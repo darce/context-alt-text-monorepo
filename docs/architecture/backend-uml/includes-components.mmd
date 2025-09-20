@@ -1,0 +1,104 @@
+classDiagram
+    class "Core::Install" as CoreInstall {
+      +run(): void
+      +rollback(): void
+      +run_migrations(): void
+    }
+
+    class "Core::API" as CoreAPI {
+      +init(): void
+    }
+
+    class "Core::Template" as CoreTemplate {
+      +init(): void
+      +custom_template($templates): array
+      +load_custom_template($template): string
+    }
+
+    class "Core::Security" as CoreSecurity {
+      +can_manage_roster(): bool
+      +can_generate_alt_text(): bool
+      +verify_admin_nonce($action,$field,$request): bool
+      +sanitize_roster_data($data): ?array
+    }
+
+    class "Core::Capabilities" as CoreCaps {
+      <<enum>>
+      +VIEW_DASHBOARD
+      +GENERATE_ALT_TEXT
+      +MANAGE_ROSTER
+    }
+
+    class "Admin::Menu" as AdminMenu {
+      +init(): void
+      +menu(): void
+      +admin_page(): void
+    }
+
+    class "Admin::RosterPage" as AdminRosterPage {
+      +enqueue_scripts($hook): void
+      +render_page(): void
+      +handle_ajax_actions(): void
+    }
+
+    class "Assets::Admin" as AssetsAdmin {
+      +bootstrap(): void
+      +enqueue_script($hook): void
+      +get_data(): array
+    }
+
+    class "Assets::Frontend" as AssetsFrontend {
+      +bootstrap(): void
+      +enqueue_script($screen): void
+      +get_data(): array
+    }
+
+    class "Services::RosterService" as RosterService {
+      +exists($label,$type,$excludeId): bool
+      +syncFromRemote(): bool
+      +createAndSync($data,$options): ?RosterEntry
+      +attachReferenceImage($entryId,$reference): bool
+      +search($query,$limit): array
+    }
+
+    class "Routes::Api" as ApiRoutes {
+      +register(): void
+    }
+
+    class "Controllers::AltText::Actions" as AltTextActions {
+      +generate($request)
+      +update_alt_text($request)
+      +list_entities($request)
+    }
+
+    class "Controllers::Roster::Actions" as RosterActions {
+      +list($request)
+      +create($request)
+      +sync($request)
+    }
+
+    class "Controllers::Dashboard::Controller" as DashboardController {
+      +get_snapshot($request)
+      +get_counts($request)
+    }
+
+    class "Media::LibraryIntegration" as MediaLibraryIntegration {
+      +bootstrap(): void
+      +register_metaboxes(): void
+    }
+
+    CoreInstall --> RosterService : migrates tables for
+    CoreInstall --> MediaLibraryIntegration : loads extensions
+    CoreAPI --> ApiRoutes : configures
+    CoreTemplate <.. AssetsAdmin : template constants
+    CoreTemplate <.. AssetsFrontend
+    CoreSecurity <.. RosterService : sanitizes
+    CoreCaps <.. CoreSecurity
+    AdminMenu --> AdminRosterPage
+    AdminMenu --> AssetsAdmin : enqueues
+    AssetsAdmin --> RosterService : ajax handlers
+    AssetsFrontend --> CoreSecurity : localizes auth info
+    ApiRoutes --> AltTextActions
+    ApiRoutes --> RosterActions
+    ApiRoutes --> DashboardController
+    MediaLibraryIntegration --> RosterService

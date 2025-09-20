@@ -1,0 +1,16 @@
+sequenceDiagram
+    participant Admin as WP Admin UI
+    participant Plugin as Context Alt Text (WP)
+    participant Recognition as Recognition API
+    participant LLM as Caption Provider
+
+    Admin->>Plugin: Trigger "Regenerate Alt Texts"
+    Plugin->>Plugin: Fetch attachments with stale policy hash
+    loop For each attachment
+        Plugin->>Recognition: POST /api/v0/analyze-scene (if requires_scene_analysis)
+        Recognition-->>Plugin: SceneAnalysisResult
+        Plugin->>LLM: generateCaption(request)
+        LLM-->>Plugin: Caption draft
+        Plugin->>Plugin: Update draft + audit log
+    end
+    Plugin-->>Admin: Batch regenerate summary

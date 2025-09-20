@@ -1,0 +1,17 @@
+sequenceDiagram
+    participant Admin as WP Admin UI
+    participant Plugin as Context Alt Text (WP)
+    participant Backend as Recognition API (HF Spaces)
+    participant Storage as Media Library
+
+    Admin->>Plugin: Open media item (attachment)
+    Plugin->>Storage: Load attachment metadata & thumbnail
+    Admin->>Plugin: Click "Identify faces"
+    Plugin->>Backend: POST /api/v0/analyze-scene (attachment URL)
+    Backend-->>Plugin: SceneAnalysisResult (faces, landmarks, confidence)
+    Plugin->>Admin: Render bounding boxes & roster suggestions
+    Admin->>Plugin: Confirm roster match
+    Plugin->>Backend: PATCH /api/v0/roster/{remoteId} (add observation embedding)
+    Backend-->>Plugin: Updated roster entry
+    Plugin->>Storage: Persist observation + remote_id locally
+    Plugin-->>Admin: Show synced badge + confidence score

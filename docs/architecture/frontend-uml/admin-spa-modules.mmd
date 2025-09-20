@@ -1,0 +1,21 @@
+graph TD
+    A[main.tsx] --> B[App.tsx]
+    B --> C[RouterProvider]
+    C --> R{routes.tsx}
+    R --> D[Dashboard Page]
+    R --> E[Drafts Page]
+    R --> F[Jobs Page]
+    R --> G[Roster Page]
+    R --> H[Media Panel]
+    R --> I[Settings Page]
+    subgraph Components
+        J[ApplicationLayout]
+        K[Shared Hooks]
+        L[API Client]
+    end
+    B --> J
+    J --> K
+    K --> L
+    L --> API[(REST Endpoints)]
+    API --> RosterService
+    API --> AltTextService

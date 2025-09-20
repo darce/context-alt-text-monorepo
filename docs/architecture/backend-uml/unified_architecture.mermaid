@@ -1,0 +1,200 @@
+---
+title: Entity Identifier API - Unified Hexagonal Architecture
+---
+flowchart TB
+    %% ===================================================================
+    %% CLIENT APPLICATIONS
+    %% ===================================================================
+    subgraph clients ["📱 Client Applications"]
+        direction TB
+        web_clients["Web Frontend<br/>- React/Vue applications<br/>- Admin dashboards<br/>- Monitoring tools"]
+        mobile_clients["Mobile Apps<br/>- iOS/Android clients<br/>- Camera integrations<br/>- Real-time analysis"]
+        api_clients["API Integrations<br/>- Third-party services<br/>- Webhook consumers<br/>- Batch processors"]
+    end
+
+    %% ===================================================================
+    %% API GATEWAY & ORCHESTRATION LAYER
+    %% ===================================================================
+    subgraph api_layer ["🌐 API Gateway & Orchestration"]
+        direction TB
+        
+        subgraph main_api ["Main API Service (Port 8000)"]
+            direction TB
+            fastapi["FastAPI Application<br/>- Lifespan management<br/>- Middleware integration<br/>- Route registration"]
+            main_routes["Main Routes<br/>- Scene analysis<br/>- Caption generation<br/>- Health checks"]
+            roster_routes["Roster Routes<br/>- CRUD operations<br/>- Bulk management<br/>- Statistics"]
+            media_routes["Media Routes<br/>- File uploads<br/>- Storage management"]
+        end
+        
+        subgraph recognition_api ["Recognition Service (Port 7860)"]
+            direction TB
+            recognition_fastapi["Recognition FastAPI<br/>- Independent service<br/>- Model switching<br/>- Quality assessment"]
+            recognition_routes["Recognition Routes<br/>- /analyze endpoint<br/>- Model management<br/>- Embedding operations"]
+        end
+    end
+
+    %% ===================================================================
+    %% DOMAIN SERVICES LAYER
+    %% ===================================================================
+    subgraph domain_services ["💼 Domain Services Layer"]
+        direction TB
+        
+        subgraph analysis_domain ["Analysis Domain"]
+            direction TB
+            scene_analysis["Scene Analysis Service<br/>- Multi-modal orchestration<br/>- Context building<br/>- Pipeline coordination"]
+            scene_composer["Scene Composer<br/>- Adapter coordination<br/>- Quality control<br/>- Error handling"]
+            context_builder["Context Builder<br/>- Scene interpretation<br/>- Metadata aggregation<br/>- Caption enhancement"]
+        end
+        
+        subgraph recognition_domain ["Recognition Domain"]
+            direction TB
+            recognition_service["Recognition Service<br/>- CVLFace integration<br/>- Quality-adaptive processing<br/>- Multi-model support"]
+            face_aligner["Face Aligner<br/>- MTCNN alignment<br/>- Fallback strategies<br/>- Quality optimization"]
+            embedding_router["Embedding Router<br/>- Model routing<br/>- Preloaded embeddings<br/>- Performance optimization"]
+        end
+        
+        subgraph roster_domain ["Roster Domain"]
+            direction TB
+            roster_service["Roster Service<br/>- Entity management<br/>- Multi-image support<br/>- Validation logic"]
+            data_validator["Data Validator<br/>- Schema validation<br/>- Business rules<br/>- Integrity checks"]
+        end
+    end
+
+    %% ===================================================================
+    %% ADAPTERS LAYER
+    %% ===================================================================
+    subgraph adapters_layer ["🔌 Adapters Layer"]
+        direction TB
+        
+        subgraph ml_adapters ["ML Model Adapters"]
+            direction TB
+            yolo_adapter["YOLO Adapter<br/>- YOLOv8 detection<br/>- Real-time inference<br/>- Multi-class detection"]
+            phi3_adapter["Phi3 Caption Adapter<br/>- Vision-language model<br/>- Context-aware captions<br/>- Prompt engineering"]
+            cvlface_adapters["CVLFace Adapters<br/>- AdaFace IR101<br/>- InsightFace W600K<br/>- ArcFace IR50"]
+        end
+        
+        subgraph storage_adapters ["Storage Adapters"]
+            direction TB
+            file_storage["File Storage Adapter<br/>- JSON persistence<br/>- Thread-safe operations<br/>- Backup management"]
+            embedding_storage["Embedding Storage<br/>- Model-specific storage<br/>- Fast retrieval<br/>- Cache management"]
+        end
+        
+        subgraph infrastructure_adapters ["Infrastructure Adapters"]
+            direction TB
+            dependency_manager["Dependency Manager<br/>- Singleton pattern<br/>- Service lifecycle<br/>- Dynamic configuration"]
+            startup_manager["Startup Manager<br/>- Background initialization<br/>- Phase tracking<br/>- Resource coordination"]
+        end
+    end
+
+    %% ===================================================================
+    %% EXTERNAL SYSTEMS
+    %% ===================================================================
+    subgraph external_systems ["🌍 External Systems"]
+        direction TB
+        
+        subgraph ai_models ["AI Models"]
+            direction TB
+            yolo_models["YOLO Models<br/>- YOLOv8 variants<br/>- Object detection<br/>- Real-time inference"]
+            cvlface_models["CVLFace Models<br/>- HuggingFace hosted<br/>- Quality-adaptive<br/>- Occlusion-aware"]
+            vision_llm["Vision LLM<br/>- Phi-3.5-Vision<br/>- Caption generation<br/>- Context understanding"]
+        end
+        
+        subgraph infrastructure ["Infrastructure"]
+            direction TB
+            file_system["File System<br/>- JSON storage<br/>- Media uploads<br/>- Configuration files"]
+            gpu_hardware["GPU Hardware<br/>- CUDA/MPS support<br/>- Memory management<br/>- Performance optimization"]
+            vector_search["Vector Search<br/>- FAISS indexing<br/>- Similarity matching<br/>- Fast retrieval"]
+        end
+    end
+
+    %% ===================================================================
+    %% DATA FLOW CONNECTIONS
+    %% ===================================================================
+    
+    %% Client to API connections
+    clients --> fastapi
+    clients --> recognition_fastapi
+    
+    %% API to Domain connections
+    fastapi --> scene_analysis
+    main_routes --> scene_composer
+    roster_routes --> roster_service
+    
+    recognition_fastapi --> recognition_service
+    recognition_routes --> face_aligner
+    recognition_routes --> embedding_router
+    
+    %% Domain to Domain connections
+    scene_analysis --> recognition_service
+    scene_composer --> context_builder
+    recognition_service --> roster_service
+    
+    %% Domain to Adapters connections
+    scene_composer --> yolo_adapter
+    scene_composer --> phi3_adapter
+    recognition_service --> cvlface_adapters
+    roster_service --> file_storage
+    roster_service --> embedding_storage
+    
+    scene_analysis --> dependency_manager
+    recognition_service --> startup_manager
+    
+    %% Adapters to External connections
+    yolo_adapter --> yolo_models
+    phi3_adapter --> vision_llm
+    cvlface_adapters --> cvlface_models
+    
+    file_storage --> file_system
+    embedding_storage --> file_system
+    cvlface_adapters --> gpu_hardware
+    
+    embedding_router --> vector_search
+    
+    dependency_manager --> file_system
+    startup_manager --> gpu_hardware
+
+    %% ===================================================================
+    %% STYLING
+    %% ===================================================================
+    classDef clientClass color:#000000,stroke:#9c27b0,stroke-width:2px,fill:#f3e5f5
+    classDef apiClass color:#000000,stroke:#01579b,stroke-width:2px,fill:#e3f2fd
+    classDef domainClass color:#000000,stroke:#2e7d32,stroke-width:2px,fill:#e8f5e8
+    classDef adapterClass color:#000000,stroke:#f57c00,stroke-width:2px,fill:#fff3e0
+    classDef externalClass color:#000000,stroke:#d32f2f,stroke-width:2px,fill:#ffebee
+
+    class clients,web_clients,mobile_clients,api_clients clientClass
+    class api_layer,main_api,recognition_api,fastapi,main_routes,roster_routes,media_routes,recognition_fastapi,recognition_routes apiClass
+    class domain_services,analysis_domain,recognition_domain,roster_domain,scene_analysis,scene_composer,context_builder,recognition_service,face_aligner,embedding_router,roster_service,data_validator domainClass
+    class adapters_layer,ml_adapters,storage_adapters,infrastructure_adapters,yolo_adapter,phi3_adapter,cvlface_adapters,file_storage,embedding_storage,dependency_manager,startup_manager adapterClass
+    class external_systems,ai_models,infrastructure,yolo_models,cvlface_models,vision_llm,file_system,gpu_hardware,vector_search externalClass
+
+    %% Red arrow styling
+    linkStyle default stroke:#ff0000,stroke-width:2px
+    
+    %% ===================================================================
+    %% ARCHITECTURAL PATTERNS & SUMMARY
+    %% ===================================================================
+    
+    %% 🎭 ANALYSIS: Orchestrates multi-modal scene analysis
+    %% Object Detection → Face Recognition → Captioning
+    %% Implements hexagonal architecture
+    
+    %% 🎯 RECOGNITION: Independent microservice on port 7860
+    %% CVLFace models with quality-adaptive margins
+    %% Multi-model switching per request, AdaFace methodology
+    
+    %% 📇 ROSTER: Multi-image entity registry
+    %% Incremental embedding aggregation, occlusion-aware weighting
+    
+    %% 🏗️ SHARED: Platform infrastructure with singleton configuration
+    %% Hardware abstraction (GPU/CPU/MPS), model lifecycle management
+    
+    %% 🌐 API: RESTful endpoints with dependency injection
+    %% Request/response DTOs, presentation layer
+    
+    %% 📋 ARCHITECTURE SUMMARY:
+    %% 🔄 Hexagonal Architecture with Domain-Driven Design
+    %% 🏗️ Clean separation of concerns across 5 domains
+    %% 🎯 Occlusion-aware face recognition pipeline
+    %% ⚡ GPU-optimized model loading and attention
+    %% 📊 Multi-modal scene analysis orchestration

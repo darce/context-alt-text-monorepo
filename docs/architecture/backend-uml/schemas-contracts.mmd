@@ -1,0 +1,64 @@
+classDiagram
+    class GenerateAltTextInput {
+      attachmentIds: integer[]
+    }
+
+    class GenerateAltTextOutput {
+      items: AltTextDraft[]
+    }
+
+    class AnalyzeSceneRequest {
+      imageUrl: string
+      attachmentId: integer?
+      model: string?
+    }
+
+    class AnalyzeSceneResponse {
+      faces: DetectedFace[]
+      objects: DetectedObject[]
+      metadata: Map
+    }
+
+    class EmbeddingsRequest {
+      imageUrl: string
+      cropBox: BoundingBox?
+      model: string?
+    }
+
+    class EmbeddingsResponse {
+      embedding: float[]
+      vectorId: string?
+    }
+
+    class ServiceHealth {
+      status: "ok"|"degraded"|"error"
+      uptimeSeconds: number
+      models: string[]
+    }
+
+    class DetectedFace {
+      bbox: BoundingBox
+      confidence: number
+      rosterMatch: string?
+    }
+
+    class DetectedObject {
+      label: string
+      bbox: BoundingBox
+      confidence: number
+    }
+
+    class BoundingBox {
+      x: number
+      y: number
+      width: number
+      height: number
+    }
+
+    GenerateAltTextInput --> GenerateAltTextOutput : produces
+    AnalyzeSceneRequest --> AnalyzeSceneResponse : yields
+    EmbeddingsRequest --> EmbeddingsResponse : returns
+    AnalyzeSceneResponse --> DetectedFace
+    AnalyzeSceneResponse --> DetectedObject
+    DetectedFace --> BoundingBox
+    DetectedObject --> BoundingBox

@@ -1,0 +1,15 @@
+sequenceDiagram
+    participant Admin as WP Admin UI
+    participant Plugin as Context Alt Text (WP)
+    participant Recognition as Recognition API
+    participant LLM as Caption Provider
+
+    Admin->>Plugin: Select images missing alt text
+    Plugin->>Recognition: POST /api/v0/analyze-scene (image URL)
+    Recognition-->>Plugin: SceneAnalysisResult
+    Plugin->>LLM: generateCaption(SceneAnalysisResult, policy)
+    LLM-->>Plugin: Caption draft
+    Plugin->>Admin: Display draft alt text + entities
+    Admin->>Plugin: Approve draft
+    Plugin->>Plugin: Persist _wp_attachment_image_alt meta
+    Plugin-->>Admin: Confirmation + activity log entry

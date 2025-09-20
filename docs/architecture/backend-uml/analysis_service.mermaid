@@ -1,0 +1,77 @@
+---
+title: Analysis Service Architecture - Hexagonal Design Pattern
+---
+flowchart TB
+    %% === PORTS LAYER (API Interfaces) ===
+    subgraph ports ["🌐 Ports Layer"]
+        direction TB
+        object_detector_port["Object Detection Port<br/>- Image analysis interface<br/>- Bounding box detection<br/>- Object classification"]
+        caption_generator_port["Caption Generation Port<br/>- Vision-language interface<br/>- Context-aware captions<br/>- Prompt processing"]
+        recognition_port["Recognition Port<br/>- Face detection interface<br/>- Entity identification<br/>- Quality assessment"]
+    end
+
+    %% === DOMAIN LAYER (Business Logic) ===
+    subgraph domain ["💼 Domain Layer"]
+        direction TB
+        scene_analysis_service["Scene Analysis Service<br/>- Multi-modal orchestration<br/>- Context building<br/>- Recognition integration"]
+        scene_composer["Scene Composer<br/>- Adapter coordination<br/>- Pipeline management<br/>- Quality control"]
+        context_builder["Context Builder<br/>- Scene interpretation<br/>- Metadata aggregation<br/>- Caption enhancement"]
+        entities["Domain Entities<br/>- DetectedObject<br/>- DetectedEntity<br/>- SceneContext"]
+    end
+
+    %% === ADAPTERS LAYER (External Integrations) ===
+    subgraph adapters ["🔌 Adapters Layer"]
+        direction TB
+        yolo_adapter["YOLO Adapter<br/>- YOLOv8 object detection<br/>- Real-time inference<br/>- Multi-class detection"]
+        phi3_adapter["Phi3 Caption Adapter<br/>- Vision-language model<br/>- Context-aware captions<br/>- Prompt engineering"]
+        mock_adapters["Mock Adapters<br/>- Testing implementations<br/>- Development stubs<br/>- Fallback options"]
+        recognition_service["Recognition Service<br/>- CVLFace integration<br/>- Quality scoring<br/>- Embedding routing"]
+    end
+
+    %% === EXTERNAL SYSTEMS ===
+    subgraph external ["🌍 External Systems"]
+        direction TB
+        models["AI Models<br/>- YOLOv8 Detection<br/>- Phi3-Vision<br/>- CVLFace Models"]
+        roster_system["Roster System<br/>- Entity database<br/>- Embedding storage<br/>- Match validation"]
+        config_system["Configuration<br/>- Model settings<br/>- Detection thresholds<br/>- Device management"]
+    end
+
+    %% === PORT TO DOMAIN CONNECTIONS ===
+    object_detector_port --> scene_composer
+    caption_generator_port --> scene_composer
+    recognition_port --> scene_analysis_service
+    
+    scene_composer --> scene_analysis_service
+    scene_analysis_service --> context_builder
+    scene_analysis_service --> entities
+    
+    %% === DOMAIN TO ADAPTERS CONNECTIONS ===
+    scene_composer --> yolo_adapter
+    scene_composer --> phi3_adapter
+    scene_composer --> mock_adapters
+    
+    scene_analysis_service --> recognition_service
+    context_builder --> recognition_service
+    
+    %% === ADAPTERS TO EXTERNAL CONNECTIONS ===
+    yolo_adapter --> models
+    phi3_adapter --> models
+    recognition_service --> models
+    
+    recognition_service --> roster_system
+    scene_analysis_service -.-> roster_system
+    
+    yolo_adapter --> config_system
+    phi3_adapter --> config_system
+    recognition_service --> config_system
+
+    %% === STYLING ===
+    classDef portClass color:#000000,stroke:#01579b,stroke-width:2px,fill:#e3f2fd
+    classDef domainClass color:#000000,stroke:#2e7d32,stroke-width:2px,fill:#e8f5e8
+    classDef adapterClass color:#000000,stroke:#f57c00,stroke-width:2px,fill:#fff3e0
+    classDef externalClass color:#000000,stroke:#7b1fa2,stroke-width:2px,fill:#f3e5f5
+
+    class ports,object_detector_port,caption_generator_port,recognition_port portClass
+    class domain,scene_analysis_service,scene_composer,context_builder,entities domainClass
+    class adapters,yolo_adapter,phi3_adapter,mock_adapters,recognition_service adapterClass
+    class external,models,roster_system,config_system externalClass

@@ -1,0 +1,34 @@
+classDiagram
+    class AltTextService {
+      +composePrompt(SceneAnalysisResult, Policy): Prompt
+      +generateDraft(AttachmentId): AltTextDraft
+    }
+
+    class RecognitionClient {
+      +analyzeScene(AnalyzeSceneRequest): SceneAnalysisResult
+      +embeddings(EmbeddingsRequest): EmbeddingsResponse
+      +reloadEmbeddings(): Status
+      +serviceInfo(): ServiceInfo
+    }
+
+    class RosterService {
+      +syncFromRemote(): SyncReport
+      +createOrUpdateEntry(RosterEntry): RemoteId
+      +addReferenceImage(RemoteId, AttachmentId): EmbeddingId
+    }
+
+    class ObservationRepository {
+      +recordMatch(AttachmentId, RemoteId, Confidence)
+      +listForAttachment(AttachmentId): Observation[]
+    }
+
+    class SettingsRepository {
+      +getRecognitionConfig(): RecognitionConfig
+      +saveRecognitionConfig(RecognitionConfig)
+    }
+
+    AltTextService --> RecognitionClient : uses
+    AltTextService --> ObservationRepository : persists
+    RosterService --> RecognitionClient : HTTP
+    RosterService --> ObservationRepository : merges
+    RecognitionClient --> SettingsRepository : reads

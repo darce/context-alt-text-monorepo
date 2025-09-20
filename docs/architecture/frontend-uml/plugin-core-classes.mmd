@@ -1,0 +1,73 @@
+classDiagram
+    class ContextAltText {
+      +init(): void
+      +register_blocks(): void
+      +i18n(): void
+    }
+
+    class Menu {
+      +init(): void
+      +menu(): void
+      +admin_page(): void
+      +render_roster_page(): void
+    }
+
+    class Admin {
+      +bootstrap(): void
+      +enqueue_script($hook_suffix): void
+      +get_config(): array
+      +get_data(): array
+    }
+
+    class Frontend {
+      +bootstrap(): void
+      +enqueue_script($screen): void
+      +get_config(): array
+      +get_data(): array
+    }
+
+    class API {
+      +init(): void
+    }
+
+    class Template {
+      +init(): void
+      +custom_template($templates): array
+      +load_custom_template($template): string
+    }
+
+    class RosterPage {
+      +enqueue_scripts($hook): void
+      +render_page(): void
+      -render_roster_table(): void
+      +handle_ajax_actions(): void
+    }
+
+    class RosterService {
+      +exists($label, $type, $excludeId): bool
+      +getLocalRoster($filters): array
+      +syncFromRemote(): bool
+      +createAndSync($data, $options): ?RosterEntry
+      +updateAndSync($id, $data, $options): ?RosterEntry
+      +attachReferenceImage($entryId, $reference): bool
+      +search($query, $limit): array
+      +validate($data): array
+    }
+
+    class Security {
+      +can_manage_roster(): bool
+      +verify_admin_nonce($action, $field, $request): bool
+      +sanitize_roster_data($data): array|null
+      +create_nonce($action): string
+    }
+
+    ContextAltText --> Menu : bootstraps
+    ContextAltText --> Admin : bootstraps
+    ContextAltText --> Frontend : bootstraps
+    ContextAltText --> API : initializes
+    ContextAltText --> Template : registers
+    ContextAltText --> RosterPage : instantiates
+    RosterPage --> RosterService : uses
+    RosterService --> Security : sanitizes
+    Admin --> Template : reads template constants
+    Frontend --> Template : reads template constants

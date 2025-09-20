@@ -1,0 +1,47 @@
+classDiagram
+    class RosterService {
+      -RosterSyncClient|null rosterClient
+      +__construct(?RosterSyncClient $client = null)
+      +exists($label, $type, $excludeId): bool
+      +getLocalRoster($filters): array
+      +syncFromRemote(): bool
+      +createIfUnique($data): ?RosterEntry
+      +createAndSync($data, $options): ?RosterEntry
+      +updateAndSync($id, $data, $options): ?RosterEntry
+      +upsertRemote(RosterEntry $entry, $options): array
+      +attachReferenceImage($entryId, $reference): bool
+      +getAugmentedEmbedding($entryId): ?array
+      +search($query, $limit): array
+      +validate($data): array
+    }
+
+    class RosterEntry {
+      +getValidTypes(): array
+      +isPerson(): bool
+      +isBrand(): bool
+      +scopeOfType($query, $type)
+      +scopeSearch($query, $search)
+      +setPrimaryEmbedding($embedding): void
+      +getPrimaryEmbedding(): ?array
+      +getAvatarAttachmentId(): ?int
+      +getAvatarHtml($size): string
+    }
+
+    class RosterSyncClient {
+      <<interface>>
+      +listRoster($params): array
+      +upsertRosterEntry($dto): array
+      +deleteRosterEntry($remoteId): array
+      +addReferenceImage($remoteId, $attachmentId): array
+    }
+
+    class Security {
+      +sanitize_roster_data($data): ?array
+      +can_manage_roster(): bool
+      +verify_admin_nonce($action, $field, $request): bool
+      +create_nonce($action): string
+    }
+
+    RosterService --> RosterEntry : persists
+    RosterService --> RosterSyncClient : invokes
+    RosterService --> Security : sanitizes

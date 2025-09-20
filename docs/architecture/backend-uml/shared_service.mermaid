@@ -1,0 +1,401 @@
+---
+title: Shared Service Domain - UML Class Diagram
+---
+classDiagram
+    %% === CONFIG MANAGEMENT ===
+    
+    class ConfigService {
+        <<singleton>>
+        -Dict~str,Any~ _config
+        -Dict~str,Any~ _cache
+        -threading.RLock _cache_lock
+        -bool _initialized
+        -Dict~str,Dict~ _model_type_registry
+        +__new__() ConfigService
+        +__init__()
+        +get(key: str, default: Any) Any
+        +get_section(section: str) Dict~str,Any~
+        +get_config() Dict~str,Any~
+        +get_adapters_config() Dict~str,Any~
+        +get_caption_config() Dict~str,Any~
+        +get_server_config() Dict~str,Any~
+        +get_startup_config() Dict~str,Any~
+        +get_attention_config() Dict~str,Any~
+        +get_occlusion_config() Dict~str,Any~
+        +get_runtime_optimizations() Dict~str,Any~
+        +is_multimodal_model(model_type: str) bool
+        +supports_vision(model_type: str) bool
+        +register_model_type(model_type: str, capabilities: Dict)
+        +validate_config()
+        +reload_config()
+        +clear_cache()
+    }
+    
+    class Settings {
+        <<module>>
+        +load_yaml_config(config_path: str) Dict~str,Any~
+        +get_config() Dict~str,Any~
+    }
+    
+    %% === DATA TRANSFER OBJECTS ===
+    
+    class AddRosterCmd {
+        <<DTO>>
+        +str name
+        +Optional~Dict~str,Any~~ metadata
+    }
+    
+    class RosterEntryDTO {
+        <<DTO>>
+        +str unique_id
+        +str name
+        +str display_name
+        +Optional~str~ roster_image_path
+        +Optional~Dict~str,Any~~ metadata
+        +Optional~datetime~ created_timestamp
+        +Optional~datetime~ updated_timestamp
+        +Optional~List~float~~ face_bbox
+        +Optional~float~ face_confidence
+        +int image_count
+        +Optional~List~float~~ aggregate_embedding
+        +Optional~int~ embedding_length
+        +Optional~List~List~float~~~ reference_embeddings
+        +model_dump() Dict~str,Any~
+    }
+    
+    %% === ENUMS ===
+    
+    class StartupPhase {
+        <<enumeration>>
+        IDLE
+        ENVIRONMENT_SETUP
+        FLASH_ATTENTION_CHECK
+        DEVICE_DETECTION
+        WARMUP_DETECTION
+        ADAPTER_CREATION
+        SCENE_COMPOSER_INIT
+        ROUTE_INJECTION
+        COMPLETED
+        FAILED
+    }
+    
+    class AttentionBackend {
+        <<enumeration>>
+        FLASH_ATTENTION_V2
+        FLASH_ATTENTION_V1
+        SDPA
+        EAGER
+    }
+    
+    class GPUArchitecture {
+        <<enumeration>>
+        TURING
+        AMPERE
+        ADA_LOVELACE
+        HOPPER
+        VOLTA
+        UNKNOWN
+    }
+    
+    %% === INFRASTRUCTURE - GPU MANAGEMENT ===
+    
+    class GPUInfo {
+        +str name
+        +Tuple~int,int~ compute_capability
+        +GPUArchitecture architecture
+        +float memory_gb
+        +bool supports_flash_v1
+        +bool supports_flash_v2
+        +str recommended_attention
+        +int device_index
+    }
+    
+    class DeviceInfo {
+        +str best_device
+        +bool cuda_available
+        +bool mps_available
+        +Optional~GPUInfo~ gpu_info
+        +int device_count
+    }
+    
+    class GPUManager {
+        <<singleton>>
+        -ConfigService config_service
+        -Optional~DeviceInfo~ _cached_device_info
+        -Optional~GPUInfo~ _cached_gpu_info
+        -Dict~str,Any~ _architecture_configs
+        +__new__() GPUManager
+        +get_device_info() DeviceInfo
+        +get_gpu_info(model_context: str) Optional~GPUInfo~
+        +detect_best_device() str
+        +resolve_device_spec(device_spec: str) str
+        +get_gpu_architecture() GPUArchitecture
+        +get_attention_config(model_type: str) Dict~str,Any~
+        +log_gpu_info()
+        +is_device_available(device: str) bool
+        +get_memory_info() Dict~str,Any~
+        +apply_runtime_optimizations(device: str)
+        -_detect_gpu_info() Optional~GPUInfo~
+        -_get_compute_capability() Tuple~int,int~
+        -_classify_architecture(compute_cap: Tuple~int,int~) GPUArchitecture
+        -_load_architecture_configs()
+    }
+    
+    %% === INFRASTRUCTURE - ATTENTION OPTIMIZATION ===
+    
+    class AttentionCapabilities {
+        +AttentionBackend backend
+        +bool available
+        +Optional~str~ version
+        +List~str~ supports_devices
+        +Optional~float~ speed_improvement
+        +str compatibility_notes
+        +List~str~ requirements
+    }
+    
+    class AttentionConfig {
+        +List~AttentionBackend~ preferred_backends
+        +Optional~AttentionBackend~ force_backend
+        +Dict~str,List~AttentionBackend~~ device_restrictions
+        +bool fallback_to_eager
+        +bool log_selection
+        +bool enable_benchmarking
+    }
+    
+    class IAttentionOptimizer {
+        <<interface>>
+        +name() str*
+        +is_available(device: str) bool*
+        +get_capabilities(device: str) AttentionCapabilities*
+        +configure_model_args(model_args: Dict, device: str) Dict*
+        +apply_runtime_optimizations(model: torch.nn.Module, device: str) torch.nn.Module*
+        +get_context_manager(device: str)*
+        +backend_type() AttentionBackend*
+    }
+    
+    class AttentionOptimizerManager {
+        -Dict~AttentionBackend,IAttentionOptimizer~ optimizers
+        -AttentionConfig config
+        -Dict~str,IAttentionOptimizer~ _selected_optimizers
+        +__init__(config: AttentionConfig)
+        +get_best_optimizer(device: str) IAttentionOptimizer
+        +get_all_capabilities(device: str) Dict~AttentionBackend,AttentionCapabilities~
+        +configure_model_args(model_args: Dict, device: str) Dict
+        +optimize_model(model: torch.nn.Module, device: str) torch.nn.Module
+        +get_inference_context(device: str)
+        +log_attention_summary(device: str)
+    }
+    
+    class FlashAttentionV2Optimizer {
+        +name() str
+        +is_available(device: str) bool
+        +get_capabilities(device: str) AttentionCapabilities
+        +configure_model_args(model_args: Dict, device: str) Dict
+        +apply_runtime_optimizations(model: torch.nn.Module, device: str) torch.nn.Module
+        +get_context_manager(device: str)
+        +backend_type() AttentionBackend
+    }
+    
+    class EagerAttentionOptimizer {
+        +name() str
+        +is_available(device: str) bool
+        +get_capabilities(device: str) AttentionCapabilities
+        +configure_model_args(model_args: Dict, device: str) Dict
+        +apply_runtime_optimizations(model: torch.nn.Module, device: str) torch.nn.Module
+        +get_context_manager(device: str)
+        +backend_type() AttentionBackend
+    }
+    
+    %% === INFRASTRUCTURE - MODEL LOADERS ===
+    
+    class Phi3ModelLoader {
+        +str model_id
+        +str device
+        +Dict~str,Any~ config
+        +Any model
+        +Any processor
+        +__init__(model_id: str, device: str, config: Dict)
+        +load_model(model_id: str, device: str) Any
+        +load_processor(model_id: str) Any
+        -_resolve_device(device: str) str
+        -_get_transformers()
+        -_build_loading_args(model_settings: Dict, device: str, trust_remote_code: bool) Dict
+        -_handle_device_placement(model, device: str)
+    }
+    
+    class InsightFaceModelLoader {
+        <<module>>
+        +load_insightface_model(model_path: str, device: str, config: Dict) Any
+        -_get_detection_size(config: Dict) int
+        -_get_providers_and_ctx(resolved_device: str, config: Dict) Tuple~list,int~
+    }
+    
+    class YoloModelLoader {
+        <<module>>
+        +load_yolo_model(model_path: str, device: str, config: Dict) Any
+    }
+    
+    %% === INFRASTRUCTURE - VECTOR SEARCH ===
+    
+    class FaissIndex {
+        +Optional~str~ index_path
+        +roster_service
+        +bool use_faiss
+        -Optional~Any~ _cached_embeddings
+        -Optional~Any~ _cached_metadata
+        -bool _cache_valid
+        +__init__(index_path: str, roster_service)
+        +search(embedding: List~float~, k: int) List~OcclusionMatchResult~
+        -_search_with_faiss(embedding: List~float~, k: int) List~OcclusionMatchResult~
+        -_search_with_numpy(embedding: List~float~, k: int) List~OcclusionMatchResult~
+        +add_embeddings(embeddings: List~Array~, metadata: List~Dict~)
+        +rebuild_index()
+    }
+    
+    %% === STARTUP MANAGEMENT ===
+    
+    class StartupMetrics {
+        +float total_time
+        +float environment_setup_time
+        +float flash_attention_time
+        +float device_detection_time
+        +float warmup_detection_time
+        +float adapter_creation_time
+        +float scene_composer_time
+        +float route_injection_time
+        +bool warmup_detected
+        +bool flash_attention_available
+        +str primary_device
+        +List~str~ adapters_initialized
+        +List~str~ errors
+        +List~str~ warnings
+    }
+    
+    class StartupConfig {
+        +int timeout_seconds
+        +bool background_initialization
+        +bool warmup_check_enabled
+        +bool flash_attention_check_enabled
+        +bool device_auto_detection
+        +List~str~ adapter_initialization_order
+        +bool enable_metrics
+        +bool verbose_logging
+    }
+    
+    class StartupManager {
+        -StartupPhase current_phase
+        -StartupConfig config
+        -StartupMetrics metrics
+        -Optional~Exception~ initialization_error
+        -bool _initialization_complete
+        -threading.Event _completion_event
+        -AttentionOptimizerManager _attention_manager
+        +__init__(config: StartupConfig)
+        +initialize_async() bool
+        +wait_for_completion(timeout: float) bool
+        +get_initialization_error() Optional~Exception~
+        +setup_environment() Dict~str,str~
+        +check_flash_attention() bool
+        +detect_compute_environment() str
+        +check_model_warmup() bool
+        +create_adapters() Tuple~Any,Any,Any,Any~
+        +create_scene_composer(object_detector, entity_identifier, caption_generator) SceneComposer
+        -_update_phase(phase: StartupPhase)
+        -_measure_time(operation: str)
+        -_apply_gpu_runtime_optimizations()
+    }
+    
+    %% === UTILITIES ===
+    
+    class DeviceUtils {
+        <<module>>
+        +get_available_device() str
+    }
+    
+    class DeviceContext {
+        -str device
+        +__init__(device: str)
+        +__enter__() str
+        +__exit__(exc_type, exc_val, exc_tb)
+    }
+    
+    class EmbeddingVisualizer {
+        +visualize_embeddings(embeddings: List~Array~, labels: List~str~)
+        +save_visualization(path: str)
+        +plot_similarity_matrix(embeddings: List~Array~)
+    }
+    
+    class PreloadModel {
+        <<module>>
+        +download_model_files() bool
+        +warmup_model_cpu_only(model_id: str, cache_dir: str) bool
+        +download_yolo_models(config: dict) bool
+    }
+    
+    %% === EXTERNAL DEPENDENCIES ===
+    
+    class OcclusionMatchResult {
+        <<external>>
+        +str entity_name
+        +str unique_id
+        +float similarity_score
+        +OcclusionType occlusion
+    }
+    
+    class SceneComposer {
+        <<external>>
+        +analyze_scene(image: Image) Dict
+    }
+    
+    %% === RELATIONSHIPS ===
+    
+    %% Config relationships
+    ConfigService --> Settings : uses
+    
+    %% Infrastructure relationships
+    GPUManager *-- DeviceInfo : contains
+    GPUManager *-- GPUInfo : contains
+    DeviceInfo *-- GPUInfo : contains
+    GPUInfo *-- GPUArchitecture : contains
+    
+    %% Attention optimization relationships
+    AttentionOptimizerManager *-- AttentionConfig : contains
+    AttentionOptimizerManager --> IAttentionOptimizer : manages
+    IAttentionOptimizer <|.. FlashAttentionV2Optimizer : implements
+    IAttentionOptimizer <|.. EagerAttentionOptimizer : implements
+    AttentionCapabilities *-- AttentionBackend : contains
+    AttentionConfig *-- AttentionBackend : contains
+    
+    %% Model loader relationships
+    Phi3ModelLoader --> GPUManager : uses
+    Phi3ModelLoader --> AttentionOptimizerManager : uses
+    
+    %% Startup management relationships
+    StartupManager *-- StartupConfig : contains
+    StartupManager *-- StartupMetrics : contains
+    StartupManager *-- StartupPhase : tracks
+    StartupManager --> GPUManager : uses
+    StartupManager --> AttentionOptimizerManager : uses
+    StartupManager --> ConfigService : uses
+    StartupManager ..> SceneComposer : creates
+    
+    %% Utility relationships
+    DeviceUtils --> ConfigService : uses
+    FaissIndex ..> OcclusionMatchResult : creates
+    
+    %% External dependencies
+    StartupManager ..> SceneComposer : initializes
+    
+    %% === NOTES ===
+    
+    note for ConfigService "Singleton configuration service with\nthread-safe caching and validation"
+    
+    note for GPUManager "Centralized GPU detection and\narchitecture-specific optimization"
+    
+    note for AttentionOptimizerManager "Manages attention backends:\n- Flash Attention v1/v2\n- SDPA (PyTorch native)\n- Eager (fallback)"
+    
+    note for StartupManager "Orchestrates application startup:\n- Environment setup\n- Device detection\n- Model warmup\n- Adapter initialization"
+    
+    note for FaissIndex "Vector similarity search with\nnumpy fallback implementation"
+    
+    note for Phi3ModelLoader "Phi-3 vision model loader with\ndevice-specific optimizations"

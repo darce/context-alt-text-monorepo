@@ -1,0 +1,46 @@
+erDiagram
+    CAT_ROSTER ||--o{ CAT_OBSERVATION : assigns
+    CAT_ROSTER {
+      bigint id PK
+      varchar label
+      varchar type
+      text primary_embedding
+      text meta
+      varchar remote_id
+      bigint avatar_id
+      datetime created_at
+      datetime updated_at
+    }
+
+    CAT_OBSERVATION {
+      bigint observation_id PK
+      varchar session_id
+      bigint attachment_id
+      text box
+      float confidence
+      bigint assigned_roster_id FK
+      varchar status
+      datetime created_at
+    }
+
+    ACCOUNTS {
+      bigint id PK
+      varchar user_id
+      varchar host
+      int port
+      varchar first_name
+      varchar last_name
+      varchar email
+      varchar name
+      varchar password
+      datetime created_at
+      datetime updated_at
+    }
+
+    ENTITY_LIBRARY {
+      bigint id PK
+      varchar name
+      text description
+      datetime created_at
+      datetime updated_at
+    }

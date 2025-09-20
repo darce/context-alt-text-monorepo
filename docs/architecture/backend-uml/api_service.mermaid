@@ -1,0 +1,86 @@
+---
+title: API Service Architecture - Hexagonal Design Pattern
+---
+flowchart TB
+    %% === PORTS LAYER (API Interfaces) ===
+    subgraph ports ["🌐 Ports Layer"]
+        direction TB
+        fastapi["FastAPI Application<br/>- Lifespan management<br/>- Middleware integration<br/>- Route registration"]
+        main_router["Main API Router<br/>- Scene analysis endpoints<br/>- Entity recognition endpoints<br/>- Health checks"]
+        roster_router["Roster API Router<br/>- CRUD operations<br/>- Bulk operations<br/>- Statistics"]
+        media_router["Media API Router<br/>- File upload<br/>- Storage management"]
+        entity_router["Entity Recognition Router<br/>- Pipeline management<br/>- Model switching<br/>- Embedding reload"]
+    end
+
+    %% === DOMAIN LAYER (Business Logic) ===
+    subgraph domain ["💼 Domain Layer"]
+        direction TB
+        dependencies["Dependency Manager<br/>- Singleton pattern<br/>- Service lifecycle<br/>- Dynamic configuration"]
+        utils["API Utilities<br/>- Image processing<br/>- Metadata parsing<br/>- Error handling"]
+        startup["Startup Manager<br/>- Background initialization<br/>- Phase tracking<br/>- Resource coordination"]
+    end
+
+    %% === ADAPTERS LAYER (External Integrations) ===
+    subgraph adapters ["🔌 Adapters Layer"]
+        direction TB
+        scene_composer["Scene Composer Adapter<br/>- Entity identification<br/>- Reference matching"]
+        scene_analysis["Scene Analysis Adapter<br/>- Caption generation<br/>- Context analysis"]
+        roster_service["Roster Service Adapter<br/>- Entry management<br/>- Validation"]
+        recognition_pipeline["Recognition Pipeline<br/>- AdaFace integration<br/>- Model management"]
+    end
+
+    %% === EXTERNAL SYSTEMS ===
+    subgraph external ["🌍 External Systems"]
+        direction TB
+        models["AI Models<br/>- AdaFace IR101<br/>- InsightFace Buffalo-L<br/>- BLIP Captioning"]
+        storage["File Storage<br/>- JSON persistence<br/>- Media uploads<br/>- Backup management"]
+        config["Configuration<br/>- YAML settings<br/>- Environment variables<br/>- Dynamic updates"]
+    end
+
+    %% === PORT TO DOMAIN CONNECTIONS ===
+    fastapi --> dependencies
+    main_router --> dependencies
+    roster_router --> dependencies
+    media_router --> dependencies
+    entity_router --> dependencies
+    
+    main_router --> utils
+    roster_router --> utils
+    media_router --> utils
+
+    fastapi --> startup
+    
+    %% === DOMAIN TO ADAPTERS CONNECTIONS ===
+    dependencies --> scene_composer
+    dependencies --> scene_analysis
+    dependencies --> roster_service
+    dependencies --> recognition_pipeline
+    
+    startup --> scene_composer
+    startup --> scene_analysis
+    startup --> roster_service
+    startup --> recognition_pipeline
+
+    %% === ADAPTERS TO EXTERNAL CONNECTIONS ===
+    scene_composer --> models
+    scene_analysis --> models
+    recognition_pipeline --> models
+    
+    roster_service --> storage
+    media_router --> storage
+    
+    startup --> config
+    dependencies --> config
+
+    %% === STYLING ===
+    classDef portClass color:#000000,stroke:#01579b,stroke-width:2px,fill:#e3f2fd
+    classDef domainClass color:#000000,stroke:#2e7d32,stroke-width:2px,fill:#e8f5e8
+    classDef adapterClass color:#000000,stroke:#f57c00,stroke-width:2px,fill:#fff3e0
+    classDef externalClass color:#000000,stroke:#7b1fa2,stroke-width:2px,fill:#f3e5f5
+
+    class ports,fastapi,main_router,roster_router,media_router,entity_router portClass
+    class domain,dependencies,utils,startup domainClass
+    class adapters,scene_composer,scene_analysis,roster_service,recognition_pipeline adapterClass
+    class external,models,storage,config externalClass
+
+    linkStyle default stroke:#ff0000,stroke-width:2px

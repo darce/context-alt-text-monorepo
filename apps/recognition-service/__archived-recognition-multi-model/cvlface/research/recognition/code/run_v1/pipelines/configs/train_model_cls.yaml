@@ -1,3 +1,0 @@
-name: 'TrainModelClsPipeline'
-resume: ${trainers.resume}
-eval_pipeline_name: 'infer_model_pipeline'

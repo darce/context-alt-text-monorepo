@@ -1,0 +1,159 @@
+# Recognition Service Configuration
+# Independent microservice for face recognition with CVLface models
+
+# Service Configuration
+service:
+  name: "face-recognition-service"
+  version: "1.0.0"
+  port: 7860
+  host: "0.0.0.0"
+  debug: false
+  log_level: "INFO"
+
+# Model Configuration
+models:
+  # AdaFace IR101 WebFace12M - High performance, quality-adaptive
+  adaface_ir101:
+    type: "cvlface_adaface"
+    model_id: "minchul/cvlface_adaface_ir101_webface12m"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "adaface_ir101_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+      quality_adaptive: true
+
+  # InsightFace W600K - Built-in alignment
+  insightface_w600k:
+    type: "cvlface_insight"
+    model_id: "deepinsight/insightface-scrfd-arcface-w600k"
+    insightface_model: "buffalo_l"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "insightface_w600k_embeddings.json"
+    settings:
+      det_size: 640
+      use_built_in_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+  # ArcFace IR50 WebFace4M - MTCNN alignment
+  arcface_ir50:
+    type: "cvlface_arcface"
+    model_id: "minchul/cvlface_arcface_ir50_webface4m"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "arcface_ir50_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+# Performance Configuration
+performance:
+  # Target latency (milliseconds)
+  target_latency_ms:
+    gpu_t4: 150
+    cpu_m1: 600
+
+  # Memory limits
+  gpu_memory_limit_gb: 6
+
+  # Caching
+  cache_embeddings: true
+  cache_models: true
+
+  # Batch processing
+  max_batch_size: 4
+  batch_timeout_ms: 50
+
+# Quality Configuration
+quality:
+  # AdaFace quality-adaptive margin settings
+  adaface_quality:
+    enable_quality_scoring: true
+    quality_weights:
+      sharpness: 0.4
+      brightness: 0.3
+      contrast: 0.3
+
+    # Quality-adaptive margin parameters
+    base_margin: 0.4
+    quality_factor: 0.5
+    margin_range: [0.2, 0.8]
+
+  # General quality thresholds
+  min_face_size: 40
+  blur_threshold: 100.0
+  brightness_range: [50, 200]
+
+# Alignment Configuration
+alignment:
+  # MTCNN settings (for AdaFace and ArcFace)
+  mtcnn:
+    min_face_size: 40
+    thresholds: [0.6, 0.7, 0.7]
+    device_fallback: "cpu" # Fall back to CPU for MPS compatibility
+
+  # Target landmarks for 112x112 alignment
+  target_landmarks:
+    left_eye: [30.2946, 51.6963]
+    right_eye: [65.5318, 51.5014]
+    nose: [48.0252, 71.7366]
+    mouth_left: [33.5493, 92.3655]
+    mouth_right: [62.7299, 92.2041]
+
+# Embeddings Configuration
+embeddings:
+  # Roster data directory
+  roster_data_dir: "${ROSTER_DATA_DIR:-roster/data}"
+
+  # Auto-reload on file changes
+  auto_reload: true
+
+  # Embedding file format
+  format: "json"
+
+  # Normalization
+  normalize_embeddings: true
+
+  # Distance metric
+  distance_metric: "cosine"
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  handlers:
+    - console
+    - file
+  file:
+    path: "logs/recognition_service.log"
+    max_size: "10MB"
+    backup_count: 5
+
+# Environment Integration
+environment:
+  # Environment variables to check
+  required_env_vars:
+    - "CACHE_DIR"
+    - "HF_HOME"
+
+  # Optional environment variables
+  optional_env_vars:
+    - "ROSTER_DATA_DIR"
+    - "DEVICE"
+    - "RECOG_SETTINGS"
+
+  # Default values
+  defaults:
+    cache_dir: "/tmp/ai_cache"
+    roster_data_dir: "roster/data"
+    device: "auto"

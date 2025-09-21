@@ -1,0 +1,212 @@
+# Recognition Service Configuration
+# Independent microservice for face recognition with CVLface models
+
+# Service Configuration
+service:
+  name: "face-recognition-service"
+  version: "1.0.0"
+  port: 7860
+  host: "0.0.0.0"
+  debug: true
+  log_level: "INFO"
+
+# Available Face Recognition Models
+# Using CVLface HuggingFace models for quality and compatibility
+models:
+  # InsightFace - Baseline model for performance comparison
+  insightface:
+    type: "insightface"
+    model_path: "buffalo_l"
+    device: "auto"
+    face_detection_threshold: 0.45
+    face_recognition_threshold: 0.3
+    embeddings_file: "data/embeddings/insightface_embeddings.json"
+    settings:
+      det_size: 640
+      force_cuda_only: false
+      onnx_gpu_mem_limit: 2500000000
+
+  # AdaFace IR101 WebFace12M - High performance, quality-adaptive
+  adaface-ir101-webface12m:
+    type: "cvlface"
+    model_id: "minchul/cvlface_adaface_ir101_webface12m"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "data/embeddings/adaface_ir101_webface12m_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+  # AdaFace IR101 WebFace4M - Smaller dataset, good baseline
+  adaface-ir101-webface4m:
+    type: "cvlface"
+    model_id: "minchul/cvlface_adaface_ir101_webface4m"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "data/embeddings/adaface_ir101_webface4m_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+  # ArcFace IR101 WebFace4M - Standard ArcFace with WebFace4M dataset
+  arcface-ir101-webface4m:
+    type: "cvlface"
+    model_id: "minchul/cvlface_arcface_ir101_webface4m"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "data/embeddings/arcface_ir101_webface4m_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+  # AdaFace ViT Base KPRPE WebFace4M - Vision Transformer with KeyPoint RPE
+  adaface-vit-kprpe-webface4m:
+    type: "cvlface"
+    model_id: "minchul/cvlface_adaface_vit_base_kprpe_webface4m"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "data/embeddings/adaface_vit_kprpe_webface4m_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+  # RetinaFace ResNet50 - Novel approach for evaluation
+  retinaface-resnet50:
+    type: "cvlface"
+    model_id: "minchul/private_retinaface_resnet50"
+    device: "auto"
+    face_detection_threshold: 0.5
+    face_recognition_threshold: 0.5
+    embeddings_file: "data/embeddings/retinaface_resnet50_embeddings.json"
+    settings:
+      input_size: 112
+      use_mtcnn_alignment: true
+      min_face_size: 40
+      max_faces: 10
+
+# Default model to use when no model is specified
+default_model: "insightface"
+
+# Face Detection Configuration
+face_detection:
+  # Primary face detector
+  detector: "mtcnn" # Options: mtcnn, retinaface, yolo
+  mtcnn:
+    min_face_size: 20
+    thresholds: [0.6, 0.7, 0.7]
+    factor: 0.709
+    device: "cpu" # Force CPU for MTCNN to avoid MPS issues
+
+# Occlusion-Aware Processing Configuration
+occlusion:
+  enable_occlusion_detection: true
+  landmark_visibility_threshold: 0.2
+  quality_assessment: true
+
+  # Landmark-based cropping for partial face analysis
+  landmarks:
+    eye_crop_padding: 0.3
+    lower_face_crop_padding: 0.2
+
+  # Fusion weights for combining embeddings
+  fusion:
+    full_face_weight: 0.7
+    partial_weight: 0.15
+    occlusion_weights:
+      partial: 0.5
+      severe: 0.3
+
+# Embedding Storage Configuration
+embeddings:
+  storage_type: "json" # Options: json, pickle, sqlite
+  base_path: "data/embeddings"
+  backup_enabled: true
+  backup_path: "data/embeddings/backups"
+
+  # Quality metrics to store with embeddings
+  quality_metrics:
+    - "sharpness"
+    - "brightness"
+    - "occlusion_score"
+    - "pose_quality"
+
+# Performance Evaluation Configuration
+evaluation:
+  enable_benchmarking: true
+  benchmark_dataset: "scripts/mock_entities"
+
+  # Metrics to track
+  metrics:
+    - "accuracy"
+    - "precision"
+    - "recall"
+    - "f1_score"
+    - "inference_time"
+    - "occlusion_robustness"
+
+  # Test scenarios for occlusion awareness
+  test_scenarios:
+    - "no_occlusion"
+    - "sunglasses"
+    - "surgical_mask"
+    - "partial_occlusion"
+    - "severe_occlusion"
+
+# API Configuration
+api:
+  # Enable model switching via query parameters
+  allow_model_switching: true
+
+  # Enable endpoint-based model routing
+  enable_model_endpoints: true
+
+  # Rate limiting
+  rate_limit:
+    enabled: true
+    requests_per_minute: 60
+
+  # Request validation
+  validation:
+    max_image_size_mb: 10
+    allowed_formats: ["jpg", "jpeg", "png", "bmp"]
+
+# Logging Configuration
+logging:
+  level: "INFO"
+  format: "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+  file: "logs/recognition_service.log"
+  max_size_mb: 100
+  backup_count: 5
+
+  # Performance logging
+  performance_logging:
+    enabled: true
+    log_inference_times: true
+    log_memory_usage: true
+
+# Hardware Configuration
+hardware:
+  # Device selection priority
+  device_priority: ["cuda", "mps", "cpu"]
+
+  # Memory management
+  memory:
+    max_gpu_memory_gb: 8
+    clear_cache_after_inference: true
+
+  # CPU settings
+  cpu:
+    num_threads: 4
+    use_openmp: true

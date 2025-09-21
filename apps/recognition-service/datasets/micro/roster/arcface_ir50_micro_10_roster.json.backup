@@ -1,0 +1,20 @@
+{
+  "metadata": {
+    "name": "real_micro_roster_dataset",
+    "version": "2.0.0",
+    "description": "Real micro dataset for roster service testing with actual entities",
+    "generated": "2025-07-20T22:08:55.526552",
+    "entry_count": 0,
+    "embedding_dimension": 512,
+    "models": [
+      "adaface_ir101",
+      "insightface_w600k",
+      "arcface_ir50"
+    ],
+    "model": "arcface_ir50",
+    "file_name": "arcface_ir50_real_micro_roster.json",
+    "source": "scripts/mock_entities",
+    "entities": []
+  },
+  "entries": []
+}

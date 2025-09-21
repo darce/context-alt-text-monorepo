@@ -1,251 +1,117 @@
 ---
-title: Roster Service Domain - UML Class Diagram (Current Implementation)
+title: Roster Service Domain (File-backed Storage)
 ---
 classDiagram
-    %% === ENTITIES ===
-    
     class RosterImage {
         +List~float~ embedding
         +Dict~str,Any~ metadata
         +Optional~str~ image_path
-        +to_dict() Dict~str,Any~
-        +from_dict(data: Dict~str,Any~) RosterImage
+        +to_dict()
+        +from_dict(data)
     }
-    
+
     class RosterEntry {
-        +str name
-        +List~RosterImage~ reference_images
-        +str display_name
         +str unique_id
+        +str label
+        +str type
+        +List~RosterImage~ reference_images
         +Optional~List~float~~ aggregate_embedding
         +Dict~str,Any~ metadata
-        +Optional~str~ created_timestamp
-        +Optional~str~ updated_timestamp
-        +__post_init__()
-        +add_reference_image(roster_image: RosterImage)
-        +update_timestamp()
+        +datetime created_at
+        +datetime updated_at
+        +add_reference_image(image: RosterImage)
         +image_count() int
-        +to_dict() Dict~str,Any~
-        +from_dict(data: Dict~str,Any~) RosterEntry
-        -_ensure_unique_id()
-        -_ensure_display_name()
-        -_ensure_timestamps()
-        -_compute_aggregate_embedding()
+        +to_dict()
+        +from_dict(data)
     }
-    
+
     class RosterMatch {
-        +RosterEntry roster_entry
-        +float similarity_score
-        +float confidence_threshold
-        +Optional~bool~ is_match
-        +__post_init__()
-        +match_confidence() float
-        +exceeds_threshold() bool
-        +to_dict() Dict~str,Any~
+        +RosterEntry entry
+        +float similarity
+        +float threshold
+        +bool meets_threshold()
+        +to_dict()
     }
-    
-    %% === PORTS (INTERFACES) ===
-    
+
     class RosterStoragePort {
         <<interface>>
-        +save_roster_entry(entry: RosterEntry, model: str) bool
-        +load_roster_entries(model: str) List~RosterEntry~
-        +get_roster_entry(unique_id: str, model: str) Optional~RosterEntry~
-        +delete_roster_entry(unique_id: str, model: str) bool
-        +roster_exists(model: str) bool
-        +clear_roster(model: str) bool
-        +get_storage_info(model: str) Dict~str,Any~
+        +save_entry(entry: RosterEntry) bool
+        +load_entries() List~RosterEntry~
+        +get_entry(unique_id: str) Optional~RosterEntry~
+        +delete_entry(unique_id: str) bool
+        +get_stats() Dict~str,Any~
     }
-    
-    class EmbeddingStoragePort {
+
+    class EmbeddingStorePort {
         <<interface>>
-        +save_embeddings(entries: List~RosterEntry~, model: str) bool
-        +load_embeddings(model: str) List~Dict~str,Any~~
-        +watch_embeddings_file(model: str, callback) bool
+        +save_embeddings(entries: List~RosterEntry~)
+        +load_embeddings() List~Dict~str,Any~~
+        +watch(callback) bool
     }
-    
+
     class DataValidationPort {
         <<interface>>
-        +validate_roster_entry(entry_data: Dict~str,Any~) List~str~
-        +validate_embedding(embedding: List~float~, model: str) List~str~
-        +validate_bulk_import(import_data: List~Dict~str,Any~~) Dict~str,Any~
+        +validate_entry(data: Dict~str,Any~) List~str~
+        +validate_embedding(embedding: List~float~) List~str~
     }
-    
-    %% === ADAPTERS ===
-    
+
     class FileRosterStorageAdapter {
-        -str data_dir
-        -Dict locks
-        +__init__()
-        +save_roster_entry(entry: RosterEntry, model: str) bool
-        +load_roster_entries(model: str) List~RosterEntry~
-        +get_roster_entry(unique_id: str, model: str) Optional~RosterEntry~
-        +delete_roster_entry(unique_id: str, model: str) bool
-        +roster_exists(model: str) bool
-        +clear_roster(model: str) bool
-        +get_storage_info(model: str) Dict~str,Any~
-        -_get_lock(model: str) Lock
-        -_get_roster_file_path(model: str) str
-        -_create_backup(model: str) bool
-        -_load_roster_file(model: str) List~Dict~str,Any~~
-        -_save_roster_file(model: str, entries: List~RosterEntry~) bool
-        -_load_roster_entries_unlocked(model: str) List~RosterEntry~
+        -Path data_dir
+        +save_entry(entry: RosterEntry) bool
+        +load_entries() List~RosterEntry~
+        +get_entry(unique_id: str)
+        +delete_entry(unique_id: str)
+        +get_stats()
+        -_load_file() List~Dict~str,Any~~
+        -_write_file(entries: List~RosterEntry~)
     }
-    
+
     class EmbeddingStorageAdapter {
-        -str data_dir
-        +__init__()
-        +save_embeddings(entries: List~RosterEntry~, model: str) bool
-        +load_embeddings(model: str) List~Dict~str,Any~~
-        +watch_embeddings_file(model: str, callback) bool
-        -_get_embedding_file_path(model: str) str
-        -_convert_entries_to_embeddings(entries: List~RosterEntry~) List~Dict~str,Any~~
+        -Path embeddings_path
+        +save_embeddings(entries: List~RosterEntry~)
+        +load_embeddings()
+        +watch(callback)
     }
-    
+
     class DataValidationAdapter {
-        -Dict validation_config
-        -Dict embedding_config
-        +__init__()
-        +validate_roster_entry(entry_data: Dict~str,Any~) List~str~
-        +validate_embedding(embedding: List~float~, model: str) List~str~
-        +validate_bulk_import(import_data: List~Dict~str,Any~~) Dict~str,Any~
-        +validate_model_compatibility(model: str) List~str~
-        -_validate_required_fields(entry_data: Dict~str,Any~) List~str~
-        -_validate_data_types(entry_data: Dict~str,Any~) List~str~
-        -_validate_business_rules(entry_data: Dict~str,Any~) List~str~
+        +validate_entry(data)
+        +validate_embedding(embedding)
     }
-    
-    %% === SERVICES ===
-    
+
     class RosterService {
         -RosterStoragePort roster_storage
-        -EmbeddingStoragePort embedding_storage
-        -DataValidationPort data_validator
-        -Dict cache
-        +__init__(roster_storage, embedding_storage, data_validator)
-        +add_entry(name: str, embedding: List~float~, model: str, metadata: Optional~Dict~, image_path: Optional~str~) Optional~RosterEntry~
-        +add_entries_bulk(entries_data: List~Dict~str,Any~~, model: str) List~str~
-        +get_entries(model: str) List~RosterEntry~
-        +get_entry(unique_id: str, model: str) Optional~RosterEntry~
-        +update_entry(unique_id: str, name: Optional~str~, embedding: Optional~List~float~~, model: str, metadata: Optional~Dict~) Optional~RosterEntry~
-        +delete_entry(unique_id: str, model: str) bool
-        +clear_roster(model: str) bool
-        +get_roster_stats(model: str) Dict~str,Any~
-        +find_matches(query_embedding: List~float~, model: str, threshold: float) List~RosterMatch~
-        -_invalidate_cache(model: str)
+        -EmbeddingStorePort embedding_storage
+        -DataValidationPort validator
+        +add_entry(label: str, type: str, embedding: List~float~, metadata) RosterEntry
+        +list_entries() List~RosterEntry~
+        +find_matches(embedding: List~float~, threshold: float) List~RosterMatch~
+        +update_entry(unique_id: str, **updates) Optional~RosterEntry~
+        +delete_entry(unique_id: str) bool
+        +stats() Dict~str,Any~
     }
-    
-    %% === API MODELS (DTOs) ===
-    
-    class AddRosterEntryRequest {
-        <<DTO>>
-        +str name
-        +List~float~ embedding
-        +Optional~Dict~str,Any~~ metadata
-        +Optional~str~ image_path
-        +validate_name(name: str) str
-        +validate_embedding(embedding: List~float~) List~float~
+
+    class RosterRouter {
+        +create_entry(request)
+        +list_entries()
+        +get_entry(unique_id: str)
+        +update_entry(unique_id: str, request)
+        +delete_entry(unique_id: str)
+        +list_stats()
     }
-    
-    class BulkAddRosterRequest {
-        <<DTO>>
-        +List~AddRosterEntryRequest~ entries
-        +validate_entries(entries: List) List
-    }
-    
-    class RosterEntryResponse {
-        <<DTO>>
-        +bool success
-        +str message
-        +RosterEntryDTO entry
-    }
-    
-    class BulkAddResponse {
-        <<DTO>>
-        +bool success
-        +str message
-        +List~str~ successful_entries
-        +List~Dict~ failed_entries
-        +Dict~str,Any~ stats
-    }
-    
-    class RosterEntryDTO {
-        <<DTO>>
-        +str name
-        +str display_name
-        +str unique_id
-        +List~RosterImageDTO~ reference_images
-        +Optional~List~float~~ aggregate_embedding
-        +Dict~str,Any~ metadata
-        +str created_timestamp
-        +str updated_timestamp
-        +int image_count
-    }
-    
-    class RosterImageDTO {
-        <<DTO>>
-        +List~float~ embedding
-        +Dict~str,Any~ metadata
-        +Optional~str~ image_path
-    }
-    
-    %% === API ROUTER ===
-    
-    class RosterAPIRouter {
-        +health_check() HealthResponse
-        +upsert_roster_entry(model: str, request: AddRosterEntryRequest) RosterEntryResponse
-        +bulk_add_roster_entries(model: str, request: BulkAddRosterRequest) BulkAddResponse
-        +get_roster_entries(model: str, include_embeddings: bool) RosterListResponse
-        +get_roster_entry_by_id(model: str, unique_id: str) RosterEntryResponse
-        +update_roster_entry(model: str, unique_id: str, request: UpdateRosterEntryRequest) RosterEntryResponse
-        +delete_roster_entry(model: str, unique_id: str) DeleteResponse
-        +clear_roster(model: str) DeleteResponse
-        +get_roster_stats(model: str) StatsResponse
-    }
-    
-    %% === RELATIONSHIPS ===
-    
-    %% Entity relationships
+
     RosterEntry "1" *-- "*" RosterImage : contains
-    RosterMatch *-- "1" RosterEntry : references
-    
-    %% Port implementations
-    RosterStoragePort <|.. FileRosterStorageAdapter : implements
-    EmbeddingStoragePort <|.. EmbeddingStorageAdapter : implements
-    DataValidationPort <|.. DataValidationAdapter : implements
-    
-    %% Service dependencies
-    RosterService --> RosterStoragePort : uses
-    RosterService --> EmbeddingStoragePort : uses
-    RosterService --> DataValidationPort : uses
-    RosterService ..> RosterEntry : creates/manages
-    RosterService ..> RosterImage : creates
-    RosterService ..> RosterMatch : creates
-    
-    %% API layer dependencies
-    RosterAPIRouter --> RosterService : uses
-    RosterAPIRouter ..> AddRosterEntryRequest : receives
-    RosterAPIRouter ..> BulkAddRosterRequest : receives
-    RosterAPIRouter ..> RosterEntryResponse : returns
-    RosterAPIRouter ..> BulkAddResponse : returns
-    RosterAPIRouter ..> RosterEntryDTO : converts to
-    
-    %% Data flow relationships
-    FileRosterStorageAdapter ..> RosterEntry : serializes/deserializes
-    FileRosterStorageAdapter ..> RosterImage : serializes/deserializes
-    RosterEntryDTO ..> RosterEntry : converts from
-    RosterImageDTO ..> RosterImage : converts from
-    
-    %% === NOTES ===
-    
-    note for RosterEntry "Simplified core entity with automatic\nID generation and timestamp management"
-    
-    note for RosterMatch "Similarity matching results with\nthreshold-based validation"
-    
-    note for RosterService "Main business logic service:\n- CRUD operations\n- Bulk import/export\n- Caching and validation\n- Model-specific storage"
-    
-    note for FileRosterStorageAdapter "JSON-based file storage with:\n- Thread-safe operations\n- Atomic writes\n- Backup/versioning support"
-    
-    note for RosterStoragePort "Storage abstraction supporting\nmultiple backend implementations"
-    
-    note for DataValidationAdapter "Comprehensive validation:\n- Schema validation\n- Business rules\n- Embedding validation\n- Bulk import validation"
+    RosterMatch *-- RosterEntry : references
+
+    RosterStoragePort <|.. FileRosterStorageAdapter
+    EmbeddingStorePort <|.. EmbeddingStorageAdapter
+    DataValidationPort <|.. DataValidationAdapter
+
+    RosterService --> RosterStoragePort
+    RosterService --> EmbeddingStorePort
+    RosterService --> DataValidationPort
+    RosterService ..> RosterEntry
+    RosterService ..> RosterMatch
+
+    RosterRouter --> RosterService
+    RosterRouter ..> RosterEntry
+    RosterRouter ..> RosterMatch

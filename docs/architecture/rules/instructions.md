@@ -23,6 +23,11 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 5. Update the Model: UML + roadmap status tags must reflect reality immediately after a slice merges.
 6. Mirror Contracts: when one side updates DTOs or OpenAPI specs, update shared fixtures under `docs/architecture` and notify the counterpart team via the weekly integration check-in.
 
+**Accuracy & Metrics**
+
+- Never fabricate benchmark numbers, latency claims, or accuracy metrics. Document the collection method and timestamp in commit messages or accompanying docs when sharing measurements.
+- All public reports or markdown summaries produced from scripts must source their values directly from the most recent benchmark run.
+
 ## Context Alt Text — Abilities + MCP Adapter Integration Guide (macOS + LocalWP)
 
 This repo follows the **WordPress AI Building Blocks**:
@@ -204,6 +209,15 @@ Quality Heuristics:
 - Conventional Commits (e.g., feat(abilities): add cat/regenerate_alt_texts).
 - Keep roadmap epics in sync with PR labels/status tags.
 
+## Recognition Service (FastAPI) Guidelines
+
+- **Hexagonal boundaries**: keep adapters in `analysis/adapters` or `recognition/adapters`, with pure orchestration in `analysis/services` and `recognition/domain`. Avoid importing archived modules or bypassing ports.
+- **Python style**: every FastAPI path handler and service method must include type hints and either a Google-style docstring or inline comment that describes side effects. Target < 40 logical lines per function; decompose when flows grow larger.
+- **Configuration**: read model paths, cache dirs, ports, and feature toggles from `pydantic` settings backed by environment variables. Hard-coded hostnames (e.g., `/Volumes/...`) are considered violations.
+- **Static checks**: `flake8` and `mypy` must pass locally and in CI. Maintain ≥ 80% overall coverage, ≥ 95% on critical pipelines (recognition adapters, roster sync). Document justified exceptions.
+- **Performance validation**: capture real latency metrics (cold vs warm) from benchmark scripts and store results under `reports/`. Include model, device, and timestamp metadata; do not extrapolate.
+- **UML parity**: keep `docs/architecture/backend-uml/*.mermaid` synchronized with the active adapters, ports, and endpoints. Update diagrams when models or API shapes change.
+
 ## Suggested Layout
 
 ```text
@@ -227,3 +241,6 @@ context-alt-text/
 - WordPress Plugin Development Cookbook
 - Professional WordPress Plugin Development
 - Test-Driven Development with PHP 8
+
+## Literature Digest:
+- `docs/wp-plugin-literature-digest.md` Use it as a launch pad for best practices, coding recipes, and cross-references when implementing new slices of the plugin.

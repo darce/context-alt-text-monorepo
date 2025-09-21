@@ -19,19 +19,40 @@ ln -s ../../../../../context-alt-text/apps/wp-context-alt-text context-alt-text
 
 Keep all plugin changes on the monorepo side; the LocalWP folder only contains the symlink and should not be committed.
 
-## Recognition Service Remotes
 
-The FastAPI recognition service needs multiple remotes:
+## Repository Management
+
+This monorepo is the single source of truth for both the plugin and the recognition service.
 
 ```bash
-cd apps/recognition-service
-# GitHub backup
-git remote add origin git@github.com:<user>/context-alt-text-recognition.git
-# Hugging Face deployment (for Spaces CI/CD)
-git remote add hf https://huggingface.co/spaces/<user>/context-alt-text-recognition
+# clone once
+git clone git@github.com:darce/context-alt-text-monorepo.git
+
+# work from feature branches at the root
+git checkout -b feature/<short-description>
+
+# commit from the root so frontend + backend changes land together
+git add apps/ packages/ docs/
+git commit -m "feat: ..."
 ```
 
-Push to GitHub for backup and code review, then push the same branch to `hf` for deployment.
+Avoid nested Git repositories or submodules inside `apps/`. If a legacy `.git` directory exists (for example under `apps/recognition-service`), remove it so all history is captured by the root repo.
+
+## Deploying the Recognition Service to Hugging Face
+
+The Space should mirror `apps/recognition-service`. After CI passes on `main`, push the subtree to Hugging Face:
+
+```bash
+# add once
+git remote add hf git@hf.co:spaces/dearce/recognition-service
+
+# publish the latest main branch
+git subtree push --prefix=apps/recognition-service hf main
+```
+
+Automate this flow with GitHub Actions: run pytest for the backend, then execute the subtree push whenever `main` is updated.
+
+
 
 ## Suggested Directory Layout
 

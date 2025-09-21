@@ -1,86 +1,79 @@
 ---
-title: API Service Architecture - Hexagonal Design Pattern
+title: API Service Architecture (Scene + Recognition)
 ---
 flowchart TB
-    %% === PORTS LAYER (API Interfaces) ===
-    subgraph ports ["🌐 Ports Layer"]
-        direction TB
-        fastapi["FastAPI Application<br/>- Lifespan management<br/>- Middleware integration<br/>- Route registration"]
-        main_router["Main API Router<br/>- Scene analysis endpoints<br/>- Entity recognition endpoints<br/>- Health checks"]
-        roster_router["Roster API Router<br/>- CRUD operations<br/>- Bulk operations<br/>- Statistics"]
-        media_router["Media API Router<br/>- File upload<br/>- Storage management"]
-        entity_router["Entity Recognition Router<br/>- Pipeline management<br/>- Model switching<br/>- Embedding reload"]
+    subgraph ports["FastAPI Layer"]
+        fastapi_app["FastAPI App\n- lifespan hooks\n- DI container"];
+        analyze_router["/api/v0/analyze-scene\n(JSON request/response)"];
+        embeddings_router["/api/v0/embeddings\n- generate embeddings for references"];
+        roster_router["/api/v0/roster\n- CRUD + sync metadata"];
+        health_router["/api/v0/service/info\n/health\n/reload-embeddings"];
     end
 
-    %% === DOMAIN LAYER (Business Logic) ===
-    subgraph domain ["💼 Domain Layer"]
-        direction TB
-        dependencies["Dependency Manager<br/>- Singleton pattern<br/>- Service lifecycle<br/>- Dynamic configuration"]
-        utils["API Utilities<br/>- Image processing<br/>- Metadata parsing<br/>- Error handling"]
-        startup["Startup Manager<br/>- Background initialization<br/>- Phase tracking<br/>- Resource coordination"]
+    subgraph domain["Domain Services"]
+        dependency_container["DependencyContainer\n- Startup wiring\n- Lazy singletons"];
+        startup_manager["StartupManager\n- warmup InsightFace\n- load embeddings"];
+        scene_service["SceneAnalysisService"];
+        recognition_service["RecognitionService (InsightFace)"];
+        roster_service["RosterService"];
     end
 
-    %% === ADAPTERS LAYER (External Integrations) ===
-    subgraph adapters ["🔌 Adapters Layer"]
-        direction TB
-        scene_composer["Scene Composer Adapter<br/>- Entity identification<br/>- Reference matching"]
-        scene_analysis["Scene Analysis Adapter<br/>- Caption generation<br/>- Context analysis"]
-        roster_service["Roster Service Adapter<br/>- Entry management<br/>- Validation"]
-        recognition_pipeline["Recognition Pipeline<br/>- AdaFace integration<br/>- Model management"]
+    subgraph adapters["Adapters"]
+        object_adapter["YOLOAdapter"];
+        caption_adapter["Phi3CaptionAdapter"];
+        recognition_adapter["InsightFaceAdapter"];
+        embedding_adapter["EmbeddingRouterAdapter"];
+        roster_storage["FileRosterStorageAdapter"];
+        embedding_storage["EmbeddingStorageAdapter"];
     end
 
-    %% === EXTERNAL SYSTEMS ===
-    subgraph external ["🌍 External Systems"]
-        direction TB
-        models["AI Models<br/>- AdaFace IR101<br/>- InsightFace Buffalo-L<br/>- BLIP Captioning"]
-        storage["File Storage<br/>- JSON persistence<br/>- Media uploads<br/>- Backup management"]
-        config["Configuration<br/>- YAML settings<br/>- Environment variables<br/>- Dynamic updates"]
+    subgraph external["External Dependencies"]
+        settings_yaml["settings.yaml + env vars"];
+        insightface_weights["InsightFace weights"];
+        yolo_weights["YOLO weights"];
+        phi3_weights["Phi-3 weights"];
+        roster_files["Roster JSON / embeddings files"];
     end
 
-    %% === PORT TO DOMAIN CONNECTIONS ===
-    fastapi --> dependencies
-    main_router --> dependencies
-    roster_router --> dependencies
-    media_router --> dependencies
-    entity_router --> dependencies
-    
-    main_router --> utils
-    roster_router --> utils
-    media_router --> utils
+    fastapi_app --> dependency_container;
+    analyze_router --> dependency_container;
+    embeddings_router --> dependency_container;
+    roster_router --> dependency_container;
+    health_router --> dependency_container;
 
-    fastapi --> startup
-    
-    %% === DOMAIN TO ADAPTERS CONNECTIONS ===
-    dependencies --> scene_composer
-    dependencies --> scene_analysis
-    dependencies --> roster_service
-    dependencies --> recognition_pipeline
-    
-    startup --> scene_composer
-    startup --> scene_analysis
-    startup --> roster_service
-    startup --> recognition_pipeline
+    dependency_container --> startup_manager;
+    dependency_container --> scene_service;
+    dependency_container --> recognition_service;
+    dependency_container --> roster_service;
 
-    %% === ADAPTERS TO EXTERNAL CONNECTIONS ===
-    scene_composer --> models
-    scene_analysis --> models
-    recognition_pipeline --> models
-    
-    roster_service --> storage
-    media_router --> storage
-    
-    startup --> config
-    dependencies --> config
+    scene_service --> object_adapter;
+    scene_service --> caption_adapter;
+    scene_service --> recognition_service;
 
-    %% === STYLING ===
-    classDef portClass color:#000000,stroke:#01579b,stroke-width:2px,fill:#e3f2fd
-    classDef domainClass color:#000000,stroke:#2e7d32,stroke-width:2px,fill:#e8f5e8
-    classDef adapterClass color:#000000,stroke:#f57c00,stroke-width:2px,fill:#fff3e0
-    classDef externalClass color:#000000,stroke:#7b1fa2,stroke-width:2px,fill:#f3e5f5
+    recognition_service --> recognition_adapter;
+    recognition_service --> embedding_adapter;
 
-    class ports,fastapi,main_router,roster_router,media_router,entity_router portClass
-    class domain,dependencies,utils,startup domainClass
-    class adapters,scene_composer,scene_analysis,roster_service,recognition_pipeline adapterClass
-    class external,models,storage,config externalClass
+    roster_service --> roster_storage;
+    roster_service --> embedding_storage;
 
-    linkStyle default stroke:#ff0000,stroke-width:2px
+    startup_manager --> recognition_adapter;
+    startup_manager --> embedding_adapter;
+
+    object_adapter --> yolo_weights;
+    caption_adapter --> phi3_weights;
+    recognition_adapter --> insightface_weights;
+    embedding_adapter --> roster_files;
+    roster_storage --> roster_files;
+
+    dependency_container --> settings_yaml;
+    startup_manager --> settings_yaml;
+
+    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px;
+    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px;
+    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px;
+    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px;
+
+    class ports,fastapi_app,analyze_router,embeddings_router,roster_router,health_router portsClass;
+    class domain,dependency_container,startup_manager,scene_service,recognition_service,roster_service domainClass;
+    class adapters,object_adapter,caption_adapter,recognition_adapter,embedding_adapter,roster_storage,embedding_storage adapterClass;
+    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,roster_files externalClass;

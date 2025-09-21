@@ -154,3 +154,12 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - “Sync Recognition” / “Sync from Remote” update local roster entries; admin table shows avatar, local ID, remote ID, sync status badges
 - Admin diagnostics page reports backend health and recent error summaries
 - All diagrams in `docs/architecture/backend-uml` and `docs/architecture/frontend-uml` stay version-aligned with current APIs
+
+## Recognition Service Backlog Prompts (Consolidated)
+
+- **InsightFace-only rewrite**: rebuild the recognition microservice around a single InsightFace pipeline, stripping legacy CVLFace dependencies and quality scorers.
+- **Green-field CVLFace rewrite**: re-evaluate the multi-model architecture (AdaFace, InsightFace, ArcFace) under a clean ports-and-adapters design; scoped for future experimentation.
+- **Pipeline debugging**: isolate the "no faces recognized" defect within the SceneAnalysis → Recognition hand-off; document root cause and remediation plan.
+- **Model benchmarking harness**: deliver a reproducible benchmark suite that runs every supported recognition model against tagged fixtures and emits JSON + Markdown reports—no synthetic scores.
+- **Recognition model test run**: execute the benchmark harness with `/scripts/mock_entities` to rank models based on real-world accuracy, capturing environment details.
+- **Roster service rewrite**: design a stand-alone roster service responsible for identity records and embedding stores without embedding inference logic (pairs with the recognition rewrite).

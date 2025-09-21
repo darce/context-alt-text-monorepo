@@ -1,102 +1,55 @@
 ---
-title: Recognition Service Architecture - InsightFace Only
+title: InsightFace Recognition Service (Modular Adapter)
 ---
 flowchart TB
-    subgraph "🎯 Recognition Service (Simplified)"
-        subgraph "🔌 Ports Layer"
-            API["`**FastAPI Router**
-            /api/v0/analyze-scene/{threshold}`"]
-            HEALTH["`**Health Endpoint**
-            /api/v0/health`"]
-            SERVICE_INFO["`**Service Info**
-            /api/v0/service/info`"]
-            RELOAD["`**Reload Endpoint**
-            /api/v0/service/reload-embeddings`"]
-        end
-        
-        subgraph "🏗️ Domain Layer"
-            RECOGNITION_SERVICE["`**RecognitionService**
-            Core Business Logic & Orchestration`"]
-            FACE_DETECTOR_PORT["`**FaceDetectorPort**
-            Abstract Face Detection`"]
-            FACE_EMBEDDER_PORT["`**FaceEmbedderPort**
-            Abstract Embedding Extraction`"]
-            EMBEDDING_ROUTER_PORT["`**EmbeddingRouterPort**
-            Abstract Embedding Management`"]
-            ENTITIES["`**Domain Entities**
-            FaceDetection, FaceEmbedding
-            EmbeddingEntry, MatchResult`"]
-        end
-        
-        subgraph "🔧 Adapters Layer"
-            INSIGHTFACE_ADAPTER["`**InsightFaceAdapter**
-            Single Model: SCRFD + ArcFace W600K
-            Detection + Embedding in One Call`"]
-            EMBEDDING_ROUTER_IMPL["`**EmbeddingRouterAdapter**
-            JSON File Loading & Cosine Similarity
-            Auto-reload on File Changes`"]
-        end
-        
-        subgraph "⚙️ Configuration"
-            SETTINGS["`**Pydantic Settings**
-            settings.yaml + Env Overrides
-            Model, Thresholds, Paths`"]
-        end
+    %% Ports & Interfaces
+    subgraph ports["Ports & Interfaces"]
+        recognition_port["RecognitionServicePort\n- recognize_faces(image, threshold?)\n- get_service_info()\n- reload_embeddings()"]; 
+        model_port["RecognitionModelPort\n- detect_faces(image)\n- extract_embeddings(detections)\n- model_info()"]; 
+        embedding_port["EmbeddingRouterPort\n- load_embeddings()\n- reload_if_needed()\n- find_matches(embedding, threshold)"];
     end
-    
-    subgraph "🗂️ External Systems"
-        HF_MODELS["`**HuggingFace Models**
-        • AdaFace IR101 WebFace12M
-    
-    subgraph "🗂️ External Systems"
-        INSIGHTFACE_MODEL["`**InsightFace Models**
-        • SCRFD Detection Model
-        • ArcFace W600K Recognition Model
-        Auto-downloaded from Model Hub`"]
-        ROSTER_DATA["`**Roster Data**
-        /roster/data/insightface_embeddings.json
-        Auto-reload on File Change`"]
-        SETTINGS_YAML["`**Settings YAML**
-        /recognition/config/settings.yaml
-        Pydantic Configuration`"]
+
+    %% Domain Layer
+    subgraph domain["Domain Layer"]
+        recognition_service["RecognitionService\n- orchestrates detection + matching\n- enforces thresholds\n- exposes service info"];
+        recognition_entities["Domain Entities\n- FaceDetection\n- FaceEmbedding\n- RecognitionResult\n- MatchResult"];
+        recognition_settings["RecognitionSettings\n- Pydantic config\n- device/provider selection\n- threshold defaults"];
     end
-    
-    %% API Layer Flow
-    API --> RECOGNITION_SERVICE
-    HEALTH --> RECOGNITION_SERVICE
-    SERVICE_INFO --> RECOGNITION_SERVICE
-    RELOAD --> RECOGNITION_SERVICE
-    
-    %% Domain Dependencies (Simplified)
-    RECOGNITION_SERVICE --> FACE_DETECTOR_PORT
-    RECOGNITION_SERVICE --> FACE_EMBEDDER_PORT
-    RECOGNITION_SERVICE --> EMBEDDING_ROUTER_PORT
-    RECOGNITION_SERVICE --> ENTITIES
-    
-    %% Single Adapter Implementation
-    FACE_DETECTOR_PORT -.-> INSIGHTFACE_ADAPTER
-    FACE_EMBEDDER_PORT -.-> INSIGHTFACE_ADAPTER
-    EMBEDDING_ROUTER_PORT -.-> EMBEDDING_ROUTER_IMPL
-    
-    %% Configuration
-    RECOGNITION_SERVICE --> SETTINGS
-    INSIGHTFACE_ADAPTER --> SETTINGS
-    EMBEDDING_ROUTER_IMPL --> SETTINGS
-    
-    %% External Dependencies (Simplified)
-    INSIGHTFACE_ADAPTER --> INSIGHTFACE_MODEL
-    EMBEDDING_ROUTER_IMPL --> ROSTER_DATA
-    SETTINGS --> SETTINGS_YAML
-    
+
+    %% Adapters
+    subgraph adapters["Adapters"]
+        insightface_adapter["InsightFaceAdapter\nimplements RecognitionModelPort\n- lazy model loading\n- detect + embed in one call"];
+        embedding_router["EmbeddingRouterAdapter\nimplements EmbeddingRouterPort\n- JSON/FAISS store\n- auto reload + caching"];
+    end
+
+    %% External Systems
+    subgraph external["External Dependencies"]
+        insightface_model["InsightFace Model Files"];
+        embeddings_store["Embeddings Storage\n(JSON files, faiss index)"];
+        config_env["Environment + settings.yaml"];
+    end
+
+    %% Connections
+    recognition_port --> recognition_service;
+    recognition_service --> recognition_entities;
+    recognition_service --> recognition_settings;
+    recognition_service --> model_port;
+    recognition_service --> embedding_port;
+
+    model_port --> insightface_adapter;
+    embedding_port --> embedding_router;
+
+    insightface_adapter --> insightface_model;
+    embedding_router --> embeddings_store;
+    recognition_settings --> config_env;
+
     %% Styling
-    classDef portClass color:#000000,stroke:#01579b,stroke-width:2px,fill:#e3f2fd
-    classDef domainClass color:#000000,stroke:#4a148c,stroke-width:2px,fill:#f3e5f5
-    classDef adapterClass color:#000000,stroke:#1b5e20,stroke-width:2px,fill:#e8f5e8
-    classDef externalClass color:#000000,stroke:#e65100,stroke-width:2px,fill:#fff3e0
-    classDef configClass color:#000000,stroke:#558b2f,stroke-width:2px,fill:#f1f8e9
-    
-    class API,HEALTH,SERVICE_INFO,RELOAD portClass
-    class RECOGNITION_SERVICE,FACE_DETECTOR_PORT,FACE_EMBEDDER_PORT,EMBEDDING_ROUTER_PORT,ENTITIES domainClass
-    class INSIGHTFACE_ADAPTER,EMBEDDING_ROUTER_IMPL adapterClass
-    class SETTINGS configClass
-    class INSIGHTFACE_MODEL,ROSTER_DATA,SETTINGS_YAML externalClass
+    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px;
+    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px;
+    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px;
+    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px;
+
+    class ports,recognition_port,model_port,embedding_port portsClass;
+    class domain,recognition_service,recognition_entities,recognition_settings domainClass;
+    class adapters,insightface_adapter,embedding_router adapterClass;
+    class external,insightface_model,embeddings_store,config_env externalClass;

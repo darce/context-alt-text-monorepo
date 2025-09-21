@@ -1,4 +1,0 @@
-name: full
-model_ckpt_dir: ''
-classifier_ckpt_dir: ''
-center_paths: []

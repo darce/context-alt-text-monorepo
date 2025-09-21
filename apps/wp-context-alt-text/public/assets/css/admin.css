@@ -1,0 +1,18 @@
+/* Admin styles for Context Alt Text plugin */
+
+.context-alt-text-admin {
+    padding: 20px;
+}
+
+.context-alt-text-settings {
+    max-width: 600px;
+}
+
+.context-alt-text-settings .form-table th {
+    width: 200px;
+}
+
+.context-alt-text-admin .button-primary {
+    background-color: #0073aa;
+    border-color: #005a87 #0073aa #0073aa;
+}

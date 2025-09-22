@@ -20,6 +20,12 @@ embedding_router:
   auto_reload: true
   reload_interval: 30 # seconds
 
+# Cache directories (optional)
+cache:
+  hf_home: null
+  hf_datasets_cache: null
+  torch_home: null
+
 # Performance Settings
 performance:
   batch_size: 1

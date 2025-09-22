@@ -1,89 +1,87 @@
 ---
-title: Recognition Backend - Unified Architecture (InsightFace)
+title: Context Alt Text Recognition Backend (MVP)
 ---
 flowchart TB
     %% Clients
     subgraph clients["Client Integrations"]
-        wp_plugin["Context Alt Text Plugin\nREST client"]
-        ops_cli["Ops / CLI scripts"]
-        hf_space["Hugging Face Space ingress"]
+        wp_plugin["Context Alt Text plugin\n(REST client)"]
+        ops_cli["Ops / CLI"]
+        hugging_face["Hugging Face Space ingress"]
     end
 
     %% API Layer
     subgraph api["FastAPI Surface"]
-        fastapi_app["FastAPI application\n- lifespan\n- dependency wiring"]
-        analyze_route["/api/v0/analyze-scene"]
-        embeddings_route["/api/v0/embeddings"]
-        roster_route["/api/v0/roster"]
-        health_route["/api/v0/service/info\n/api/v0/health\n/api/v0/service/reload-embeddings"]
+        fastapi_app["FastAPI app"]
+        analyze_scene_route["POST /api/v0/analyze-scene"]
+        embeddings_route["POST /api/v0/embeddings"]
+        roster_routes["/api/v0/roster …"]
+        service_info_route["GET /api/v0/service/info"]
+        health_route["GET /api/v0/health"]
     end
 
     %% Domain Services
-    subgraph domain["Domain Services"]
+    subgraph domain["Domain Layer"]
         scene_service["SceneAnalysisService"]
-        recognition_service["RecognitionService\n(InsightFace adapter)"]
+        recognition_service["RecognitionService (InsightFace)"]
         roster_service["RosterService"]
-        startup_manager["StartupManager\n- warmup\n- embedding preload"]
+        startup_manager["StartupManager"]
     end
 
     %% Adapters
     subgraph adapters["Adapters"]
         yolo_adapter["YOLOAdapter"]
         caption_adapter["Phi3CaptionAdapter"]
-        recognition_adapter["InsightFaceAdapter\nimplements RecognitionModelPort"]
+        insightface_adapter["InsightFaceAdapter"]
         embedding_adapter["EmbeddingRouterAdapter"]
         roster_storage["FileRosterStorageAdapter"]
         embedding_storage["EmbeddingStorageAdapter"]
     end
 
-    %% External
+    %% External Systems
     subgraph external["External Dependencies"]
-        insightface_weights["InsightFace model weights"]
+        settings_yaml["settings.yaml + env"]
+        insightface_weights["InsightFace weights"]
         yolo_weights["YOLO weights"]
         phi3_weights["Phi-3 weights"]
-        roster_files["Embeddings + roster JSON"]
-        settings_store["settings.yaml + env vars"]
-        gpu_hardware["GPU / CPU runtime"]
+        roster_files["Roster JSON / embeddings"]
+        hardware["GPU/CPU runtime"]
     end
 
-    %% Connections
     clients --> fastapi_app
-    fastapi_app --> analyze_route
+    fastapi_app --> analyze_scene_route
     fastapi_app --> embeddings_route
-    fastapi_app --> roster_route
+    fastapi_app --> roster_routes
+    fastapi_app --> service_info_route
     fastapi_app --> health_route
 
-    analyze_route --> scene_service
-    embeddings_route --> recognition_service
-    roster_route --> roster_service
+    analyze_scene_route --> scene_service
+    embeddings_route --> scene_service
+    roster_routes --> roster_service
+    service_info_route --> recognition_service
     health_route --> recognition_service
-    health_route --> startup_manager
 
+    scene_service --> recognition_service
     scene_service --> yolo_adapter
     scene_service --> caption_adapter
-    scene_service --> recognition_service
 
-    recognition_service --> recognition_adapter
+    recognition_service --> insightface_adapter
     recognition_service --> embedding_adapter
-
-    startup_manager --> recognition_adapter
-    startup_manager --> embedding_adapter
 
     roster_service --> roster_storage
     roster_service --> embedding_storage
 
-    recognition_adapter --> insightface_weights
-    embedding_adapter --> roster_files
+    startup_manager --> insightface_adapter
+    startup_manager --> embedding_adapter
+
     yolo_adapter --> yolo_weights
     caption_adapter --> phi3_weights
+    insightface_adapter --> insightface_weights
+    embedding_adapter --> roster_files
     roster_storage --> roster_files
-    embedding_storage --> roster_files
 
-    startup_manager --> settings_store
-    recognition_service --> settings_store
-    scene_service --> settings_store
-    roster_service --> settings_store
-    recognition_adapter --> gpu_hardware
+    fastapi_app --> settings_yaml
+    startup_manager --> settings_yaml
+    insightface_adapter --> hardware
 
     classDef clientsClass fill:#e8eaf6,stroke:#3949ab,color:#000,stroke-width:2px
     classDef apiClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
@@ -91,8 +89,8 @@ flowchart TB
     classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
     classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class clients,wp_plugin,ops_cli,hf_space clientsClass
-    class api,fastapi_app,analyze_route,embeddings_route,roster_route,health_route apiClass
+    class clients,wp_plugin,ops_cli,hugging_face clientsClass
+    class api,fastapi_app,analyze_scene_route,embeddings_route,roster_routes,service_info_route,health_route apiClass
     class domain,scene_service,recognition_service,roster_service,startup_manager domainClass
-    class adapters,yolo_adapter,caption_adapter,recognition_adapter,embedding_adapter,roster_storage,embedding_storage adapterClass
-    class external,insightface_weights,yolo_weights,phi3_weights,roster_files,settings_store,gpu_hardware externalClass
+    class adapters,yolo_adapter,caption_adapter,insightface_adapter,embedding_adapter,roster_storage,embedding_storage adapterClass
+    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,roster_files,hardware externalClass

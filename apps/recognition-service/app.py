@@ -9,6 +9,7 @@ import threading
 import logging
 import json
 from pathlib import Path
+from typing import Optional
 from shared.config.logging_config import setup_logging
 from shared.config.settings import get_config
 from shared.startup.startup_manager import StartupManager, StartupConfig, get_startup_manager
@@ -18,7 +19,44 @@ from api.routes.main import router as main_router
 from api.routes.media import router as media_router
 from api.routes.roster import router as roster_router
 from api.routes.main import set_scene_analysis_service
+from recognition.config import get_settings as get_recognition_settings
 import asyncio
+
+# Configure cache directories before any model loads
+def configure_cache_dirs() -> None:
+    """Set cache directories; error if any are missing.
+
+    Resolution order per variable:
+    1. Explicit value in settings.yaml (cache.*)
+    2. Environment variable already set (including .env)
+
+    If neither source provides a value the service aborts so configuration
+    problems surface immediately.
+    """
+
+    settings = get_recognition_settings()
+    cache = settings.cache
+
+    def resolve(env_var: str, configured: Optional[str]) -> str:
+        raw_value = configured or os.environ.get(env_var)
+        if not raw_value:
+            raise RuntimeError(
+                f"Missing cache directory for {env_var}. Configure cache.{env_var.lower()} in settings.yaml "
+                "or export the environment variable before launching the service."
+            )
+        return os.path.expanduser(os.path.expandvars(raw_value))
+
+    targets = {
+        "HF_HOME": cache.hf_home,
+        "HF_DATASETS_CACHE": cache.hf_datasets_cache,
+        "TORCH_HOME": cache.torch_home,
+    }
+
+    for env_var, configured in targets.items():
+        os.environ[env_var] = resolve(env_var, configured)
+
+
+configure_cache_dirs()
 
 # Configure logging via our logging_config
 setup_logging()

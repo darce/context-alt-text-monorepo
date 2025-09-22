@@ -214,6 +214,7 @@ Quality Heuristics:
 - **Hexagonal boundaries**: keep adapters in `analysis/adapters` or `recognition/adapters`, with pure orchestration in `analysis/services` and `recognition/domain`. Avoid importing archived modules or bypassing ports.
 - **Python style**: every FastAPI path handler and service method must include type hints and either a Google-style docstring or inline comment that describes side effects. Target < 40 logical lines per function; decompose when flows grow larger.
 - **Configuration**: read model paths, cache dirs, ports, and feature toggles from `pydantic` settings backed by environment variables. Hard-coded hostnames (e.g., `/Volumes/...`) are considered violations.
+- **Failure on missing configuration**: services must fail fast when required settings are absent. Provide cache/model paths via `settings.yaml` (or explicit env vars) and avoid baking in fallbacks inside the codebase.
 - **Static checks**: `flake8` and `mypy` must pass locally and in CI. Maintain ≥ 80% overall coverage, ≥ 95% on critical pipelines (recognition adapters, roster sync). Document justified exceptions.
 - **Performance validation**: capture real latency metrics (cold vs warm) from benchmark scripts and store results under `reports/`. Include model, device, and timestamp metadata; do not extrapolate.
 - **UML parity**: keep `docs/architecture/backend-uml/*.mermaid` synchronized with the active adapters, ports, and endpoints. Update diagrams when models or API shapes change.

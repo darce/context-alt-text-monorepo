@@ -34,6 +34,14 @@ class EmbeddingRouterSettings(BaseSettings):
     reload_interval: int = 30
 
 
+class CacheSettings(BaseSettings):
+    """Cache directory configuration for Hugging Face / Torch."""
+
+    hf_home: Optional[str] = Field(default=None)
+    hf_datasets_cache: Optional[str] = Field(default=None)
+    torch_home: Optional[str] = Field(default=None)
+
+
 class PerformanceSettings(BaseSettings):
     """Performance and concurrency settings."""
     batch_size: int = 1
@@ -52,6 +60,7 @@ class Settings(BaseSettings):
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
     recognition: RecognitionSettings = Field(default_factory=RecognitionSettings)
     embedding_router: EmbeddingRouterSettings = Field(default_factory=EmbeddingRouterSettings)
+    cache: CacheSettings = Field(default_factory=CacheSettings)
     performance: PerformanceSettings = Field(default_factory=PerformanceSettings)
     logging: LoggingSettings = Field(default_factory=LoggingSettings)
     
@@ -90,6 +99,7 @@ def load_settings() -> Settings:
         "insightface": InsightFaceSettings(**config_data.get("insightface", {})),
         "recognition": RecognitionSettings(**config_data.get("recognition", {})),
         "embedding_router": EmbeddingRouterSettings(**config_data.get("embedding_router", {})),
+        "cache": CacheSettings(**config_data.get("cache", {})),
         "performance": PerformanceSettings(**config_data.get("performance", {})),
         "logging": LoggingSettings(**config_data.get("logging", {})),
     }

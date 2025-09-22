@@ -1,0 +1,13 @@
+{
+  "status": "ok",
+  "data": {
+    "model_name": "stub-face",
+    "device": "cpu",
+    "default_threshold": 0.5,
+    "loaded_embeddings": 1,
+    "entity_names": [
+      "Test User"
+    ],
+    "auto_reload": false
+  }
+}

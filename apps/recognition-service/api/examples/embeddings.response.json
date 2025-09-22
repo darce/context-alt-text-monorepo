@@ -1,0 +1,22 @@
+{
+  "faces": [
+    {
+      "bbox": [0, 0, 10, 10],
+      "confidence": 0.95,
+      "embedding": [1.0, 0.0],
+      "matches": [
+        {
+          "name": "Test User",
+          "unique_id": "roster-1",
+          "similarity": 0.92,
+          "meets_threshold": true,
+          "metadata": {
+            "role": "tester"
+          }
+        }
+      ]
+    }
+  ],
+  "processing_time_ms": 12.3,
+  "threshold": 0.5
+}

@@ -1,0 +1,10 @@
+{
+  "images": [
+    {
+      "filename": "sample.png",
+      "image_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAnEB7SBSYQAAAABJRU5ErkJggg=="
+    }
+  ],
+  "use_roster": true,
+  "threshold": 0.5
+}

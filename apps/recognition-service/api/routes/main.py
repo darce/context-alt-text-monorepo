@@ -254,6 +254,25 @@ async def generate_embeddings(
         logging.error("Error in /embeddings endpoint: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
 
+
+@router.get("/service/info")
+async def service_info(
+    scene_analysis_service: SceneAnalysisService = Depends(get_scene_analysis_service),
+):
+    """Expose model metadata for diagnostics."""
+    info = await scene_analysis_service.recognition_service.get_service_info()
+    return {"status": "ok", "data": info}
+
+
+@router.get("/health")
+async def health(
+    scene_analysis_service: SceneAnalysisService = Depends(get_scene_analysis_service),
+):
+    """Simple readiness check used by deployment targets."""
+    # If the dependency resolved, we consider the service healthy.
+    _ = scene_analysis_service
+    return {"status": "ok"}
+
 @router.post("/identify-hf")  # Alias for ONNX AdaFace identification
 async def identify_hf(
     image: UploadFile = File(...),

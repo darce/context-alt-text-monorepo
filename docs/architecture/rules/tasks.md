@@ -49,7 +49,7 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 1. Backend Service Readiness (`__hugging-face/entity-identifier-api/`)
 
 - [x] Define/lock DTO schemas (AnalyzeSceneRequest, SceneAnalysisResult, EmbeddingsRequest, EmbeddingsResponse)
-- [ ] Add OpenAPI examples for new endpoints and publish base URL
+- [x] Add OpenAPI examples for new endpoints and publish base URL
 - [ ] CORS and rate limits configured for WP origin(s)
 - [ ] Health/Info endpoints return model versions, thresholds, and uptime
 - [ ] Smoke tests for /analyze-scene and /embeddings with public demo images

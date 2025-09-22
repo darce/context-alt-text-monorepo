@@ -1,79 +1,81 @@
 ---
-title: API Service Architecture (Scene + Recognition)
+title: Recognition API Surface (FastAPI)
 ---
 flowchart TB
     subgraph ports["FastAPI Layer"]
-        fastapi_app["FastAPI App\n- lifespan hooks\n- DI container"];
-        analyze_router["/api/v0/analyze-scene\n(JSON request/response)"];
-        embeddings_router["/api/v0/embeddings\n- generate embeddings for references"];
-        roster_router["/api/v0/roster\n- CRUD + sync metadata"];
-        health_router["/api/v0/service/info\n/health\n/reload-embeddings"];
+        fastapi_app["FastAPI App\n- lifespan hooks\n- dependency injection"]
+        analyze_route["POST /api/v0/analyze-scene\nAnalyzeSceneRequest → SceneContext"]
+        embeddings_route["POST /api/v0/embeddings\nEmbeddingsRequest → EmbeddingsResponse"]
+        roster_route["/api/v0/roster\nCRUD + sync"]
+        service_info_route["GET /api/v0/service/info"]
+        health_route["GET /api/v0/health"]
     end
 
     subgraph domain["Domain Services"]
-        dependency_container["DependencyContainer\n- Startup wiring\n- Lazy singletons"];
-        startup_manager["StartupManager\n- warmup InsightFace\n- load embeddings"];
-        scene_service["SceneAnalysisService"];
-        recognition_service["RecognitionService (InsightFace)"];
-        roster_service["RosterService"];
+        dependency_container["DependencyContainer"]
+        startup_manager["StartupManager"]
+        scene_analysis_service["SceneAnalysisService"]
+        recognition_service["RecognitionService"]
+        roster_service["RosterService"]
     end
 
     subgraph adapters["Adapters"]
-        object_adapter["YOLOAdapter"];
-        caption_adapter["Phi3CaptionAdapter"];
-        recognition_adapter["InsightFaceAdapter"];
-        embedding_adapter["EmbeddingRouterAdapter"];
-        roster_storage["FileRosterStorageAdapter"];
-        embedding_storage["EmbeddingStorageAdapter"];
+        object_adapter["YOLOAdapter"]
+        caption_adapter["Phi3CaptionAdapter"]
+        recognition_adapter["InsightFaceAdapter"]
+        embedding_adapter["EmbeddingRouterAdapter"]
+        roster_storage["FileRosterStorageAdapter"]
+        embedding_storage["EmbeddingStorageAdapter"]
     end
 
-    subgraph external["External Dependencies"]
-        settings_yaml["settings.yaml + env vars"];
-        insightface_weights["InsightFace weights"];
-        yolo_weights["YOLO weights"];
-        phi3_weights["Phi-3 weights"];
-        roster_files["Roster JSON / embeddings files"];
+    subgraph external["External"]
+        settings_yaml["settings.yaml + env"]
+        insightface_weights["InsightFace weights"]
+        yolo_weights["YOLO weights"]
+        phi3_weights["Phi-3 weights"]
+        roster_files["Roster embeddings JSON"]
     end
 
-    fastapi_app --> dependency_container;
-    analyze_router --> dependency_container;
-    embeddings_router --> dependency_container;
-    roster_router --> dependency_container;
-    health_router --> dependency_container;
+    fastapi_app --> dependency_container
+    analyze_route --> dependency_container
+    embeddings_route --> dependency_container
+    roster_route --> dependency_container
+    service_info_route --> dependency_container
+    health_route --> dependency_container
 
-    dependency_container --> startup_manager;
-    dependency_container --> scene_service;
-    dependency_container --> recognition_service;
-    dependency_container --> roster_service;
+    dependency_container --> startup_manager
+    dependency_container --> scene_analysis_service
+    dependency_container --> recognition_service
+    dependency_container --> roster_service
 
-    scene_service --> object_adapter;
-    scene_service --> caption_adapter;
-    scene_service --> recognition_service;
+    scene_analysis_service --> object_adapter
+    scene_analysis_service --> caption_adapter
+    scene_analysis_service --> recognition_service
 
-    recognition_service --> recognition_adapter;
-    recognition_service --> embedding_adapter;
+    recognition_service --> recognition_adapter
+    recognition_service --> embedding_adapter
 
-    roster_service --> roster_storage;
-    roster_service --> embedding_storage;
+    roster_service --> roster_storage
+    roster_service --> embedding_storage
 
-    startup_manager --> recognition_adapter;
-    startup_manager --> embedding_adapter;
+    startup_manager --> recognition_adapter
+    startup_manager --> embedding_adapter
 
-    object_adapter --> yolo_weights;
-    caption_adapter --> phi3_weights;
-    recognition_adapter --> insightface_weights;
-    embedding_adapter --> roster_files;
-    roster_storage --> roster_files;
+    object_adapter --> yolo_weights
+    caption_adapter --> phi3_weights
+    recognition_adapter --> insightface_weights
+    embedding_adapter --> roster_files
+    roster_storage --> roster_files
 
-    dependency_container --> settings_yaml;
-    startup_manager --> settings_yaml;
+    dependency_container --> settings_yaml
+    startup_manager --> settings_yaml
 
-    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px;
-    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px;
-    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px;
-    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px;
+    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
+    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px
+    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
+    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class ports,fastapi_app,analyze_router,embeddings_router,roster_router,health_router portsClass;
-    class domain,dependency_container,startup_manager,scene_service,recognition_service,roster_service domainClass;
-    class adapters,object_adapter,caption_adapter,recognition_adapter,embedding_adapter,roster_storage,embedding_storage adapterClass;
-    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,roster_files externalClass;
+    class ports,fastapi_app,analyze_route,embeddings_route,roster_route,service_info_route,health_route portsClass
+    class domain,dependency_container,startup_manager,scene_analysis_service,recognition_service,roster_service domainClass
+    class adapters,object_adapter,caption_adapter,recognition_adapter,embedding_adapter,roster_storage,embedding_storage adapterClass
+    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,roster_files externalClass

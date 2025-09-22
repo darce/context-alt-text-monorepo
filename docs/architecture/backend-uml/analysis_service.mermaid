@@ -1,64 +1,54 @@
 ---
-title: Scene Analysis Service (InsightFace Integration)
+title: Scene Analysis Service (InsightFace Only)
 ---
 flowchart TB
-    %% Ports
-    subgraph ports["Ports & Interfaces"]
-        object_port["ObjectDetectionPort\n- detect_objects(image)"];
-        caption_port["CaptionGeneratorPort\n- generate_caption(context)"];
-        recognition_port["RecognitionServicePort\n- recognize_faces(image, threshold)"];
+    subgraph ports["Ports"]
+        object_port["ObjectDetectionPort\ndetect_objects(image)"]
+        caption_port["CaptionGeneratorPort\ngenerate_caption(image, context)"]
+        recognition_port["RecognitionServicePort\nrecognize_faces(image, threshold)"]
     end
 
-    %% Domain
     subgraph domain["Domain Layer"]
-        scene_analysis_service["SceneAnalysisService\n- orchestrates detection + captions + recognition\n- enriches SceneContext"];
-        scene_composer["SceneComposer\n- aggregates adapter outputs\n- manages pipeline order"];
-        context_builder["ContextBuilder\n- merges objects, faces, captions\n- prepares SceneContext DTOs"];
-        scene_entities["Domain Entities\n- DetectedObject\n- DetectedEntity\n- SceneContext"];
+        scene_service["SceneAnalysisService\n- orchestrates detectors + captions\n- normalizes roster matches\n- emits SceneContext"]
+        scene_composer["SceneComposer\n- wraps detector/caption adapters"]
+        scene_entities["Domain Entities\nDetectedObject\nDetectedEntity\nSceneContext"]
     end
 
-    %% Adapters
     subgraph adapters["Adapters"]
-        yolo_adapter["YOLOAdapter\nimplements ObjectDetectionPort"];
-        phi3_adapter["Phi3CaptionAdapter\nimplements CaptionGeneratorPort"];
-        mock_detection["MockDetectionAdapter\n(test only)"];
-        mock_caption["MockCaptionAdapter\n(test only)"];
-        recognition_service_adapter["RecognitionService (InsightFace)\nimplements RecognitionServicePort\n- delegates to RecognitionModelPort"];
+        yolo_adapter["YOLOAdapter"]
+        caption_adapter["Phi3CaptionAdapter"]
+        recognition_service_adapter["RecognitionService (InsightFace)"]
     end
 
-    %% External
     subgraph external["External Dependencies"]
-        yolo_model["YOLOv8 weights"];
-        phi3_model["Phi-3 vision model"];
-        recognition_service["InsightFace recognition stack"];
-        config_store["ConfigService / settings.yaml"];
+        yolo_weights["YOLO weights"]
+        phi3_weights["Phi-3 weights"]
+        recognition_stack["InsightFace recognition stack"]
+        settings_yaml["ConfigService / settings.yaml"]
     end
 
-    object_port --> scene_composer;
-    caption_port --> scene_composer;
-    recognition_port --> scene_analysis_service;
+    object_port --> scene_composer
+    caption_port --> scene_composer
+    recognition_port --> scene_service
 
-    scene_composer --> scene_analysis_service;
-    scene_analysis_service --> context_builder;
-    context_builder --> scene_entities;
+    scene_composer --> scene_service
+    scene_service --> scene_entities
 
-    scene_composer --> yolo_adapter;
-    scene_composer --> phi3_adapter;
-    scene_composer --> mock_detection;
-    scene_composer --> mock_caption;
-    scene_analysis_service --> recognition_service_adapter;
+    scene_composer --> yolo_adapter
+    scene_composer --> caption_adapter
+    scene_service --> recognition_service_adapter
 
-    yolo_adapter --> yolo_model;
-    phi3_adapter --> phi3_model;
-    recognition_service_adapter --> recognition_service;
-    scene_analysis_service --> config_store;
+    yolo_adapter --> yolo_weights
+    caption_adapter --> phi3_weights
+    recognition_service_adapter --> recognition_stack
+    scene_service --> settings_yaml
 
-    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px;
-    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px;
-    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px;
-    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px;
+    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
+    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px
+    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
+    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class ports,object_port,caption_port,recognition_port portsClass;
-    class domain,scene_analysis_service,scene_composer,context_builder,scene_entities domainClass;
-    class adapters,yolo_adapter,phi3_adapter,mock_detection,mock_caption,recognition_service_adapter adapterClass;
-    class external,yolo_model,phi3_model,recognition_service,config_store externalClass;
+    class ports,object_port,caption_port,recognition_port portsClass
+    class domain,scene_service,scene_composer,scene_entities domainClass
+    class adapters,yolo_adapter,caption_adapter,recognition_service_adapter adapterClass
+    class external,yolo_weights,phi3_weights,recognition_stack,settings_yaml externalClass

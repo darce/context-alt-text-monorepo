@@ -1,0 +1,7 @@
+{
+  "image": {
+    "filename": "sample.png",
+    "image_base64": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8Xw8AAnEB7SBSYQAAAABJRU5ErkJggg=="
+  },
+  "threshold": 0.5
+}

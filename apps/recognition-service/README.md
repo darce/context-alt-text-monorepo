@@ -25,6 +25,16 @@ StartupManager ──► warms InsightFace + embeddings cache
 - **REST contract** preserved: WordPress client calls the same endpoints, now returning JSON payloads defined in `api/examples/`.
 - **Tests** live under `tests/`; `test_api_contract.py` validates DTO examples consume the same JSON fixtures as the plugin.
 
+### Architecture Pattern
+
+The service retains a ports-and-adapters (hexagonal) structure:
+
+- **Ports (interfaces)** live in `analysis/ports` and `recognition_core/domain/interfaces.py`.
+- **Adapters** implement those ports (YOLO object detector, Phi-3 caption generator, InsightFace recognition, embedding router).
+- **Core services** (e.g., `SceneAnalysisService`, `RecognitionService`) orchestrate the adapters and expose domain logic to FastAPI routes.
+
+Swapping inference models now requires implementing a new adapter that satisfies the relevant port—no changes to the API layer or orchestration classes. Captioning and recognition can evolve independently by introducing additional adapters and registering them through the startup factory.
+
 ---
 ## 2. Local Quickstart (Recognition Only)
 
@@ -35,19 +45,20 @@ cd apps/recognition-service
 pyenv virtualenv 3.10.17 recognition-service-env   # create once
 pyenv shell recognition-service-env                # activate for current session
 
-# 2. Install dependencies needed for the backend API
-pip install --upgrade pip
-pip install -r requirements_local_dev.txt
+# 2. Install dependencies and launch the API (Apple Silicon helper included)
+./scripts/start_recognition_local.sh start
 
-# Optional: use a custom config file (defaults to recognition/config/settings.yaml)
-export RECOG_SETTINGS=${PWD}/recognition/config/settings.yaml
+# Optional: skip dependency installation on subsequent runs
+SKIP_INSTALL=1 ./scripts/start_recognition_local.sh start
 
-# Optional: pin local cache root when running on a developer machine
-export LOCAL_CACHE_ROOT=/Volumes/Butter
+# Optional: override defaults
+# HOST=127.0.0.1 PORT=8000 LOCAL_CACHE_ROOT=/Volumes/Butter ./scripts/start_recognition_local.sh start
 
-# 3. Launch the FastAPI server
-uvicorn app:app --host 0.0.0.0 --port 7860 --reload
+# Stop the service (best effort)
+./scripts/start_recognition_local.sh stop
 ```
+
+Offline starts are supported: the helper skips dependency installation when `pypi.org` is unreachable so previously provisioned environments boot without a network connection. Use `FORCE_INSTALL=1 ./scripts/start_recognition_local.sh install` to retry once you are back online (set `ASSUME_OFFLINE=1` to simulate the offline branch during testing).
 
 Verify the endpoints (examples in `api/examples/`):
 
@@ -56,7 +67,7 @@ Verify the endpoints (examples in `api/examples/`):
 - `GET  http://localhost:7860/api/v0/service/info`
 - `GET  http://localhost:7860/api/v0/health`
 
-InsightFace weights download on first run. Adjust model/device/thresholds in `recognition/config/settings.yaml` or override via `RECOG_SETTINGS`.
+InsightFace weights download on first run. Adjust model/device/thresholds in `recognition_core/config/settings.yaml` or override via `RECOG_SETTINGS`.
 
 ---
 ## 3. Deploying to Hugging Face Spaces (Recognition MVP)
@@ -80,7 +91,7 @@ Only the recognition stack ships today. Caption generation will be enabled later
 ---
 ## 4. Configuration (Pydantic Settings)
 
-`recognition/config/__init__.py` loads `recognition/config/settings.yaml` (override via `RECOG_SETTINGS`). Key sections:
+`recognition_core/config/__init__.py` loads `recognition_core/config/settings.yaml` (override via `RECOG_SETTINGS`). Key sections:
 
 ```yaml
 insightface:
@@ -93,7 +104,7 @@ recognition:
   max_faces_per_image: 10
 
 embedding_router:
-  embeddings_file: "/roster/data/insightface_embeddings.json"
+  embeddings_file: "/roster/data/insightface_w600k_embeddings.json"
   auto_reload: true
   reload_interval: 30
 
@@ -101,6 +112,22 @@ cache:
   hf_home: null
   hf_datasets_cache: null
   torch_home: null
+
+caption_generator:
+  type: phi3  # options: phi3, mock, or custom
+  config:
+    model_id: microsoft/Phi-3.5-vision-instruct
+    device: auto
+    class_path: null
+
+# Example custom adapter (optional)
+# caption_generator:
+#   type: custom
+#   class_path: "analysis.adapters.openai_caption_adapter.OpenAICaptionAdapter"
+#   config:
+#     init_kwargs:
+#       api_key: "${OPENAI_API_KEY}"
+#       model: "gpt-4o-mini"
 ```
 
 Flash Attention + caption models are still in the tree for future phases (see the “Flash Attention Configuration” section below), but they are disabled by default.
@@ -120,12 +147,28 @@ All DTO examples live in `api/examples/`.
 | `POST /api/v0/embeddings` | Returns embeddings + similarity matches for a single image (supports roster onboarding). |
 | `GET /api/v0/service/info` | Model metadata (model name, device, thresholds, loaded entities). |
 | `GET /api/v0/health` | Lightweight readiness check. |
-| `/api/v0/roster/*` | Roster CRUD + sync (see `recognition/README` sections below for details). |
+| `/api/v0/roster/*` | Roster CRUD + sync (see historical docs under `recognition_core/README` for legacy details). |
 
 Use the JSON fixtures under `api/examples/` when wiring the WordPress client and contract tests.
 
+### Roster API Notes
+
+- `POST /api/v0/roster` accepts JSON payloads containing precomputed embeddings (obtained via `/api/v0/embeddings`). Each successful call recomputes the aggregate embedding and persists it for the recognition service.
+- `POST /api/v0/roster/{unique_id}/embeddings` appends a new reference embedding to an existing identity. Additional embeddings are averaged, which typically reduces noise and improves InsightFace match confidence.
+- `DELETE /api/v0/roster/{unique_id}` removes an identity and the embedding store is refreshed immediately so subsequent recognition calls pick up the change.
+
 ---
 ## 6. Development Guide
+
+### Dependency management (pip-tools)
+
+- Install pip-tools once per environment: `python -m pip install pip-tools`.
+- Sync the local runtime + dev tooling with `./scripts/sync_local_env.sh`. The helper:
+  - Invokes `scripts/install_insightface_mac.sh` automatically on Apple Silicon so `insightface` builds with the correct SDK headers.
+  - Runs `pip-sync requirements_local.txt requirements_local_dev.txt`, keeping the virtualenv aligned with the checked-in requirement files.
+- Pass alternative requirement files if needed (for example, `./scripts/sync_local_env.sh requirements_remote_main.txt`). The script validates paths relative to `apps/recognition-service/` before delegating to `pip-sync`.
+
+`pip install -r …` continues to work for ad-hoc installs, but the pip-tools flow is preferred because it removes packages that are no longer declared and catches version drift earlier.
 
 ### Running Tests
 
@@ -133,22 +176,18 @@ Use the JSON fixtures under `api/examples/` when wiring the WordPress client and
 # ensure pyenv env is active
 pyenv shell recognition-service-env
 
-# run contract + unit tests
-pytest tests/test_api_contract.py -v
-pytest recognition/tests/test_api_smoke.py -v
-
-# (optional) accuracy / performance suites
-pytest recognition/tests/test_top1_micro.py -v
-pytest recognition/tests/bench_latency_micro.py -v
+# run core integration + unit tests
+pytest tests/integration/test_api_endpoints.py -v
+pytest tests/unit/test_scene_analysis_service.py -v
 ```
 
 ### Hexagonal Layout
 
 - `analysis/services/scene_analysis_service.py` – orchestrates YOLO + recognition, outputs `SceneContext`.
-- `recognition/services/recognition_service.py` – wraps InsightFace adapter + embedding router.
-- `recognition/adapters/insightface_adapter.py` – detection + embeddings.
-- `recognition/adapters/embedding_router_adapter.py` – cosine similarity over JSON roster embeddings.
-- `recognition/domain/interfaces.py` – ports (`RecognitionModelPort`, `EmbeddingRouterPort`, `RecognitionServicePort`).
+- `recognition_core/services/recognition_service.py` – wraps InsightFace adapter + embedding router.
+- `recognition_core/adapters/insightface_adapter.py` – detection + embeddings.
+- `recognition_core/adapters/embedding_router_adapter.py` – cosine similarity over JSON roster embeddings.
+- `recognition_core/domain/interfaces.py` – ports (`RecognitionModelPort`, `EmbeddingRouterPort`, `RecognitionServicePort`).
 - `api/routes/main.py` – JSON-first REST surface consumed by the plugin.
 
 Remove of legacy multi-model stack completed; only InsightFace code remains.
@@ -189,4 +228,4 @@ To experiment locally, enable Flash Attention in settings and install the wheel 
 ---
 ## 10. Legacy README
 
-The older `recognition/README.md` has been superseded by this document and will be removed in a future cleanup to avoid drift.
+The older `recognition_core/README.md` has been superseded by this document and will be removed in a future cleanup to avoid drift.

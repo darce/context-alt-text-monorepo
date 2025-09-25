@@ -211,7 +211,7 @@ Quality Heuristics:
 
 ## Recognition Service (FastAPI) Guidelines
 
-- **Hexagonal boundaries**: keep adapters in `analysis/adapters` or `recognition/adapters`, with pure orchestration in `analysis/services` and `recognition/domain`. Avoid importing archived modules or bypassing ports.
+- **Hexagonal boundaries**: keep adapters in `analysis/adapters` or `recognition_core/adapters`, with pure orchestration in `analysis/services` and `recognition_core/domain`. Avoid importing archived modules or bypassing ports.
 - **Python style**: every FastAPI path handler and service method must include type hints and either a Google-style docstring or inline comment that describes side effects. Target < 40 logical lines per function; decompose when flows grow larger.
 - **Configuration**: read model paths, cache dirs, ports, and feature toggles from `pydantic` settings backed by environment variables. Hard-coded hostnames (e.g., `/Volumes/...`) are considered violations.
 - **Failure on missing configuration**: services must fail fast when required settings are absent. Provide cache/model paths via `settings.yaml` (or explicit env vars) and avoid baking in fallbacks inside the codebase.

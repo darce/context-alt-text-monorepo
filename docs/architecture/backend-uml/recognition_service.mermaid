@@ -22,7 +22,7 @@ flowchart TB
     subgraph external["External Dependencies"]
         insightface_weights["InsightFace weights / providers"]
         embeddings_file["Roster embeddings JSON"]
-        settings_yaml["recognition/config/settings.yaml + env"]
+        settings_yaml["recognition_core/config/settings.yaml + env"]
     end
 
     recognition_port --> recognition_service

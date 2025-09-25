@@ -1,4 +1,9 @@
-# Quality-Aware Embeddings Impact Analysis
+# Quality-Aware Embeddings Impact Analysis *(Historical)*
+
+> **Note**: The AdaFace/CVLFace quality-weighting pipeline has been removed from the
+> active service. This document remains as an archival reference and no longer reflects
+> the current InsightFace-only implementation. References to `datasets/` assets point to
+> historical micro-datasets that are no longer distributed with the project.
 
 ## Comparison of Performance Reports
 

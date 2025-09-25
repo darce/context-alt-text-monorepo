@@ -7,7 +7,7 @@ Recommended structure:
 ```
 json/
   alt-text/
-  recognition/
+  recognition_core/
 php/
   src/Contracts/
   composer.json

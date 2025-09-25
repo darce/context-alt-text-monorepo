@@ -17,3 +17,4 @@ jupyter>=1.0.0  # Notebook support for analysis
 pre-commit>=3.0.0  # Git hooks
 bandit>=1.7.0  # Security linting
 memory-profiler>=0.60.0  # Memory usage profiling
+

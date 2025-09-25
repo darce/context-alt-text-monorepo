@@ -8,7 +8,7 @@ for API compatibility.
 from typing import Dict, List, Any, Optional
 import logging
 
-from recognition.domain.entities import RecognitionResult
+from recognition_core.domain.entities import RecognitionResult
 from analysis.entities.detected_entity import DetectedEntity
 from analysis.entities.scene_context import SceneContext
 from analysis.entities.detected_object import DetectedObject

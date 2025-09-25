@@ -1,5 +1,8 @@
 .env
-scripts
+scripts/*
+!scripts/install_insightface_mac.sh
+!scripts/sync_local_env.sh
+!scripts/start_recognition_local.sh
 data
 requirements_local.txt
 

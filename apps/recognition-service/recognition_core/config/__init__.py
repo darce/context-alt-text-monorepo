@@ -29,7 +29,7 @@ class RecognitionSettings(BaseSettings):
 
 class EmbeddingRouterSettings(BaseSettings):
     """Embedding router configuration."""
-    embeddings_file: str = "/roster/data/insightface_embeddings.json"
+    embeddings_file: str = "/roster/data/insightface_w600k_embeddings.json"
     auto_reload: bool = True
     reload_interval: int = 30
 
@@ -75,23 +75,20 @@ def load_settings() -> Settings:
     Load settings from YAML file with environment variable overrides.
     
     The RECOG_SETTINGS environment variable can specify the path to settings.yaml.
-    If not set, defaults to recognition/config/settings.yaml.
+    If not set, defaults to recognition_core/config/settings.yaml.
     """
-    # Get settings file path from environment or use default
-    settings_path = os.getenv(
-        "RECOG_SETTINGS", 
-        "/recognition/config/settings.yaml"
-    )
-    
-    # If path is relative, make it relative to the project root
-    if not os.path.isabs(settings_path):
+    default_settings = Path(__file__).with_name("settings.yaml")
+    env_setting = os.getenv("RECOG_SETTINGS")
+    settings_path = Path(env_setting) if env_setting else default_settings
+
+    if not settings_path.is_absolute():
         project_root = Path(__file__).parent.parent.parent
-        settings_path = project_root / settings_path.lstrip("/")
+        settings_path = (project_root / settings_path).resolve()
     
     # Load YAML configuration
     config_data = {}
-    if os.path.exists(settings_path):
-        with open(settings_path, 'r') as f:
+    if settings_path.exists():
+        with settings_path.open('r') as f:
             config_data = yaml.safe_load(f) or {}
     
     # Create nested settings objects

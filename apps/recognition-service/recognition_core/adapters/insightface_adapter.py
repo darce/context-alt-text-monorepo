@@ -15,13 +15,13 @@ import numpy as np
 from PIL import Image
 import cv2
 
-from recognition.domain.interfaces import (
+from recognition_core.domain.interfaces import (
     FaceDetectorPort,
     FaceEmbedderPort,
     RecognitionModelPort,
 )
-from recognition.domain.entities import FaceDetection, FaceEmbedding
-from recognition.config import get_settings
+from recognition_core.domain.entities import FaceDetection, FaceEmbedding
+from recognition_core.config import get_settings
 from shared.infrastructure.gpu_manager import GPUManager
 
 logger = logging.getLogger(__name__)

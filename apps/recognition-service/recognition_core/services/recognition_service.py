@@ -10,14 +10,14 @@ import time
 from typing import Optional, List, Dict, Any
 from PIL import Image
 
-from recognition.domain.interfaces import (
+from recognition_core.domain.interfaces import (
     RecognitionServicePort,
     RecognitionModelPort,
     EmbeddingRouterPort,
 )
-from recognition.domain.entities import RecognitionResult, MatchResult
-from recognition.adapters import InsightFaceAdapter, EmbeddingRouterAdapter
-from recognition.config import get_settings
+from recognition_core.domain.entities import RecognitionResult, MatchResult
+from recognition_core.adapters import InsightFaceAdapter, EmbeddingRouterAdapter
+from recognition_core.config import get_settings
 
 logger = logging.getLogger(__name__)
 

@@ -30,7 +30,7 @@ except ImportError:
     PLOTLY_AVAILABLE = False
     logging.warning("Plotly not available. Using matplotlib for visualizations.")
 
-from recognition.utils.face_utils import normalize_vec, cosine_similarity
+from recognition_core.utils.face_utils import normalize_vec, cosine_similarity
 
 
 class EmbeddingVisualizer:

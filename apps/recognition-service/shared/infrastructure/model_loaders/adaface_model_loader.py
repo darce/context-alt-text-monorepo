@@ -4,7 +4,7 @@ import onnxruntime as ort
 from typing import Any, Dict, Tuple, Optional
 from shared.infrastructure.gpu_manager import get_gpu_manager
 from shared.utils.device_utils import get_available_device
-from recognition.utils.face_utils import normalize_vec
+from recognition_core.utils.face_utils import normalize_vec
 import cv2
 from pathlib import Path
 
@@ -46,7 +46,7 @@ def _validate_model_path(model_path: str) -> str:
 
 class AdaFaceModel:
     """
-    AdaFace IR-101-OCC ONNX model wrapper for face recognition.
+    AdaFace IR-101-OCC ONNX model wrapper for face recognition_core.
     Provides 512-dimensional face embeddings.
     """
     
@@ -157,7 +157,7 @@ class AdaFaceModel:
 
 def load_adaface_model(model_path: str, device: str = None, config: Dict[str, Any] = None) -> AdaFaceModel:
     """
-    Load AdaFace IR-101-OCC model for face recognition.
+    Load AdaFace IR-101-OCC model for face recognition_core.
     
     Args:
         model_path: Path to the AdaFace ONNX model file

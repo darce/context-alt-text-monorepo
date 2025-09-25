@@ -4,15 +4,12 @@ from typing import Optional
 from analysis.workflow.scene_composer import SceneComposer
 from analysis.services.scene_analysis_service import SceneAnalysisService
 from .roster import router as roster_router
-from .entity_recognition import router as entity_recognition_router
-from recognition.pipelines.pipeline_manager import get_hf_pipeline
 from api.dependencies import get_roster_service
 from api.schemas import AnalyzeSceneRequest, EmbeddingsRequest
 from shared.utils.device_utils import get_available_device  # for device resolution if needed
 
 router = APIRouter()
 router.include_router(roster_router)
-router.include_router(entity_recognition_router)
 
 # Dependency to get scene composer - will be set by the main app
 _scene_composer: Optional[SceneComposer] = None

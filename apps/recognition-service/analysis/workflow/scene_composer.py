@@ -4,9 +4,9 @@ from typing import Dict, Optional, Any, List
 from PIL import Image
 
 from analysis.ports.object_detection_base import IObjectDetector
-from recognition.domain.interfaces import RecognitionPort
+from recognition_core.domain.interfaces import RecognitionPort
 from analysis.ports.caption_generation_base import ICaptionGeneration
-from recognition.utils.face_utils import crop_face_detections as crop_detections
+from recognition_core.utils.face_utils import crop_face_detections as crop_detections
 
 class SceneComposer:
     """Core orcestrator for multimodal scene understanding..
@@ -16,11 +16,11 @@ class SceneComposer:
     def __init__(
             self,
             object_detector: IObjectDetector,
-            entity_identifiers: List[RecognitionPort],
-            caption_generator: ICaptionGeneration
+            entity_identifiers: Optional[List[RecognitionPort]] = None,
+            caption_generator: Optional[ICaptionGeneration] = None
         ):
         self.object_detector = object_detector
-        self.entity_identifiers = entity_identifiers
+        self.entity_identifiers = entity_identifiers or []
         self.caption_generator = caption_generator
 
         # Ensure caption generator is initialized
@@ -30,7 +30,7 @@ class SceneComposer:
 
     def _ensure_adapters_ready(self):
         """Ensure all adapters are properly initialized."""
-        if hasattr(self.caption_generator, 'is_ready') and not self.caption_generator.is_ready():
+        if self.caption_generator and hasattr(self.caption_generator, 'is_ready') and not self.caption_generator.is_ready():
             if hasattr(self.caption_generator, 'initialize'):
                 logging.info("Initializing caption generator...")
                 self.caption_generator.initialize()
@@ -43,7 +43,7 @@ class SceneComposer:
                 logging.info("Initializing object detector...")
                 self.object_detector.initialize()
         
-        # Initialize entity identifier adapters
+        # Initialize entity identifier adapters if provided
         for adapter in self.entity_identifiers:
             if hasattr(adapter, 'is_ready') and hasattr(adapter, 'initialize'):
                 if not adapter.is_ready():
@@ -67,6 +67,15 @@ class SceneComposer:
         If a reference_image is provided, compare detected persons to the reference face and return match info.
         Returns a list of dicts with bounding box and identification info.
         """
+        if not self.entity_identifiers:
+            logging.warning("identify_persons_with_reference called without any entity identifier adapters configured")
+            return []
+
+        adapter = self.entity_identifiers[0]
+        if not hasattr(adapter, 'identify_entities'):
+            logging.warning("Entity identifier does not implement identify_entities; returning empty results")
+            return []
+
         detections = self.object_detector.detect_objects(image)
         persons = [d for d in detections if d.get('class_name', '').lower() == 'person']
         logging.info(f"SceneComposer.identify_persons_with_reference: found {len(persons)} persons")
@@ -78,22 +87,22 @@ class SceneComposer:
         # If reference image is provided, extract its embedding
         reference_embedding = None
         if reference_image is not None:
-            ref_identities = self.entity_identifiers[0].identify_entities(reference_image)
+            ref_identities = adapter.identify_entities(reference_image)
             if ref_identities and 'embedding' in ref_identities[0]:
                 reference_embedding = ref_identities[0]['embedding']
 
         results = []
         for person, crop in zip(persons, cropped_images):
-            identities = self.entity_identifiers[0].identify_entities(crop)
+            identities = adapter.identify_entities(crop)
             match_score = None
             if reference_embedding is not None and identities:
                 # Compare the first detected face in crop to the reference embedding
                 candidate_embedding = identities[0].get('embedding')
-                if candidate_embedding is not None:
-                    # Use the compare_embeddings method from the model
-                    match_score = self.entity_identifiers[0].model.compare_embeddings(
-                        candidate_embedding, reference_embedding
-                    )
+                model = getattr(adapter, 'model', None)
+                compare_fn = getattr(model, 'compare_embeddings', None)
+                if candidate_embedding is not None and callable(compare_fn):
+                    # Use the compare_embeddings method from the model when available
+                    match_score = compare_fn(candidate_embedding, reference_embedding)
             results.append({
                 "bbox": person.get("bbox"),
                 "confidence": person.get("confidence"),

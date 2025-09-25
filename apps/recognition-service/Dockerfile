@@ -92,7 +92,7 @@ FROM dependencies as application
 # Copy application code (changes frequently, so put it late)
 COPY app.py ./
 COPY shared/ shared/
-COPY recognition/ recognition/
+COPY recognition_core/ recognition_core/
 COPY analysis/ analysis/
 COPY roster/ roster/
 COPY api/ api/
@@ -104,7 +104,7 @@ RUN mkdir -p /code/data/media \
 
 # Set permissions for Hugging Face Space container
 RUN chmod -R a+r /code/shared/infrastructure \
-    && chmod -R a+r /code/recognition \
+    && chmod -R a+r /code/recognition_core \
     && chmod -R a+r /code/analysis \
     && chmod -R a+r /code/roster \
     && chmod -R a+r /code/api \

@@ -13,9 +13,9 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 import numpy as np
 
-from recognition.domain.interfaces import EmbeddingRouterPort
-from recognition.domain.entities import EmbeddingEntry, MatchResult
-from recognition.config import get_settings
+from recognition_core.domain.interfaces import EmbeddingRouterPort
+from recognition_core.domain.entities import EmbeddingEntry, MatchResult
+from recognition_core.config import get_settings
 
 logger = logging.getLogger(__name__)
 

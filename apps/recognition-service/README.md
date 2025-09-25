@@ -157,6 +157,24 @@ Use the JSON fixtures under `api/examples/` when wiring the WordPress client and
 - `POST /api/v0/roster/{unique_id}/embeddings` appends a new reference embedding to an existing identity. Additional embeddings are averaged, which typically reduces noise and improves InsightFace match confidence.
 - `DELETE /api/v0/roster/{unique_id}` removes an identity and the embedding store is refreshed immediately so subsequent recognition calls pick up the change.
 
+### Health & Operations
+
+- `GET /api/v0/health` provides a lightweight readiness probe suitable for load balancers, ELB targets, or Kubernetes liveness/readiness checks.
+- `GET /api/v0/service/info` returns detailed runtime metadata (model name, device, thresholds, loaded roster counts) for dashboards and incident triage.
+- `POST /api/v0/service/reload-embeddings` hot-reloads roster data; call it from automation after out-of-band roster updates to confirm the cache refresh path.
+
+Container health checks can curl the readiness endpoint directly:
+
+```yaml
+healthcheck:
+  test: ["CMD", "curl", "-f", "http://localhost:8000/api/v0/health"]
+  interval: 30s
+  timeout: 10s
+  retries: 3
+```
+
+Monitoring systems ingesting JSON (Prometheus pushgateway sidecars, lightweight cron jobs, etc.) can re-use these endpoints without additional dependencies. For smoke testing, run `pytest tests/integration/test_api_endpoints.py -v` and `pytest tests/unit/test_scene_analysis_service.py -v` after setting `CACHE_DIR` so the service can locate model caches.
+
 ---
 ## 6. Development Guide
 

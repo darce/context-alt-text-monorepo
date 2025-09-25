@@ -4,7 +4,6 @@ from datetime import datetime
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.responses import JSONResponse
 from contextlib import asynccontextmanager
-from transformers import pipeline
 import threading
 import logging
 import json
@@ -19,7 +18,7 @@ from api.routes.main import router as main_router
 from api.routes.media import router as media_router
 from api.routes.roster import router as roster_router
 from api.routes.main import set_scene_analysis_service
-from recognition.config import get_settings as get_recognition_settings
+from recognition_core.config import get_settings as get_recognition_settings
 import asyncio
 
 # Configure cache directories before any model loads
@@ -116,31 +115,10 @@ def initialize_application(app: FastAPI):
         logger.info("🔧 [STARTUP] Starting initialization process...")
         # Run the initialization process
         scene_composer = startup_manager.initialize()
-        # Integrate HuggingFace AdaFace HF pipeline as the sole face identifier (singleton)
-        from recognition.pipelines.pipeline_manager import get_hf_pipeline
-        hf_pipeline = get_hf_pipeline()
-        scene_composer.entity_identifiers = [hf_pipeline]
-        
-        # Seed dependency-injected entity_identifier to avoid reinitialization
-        try:
-            from api.dependencies import set_entity_identifier
-            # scene_composer.entity_identifiers is a list, pick the first
-            entity_ident = scene_composer.entity_identifiers[0]
-            set_entity_identifier(entity_ident)
-        except Exception as e:
-            logger.warning(f"[APP] Could not seed entity_identifier: {e}")
-        
-        # Initialize SceneAnalysisService with the composer
-        # Note: get_roster_service will now reuse the entity_identifier from scene_composer
+        # Initialize SceneAnalysisService with the composer and roster service
         from api.dependencies import get_roster_service
         roster_service = get_roster_service()
-        # Ensure the adapter inside scene_composer has the roster_service reference
-        try:
-            entity_identifier = scene_composer.entity_identifiers[0]
-            entity_identifier.roster_service = roster_service
-        except Exception as e:
-            logger.warning(f"[APP] Could not set roster_service on entity_identifier: {e}")
-         
+
         scene_analysis_service = SceneAnalysisService(scene_composer, roster_service)
         set_scene_analysis_service(scene_analysis_service)
 
@@ -210,8 +188,7 @@ app.include_router(media_router, prefix="/api/v0")
 # Roster management endpoints
 app.include_router(roster_router, prefix="/api/v0")
 # Recognition service endpoints
-from recognition.ports import router as recognition_router
-app.include_router(recognition_router)
+# Legacy recognition routes removed; all endpoints served via api routes.
 
 # --- Middleware ---
 ENABLE_REQUEST_TIMING = os.getenv("ENABLE_REQUEST_TIMING", "false").lower() == "true"

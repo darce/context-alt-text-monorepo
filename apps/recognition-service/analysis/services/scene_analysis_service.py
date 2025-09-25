@@ -8,8 +8,8 @@ from analysis.workflow.scene_composer import SceneComposer
 from analysis.entities.detected_object import DetectedObject
 from analysis.entities.detected_entity import DetectedEntity
 from analysis.entities.scene_context import SceneContext
-from recognition.services.recognition_service import RecognitionService
-from recognition.domain.entities import EmbeddingEntry
+from recognition_core.services.recognition_service import RecognitionService
+from recognition_core.domain.entities import EmbeddingEntry
 from roster.domain.entities import RosterMatch, RosterEntry, RosterImage
 from shared.config.config_service import ConfigService
 

@@ -2,7 +2,7 @@ from dataclasses import dataclass
 from typing import Tuple, Optional, Dict, Any
 from roster.domain.entities import RosterMatch
 import numpy as np
-from recognition.utils.face_utils import clean_numpy_types
+from recognition_core.utils.face_utils import clean_numpy_types
 
 @dataclass
 class DetectedEntity:

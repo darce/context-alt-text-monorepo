@@ -2,8 +2,8 @@
 Recognition Services Module
 """
 
-from .recognition_service import RecognitionService
+from .face_recognition_service import FaceRecognitionService
 
 __all__ = [
-    "RecognitionService"
+    "FaceRecognitionService"
 ]

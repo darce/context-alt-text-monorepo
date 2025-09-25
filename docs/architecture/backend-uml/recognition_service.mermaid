@@ -9,7 +9,7 @@ flowchart TB
     end
 
     subgraph domain["Domain Layer"]
-        recognition_service["RecognitionService\n- orchestrates analyze + match\n- aggregates per-face matches\n- exposes diagnostics"]
+        recognition_service["FaceRecognitionService\n- orchestrates analyze + match\n- aggregates per-face matches\n- exposes diagnostics"]
         recognition_entities["Domain Entities\nFaceDetection / FaceEmbedding\nRecognitionResult / MatchResult"]
         recognition_settings["Settings (Pydantic)\ninsightface, recognition, router"]
     end

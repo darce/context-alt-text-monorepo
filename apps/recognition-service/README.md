@@ -12,7 +12,7 @@ Clients (WordPress plugin, CLI, HF Space ingress)
 FastAPI app (/api/v0/analyze-scene, /embeddings, /service/info, /health, /roster)
         │
         ▼
-SceneAnalysisService ──► RecognitionService (InsightFace) ──► EmbeddingRouter
+SceneAnalysisService ──► FaceRecognitionService (InsightFace) ──► EmbeddingRouter
         │                        │
         │                        └─ InsightFaceAdapter (SCRFD + ArcFace)
         └─ YOLOAdapter / Phi3CaptionAdapter (caption disabled for MVP)
@@ -31,7 +31,7 @@ The service retains a ports-and-adapters (hexagonal) structure:
 
 - **Ports (interfaces)** live in `analysis/ports` and `recognition_core/domain/interfaces.py`.
 - **Adapters** implement those ports (YOLO object detector, Phi-3 caption generator, InsightFace recognition, embedding router).
-- **Core services** (e.g., `SceneAnalysisService`, `RecognitionService`) orchestrate the adapters and expose domain logic to FastAPI routes.
+- **Core services** (e.g., `SceneAnalysisService`, `FaceRecognitionService`) orchestrate the adapters and expose domain logic to FastAPI routes.
 
 Swapping inference models now requires implementing a new adapter that satisfies the relevant port—no changes to the API layer or orchestration classes. Captioning and recognition can evolve independently by introducing additional adapters and registering them through the startup factory.
 
@@ -184,7 +184,7 @@ pytest tests/unit/test_scene_analysis_service.py -v
 ### Hexagonal Layout
 
 - `analysis/services/scene_analysis_service.py` – orchestrates YOLO + recognition, outputs `SceneContext`.
-- `recognition_core/services/recognition_service.py` – wraps InsightFace adapter + embedding router.
+- `recognition_core/services/face_recognition_service.py` – wraps InsightFace adapter + embedding router.
 - `recognition_core/adapters/insightface_adapter.py` – detection + embeddings.
 - `recognition_core/adapters/embedding_router_adapter.py` – cosine similarity over JSON roster embeddings.
 - `recognition_core/domain/interfaces.py` – ports (`RecognitionModelPort`, `EmbeddingRouterPort`, `RecognitionServicePort`).

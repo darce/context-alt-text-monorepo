@@ -40,6 +40,7 @@ class RosterService:
         self.roster_storage = roster_storage
         self.embedding_storage = embedding_storage
         self.data_validator = data_validator
+        self.default_model = "insightface_w600k"
         self._cache: Dict[str, List[RosterEntry]] = {}
         
     def add_entry(
@@ -65,7 +66,9 @@ class RosterService:
         """
         try:
             # Validate embedding
-            embedding_errors = self.data_validator.validate_embedding(embedding, model)
+            embedding_errors = []
+            if self.data_validator:
+                embedding_errors = self.data_validator.validate_embedding(embedding, model)
             if embedding_errors:
                 logger.error(f"Embedding validation failed: {embedding_errors}")
                 return None
@@ -87,6 +90,7 @@ class RosterService:
                 success = self.roster_storage.save_roster_entry(existing_entry, model)
                 if success:
                     self._invalidate_cache(model)
+                    self._sync_embeddings_store(model)
                     logger.info(f"Added reference image to existing entry: {name}")
                     return existing_entry
             else:
@@ -101,6 +105,7 @@ class RosterService:
                 success = self.roster_storage.save_roster_entry(roster_entry, model)
                 if success:
                     self._invalidate_cache(model)
+                    self._sync_embeddings_store(model)
                     logger.info(f"Created new roster entry: {name}")
                     return roster_entry
             
@@ -128,7 +133,9 @@ class RosterService:
         successful_names = []
         
         # Basic validation - check bulk size limit
-        max_bulk_size = self.data_validator.validation_config.get("max_bulk_import_size", 1000)
+        max_bulk_size = 1000
+        if self.data_validator:
+            max_bulk_size = self.data_validator.validation_config.get("max_bulk_import_size", 1000)
         if len(entries_data) > max_bulk_size:
             logger.error(f"Bulk import too large: {len(entries_data)} entries (max {max_bulk_size})")
             return successful_names
@@ -153,6 +160,8 @@ class RosterService:
                 continue
         
         logger.info(f"Bulk add completed: {len(successful_names)}/{len(entries_data)} successful")
+        if successful_names:
+            self._sync_embeddings_store(model)
         return successful_names
     
     def get_entries(self, model: str, use_cache: bool = True) -> List[RosterEntry]:
@@ -229,6 +238,9 @@ class RosterService:
             if success:
                 self._invalidate_cache(model)
             
+            if success:
+                self._invalidate_cache(model)
+                self._sync_embeddings_store(model)
             return success
             
         except Exception as e:
@@ -249,6 +261,7 @@ class RosterService:
         success = self.roster_storage.delete_roster_entry(unique_id, model)
         if success:
             self._invalidate_cache(model)
+            self._sync_embeddings_store(model)
         return success
     
     def get_entry_count(self, model: str) -> int:
@@ -277,6 +290,7 @@ class RosterService:
         success = self.roster_storage.clear_roster(model)
         if success:
             self._invalidate_cache(model)
+            self._sync_embeddings_store(model)
         return success
     
     def get_storage_info(self, model: str) -> Dict[str, Any]:
@@ -329,3 +343,13 @@ class RosterService:
         if model in self._cache:
             del self._cache[model]
         logger.debug(f"Cache invalidated for model: {model}")
+
+    def _sync_embeddings_store(self, model: str):
+        """Persist merged embeddings for recognition service consumption."""
+        if not self.embedding_storage:
+            return
+        try:
+            entries = self.roster_storage.load_roster_entries(model)
+            self.embedding_storage.save_embeddings(entries, model)
+        except Exception as exc:
+            logger.warning(f"Failed to sync embeddings for {model}: {exc}")

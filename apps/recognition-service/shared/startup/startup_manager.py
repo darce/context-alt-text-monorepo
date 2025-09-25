@@ -393,28 +393,19 @@ class StartupManager:
                 self.logger.warning(f"⚠️ [WARMUP] {warning}")
                 return False
     
-    def create_adapters(self) -> Tuple[Any, Any, Any, Optional[Any]]:
+    def create_adapters(self) -> Tuple[Any, Any, Optional[Any]]:
         """Create and initialize all adapters, including caption pipeline."""
         self._update_phase(StartupPhase.ADAPTER_CREATION)
         
         with self._measure_time("adapter_creation"):
             config = get_config()
             adapters_config = config["adapters"]
-            
+
             self.logger.info("🔧 [ADAPTERS] Creating adapters...")
-            
+
             # Create adapters using factory
-            object_detector, entity_identifier, caption_generator = AdapterFactory.create_adapters(adapters_config)
-            # Inject roster_service into entity_identifier so FaissIndex can use it
-            try:
-                from api.dependencies import get_roster_service
-                roster_srv = get_roster_service()
-                if entity_identifier:
-                    entity_identifier.roster_service = roster_srv
-                self.logger.info("🔌 [STARTUP] Injected roster_service into entity_identifier for FaissIndex")
-            except Exception as e:
-                self.logger.warning(f"🔌 [STARTUP] Could not inject roster_service into entity_identifier: {e}")
-            
+            object_detector, caption_generator = AdapterFactory.create_adapters(adapters_config)
+
             # Initialize caption pipeline if caption generator exists
             caption_pipeline = None
             if caption_generator:
@@ -424,7 +415,6 @@ class StartupManager:
             adapter_details = []
             adapter_map = {
                 "object_detector": (object_detector, adapters_config.get("object_detector", {}).get("type", "unknown")),
-                "entity_identifier": (entity_identifier, adapters_config.get("entity_identifier", {}).get("type", "stub")),
                 "caption_generator": (caption_generator, adapters_config.get("caption_generator", {}).get("type", "unknown"))
             }
             
@@ -436,10 +426,10 @@ class StartupManager:
                     adapter_details.append(f"{name}({adapter_type})[NOT_READY]")
             
             self.logger.info(f"✅ [ADAPTERS] Created {len(self.metrics.adapters_initialized)}/{len(adapter_map)} adapters: {', '.join(adapter_details)}")
-            
-            return object_detector, entity_identifier, caption_generator, caption_pipeline
+
+            return object_detector, caption_generator, caption_pipeline
     
-    def create_scene_composer(self, object_detector, entity_identifier, caption_generator) -> SceneComposer:
+    def create_scene_composer(self, object_detector, caption_generator) -> SceneComposer:
         """Create and configure the scene composer."""
         self._update_phase(StartupPhase.SCENE_COMPOSER_INIT)
         
@@ -448,7 +438,6 @@ class StartupManager:
                 # Count and list the adapters being passed
                 adapters = {
                     "object_detector": object_detector,
-                    "entity_identifier": entity_identifier, 
                     "caption_generator": caption_generator
                 }
                 
@@ -458,12 +447,9 @@ class StartupManager:
                 
                 self.logger.info(f"🎭 [COMPOSER] Creating scene composer with {len(active_adapters)} adapters: {', '.join(adapter_names)}")
                 
-                # Support registry pattern for entity identifiers
-                entity_identifiers = [entity_identifier] if entity_identifier else []
-                
                 scene_composer = SceneComposer(
                     object_detector=object_detector,
-                    entity_identifiers=entity_identifiers,
+                    entity_identifiers=[],
                     caption_generator=caption_generator
                 )
                 
@@ -537,13 +523,13 @@ class StartupManager:
             warmup_detected = self.check_model_warmup()
             
             # Create adapters with smart loading configuration and initialize caption pipeline
-            object_detector, entity_identifier, caption_generator, caption_pipeline = self.create_adapters()
+            object_detector, caption_generator, caption_pipeline = self.create_adapters()
             
             # Store the caption pipeline for potential use by the application
             self.caption_pipeline = caption_pipeline
             
             # Create scene composer
-            scene_composer = self.create_scene_composer(object_detector, entity_identifier, caption_generator)
+            scene_composer = self.create_scene_composer(object_detector, caption_generator)
             
             # Inject dependencies
             self.inject_dependencies(scene_composer)

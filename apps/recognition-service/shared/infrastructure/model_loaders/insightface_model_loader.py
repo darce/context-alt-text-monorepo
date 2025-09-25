@@ -3,7 +3,7 @@ import numpy as np
 from typing import Any, Dict, Tuple
 from shared.infrastructure.gpu_manager import get_gpu_manager
 from shared.utils.device_utils import get_available_device
-from recognition.utils.face_utils import to_rgb_array, cosine_similarity
+from recognition_core.utils.face_utils import to_rgb_array, cosine_similarity
 
 # Private helpers for loader
 def _get_detection_size(config: Dict[str, Any]) -> int:

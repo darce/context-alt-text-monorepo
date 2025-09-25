@@ -16,7 +16,7 @@ recognition:
 
 # Embedding Router Configuration
 embedding_router:
-  embeddings_file: "/roster/data/insightface_embeddings.json"
+  embeddings_file: "/roster/data/insightface_w600k_embeddings.json"
   auto_reload: true
   reload_interval: 30 # seconds
 

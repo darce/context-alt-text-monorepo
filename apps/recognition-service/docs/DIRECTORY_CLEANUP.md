@@ -41,7 +41,7 @@ This document summarizes the file organization cleanup performed on the project.
 
 ### Configuration
 
-- `recognition_settings.yaml` → `recognition/config/recognition_settings.yaml`
+- `recognition_settings.yaml` → `recognition_core/config/recognition_settings.yaml`
 
 ### Documentation
 
@@ -64,7 +64,7 @@ This document summarizes the file organization cleanup performed on the project.
 
 ### Dataset Scripts
 
-- `make_micro_set.py` → `datasets/make_micro_set.py`
+- (Removed) `make_micro_set.py` (historical dataset generator)
 
 ## Files Remaining in Root
 
@@ -86,7 +86,7 @@ This document summarizes the file organization cleanup performed on the project.
 
 - `analysis/` - Analysis service
 - `api/` - API definitions
-- `recognition/` - Recognition service
+- `recognition_core/` - Recognition service (renamed from `recognition/`)
 - `roster/` - Roster service
 - `recognition_bench/` - Recognition benchmarking
 - `services/` - Shared services
@@ -94,7 +94,7 @@ This document summarizes the file organization cleanup performed on the project.
 
 ### Data and Output Directories
 
-- `datasets/` - Test datasets (micro dataset for development/testing)
+- (Removed) `/datasets` micro test fixtures (archival only)
 - `docs/` - Documentation
 - `logs/` - Application logs
 - `reports/` - Generated reports
@@ -114,8 +114,8 @@ This document summarizes the file organization cleanup performed on the project.
 3. **Better Maintainability**: Scripts are logically grouped by service
 4. **Easier Navigation**: Related files are co-located
 5. **Clean Git History**: Ephemeral files removed from tracking
-6. **Proper Test Organization**: Comprehensive test suites exist in service directories (`roster/tests/` with 18 tests, `recognition/tests/` with 16 tests)
+6. **Proper Test Organization**: Comprehensive test suites exist in service directories (`roster/tests/` with 18 tests, `apps/recognition-service/tests/` covering API contracts and scene analysis)
 7. **Eliminated Redundancy**: Removed orphaned test files that duplicated existing functionality
 8. **Removed Unused Templates**: Eliminated template files that referenced non-existent tools and workflows  
-9. **Consolidated Data Storage**: Removed redundant `/data` directory, keeping only `/datasets` with actively used micro test datasets
+9. **Consolidated Data Storage**: Removed redundant `/data` directory; retired `/datasets` since micro test fixtures are no longer shipped
 10. **Eliminated Dead Code**: Removed large unused benchmark files (200KB+ total) and empty directory structures

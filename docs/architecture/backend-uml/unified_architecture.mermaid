@@ -39,7 +39,7 @@ flowchart TB
 
     %% External Systems
     subgraph external["External Dependencies"]
-        settings_yaml["settings.yaml + env"]
+        settings_yaml["shared/settings.yaml + recognition_core overrides"]
         insightface_weights["InsightFace weights"]
         yolo_weights["YOLO weights"]
         phi3_weights["Phi-3 weights"]

@@ -27,8 +27,9 @@ pip install -r requirements_local_dev.txt
 
 ### Testing with Production Health Checks
 ```bash
-# Set cache directory and run lightweight health tests
-CACHE_DIR=/path/to/cache python -m pytest recognition/tests/test_production_health.py -v
+# Set cache directory and run integration + unit smoke tests
+CACHE_DIR=/path/to/cache python -m pytest tests/integration/test_api_endpoints.py -v
+CACHE_DIR=/path/to/cache python -m pytest tests/unit/test_scene_analysis_service.py -v
 ```
 
 ## Kubernetes/Docker Health Checks

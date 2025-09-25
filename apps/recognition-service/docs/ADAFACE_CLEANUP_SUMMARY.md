@@ -1,4 +1,8 @@
-# AdaFace Pipeline Cleanup Summary
+# AdaFace Pipeline Cleanup Summary *(Historical)*
+
+> **Note**: The AdaFace/CVLFace pipelines referenced here were removed from
+> the active service during the InsightFace-only rewrite. This document is
+> retained for historical reference only.
 
 ## Overview
 Successfully cleaned up unused and dead code from the AdaFace pipeline while preserving the working CVLFace-based implementation and ensuring compatibility.

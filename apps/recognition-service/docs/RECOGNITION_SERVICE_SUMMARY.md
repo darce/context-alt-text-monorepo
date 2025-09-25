@@ -131,7 +131,7 @@ data/
 ├── adaface_ir101_webface4m_embeddings.json
 ├── adaface_vit_kprpe_webface4m_embeddings.json
 ├── retinaface_resnet50_embeddings.json
-└── insightface_embeddings_augmented.json
+└── insightface_w600k_embeddings.json
 ```
 
 ### Augmented Embeddings

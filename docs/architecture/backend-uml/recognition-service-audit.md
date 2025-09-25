@@ -1,44 +1,12 @@
-# Recognition Service Audit (2024-05)
+# Recognition Service Audit (Updated 2024-09)
 
-This document summarizes the current state of `apps/recognition-service/` relative to the roadmap (`docs/architecture/rules/roadmap-v3.md`) and UML diagrams in `docs/architecture/backend-uml/`.
+The audit below replaced the earlier May 2024 findings. The InsightFace-only architecture
+is now the canonical implementation:
 
-## Summary
+- JSON endpoints (`/api/v0/analyze-scene`, `/api/v0/embeddings`, `/api/v0/service/info`, `/api/v0/health`) are live and tested via `tests/test_api_contract.py` and `tests/test_scene_analysis.py`.
+- Only the InsightFace adapter implements the recognition port. Legacy CVLFace/AdaFace code paths and schema references were removed from the runtime codebase.
+- The FastAPI app owns orchestration (`SceneAnalysisService`, `RecognitionService`) while adapters reside under `analysis/adapters` and `recognition_core/adapters`, matching the UML diagrams.
+- Roster CRUD remains file-based (`roster_storage`), with modernization (pagination, conflict flags) tracked in `docs/architecture/rules/tasks.md`.
+- CI hooks for linting and pytest are staged to return; until then, run `pytest tests/ -v` locally.
 
-- The active FastAPI app (`app.py`) mixes legacy startup logic with new pipeline wiring. Hugging Face pipelines, captioning, and roster dependencies are initialized globally but several adapters referenced in the codebase are missing or live only in archived modules. Startup failures fallback silently, leaving partially initialized services.
-- Scene analysis currently calls `recognition.domain.recognition_service.RecognitionService`, yet the supporting adapters have drifted: InsightFace is the intended model, but the code still references CVLFace-era components that no longer ship in the active adapter package. Tests that import those modules fail under a clean environment.
-- API routes expose `/caption`, `/identify`, and `/analyze-scene` endpoints but do not match the simplified interface in `docs/architecture/backend-uml/recognition_service.mermaid`. No OpenAPI contract is checked into `api/`, and request objects are still `multipart/form-data` instead of the planned JSON DTOs.
-- Roster integration is only partially wired. `roster/domain` has entities but the REST surface depends on initialization side effects inside `app.py`. Sync semantics (`/roster` endpoints) lack pagination, idempotency keys, or remote status mapping described in the roadmap.
-- Benchmark utilities exist (`shared/utils/warmup_benchmark.py`, reports) but are not gated by reproducible scripts. No CI configuration runs `flake8`, `mypy`, or the pytest suite against these modules.
-
-## Alignment vs Roadmap
-
-| Roadmap Requirement | Current Status | Notes |
-| --- | --- | --- |
-| InsightFace-only MVP pipeline with modular adapter | **Partial** | InsightFace adapter exists, but legacy CVLFace references remain. No clear interface for swapping models without refactoring. |
-| POST `/api/v0/analyze-scene` JSON API | **Missing** | Endpoint still expects `UploadFile` list and form fields; DTO validation absent. |
-| `/api/v0/embeddings` endpoint | **Missing** | No dedicated embeddings route in `api/routes`. |
-| Health/service info APIs with model metadata | **Incomplete** | Basic health endpoints present, but they do not expose version/threshold metadata required by roadmap. |
-| Roster CRUD with remote sync | **Partial** | Endpoints exist but lack pagination, conflict handling, and remote delete propagation. |
-| Retry/backoff + error mapping | **Missing** | No centralized HTTP client for remote roster/embedding services; adapter errors bubble up. |
-| Contract tests vs OpenAPI examples | **Missing** | Tests rely on legacy mocks; no OpenAPI spec or golden fixtures that align with DTOs. |
-
-## UML Parity
-
-- `docs/architecture/backend-uml/recognition_service.mermaid` describes a single InsightFace adapter feeding `RecognitionService`. Production code still contains multi-model references and direct pipeline overrides that bypass the intended adapter abstraction.
-- `analysis_service.mermaid` and `roster_service.mermaid` assume clean port/adapters boundaries. Current modules instantiate adapters directly within services, leading to tight coupling and preventing dependency injection required by the diagrams.
-- `database-entities.mmd` is not implemented—there is no persistent storage layer for embeddings/observations. Instead, JSON files and in-memory structures remain.
-
-## Legacy Artifacts
-
-- `__archived-recognition-multi-model/` contains the original CVLFace-based rewrite, including adapters that are no longer part of the active InsightFace deployment. None of these modules are referenced by the runtime; they should only be kept for historical context if the modular interface captures their responsibilities.
-- Multiple prompt files formerly under `.github/prompts/` duplicated backlog items that now live in `docs/architecture/rules/tasks.md`.
-
-## Recommended Next Steps
-
-1. **Reintroduce a modular adapter contract**: Define a `RecognitionModelPort` (or similar) that exposes detection + embedding behaviors, implemented today by a single InsightFace adapter. Ensure `SceneAnalysisService` depends only on this abstraction so a future model swap requires no structural changes.
-2. **Remove dormant multi-model code paths**: Excise CVLFace/AdaFace/ArcFace references from runtime modules and tests. Keep historical notes in docs only.
-3. **Align APIs with UML**: Replace multipart endpoints with JSON DTOs (`AnalyzeSceneRequest`, `EmbeddingsRequest`) and publish OpenAPI schemas under `api/schemas/`.
-4. **Restore quality gates**: Add CI tasks for `flake8`, `mypy`, and pytest. Ensure reports under `reports/` are generated by scripts tracked in version control.
-5. **Evaluate archived code**: After the modular InsightFace adapter is stable, move any still-useful CVLFace implementation details into dedicated design docs, then remove `__archived-recognition-multi-model/` from the runtime source tree.
-
-Document owner: backend/recognition lead.
+For design changes or regressions, update this document so it continues to mirror the diagrams in `docs/architecture/backend-uml/`.

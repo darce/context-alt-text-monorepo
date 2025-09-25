@@ -1,4 +1,4 @@
-"""Unit tests for SceneAnalysisService and RecognitionService.
+"""Unit tests for SceneAnalysisService and FaceRecognitionService.
 
 Focuses on business logic without FastAPI or network dependencies.
 """
@@ -18,7 +18,7 @@ from recognition_core.domain.entities import (
     RecognitionResult,
 )
 from recognition_core.domain.interfaces import EmbeddingRouterPort, RecognitionModelPort
-from recognition_core.services.recognition_service import RecognitionService
+from recognition_core.services import FaceRecognitionService
 
 
 class StubRecognitionModel(RecognitionModelPort):
@@ -77,7 +77,7 @@ class StubEmbeddingRouter(EmbeddingRouterPort):
 async def test_recognition_service_returns_matches():
     model = StubRecognitionModel()
     router = StubEmbeddingRouter()
-    service = RecognitionService(model=model, embedding_router=router)
+    service = FaceRecognitionService(model=model, embedding_router=router)
 
     dummy_image = Image.new("RGB", (10, 10), color="white")
     result = await service.recognize_faces(dummy_image, threshold=0.5)
@@ -92,7 +92,7 @@ async def test_recognition_service_returns_matches():
 async def test_recognition_service_handles_no_faces():
     model = StubRecognitionModel(faces=[])
     router = StubEmbeddingRouter(matches=[])
-    service = RecognitionService(model=model, embedding_router=router)
+    service = FaceRecognitionService(model=model, embedding_router=router)
 
     dummy_image = Image.new("RGB", (10, 10), color="white")
     result = await service.recognize_faces(dummy_image, threshold=0.5)
@@ -130,7 +130,7 @@ async def test_scene_analysis_builds_entities():
         caption_generator=StubCaptionGenerator(),
     )
 
-    recognition_service = RecognitionService(
+    recognition_service = FaceRecognitionService(
         model=StubRecognitionModel(),
         embedding_router=StubEmbeddingRouter(),
     )

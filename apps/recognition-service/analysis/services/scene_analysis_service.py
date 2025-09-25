@@ -8,7 +8,7 @@ from analysis.workflow.scene_composer import SceneComposer
 from analysis.entities.detected_object import DetectedObject
 from analysis.entities.detected_entity import DetectedEntity
 from analysis.entities.scene_context import SceneContext
-from recognition_core.services.recognition_service import RecognitionService
+from recognition_core.services import FaceRecognitionService
 from recognition_core.domain.entities import EmbeddingEntry
 from roster.domain.entities import RosterMatch, RosterEntry, RosterImage
 from shared.config.config_service import ConfigService
@@ -24,12 +24,12 @@ class SceneAnalysisService:
         scene_composer: SceneComposer,
         roster_service=None,
         config_service: Optional[ConfigService] = None,
-        recognition_service: Optional[RecognitionService] = None,
+        recognition_service: Optional[FaceRecognitionService] = None,
     ) -> None:
         self.scene_composer = scene_composer
         self.roster_service = roster_service
         self.config_service = config_service or ConfigService()
-        self.recognition_service = recognition_service or RecognitionService()
+        self.recognition_service = recognition_service or FaceRecognitionService()
         self._settings = self.recognition_service.settings
 
         logger.info("SceneAnalysisService initialized (device=%s)", self._settings.insightface.device)

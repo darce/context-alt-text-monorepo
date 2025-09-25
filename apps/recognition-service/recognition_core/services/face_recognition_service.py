@@ -1,9 +1,4 @@
-"""
-Recognition Service Implementation
-
-Main service that orchestrates face detection, embedding extraction, and matching.
-Simplified for InsightFace-only pipeline.
-"""
+"""Face recognition orchestrator for the InsightFace-only pipeline."""
 
 import logging
 import time
@@ -22,11 +17,8 @@ from recognition_core.config import get_settings
 logger = logging.getLogger(__name__)
 
 
-class RecognitionService(RecognitionServicePort):
-    """
-    Main recognition service that combines face detection, embedding extraction,
-    and roster matching using InsightFace.
-    """
+class FaceRecognitionService(RecognitionServicePort):
+    """Combine detection, embedding extraction, and roster matching via InsightFace."""
     
     def __init__(
         self,

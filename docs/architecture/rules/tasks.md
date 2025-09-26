@@ -79,6 +79,8 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - [ ] Add WP-CLI commands: `cat-recognition health` and `cat-recognition analyze <attachment_id>`
 - [ ] ObservationRepository persists backend matches/confidence for UI badges
 - [ ] Settings page: base URL, API key, timeout, model profile, recognition enable toggle
+- [x] Persist initial media scan results on activation and prime counts when missing
+- [x] Provide Media Library panel view for attachments missing alt text
 
 1. Propagation & Roster Sync (Shared)
 

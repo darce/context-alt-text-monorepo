@@ -12,6 +12,7 @@ class MissingAltTextScanner
     public function register(): void
     {
         add_action(self::CRON_HOOK, [$this, 'handle']);
+        add_action('admin_init', [$this, 'maybe_prime_counts']);
     }
 
     public function schedule_first_run(): void
@@ -56,6 +57,22 @@ class MissingAltTextScanner
     {
         delete_option(self::OPTION_KEY);
         $this->clear_schedule();
+    }
+
+    public function maybe_prime_counts(): void
+    {
+        if (!is_admin()) {
+            return;
+        }
+
+        $summary = $this->get_summary();
+        $updatedAt = $summary['updated_at'] ?? null;
+
+        if (!empty($updatedAt)) {
+            return;
+        }
+
+        $this->handle();
     }
 
     private function scan_missing_alt_text(): array

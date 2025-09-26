@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ContextAltText;
 
 use ContextAltText\Admin\Admin;
+use ContextAltText\Admin\DashboardPage;
 use ContextAltText\Admin\Menu;
 use ContextAltText\Admin\RosterPage;
 use ContextAltText\Admin\MediaLibraryPanel;

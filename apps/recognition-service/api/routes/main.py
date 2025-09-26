@@ -1,6 +1,9 @@
-from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends
+import io
 import logging
 from typing import Optional
+
+from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Request
+from PIL import Image
 from analysis.workflow.scene_composer import SceneComposer
 from analysis.services.scene_analysis_service import SceneAnalysisService
 from .roster import router as roster_router
@@ -14,6 +17,16 @@ router.include_router(roster_router)
 # Dependency to get scene composer - will be set by the main app
 _scene_composer: Optional[SceneComposer] = None
 _scene_analysis_service: Optional[SceneAnalysisService] = None
+
+
+async def _read_pil_image(file: Optional[UploadFile]) -> Optional[Image.Image]:
+    """Load an uploaded file into a RGB PIL image."""
+    if file is None:
+        return None
+
+    data = await file.read()
+    image = Image.open(io.BytesIO(data))
+    return image.convert("RGB")
 
 def get_scene_composer(request: Request) -> SceneComposer:
     if not getattr(request.app.state, "initialization_complete", False):
@@ -60,15 +73,8 @@ async def caption(
     scene_analysis_service: SceneAnalysisService = Depends(get_scene_analysis_service),
 ):
     try:
-        from PIL import Image
-        import io
-
-        async def _read_pil_image(file: UploadFile) -> Image.Image:
-            data = await file.read()
-            return Image.open(io.BytesIO(data)).convert("RGB")
-
         main_image = await _read_pil_image(image)
-        ref_image = await _read_pil_image(reference_image) if reference_image else None
+        ref_image = await _read_pil_image(reference_image)
         result = scene_analysis_service.generate_caption(
             image=main_image,
             reference_image=ref_image,
@@ -85,9 +91,9 @@ async def caption(
 
 @router.post("/identify")
 async def identify(
+    request: Request,
     image: UploadFile = File(...),
     reference_image: UploadFile = File(...),
-    request: Request = None
 ):
     try:
         main_image = await _read_pil_image(image)

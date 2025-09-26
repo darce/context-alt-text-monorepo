@@ -87,7 +87,7 @@ function context_alt_text(): ContextAltText
     $featureFlags = new FeatureFlags();
     $security = new Security();
     $rosterService = new RosterService($security);
-    $dashboardPage = new DashboardPage();
+    $dashboardPage = new DashboardPage($scanner);
     $workbenchPage = new AltTextWorkbenchPage();
     $automationQueuePage = new AutomationQueuePage();
     $rosterPage = new RosterPage($rosterService, $security, $scanner);

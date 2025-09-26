@@ -20,9 +20,14 @@
 
 declare(strict_types=1);
 
+use ContextAltText\Admin\AccountCenterPage;
 use ContextAltText\Admin\Admin;
+use ContextAltText\Admin\AltTextWorkbenchPage;
+use ContextAltText\Admin\AutomationQueuePage;
+use ContextAltText\Admin\DashboardPage;
 use ContextAltText\Admin\MediaLibraryPanel;
 use ContextAltText\Admin\Menu;
+use ContextAltText\Admin\PluginSettingsPage;
 use ContextAltText\Admin\RosterPage;
 use ContextAltText\Api\Api;
 use ContextAltText\ContextAltText;
@@ -82,14 +87,27 @@ function context_alt_text(): ContextAltText
     $featureFlags = new FeatureFlags();
     $security = new Security();
     $rosterService = new RosterService($security);
+    $dashboardPage = new DashboardPage();
+    $workbenchPage = new AltTextWorkbenchPage();
+    $automationQueuePage = new AutomationQueuePage();
     $rosterPage = new RosterPage($rosterService, $security, $scanner);
+    $settingsPage = new PluginSettingsPage();
+    $accountCenterPage = new AccountCenterPage();
     $mediaPanel = new MediaLibraryPanel($scanner);
 
     $instance = new ContextAltText(
         new Admin($scanner),
         new Frontend(),
         new Api(),
-        new Menu($rosterPage, $featureFlags),
+        new Menu(
+            $dashboardPage,
+            $workbenchPage,
+            $automationQueuePage,
+            $rosterPage,
+            $settingsPage,
+            $accountCenterPage,
+            $featureFlags
+        ),
         $rosterPage,
         new Template(),
         $featureFlags,

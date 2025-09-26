@@ -51,6 +51,13 @@ if (!function_exists('esc_html__')) {
     }
 }
 
+if (!function_exists('esc_html_e')) {
+    function esc_html_e($value, $domain = null): void
+    {
+        echo esc_html__($value, $domain);
+    }
+}
+
 if (!function_exists('__')) {
     function __($value, $domain = null)
     {

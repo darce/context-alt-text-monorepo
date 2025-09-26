@@ -21,6 +21,7 @@
 declare(strict_types=1);
 
 use ContextAltText\Admin\Admin;
+use ContextAltText\Admin\MediaLibraryPanel;
 use ContextAltText\Admin\Menu;
 use ContextAltText\Admin\RosterPage;
 use ContextAltText\Api\Api;
@@ -82,6 +83,7 @@ function context_alt_text(): ContextAltText
     $security = new Security();
     $rosterService = new RosterService($security);
     $rosterPage = new RosterPage($rosterService, $security, $scanner);
+    $mediaPanel = new MediaLibraryPanel($scanner);
 
     $instance = new ContextAltText(
         new Admin($scanner),
@@ -92,7 +94,8 @@ function context_alt_text(): ContextAltText
         new Template(),
         $featureFlags,
         new LifecycleManager($scanner),
-        $scanner
+        $scanner,
+        $mediaPanel
     );
 
     return $instance;

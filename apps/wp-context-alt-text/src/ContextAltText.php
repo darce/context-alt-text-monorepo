@@ -7,6 +7,7 @@ namespace ContextAltText;
 use ContextAltText\Admin\Admin;
 use ContextAltText\Admin\Menu;
 use ContextAltText\Admin\RosterPage;
+use ContextAltText\Admin\MediaLibraryPanel;
 use ContextAltText\Api\Api;
 use ContextAltText\Frontend\Frontend;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
@@ -21,6 +22,7 @@ class ContextAltText
     private Api $api;
     private Menu $menu;
     private RosterPage $rosterPage;
+    private MediaLibraryPanel $mediaLibraryPanel;
     private Template $template;
     private FeatureFlags $featureFlags;
     private LifecycleManager $lifecycle;
@@ -35,7 +37,8 @@ class ContextAltText
         Template $template,
         FeatureFlags $featureFlags,
         LifecycleManager $lifecycle,
-        MissingAltTextScanner $missingAltTextScanner
+        MissingAltTextScanner $missingAltTextScanner,
+        MediaLibraryPanel $mediaLibraryPanel
     ) {
         $this->admin = $admin;
         $this->frontend = $frontend;
@@ -46,6 +49,7 @@ class ContextAltText
         $this->featureFlags = $featureFlags;
         $this->lifecycle = $lifecycle;
         $this->missingAltTextScanner = $missingAltTextScanner;
+        $this->mediaLibraryPanel = $mediaLibraryPanel;
     }
 
     public function init(): void
@@ -60,6 +64,7 @@ class ContextAltText
         $this->rosterPage->init();
         $this->template->init();
         $this->missingAltTextScanner->register();
+        $this->mediaLibraryPanel->init();
     }
 
     public function register_blocks(): void

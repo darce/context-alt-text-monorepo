@@ -56,3 +56,6 @@ public/assets/dist/
 storybook-static/
 vendor/
 composer.lock
+
+# Vite build output
+apps/wp-context-alt-text/public/assets/dist/

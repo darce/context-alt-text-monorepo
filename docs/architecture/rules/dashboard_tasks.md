@@ -16,14 +16,14 @@
 - Line chart (evaluate usefulness) showing progress over time as missing count declines; confirm signal clarity before committing.
 
 Implementation steps:
-1. Define shared `CoverageDonut` component in SPA primitives with props `{ total, withAlt, missing }`.
-2. Expose `useCoverageMetrics()` hook that reads from REST endpoint `/wp-json/cat/v1/dashboard/coverage` (stubbed until backend ready).
-3. Persist coverage history (already captured via `MissingAltTextScanner`) and expose through same endpoint.
-4. Build `CoverageTrend` component that consumes the history array, rendering a sparkline/line chart; gate behind feature flag until usefulness validated.
-5. Add Storybook stories for both components (empty, partial, full coverage, and loading states).
-6. Wire components into the dashboard page route and ensure data hydration via React Query.
-7. Replace bespoke coverage donut/sparkline markup with Radix UI primitives once the component library is available.
-8. Replace the CSS pseudo-element radial illusion with an actual SVG doughnut chart that renders arcs based on coverage percentages; retire the `.cat-progress--radial` hack and avoid misusing `@radix-ui/react-progress` for circular visuals.
+- [x] Define shared `CoverageDonut` component in SPA primitives with props `{ total, withAlt, missing }`.
+- [x] Expose `useCoverageMetrics()` hook that reads from REST endpoint `/wp-json/cat/v1/dashboard/coverage` (stubbed until backend ready).
+- [ ] Persist coverage history (already captured via `MissingAltTextScanner`) and expose through same endpoint.
+- [ ] Build `CoverageTrend` component that consumes the history array, rendering a sparkline/line chart; gate behind feature flag until usefulness validated.
+- [ ] Add Storybook stories for both components (empty, partial, full coverage, and loading states).
+- [x] Wire components into the dashboard page route and ensure data hydration via React Query.
+- [ ] Replace bespoke coverage donut/sparkline markup with Radix UI primitives once the component library is available.
+- [x] Replace the CSS pseudo-element radial illusion with an actual SVG doughnut chart that renders arcs based on coverage percentages; retire the `.cat-progress--radial` hack and avoid misusing `@radix-ui/react-progress` for circular visuals.
 
 ### Latest Activity
 - Card showing timestamps for:

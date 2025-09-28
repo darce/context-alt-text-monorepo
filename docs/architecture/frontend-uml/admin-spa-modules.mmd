@@ -1,31 +1,37 @@
 graph TD
     A[main.tsx] --> B[App.tsx]
-    B --> C[RouterProvider]
-    C --> R{routes.tsx}
-    R --> D[Dashboard Overview]
-    D --> D1[HeroStatus]
-    D --> D2[CoverageTrendCard]
-    D --> D3[LatestActivityCard]
-    D --> D4[RecognitionInsightsCard]
-    D --> D5[AutomationPipelineCard]
+    B --> C[QueryClientProvider]
+    C --> D[DashboardShell]
+    D --> D1[HeroStatusSection]
+    D --> D2[CoverageCard]
+    D2 --> D2a[CoverageDonut]
+    D2 --> D2b[useCoverageMetrics]
+    D --> D3[ActivityCard]
+    D --> D4[RecognitionCard]
+    D --> D5[AutomationCard]
     D --> D6[ActionFooter]
-    R --> E[Automation Queue]
-    R --> F[Roster Manager]
-    R --> G[Alt-Text Workbench]
-    G --> G1[MediaList]
-    G --> G2[SelectionToolbar]
-    G --> G3[RecognitionActions]
-    G --> G4[BulkAltTextPanel]
-    R --> H[Settings]
-    R --> I[Account Center]
-    subgraph Components
-        J[ApplicationLayout]
-        K[Shared Hooks]
-        L[API Client]
+
+    subgraph FutureRoutes
+        R1[Automation Queue]
+        R2[Roster Manager]
+        R3[Alt-Text Workbench]
+        R4[Settings]
+        R5[Account Center]
     end
-    B --> J
-    J --> K
-    K --> L
-    L --> API[(REST Endpoints)]
-    API --> RosterService
-    API --> AltTextService
+    C -. planned routes .-> FutureRoutes
+
+    subgraph DataLayer
+        Q[QueryClient]
+        H[useCoverageMetrics]
+        H --> Q
+        H --> F[fetch /dashboard/coverage]
+    end
+    C --> Q
+
+    subgraph REST
+        API[(context-alt-text/v1)]
+        API --> Cov[/dashboard/coverage/]
+        API --> Other[(other planned endpoints)]
+    end
+
+    F --> Cov

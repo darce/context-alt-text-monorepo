@@ -49,3 +49,10 @@ wp-config.php
 
 docs/literature
 .DS_Store
+.env
+node_modules/
+package-lock.json
+public/assets/dist/
+storybook-static/
+vendor/
+composer.lock

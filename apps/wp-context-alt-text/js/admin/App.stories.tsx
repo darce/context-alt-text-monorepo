@@ -1,4 +1,5 @@
 import type { Meta, StoryObj } from "@storybook/react";
+import type { CSSProperties } from "react";
 import { App } from "./App";
 import type { DashboardData } from "@/admin/types";
 
@@ -7,6 +8,12 @@ const meta: Meta<typeof App> = {
   component: App,
   parameters: {
     layout: "fullscreen",
+    docs: {
+      description: {
+        component:
+          "Dashboard buttons, tooltips, and progress bars use Radix primitives. Cards remain bespoke until Radix introduces a dedicated card primitive.",
+      },
+    },
   },
   decorators: [
     (Story) => {
@@ -72,3 +79,23 @@ export default meta;
 type Story = StoryObj<typeof App>;
 
 export const Default: Story = {};
+
+export const CustomTheme: Story = {
+  decorators: [
+    (Story) => (
+      <div
+        style={{
+          '--cat-accent': '#9333ea',
+          '--cat-accent-soft': 'rgba(147, 51, 234, 0.12)',
+          '--cat-background': '#0f172a',
+          '--cat-surface': '#111c32',
+          '--cat-text': '#f8fafc',
+          '--cat-border': 'rgba(148, 163, 184, 0.3)',
+          '--cat-muted': '#94a3b8',
+        } as CSSProperties}
+      >
+        <Story />
+      </div>
+    ),
+  ],
+};

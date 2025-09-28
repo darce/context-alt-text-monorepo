@@ -23,10 +23,25 @@ if (!function_exists('admin_url')) {
     }
 }
 
+if (!function_exists('wp_nonce_url')) {
+    function wp_nonce_url(string $url, string $action): string
+    {
+        $separator = str_contains($url, '?') ? '&' : '?';
+        return $url . $separator . '_wpnonce=' . rawurlencode($action);
+    }
+}
+
 if (!function_exists('esc_url')) {
     function esc_url($value)
     {
         return (string) $value;
+    }
+}
+
+if (!function_exists('trailingslashit')) {
+    function trailingslashit($value)
+    {
+        return rtrim((string) $value, '/\\') . '/';
     }
 }
 
@@ -121,6 +136,55 @@ if (!function_exists('human_time_diff')) {
         $to = $to ?? time();
         $diff = max((int) $to - (int) $from, 0);
         return $diff . ' seconds';
+    }
+}
+
+if (!function_exists('apply_filters')) {
+    function apply_filters($hook, $value)
+    {
+        return $value;
+    }
+}
+
+if (!function_exists('number_format_i18n')) {
+    function number_format_i18n($number, $decimals = 0)
+    {
+        return number_format((float) $number, (int) $decimals);
+    }
+}
+
+if (!function_exists('wp_json_encode')) {
+    function wp_json_encode($data)
+    {
+        return json_encode($data);
+    }
+}
+
+if (!function_exists('wp_enqueue_script')) {
+    function wp_enqueue_script($handle, $src = '', $deps = [], $ver = false, $in_footer = false): void
+    {
+        $GLOBALS['__cat_scripts'][$handle] = compact('src', 'deps', 'ver', 'in_footer');
+    }
+}
+
+if (!function_exists('wp_enqueue_style')) {
+    function wp_enqueue_style($handle, $src = '', $deps = [], $ver = false, $media = 'all'): void
+    {
+        $GLOBALS['__cat_styles'][$handle] = compact('src', 'deps', 'ver', 'media');
+    }
+}
+
+if (!function_exists('wp_localize_script')) {
+    function wp_localize_script($handle, $object_name, $l10n): void
+    {
+        $GLOBALS['__cat_localized_scripts'][$handle][$object_name] = $l10n;
+    }
+}
+
+if (!function_exists('wp_get_environment_type')) {
+    function wp_get_environment_type(): string
+    {
+        return $_ENV['WP_ENVIRONMENT_TYPE'] ?? 'production';
     }
 }
 

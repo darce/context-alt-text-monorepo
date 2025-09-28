@@ -34,8 +34,6 @@ js/
     dashboard/
     ui/
   admin/
-  media-modal/
-  shared/
 config/
   composer.json
   package.json
@@ -82,16 +80,18 @@ By default Vite serves on `http://localhost:5173`. Configure your WordPress dev 
 
    ```php
    if (wp_get_environment_type() === 'development') {
+       $dev_server = rtrim(CONTEXT_ALT_TEXT_VITE_DEV_SERVER, '/');
+
        wp_enqueue_script(
            'context-alt-text-admin-dev',
-           'http://localhost:5173/@vite/client',
+           $dev_server . '/@vite/client',
            [],
            null,
            true
        );
        wp_enqueue_script(
            'context-alt-text-admin',
-           'http://localhost:5173/js/admin/main.tsx',
+           $dev_server . '/js/admin/main.tsx',
            ['context-alt-text-admin-dev'],
            null,
            true

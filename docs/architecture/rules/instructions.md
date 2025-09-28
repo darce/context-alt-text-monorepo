@@ -56,9 +56,24 @@ http://<local-domain>/wp-json/<your-namespace>/server/streamable.
 5. Refactor for clarity and duplication removal while tests stay green.
 6. Update UML (Mermaid) and roadmap status tags.
 7. Security & A11y pass: nonce/cap checks; escape + sanitize; keyboard/ARIA (when UI slice).
-8. Commit with Conventional Commits (e.g., feat(abilities): add cat/generate_alt_text). Use feat only when the slice is functionally complete.
-9. All user-visible strings follow WordPress i18n patterns.
-10. UI changes must meet WCAG 2.1 AA.
+8. Do **not** stage or commit files until the feature slice is fully implemented, reviewed locally, and all relevant tests pass—use the worktree for WIP only.
+9. Commit with Conventional Commits (e.g., feat(abilities): add cat/generate_alt_text). Use feat only when the slice is functionally complete.
+10. All user-visible strings follow WordPress i18n patterns.
+11. UI changes must meet WCAG 2.1 AA.
+
+### Frontend SPA Engineering Principles
+
+1. Build every admin SPA slice from small, composable components. Favor composition over inheritance; resist copy/paste UI.
+2. Centralize shared UI primitives (buttons, cards, charts) and reuse them aggressively; new views assemble existing pieces before introducing bespoke variants.
+3. Prefer declarative data hooks and derived state; only add `useEffect` when responding to external side-effects (subscriptions, imperative APIs). No `useEffect` purely to sync props → state.
+4. Component state flows top-down; use context sparingly, and only for cross-cutting concerns (theme, router, notifications).
+5. Co-locate styling with components (CSS modules, CSS-in-JS, or SCSS) while keeping tokens in a shared design file.
+6. Storybook (or similar component workbench) is recommended. It accelerates developing reusable primitives, documents UX contracts, and provides visual regression targets—schedule adoption alongside the first React dashboard slice.
+7. The Vite dev server URL comes from `.env` (`CAT_VITE_DEV_SERVER`) so local, tunnelled, or containerised setups can override `localhost:5173` without code changes.
+8. All front-end code is authored in TypeScript (`.ts/.tsx`) with strict compiler settings; no new plain JavaScript modules without explicit architectural approval.
+9. Use 4 spaces for indentation across frontend TypeScript/SCSS files; tabs or alternative spacing styles are not permitted.
+10. Prefer arrow functions for all frontend JavaScript/TypeScript modules (components, hooks, utilities) to keep the style consistent.
+11. Alternative front-end runtimes (Svelte, Ripple, etc.) were evaluated: React remains the default because it aligns with WordPress’ Gutenberg ecosystem, existing WP packages (`@wordpress/components`, data), and team familiarity. Revisit only if performance profiling shows React/SPAs cannot meet targets.
 
 ## Roadmap Usage & Status Tagging
 

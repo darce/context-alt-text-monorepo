@@ -89,6 +89,10 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - [ ] Shared components: toast/notices, async data hooks, suspense states
 - [ ] REST integration layer with nonce handling + error normalization for SPA consumption
 - [ ] Storybook/Playground or dedicated mock state harness for rapid SPA iteration
+- [ ] Global keyboard accessibility system covering all SPA surfaces
+  - [ ] Define shortcut map aligned with Apple/Adobe conventions while avoiding existing WordPress bindings
+  - [ ] Implement a togglable in-app shortcut helper/overlay that announces commands (including key combos) to assistive tech
+  - [ ] Publish and maintain a dedicated keyboard bindings documentation page kept in sync with product changes
 
 1. Recognition Service Integration (Frontend)
 
@@ -176,6 +180,7 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - “Sync Recognition” / “Sync from Remote” update local roster entries; admin table shows avatar, local ID, remote ID, sync status badges
 - Admin diagnostics page reports backend health and recent error summaries
 - All diagrams in `docs/architecture/backend-uml` and `docs/architecture/frontend-uml` stay version-aligned with current APIs
+- Keyboard-only workflows succeed for every shipped feature; shortcut helper toggle and documentation page surface key combos with audible descriptions, using Apple/Adobe-style patterns that avoid WordPress collisions
 
 ## Recognition Service Backlog Prompts (Consolidated)
 

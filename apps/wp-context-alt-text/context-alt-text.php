@@ -24,6 +24,7 @@ use ContextAltText\Admin\AccountCenterPage;
 use ContextAltText\Admin\Admin;
 use ContextAltText\Admin\AltTextWorkbenchPage;
 use ContextAltText\Admin\AutomationQueuePage;
+use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Admin\DashboardPage;
 use ContextAltText\Admin\MediaLibraryPanel;
 use ContextAltText\Admin\Menu;
@@ -35,6 +36,7 @@ use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Frontend\Frontend;
 use ContextAltText\Security\Security;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
+use ContextAltText\Support\Env;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Support\LifecycleManager;
 use ContextAltText\Template\Template;
@@ -75,6 +77,22 @@ if (is_readable($contextAltTextAutoload)) {
     });
 }
 
+require_once CONTEXT_ALT_TEXT_PLUGIN_DIR . 'src/Support/WpFunctionStubs.php';
+
+Env::load(CONTEXT_ALT_TEXT_PLUGIN_DIR . '.env');
+
+if (!defined('CONTEXT_ALT_TEXT_VITE_DEV_SERVER')) {
+    $envValue = getenv('CAT_VITE_DEV_SERVER');
+
+    if ($envValue === false && isset($_ENV['CAT_VITE_DEV_SERVER'])) {
+        $envValue = (string) $_ENV['CAT_VITE_DEV_SERVER'];
+    }
+
+    $devServer = $envValue ? rtrim((string) $envValue, '/') : 'http://localhost:5173';
+
+    define('CONTEXT_ALT_TEXT_VITE_DEV_SERVER', $devServer);
+}
+
 function context_alt_text(): ContextAltText
 {
     static $instance = null;
@@ -87,7 +105,8 @@ function context_alt_text(): ContextAltText
     $featureFlags = new FeatureFlags();
     $security = new Security();
     $rosterService = new RosterService($security);
-    $dashboardPage = new DashboardPage($scanner);
+    $dashboardMetrics = new DashboardMetricsService($scanner);
+    $dashboardPage = new DashboardPage($dashboardMetrics);
     $workbenchPage = new AltTextWorkbenchPage();
     $automationQueuePage = new AutomationQueuePage();
     $rosterPage = new RosterPage($rosterService, $security, $scanner);
@@ -96,7 +115,7 @@ function context_alt_text(): ContextAltText
     $mediaPanel = new MediaLibraryPanel($scanner);
 
     $instance = new ContextAltText(
-        new Admin($scanner),
+        new Admin($scanner, $dashboardMetrics),
         new Frontend(),
         new Api(),
         new Menu(

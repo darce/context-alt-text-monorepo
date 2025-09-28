@@ -24,7 +24,7 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - [ ] Weekly handshake (15 min) to review contract diffs (`api/openapi.yaml` vs PHP DTOs) and backlog rollovers
 - [ ] Mirror test fixtures: share golden responses under `context-alt-text/tests/fixtures/hf/` sourced from backend `tests/fixtures/`
 - [ ] Update `docs/architecture/backend-uml/unified_architecture.mermaid` after any API shape change (frontend consumes this diagram)
-- [ ] Shared env file template (`.env.example`) describing recognition base URL, API key, and timeouts for both services
+- [ ] Shared env file template (`.env.template`) describing recognition base URL, API key, and timeouts for both services
 - [ ] Publish run-book for local dev tunnel (ngrok/Cloudflared) so WP ↔ HF calls work during pairing sessions
 
 ## Interfaces to Implement/Verify
@@ -65,12 +65,30 @@ This sprint plan ensures both services land the same contracts, feature flags, a
   - [x] reloadEmbeddings(): { status }
 - [ ] Handle retries, circuit breaker, and structured error mapping
 - [ ] Add WP-CLI commands for pinging health and analyzing a sample attachment
+- [ ] Establish TDD scaffolding: phpunit suites cover admin enqueue + metrics wiring; Vitest exercises dashboard data hooks/components (see roadmap-v3.md testing requirements)
+- [ ] Frontend code authored in TypeScript (`.ts/.tsx`) with strict compiler options; no new plain `.js/.jsx` files without architectural approval
+- [ ] Refactor existing frontend modules to use arrow function expressions; enforce arrow functions for new React components/hooks/utilities
 
 - [x] Add PHP RosterSyncClient (or extend RecognitionClient) for remote roster operations:
   - [x] listRoster({ since?, page?, per_page? }): { entries: RosterEntryDTO[], nextPageToken? }
   - [x] upsertRosterEntry(dto: { remoteId?, label, type, avatarUrl?, references: AttachmentRef[] }): { remoteId }
   - [x] deleteRosterEntry(remoteId: string): { status }
-  - [x] addReferenceImage(remoteId: string, attachmentId: number): { updated: true, embeddingId }
+ - [x] addReferenceImage(remoteId: string, attachmentId: number): { updated: true, embeddingId }
+
+1. Admin SPA Surfaces (`context-alt-text/js/`)
+
+- [ ] Bootstrap React SPA shell (RouterProvider + ApplicationLayout) mounting inside dashboard PHP entrypoint
+- [ ] Dashboard Overview route — surface missing-alt counts, queued jobs, latest recognition insights
+- [ ] Dashboard Overview widgets (HeroStats, RecentActivity, QueuedJobsSummary, RecognitionStatus)
+- [ ] Automation Queue route — list/manage bulk jobs (generation, propagation, sync) with status filters and retry controls
+- [ ] Roster Manager route — CRUD UI, roster match insights, guidance on entity creation during alt-text runs (finalize flow)
+- [ ] Alt-Text Workbench route — grid/list of images missing alt text with selection tools, recognition triggers, bulk actions
+- [ ] Alt-Text Workbench modules (MediaList, SelectionToolbar, RecognitionActions, BulkAltTextPanel)
+- [ ] Settings route — plugin configuration forms (base URL, timeouts, feature toggles)
+- [ ] Account Center route — API keys, billing/entitlements, account-specific notices
+- [ ] Shared components: toast/notices, async data hooks, suspense states
+- [ ] REST integration layer with nonce handling + error normalization for SPA consumption
+- [ ] Storybook/Playground or dedicated mock state harness for rapid SPA iteration
 
 1. Recognition Service Integration (Frontend)
 
@@ -146,6 +164,8 @@ This sprint plan ensures both services land the same contracts, feature flags, a
   - [x] Added unit tests for RosterService::syncFromRemote basic create/update merge via injected fake client
 - [ ] Seed minimal roster and sample images for local E2E
 - [ ] Roster sync round-trip tests: create locally → remote_id set; update remotely → reflected locally; delete remotely → archived locally
+- [ ] Dashboard SPA tests: React component unit tests via Vitest + Testing Library; Storybook visual baselines align with Radix/SCSS stack
+- [ ] Ensure SPA tests run under TypeScript strict mode; all new React modules authored as `.ts`/`.tsx`
 
 ## Acceptance Criteria
 

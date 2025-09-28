@@ -51,6 +51,22 @@ Notes:
 
 * Recognition remains a self-hostable microservice (HF Space or your GPU box). No embeddings on the frontend.
 
+Implementation guardrails for the admin UI:
+
+* Keep the PHP-rendered dashboard entry screen for capability checks and menu wiring, then mount the SPA within it.
+* Build the React admin app with the standard WordPress stack (`@wordpress/scripts` or Vite) and source REST endpoints + nonces via PHP.
+* Default to SPA routes for new UI slices (dashboard widgets, media panel, roster, settings), migrating legacy fragments incrementally.
+* Reserve server-rendered PHP fallbacks for scenarios that demand them (activation notices, hard failures).
+
+Planned SPA navigation surfaces:
+
+* **Dashboard Overview** – single-glance status of the recognition + alt-text workflow (missing counts, recent recognitions, queued jobs).
+* **Automation Queue** – bulk job manager (naming replacement for "Jobs") tracking generation, propagation, and sync runs.
+* **Roster Manager** – CRUD for roster entities plus touchpoints for how matches are captured during alt-text generation (decision pending on when new entities are created vs. linked).
+* **Alt-Text Workbench** – dedicated list of media missing alt text (new name to avoid clashing with the native Media Library) with workflow tooling, recognition triggers, and selection helpers.
+* **Settings** – plugin configuration (base URLs, feature toggles, timeouts).
+* **Account Center** – account-scoped details such as API keys, billing, entitlements; lives separately to keep operational controls distinct from general settings.
+
 ## 🔧 Feature flags and gating (MVP)
 
 * CAT_ENABLE_ABILITIES: default false. When true (or filtered via `cat_enable_abilities`), Abilities registrar boots and tools are registered.

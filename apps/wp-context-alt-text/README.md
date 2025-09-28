@@ -30,6 +30,9 @@ public/
   assets/
   languages/
 js/
+  components/
+    dashboard/
+    ui/
   admin/
   media-modal/
   shared/
@@ -38,7 +41,155 @@ config/
   package.json
 ```
 
-The plugin bootstrap lives at the root as `context-alt-text.php` and wires WordPress hooks into the namespaced classes under `src/`.
+The plugin bootstrap lives at the root as `context-alt-text.php` and wires WordPress hooks into the namespaced classes under `src/`. React components are organised under `js/` with reusable primitives in `js/components/` and feature-specific wiring (dashboard SPA) in `js/admin/`.
+
+## Frontend Development (Vite + Storybook)
+
+All SPA work is built with Vite 7 and React 19. The compiled assets are committed so production installs never need Node, but contributors do.
+
+### Prerequisites
+
+- Node.js >= 22.18.0 (`nvm install 22.18.0` or use FNM)
+- npm (bundled with Node 22)
+
+### Install dependencies (first run)
+
+```bash
+cd apps/wp-context-alt-text
+npm install
+```
+
+Copy `.env.template` to `.env` and set the dev server URL if it differs from the default:
+
+```bash
+cp .env.template .env
+# edit .env and set CAT_VITE_DEV_SERVER=http://localhost:5173 (or your proxy)
+```
+
+### Run the Vite dev server
+
+```bash
+npm run dev
+```
+
+By default Vite serves on `http://localhost:5173`. Configure your WordPress dev site (e.g. LocalWP) to proxy the compiled bundle or enqueue the dev server URL via PHP when `wp_get_environment_type() === 'development'`.
+
+#### Using Vite with LocalWP
+
+1. Start LocalWP and open the shell for your site. Confirm `wp_get_environment_type()` returns `development` (set `WP_ENVIRONMENT_TYPE` in `wp-config.php` if needed).
+2. Run `npm run dev` inside `apps/wp-context-alt-text` (Vite serves `http://localhost:5173`).
+3. In `context_alt_text()->admin->bootstrap()` (or a dedicated enqueue function), conditionally load the dev bundle:
+
+   ```php
+   if (wp_get_environment_type() === 'development') {
+       wp_enqueue_script(
+           'context-alt-text-admin-dev',
+           'http://localhost:5173/@vite/client',
+           [],
+           null,
+           true
+       );
+       wp_enqueue_script(
+           'context-alt-text-admin',
+           'http://localhost:5173/js/admin/main.tsx',
+           ['context-alt-text-admin-dev'],
+           null,
+           true
+       );
+   }
+   ```
+
+The helper reads `CAT_VITE_DEV_SERVER` from `.env`, defaulting to `http://localhost:5173`. Adjust the entry path (`js/admin/main.tsx`) to match your Vite entry file.
+
+4. Visit the dashboard (`http://localhost:<localwp-port>/wp-admin/admin.php?page=context-alt-text-dashboard`). The SPA will load assets directly from the Vite dev server with full HMR.
+5. When you stop Vite, WordPress should fall back to the compiled assets committed in `public/assets/dist`. Guard the enqueue block with `else` to load production builds for non-dev environments.
+
+### Build production assets
+
+```bash
+npm run build
+```
+
+This writes minified JS/CSS to the Vite output directory (e.g. `public/assets/dist`). Commit the build artifacts so production sites do not need Node.
+
+### Component workbench (Storybook)
+
+Storybook documents reusable React components and supports visual testing.
+
+```bash
+# Start Storybook locally
+npm run storybook
+
+# Build static Storybook bundle (for CI or docs hosting)
+npm run storybook:build
+```
+
+Stories live under `js/components/**` (follow the component guidelines in `docs/architecture/rules/instructions.md`). Add stories for each variant (loading, empty, populated) so design feedback happens without touching WordPress.
+
+### Developer Checklist
+
+1. **Bootstrap environment**
+   - Install Node 22.18+.
+   - Clone the monorepo and run `npm install` inside `apps/wp-context-alt-text`.
+   - Copy `.env.template` (if provided) and configure WordPress dev site.
+
+2. **Run Vite**
+   - `npm run dev`
+   - Load the plugin dashboard in WordPress to verify HMR works.
+
+3. **Explore components**
+   - `npm run storybook`
+   - Review existing stories and add new ones for any component you touch.
+
+4. **Implement slice**
+   - Follow the dashboard tasks (`docs/architecture/rules/dashboard_tasks.md`).
+   - Write unit tests (PHP/JS) and update Storybook stories.
+
+5. **Build & verify**
+   - `npm run build`
+   - Run PHP unit tests (`phpunit`) and JS checks (lint/tests when available).
+   - Verify no uncommitted build artifacts are missing.
+
+### Testing & QA
+
+1. Install dependencies
+   ```bash
+   npm install
+   composer install # optional, only if phpunit tooling is needed
+   ```
+
+2. Run PHP unit tests (WordPress stubs under `tests/stubs/`)
+   ```bash
+   composer test
+   ```
+
+3. Run frontend unit tests (Vitest + Testing Library)
+   ```bash
+   npm run test       # single run
+   npm run test:watch # watch mode
+   ```
+
+4. Review components in Storybook
+   ```bash
+   npm run storybook
+   ```
+   Visit `http://localhost:6006` to inspect Radix/SCSS-driven components.
+
+5. Smoke-test the production bundle
+   ```bash
+   npm run build
+   ```
+   Confirm assets land in `public/assets/dist/` and that the dashboard loads when the Vite dev server is offline.
+
+6. **Prepare PR**
+   - Ensure instructions (README, dashboard tasks) stay accurate.
+   - Do not commit until the slice is complete and tested per instructions.
+
+### Troubleshooting
+
+- If Vite or Storybook complains about missing dependencies, re-run `npm install`.
+- Version mismatches usually stem from outdated Node. Re-run `node -v` and match the required version.
+- For Storybook build errors, ensure coverage assets exist and React components render without browser APIs (use mocks in stories).
 
 ## Feature Flags
 

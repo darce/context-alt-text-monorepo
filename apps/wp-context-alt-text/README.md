@@ -102,7 +102,12 @@ By default Vite serves on `http://localhost:5173`. Configure your WordPress dev 
 The helper reads `CAT_VITE_DEV_SERVER` from `.env`, defaulting to `http://localhost:5173`. Adjust the entry path (`js/admin/main.tsx`) to match your Vite entry file.
 
 4. Visit the dashboard (`http://localhost:<localwp-port>/wp-admin/admin.php?page=context-alt-text-dashboard`). The SPA will load assets directly from the Vite dev server with full HMR.
-5. When you stop Vite, WordPress should fall back to the compiled assets committed in `public/assets/dist`. Guard the enqueue block with `else` to load production builds for non-dev environments.
+5. When you stop Vite (press `Ctrl+C` in the terminal that is running `npm run dev`), WordPress falls back to the compiled assets in `public/assets/dist`. Guard the enqueue block with `else` to load production builds for non-dev environments.
+
+#### Stopping the dev server
+
+- If the server is running in the foreground, press `Ctrl+C`.
+- If you launched it in the background (e.g. `npm run dev &`), bring it back with `fg` and press `Ctrl+C`, or terminate it directly with `pkill -f "vite"` / `kill $(lsof -ti:5173)` (adjust the port if Vite chose another).
 
 ### Build production assets
 

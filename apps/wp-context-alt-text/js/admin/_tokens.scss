@@ -1,0 +1,19 @@
+$cat-accent: #1d4ed8;
+$cat-accent-soft: #eff6ff;
+$cat-warning: #d97706;
+$cat-background: #f9fafb;
+$cat-surface: #ffffff;
+$cat-border: #e5e7eb;
+$cat-text: #111827;
+$cat-muted: #6b7280;
+
+:root {
+  --cat-accent: #{$cat-accent};
+  --cat-accent-soft: #{$cat-accent-soft};
+  --cat-warning: #{$cat-warning};
+  --cat-background: #{$cat-background};
+  --cat-surface: #{$cat-surface};
+  --cat-border: #{$cat-border};
+  --cat-text: #{$cat-text};
+  --cat-muted: #{$cat-muted};
+}

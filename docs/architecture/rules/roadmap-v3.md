@@ -57,6 +57,7 @@ Implementation guardrails for the admin UI:
 * Build the React admin app with the standard WordPress stack (`@wordpress/scripts` or Vite) and source REST endpoints + nonces via PHP.
 * Default to SPA routes for new UI slices (dashboard widgets, media panel, roster, settings), migrating legacy fragments incrementally.
 * Reserve server-rendered PHP fallbacks for scenarios that demand them (activation notices, hard failures).
+* Treat keyboard accessibility as a first-class contract: every interactive surface must be operable end-to-end via the keyboard, include shortcut bindings that mirror familiar Apple/Adobe conventions (while avoiding collisions with existing WordPress shortcuts), expose those bindings through a togglable/audible in-app helper, and maintain a dedicated key-command reference page. New features cannot ship without meeting this bar.
 
 Planned SPA navigation surfaces:
 
@@ -226,6 +227,7 @@ DoD:
 3. Shared contract + UML docs maintained under `docs/architecture`.
 4. Test suites (PHPUnit, Vitest, FastAPI pytest) covering pipeline happy paths + failure modes.
 5. Ops guides: environment variables, local tunnel, smoke scripts.
+6. Keyboard accessibility system: non-conflicting shortcut map, togglable helper overlay with audible descriptions, and published key-binding documentation.
 
 ## 🧪 Validation Checklist
 
@@ -234,6 +236,7 @@ DoD:
 - [ ] FastAPI pytest suite covers analyze + embeddings.
 - [ ] Contract tests compare OpenAPI schema with PHP DTOs.
 - [ ] Playbook for manual smoke (WP admin + HF backend) published.
+- [ ] Keyboard navigation verified (no-pointer workflow, shortcut helper toggle, reference page linked) and recorded in Storybook/QA notes.
 
 ## 🗺️ Long-Term Backlog (Post-MVP)
 

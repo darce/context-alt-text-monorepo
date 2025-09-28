@@ -105,8 +105,16 @@ class Admin
 
     public function get_config(): array
     {
+        $coverageEndpoint = function_exists('rest_url')
+            ? rest_url('context-alt-text/v1/dashboard/coverage')
+            : '';
+
         return [
             'missingAltMediaUrl' => admin_url('upload.php?context_alt_text=missing'),
+            'restNonce' => function_exists('wp_create_nonce') ? wp_create_nonce('wp_rest') : '',
+            'endpoints' => [
+                'coverage' => $coverageEndpoint,
+            ],
         ];
     }
 

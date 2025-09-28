@@ -59,6 +59,15 @@ final class AdminAssetEnqueueTest extends TestCase
 
         $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin-entry']['ContextAltTextAdmin'] ?? null;
         self::assertIsArray($localized);
+        self::assertArrayHasKey('config', $localized);
+        $config = $localized['config'];
+        self::assertIsArray($config);
+        self::assertSame('nonce-wp_rest', $config['restNonce']);
+        self::assertIsArray($config['endpoints'] ?? null);
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/dashboard/coverage',
+            $config['endpoints']['coverage'] ?? null
+        );
         self::assertArrayHasKey('dashboard', $localized['data']);
     }
 
@@ -104,6 +113,18 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertTrue(
             array_key_exists('context-alt-text-admin-0', $GLOBALS['__cat_styles']),
             'CSS from manifest should be enqueued'
+        );
+
+        $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin']['ContextAltTextAdmin'] ?? null;
+        self::assertIsArray($localized);
+        self::assertArrayHasKey('config', $localized);
+        $config = $localized['config'];
+        self::assertIsArray($config);
+        self::assertSame('nonce-wp_rest', $config['restNonce']);
+        self::assertIsArray($config['endpoints'] ?? null);
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/dashboard/coverage',
+            $config['endpoints']['coverage'] ?? null
         );
 
         if (file_exists($manifestPath)) {

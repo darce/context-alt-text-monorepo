@@ -21,30 +21,40 @@ const formatPercent = (value: number): string => {
 
 export const CoverageCard = ({ data }: CoverageCardProps): React.JSX.Element => {
     const percent = Math.min(100, Math.max(0, data.coverage_percent ?? 0));
+    const hasLibrary = (data.total ?? 0) > 0;
+    const showTrend = Boolean(data.trend_series && data.trend_series.length > 1);
 
     return (
         <Card title="Coverage Progress" className="cat-card--coverage">
             <div className="cat-coverage">
-                <div className="cat-coverage__metric">
-                    <span className="cat-coverage__metric-value">{formatPercent(percent)}%</span>
-                    <CoverageDonut value={percent} />
-                </div>
-                <dl className="cat-coverage__stats">
-                    <div>
-                        <dt>Total images</dt>
-                        <dd>{data.total}</dd>
-                    </div>
-                    <div>
-                        <dt>With alt text</dt>
-                        <dd>{data.with_alt}</dd>
-                    </div>
-                    <div>
-                        <dt>Missing alt text</dt>
-                        <dd className={data.missing > 0 ? "cat-text-warning" : ""}>{data.missing}</dd>
-                    </div>
-                </dl>
+                {hasLibrary ? (
+                    <>
+                        <div className="cat-coverage__metric">
+                            <span className="cat-coverage__metric-value">{formatPercent(percent)}%</span>
+                            <CoverageDonut value={percent} />
+                        </div>
+                        <dl className="cat-coverage__stats">
+                            <div>
+                                <dt>Total images</dt>
+                                <dd>{data.total}</dd>
+                            </div>
+                            <div>
+                                <dt>With alt text</dt>
+                                <dd>{data.with_alt}</dd>
+                            </div>
+                            <div>
+                                <dt>Missing alt text</dt>
+                                <dd className={data.missing > 0 ? "cat-text-warning" : ""}>{data.missing}</dd>
+                            </div>
+                        </dl>
+                    </>
+                ) : (
+                    <p className="cat-coverage__empty" role="status">
+                        No Media Library items yet. Upload images to start tracking coverage.
+                    </p>
+                )}
             </div>
-            {data.trend_series && data.trend_series.length > 1 && (
+            {showTrend && (
                 <div className="cat-coverage__trend">
                     <small>Trend (beta)</small>
                     <Sparkline points={data.trend_series.map((point) => point.coverage)} />

@@ -33,6 +33,7 @@ class MissingAltTextScanner
         $counts['updated_at'] = time();
 
         update_option(self::OPTION_KEY, $counts);
+        $this->recordCoverageHistory($counts);
     }
 
     public function get_summary(): array
@@ -75,7 +76,7 @@ class MissingAltTextScanner
         $this->handle();
     }
 
-    private function scan_missing_alt_text(): array
+    protected function scan_missing_alt_text(): array
     {
         global $wpdb;
 
@@ -109,5 +110,42 @@ class MissingAltTextScanner
             'with_alt' => $withAlt,
             'missing' => $missing,
         ];
+    }
+
+    /**
+     * Persist coverage history for dashboard visualisations.
+     *
+     * @param array<string,mixed> $counts
+     */
+    private function recordCoverageHistory(array $counts): void
+    {
+        $total = max((int) ($counts['total'] ?? 0), 0);
+        $withAlt = max((int) ($counts['with_alt'] ?? 0), 0);
+        $missing = max((int) ($counts['missing'] ?? 0), 0);
+
+        if ($total <= 0) {
+            return;
+        }
+
+        $coverage = $total > 0 ? round(($withAlt / $total) * 100, 2) : 0.0;
+
+        $history = get_option('context_alt_text_coverage_history', []);
+        if (!is_array($history)) {
+            $history = [];
+        }
+
+        $history[] = [
+            'timestamp' => time(),
+            'coverage' => $coverage,
+            'total' => $total,
+            'with_alt' => $withAlt,
+            'missing' => $missing,
+        ];
+
+        if (count($history) > 50) {
+            $history = array_slice($history, -50);
+        }
+
+        update_option('context_alt_text_coverage_history', $history);
     }
 }

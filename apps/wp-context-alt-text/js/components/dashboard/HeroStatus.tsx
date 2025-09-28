@@ -1,5 +1,6 @@
 import React from "react";
 import type { HeroStatus } from "@/admin/types";
+import { Button } from "@/components/ui/button";
 
 interface HeroStatusProps {
     data: HeroStatus;
@@ -17,9 +18,9 @@ export const HeroStatusSection = ({ data }: HeroStatusProps): React.JSX.Element 
                 )}
             </div>
             <div className="cat-hero__actions">
-                <a className="cat-button cat-button--primary" href={data.cta_url}>
-                    {data.cta_label}
-                </a>
+                <Button asChild variant="primary">
+                    <a href={data.cta_url}>{data.cta_label}</a>
+                </Button>
             </div>
         </section>
     );

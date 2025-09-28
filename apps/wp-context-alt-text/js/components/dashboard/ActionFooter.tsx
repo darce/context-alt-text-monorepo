@@ -1,5 +1,6 @@
 import React from "react";
 import type { DashboardFooter } from "@/admin/types";
+import { Button } from "@/components/ui/button";
 
 interface ActionFooterProps {
     data: DashboardFooter;
@@ -10,9 +11,9 @@ export const ActionFooter = ({ data }: ActionFooterProps): React.JSX.Element => 
         <footer className="cat-footer">
             <div className="cat-footer__actions">
                 {data.actions.map((action) => (
-                    <a key={action.label} className="cat-button" href={action.url}>
-                        {action.label}
-                    </a>
+                    <Button key={action.label} asChild variant="default" size="md">
+                        <a href={action.url}>{action.label}</a>
+                    </Button>
                 ))}
             </div>
             <p className="cat-footer__status">{data.statusText}</p>

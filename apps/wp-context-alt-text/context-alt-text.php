@@ -45,6 +45,32 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
+if (!defined('WP_PLUGIN_DIR')) {
+    define('WP_PLUGIN_DIR', dirname(__FILE__));
+}
+
+if (!function_exists('plugin_dir_path')) {
+    function plugin_dir_path(string $file): string
+    {
+        return rtrim(dirname($file), '/\\') . '/';
+    }
+}
+
+if (!function_exists('plugin_dir_url')) {
+    function plugin_dir_url(string $file): string
+    {
+        return plugin_dir_path($file);
+    }
+}
+
+if (!function_exists('plugin_basename')) {
+    function plugin_basename(string $file): string
+    {
+        $pluginRoot = defined('WP_PLUGIN_DIR') ? WP_PLUGIN_DIR : dirname($file);
+        return trim(str_replace(rtrim($pluginRoot, '/\\') . '/', '', $file), '/');
+    }
+}
+
 define('CONTEXT_ALT_TEXT_VERSION', '1.0.0');
 define('CONTEXT_ALT_TEXT_PLUGIN_FILE', __FILE__);
 define('CONTEXT_ALT_TEXT_PLUGIN_DIR', plugin_dir_path(__FILE__));
@@ -117,7 +143,7 @@ function context_alt_text(): ContextAltText
     $instance = new ContextAltText(
         new Admin($scanner, $dashboardMetrics),
         new Frontend(),
-        new Api(),
+        new Api($dashboardMetrics),
         new Menu(
             $dashboardPage,
             $workbenchPage,

@@ -166,31 +166,109 @@ Quality Heuristics:
     - Contract: real HTTP surfaced through a mock server (e.g., MSW / local PHP stub) asserting request/response schema
     - Integration (optional, manual): real remote model endpoints (skipped in CI)
 
-## Testing Paradigm (TDD)
+## Testing Paradigm (TDD - 2025 Standards)
 
-1. Unit
+### 1. Unit Tests
 
-    - AltTextService.composePrompt — golden tests.
-    - RecognitionClient — mock HTTP; simulate 200/429/5xx; retries with jitter.
-    - Repos — stub WP functions; no hidden global state.
+**PHP (PHPUnit 10+)**:
+- `AltTextService::composePrompt()` — golden snapshot tests
+- `RecognitionClient` — mock HTTP; simulate 200/429/5xx; exponential backoff with jitter
+- Repositories — stub WP functions (`WP_Mock`); zero hidden global state
+- Data providers for edge cases (empty, null, malformed input)
 
-2. Integration
+**Frontend (Vitest + Testing Library)**:
+- Component behavior tests — user interactions, not implementation
+- Query by accessible roles: `getByRole('button')`, not `getByTestId()`
+- Mock API responses with MSW (Mock Service Worker)
+- Test loading states, error boundaries, suspense fallbacks
+- Snapshot tests only for stable, non-dynamic output
 
-    - Call each ability via MCP REST and assert JSON shape + side effects (e.g., alt_text updated).
+### 2. Integration Tests
 
-3. E2E (optional)
+**API Contract Tests**:
+- Call each ability via MCP REST and assert JSON shape + side effects
+- Validate against JSON Schema fixtures in `docs/architecture/contracts/`
+- Test authentication (valid/invalid nonces, capability checks)
+- Test rate limiting and error responses
 
-    - Playwright: magic import → generate → approve → propagate.
+**Component Integration**:
+- Mount full feature slices (e.g., Dashboard with real React Query)
+- Test data fetching, caching, refetching, error recovery
+- Verify optimistic updates and cache invalidation
 
-4. CI
+### 3. Accessibility Tests (Required)
 
-    - Lint → Unit → Integration (LocalWP runner) → Coverage gate; cache fixtures.
+**Automated**:
+- Run `axe-core` on every component in tests (`jest-axe`)
+- Assert zero critical violations before merge
+- Test keyboard navigation paths explicitly
+- Verify ARIA attributes and screen reader announcements
+
+**Manual**:
+- Test with screen readers (NVDA, JAWS, VoiceOver)
+- Verify focus management and skip links
+- Test with keyboard only (no mouse)
+- Check color contrast with DevTools
+
+### 4. E2E Tests (Playwright)
+
+**Critical User Flows**:
+- First-run scan → Workbench → Generate alt text → Review → Approve
+- Recognition flow → Review matches → Accept/reject
+- Bulk operations → Queue monitoring → Error handling
+- Settings changes → Data persistence → Effect on UI
+
+**Test Matrix**:
+- Browsers: Chromium, Firefox, WebKit
+- Viewports: Mobile (375px), Tablet (768px), Desktop (1920px)
+- Accessibility: Test with screen reader extensions
+
+### 5. Performance Tests
+
+**Frontend**:
+- Lighthouse CI in PR checks (>90 performance score)
+- Core Web Vitals: LCP <2.5s, FID <100ms, CLS <0.1
+- Bundle size limits enforced in CI
+- React Profiler for render performance
+
+**Backend**:
+- Response time <150ms for synchronous endpoints
+- Database query monitoring (Query Monitor plugin)
+- Memory profiling for bulk operations
+
+### 6. Visual Regression Tests
+
+**Storybook + Chromatic**:
+- Snapshot every Storybook story
+- Catch unintended visual changes in PR reviews
+- Test responsive breakpoints and theme variations
+- Archive visual history for documentation
+
+### 7. CI Pipeline (GitHub Actions)
+
+```yaml
+1. Lint (PHP_CodeSniffer, ESLint, Prettier)
+2. Type check (TypeScript strict mode)
+3. Unit tests (PHPUnit + Vitest) with coverage reports
+4. Integration tests (LocalWP + Playwright)
+5. Accessibility audit (axe-core + pa11y)
+6. Bundle size check (size-limit)
+7. Lighthouse CI (performance budget)
+8. Visual regression (Chromatic)
+9. Coverage gate (90% threshold)
+```
+
+**Caching Strategy**:
+- Cache Composer and npm dependencies
+- Cache WordPress installation and plugins
+- Cache test fixtures and screenshots
+- Parallel test execution where possible
 
 ## Security & Capability Patterns
 
 - Nonce required for state mutation (create/update/delete/bulk), named cat_{action} (placeholder).
 - Centralize capability mapping in Security (e.g., can_generate_alt_text()); controllers shouldn’t inline current_user_can.
-- Rate limiting via keyed transients cat_rate_limit_<scope>_<user>. Provide helpers to reset in tests.
+- Rate limiting via keyed transients cat_rate_limit_{scope}_{user}. Provide helpers to reset in tests.
 - Escape, sanitize, and validate on all I/O boundaries.
 
 ## MCP Client Setup (Local)
@@ -215,15 +293,94 @@ Quality Heuristics:
 3. CI doc check: fail if roadmap or instructions are missing mandatory sections.
 4. Optionally mirror key architecture files into generated docs during build so external contributors can browse them easily.
 
-## Code Style & Tooling
+## Code Style & Tooling (2025 Standards)
 
-- PHP: PSR-4, PHPCS (WordPress CS), docblocks on public methods, domain exceptions caught at ability boundaries.
-- TypeScript: strict, ESLint + Prettier, functional components, Radix primitives as needed, WCAG 2.1 AA.
+### PHP
+- **PSR-12** coding standard via PHP_CodeSniffer
+- **WordPress Coding Standards** (WPCS) enforced
+- **PHP 8.1+** features: typed properties, named arguments, readonly properties
+- **PHPStan level 8** for static analysis
+- Docblocks on all public methods (PHPDoc 5.0 format)
+- Domain exceptions caught at ability boundaries
+- **Composer 2.6+** for dependency management
+
+### TypeScript/JavaScript
+- **TypeScript 5.3+** with `strict: true`, `noUncheckedIndexedAccess: true`
+- **ESLint 9+** with TypeScript parser and React hooks plugin
+- **Prettier 3+** for automatic formatting (enforced in pre-commit)
+- **Functional components** with hooks (no class components)
+- **Import sorting**: automatic via `eslint-plugin-import`
+- **4-space indentation** (enforced by Prettier config)
+- **Arrow functions** for consistency across all modules
+
+### CSS/SCSS
+- **SCSS** with shared design token files
+- **CSS Modules** or scoped styles (no global CSS leaks)
+- **PostCSS** for autoprefixing and modern CSS features
+- **BEM naming** for utility classes (when not using modules)
+- **Mobile-first** media queries
+- **Container queries** for component-level responsiveness
+
+### Tooling Stack
+- **Vite 5+**: Build tool and dev server
+- **Vitest**: Unit and component testing
+- **Playwright**: E2E testing
+- **Storybook 8+**: Component development and documentation
+- **MSW 2+**: API mocking in tests and development
+- **React Query 5+**: Data fetching and caching
+- **Radix UI**: Accessible headless components
+- **Husky**: Git hooks for pre-commit checks
+- **lint-staged**: Run linters on staged files only
 
 ### Commits & Branching
 
-- Conventional Commits (e.g., feat(abilities): add cat/regenerate_alt_texts).
-- Keep roadmap epics in sync with PR labels/status tags.
+- **Conventional Commits** (enforced by `commitlint`):
+  - `feat(dashboard): add coverage trend sparkline`
+  - `fix(workbench): correct filter reset behavior`
+  - `docs(architecture): update face recognition flow diagram`
+  - `test(coverage-card): add accessibility tests`
+  - `refactor(api): simplify error handling pattern`
+  - `chore(deps): update react-query to v5.18.0`
+- **Semantic versioning**: Major.Minor.Patch based on commit types
+- **Branch naming**: `feat/dashboard-cards`, `fix/alt-text-escaping`
+- **PR labels**: Auto-generated from conventional commits
+- **Roadmap sync**: Update epic status tags when PR merges
+
+### Pre-commit Checks (Automated)
+
+```bash
+1. Prettier formatting (auto-fix)
+2. ESLint (with auto-fix where possible)
+3. PHP_CodeSniffer (WordPress CS)
+4. PHPStan static analysis
+5. TypeScript type checking
+6. Unit tests for changed files
+7. Commit message linting (commitlint)
+```
+
+### Editor Configuration (.editorconfig)
+
+```ini
+root = true
+
+[*]
+charset = utf-8
+end_of_line = lf
+insert_final_newline = true
+trim_trailing_whitespace = true
+
+[*.{ts,tsx,js,jsx,css,scss}]
+indent_style = space
+indent_size = 4
+
+[*.{json,yml,yaml,md}]
+indent_style = space
+indent_size = 2
+
+[*.php]
+indent_style = space
+indent_size = 4
+```
 
 ## Recognition Service (FastAPI) Guidelines
 

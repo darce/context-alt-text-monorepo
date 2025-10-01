@@ -32,8 +32,12 @@ flowchart TD
         EVENTS{Workbench Events}
     end
 
-    subgraph RosterIntegration
-        ROSTER_LINK[Roster link + match chip]
+    subgraph BackendIntegration["Backend Recognition Service"]
+        BACKEND_RECOG[Recognition API - analyze-scene]
+        BACKEND_ROSTER[Roster API - backend-only]
+    end
+    
+    subgraph PostMVP["Post-MVP: Roster UI"]
         ROSTER_MANAGER[Roster Manager surface]
     end
 
@@ -46,14 +50,14 @@ flowchart TD
     APP --> NOTICE
 
     ROW -->|requests| HOOK_MEDIA
-    ROW --> ROSTER_LINK[Deep link to Roster Manager]
     HOOK_MEDIA --> QUERY
     HOOK_MEDIA --> MEDIA_API
     GLOBAL --> HOOK_MEDIA
     GLOBAL --> HOOK_SELECTION
 
-    ROSTER_LINK -->|unresolved faces| RECOG
-    ROSTER_LINK -->|open roster manager| ROSTER_MANAGER[Roster Manager UI]
+    RECOG --> RECOG_API
+    RECOG_API -->|delegates to| BACKEND_RECOG
+    BACKEND_RECOG -.->|uses| BACKEND_ROSTER
 
     TOOLBAR --> HOOK_SELECTION
     HOOK_SELECTION --> QUERY

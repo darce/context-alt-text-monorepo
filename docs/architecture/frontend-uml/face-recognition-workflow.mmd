@@ -10,8 +10,19 @@ flowchart TD
     ShowQueue --> Select{User selects media?}
     Select -- Yes --> SelectionToolbar[SelectionToolbar captures selection state]
     SelectionToolbar --> BulkActions{Trigger bulk action?}
+    BulkActions -- Trigger Recognition --> RecogDispatch[POST to WP REST recognition endpoint]
+    RecogDispatch --> BackendRecog[Backend Recognition Service /api/v0/analyze-scene]
+    BackendRecog --> RosterMatch[Backend checks roster for face matches]
+    RosterMatch --> ReturnResults[Return SceneAnalysisResult to WP]
+    ReturnResults --> StoreObservations[Store observations in WP database]
+    StoreObservations --> QueueRefresh[Refetch workbench queue]
     BulkActions -- Generate Alt Text --> Dispatch[emitDashboardEvent + enqueue background job]
     BulkActions -- Review or other --> UpdateUI[Optimistic UI updates]
-    Dispatch --> BackendJob[Backend service generates alt text]
-    BackendJob --> QueueRefresh[Refetch queue to reflect new alt text status]
+    Dispatch --> BackendJob[Backend service generates alt text with context]
+    BackendJob --> QueueRefresh
     QueueRefresh --> WorkbenchUI
+    
+    note1["⚠️ BACKEND-ONLY: All face detection, recognition, roster CRUD, and matching happens in backend service"]
+    note2["Frontend ONLY displays results and provides confirmation UI - NO roster management pages in MVP"]
+    BackendRecog -.-> note1
+    BackendRecog -.-> note2

@@ -4,6 +4,8 @@ interface CoverageDonutProps {
     value: number;
     size?: number;
     strokeWidth?: number;
+    describedBy?: string;
+    label?: string;
 }
 
 const clampValue = (value: number): number => {
@@ -18,6 +20,8 @@ export const CoverageDonut = ({
     value,
     size = 140,
     strokeWidth = 16,
+    describedBy,
+    label,
 }: CoverageDonutProps): React.JSX.Element => {
     const clamped = clampValue(value);
     const radius = (size - strokeWidth) / 2;
@@ -30,7 +34,8 @@ export const CoverageDonut = ({
             width={size}
             height={size}
             role="img"
-            aria-label={`Coverage ${clamped}%`}
+            aria-label={label ?? `Coverage ${clamped}%`}
+            aria-describedby={describedBy}
         >
             <circle
                 className="cat-coverage__donut-track"

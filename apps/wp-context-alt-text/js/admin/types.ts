@@ -1,11 +1,20 @@
 export type DashboardEndpoints = {
     coverage?: string;
+    workbenchMedia?: string;
+};
+
+export type FeatureFlags = {
+    coverageTrend?: boolean;
+    workbenchEnabled?: boolean;
+    workbenchRecognition?: boolean;
+    workbenchBulkAI?: boolean;
 };
 
 export type AdminConfig = {
     missingAltMediaUrl?: string;
     endpoints?: DashboardEndpoints;
     restNonce?: string;
+    featureFlags?: FeatureFlags;
 };
 
 export type HeroStatus = {
@@ -31,6 +40,36 @@ export type CoverageCard = {
     coverage_percent: number;
     trend_series?: CoverageTrendPoint[];
 };
+
+export type WorkbenchMediaItem = {
+    id: string;
+    title: string;
+    status: "missing" | "draft" | "published";
+    thumbnailUrl?: string;
+    updatedAt?: string;
+    altText?: string | null;
+    mimeType?: string | null;
+    dimensions?: {
+        width: number;
+        height: number;
+    } | null;
+    editUrl?: string | null;
+};
+
+export type WorkbenchPagination = {
+    page: number;
+    perPage: number;
+    total: number;
+    totalPages: number;
+};
+
+export type WorkbenchData = {
+    items: WorkbenchMediaItem[];
+    viewMode: "grid" | "list";
+    pagination: WorkbenchPagination;
+};
+
+export type AdminRouteKey = "dashboard" | "workbench";
 
 export type LatestActivityCard = {
     last_recognition: number | string | null;
@@ -75,5 +114,10 @@ export type GlobalPayload = {
     data?: {
         summary?: Record<string, unknown>;
         dashboard?: Partial<DashboardData>;
+        workbench?: Partial<WorkbenchData & {
+            items?: Array<Partial<WorkbenchMediaItem>>;
+            pagination?: Partial<WorkbenchPagination>;
+        }>;
     };
+    page?: AdminRouteKey;
 };

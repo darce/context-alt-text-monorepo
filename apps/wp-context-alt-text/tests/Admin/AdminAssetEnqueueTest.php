@@ -7,6 +7,8 @@ namespace ContextAltText\Tests\Admin;
 use ContextAltText\Admin\Admin;
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
+use ContextAltText\Support\FeatureFlags;
+use ContextAltText\Workbench\WorkbenchMediaResolver;
 use PHPUnit\Framework\TestCase;
 
 use const JSON_THROW_ON_ERROR;
@@ -49,7 +51,7 @@ final class AdminAssetEnqueueTest extends TestCase
         };
 
         $metrics = $this->fakeMetricsService($scanner);
-        $admin = new Admin($scanner, $metrics);
+        $admin = new Admin($scanner, $metrics, $this->fakeFeatureFlags(), new WorkbenchMediaResolver());
         $admin->enqueue_script(Admin::DASHBOARD_HOOK);
 
         self::assertArrayHasKey('context-alt-text-admin-entry', $GLOBALS['__cat_scripts']);
@@ -68,7 +70,12 @@ final class AdminAssetEnqueueTest extends TestCase
             'http://example.test/wp-json/context-alt-text/v1/dashboard/coverage',
             $config['endpoints']['coverage'] ?? null
         );
+        self::assertArrayHasKey('workbenchMedia', $config['endpoints']);
+        self::assertSame('', $config['endpoints']['workbenchMedia']);
+        self::assertArrayHasKey('featureFlags', $config);
+        self::assertFalse($config['featureFlags']['workbenchEnabled']);
         self::assertArrayHasKey('dashboard', $localized['data']);
+        self::assertArrayHasKey('workbench', $localized['data']);
     }
 
     public function test_enqueue_script_loads_manifest_assets_in_production(): void
@@ -103,7 +110,7 @@ final class AdminAssetEnqueueTest extends TestCase
         };
 
         $metrics = $this->fakeMetricsService($scanner);
-        $admin = new Admin($scanner, $metrics);
+        $admin = new Admin($scanner, $metrics, $this->fakeFeatureFlags(), new WorkbenchMediaResolver());
         $admin->enqueue_script(Admin::DASHBOARD_HOOK);
 
         self::assertArrayHasKey('context-alt-text-admin', $GLOBALS['__cat_scripts']);
@@ -126,10 +133,80 @@ final class AdminAssetEnqueueTest extends TestCase
             'http://example.test/wp-json/context-alt-text/v1/dashboard/coverage',
             $config['endpoints']['coverage'] ?? null
         );
+        self::assertArrayHasKey('workbenchMedia', $config['endpoints']);
+        self::assertSame('', $config['endpoints']['workbenchMedia']);
+        self::assertArrayHasKey('featureFlags', $config);
+        self::assertFalse($config['featureFlags']['workbenchEnabled']);
+        self::assertArrayHasKey('workbench', $localized['data']);
 
         if (file_exists($manifestPath)) {
             unlink($manifestPath);
         }
+    }
+
+    public function test_enqueue_script_runs_for_workbench_page(): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+        if (!defined('CONTEXT_ALT_TEXT_VITE_DEV_SERVER')) {
+            define('CONTEXT_ALT_TEXT_VITE_DEV_SERVER', 'http://dev.local:5173');
+        }
+
+        $scanner = new class extends MissingAltTextScanner {
+            public function get_summary(): array
+            {
+                return [
+                    'total' => 3,
+                    'with_alt' => 1,
+                    'missing' => 2,
+                ];
+            }
+        };
+
+        $metrics = $this->fakeMetricsService($scanner);
+        $admin = new Admin($scanner, $metrics, $this->fakeFeatureFlags(), new WorkbenchMediaResolver());
+
+        $_GET['page'] = 'context-alt-text-workbench';
+
+        $admin->enqueue_script('context-alt-text-dashboard_page_context-alt-text-workbench');
+
+        self::assertArrayHasKey('context-alt-text-admin-entry', $GLOBALS['__cat_scripts']);
+        $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin-entry']['ContextAltTextAdmin'] ?? null;
+        self::assertIsArray($localized);
+        $config = $localized['config'] ?? null;
+        self::assertIsArray($config);
+        self::assertArrayHasKey('featureFlags', $config);
+        self::assertTrue($config['featureFlags']['workbenchEnabled']);
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/workbench/media',
+            $config['endpoints']['workbenchMedia'] ?? null
+        );
+
+        unset($_GET['page']);
+    }
+
+    private function fakeFeatureFlags(): FeatureFlags
+    {
+        return new class extends FeatureFlags {
+            public function coverageTrendEnabled(): bool
+            {
+                return false;
+            }
+
+            public function workbenchEnabled(): bool
+            {
+                return false;
+            }
+
+            public function workbenchRecognitionEnabled(): bool
+            {
+                return false;
+            }
+
+            public function workbenchBulkAIEnabled(): bool
+            {
+                return false;
+            }
+        };
     }
 
     private function fakeMetricsService(MissingAltTextScanner $scanner): DashboardMetricsService

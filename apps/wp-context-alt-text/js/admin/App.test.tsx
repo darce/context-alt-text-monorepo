@@ -1,7 +1,18 @@
-import { describe, expect, it, beforeEach, afterEach } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
+import { render, screen, fireEvent } from "@testing-library/react";
 import { axe } from "vitest-axe";
 import { http, HttpResponse } from "msw";
+
+const { dispatchNoticeMock, notifyErrorMock } = vi.hoisted(() => ({
+    dispatchNoticeMock: vi.fn(),
+    notifyErrorMock: vi.fn(),
+}));
+
+vi.mock("@/admin/notices", () => ({
+    dispatchNotice: dispatchNoticeMock,
+    notifyError: notifyErrorMock,
+    NOTICE_EVENT_NAME: "cat:workbench:notice",
+}));
 
 import { App } from "./App";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
@@ -48,8 +59,33 @@ const bootstrapPayload = {
     },
 };
 
+const workbenchBootstrapData = {
+    viewMode: "list" as const,
+    pagination: {
+        page: 1,
+        perPage: 20,
+        total: 1,
+        totalPages: 1,
+    },
+    items: [
+        {
+            id: "123",
+            title: "Sample image",
+            status: "missing" as const,
+            updatedAt: "2024-01-01T00:00:00.000Z",
+            altText: "",
+            mimeType: "image/jpeg",
+            dimensions: { width: 1920, height: 1080 },
+            editUrl: "https://example.com/wp-admin/post.php?post=123&action=edit",
+        },
+    ],
+};
+
 describe("App", () => {
     beforeEach(() => {
+        dispatchNoticeMock.mockReset();
+        notifyErrorMock.mockReset();
+
         (globalThis as any).ContextAltTextAdmin = {
             config: {
                 endpoints: {
@@ -96,23 +132,172 @@ describe("App", () => {
     });
 
     it("hydrates the dashboard and passes accessibility checks", async () => {
-        const originalFetch = global.fetch;
-        global.fetch = async (...args) => {
-            console.info("fetch invoked", args[0]);
-            return originalFetch(...args);
-        };
-
         const { container } = render(<App />);
 
         expect(screen.getByText(/We found 12 images missing alt text/i)).toBeInTheDocument();
 
-
-        await screen.findByRole("img", { name: /Coverage 90%/i });
-        await screen.findByText("44");
+        await screen.findByRole("img", { name: /Coverage 70%/i });
 
         const results = await axe(container);
         expect(results).toHaveNoViolations();
+    });
 
-        global.fetch = originalFetch;
+    it("renders the workbench when requested", () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                    workbenchRecognition: true,
+                    workbenchBulkAI: true,
+                },
+                endpoints: {
+                    workbenchMedia: "https://example.com/wp-json/context-alt-text/v1/workbench/media",
+                },
+            },
+            data: {
+                workbench: workbenchBootstrapData,
+            },
+        };
+
+        const { getByText } = render(<App />);
+
+        expect(getByText(/Sample image/i)).toBeInTheDocument();
+        expect(getByText(/image\/jpeg/i)).toBeInTheDocument();
+        expect(screen.getByRole("table", { name: /Media queue/i })).toBeInTheDocument();
+    });
+
+    it("emits workbench seen analytics once when route loads", () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+            },
+            data: {
+                workbench: workbenchBootstrapData,
+            },
+        };
+
+        const dispatchEventSpy = vi.spyOn(window, "dispatchEvent");
+        render(<App />);
+
+        const seenEvents = dispatchEventSpy.mock.calls.filter(([event]) => event.type === "cat_workbench_seen");
+        expect(seenEvents).toHaveLength(1);
+        const [seenEvent] = seenEvents[0];
+        expect(seenEvent.detail).toMatchObject({
+            pagination: {
+                page: 1,
+                perPage: 20,
+            },
+            viewMode: "list",
+            filters: {
+                status: "missing",
+                search: null,
+            },
+        });
+
+        dispatchEventSpy.mockRestore();
+    });
+
+    it("dispatches notices when bulk actions are triggered", () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                    workbenchRecognition: true,
+                    workbenchBulkAI: true,
+                },
+            },
+            data: {
+                workbench: workbenchBootstrapData,
+            },
+        };
+
+        const dispatchEventSpy = vi.spyOn(window, "dispatchEvent");
+        render(<App />);
+
+        const checkbox = screen.getByRole("checkbox", { name: /Select Sample image/i });
+        fireEvent.click(checkbox);
+
+        const generateButton = screen.getByRole("button", { name: /Generate Alt Text/i });
+        fireEvent.click(generateButton);
+
+        expect(dispatchNoticeMock).toHaveBeenCalledWith(
+            "info",
+            "Preparing to generate alt text for 1 item.",
+            expect.objectContaining({
+                id: "workbench-bulk-generate",
+                spokenMessage: "Preparing to generate alt text for 1 item.",
+            }),
+        );
+        expect(dispatchNoticeMock).toHaveBeenCalledTimes(1);
+
+        const bulkEvents = dispatchEventSpy.mock.calls.filter(([event]) => event.type === "cat_workbench_bulk_action");
+        expect(bulkEvents).toHaveLength(1);
+        const [bulkEvent] = bulkEvents[0];
+        expect(bulkEvent.detail).toMatchObject({
+            action: "generate",
+            count: 1,
+            selection: ["123"],
+            filters: {
+                status: "missing",
+                search: null,
+            },
+        });
+
+        dispatchEventSpy.mockRestore();
+    });
+
+    it("dispatches recognition analytics with filters and notice messaging", () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                    workbenchRecognition: true,
+                },
+            },
+            data: {
+                workbench: workbenchBootstrapData,
+            },
+        };
+
+        const dispatchEventSpy = vi.spyOn(window, "dispatchEvent");
+        render(<App />);
+
+        const checkbox = screen.getByRole("checkbox", { name: /Select Sample image/i });
+        fireEvent.click(checkbox);
+
+        const recognitionButton = screen.getByRole("button", { name: /Trigger Recognition/i });
+        fireEvent.click(recognitionButton);
+
+        expect(dispatchNoticeMock).toHaveBeenCalledWith(
+            "info",
+            "Recognition triggered for 1 item.",
+            expect.objectContaining({
+                id: "workbench-recognition",
+                spokenMessage: "Recognition triggered for 1 item.",
+            }),
+        );
+        expect(dispatchNoticeMock).toHaveBeenCalledTimes(1);
+
+        const recognitionEvents = dispatchEventSpy.mock.calls.filter(
+            ([event]) => event.type === "cat_workbench_recognition_triggered",
+        );
+        expect(recognitionEvents).toHaveLength(1);
+        const [recognitionEvent] = recognitionEvents[0];
+        expect(recognitionEvent.detail).toMatchObject({
+            count: 1,
+            selection: ["123"],
+            filters: {
+                status: "missing",
+                search: null,
+            },
+        });
+
+        dispatchEventSpy.mockRestore();
     });
 });

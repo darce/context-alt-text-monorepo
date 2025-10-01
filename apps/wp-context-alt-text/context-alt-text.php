@@ -4,8 +4,8 @@
  * Plugin Name: Context Alt Text
  * Plugin URI: https://github.com/darce/context-alt-text-monorepo
  * Description: Batch-generate semantically rich, identity-aware alt text with remote recognition + LLM support.
- * Version: 1.0.0
- * Author: Daniel Darce
+ * Version: 0.0.1
+ * Author: Daniel Arcé
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: context-alt-text
@@ -19,6 +19,8 @@
  */
 
 declare(strict_types=1);
+
+require_once __DIR__ . '/src/Support/WpFunctionStubs.php';
 
 use ContextAltText\Admin\AccountCenterPage;
 use ContextAltText\Admin\Admin;
@@ -40,38 +42,27 @@ use ContextAltText\Support\Env;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Support\LifecycleManager;
 use ContextAltText\Template\Template;
+use ContextAltText\Workbench\WorkbenchMediaResolver;
 
 if (!defined('ABSPATH')) {
     exit;
+}
+
+$pluginMeta = function_exists('get_file_data')
+    ? get_file_data(__FILE__, ['Version' => 'Version'])
+    : ['Version' => '0.0.1'];
+
+$pluginVersion = trim((string) ($pluginMeta['Version'] ?? ''));
+
+if ($pluginVersion === '') {
+    $pluginVersion = '0.0.1';
 }
 
 if (!defined('WP_PLUGIN_DIR')) {
     define('WP_PLUGIN_DIR', dirname(__FILE__));
 }
 
-if (!function_exists('plugin_dir_path')) {
-    function plugin_dir_path(string $file): string
-    {
-        return rtrim(dirname($file), '/\\') . '/';
-    }
-}
-
-if (!function_exists('plugin_dir_url')) {
-    function plugin_dir_url(string $file): string
-    {
-        return plugin_dir_path($file);
-    }
-}
-
-if (!function_exists('plugin_basename')) {
-    function plugin_basename(string $file): string
-    {
-        $pluginRoot = defined('WP_PLUGIN_DIR') ? WP_PLUGIN_DIR : dirname($file);
-        return trim(str_replace(rtrim($pluginRoot, '/\\') . '/', '', $file), '/');
-    }
-}
-
-define('CONTEXT_ALT_TEXT_VERSION', '1.0.0');
+define('CONTEXT_ALT_TEXT_VERSION', $pluginVersion);
 define('CONTEXT_ALT_TEXT_PLUGIN_FILE', __FILE__);
 define('CONTEXT_ALT_TEXT_PLUGIN_DIR', plugin_dir_path(__FILE__));
 define('CONTEXT_ALT_TEXT_PLUGIN_URL', plugin_dir_url(__FILE__));
@@ -102,8 +93,6 @@ if (is_readable($contextAltTextAutoload)) {
         }
     });
 }
-
-require_once CONTEXT_ALT_TEXT_PLUGIN_DIR . 'src/Support/WpFunctionStubs.php';
 
 Env::load(CONTEXT_ALT_TEXT_PLUGIN_DIR . '.env');
 
@@ -139,11 +128,12 @@ function context_alt_text(): ContextAltText
     $settingsPage = new PluginSettingsPage();
     $accountCenterPage = new AccountCenterPage();
     $mediaPanel = new MediaLibraryPanel($scanner);
+    $workbenchMediaResolver = new WorkbenchMediaResolver();
 
     $instance = new ContextAltText(
-        new Admin($scanner, $dashboardMetrics),
+        new Admin($scanner, $dashboardMetrics, $featureFlags, $workbenchMediaResolver),
         new Frontend(),
-        new Api($dashboardMetrics),
+        new Api($dashboardMetrics, $featureFlags, $workbenchMediaResolver),
         new Menu(
             $dashboardPage,
             $workbenchPage,

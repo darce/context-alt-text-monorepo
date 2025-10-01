@@ -1,23 +1,32 @@
+```mermaid.radar
 graph TD
     A[main.tsx] --> B[App.tsx]
     B --> C[QueryClientProvider]
     C --> D[DashboardShell]
     D --> D1[HeroStatusSection]
-    D --> D2[CoverageCard]
-    D2 --> D2a[CoverageDonut]
-    D2 --> D2b[useCoverageMetrics]
-    D --> D3[ActivityCard]
-    D --> D4[RecognitionCard]
-    D --> D5[AutomationCard]
-    D --> D6[ActionFooter]
-
-    subgraph FutureRoutes
-        R1[Automation Queue]
-        R2[Roster Manager]
+    D1 --> D1a["Missing alt text count + Review in Panel CTA"]
+    
+    subgraph QuarantinedComponents["Quarantined (Post-MVP)"]
+        Q1[CoverageCard with donut]
+        Q2[ActivityCard]
+        Q3[RecognitionCard]
+        Q4[AutomationCard]
+        Q5[ActionFooter]
+    end
+    
+    subgraph ActiveRoutes["Active MVP Routes"]
         R3[Alt-Text Workbench]
+    end
+    
+    subgraph FutureRoutes["Post-MVP Routes (Backend-Managed)"]
+        R1[Automation Queue]
+        R2[Roster Manager - Backend Only via HF Spaces UI]
         R4[Settings]
         R5[Account Center]
     end
+    
+    note1["⚠️ Roster Management: All roster CRUD operations happen in backend service.<br/>Frontend only displays recognition results from backend roster matches."]
+    C --> ActiveRoutes
     C -. planned routes .-> FutureRoutes
 
     subgraph DataLayer

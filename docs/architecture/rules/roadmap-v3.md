@@ -19,24 +19,74 @@ Agent integrations (VS Code Copilot, Claude, etc.) go through MCP (post‑MVP); 
 
 ---
 
-## 🧱 Dashboard (Current Narrow MVP Scope)
+## 🧱 Dashboard (Comprehensive Overview)
 
-The Dashboard UI has been intentionally reduced to ONLY surface the core accessibility signal:
+The Dashboard provides a at-a-glance status of the plugin's recognition, alt-text generation, and automation workflows through five card-based widgets and a hero status banner.
 
-1. “We found N images missing alt text” (primary status line – KEEP EXACT WORDING)
-2. “Review in Panel” action (opens Media Library filtered to missing alt text)
+### Dashboard Components
 
-All former First Run Scan (formerly "Magic Import") related panels, banners, demo draft sections, and experimental counts have been QUARANTINED (code retained but not executed). No additional widgets (jobs, drafts, banners) are required for this phase.
+#### 1. Hero Status Banner
 
-Notes:
+**Purpose**: Primary accessibility signal with immediate action path
 
-* The historical typo / merged text after item 2 has been corrected. Only the two bullets above are in scope.
-* A first-run scan MUST populate the missing alt text count within 30s of activation (or plugin install) so the dashboard line is meaningful immediately.
-* When the count is not yet ready, the UI should still render the line with a spinner or a temporary “calculating…” state (future enhancement; not blocking this edit).
-* Total image count debug output currently shown in development (e.g., `DEBUG: Total Images = 0 | With Alt = 0 | Missing = 0`) is temporary and will be removed once the corrected query & tests land.
-* First Run Scan service / UI code (formerly Magic Import): quarantined; do NOT delete yet (scheduled for later cleanup milestone).
-* Ensure counting logic treats BOTH (a) absence of the `_wp_attachment_image_alt` meta row AND (b) empty-string values as “missing”.
-* Future (optional) enhancement: surface compliance percentage once counts are verified.
+* Displays current system state (e.g., "We found N images missing alt text")
+* CTA button directing to filtered Media Library or Workbench
+* Shows last updated timestamp
+* State-driven styling (info, warning, success)
+
+#### 2. Coverage Card
+
+**Purpose**: Visual progress tracking for alt-text coverage
+
+* Percentage coverage with donut chart visualization
+* Breakdown: Total images, With alt text, Missing alt text
+* Optional trend visualization (feature-flagged: `coverageTrend`)
+* React Query-powered with loading/error states
+* Retry action on fetch failures
+* Intersection Observer for analytics (card visibility tracking)
+
+#### 3. Activity Card
+
+**Purpose**: Recent operation timestamps
+
+* Last recognition run
+* Last alt-text generation
+* Last roster sync
+* Human-readable relative timestamps with tooltips showing absolute values
+
+#### 4. Recognition Insights Card
+
+**Purpose**: Triage surface for pending recognition work
+
+* Faces awaiting review (count with warning styling if > 0)
+* Brands awaiting review (count with warning styling if > 0)
+* Unresolved matches requiring manual intervention
+
+#### 5. Automation Pipeline Card
+
+**Purpose**: Background job status at a glance
+
+* Queued jobs count
+* Currently running jobs
+* Completed jobs (24-hour window)
+* Next scheduled action timestamp (if applicable)
+
+#### 6. Action Footer
+
+**Purpose**: Persistent quick-action bar
+
+* Primary workflows accessible from any dashboard view
+* Links to Workbench, Settings, Documentation
+
+### Implementation Notes
+
+* First-run scan MUST populate missing alt text count within 30s of activation
+* When count not ready, render "Calculating…" with spinner (no blocking errors)
+* Counting logic treats BOTH (a) absence of `_wp_attachment_image_alt` meta AND (b) empty-string values as "missing"
+* Coverage Card uses React Query with 60s stale time, manual refetch available
+* All cards implement proper ARIA labels, live regions, and screen reader announcements
+* Cards emit analytics events on visibility (IntersectionObserver) and interactions
+* Feature flags control optional enhancements (trend visualization, advanced metrics)
 
 > Gating note (MVP): Abilities and MCP integration are scaffolded but disabled by default. They are behind feature flags and will be delivered post‑MVP. See "Feature flags and gating" below.
 
@@ -164,23 +214,60 @@ DoD:
 * Analyze scene triggered from WP returns labeled detections.
 * Admin diagnostics surfaces health and recent errors.
 
-### Epic D — Alt Text Generation [PLANNED]
+### Epic D — Dashboard & Alt Text Generation [IN PROGRESS]
 
 Implementation:
 
-* AltTextService composes prompt from SceneAnalysisResult + policy.
-* AIClient chooses provider, enforces style guardrails.
-* Admin UI to review/approve drafts.
+**Dashboard Surface** (React/TypeScript)
+
+* [x] Hero Status component with state-driven messaging
+* [x] Coverage Card with donut chart, trend visualization (feature-flagged)
+* [x] Activity Card with relative timestamps and tooltips
+* [x] Recognition Insights Card with pending counts
+* [x] Automation Pipeline Card with job status
+* [x] Action Footer with quick-access links
+* [x] React Query integration with proper loading/error states
+* [x] Analytics instrumentation (IntersectionObserver, event emission)
+* [x] Comprehensive test coverage (Vitest + Testing Library)
+* [ ] Storybook stories for all dashboard components
+* [ ] REST endpoint for live Coverage Card refresh (`/wp-json/context-alt-text/v1/dashboard/coverage`)
+* [ ] REST endpoint for Activity Card data (`/wp-json/context-alt-text/v1/dashboard/activity`)
+* [ ] REST endpoint for Recognition Insights (`/wp-json/context-alt-text/v1/dashboard/recognition`)
+* [ ] REST endpoint for Automation Pipeline status (`/wp-json/context-alt-text/v1/dashboard/automation`)
+* [ ] PHP service layer: `DashboardMetricsService` aggregating data from domain services
+* [ ] First-run scan integration (<30s after activation)
+* [ ] Persistent user preferences (dismissed notices, view settings)
+
+#### Alt-Text Generation Pipeline
+
+* AltTextService composes prompt from SceneAnalysisResult + policy
+* AIClient chooses provider, enforces style guardrails
+* Admin UI to review/approve drafts (Workbench integration)
+* Batch generation queue with progress tracking
 
 TDD:
 
-* Golden prompt composition tests.
-* Provider-specific adapters with mock responses.
+* [x] CoverageCard unit tests (loading, error, refetch, trend, accessibility)
+* [x] ActivityCard unit tests (timestamp formatting, tooltips)
+* [x] RecognitionCard unit tests (warning states, zero states)
+* [x] AutomationCard unit tests (job counts, next run display)
+* [x] HeroStatus unit tests (state variants, CTA rendering)
+* [ ] Integration tests for dashboard data hydration
+* [ ] Contract tests for REST endpoints vs TypeScript types
+* Golden prompt composition tests
+* Provider-specific adapters with mock responses
+* [ ] E2E tests for dashboard → workbench navigation flow
 
 DoD:
 
-* Draft alt text generated automatically for missing entries.
-* Admin can accept/decline drafts with history log.
+* [x] Dashboard renders all 5 cards with proper accessibility
+* [x] Coverage Card live-refreshes via React Query
+* [x] Analytics events fire on card visibility and interactions
+* [ ] REST endpoints return properly typed, cacheable responses
+* [ ] First-run scan completes within 30s, dashboard reflects counts
+* Draft alt text generated automatically for missing entries
+* Admin can accept/decline drafts with history log
+* [ ] Storybook deployed with all dashboard component stories
 
 ### Epic E — Propagation & Sync [PLANNED]
 
@@ -231,23 +318,23 @@ DoD:
 
 ## 🧪 Validation Checklist
 
-- [ ] `composer test` (PHPUnit) passes.
-- [ ] `npm test` / `npx vitest run` passes or appropriately skipped.
-- [ ] FastAPI pytest suite covers analyze + embeddings.
-- [ ] Contract tests compare OpenAPI schema with PHP DTOs.
-- [ ] Playbook for manual smoke (WP admin + HF backend) published.
-- [ ] Keyboard navigation verified (no-pointer workflow, shortcut helper toggle, reference page linked) and recorded in Storybook/QA notes.
+* [ ] `composer test` (PHPUnit) passes.
+* [ ] `npm test` / `npx vitest run` passes or appropriately skipped.
+* [ ] FastAPI pytest suite covers analyze + embeddings.
+* [ ] Contract tests compare OpenAPI schema with PHP DTOs.
+* [ ] Playbook for manual smoke (WP admin + HF backend) published.
+* [ ] Keyboard navigation verified (no-pointer workflow, shortcut helper toggle, reference page linked) and recorded in Storybook/QA notes.
 
 ## 🗺️ Long-Term Backlog (Post-MVP)
 
-- MCP tool enablement & agent documentation.
-- Advanced roster analytics (duplicate detection, tagging suggestions).
-- Multi-tenant backend support with per-site API keys.
-- Offline processing queue using managed job runner (e.g., Temporal, PydanticWorker).
-- Accessibility insights dashboard with trendlines and digests.
+* MCP tool enablement & agent documentation.
+* Advanced roster analytics (duplicate detection, tagging suggestions).
+* Multi-tenant backend support with per-site API keys.
+* Offline processing queue using managed job runner (e.g., Temporal, PydanticWorker).
+* Accessibility insights dashboard with trendlines and digests.
 
 ## 📚 References
 
-- WordPress Plugin Handbook — https://developer.wordpress.org/plugins/
-- FastAPI docs — https://fastapi.tiangolo.com/
-- Hugging Face Spaces — https://huggingface.co/spaces
+* WordPress Plugin Handbook — <https://developer.wordpress.org/plugins/>
+* FastAPI docs — <https://fastapi.tiangolo.com/>
+* Hugging Face Spaces — <https://huggingface.co/spaces>

@@ -55,7 +55,7 @@ http://<local-domain>/wp-json/<your-namespace>/server/streamable.
 3. If remote dependency is involved, add/refine a provider interface + mock implementation.
 4. Implement the minimal production code to pass tests.
 5. Refactor for clarity and duplication removal while tests stay green.
-6. Update UML (Mermaid) and roadmap status tags.
+6. Update UML (Mermaid) and roadmap status tags, ensuring every diagram renders without syntax errors.
 7. Security & A11y pass: nonce/cap checks; escape + sanitize; keyboard/ARIA (when UI slice).
 8. Do **not** stage or commit files until the feature slice is fully implemented, reviewed locally, and all relevant tests pass—use the worktree for WIP only.
 9. Commit with Conventional Commits (e.g., feat(abilities): add cat/generate_alt_text). Use feat only when the slice is functionally complete.

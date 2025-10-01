@@ -1,19 +1,18 @@
 classDiagram
+    note "⚠️ BACKEND-ONLY ARCHITECTURE: All roster CRUD operations happen in Recognition API (HF Spaces).\nWP Plugin only reads roster data via RosterSyncClient for display purposes.\nNO frontend roster management UI in MVP."
+    
     class RosterService {
+      <<WordPress Backend - Read Only>>
       -RosterSyncClient|null rosterClient
       +__construct(?RosterSyncClient $client = null)
       +exists($label, $type, $excludeId): bool
       +getLocalRoster($filters): array
       +syncFromRemote(): bool
-      +createIfUnique($data): ?RosterEntry
-      +createAndSync($data, $options): ?RosterEntry
-      +updateAndSync($id, $data, $options): ?RosterEntry
-      +upsertRemote(RosterEntry $entry, $options): array
-      +attachReferenceImage($entryId, $reference): bool
-      +getAugmentedEmbedding($entryId): ?array
       +search($query, $limit): array
       +validate($data): array
     }
+    
+    note for RosterService "Read-only local cache of backend roster.\nNO create/update/delete methods in MVP.\nAll mutations happen in backend service."
 
     class RosterEntry {
       +getValidTypes(): array

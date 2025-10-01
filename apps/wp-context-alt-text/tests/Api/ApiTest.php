@@ -7,6 +7,8 @@ namespace ContextAltText\Tests\Api;
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Api\Api;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
+use ContextAltText\Support\FeatureFlags;
+use ContextAltText\Workbench\WorkbenchMediaResolver;
 use PHPUnit\Framework\TestCase;
 
 final class ApiTest extends TestCase
@@ -32,13 +34,12 @@ final class ApiTest extends TestCase
         };
 
         $metrics = new DashboardMetricsService($scanner);
-        $api = new Api($metrics);
+        $api = new Api($metrics, new FeatureFlags(), new WorkbenchMediaResolver());
         $api->register_routes();
 
         self::assertNotEmpty($GLOBALS['__cat_rest_routes']);
-        $route = $GLOBALS['__cat_rest_routes'][0];
-        self::assertSame('context-alt-text/v1', $route['namespace']);
-        self::assertSame('/dashboard/coverage', $route['route']);
+        $route = $this->find_route('/dashboard/coverage');
+        self::assertNotNull($route);
 
         $callback = $route['args']['callback'];
         $response = $callback();
@@ -61,10 +62,11 @@ final class ApiTest extends TestCase
         };
 
         $metrics = new DashboardMetricsService($scanner);
-        $api = new Api($metrics);
+        $api = new Api($metrics, new FeatureFlags(), new WorkbenchMediaResolver());
         $api->register_routes();
 
-        $route = $GLOBALS['__cat_rest_routes'][0];
+        $route = $this->find_route('/dashboard/coverage');
+        self::assertNotNull($route);
         $permission = $route['args']['permission_callback'];
 
         $GLOBALS['__cat_current_user_capabilities']['manage_options'] = true;
@@ -72,5 +74,65 @@ final class ApiTest extends TestCase
 
         $GLOBALS['__cat_current_user_capabilities']['manage_options'] = false;
         self::assertFalse($permission());
+    }
+
+    public function test_registers_workbench_media_route_when_feature_enabled(): void
+    {
+        $scanner = new class extends MissingAltTextScanner {
+            public function get_summary(): array
+            {
+                return [
+                    'total' => 0,
+                    'with_alt' => 0,
+                    'missing' => 0,
+                ];
+            }
+        };
+
+        $metrics = new DashboardMetricsService($scanner);
+        $api = new Api($metrics, new FeatureFlags(), new WorkbenchMediaResolver());
+        $api->register_routes();
+
+        $route = $this->find_route('/workbench/media');
+        self::assertNotNull($route);
+        self::assertSame('GET', $route['args']['methods']);
+    }
+
+    public function test_skips_workbench_media_route_when_feature_disabled(): void
+    {
+        $scanner = new class extends MissingAltTextScanner {
+            public function get_summary(): array
+            {
+                return [
+                    'total' => 0,
+                    'with_alt' => 0,
+                    'missing' => 0,
+                ];
+            }
+        };
+
+        $metrics = new DashboardMetricsService($scanner);
+        $flags = new class extends FeatureFlags {
+            public function workbenchEnabled(): bool
+            {
+                return false;
+            }
+        };
+
+        $api = new Api($metrics, $flags, new WorkbenchMediaResolver());
+        $api->register_routes();
+
+        self::assertNull($this->find_route('/workbench/media'));
+    }
+
+    private function find_route(string $path): ?array
+    {
+        foreach ($GLOBALS['__cat_rest_routes'] as $route) {
+            if ($route['route'] === $path) {
+                return $route;
+            }
+        }
+
+        return null;
     }
 }

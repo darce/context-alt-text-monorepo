@@ -1,7 +1,7 @@
 import type { Meta, StoryObj } from "@storybook/react";
 
 import { CoverageCard } from "./CoverageCard";
-import type { CoverageCard as CoverageCardData, CoverageTrendPoint } from "@/admin/types";
+import type { CoverageCard as CoverageCardData, CoverageTrendPoint, FeatureFlags } from "@/admin/types";
 
 const meta: Meta<typeof CoverageCard> = {
     title: "Dashboard/CoverageCard",
@@ -39,9 +39,24 @@ const baseData: CoverageCardData = {
     trend_series: sampleTrend([40, 55, 65, 75]).reverse(),
 };
 
+const featureFlags: FeatureFlags = {
+    coverageTrend: true,
+};
+
+const baseQueryState = {
+    status: "success" as const,
+    isLoading: false,
+    isFetching: false,
+    isError: false,
+    error: null,
+    hasEndpoint: true,
+};
+
 export const Default: Story = {
     args: {
         data: baseData,
+        featureFlags,
+        queryState: baseQueryState,
     },
 };
 
@@ -54,6 +69,8 @@ export const ImprovingCoverage: Story = {
             coverage_percent: 75,
             trend_series: sampleTrend([35, 42, 55, 67, 75]).reverse(),
         },
+        featureFlags,
+        queryState: baseQueryState,
     },
 };
 
@@ -66,6 +83,8 @@ export const FullCoverage: Story = {
             coverage_percent: 100,
             trend_series: sampleTrend([70, 82, 90, 100]).reverse(),
         },
+        featureFlags,
+        queryState: baseQueryState,
     },
 };
 
@@ -77,6 +96,47 @@ export const EmptyLibrary: Story = {
             missing: 0,
             coverage_percent: 0,
             trend_series: [],
+        },
+        queryState: {
+            ...baseQueryState,
+            hasEndpoint: false,
+        },
+    },
+};
+
+export const Loading: Story = {
+    args: {
+        data: baseData,
+        featureFlags,
+        queryState: {
+            ...baseQueryState,
+            status: "pending",
+            isLoading: true,
+        },
+    },
+};
+
+export const ErrorState: Story = {
+    args: {
+        data: baseData,
+        featureFlags,
+        queryState: {
+            ...baseQueryState,
+            status: "error",
+            isError: true,
+            error: new Error("Server returned 500"),
+            refetch: async () => undefined,
+        },
+    },
+};
+
+export const Refreshing: Story = {
+    args: {
+        data: baseData,
+        featureFlags,
+        queryState: {
+            ...baseQueryState,
+            isFetching: true,
         },
     },
 };

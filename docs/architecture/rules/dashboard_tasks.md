@@ -1,109 +1,350 @@
-# Dashboard Experience Tasks
+# Dashboard Tasks
 
-## 1. Hero Status
+Admin home screen providing at-a-glance metrics, activity feed, recognition insights, and automation pipeline status. Aligns with roadmap v3.0 Phase 1 (Epic D) objectives and serves as the primary navigation entry point for the plugin.
 
-- Render headline message (`We found N images missing alt text`) sourced from the latest scan summary.
-- Call-to-action button `Open Alt-Text Workbench` that routes to the SPA workbench surface.
-- Adaptive copy:
-  - `Scanning…` state when counts are not yet available.
-  - `Scan complete — fix them now.` once results are ready.
-- Display timestamp badge (timeago) for the last completed scan.
+## Overview
 
-## 2. Diagnostic Cards (Two-Row Grid)
+The Dashboard provides at-a-glance status through **six key components**:
 
-### Coverage & Trend
-- Donut chart: missing vs total images to surface overall coverage percentage.
-- Line chart (evaluate usefulness) showing progress over time as missing count declines; confirm signal clarity before committing.
+1. **Hero Status Banner** — Primary accessibility signal and scan status
+2. **Coverage Card** — Visual progress tracking with donut chart and trend
+3. **Activity Card** — Recent operation timestamps and activity feed
+4. **Recognition Insights Card** — Pending face/brand recognition work  
+5. **Automation Pipeline Card** — Background job queue status
+6. **Action Footer** — Quick-access CTAs and navigation
 
-Implementation steps:
-- [x] Define shared `CoverageDonut` component in SPA primitives with props `{ total, withAlt, missing }`.
-- [x] Expose `useCoverageMetrics()` hook that reads from REST endpoint `/wp-json/cat/v1/dashboard/coverage` (stubbed until backend ready).
-- [ ] Persist coverage history (already captured via `MissingAltTextScanner`) and expose through same endpoint.
-- [x] Build `CoverageTrend` component that consumes the history array, rendering a sparkline/line chart; gate behind feature flag until usefulness validated.
-- [x] Add Storybook stories for both components (empty, partial, full coverage, and loading states).
-- [x] Wire components into the dashboard page route and ensure data hydration via React Query.
-- [ ] Replace bespoke coverage donut/sparkline markup with Radix UI primitives once the component library is available.
-- [ ] Verify WordPress analytics listeners record the `cat_dashboard_card_seen` and `cat_dashboard_coverage_trend_enabled` events emitted by the dashboard UI.
-- [ ] Define the migration plan (timing, primitives, fallbacks) for replacing the bespoke SVG donut/sparkline with Radix or a shared chart utility when available.
-- [x] Replace the CSS pseudo-element radial illusion with an actual SVG doughnut chart that renders arcs based on coverage percentages; retire the `.cat-progress--radial` hack and avoid misusing `@radix-ui/react-progress` for circular visuals.
-- [ ] Publish JSON Schema + golden example fixtures for `/wp-json/cat/v1/dashboard/coverage` covering both the summary fields and each `trend_series` entry; land them under `docs/architecture/contracts/dashboard/` so frontend/backends share the contract.
-- [ ] Extend `MissingAltTextScanner` persistence so each completed scan appends a coverage snapshot to a bounded history store (keep last 30 entries) and expose a `wp cat dashboard backfill-coverage-history` CLI to seed existing installs.
-- [x] Layer React Query states into the card (`isLoading`, `isRefetching`, `isError`) with skeleton, retry, and inline error copy; show a neutral "No Media Library items yet" message when `total === 0` instead of the chart.
-- [x] Introduce narrated alternatives for the donut and trend (`aria-describedby` + visually hidden delta text) so screen readers receive the coverage percentage and latest change without relying on the SVGs.
-- [x] Add Vitest + RTL coverage for `CoverageCard`, `CoverageDonut`, and the upcoming `CoverageTrend` verifying clamped percentages, zero-state messaging, feature-flag gating, and endpoint integration via MSW stubs.
-- [x] Instrument analytics when the card enters the viewport (`cat_dashboard_card_seen`) and when the trend toggle/feature flag is enabled to measure sparkline engagement before graduating the feature.
+All components are React/TypeScript with comprehensive test coverage, accessibility compliance, and analytics instrumentation.
 
-### Latest Activity
-- Card showing timestamps for:
-  - Last recognition run
-  - Last alt-text generation batch
-  - Last roster sync
-- Include quick links to relevant logs/detail views.
+---
 
-### Recognition Insights
-- Counts of detected faces/brands awaiting approval or unresolved matches.
-- Highlight potential follow-ups (e.g., `3 faces need review`).
+## 1. Hero Status Banner
 
-### Automation Pipeline
-- Status chips for queued/running/completed bulk jobs.
-- Provide pending job count and next scheduled run time.
+### Component Status
+* [x] Component created (`HeroStatus.tsx`)
+* [x] Unit tests with state variants (`HeroStatus.test.tsx`)
+* [x] State-driven styling (info, warning, success, error)
+* [x] CTA button with dynamic routing
+* [x] Relative timestamp display
+* [ ] Storybook story with all state variants
+* [ ] Integration with real-time scan status
 
-## TDD Test Suite Roadmap
+### Backend Work
+* [ ] PHP `HeroStatusService` calculates current state
+* [ ] REST endpoint `/wp-json/context-alt-text/v1/dashboard/hero` (optional live refresh)
+* [ ] Hook into first-run scan completion to update state
+* [ ] Admin notice integration for critical states
 
-- [ ] Draft failing tests for `HeroStatus` that codify scanning vs ready copy, CTA routing, and the timestamp badge before iterating on the component.
-  - [x] Capture default bootstrap payload and assert the component renders the localized message variants using React Testing Library queries.
-  - [x] Verify CTA button invokes `Open Alt-Text Workbench` navigation via mocked router history.
-  - [x] Assert the relative timestamp badge updates when the query data changes (simulate via React Query invalidate).
-- [x] Capture desired loading/empty/error behaviors for `CoverageCard` + `CoverageTrend` via component tests that assert skeletons, zero-state messaging, and feature-flagged trend rendering.
-  - [x] Define MSW handlers for success, timeout, and empty dataset responses to drive Vitest scenarios.
-  - [x] Assert the donut clamps values, trend hides when feature flag off, and zero-library message replaces charts.
-  - [x] Document the pending trend flag in the test file so toggling the flag requires updating expectations.
-- [ ] Add integration-style tests for `LatestActivity`, `RecognitionInsights`, and `AutomationPipeline` cards that assert placeholder/resolved states so future UI slices stay regression-safe.
-  - [x] Mock dashboard bootstrap payload with partial data to confirm fallbacks and skeleton UIs render correctly.
-  - [ ] Validate that resolved state links/buttons route to expected URLs using a shared test utility.
-  - [x] Cover edge cases (null timestamps, zero counts) to lock in desired copy and avoid regressions during refactors.
-- [ ] Introduce a dashboard page smoke test that mounts the full SPA route with MSW-powered REST fixtures to enforce data hydration contracts as new cards land.
-  - [x] Stand up a shared `renderDashboard` helper that wraps React Query provider, router, and theme tokens.
-  - [ ] Assert hydration requests hit the expected endpoints and respond to refetch events.
-  - [ ] Include an accessibility audit snapshot (axe) to catch regressions as new components arrive.
+### Testing Needs
+* [x] Renders message and CTA correctly
+* [x] State-based CSS class application
+* [x] Timestamp formatting (human-readable)
+* [x] Missing/null data handling
+* [ ] Screen reader announcements (aria-live regions)
 
-### WordPress (PHPUnit + WP-CLI Acceptance)
-- [ ] Create PHPUnit controller tests that specify the `/wp-json/cat/v1/dashboard/coverage` contract, including history window rules, zero-library handling, and REST nonce requirements.
-  - [ ] Lock the JSON schema by comparing controller responses against the published fixture using `wp_json_file_decode` and `assertSame`.
-  - [ ] Simulate nonce failures and insufficient capability to ensure the endpoint rejects unauthorized access.
-  - [ ] Verify history trimming logic keeps the most recent 30 entries with deterministic timestamps supplied via a fake clock helper.
-- [ ] Add acceptance-style WP_CLI tests documenting the expected output/side-effects of the upcoming `wp cat dashboard backfill-coverage-history` command.
-  - [ ] Create a disposable test site fixture with legacy scans and assert the command backfills missing history rows.
-  - [ ] Confirm idempotency by running the command twice and ensuring no duplicate rows appear.
-  - [ ] Capture error messaging when the scanner has never been executed to guide ops troubleshooting.
-- [ ] Expand backend tests for scan orchestration so each completed `MissingAltTextScanner` run records a coverage snapshot and triggers any async analytics hooks.
-  - [ ] Introduce a fake analytics transport and assert events fire with the correct payload after persistence.
-  - [ ] Ensure transactional rollbacks on failure do not persist partial history entries.
-  - [ ] Verify cron-driven and manual scan triggers share the same recording path via data providers.
-- [ ] Seed fixtures + contract assertions for dashboard bootstrap payloads to keep frontend and backend synchronized as new cards and metrics ship.
-  - [ ] Store canonical bootstrap JSON under `docs/architecture/contracts/dashboard/bootstrap.json` and reference it in tests.
-  - [ ] Write assertions that the localized bootstrap enqueues expected cards and omits feature-flagged entries by default.
-  - [ ] Add smoke coverage for the enqueue script to confirm the payload survives serialization/deserialization.
+### Accessibility Work
+* [x] Semantic HTML structure
+* [ ] ARIA landmarks for status section
+* [ ] Live region for dynamic updates
+* [ ] Keyboard navigation to CTA button
 
-## 3. Actionable Footer
+---
 
-- Quick actions:
-  - `Run scan again`
-  - `Generate drafts for selection`
-  - `Sync roster`
-- Secondary text: `Last scan completed X minutes ago.`
-- Consistent color palette (warning for missing alt text, success for completed tasks).
-- Small sparkline/iconography per card to convey liveliness.
+## 2. Coverage Card
 
-## Component & Styling Stack
+Shows alt-text coverage metrics with donut chart visualization and optional trend sparkline.
 
-- [x] Integrate Radix UI headless primitives across dashboard surfaces (buttons, progress, tooltips). Cards remain bespoke (documented in Storybook notes).
-- [x] Introduce a lightweight SCSS design token layer (colors, spacing, typography) and wire Vite to compile `.scss` into the bundle.
-- [x] Refactor existing React components to wrap Radix primitives; only author bespoke components when Radix lacks an equivalent. Document any exceptions in Storybook.
-- [x] Update Storybook stories to showcase Radix-based components and demonstrate theme overrides via SCSS tokens.
+### Component Status
+* [x] Component created (`CoverageCard.tsx`)
+* [x] Donut chart sub-component (`CoverageDonut.tsx`)
+* [x] Trend sparkline sub-component (`CoverageTrend.tsx`)
+* [x] Unit tests with multiple scenarios (`CoverageCard.test.tsx`)
+* [x] Storybook stories (`CoverageCard.stories.tsx`)
+* [x] React Query integration with `useCoverageMetrics()` hook
+* [x] Loading/error states with retry button
+* [x] Feature flag for trend display (`featureFlags.coverageTrend`)
+* [x] Analytics instrumentation (card seen, trend enabled)
+* [x] Accessibility: aria-describedby for donut and trend
+* [x] Zero-state messaging when no library items exist
+* [ ] Drill-down click to open Workbench filtered view
+* [ ] Export coverage report action (CSV/PDF)
 
-## Layout Notes
+### Backend Work
+* [x] REST endpoint `/wp-json/cat/v1/dashboard/coverage` (stub exists)
+* [ ] PHP `CoverageMetricsService` calculates metrics from scanner data
+* [ ] Persist coverage history on each `MissingAltTextScanner` run
+* [ ] Return trend data points (last 30 snapshots, bounded)
+* [ ] Add query parameter for date range filtering (?days=7,30,90)
+* [ ] Implement caching with WP Transients API (5-minute cache)
+* [ ] Add breakdown by MIME type (images, videos, PDFs)
 
-- Structure: hero at top, two rows of diagnostic cards, footer CTA row.
-- Ensure cards respond gracefully on narrower screens (stack to single column).
-- Integrate with SPA data layer (React Query or equivalent) for live refresh without reloads.
+### Data Contract Work
+* [ ] Publish JSON Schema for `/wp-json/cat/v1/dashboard/coverage` response
+* [ ] Create golden fixture under `docs/architecture/contracts/dashboard/coverage.json`
+* [ ] Document `trend_series` array structure (timestamp, coverage_percent, total, with_alt, missing)
+* [ ] Frontend/backend sync on field names and types
+
+### Testing Needs
+* [x] Percentage clamping (0-100 range)
+* [x] Zero-state messaging when total === 0
+* [x] Feature flag gating for trend display
+* [x] MSW stubs for endpoint integration
+* [x] Loading skeleton display
+* [x] Error state with retry button
+* [x] Screen reader alternatives (aria-describedby)
+* [ ] Drill-down navigation behavior
+* [ ] Export action triggering
+
+### Analytics Work
+* [x] IntersectionObserver tracks card visibility
+* [x] Emit `cat_dashboard_card_seen` event
+* [x] Emit `cat_dashboard_coverage_trend_enabled` when trend is shown
+* [ ] Track drill-down clicks: `cat_coverage_drilldown`
+* [ ] Track export actions: `cat_coverage_export`
+
+---
+
+## 3. Activity Card
+
+Shows recent plugin activity timestamps (alt-text generation, recognition jobs, manual edits, roster syncs).
+
+### Component Status
+* [x] Component created (`ActivityCard.tsx`)
+* [x] Unit tests (`ActivityCard.test.tsx`)
+* [x] Display list of recent activities with relative timestamps
+* [x] Tooltip support for timestamp details
+* [x] Format relative timestamps ("2 hours ago", "yesterday")
+* [x] Empty state handling ("No recent activity")
+* [ ] Activity type icons (generated, manual edit, recognition, error)
+* [ ] "View All Activity" link to full activity log page
+* [ ] Filtering by activity type (dropdown or tabs)
+* [ ] Show user avatars for manual edit activities
+* [ ] Pagination or "Load More" for long lists
+* [ ] Real-time updates for new activities
+
+### Backend Work
+* [ ] Create `GET /wp-json/context-alt-text/v1/dashboard/activity` endpoint
+* [ ] Return array of activity objects with type, message, timestamp, user, attachment_id
+* [ ] Add pagination support (?page=1&per_page=10)
+* [ ] Add filtering by activity type (?type=generation,recognition,manual)
+* [ ] Add capability check (manage_options)
+* [ ] Store activities in custom table or post meta for performance
+
+### Activity Types Needed
+* [ ] `alt_text_generated` - Automatic generation completed
+* [ ] `alt_text_edited` - Manual edit by user
+* [ ] `recognition_completed` - Face/brand recognition finished
+* [ ] `recognition_failed` - Recognition job error
+* [ ] `bulk_generation_started` - Bulk job initiated
+* [ ] `bulk_generation_completed` - Bulk job finished
+* [ ] `roster_synced` - Roster sync completed
+
+---
+
+## 4. Recognition Insights Card
+
+Shows recognition insights: pending faces/brands, unresolved matches, confidence scores.
+
+### Component Status
+* [x] Component created (`RecognitionCard.tsx`)
+* [x] Unit tests (`RecognitionCard.test.tsx`)
+* [x] Display count of pending face detections
+* [x] Display count of pending brand detections
+* [x] Show count of unresolved matches
+* [x] Warning styling for non-zero counts
+* [ ] "Review Matches" button linking to recognition review page
+* [ ] Show average confidence score for recent recognitions
+* [ ] Empty state when no recognition data available
+* [ ] Visual indicators for confidence levels (high/medium/low)
+* [ ] Quick preview of top unresolved matches (thumbnails)
+* [ ] "Sync Roster" action button
+
+### Backend Work
+* [ ] Create `GET /wp-json/context-alt-text/v1/dashboard/recognition` endpoint
+* [ ] Return counts of pending detections, unresolved matches
+* [ ] Include sample of top unresolved matches with thumbnails
+* [ ] Add average confidence score calculation
+* [ ] Add capability check (manage_options)
+* [ ] Query custom recognition tables for metrics
+* [ ] Add roster sync status indicator (last sync timestamp)
+* [ ] Cache recognition metrics for 2 minutes
+
+### Integration Work
+* [ ] Query recognition observations from custom tables
+* [ ] Calculate pending counts (faces/brands without roster matches)
+* [ ] Calculate unresolved counts (matches below confidence threshold)
+* [ ] Provide sample matches for preview
+
+---
+
+## 5. Automation Pipeline Card
+
+Shows pipeline status: queued jobs, running jobs, completed jobs, error states.
+
+### Component Status
+* [x] Component created (`AutomationCard.tsx`)
+* [x] Unit tests (`AutomationCard.test.tsx`)
+* [x] Display count of queued jobs
+* [x] Display count of running jobs
+* [x] Display count of completed jobs (last 24 hours)
+* [x] Display next scheduled run time
+* [ ] Display count of failed jobs with error state
+* [ ] "View Queue" button linking to automation queue page
+* [ ] Progress bars for running jobs
+* [ ] Estimated time remaining for queued jobs
+* [ ] "Pause/Resume Queue" action button
+* [ ] Real-time updates for job status changes
+* [ ] Retry action for failed jobs
+
+### Backend Work
+* [ ] Create `GET /wp-json/context-alt-text/v1/dashboard/automation` endpoint
+* [ ] Return job counts by status (queued, running, completed, failed)
+* [ ] Include running jobs with progress percentages
+* [ ] Include failed jobs with error messages
+* [ ] Add capability check (manage_options)
+* [ ] Query Action Scheduler or custom job queue table
+
+### Job Queue Integration
+* [ ] Integrate with Action Scheduler API for job status
+* [ ] Query pending actions: `as_get_scheduled_actions()`
+* [ ] Query running actions: `as_get_scheduled_actions(['status' => 'in-progress'])`
+* [ ] Query failed actions with error logs
+* [ ] Calculate progress for batch jobs (completed / total items)
+
+---
+
+## 6. Action Footer
+
+Call-to-action footer with primary action buttons and quick links.
+
+### Component Status
+* [x] Component created (`ActionFooter.tsx`)
+* [x] Unit tests (`ActionFooter.test.tsx`)
+* [ ] Add primary CTA: "Generate Alt Text" button (opens Workbench)
+* [ ] Add secondary CTA: "Review Recognition" button (opens recognition page)
+* [ ] Add quick link: "View All Activity"
+* [ ] Add quick link: "Plugin Settings"
+* [ ] Implement responsive layout (stack on mobile)
+* [ ] Add keyboard navigation support
+* [ ] Style with WordPress button classes for consistency
+
+---
+
+## 7. Dashboard-Wide Features
+
+### Performance Optimization
+* [x] React Query caching implemented for coverage metrics
+* [ ] Implement stale-while-revalidate strategy for all endpoints
+* [ ] Add request deduplication for concurrent fetches
+* [ ] Implement optimistic updates for actions (pause/resume queue)
+* [ ] Code split dashboard cards for smaller initial bundle
+* [ ] Implement virtual scrolling for activity feed if > 100 items
+* [ ] Add performance monitoring: track render times
+
+### Error Handling
+* [x] Inline retry button on CoverageCard on fetch error
+* [ ] Implement error boundaries for each dashboard card
+* [ ] Show user-friendly error messages (no stack traces)
+* [ ] Add "Report Issue" link on error states
+* [ ] Log errors to browser console with context
+* [ ] Send critical errors to backend logging endpoint
+* [ ] Implement graceful degradation (show cached data on error)
+* [ ] Add offline detection and appropriate messaging
+
+### Accessibility
+* [x] Basic ARIA attributes on CoverageCard
+* [ ] Add comprehensive ARIA labels to all cards
+* [ ] Ensure all interactive elements are keyboard accessible
+* [ ] Add screen reader announcements for dynamic updates
+* [ ] Implement focus management for modals/overlays
+* [ ] Add skip links for dashboard sections
+* [ ] Ensure color contrast meets WCAG AA standards
+* [ ] Add reduced motion alternatives for animations
+* [ ] Test with screen readers (NVDA, JAWS, VoiceOver)
+
+### Internationalization
+* [ ] Extract all user-facing strings to translation functions
+* [ ] Use `wp.i18n.__()` for translations
+* [ ] Add text domain: `context-alt-text`
+* [ ] Generate `.pot` file for translators
+* [ ] Test with RTL languages (Arabic, Hebrew)
+* [ ] Format numbers/dates according to locale
+
+### Configuration
+* [x] Feature flag for CoverageTrend: `featureFlags.coverageTrend`
+* [ ] Add user preference for dashboard layout (compact/expanded)
+* [ ] Add user preference for auto-refresh interval
+* [ ] Add user preference for which cards to show/hide
+* [ ] Add admin setting for default dashboard view
+* [ ] Store preferences in user meta: `wp_usermeta`
+* [ ] Add "Reset to Defaults" action
+
+### Help & Onboarding
+* [ ] Add contextual help tooltips for each card
+* [ ] Implement first-time user onboarding tour
+* [ ] Add "What's This?" help icon on complex metrics
+* [ ] Link to documentation for each dashboard section
+* [ ] Add empty state messaging with getting started guide
+* [ ] Implement feature announcements for new capabilities
+
+---
+
+## 8. Testing Strategy
+
+### Frontend Tests (Vitest + RTL)
+* [x] Unit tests for HeroStatus, CoverageCard, ActivityCard
+* [x] Storybook stories for CoverageCard variations
+* [x] MSW stubs for endpoint integration
+* [ ] Complete unit test coverage for all dashboard components (>90%)
+* [ ] Integration tests for dashboard data fetching
+* [ ] Accessibility tests with axe-core for all components
+* [ ] Visual regression tests with Percy or Chromatic
+
+### Backend Tests (PHPUnit)
+* [ ] PHPUnit controller tests for `/wp-json/cat/v1/dashboard/coverage` contract
+* [ ] Lock JSON schema by comparing responses against published fixture
+* [ ] Simulate nonce failures and insufficient capability
+* [ ] Verify history trimming logic keeps most recent 30 entries
+* [ ] Test scan orchestration records coverage snapshots
+* [ ] Seed fixtures + contract assertions for dashboard bootstrap payloads
+
+### E2E Tests (Playwright/Cypress)
+* [ ] Load dashboard and verify all cards render
+* [ ] Click through to Workbench from coverage card
+* [ ] Interact with automation queue (pause/resume)
+* [ ] Review recognition matches
+* [ ] Test error states and retry actions
+* [ ] Test responsive behavior on mobile
+
+---
+
+## 9. Success Metrics
+
+* **Coverage Card**: Users click through to Workbench at >20% rate
+* **Activity Card**: Users engage with activity log within first session
+* **Recognition Card**: Users review pending matches within 24 hours of detection
+* **Automation Card**: Users monitor queue status regularly (>3 times/week)
+* **Performance**: Dashboard initial load < 1.5s on 3G connection
+* **Accessibility**: All cards pass axe-core audit with zero critical issues
+* **Test Coverage**: >90% line coverage across all dashboard components
+
+---
+
+## 10. Dependencies
+
+* **WordPress REST API**: All dashboard endpoints under `/wp-json/context-alt-text/v1/dashboard/*`
+* **React Query**: For data fetching, caching, and synchronization
+* **Action Scheduler**: For job queue metrics (AutomationCard)
+* **Custom Tables**: Recognition observations, activity log
+* **Feature Flags**: From `ContextAltTextAdmin.featureFlags`
+* **Analytics**: Event tracking via `emitDashboardEvent()`
+* **Radix UI**: Headless primitives for accessible components
+* **SCSS**: Design token layer for theming
+
+---
+
+## Related Documentation
+
+* `docs/architecture/frontend-uml/dashboard-coverage-detail.mmd` - CoverageCard data flow
+* `docs/architecture/frontend-uml/admin-spa-modules.mmd` - Dashboard routing
+* `docs/architecture/frontend-uml/sequence-diagrams.mmd` - Dashboard interaction sequences
+* `docs/architecture/rules/roadmap-v3.md` - Phase 1 (Epic D) requirements

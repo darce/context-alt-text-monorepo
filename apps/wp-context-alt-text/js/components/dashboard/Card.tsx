@@ -6,13 +6,17 @@ interface CardProps {
     className?: string;
 }
 
-export const Card = ({ title, children, className }: CardProps): React.JSX.Element => {
-    return (
-        <article className={`cat-card ${className ?? ""}`.trim()}>
-            <header className="cat-card__header">
-                <h2>{title}</h2>
-            </header>
-            <div className="cat-card__body">{children}</div>
-        </article>
-    );
-};
+export const Card = React.forwardRef<HTMLElement, CardProps>(
+    ({ title, children, className }, ref): React.JSX.Element => {
+        return (
+            <article ref={ref} className={`cat-card ${className ?? ""}`.trim()}>
+                <header className="cat-card__header">
+                    <h2>{title}</h2>
+                </header>
+                <div className="cat-card__body">{children}</div>
+            </article>
+        );
+    },
+);
+
+Card.displayName = "Card";

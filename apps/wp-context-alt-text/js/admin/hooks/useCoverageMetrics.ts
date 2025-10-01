@@ -13,6 +13,7 @@ export const useCoverageMetrics = ({ initialData }: UseCoverageMetricsOptions) =
     const config = getDashboardConfig();
     const endpoint = config.endpoints?.coverage ?? null;
     const restNonce = config.restNonce;
+    const hasEndpoint = Boolean(endpoint);
 
     const query = useQuery<CoverageCard>({
         queryKey: COVERAGE_QUERY_KEY,
@@ -40,11 +41,12 @@ export const useCoverageMetrics = ({ initialData }: UseCoverageMetricsOptions) =
         staleTime: 60_000,
         gcTime: 5 * 60_000,
         retry: 1,
-        enabled: Boolean(endpoint),
+        enabled: hasEndpoint,
     });
 
     return {
         ...query,
         data: query.data ?? initialData,
+        hasEndpoint,
     };
 };

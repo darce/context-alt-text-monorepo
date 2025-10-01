@@ -1,17 +1,16 @@
 sequenceDiagram
-    participant Admin as WP Admin UI
-    participant Plugin as Context Alt Text (WP)
+    participant Admin as WP Admin UI (Frontend)
+    participant Plugin as Context Alt Text Plugin (WP Backend)
     participant Backend as Recognition API (HF Spaces)
     participant Storage as Media Library
 
-    Admin->>Plugin: Open media item (attachment)
+    Note over Admin,Backend: ⚠️ Frontend has NO roster management UI - only displays results
+    Admin->>Plugin: Open media item in Workbench
     Plugin->>Storage: Load attachment metadata & thumbnail
-    Admin->>Plugin: Click "Identify faces"
+    Admin->>Plugin: Click "Run Recognition" (bulk action)
     Plugin->>Backend: POST /api/v0/analyze-scene (attachment URL)
-    Backend-->>Plugin: SceneAnalysisResult (faces, landmarks, confidence)
-    Plugin->>Admin: Render bounding boxes & roster suggestions
-    Admin->>Plugin: Confirm roster match
-    Plugin->>Backend: PATCH /api/v0/roster/{remoteId} (add observation embedding)
-    Backend-->>Plugin: Updated roster entry
-    Plugin->>Storage: Persist observation + remote_id locally
-    Plugin-->>Admin: Show synced badge + confidence score
+    Note over Backend: Backend performs:<br/>1. Face detection<br/>2. Embedding extraction<br/>3. Roster matching<br/>4. Confidence scoring
+    Backend-->>Plugin: SceneAnalysisResult (faces, matched roster entries, confidence)
+    Plugin->>Storage: Store observations + roster matches locally
+    Plugin-->>Admin: Display recognition results (read-only)
+    Note over Admin: Frontend shows:<br/>- Matched names from backend roster<br/>- Confidence scores<br/>- Detection bounding boxes<br/>NO roster editing or management

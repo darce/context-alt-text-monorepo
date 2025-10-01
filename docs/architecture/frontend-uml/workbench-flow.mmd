@@ -1,0 +1,79 @@
+flowchart TD
+    subgraph WorkbenchRoute
+        APP[Workbench App]
+        LIST[MediaList]
+        ROW[List Row Renderer]
+        TOOLBAR[SelectionToolbar]
+        ACTIONS[BulkAltTextPanel]
+        RECOG[RecognitionActions]
+        PREVIEW[MediaPreview]
+        NOTICE[ToastBus]
+    end
+
+    subgraph DataLayer
+        HOOK_MEDIA[useWorkbenchMedia]
+        HOOK_SELECTION[useSelection]
+        QUERY[(QueryClient)]
+    end
+
+    subgraph Config
+        GLOBAL[ContextAltTextAdmin.data.workbench]
+        FLAGS[Feature Flags]
+    end
+
+    subgraph REST
+        MEDIA_API[wp-json/cat/v1/workbench/media]
+        BULK_API[wp-json/cat/v1/alt-text/bulk]
+        RECOG_API[wp-json/cat/v1/recognition/run]
+    end
+
+    subgraph Analytics
+        TRACK[emitDashboardEvent]
+        EVENTS{Workbench Events}
+    end
+
+    subgraph RosterIntegration
+        ROSTER_LINK[Roster link + match chip]
+        ROSTER_MANAGER[Roster Manager surface]
+    end
+
+    APP --> LIST
+    LIST --> ROW
+    APP --> TOOLBAR
+    APP --> ACTIONS
+    APP --> RECOG
+    APP --> PREVIEW
+    APP --> NOTICE
+
+    ROW -->|requests| HOOK_MEDIA
+    ROW --> ROSTER_LINK[Deep link to Roster Manager]
+    HOOK_MEDIA --> QUERY
+    HOOK_MEDIA --> MEDIA_API
+    GLOBAL --> HOOK_MEDIA
+    GLOBAL --> HOOK_SELECTION
+
+    ROSTER_LINK -->|unresolved faces| RECOG
+    ROSTER_LINK -->|open roster manager| ROSTER_MANAGER[Roster Manager UI]
+
+    TOOLBAR --> HOOK_SELECTION
+    HOOK_SELECTION --> QUERY
+
+    TOOLBAR --> ACTIONS
+    ACTIONS --> BULK_API
+    ACTIONS --> NOTICE
+
+    RECOG --> RECOG_API
+    RECOG --> NOTICE
+
+    APP --> TRACK
+    TRACK --> EVENTS
+    EVENTS -->|cat_workbench_seen| TRACK
+    EVENTS -->|cat_workbench_bulk_action| TRACK
+    EVENTS -->|cat_workbench_recognition_triggered| TRACK
+
+    FLAGS --> APP
+    FLAGS --> RECOG
+    FLAGS --> ACTIONS
+
+    PREVIEW --> HOOK_MEDIA
+    RECOG --> ROSTER_MANAGER

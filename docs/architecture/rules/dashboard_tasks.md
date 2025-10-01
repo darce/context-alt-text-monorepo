@@ -19,17 +19,19 @@ Implementation steps:
 - [x] Define shared `CoverageDonut` component in SPA primitives with props `{ total, withAlt, missing }`.
 - [x] Expose `useCoverageMetrics()` hook that reads from REST endpoint `/wp-json/cat/v1/dashboard/coverage` (stubbed until backend ready).
 - [ ] Persist coverage history (already captured via `MissingAltTextScanner`) and expose through same endpoint.
-- [ ] Build `CoverageTrend` component that consumes the history array, rendering a sparkline/line chart; gate behind feature flag until usefulness validated.
+- [x] Build `CoverageTrend` component that consumes the history array, rendering a sparkline/line chart; gate behind feature flag until usefulness validated.
 - [x] Add Storybook stories for both components (empty, partial, full coverage, and loading states).
 - [x] Wire components into the dashboard page route and ensure data hydration via React Query.
 - [ ] Replace bespoke coverage donut/sparkline markup with Radix UI primitives once the component library is available.
+- [ ] Verify WordPress analytics listeners record the `cat_dashboard_card_seen` and `cat_dashboard_coverage_trend_enabled` events emitted by the dashboard UI.
+- [ ] Define the migration plan (timing, primitives, fallbacks) for replacing the bespoke SVG donut/sparkline with Radix or a shared chart utility when available.
 - [x] Replace the CSS pseudo-element radial illusion with an actual SVG doughnut chart that renders arcs based on coverage percentages; retire the `.cat-progress--radial` hack and avoid misusing `@radix-ui/react-progress` for circular visuals.
 - [ ] Publish JSON Schema + golden example fixtures for `/wp-json/cat/v1/dashboard/coverage` covering both the summary fields and each `trend_series` entry; land them under `docs/architecture/contracts/dashboard/` so frontend/backends share the contract.
 - [ ] Extend `MissingAltTextScanner` persistence so each completed scan appends a coverage snapshot to a bounded history store (keep last 30 entries) and expose a `wp cat dashboard backfill-coverage-history` CLI to seed existing installs.
-- [ ] Layer React Query states into the card (`isLoading`, `isRefetching`, `isError`) with skeleton, retry, and inline error copy; show a neutral "No Media Library items yet" message when `total === 0` instead of the chart.
-- [ ] Introduce narrated alternatives for the donut and trend (`aria-describedby` + visually hidden delta text) so screen readers receive the coverage percentage and latest change without relying on the SVGs.
-- [ ] Add Vitest + RTL coverage for `CoverageCard`, `CoverageDonut`, and the upcoming `CoverageTrend` verifying clamped percentages, zero-state messaging, feature-flag gating, and endpoint integration via MSW stubs.
-- [ ] Instrument analytics when the card enters the viewport (`cat_dashboard_card_seen`) and when the trend toggle/feature flag is enabled to measure sparkline engagement before graduating the feature.
+- [x] Layer React Query states into the card (`isLoading`, `isRefetching`, `isError`) with skeleton, retry, and inline error copy; show a neutral "No Media Library items yet" message when `total === 0` instead of the chart.
+- [x] Introduce narrated alternatives for the donut and trend (`aria-describedby` + visually hidden delta text) so screen readers receive the coverage percentage and latest change without relying on the SVGs.
+- [x] Add Vitest + RTL coverage for `CoverageCard`, `CoverageDonut`, and the upcoming `CoverageTrend` verifying clamped percentages, zero-state messaging, feature-flag gating, and endpoint integration via MSW stubs.
+- [x] Instrument analytics when the card enters the viewport (`cat_dashboard_card_seen`) and when the trend toggle/feature flag is enabled to measure sparkline engagement before graduating the feature.
 
 ### Latest Activity
 - Card showing timestamps for:
@@ -52,7 +54,7 @@ Implementation steps:
   - [x] Capture default bootstrap payload and assert the component renders the localized message variants using React Testing Library queries.
   - [x] Verify CTA button invokes `Open Alt-Text Workbench` navigation via mocked router history.
   - [x] Assert the relative timestamp badge updates when the query data changes (simulate via React Query invalidate).
-- [ ] Capture desired loading/empty/error behaviors for `CoverageCard` + `CoverageTrend` via component tests that assert skeletons, zero-state messaging, and feature-flagged trend rendering.
+- [x] Capture desired loading/empty/error behaviors for `CoverageCard` + `CoverageTrend` via component tests that assert skeletons, zero-state messaging, and feature-flagged trend rendering.
   - [x] Define MSW handlers for success, timeout, and empty dataset responses to drive Vitest scenarios.
   - [x] Assert the donut clamps values, trend hides when feature flag off, and zero-library message replaces charts.
   - [x] Document the pending trend flag in the test file so toggling the flag requires updating expectations.
@@ -61,7 +63,7 @@ Implementation steps:
   - [ ] Validate that resolved state links/buttons route to expected URLs using a shared test utility.
   - [x] Cover edge cases (null timestamps, zero counts) to lock in desired copy and avoid regressions during refactors.
 - [ ] Introduce a dashboard page smoke test that mounts the full SPA route with MSW-powered REST fixtures to enforce data hydration contracts as new cards land.
-  - [ ] Stand up a shared `renderDashboard` helper that wraps React Query provider, router, and theme tokens.
+  - [x] Stand up a shared `renderDashboard` helper that wraps React Query provider, router, and theme tokens.
   - [ ] Assert hydration requests hit the expected endpoints and respond to refetch events.
   - [ ] Include an accessibility audit snapshot (axe) to catch regressions as new components arrive.
 

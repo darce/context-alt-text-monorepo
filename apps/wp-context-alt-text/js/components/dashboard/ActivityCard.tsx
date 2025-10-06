@@ -1,4 +1,6 @@
 import React from "react";
+import { __, _n, sprintf } from "@wordpress/i18n";
+
 import type { LatestActivityCard as LatestActivityCardData } from "@/admin/types";
 import { Card } from "@/components/dashboard/Card";
 import {
@@ -21,22 +23,30 @@ const formatActivity = (
     value: LatestActivityCardData[keyof LatestActivityCardData],
 ): string => {
     if (value === null || value === undefined || value === "") {
-        return "No recent activity";
+        return __("No recent activity", "context-alt-text");
     }
 
     if (typeof value === "number") {
         if (value <= 0) {
-            return "No recent activity";
+            return __("No recent activity", "context-alt-text");
         }
         const minutes = Math.round((Date.now() / 1000 - value) / 60);
         if (minutes < 1) {
-            return "Just now";
+            return __("Just now", "context-alt-text");
         }
         if (minutes < 60) {
-            return `${minutes} minute${minutes === 1 ? "" : "s"} ago`;
+            return sprintf(
+                /* translators: %d: number of minutes since the last activity */
+                _n("%d minute ago", "%d minutes ago", minutes, "context-alt-text"),
+                minutes,
+            );
         }
         const hours = Math.round(minutes / 60);
-        return `${hours} hour${hours === 1 ? "" : "s"} ago`;
+        return sprintf(
+            /* translators: %d: number of hours since the last activity */
+            _n("%d hour ago", "%d hours ago", hours, "context-alt-text"),
+            hours,
+        );
     }
 
     return String(value);
@@ -52,7 +62,11 @@ const ActivityRow = ({ label, value }: ActivityRowProps): React.JSX.Element => {
                 <TooltipTrigger asChild>
                     <strong className="cat-activity__value">{formatted}</strong>
                 </TooltipTrigger>
-                <TooltipContent side="bottom">{String(value ?? "No recent activity recorded")}</TooltipContent>
+                <TooltipContent side="bottom">
+                    {String(
+                        value ?? __("No recent activity recorded", "context-alt-text"),
+                    )}
+                </TooltipContent>
             </TooltipRoot>
         </li>
     );
@@ -60,12 +74,18 @@ const ActivityRow = ({ label, value }: ActivityRowProps): React.JSX.Element => {
 
 export const ActivityCard = ({ data }: LatestActivityCardProps): React.JSX.Element => {
     return (
-        <Card title="Latest Activity" className="cat-card--activity">
+        <Card title={__("Latest Activity", "context-alt-text")} className="cat-card--activity">
             <TooltipProvider delayDuration={150}>
                 <ul className="cat-activity">
-                    <ActivityRow label="Recognition" value={data.last_recognition} />
-                    <ActivityRow label="Alt-text generation" value={data.last_alt_text_generation} />
-                    <ActivityRow label="Roster sync" value={data.last_roster_sync} />
+                    <ActivityRow label={__("Recognition", "context-alt-text")} value={data.last_recognition} />
+                    <ActivityRow
+                        label={__("Alt-text generation", "context-alt-text")}
+                        value={data.last_alt_text_generation}
+                    />
+                    <ActivityRow
+                        label={__("Roster sync", "context-alt-text")}
+                        value={data.last_roster_sync}
+                    />
                 </ul>
             </TooltipProvider>
         </Card>

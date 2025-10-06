@@ -1,4 +1,5 @@
 import React from "react";
+import { __, _n, sprintf } from "@wordpress/i18n";
 import type { QueryStatus } from "@tanstack/react-query";
 
 import type { CoverageCard as CoverageCardData, FeatureFlags } from "@/admin/types";
@@ -47,6 +48,7 @@ const formatPercent = (value: number): string => {
 export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardProps): React.JSX.Element => {
     const percent = clampPercent(data.coverage_percent ?? 0);
     const hasLibrary = (data.total ?? 0) > 0;
+    const missingCount = data.missing ?? 0;
     const trendPoints = data.trend_series ?? [];
     const coverageDescriptionId = React.useId();
     const cardRef = React.useRef<HTMLElement | null>(null);
@@ -64,14 +66,34 @@ export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardPro
     const delta = latestPoint && previousPoint ? latestPoint.coverage - previousPoint.coverage : null;
 
     const coverageSummaryText = hasLibrary
-        ? `Media library coverage is ${formatPercent(percent)} percent with ${data.missing} images missing alt text.`
-        : "Media library is empty. Upload images to track coverage.";
+        ? sprintf(
+            /* translators: 1: coverage percentage, 2: number of images missing alt text */
+            _n(
+                "Media library coverage is %1$s percent with %2$s image missing alt text.",
+                "Media library coverage is %1$s percent with %2$s images missing alt text.",
+                missingCount,
+                "context-alt-text",
+            ),
+            formatPercent(percent),
+            missingCount,
+        )
+        : __("Media library is empty. Upload images to track coverage.", "context-alt-text");
 
     const deltaText = delta === null
-        ? "Trend data is not yet available."
+        ? __("Trend data is not yet available.", "context-alt-text")
         : delta === 0
-          ? "Coverage is unchanged since the previous scan."
-          : `Coverage ${delta > 0 ? "increased" : "decreased"} by ${formatPercent(Math.abs(delta))} points since the previous scan.`;
+            ? __("Coverage is unchanged since the previous scan.", "context-alt-text")
+            : delta > 0
+                ? sprintf(
+                    /* translators: %s: number of points coverage increased */
+                    __("Coverage increased by %s points since the previous scan.", "context-alt-text"),
+                    formatPercent(Math.abs(delta ?? 0)),
+                )
+                : sprintf(
+                    /* translators: %s: number of points coverage decreased */
+                    __("Coverage decreased by %s points since the previous scan.", "context-alt-text"),
+                    formatPercent(Math.abs(delta ?? 0)),
+                );
 
     const handleRetry = React.useCallback(() => {
         if (refetch) {
@@ -126,11 +148,15 @@ export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardPro
     const errorMessage = showError
         ? queryState?.error instanceof Error
             ? queryState.error.message
-            : "Unknown error"
+            : __("Unknown error", "context-alt-text")
         : null;
 
     return (
-        <Card ref={cardRef} title="Coverage Progress" className="cat-card--coverage">
+        <Card
+            ref={cardRef}
+            title={__("Coverage Progress", "context-alt-text")}
+            className="cat-card--coverage"
+        >
             <div className="cat-coverage">
                 <span id={coverageDescriptionId} className="cat-sr-only">
                     {coverageSummaryText} {deltaText}
@@ -150,27 +176,31 @@ export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardPro
                             <CoverageDonut
                                 value={percent}
                                 describedBy={coverageDescriptionId}
-                                label={`Coverage ${formatPercent(percent)}%`}
+                                label={sprintf(
+                                    /* translators: %s: coverage percentage */
+                                    __("Coverage %s%%", "context-alt-text"),
+                                    formatPercent(percent),
+                                )}
                             />
                         </div>
                         <dl className="cat-coverage__stats">
                             <div>
-                                <dt>Total images</dt>
+                                <dt>{__("Total images", "context-alt-text")}</dt>
                                 <dd>{data.total}</dd>
                             </div>
                             <div>
-                                <dt>With alt text</dt>
+                                <dt>{__("With alt text", "context-alt-text")}</dt>
                                 <dd>{data.with_alt}</dd>
                             </div>
                             <div>
-                                <dt>Missing alt text</dt>
+                                <dt>{__("Missing alt text", "context-alt-text")}</dt>
                                 <dd className={data.missing > 0 ? "cat-text-warning" : ""}>{data.missing}</dd>
                             </div>
                         </dl>
                     </>
                 ) : (
                     <p className="cat-coverage__empty" role="status">
-                        No Media Library items yet. Upload images to start tracking coverage.
+                        {__("No Media Library items yet. Upload images to start tracking coverage.", "context-alt-text")}
                     </p>
                 )}
             </div>
@@ -178,7 +208,7 @@ export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardPro
             {showError && (
                 <div className="cat-alert cat-alert--error" role="alert">
                     <div>
-                        Unable to refresh coverage metrics.
+                        {__("Unable to refresh coverage metrics.", "context-alt-text")}
                         {errorMessage && <span className="cat-alert__detail"> {errorMessage}</span>}
                     </div>
                     {refetch && (
@@ -188,7 +218,7 @@ export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardPro
                             size="sm"
                             onClick={handleRetry}
                         >
-                            Try again
+                            {__("Try again", "context-alt-text")}
                         </Button>
                     )}
                 </div>
@@ -196,13 +226,13 @@ export const CoverageCard = ({ data, featureFlags, queryState }: CoverageCardPro
 
             {showRefetching && (
                 <p className="cat-coverage__refresh" role="status" aria-live="polite">
-                    Refreshing latest coverage…
+                    {__("Refreshing latest coverage…", "context-alt-text")}
                 </p>
             )}
 
             {showTrend && (
                 <div className="cat-coverage__trend">
-                    <small>Trend (beta)</small>
+                    <small>{__("Trend (beta)", "context-alt-text")}</small>
                     <CoverageTrend points={trendPoints} />
                 </div>
             )}

@@ -295,7 +295,13 @@ Quality Heuristics:
 
 ## Code Style & Tooling (2025 Standards)
 
+### Package Management
+
+- Use `npm` for all Node-based tooling in this repository. `pnpm` is not installed or supported—pnpm commands will fail and should not be used.
+- PHP dependencies continue to use Composer as described below.
+
 ### PHP
+
 - **PSR-12** coding standard via PHP_CodeSniffer
 - **WordPress Coding Standards** (WPCS) enforced
 - **PHP 8.1+** features: typed properties, named arguments, readonly properties
@@ -305,6 +311,7 @@ Quality Heuristics:
 - **Composer 2.6+** for dependency management
 
 ### TypeScript/JavaScript
+
 - **TypeScript 5.3+** with `strict: true`, `noUncheckedIndexedAccess: true`
 - **ESLint 9+** with TypeScript parser and React hooks plugin
 - **Prettier 3+** for automatic formatting (enforced in pre-commit)
@@ -314,6 +321,7 @@ Quality Heuristics:
 - **Arrow functions** for consistency across all modules
 
 ### CSS/SCSS
+
 - **SCSS** with shared design token files
 - **CSS Modules** or scoped styles (no global CSS leaks)
 - **PostCSS** for autoprefixing and modern CSS features
@@ -322,6 +330,7 @@ Quality Heuristics:
 - **Container queries** for component-level responsiveness
 
 ### Tooling Stack
+
 - **Vite 5+**: Build tool and dev server
 - **Vitest**: Unit and component testing
 - **Playwright**: E2E testing
@@ -331,6 +340,13 @@ Quality Heuristics:
 - **Radix UI**: Accessible headless components
 - **Husky**: Git hooks for pre-commit checks
 - **lint-staged**: Run linters on staged files only
+
+### Internationalization Requirements
+
+- All UI- or user-facing strings must pass through localized translation helpers (`__`, `_x`, `_n`, etc.) with the `context-alt-text` domain across PHP and TypeScript.
+- Favor translation-ready string interpolation (e.g., `sprintf`) with translator comments instead of concatenation.
+- Backend responses surfaced to administrators and structured logs intended for UI display must use translatable strings or map to localization-ready codes.
+- Tests that assert on copy or aria labels should reference the translated helpers to remain resilient to locale changes.
 
 ### Commits & Branching
 
@@ -416,5 +432,6 @@ context-alt-text/
 - Professional WordPress Plugin Development
 - Test-Driven Development with PHP 8
 
-## Literature Digest:
+## Literature Digest
+
 - `docs/wp-plugin-literature-digest.md` Use it as a launch pad for best practices, coding recipes, and cross-references when implementing new slices of the plugin.

@@ -93,6 +93,7 @@ This sprint plan ensures both services land the same contracts, feature flags, a
   - [ ] Define shortcut map aligned with Apple/Adobe conventions while avoiding existing WordPress bindings
   - [ ] Implement a togglable in-app shortcut helper/overlay that announces commands (including key combos) to assistive tech
   - [ ] Publish and maintain a dedicated keyboard bindings documentation page kept in sync with product changes
+- [ ] Audit SPA components for hard-coded strings and replace with internationalized resources
 
 1. Recognition Service Integration (Frontend)
 

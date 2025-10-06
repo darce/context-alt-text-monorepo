@@ -15,6 +15,7 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 
 ## 2. Media Queue (Grid/List)
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### Component Status
 
 - [x] Component created (`MediaList.tsx`)
@@ -39,9 +40,9 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 - [x] React Query caching with filter state preservation during search
 - [x] Supports `search`, `status`, pagination query params
 - [x] Optimistic loading states during search
-- [ ] Provide inline loading/error affordances inside search field (spinner, clear button)
-- [ ] Search debouncing (currently immediate)
-- [ ] SR-only live status announcements for search results
+- [x] Provide inline loading/error affordances inside search field (spinner, clear button)
+- [x] Search debouncing (currently immediate)
+- [x] SR-only live status announcements for search results
 - [ ] Advanced filter dropdown with multiple status options
 
 ### Pagination
@@ -50,12 +51,13 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 - [x] Props: currentPage, totalPages, onPageChange, loading state
 - [x] Previous/Next navigation
 - [x] Page number display
-- [ ] Jump to page input
-- [ ] Items per page selector
-- [ ] Total items count display
+- [x] Jump to page input
+- [x] Items per page selector
+- [x] Total items count display
 
 ## 3. Selection & Bulk Actions
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### Component Status
 
 - [x] Component created (`SelectionToolbar.tsx`)
@@ -77,6 +79,7 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 
 ## 4. Recognition & Context Modules
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### Component Status
 
 - [x] Component created (`RecognitionActions.tsx`)
@@ -121,6 +124,7 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 
 ## 5. Draft Authoring & Preview
 
+<!-- markdownlint-disable-next-line MD024 -->
 ### Component Status
 
 - [x] Component created (`BulkAltTextPanel.tsx`)

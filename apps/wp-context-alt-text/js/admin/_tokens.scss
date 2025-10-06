@@ -1,6 +1,7 @@
 $cat-accent: #1d4ed8;
 $cat-accent-soft: #eff6ff;
 $cat-warning: #d97706;
+$cat-danger: #b91c1c;
 $cat-background: #f9fafb;
 $cat-surface: #ffffff;
 $cat-border: #e5e7eb;
@@ -28,6 +29,7 @@ $cat-font-size-sm: 0.875rem;
   --cat-accent: #{$cat-accent};
   --cat-accent-soft: #{$cat-accent-soft};
   --cat-warning: #{$cat-warning};
+  --cat-danger: #{$cat-danger};
   --cat-background: #{$cat-background};
   --cat-surface: #{$cat-surface};
   --cat-border: #{$cat-border};

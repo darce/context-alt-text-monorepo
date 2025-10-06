@@ -1,10 +1,9 @@
 import React from "react";
 
+import { __ } from "@wordpress/i18n";
+
 import { SelectionToolbar } from "@/components/workbench/SelectionToolbar";
 import { MediaList } from "@/components/workbench/MediaList";
-import { BulkAltTextPanel } from "@/components/workbench/BulkAltTextPanel";
-import { RecognitionActions } from "@/components/workbench/RecognitionActions";
-import { MediaPreview } from "@/components/workbench/MediaPreview";
 
 export type WorkbenchViewMode = "grid" | "list";
 
@@ -26,27 +25,17 @@ export interface WorkbenchMediaItem {
 export interface WorkbenchAppProps {
     items?: WorkbenchMediaItem[];
     viewMode?: WorkbenchViewMode;
-    recognitionEnabled?: boolean;
-    bulkAIEnabled?: boolean;
     onGenerateAltText?: (ids: string[]) => void;
     onRegenerateAltText?: (ids: string[]) => void;
     onMarkReviewed?: (ids: string[]) => void;
-    onTriggerRecognition?: (ids: string[]) => void;
-    onGenerateDrafts?: (ids: string[]) => void;
-    onPublishDrafts?: (ids: string[]) => void;
 }
 
 export const WorkbenchApp = ({
     items = [],
     viewMode = "list",
-    recognitionEnabled = false,
-    bulkAIEnabled = false,
     onGenerateAltText,
     onRegenerateAltText,
     onMarkReviewed,
-    onTriggerRecognition,
-    onGenerateDrafts,
-    onPublishDrafts,
 }: WorkbenchAppProps): React.JSX.Element => {
     const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
     const selectedList = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
@@ -93,29 +82,11 @@ export const WorkbenchApp = ({
         onMarkReviewed?.(selectedList);
     }, [onMarkReviewed, selectedList]);
 
-    const handleTriggerRecognition = React.useCallback(() => {
-        if (selectedList.length === 0) {
-            return;
-        }
-        onTriggerRecognition?.(selectedList);
-    }, [onTriggerRecognition, selectedList]);
-
-    const handleGenerateDrafts = React.useCallback(() => {
-        if (selectedList.length === 0) {
-            return;
-        }
-        onGenerateDrafts?.(selectedList);
-    }, [onGenerateDrafts, selectedList]);
-
-    const handlePublishDrafts = React.useCallback(() => {
-        if (selectedList.length === 0) {
-            return;
-        }
-        onPublishDrafts?.(selectedList);
-    }, [onPublishDrafts, selectedList]);
-
     return (
-        <div className="cat-workbench" aria-label="Alt-Text Workbench">
+        <div
+            className="cat-workbench"
+            aria-label={__("Alt-Text Workbench", "context-alt-text")}
+        >
             <SelectionToolbar
                 selectionCount={selectedIds.size}
                 onGenerate={handleGenerateAltText}
@@ -131,23 +102,6 @@ export const WorkbenchApp = ({
                     onToggleSelect={handleToggleSelection}
                     viewMode={viewMode}
                 />
-
-                <aside className="cat-workbench__sidebar">
-                    {recognitionEnabled && (
-                        <RecognitionActions
-                            disabled={selectedIds.size === 0}
-                            onTriggerRecognition={handleTriggerRecognition}
-                            selectionCount={selectedIds.size}
-                        />
-                    )}
-                    <BulkAltTextPanel
-                        selectionCount={selectedIds.size}
-                        onGenerateDrafts={handleGenerateDrafts}
-                        onPublishDrafts={handlePublishDrafts}
-                        enableGeneration={bulkAIEnabled}
-                    />
-                    <MediaPreview selectedIds={selectedIds} items={items} />
-                </aside>
             </div>
         </div>
     );

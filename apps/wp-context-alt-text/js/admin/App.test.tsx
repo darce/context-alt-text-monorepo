@@ -1,5 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { render, screen, fireEvent } from "@testing-library/react";
+import { render, screen, fireEvent, act, waitFor } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { axe } from "vitest-axe";
 import { http, HttpResponse } from "msw";
 
@@ -18,6 +19,9 @@ import { App } from "./App";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 
 const COVERAGE_ENDPOINT = "https://example.com/wp-json/cat/v1/dashboard/coverage";
+const WORKBENCH_MEDIA_ENDPOINT = "https://example.com/wp-json/context-alt-text/v1/workbench/media";
+const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/context-alt-text/v1/workbench/media";
+const WORKBENCH_MEDIA_FALLBACK_HANDLER = `*${WORKBENCH_MEDIA_FALLBACK_PATH}`;
 
 const bootstrapPayload = {
     hero: {
@@ -139,7 +143,7 @@ describe("App", () => {
         await screen.findByRole("img", { name: /Coverage 70%/i });
 
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 
     it("renders the workbench when requested", () => {
@@ -186,7 +190,8 @@ describe("App", () => {
         const seenEvents = dispatchEventSpy.mock.calls.filter(([event]) => event.type === "cat_workbench_seen");
         expect(seenEvents).toHaveLength(1);
         const [seenEvent] = seenEvents[0];
-        expect(seenEvent.detail).toMatchObject({
+        const seenCustomEvent = seenEvent as CustomEvent<Record<string, unknown>>;
+        expect(seenCustomEvent.detail).toMatchObject({
             pagination: {
                 page: 1,
                 perPage: 20,
@@ -199,6 +204,357 @@ describe("App", () => {
         });
 
         dispatchEventSpy.mockRestore();
+    });
+
+    it("filters workbench media items when searching without a REST endpoint", async () => {
+        const observedRequests: URL[] = [];
+
+        useDashboardHandlers(
+            http.get(WORKBENCH_MEDIA_FALLBACK_HANDLER, ({ request }) => {
+                const url = new URL(request.url);
+                observedRequests.push(url);
+
+                if (url.searchParams.get("search") === "mountain") {
+                    return HttpResponse.json(
+                        [
+                            {
+                                id: "beta",
+                                title: "Mountain trail",
+                                status: "missing",
+                                updated_at: "2024-01-03T00:00:00.000Z",
+                                alt_text: "Hikers ascending a steep trail",
+                                mime_type: "image/png",
+                                dimensions: { width: 1400, height: 900 },
+                                edit_url: "https://example.com/edit/beta",
+                            },
+                        ],
+                        {
+                            headers: {
+                                "X-WP-Total": "1",
+                                "X-WP-TotalPages": "1",
+                            },
+                        },
+                    );
+                }
+
+                return HttpResponse.json([
+                    {
+                        id: "alpha",
+                        title: "Ocean view",
+                        status: "missing",
+                        updated_at: "2024-01-02T00:00:00.000Z",
+                        alt_text: "A wide shot of the ocean horizon",
+                        mime_type: "image/jpeg",
+                        dimensions: { width: 1200, height: 800 },
+                        edit_url: "https://example.com/edit/alpha",
+                    },
+                    {
+                        id: "beta",
+                        title: "Mountain trail",
+                        status: "missing",
+                        updated_at: "2024-01-03T00:00:00.000Z",
+                        alt_text: "Hikers ascending a steep trail",
+                        mime_type: "image/png",
+                        dimensions: { width: 1400, height: 900 },
+                        edit_url: "https://example.com/edit/beta",
+                    },
+                ]);
+            }),
+        );
+
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+            },
+            data: {
+                workbench: {
+                    ...workbenchBootstrapData,
+                    items: [
+                        {
+                            id: "alpha",
+                            title: "Ocean view",
+                            status: "missing" as const,
+                            updatedAt: "2024-01-02T00:00:00.000Z",
+                            altText: "A wide shot of the ocean horizon",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1200, height: 800 },
+                            editUrl: "https://example.com/edit/alpha",
+                        },
+                        {
+                            id: "beta",
+                            title: "Mountain trail",
+                            status: "missing" as const,
+                            updatedAt: "2024-01-03T00:00:00.000Z",
+                            altText: "Hikers ascending a steep trail",
+                            mimeType: "image/png",
+                            dimensions: { width: 1400, height: 900 },
+                            editUrl: "https://example.com/edit/beta",
+                        },
+                    ],
+                    pagination: {
+                        page: 1,
+                        perPage: 20,
+                        total: 2,
+                        totalPages: 1,
+                    },
+                },
+            },
+        };
+
+        vi.useFakeTimers();
+
+        const user = userEvent.setup({
+            advanceTimers: vi.advanceTimersByTimeAsync.bind(vi),
+        });
+
+        try {
+            render(<App />);
+
+            expect(await screen.findByText(/Ocean view/i)).toBeInTheDocument();
+            expect(screen.getByText(/Mountain trail/i)).toBeInTheDocument();
+
+            const input = screen.getByRole("searchbox", { name: /search media/i });
+            await user.clear(input);
+            await user.type(input, "mountain");
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(400);
+            });
+
+            vi.useRealTimers();
+
+            await waitFor(() => expect(observedRequests).toHaveLength(1));
+
+            expect(await screen.findByText(/Mountain trail/i)).toBeInTheDocument();
+            expect(screen.queryByText(/Ocean view/i)).not.toBeInTheDocument();
+
+            const statusRegion = await screen.findByTestId("workbench-search-status");
+            expect(statusRegion).toHaveTextContent("Showing 1 search result.");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("loads additional pages via the fallback workbench endpoint when pagination changes", async () => {
+        const observedRequests: URL[] = [];
+        const originalAjaxUrl = (window as unknown as { ajaxurl?: string }).ajaxurl;
+        (window as unknown as { ajaxurl?: string }).ajaxurl = "/wp-admin/admin-ajax.php";
+
+        useDashboardHandlers(
+            http.get(WORKBENCH_MEDIA_FALLBACK_HANDLER, ({ request }) => {
+                const url = new URL(request.url);
+                observedRequests.push(url);
+
+                const pageParam = url.searchParams.get("page") ?? "1";
+                const payload =
+                    pageParam === "1"
+                        ? [
+                            {
+                                id: "f1",
+                                title: "Fallback portrait one",
+                                status: "missing",
+                                updated_at: "2024-03-01T00:00:00.000Z",
+                                alt_text: "",
+                                mime_type: "image/jpeg",
+                                dimensions: { width: 1600, height: 900 },
+                                edit_url: "https://example.com/wp-admin/post.php?post=f1&action=edit",
+                            },
+                            {
+                                id: "f2",
+                                title: "Fallback portrait two",
+                                status: "missing",
+                                updated_at: "2024-03-02T00:00:00.000Z",
+                                alt_text: "",
+                                mime_type: "image/jpeg",
+                                dimensions: { width: 1600, height: 900 },
+                                edit_url: "https://example.com/wp-admin/post.php?post=f2&action=edit",
+                            },
+                        ]
+                        : [
+                            {
+                                id: "f3",
+                                title: "Fallback portrait three",
+                                status: "missing",
+                                updated_at: "2024-03-03T00:00:00.000Z",
+                                alt_text: "",
+                                mime_type: "image/jpeg",
+                                dimensions: { width: 1600, height: 900 },
+                                edit_url: "https://example.com/wp-admin/post.php?post=f3&action=edit",
+                            },
+                        ];
+
+                return HttpResponse.json(payload, {
+                    headers: {
+                        "X-WP-Total": "3",
+                        "X-WP-TotalPages": "2",
+                    },
+                });
+            }),
+        );
+
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+            },
+            data: {
+                workbench: {
+                    ...workbenchBootstrapData,
+                    pagination: {
+                        page: 1,
+                        perPage: 2,
+                        total: 3,
+                        totalPages: 2,
+                    },
+                    items: [
+                        {
+                            id: "f1",
+                            title: "Fallback portrait one",
+                            status: "missing" as const,
+                            updatedAt: "2024-03-01T00:00:00.000Z",
+                            altText: "",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1600, height: 900 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=f1&action=edit",
+                        },
+                        {
+                            id: "f2",
+                            title: "Fallback portrait two",
+                            status: "missing" as const,
+                            updatedAt: "2024-03-02T00:00:00.000Z",
+                            altText: "",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1600, height: 900 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=f2&action=edit",
+                        },
+                    ],
+                },
+            },
+        };
+
+        try {
+            render(<App />);
+
+            expect(await screen.findByText(/Fallback portrait one/i)).toBeInTheDocument();
+            expect(screen.getByText("Showing 1-2 of 3")).toBeInTheDocument();
+
+            const nextButton = screen.getByRole("button", { name: /Next/i });
+            fireEvent.click(nextButton);
+
+            await waitFor(() =>
+                expect(observedRequests.some((url) => url.searchParams.get("page") === "2")).toBe(true),
+            );
+
+            expect(await screen.findByText(/Fallback portrait three/i)).toBeInTheDocument();
+            expect(screen.getByText("Showing 3-3 of 3")).toBeInTheDocument();
+        } finally {
+            (window as unknown as { ajaxurl?: string }).ajaxurl = originalAjaxUrl;
+        }
+    });
+
+    it("allows changing items per page and refetches with the new size", async () => {
+        const observedRequests: URL[] = [];
+
+        useDashboardHandlers(
+            http.get(WORKBENCH_MEDIA_FALLBACK_HANDLER, ({ request }) => {
+                const url = new URL(request.url);
+                observedRequests.push(url);
+
+                const perPage = url.searchParams.get("per_page") ?? "2";
+                const pageParam = url.searchParams.get("page") ?? "1";
+
+                const buildItems = (prefix: string, count: number, offset: number) =>
+                    Array.from({ length: count }, (_, index) => ({
+                        id: `${prefix}-${offset + index + 1}`,
+                        title: `${prefix} asset ${offset + index + 1}`,
+                        status: "missing",
+                        updated_at: "2024-04-0${index + 1}T00:00:00.000Z",
+                        alt_text: "",
+                        mime_type: "image/jpeg",
+                        dimensions: { width: 1200, height: 800 },
+                        edit_url: `https://example.com/wp-admin/post.php?post=${prefix}-${index + 1}&action=edit`,
+                    }));
+
+                const perPageNumber = Number(perPage);
+                const pageNumber = Number(pageParam);
+                const totalItems = 6;
+
+                const start = (pageNumber - 1) * perPageNumber;
+                const end = Math.min(start + perPageNumber, totalItems);
+
+                return HttpResponse.json(buildItems("page", end - start, start), {
+                    headers: {
+                        "X-WP-Total": String(totalItems),
+                        "X-WP-TotalPages": String(Math.ceil(totalItems / perPageNumber) || 1),
+                    },
+                });
+            }),
+        );
+
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+            },
+            data: {
+                workbench: {
+                    ...workbenchBootstrapData,
+                    pagination: {
+                        page: 1,
+                        perPage: 2,
+                        total: 6,
+                        totalPages: 3,
+                    },
+                    items: [
+                        {
+                            id: "page-1",
+                            title: "Initial asset 1",
+                            status: "missing" as const,
+                            updatedAt: "2024-04-01T00:00:00.000Z",
+                            altText: "",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1200, height: 800 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=page-1&action=edit",
+                        },
+                        {
+                            id: "page-2",
+                            title: "Initial asset 2",
+                            status: "missing" as const,
+                            updatedAt: "2024-04-02T00:00:00.000Z",
+                            altText: "",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1200, height: 800 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=page-2&action=edit",
+                        },
+                    ],
+                },
+            },
+        };
+
+        const user = userEvent.setup();
+
+        render(<App />);
+
+        const select = await screen.findByLabelText(/Items per page/i);
+        await user.selectOptions(select, "10");
+
+        await waitFor(() =>
+            expect(
+                observedRequests.some((url) =>
+                    url.searchParams.get("per_page") === "10" && url.searchParams.get("page") === "1",
+                ),
+            ).toBe(true),
+        );
+
+        expect(await screen.findByText(/Showing 1-6 of 6/i)).toBeInTheDocument();
+        expect(screen.getByText(/Page 1/)).toBeInTheDocument();
     });
 
     it("dispatches notices when bulk actions are triggered", () => {
@@ -238,7 +594,8 @@ describe("App", () => {
         const bulkEvents = dispatchEventSpy.mock.calls.filter(([event]) => event.type === "cat_workbench_bulk_action");
         expect(bulkEvents).toHaveLength(1);
         const [bulkEvent] = bulkEvents[0];
-        expect(bulkEvent.detail).toMatchObject({
+        const bulkCustomEvent = bulkEvent as CustomEvent<Record<string, unknown>>;
+        expect(bulkCustomEvent.detail).toMatchObject({
             action: "generate",
             count: 1,
             selection: ["123"],
@@ -251,53 +608,221 @@ describe("App", () => {
         dispatchEventSpy.mockRestore();
     });
 
-    it("dispatches recognition analytics with filters and notice messaging", () => {
+    it("filters workbench media via debounced search with inline status messaging", async () => {
+        vi.useFakeTimers();
+
+        const observedRequests: URL[] = [];
+
         (globalThis as any).ContextAltTextAdmin = {
             page: "workbench",
             config: {
                 featureFlags: {
                     workbenchEnabled: true,
-                    workbenchRecognition: true,
+                },
+                endpoints: {
+                    workbenchMedia: WORKBENCH_MEDIA_ENDPOINT,
                 },
             },
             data: {
-                workbench: workbenchBootstrapData,
+                workbench: {
+                    ...workbenchBootstrapData,
+                    items: workbenchBootstrapData.items,
+                    pagination: {
+                        ...workbenchBootstrapData.pagination,
+                        total: 1,
+                        totalPages: 1,
+                    },
+                },
             },
         };
 
-        const dispatchEventSpy = vi.spyOn(window, "dispatchEvent");
-        render(<App />);
+        useDashboardHandlers(
+            http.get(WORKBENCH_MEDIA_ENDPOINT, ({ request }) => {
+                const url = new URL(request.url);
+                observedRequests.push(url);
 
-        const checkbox = screen.getByRole("checkbox", { name: /Select Sample image/i });
-        fireEvent.click(checkbox);
+                expect(url.searchParams.get("search")).toBe("portrait");
 
-        const recognitionButton = screen.getByRole("button", { name: /Trigger Recognition/i });
-        fireEvent.click(recognitionButton);
-
-        expect(dispatchNoticeMock).toHaveBeenCalledWith(
-            "info",
-            "Recognition triggered for 1 item.",
-            expect.objectContaining({
-                id: "workbench-recognition",
-                spokenMessage: "Recognition triggered for 1 item.",
+                return HttpResponse.json(
+                    [
+                        {
+                            id: "456",
+                            title: "Portrait hero image",
+                            status: "missing",
+                            updated_at: "2024-02-01T00:00:00.000Z",
+                            alt_text: "",
+                            mime_type: "image/jpeg",
+                            dimensions: { width: 1200, height: 800 },
+                            edit_url: "https://example.com/wp-admin/post.php?post=456&action=edit",
+                        },
+                    ],
+                    {
+                        headers: {
+                            "X-WP-Total": "1",
+                            "X-WP-TotalPages": "1",
+                        },
+                    },
+                );
             }),
         );
-        expect(dispatchNoticeMock).toHaveBeenCalledTimes(1);
 
-        const recognitionEvents = dispatchEventSpy.mock.calls.filter(
-            ([event]) => event.type === "cat_workbench_recognition_triggered",
+        try {
+            render(<App />);
+
+            const input = screen.getByRole("searchbox", { name: /search media/i });
+            fireEvent.change(input, { target: { value: "portrait" } });
+
+            await act(async () => {
+                await vi.advanceTimersByTimeAsync(400);
+            });
+
+            const spinner = screen.getByRole("status", { name: /searching media/i });
+            expect(spinner).toBeInTheDocument();
+
+            vi.useRealTimers();
+
+            await waitFor(() => expect(observedRequests).toHaveLength(1));
+
+            expect(await screen.findByText(/Portrait hero image/i)).toBeInTheDocument();
+
+            const statusRegion = screen.getByTestId("workbench-search-status");
+            expect(statusRegion).toHaveTextContent("Showing 1 search result.");
+        } finally {
+            vi.useRealTimers();
+        }
+    });
+
+    it("supports pagination across remote workbench pages", async () => {
+        const observedRequests: URL[] = [];
+
+        const remoteResponses: Record<string, Array<Record<string, unknown>>> = {
+            "1": [
+                {
+                    id: "p1",
+                    title: "First portrait",
+                    status: "missing",
+                    updated_at: "2024-02-10T00:00:00.000Z",
+                    alt_text: "",
+                    mime_type: "image/jpeg",
+                    dimensions: { width: 1600, height: 900 },
+                    edit_url: "https://example.com/wp-admin/post.php?post=p1&action=edit",
+                },
+                {
+                    id: "p2",
+                    title: "Second portrait",
+                    status: "missing",
+                    updated_at: "2024-02-11T00:00:00.000Z",
+                    alt_text: "",
+                    mime_type: "image/jpeg",
+                    dimensions: { width: 1600, height: 900 },
+                    edit_url: "https://example.com/wp-admin/post.php?post=p2&action=edit",
+                },
+            ],
+            "2": [
+                {
+                    id: "p3",
+                    title: "Final portrait",
+                    status: "missing",
+                    updated_at: "2024-02-12T00:00:00.000Z",
+                    alt_text: "",
+                    mime_type: "image/jpeg",
+                    dimensions: { width: 1600, height: 900 },
+                    edit_url: "https://example.com/wp-admin/post.php?post=p3&action=edit",
+                },
+            ],
+        };
+
+        useDashboardHandlers(
+            http.get(WORKBENCH_MEDIA_ENDPOINT, ({ request }) => {
+                const url = new URL(request.url);
+                observedRequests.push(url);
+
+                const pageParam = url.searchParams.get("page") ?? "1";
+                const responseItems = remoteResponses[pageParam] ?? remoteResponses["1"];
+
+                return HttpResponse.json(responseItems, {
+                    headers: {
+                        "X-WP-Total": "3",
+                        "X-WP-TotalPages": "2",
+                    },
+                });
+            }),
         );
-        expect(recognitionEvents).toHaveLength(1);
-        const [recognitionEvent] = recognitionEvents[0];
-        expect(recognitionEvent.detail).toMatchObject({
-            count: 1,
-            selection: ["123"],
-            filters: {
-                status: "missing",
-                search: null,
-            },
-        });
 
-        dispatchEventSpy.mockRestore();
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+                endpoints: {
+                    workbenchMedia: WORKBENCH_MEDIA_ENDPOINT,
+                },
+                restNonce: "workbench-nonce",
+            },
+            data: {
+                workbench: {
+                    ...workbenchBootstrapData,
+                    pagination: {
+                        page: 1,
+                        perPage: 2,
+                        total: 3,
+                        totalPages: 2,
+                    },
+                    items: [
+                        {
+                            id: "p1",
+                            title: "First portrait",
+                            status: "missing" as const,
+                            updatedAt: "2024-02-10T00:00:00.000Z",
+                            altText: "",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1600, height: 900 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=p1&action=edit",
+                        },
+                        {
+                            id: "p2",
+                            title: "Second portrait",
+                            status: "missing" as const,
+                            updatedAt: "2024-02-11T00:00:00.000Z",
+                            altText: "",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1600, height: 900 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=p2&action=edit",
+                        },
+                    ],
+                },
+            },
+        };
+
+        render(<App />);
+
+        expect(await screen.findByText(/First portrait/i)).toBeInTheDocument();
+
+        const paginationNav = await screen.findByRole("navigation", { name: /Workbench pagination/i });
+        expect(paginationNav).toBeInTheDocument();
+        expect(screen.getByText("Showing 1-2 of 3")).toBeInTheDocument();
+
+        const nextButton = screen.getByRole("button", { name: /Next/i });
+        fireEvent.click(nextButton);
+
+        await waitFor(() =>
+            expect(observedRequests.some((url) => url.searchParams.get("page") === "2")).toBe(true),
+        );
+
+        expect(await screen.findByText(/Final portrait/i)).toBeInTheDocument();
+        expect(screen.getByText("Showing 3-3 of 3")).toBeInTheDocument();
+
+        const previousButton = screen.getByRole("button", { name: /Previous/i });
+        fireEvent.click(previousButton);
+
+        await waitFor(() =>
+            expect(
+                observedRequests.filter((url) => url.searchParams.get("page") === "1").length,
+            ).toBeGreaterThanOrEqual(2),
+        );
+
+        expect(await screen.findByText(/First portrait/i)).toBeInTheDocument();
+        expect(screen.getByText("Showing 1-2 of 3")).toBeInTheDocument();
     });
 });

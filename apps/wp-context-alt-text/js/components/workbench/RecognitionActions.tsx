@@ -1,5 +1,7 @@
 import React from "react";
 
+import { __ } from "@wordpress/i18n";
+
 import { Button } from "@/components/ui/button";
 
 export interface RecognitionActionsProps {
@@ -10,10 +12,15 @@ export interface RecognitionActionsProps {
 
 export const RecognitionActions = ({ selectionCount, disabled, onTriggerRecognition }: RecognitionActionsProps): React.JSX.Element => {
     return (
-        <section className="cat-workbench__panel" aria-label="Recognition actions">
+        <section
+            className="cat-workbench__panel"
+            aria-label={__("Recognition actions", "context-alt-text")}
+        >
             <header>
-                <h2>Recognition</h2>
-                <p>Run face and brand detection to enrich context for selected items.</p>
+                <h2>{__("Recognition", "context-alt-text")}</h2>
+                <p>
+                    {__("Run face and brand detection to enrich context for selected items.", "context-alt-text")}
+                </p>
             </header>
             <Button
                 variant="default"
@@ -21,10 +28,13 @@ export const RecognitionActions = ({ selectionCount, disabled, onTriggerRecognit
                 onClick={onTriggerRecognition}
                 disabled={disabled || selectionCount === 0}
             >
-                Trigger Recognition
+                {__("Trigger Recognition", "context-alt-text")}
             </Button>
             <small>
-                Analytics event `cat_workbench_recognition_triggered` will fire once this button is connected to the service layer.
+                {__(
+                    "Analytics event `cat_workbench_recognition_triggered` will fire once this button is connected to the service layer.",
+                    "context-alt-text",
+                )}
             </small>
         </section>
     );

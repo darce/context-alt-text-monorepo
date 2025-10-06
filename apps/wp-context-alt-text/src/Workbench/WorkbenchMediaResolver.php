@@ -6,6 +6,7 @@ namespace ContextAltText\Workbench;
 
 use WP_Post;
 use WP_Query;
+use function class_exists;
 use function admin_url;
 use function function_exists;
 use function get_post_mime_type;
@@ -26,7 +27,7 @@ class WorkbenchMediaResolver
      */
     public function fetch(array $args = []): array
     {
-        if (!function_exists('get_posts')) {
+        if (!function_exists('get_posts') || !class_exists(WP_Query::class)) {
             return [
                 'items' => [],
                 'total' => 0,
@@ -58,7 +59,8 @@ class WorkbenchMediaResolver
             $queryArgs['s'] = $search;
         }
 
-        $wpQuery = new WP_Query($queryArgs);
+        $wpQuery = new WP_Query();
+        $wpQuery->query($queryArgs);
 
         $total = (int) ($wpQuery->found_posts ?? 0);
         $totalPagesRaw = (int) ($wpQuery->max_num_pages ?? 0);

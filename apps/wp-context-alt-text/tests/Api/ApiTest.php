@@ -6,6 +6,10 @@ namespace ContextAltText\Tests\Api;
 
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Api\Api;
+use ContextAltText\Recognition\RecognitionClient;
+use ContextAltText\Recognition\RecognitionJobRepository;
+use ContextAltText\Recognition\RecognitionJobService;
+use ContextAltText\Recognition\RecognitionSettings;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
@@ -34,7 +38,7 @@ final class ApiTest extends TestCase
         };
 
         $metrics = new DashboardMetricsService($scanner);
-        $api = new Api($metrics, new FeatureFlags(), new WorkbenchMediaResolver());
+        $api = $this->createApi($metrics, new FeatureFlags());
         $api->register_routes();
 
         self::assertNotEmpty($GLOBALS['__cat_rest_routes']);
@@ -62,7 +66,7 @@ final class ApiTest extends TestCase
         };
 
         $metrics = new DashboardMetricsService($scanner);
-        $api = new Api($metrics, new FeatureFlags(), new WorkbenchMediaResolver());
+        $api = $this->createApi($metrics, new FeatureFlags());
         $api->register_routes();
 
         $route = $this->find_route('/dashboard/coverage');
@@ -90,7 +94,7 @@ final class ApiTest extends TestCase
         };
 
         $metrics = new DashboardMetricsService($scanner);
-        $api = new Api($metrics, new FeatureFlags(), new WorkbenchMediaResolver());
+        $api = $this->createApi($metrics, new FeatureFlags());
         $api->register_routes();
 
         $route = $this->find_route('/workbench/media');
@@ -119,7 +123,7 @@ final class ApiTest extends TestCase
             }
         };
 
-        $api = new Api($metrics, $flags, new WorkbenchMediaResolver());
+        $api = $this->createApi($metrics, $flags);
         $api->register_routes();
 
         self::assertNull($this->find_route('/workbench/media'));
@@ -134,5 +138,29 @@ final class ApiTest extends TestCase
         }
 
         return null;
+    }
+
+    private function createApi(DashboardMetricsService $metrics, FeatureFlags $flags): Api
+    {
+        $client = new class extends RecognitionClient {
+            public function __construct()
+            {
+                parent::__construct(new RecognitionSettings());
+            }
+
+            public function analyzeScene(array $payload): array
+            {
+                return ['outputs' => []];
+            }
+
+            public function embeddings(array $payload): array
+            {
+                return [];
+            }
+        };
+
+        $jobs = new RecognitionJobService($client, new RecognitionJobRepository());
+
+        return new Api($metrics, $flags, new WorkbenchMediaResolver(), $jobs);
     }
 }

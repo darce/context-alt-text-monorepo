@@ -42,6 +42,10 @@ use ContextAltText\Support\Env;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Support\LifecycleManager;
 use ContextAltText\Template\Template;
+use ContextAltText\Recognition\RecognitionClient;
+use ContextAltText\Recognition\RecognitionJobRepository;
+use ContextAltText\Recognition\RecognitionJobService;
+use ContextAltText\Recognition\RecognitionSettings;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
 
 if (!defined('ABSPATH')) {
@@ -126,14 +130,19 @@ function context_alt_text(): ContextAltText
     $automationQueuePage = new AutomationQueuePage();
     $rosterPage = new RosterPage($rosterService, $security, $scanner);
     $settingsPage = new PluginSettingsPage();
+    $settingsPage->init();
     $accountCenterPage = new AccountCenterPage();
     $mediaPanel = new MediaLibraryPanel($scanner);
     $workbenchMediaResolver = new WorkbenchMediaResolver();
+    $recognitionSettings = new RecognitionSettings();
+    $recognitionClient = new RecognitionClient($recognitionSettings);
+    $recognitionJobRepository = new RecognitionJobRepository();
+    $recognitionJobService = new RecognitionJobService($recognitionClient, $recognitionJobRepository);
 
     $instance = new ContextAltText(
         new Admin($scanner, $dashboardMetrics, $featureFlags, $workbenchMediaResolver),
         new Frontend(),
-        new Api($dashboardMetrics, $featureFlags, $workbenchMediaResolver),
+        new Api($dashboardMetrics, $featureFlags, $workbenchMediaResolver, $recognitionJobService),
         new Menu(
             $dashboardPage,
             $workbenchPage,

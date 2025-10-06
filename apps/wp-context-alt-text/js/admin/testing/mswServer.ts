@@ -1,10 +1,10 @@
 import { afterAll, afterEach, beforeAll } from "vitest";
 import { setupServer } from "msw/node";
-import type { RestHandler } from "msw";
+import type { HttpHandler } from "msw";
 
 export const server = setupServer();
 
-export const useDashboardHandlers = (...handlers: RestHandler[]) => {
+export const useDashboardHandlers = (...handlers: HttpHandler[]) => {
     server.use(...handlers);
 };
 

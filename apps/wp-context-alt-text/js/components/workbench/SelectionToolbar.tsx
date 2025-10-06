@@ -1,5 +1,7 @@
 import React from "react";
 
+import { __, _n } from "@wordpress/i18n";
+
 import { Button } from "@/components/ui/button";
 
 export interface SelectionToolbarProps {
@@ -18,24 +20,25 @@ export const SelectionToolbar = ({
     onClearSelection,
 }: SelectionToolbarProps): React.JSX.Element => {
     const hasSelection = selectionCount > 0;
+    const selectionLabel = _n("item selected", "items selected", selectionCount, "context-alt-text");
 
     return (
         <header className="cat-workbench__toolbar" aria-live="polite">
             <div>
-                <strong>{selectionCount}</strong> item{selectionCount === 1 ? "" : "s"} selected
+                <strong>{selectionCount}</strong> {selectionLabel}
             </div>
             <div className="cat-workbench__toolbar-actions">
                 <Button variant="primary" size="sm" onClick={onGenerate} disabled={!hasSelection}>
-                    Generate Alt Text
+                    {__("Generate Alt Text", "context-alt-text")}
                 </Button>
                 <Button variant="default" size="sm" onClick={onRegenerate} disabled={!hasSelection}>
-                    Regenerate
+                    {__("Regenerate", "context-alt-text")}
                 </Button>
                 <Button variant="default" size="sm" onClick={onMarkReviewed} disabled={!hasSelection}>
-                    Mark Reviewed
+                    {__("Mark Reviewed", "context-alt-text")}
                 </Button>
                 <Button variant="subtle" size="sm" onClick={onClearSelection} disabled={!hasSelection}>
-                    Clear Selection
+                    {__("Clear Selection", "context-alt-text")}
                 </Button>
             </div>
         </header>

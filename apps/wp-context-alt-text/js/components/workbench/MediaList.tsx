@@ -1,14 +1,10 @@
 import React from "react";
 
+import { __, sprintf } from "@wordpress/i18n";
+
 import type { WorkbenchMediaItem, WorkbenchViewMode } from "@/components/workbench/WorkbenchApp";
 import { Button } from "@/components/ui/button";
 import { formatWorkbenchDate } from "@/components/workbench/utils";
-
-const STATUS_COPY: Record<WorkbenchMediaItem["status"], string> = {
-    missing: "Needs alt text",
-    draft: "Draft available",
-    published: "Alt text published",
-};
 
 const STATUS_CLASS: Record<WorkbenchMediaItem["status"], string> = {
     missing: "cat-status-chip--missing",
@@ -29,29 +25,32 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
     if (items.length === 0) {
         return (
             <div className="cat-workbench__empty" role="status" aria-live="polite">
-                <p>No media requires attention right now. Adjust your filters once data is wired.</p>
+                <p>{__("No media requires attention right now. Adjust your filters once data is wired.", "context-alt-text")}</p>
             </div>
         );
     }
 
     return (
-        <table className={`cat-workbench__table cat-workbench__table--${viewMode}`} aria-label="Media queue">
+        <table
+            className={`cat-workbench__table cat-workbench__table--${viewMode}`}
+            aria-label={__("Media queue", "context-alt-text")}
+        >
             <thead className="cat-workbench__thead">
                 <tr>
                     <th scope="col" className="cat-workbench__cell cat-workbench__cell--checkbox">
-                        <span className="cat-sr-only">Select asset</span>
+                        <span className="cat-sr-only">{__("Select asset", "context-alt-text")}</span>
                     </th>
                     <th scope="col" className="cat-workbench__cell cat-workbench__cell--file">
-                        File
+                        {__("File", "context-alt-text")}
                     </th>
                     <th scope="col" className="cat-workbench__cell cat-workbench__cell--alt">
-                        Alt text preview
+                        {__("Alt text preview", "context-alt-text")}
                     </th>
                     <th scope="col" className="cat-workbench__cell cat-workbench__cell--details">
-                        Details
+                        {__("Details", "context-alt-text")}
                     </th>
                     <th scope="col" className="cat-workbench__cell cat-workbench__cell--actions">
-                        Actions
+                        {__("Actions", "context-alt-text")}
                     </th>
                 </tr>
             </thead>
@@ -93,7 +92,11 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                                     type="checkbox"
                                     checked={isSelected}
                                     onChange={() => onToggleSelect(item.id)}
-                                    aria-label={`Select ${item.title}`}
+                                    aria-label={sprintf(
+                                        /* translators: %s: media title */
+                                        __("Select %s", "context-alt-text"),
+                                        item.title,
+                                    )}
                                     onClick={(event) => event.stopPropagation()}
                                 />
                             </td>
@@ -107,7 +110,9 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                                         )}
                                     </span>
                                     <div className="cat-workbench__fileMeta">
-                                        <span className={`cat-status-chip ${STATUS_CLASS[item.status]}`}>{STATUS_COPY[item.status]}</span>
+                                        <span className={`cat-status-chip ${STATUS_CLASS[item.status]}`}>
+                                            {getStatusCopy(item.status)}
+                                        </span>
                                         <h3>
                                             {item.editUrl ? (
                                                 <a href={item.editUrl}>{item.title}</a>
@@ -123,11 +128,14 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                                 <p className="cat-workbench__media-alt-value">
                                     {item.altText && item.altText.trim().length > 0
                                         ? truncateAltText(item.altText)
-                                        : "Alt text not yet provided"}
+                                        : __("Alt text not yet provided", "context-alt-text")}
                                 </p>
                             </td>
                             <td className="cat-workbench__cell cat-workbench__cell--details">
-                                <ul className="cat-workbench__metaList" aria-label="Media details">
+                                <ul
+                                    className="cat-workbench__metaList"
+                                    aria-label={__("Media details", "context-alt-text")}
+                                >
                                     {dimensions && <li>{dimensions}</li>}
                                     {formattedUpdatedAt && <li>{formattedUpdatedAt}</li>}
                                 </ul>
@@ -135,7 +143,7 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                             <td className="cat-workbench__cell cat-workbench__cell--actions">
                                 {item.editUrl && (
                                     <Button asChild variant="subtle" size="sm">
-                                        <a href={item.editUrl}>Edit</a>
+                                        <a href={item.editUrl}>{__("Edit", "context-alt-text")}</a>
                                     </Button>
                                 )}
                             </td>
@@ -145,6 +153,19 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
             </tbody>
         </table>
     );
+};
+
+const getStatusCopy = (status: WorkbenchMediaItem["status"]): string => {
+    switch (status) {
+        case "missing":
+            return __("Needs alt text", "context-alt-text");
+        case "draft":
+            return __("Draft available", "context-alt-text");
+        case "published":
+            return __("Alt text published", "context-alt-text");
+        default:
+            return status;
+    }
 };
 
 const truncateAltText = (value: string): string => {

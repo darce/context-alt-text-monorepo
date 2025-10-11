@@ -6,16 +6,136 @@ if (!class_exists('WP_Error')) {
     class WP_Error
     {
         /** @var string */
+        private $code;
+        /** @var string */
         private $message;
+        /** @var mixed */
+        private $data;
 
-        public function __construct(string $code = '', string $message = '')
+        public function __construct(string $code = '', string $message = '', $data = null)
         {
+            $this->code = $code;
             $this->message = $message;
+            $this->data = $data;
         }
 
         public function get_error_message(): string
         {
             return $this->message;
+        }
+
+        public function get_error_code(): string
+        {
+            return $this->code;
+        }
+
+        /**
+         * @return mixed
+         */
+        public function get_error_data()
+        {
+            return $this->data;
+        }
+    }
+}
+
+if (!class_exists('WP_REST_Request')) {
+    class WP_REST_Request implements \ArrayAccess
+    {
+        /** @var array<string,mixed> */
+        private $params;
+
+        /**
+         * @param array<string,mixed> $params
+         */
+        public function __construct(array $params = [])
+        {
+            $this->params = $params;
+        }
+
+        public function get_param(string $key)
+        {
+            return $this->params[$key] ?? null;
+        }
+
+        public function offsetExists(mixed $offset): bool
+        {
+            return array_key_exists($offset, $this->params);
+        }
+
+        public function offsetGet(mixed $offset): mixed
+        {
+            return $this->params[$offset] ?? null;
+        }
+
+        public function offsetSet(mixed $offset, mixed $value): void
+        {
+            if ($offset === null) {
+                return;
+            }
+
+            $this->params[$offset] = $value;
+        }
+
+        public function offsetUnset(mixed $offset): void
+        {
+            unset($this->params[$offset]);
+        }
+    }
+}
+
+if (!class_exists('WP_CLI_Command')) {
+    class WP_CLI_Command {}
+}
+
+if (!class_exists('WP_CLI')) {
+    class WP_CLI
+    {
+        /** @var array<string,mixed> */
+        public static $commands = [];
+
+        /** @var array<string,array<int,string>> */
+        public static $messages = [
+            'log' => [],
+            'success' => [],
+            'warning' => [],
+            'error' => [],
+        ];
+
+        public static function add_command($name, $callable): void
+        {
+            self::$commands[$name] = $callable;
+        }
+
+        public static function log($message): void
+        {
+            self::$messages['log'][] = (string) $message;
+        }
+
+        public static function success($message): void
+        {
+            self::$messages['success'][] = (string) $message;
+        }
+
+        public static function warning($message): void
+        {
+            self::$messages['warning'][] = (string) $message;
+        }
+
+        public static function error($message): void
+        {
+            self::$messages['error'][] = (string) $message;
+            throw new RuntimeException((string) $message);
+        }
+
+        public static function reset_cli_messages(): void
+        {
+            self::$messages = [
+                'log' => [],
+                'success' => [],
+                'warning' => [],
+                'error' => [],
+            ];
         }
     }
 }
@@ -67,6 +187,17 @@ if (!function_exists('wp_nonce_url')) {
     }
 }
 
+if (!function_exists('wp_verify_nonce')) {
+    function wp_verify_nonce($nonce, $action): bool
+    {
+        if (!is_string($nonce)) {
+            return false;
+        }
+
+        return $nonce === 'nonce-' . $action;
+    }
+}
+
 if (!function_exists('wp_create_nonce')) {
     function wp_create_nonce(string $action): string
     {
@@ -78,6 +209,36 @@ if (!function_exists('rest_url')) {
     function rest_url(string $path = ''): string
     {
         return 'http://example.test/wp-json/' . ltrim($path, '/');
+    }
+}
+
+if (!function_exists('wp_send_json_success')) {
+    function wp_send_json_success($data = null, int $status_code = 200)
+    {
+        $response = [
+            'success' => true,
+            'data' => $data,
+            'status' => $status_code,
+        ];
+
+        $GLOBALS['__cat_json_response'] = $response;
+
+        return $response;
+    }
+}
+
+if (!function_exists('wp_send_json_error')) {
+    function wp_send_json_error($data = null, int $status_code = 400)
+    {
+        $response = [
+            'success' => false,
+            'data' => $data,
+            'status' => $status_code,
+        ];
+
+        $GLOBALS['__cat_json_response'] = $response;
+
+        return $response;
     }
 }
 
@@ -213,6 +374,59 @@ if (!function_exists('wp_get_attachment_url')) {
     function wp_get_attachment_url($attachmentId)
     {
         return $GLOBALS['__cat_attachment_urls'][$attachmentId] ?? false;
+    }
+}
+
+if (!function_exists('get_post_meta')) {
+    function get_post_meta($postId, $key = '', $single = false)
+    {
+        if (!isset($GLOBALS['__cat_post_meta'][$postId])) {
+            return $single ? '' : [];
+        }
+
+        if ($key === '' || $key === null) {
+            return $GLOBALS['__cat_post_meta'][$postId];
+        }
+
+        if (!array_key_exists($key, $GLOBALS['__cat_post_meta'][$postId])) {
+            return $single ? '' : [];
+        }
+
+        $value = $GLOBALS['__cat_post_meta'][$postId][$key];
+
+        if ($single) {
+            return $value;
+        }
+
+        return [$value];
+    }
+}
+
+if (!function_exists('update_post_meta')) {
+    function update_post_meta($postId, $metaKey, $metaValue)
+    {
+        if (!isset($GLOBALS['__cat_post_meta'])) {
+            $GLOBALS['__cat_post_meta'] = [];
+        }
+
+        if (!isset($GLOBALS['__cat_post_meta'][$postId])) {
+            $GLOBALS['__cat_post_meta'][$postId] = [];
+        }
+
+        $GLOBALS['__cat_post_meta'][$postId][$metaKey] = $metaValue;
+
+        return true;
+    }
+}
+
+if (!function_exists('delete_post_meta')) {
+    function delete_post_meta($postId, $metaKey)
+    {
+        if (isset($GLOBALS['__cat_post_meta'][$postId][$metaKey])) {
+            unset($GLOBALS['__cat_post_meta'][$postId][$metaKey]);
+        }
+
+        return true;
     }
 }
 
@@ -479,6 +693,7 @@ if (!function_exists('wp_remote_post')) {
         $GLOBALS['__cat_http_calls'][] = [
             'url' => $url,
             'args' => $args,
+            'method' => 'POST',
         ];
 
         if (!empty($GLOBALS['__cat_http_queue'])) {
@@ -492,6 +707,79 @@ if (!function_exists('wp_remote_post')) {
             ],
             'body' => '',
         ];
+    }
+}
+
+if (!function_exists('wp_remote_get')) {
+    function wp_remote_get($url, $args = [])
+    {
+        if (!isset($GLOBALS['__cat_http_calls'])) {
+            $GLOBALS['__cat_http_calls'] = [];
+        }
+
+        $GLOBALS['__cat_http_calls'][] = [
+            'url' => $url,
+            'args' => $args,
+            'method' => 'GET',
+        ];
+
+        if (!empty($GLOBALS['__cat_http_queue'])) {
+            return array_shift($GLOBALS['__cat_http_queue']);
+        }
+
+        return [
+            'response' => [
+                'code' => 200,
+                'message' => 'OK',
+            ],
+            'body' => '',
+        ];
+    }
+}
+
+if (!function_exists('wp_remote_request')) {
+    function wp_remote_request($url, $args = [])
+    {
+        if (!isset($GLOBALS['__cat_http_calls'])) {
+            $GLOBALS['__cat_http_calls'] = [];
+        }
+
+        $method = isset($args['method']) ? strtoupper((string) $args['method']) : 'GET';
+
+        $GLOBALS['__cat_http_calls'][] = [
+            'url' => $url,
+            'args' => $args,
+            'method' => $method,
+        ];
+
+        if (!empty($GLOBALS['__cat_http_queue'])) {
+            return array_shift($GLOBALS['__cat_http_queue']);
+        }
+
+        return [
+            'response' => [
+                'code' => 200,
+                'message' => 'OK',
+            ],
+            'body' => '',
+        ];
+    }
+}
+
+if (!function_exists('current_time')) {
+    function current_time($type, $gmt = 0)
+    {
+        $timestamp = time();
+
+        if ($type === 'timestamp') {
+            return $gmt ? $timestamp : $timestamp;
+        }
+
+        if ($type === 'mysql') {
+            return gmdate('Y-m-d H:i:s', $timestamp);
+        }
+
+        return $timestamp;
     }
 }
 

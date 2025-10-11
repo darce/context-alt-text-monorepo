@@ -146,11 +146,20 @@ class Admin
         $coverageEndpoint = function_exists('rest_url')
             ? rest_url('context-alt-text/v1/dashboard/coverage')
             : '';
-        $workbenchEndpoint = '';
-        $workbenchEnabled = $this->featureFlags->workbenchEnabled() || $this->is_workbench_page();
 
+        $workbenchEnabled = $this->featureFlags->workbenchEnabled() || $this->is_workbench_page();
+        $workbenchEndpoint = '';
         if ($workbenchEnabled && function_exists('rest_url')) {
             $workbenchEndpoint = rest_url('context-alt-text/v1/workbench/media');
+        }
+
+        $recognitionEnabled = $this->featureFlags->workbenchRecognitionEnabled();
+        $recognitionAnalyzeEndpoint = '';
+        $recognitionJobEndpoint = '';
+
+        if ($recognitionEnabled && function_exists('rest_url')) {
+            $recognitionAnalyzeEndpoint = rest_url('context-alt-text/v1/recognition/analyze');
+            $recognitionJobEndpoint = rtrim(rest_url('context-alt-text/v1/recognition/job/'), '/') . '/';
         }
 
         return [
@@ -159,6 +168,8 @@ class Admin
             'endpoints' => [
                 'coverage' => $coverageEndpoint,
                 'workbenchMedia' => $workbenchEndpoint,
+                'recognitionAnalyze' => $recognitionAnalyzeEndpoint,
+                'recognitionJob' => $recognitionJobEndpoint,
             ],
             'featureFlags' => $this->get_feature_flags_config(),
         ];

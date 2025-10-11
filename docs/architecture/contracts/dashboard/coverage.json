@@ -1,0 +1,36 @@
+{
+    "total": 125,
+    "with_alt": 95,
+    "missing": 30,
+    "coverage_percent": 76,
+    "trend_series": [
+        {
+            "timestamp": 1717027200000,
+            "coverage": 45,
+            "total": 110,
+            "with_alt": 50,
+            "missing": 60
+        },
+        {
+            "timestamp": 1717113600000,
+            "coverage": 60,
+            "total": 118,
+            "with_alt": 71,
+            "missing": 47
+        },
+        {
+            "timestamp": 1717200000000,
+            "coverage": 68,
+            "total": 120,
+            "with_alt": 82,
+            "missing": 38
+        },
+        {
+            "timestamp": 1717286400000,
+            "coverage": 76,
+            "total": 125,
+            "with_alt": 95,
+            "missing": 30
+        }
+    ]
+}

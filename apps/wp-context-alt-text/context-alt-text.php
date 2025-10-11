@@ -42,10 +42,15 @@ use ContextAltText\Support\Env;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Support\LifecycleManager;
 use ContextAltText\Template\Template;
+use ContextAltText\Recognition\RecognitionCli;
 use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Recognition\RecognitionJobRepository;
 use ContextAltText\Recognition\RecognitionJobService;
+use ContextAltText\Recognition\RecognitionObservationRepository;
 use ContextAltText\Recognition\RecognitionSettings;
+use ContextAltText\Roster\RosterClient;
+use ContextAltText\Roster\RosterCli;
+use ContextAltText\Roster\RosterSyncScheduler;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
 
 if (!defined('ABSPATH')) {
@@ -78,6 +83,10 @@ if (!defined('CAT_ENABLE_ABILITIES')) {
 
 if (!defined('CAT_ENABLE_MCP')) {
     define('CAT_ENABLE_MCP', false);
+}
+
+if (!defined('WP_CLI')) {
+    define('WP_CLI', false);
 }
 
 $contextAltTextAutoload = CONTEXT_ALT_TEXT_PLUGIN_DIR . 'vendor/autoload.php';
@@ -123,21 +132,27 @@ function context_alt_text(): ContextAltText
     $scanner = new MissingAltTextScanner();
     $featureFlags = new FeatureFlags();
     $security = new Security();
-    $rosterService = new RosterService($security);
+    $rosterService = context_alt_text_roster_service($security);
+    $rosterScheduler = context_alt_text_roster_sync_scheduler($rosterService);
     $dashboardMetrics = new DashboardMetricsService($scanner);
     $dashboardPage = new DashboardPage($dashboardMetrics);
     $workbenchPage = new AltTextWorkbenchPage();
     $automationQueuePage = new AutomationQueuePage();
-    $rosterPage = new RosterPage($rosterService, $security, $scanner);
+    $rosterPage = new RosterPage($rosterService, $security, $scanner, $rosterScheduler);
     $settingsPage = new PluginSettingsPage();
     $settingsPage->init();
     $accountCenterPage = new AccountCenterPage();
     $mediaPanel = new MediaLibraryPanel($scanner);
     $workbenchMediaResolver = new WorkbenchMediaResolver();
-    $recognitionSettings = new RecognitionSettings();
-    $recognitionClient = new RecognitionClient($recognitionSettings);
-    $recognitionJobRepository = new RecognitionJobRepository();
-    $recognitionJobService = new RecognitionJobService($recognitionClient, $recognitionJobRepository);
+    $recognitionServices = context_alt_text_recognition_services();
+    /** @var RecognitionClient $recognitionClient */
+    $recognitionClient = $recognitionServices['client'];
+    /** @var RecognitionJobRepository $recognitionJobRepository */
+    $recognitionJobRepository = $recognitionServices['jobRepository'];
+    /** @var RecognitionObservationRepository $recognitionObservationRepository */
+    $recognitionObservationRepository = $recognitionServices['observationRepository'];
+    /** @var RecognitionJobService $recognitionJobService */
+    $recognitionJobService = $recognitionServices['jobService'];
 
     $instance = new ContextAltText(
         new Admin($scanner, $dashboardMetrics, $featureFlags, $workbenchMediaResolver),
@@ -163,17 +178,103 @@ function context_alt_text(): ContextAltText
     return $instance;
 }
 
+/**
+ * @return array{
+ *     settings: RecognitionSettings,
+ *     client: RecognitionClient,
+ *     jobRepository: RecognitionJobRepository,
+ *     observationRepository: RecognitionObservationRepository,
+ *     jobService: RecognitionJobService
+ * }
+ */
+function context_alt_text_recognition_services(): array
+{
+    static $services = null;
+
+    if ($services !== null) {
+        return $services;
+    }
+
+    $settings = new RecognitionSettings();
+    $client = new RecognitionClient($settings);
+    $jobRepository = new RecognitionJobRepository();
+    $observationRepository = new RecognitionObservationRepository();
+    $jobService = new RecognitionJobService($client, $jobRepository, $observationRepository);
+
+    $services = [
+        'settings' => $settings,
+        'client' => $client,
+        'jobRepository' => $jobRepository,
+        'observationRepository' => $observationRepository,
+        'jobService' => $jobService,
+    ];
+
+    return $services;
+}
+
+function context_alt_text_roster_service(?Security $security = null): RosterService
+{
+    static $service = null;
+
+    if ($service instanceof RosterService) {
+        return $service;
+    }
+
+    $security = $security ?? new Security();
+    $recognitionServices = context_alt_text_recognition_services();
+    /** @var RecognitionSettings $recognitionSettings */
+    $recognitionSettings = $recognitionServices['settings'];
+    $rosterClient = new RosterClient($recognitionSettings);
+
+    $service = new RosterService($security, $rosterClient);
+
+    return $service;
+}
+
+function context_alt_text_roster_sync_scheduler(?RosterService $service = null): RosterSyncScheduler
+{
+    static $scheduler = null;
+
+    if ($scheduler instanceof RosterSyncScheduler) {
+        return $scheduler;
+    }
+
+    $service = $service ?? context_alt_text_roster_service();
+    $scheduler = new RosterSyncScheduler($service);
+    $scheduler->register();
+
+    return $scheduler;
+}
+
 add_action('plugins_loaded', static function (): void {
     context_alt_text()->init();
 });
 
+if (defined('WP_CLI') && WP_CLI) {
+    add_action('plugins_loaded', static function (): void {
+        $services = context_alt_text_recognition_services();
+        \WP_CLI::add_command(
+            'cat-recognition',
+            new RecognitionCli($services['client'], $services['jobService'])
+        );
+
+        $rosterService = context_alt_text_roster_service();
+        \WP_CLI::add_command(
+            'cat-roster',
+            new RosterCli($rosterService)
+        );
+    });
+}
+
 function context_alt_text_activate(): void
 {
+    context_alt_text_roster_sync_scheduler()->activate();
     context_alt_text()->lifecycle()->activate();
 }
 
 function context_alt_text_deactivate(): void
 {
+    context_alt_text_roster_sync_scheduler()->deactivate();
     context_alt_text()->lifecycle()->deactivate();
 }
 

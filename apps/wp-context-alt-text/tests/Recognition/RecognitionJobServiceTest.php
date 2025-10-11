@@ -6,6 +6,7 @@ use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Recognition\RecognitionClientException;
 use ContextAltText\Recognition\RecognitionJobRepository;
 use ContextAltText\Recognition\RecognitionJobService;
+use ContextAltText\Recognition\RecognitionObservationRepository;
 use ContextAltText\Recognition\RecognitionSettings;
 use PHPUnit\Framework\TestCase;
 
@@ -25,6 +26,7 @@ final class RecognitionJobServiceTest extends TestCase
         $GLOBALS['__cat_uuid_counter'] = 0;
         $GLOBALS['__cat_actions'] = [];
         $GLOBALS['__cat_filters'] = [];
+        $GLOBALS['__cat_post_meta'] = [];
 
         add_filter('cat_recognition_should_log_error', static function (bool $shouldLog): bool {
             return false;
@@ -58,7 +60,8 @@ final class RecognitionJobServiceTest extends TestCase
         };
 
         $repository = new RecognitionJobRepository();
-        $service = new RecognitionJobService($client, $repository);
+        $observations = new RecognitionObservationRepository();
+        $service = new RecognitionJobService($client, $repository, $observations);
 
         $GLOBALS['__cat_current_user_capabilities']['edit_post'] = false;
 
@@ -86,19 +89,71 @@ final class RecognitionJobServiceTest extends TestCase
                 $this->calls[] = $payload;
 
                 return [
-                    'outputs' => [
-                        ['text' => 'description'],
+                    'results' => [
+                        [
+                            'detected_entities' => [
+                                [
+                                    'label' => 'Face',
+                                    'entity_type' => 'person',
+                                    'confidence' => 0.95,
+                                    'area' => 120.5,
+                                    'bbox' => [0, 0, 10, 10],
+                                    'roster_match' => [
+                                        'is_match' => true,
+                                        'similarity_score' => 0.92,
+                                        'match_confidence' => 92.0,
+                                        'confidence_threshold' => 0.5,
+                                        'roster_entry' => [
+                                            'unique_id' => 'roster-123',
+                                            'name' => 'Test User',
+                                            'display_name' => 'Test User',
+                                        ],
+                                    ],
+                                    'face_data' => [
+                                        'candidates' => [
+                                            [
+                                                'name' => 'Test User',
+                                                'similarity' => 0.92,
+                                                'unique_id' => 'roster-123',
+                                                'meets_threshold' => true,
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                                [
+                                    'label' => 'Face',
+                                    'entity_type' => 'person',
+                                    'confidence' => 0.45,
+                                    'area' => 80.0,
+                                    'bbox' => [1, 2, 3, 4],
+                                    'face_data' => [
+                                        'candidates' => [],
+                                    ],
+                                ],
+                            ],
+                        ],
                     ],
                 ];
             }
         };
 
         $repository = new RecognitionJobRepository();
-        $service = new RecognitionJobService($client, $repository);
+        $observations = new RecognitionObservationRepository();
+        $service = new RecognitionJobService($client, $repository, $observations);
 
         $GLOBALS['__cat_current_user_capabilities']['edit_post'] = true;
 
         $this->primeValidAttachment(10, 'image/png', 'http://example.test/photo.png');
+
+        $capturedObservations = [];
+        add_action(
+            'cat_recognition_observations_stored',
+            static function ($jobId, $attachmentId, array $payload) use (&$capturedObservations): void {
+                $capturedObservations[] = [$jobId, $attachmentId, $payload];
+            },
+            10,
+            3
+        );
 
         $result = $service->submit([10]);
 
@@ -124,7 +179,40 @@ final class RecognitionJobServiceTest extends TestCase
         $this->assertIsInt($job['startedAt']);
         $this->assertIsInt($job['completedAt']);
         $this->assertArrayHasKey('result', $job);
-        $this->assertSame('description', $job['result']['outputs'][0]['text']);
+        $this->assertCount(1, $job['result']['results']);
+        $this->assertCount(2, $job['result']['results'][0]['detected_entities']);
+
+        $stored = get_post_meta(10, '_context_alt_text_recognition_observations', true);
+        $this->assertIsArray($stored);
+        $this->assertSame('uuid-1', $stored['jobId']);
+        $this->assertSame(10, $stored['attachmentId']);
+        $this->assertSame('photo.png', $stored['context']['filename']);
+        $this->assertSame('http://example.test/photo.png', $stored['context']['imageUrl']);
+        $this->assertCount(2, $stored['observations']);
+        $this->assertSame(2, $stored['summary']['total']);
+        $this->assertSame(1, $stored['summary']['matched']);
+        $this->assertSame(1, $stored['summary']['needs_review']);
+
+        $matched = $stored['observations'][0];
+        $this->assertSame('matched', $matched['status']);
+        $this->assertSame('roster-123', $matched['roster']['remoteId']);
+        $this->assertSame('Test User', $matched['roster']['name']);
+        $this->assertTrue($matched['match']['isMatch']);
+
+        $needsReview = $stored['observations'][1];
+        $this->assertSame('needs_review', $needsReview['status']);
+        $this->assertSame([], $needsReview['candidates']);
+
+        $this->assertCount(1, $capturedObservations);
+        $this->assertSame('uuid-1', $capturedObservations[0][0]);
+        $this->assertSame(10, $capturedObservations[0][1]);
+        $this->assertSame(2, $capturedObservations[0][2]['summary']['total']);
+
+        $jobWithObservations = $service->getJob('uuid-1');
+        $this->assertNotNull($jobWithObservations);
+        $this->assertArrayHasKey('observations', $jobWithObservations);
+        $this->assertCount(1, $jobWithObservations['observations']);
+        $this->assertSame(10, $jobWithObservations['observations'][0]['attachmentId']);
     }
 
     public function test_submit_marks_job_as_error_when_client_fails(): void
@@ -142,7 +230,8 @@ final class RecognitionJobServiceTest extends TestCase
         };
 
         $repository = new RecognitionJobRepository();
-        $service = new RecognitionJobService($client, $repository);
+        $observations = new RecognitionObservationRepository();
+        $service = new RecognitionJobService($client, $repository, $observations);
 
         $GLOBALS['__cat_current_user_capabilities']['edit_post'] = true;
         $this->primeValidAttachment(25);
@@ -175,7 +264,8 @@ final class RecognitionJobServiceTest extends TestCase
         };
 
         $repository = new RecognitionJobRepository();
-        $service = new RecognitionJobService($client, $repository);
+        $observations = new RecognitionObservationRepository();
+        $service = new RecognitionJobService($client, $repository, $observations);
 
         $GLOBALS['__cat_current_user_capabilities']['edit_post'] = true;
         $this->primeValidAttachment(77);

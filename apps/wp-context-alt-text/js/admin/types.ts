@@ -1,6 +1,8 @@
 export type DashboardEndpoints = {
     coverage?: string;
     workbenchMedia?: string;
+    recognitionAnalyze?: string;
+    recognitionJob?: string;
 };
 
 export type FeatureFlags = {

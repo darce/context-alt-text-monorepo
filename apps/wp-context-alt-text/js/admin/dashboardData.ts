@@ -126,6 +126,10 @@ export const getDashboardConfig = (): AdminConfig => {
         endpoints: {
             coverage: typeof endpoints.coverage === "string" ? endpoints.coverage : undefined,
             workbenchMedia: typeof endpoints.workbenchMedia === "string" ? endpoints.workbenchMedia : undefined,
+            recognitionAnalyze:
+                typeof endpoints.recognitionAnalyze === "string" ? endpoints.recognitionAnalyze : undefined,
+            recognitionJob:
+                typeof endpoints.recognitionJob === "string" ? endpoints.recognitionJob : undefined,
         },
         featureFlags: {
             coverageTrend: Boolean(featureFlags.coverageTrend ?? FALLBACK_FEATURE_FLAGS.coverageTrend),

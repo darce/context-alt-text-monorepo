@@ -7,21 +7,29 @@ namespace ContextAltText\Admin;
 use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Security\Security;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
+use ContextAltText\Roster\RosterSyncScheduler;
+use function __;
+use function sanitize_text_field;
+use function wp_send_json_error;
+use function wp_send_json_success;
 
 class RosterPage
 {
     private RosterService $rosterService;
     private Security $security;
     private MissingAltTextScanner $scanner;
+    private RosterSyncScheduler $scheduler;
 
     public function __construct(
         RosterService $rosterService,
         Security $security,
-        MissingAltTextScanner $scanner
+        MissingAltTextScanner $scanner,
+        RosterSyncScheduler $scheduler
     ) {
         $this->rosterService = $rosterService;
         $this->security = $security;
         $this->scanner = $scanner;
+        $this->scheduler = $scheduler;
     }
 
     public function init(): void
@@ -44,7 +52,7 @@ class RosterPage
         $summary = $this->scanner->get_summary();
         $missing = (int) ($summary['missing'] ?? 0);
         $updatedAt = $summary['updated_at'] ?? null;
-        ?>
+?>
         <div class="wrap context-alt-text-admin">
             <h1><?php esc_html_e('Context Alt Text', 'context-alt-text'); ?></h1>
             <p class="cat-status-line">
@@ -82,19 +90,34 @@ class RosterPage
                 </p>
             <?php endif; ?>
         </div>
-        <?php
+<?php
     }
 
     public function handle_ajax_actions(): void
     {
         if (!$this->security->can_manage_roster()) {
             wp_send_json_error(['message' => __('You are not allowed to manage the roster.', 'context-alt-text')], 403);
+            return;
         }
 
         if (!$this->security->verify_admin_nonce('context-alt-text-roster', '_wpnonce', $_REQUEST)) {
             wp_send_json_error(['message' => __('Invalid request nonce.', 'context-alt-text')], 400);
+            return;
         }
 
-        wp_send_json_error(['message' => __('Roster actions are not yet implemented.', 'context-alt-text')], 501);
+        $commandRaw = $_REQUEST['command'] ?? 'sync';
+        $command = sanitize_text_field((string) $commandRaw);
+
+        if ($command !== 'sync') {
+            wp_send_json_error(['message' => __('Unknown roster action.', 'context-alt-text')], 400);
+            return;
+        }
+
+        $result = $this->scheduler->runManualSync();
+
+        wp_send_json_success([
+            'changesApplied' => $result['changesApplied'],
+            'state' => $result['state'],
+        ]);
     }
 }

@@ -10,7 +10,7 @@ interface HeroStatusProps {
 
 export const HeroStatusSection = ({ data }: HeroStatusProps): React.JSX.Element => {
     return (
-        <section className={`cat-hero cat-hero--${data.state}`}>
+        <section className={`cat-hero cat-hero--${data.state}`} aria-live="polite" role="status">
             <div className="cat-hero__content">
                 <p className="cat-hero__message">{data.message}</p>
                 {data.last_updated_human && (

@@ -4,6 +4,10 @@ import { __ } from "@wordpress/i18n";
 
 import { SelectionToolbar } from "@/components/workbench/SelectionToolbar";
 import { MediaList } from "@/components/workbench/MediaList";
+import { RecognitionActions } from "@/components/workbench/RecognitionActions";
+import { useRecognitionJob, type RecognitionJobDetails } from "@/admin/hooks/useRecognitionJob";
+import { emitDashboardEvent } from "@/admin/analytics";
+import { pushSnackbarNotice } from "@/admin/utils/notices";
 
 export type WorkbenchViewMode = "grid" | "list";
 
@@ -29,7 +33,6 @@ export interface WorkbenchAppProps {
     onRegenerateAltText?: (ids: string[]) => void;
     onMarkReviewed?: (ids: string[]) => void;
 }
-
 export const WorkbenchApp = ({
     items = [],
     viewMode = "list",
@@ -40,9 +43,125 @@ export const WorkbenchApp = ({
     const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
     const selectedList = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
 
+    const recognition = useRecognitionJob();
+    const jobDetails = recognition.jobDetails as RecognitionJobDetails | null;
+
     React.useEffect(() => {
         setSelectedIds(new Set());
     }, [items]);
+
+    const requestErrorNoticeRef = React.useRef<string | null>(null);
+    const jobErrorNoticeRef = React.useRef<string | null>(null);
+    const requestErrorEventRef = React.useRef<string | null>(null);
+    const jobErrorEventRef = React.useRef<string | null>(null);
+    const completedJobEventRef = React.useRef<string | null>(null);
+
+    React.useEffect(() => {
+        if (!recognition.error) {
+            requestErrorNoticeRef.current = null;
+            requestErrorEventRef.current = null;
+            return;
+        }
+
+        const message = recognition.error.message && recognition.error.message.trim() !== ""
+            ? recognition.error.message
+            : __("Recognition request failed. Review the log for more details.", "context-alt-text");
+
+        const signature = [
+            recognition.error.status ?? "unknown",
+            message,
+            recognition.error.rejected.join(","),
+        ].join("|");
+
+        if (requestErrorNoticeRef.current !== signature) {
+            requestErrorNoticeRef.current = signature;
+            pushSnackbarNotice("error", message);
+        }
+
+        if (requestErrorEventRef.current !== signature) {
+            requestErrorEventRef.current = signature;
+            emitDashboardEvent("cat_workbench_recognition_failed", {
+                stage: "request",
+                status: recognition.error.status ?? null,
+                message,
+                rejected: recognition.error.rejected,
+            });
+        }
+    }, [recognition.error]);
+
+    React.useEffect(() => {
+        const status = jobDetails?.status ?? null;
+
+        if (status !== "error") {
+            jobErrorNoticeRef.current = null;
+            jobErrorEventRef.current = null;
+            return;
+        }
+
+        const message = jobDetails?.error && jobDetails.error.trim() !== ""
+            ? jobDetails.error
+            : __("Recognition job failed. Review the log for more details.", "context-alt-text");
+
+        const jobId = jobDetails?.id ?? recognition.lastJob?.jobId ?? null;
+        const signature = [jobId ?? "unknown", message].join("|");
+
+        if (jobErrorNoticeRef.current !== signature) {
+            jobErrorNoticeRef.current = signature;
+            pushSnackbarNotice("error", message);
+        }
+
+        if (jobErrorEventRef.current !== signature) {
+            jobErrorEventRef.current = signature;
+            emitDashboardEvent("cat_workbench_recognition_failed", {
+                stage: "job",
+                jobId,
+                message,
+                attachments: jobDetails?.attachments?.map((attachment) => attachment.id) ?? [],
+                rejected: jobDetails?.rejected ?? [],
+            });
+        }
+    }, [jobDetails?.status, jobDetails?.error, jobDetails?.id, recognition.lastJob?.jobId]);
+
+    React.useEffect(() => {
+        if (!jobDetails || jobDetails.status !== "complete") {
+            return;
+        }
+
+        const jobId = jobDetails.id ?? recognition.lastJob?.jobId ?? null;
+        const signature = jobId ?? `complete:${jobDetails.completedAt ?? Date.now()}`;
+
+        if (completedJobEventRef.current === signature) {
+            return;
+        }
+
+        completedJobEventRef.current = signature;
+
+        const observationSummary = jobDetails.observations.reduce(
+            (acc, item) => {
+                acc.total += item.summary.total;
+                acc.matched += item.summary.matched;
+                acc.needsReview += item.summary.needsReview;
+                return acc;
+            },
+            { total: 0, matched: 0, needsReview: 0 },
+        );
+
+        const durationSeconds = jobDetails.startedAt && jobDetails.completedAt
+            ? Math.max(0, jobDetails.completedAt - jobDetails.startedAt)
+            : null;
+
+        emitDashboardEvent("cat_workbench_recognition_completed", {
+            jobId,
+            attachments: jobDetails.attachments.map((attachment) => attachment.id),
+            attachmentCount: jobDetails.attachments.length,
+            observations: observationSummary.total,
+            matched: observationSummary.matched,
+            needsReview: observationSummary.needsReview,
+            rejected: jobDetails.rejected,
+            rejectedCount: jobDetails.rejected.length,
+            durationSeconds,
+        });
+    }, [jobDetails, recognition.lastJob?.jobId]);
 
     const handleToggleSelection = React.useCallback(
         (id: string) => {
@@ -82,6 +201,26 @@ export const WorkbenchApp = ({
         onMarkReviewed?.(selectedList);
     }, [onMarkReviewed, selectedList]);
 
+    const handleTriggerRecognition = React.useCallback(() => {
+        if (selectedList.length === 0 || !recognition.canSubmit) {
+            return;
+        }
+        const selectionSnapshot = [...selectedList];
+
+        requestErrorEventRef.current = null;
+        jobErrorEventRef.current = null;
+        completedJobEventRef.current = null;
+
+        emitDashboardEvent("cat_workbench_recognition_triggered", {
+            selection: selectionSnapshot,
+            count: selectionSnapshot.length,
+        });
+
+        void recognition.triggerRecognition(selectionSnapshot).catch(() => {
+            // Errors are surfaced via the hook state; no additional handling needed here.
+        });
+    }, [recognition, selectedList]);
+
     return (
         <div
             className="cat-workbench"
@@ -96,6 +235,16 @@ export const WorkbenchApp = ({
             />
 
             <div className="cat-workbench__layout">
+                <RecognitionActions
+                    selectionCount={selectedIds.size}
+                    isEnabled={recognition.canSubmit}
+                    isSubmitting={recognition.isSubmitting}
+                    isPolling={recognition.isPolling}
+                    lastJob={recognition.lastJob}
+                    jobDetails={jobDetails}
+                    error={recognition.error}
+                    onTriggerRecognition={handleTriggerRecognition}
+                />
                 <MediaList
                     items={items}
                     selectedIds={selectedIds}

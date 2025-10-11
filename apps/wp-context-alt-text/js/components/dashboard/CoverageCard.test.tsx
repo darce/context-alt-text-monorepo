@@ -1,9 +1,10 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { axe } from "vitest-axe";
 
 import { CoverageCard } from "./CoverageCard";
 import { renderDashboard } from "@/admin/testing/renderDashboard";
 import { FALLBACK_COVERAGE } from "@/admin/dashboardData";
+import * as analytics from "@/admin/analytics";
 
 const baseFlags = {
     coverageTrend: true,
@@ -17,6 +18,10 @@ const successQueryState = {
     error: null,
     hasEndpoint: true,
 };
+
+afterEach(() => {
+    vi.restoreAllMocks();
+});
 
 describe("CoverageCard", () => {
     it("clamps displayed coverage percentage between 0 and 100", () => {
@@ -206,5 +211,98 @@ describe("CoverageCard", () => {
 
         const results = await axe(container);
         expect(results).toHaveNoViolations();
+    });
+
+    it("invokes the drill-down handler and emits analytics when the action is clicked", async () => {
+        const analyticsSpy = vi.spyOn(analytics, "emitDashboardEvent");
+        const onDrilldown = vi.fn();
+        const data = {
+            ...FALLBACK_COVERAGE,
+            total: 50,
+            with_alt: 35,
+            missing: 15,
+            coverage_percent: 70,
+        };
+
+        const { getByRole, user } = renderDashboard(
+            <CoverageCard
+                data={data}
+                featureFlags={{ ...baseFlags, workbenchEnabled: true }}
+                queryState={successQueryState}
+                onDrilldown={onDrilldown}
+            />,
+        );
+
+        const drilldownButton = getByRole("button", { name: /Workbench/i });
+        await user.click(drilldownButton);
+
+        expect(onDrilldown).toHaveBeenCalledTimes(1);
+        expect(analyticsSpy).toHaveBeenCalledWith(
+            "cat_coverage_drilldown",
+            expect.objectContaining({
+                coverage_percent: 70,
+                missing: 15,
+                total: 50,
+            }),
+        );
+    });
+
+    it("invokes the export handler and emits analytics when the action is clicked", async () => {
+        const analyticsSpy = vi.spyOn(analytics, "emitDashboardEvent");
+        const onExport = vi.fn();
+        const data = {
+            ...FALLBACK_COVERAGE,
+            total: 80,
+            with_alt: 60,
+            missing: 20,
+            coverage_percent: 75,
+        };
+
+        const { getByRole, user } = renderDashboard(
+            <CoverageCard
+                data={data}
+                featureFlags={baseFlags}
+                queryState={successQueryState}
+                onExport={onExport}
+            />,
+        );
+
+        const exportButton = getByRole("button", { name: /Export coverage/i });
+        await user.click(exportButton);
+
+        expect(onExport).toHaveBeenCalledTimes(1);
+        expect(analyticsSpy).toHaveBeenCalledWith(
+            "cat_coverage_export",
+            expect.objectContaining({
+                coverage_percent: 75,
+                missing: 20,
+                total: 80,
+            }),
+        );
+    });
+
+    it("hides the action buttons while the skeleton is visible", () => {
+        const { queryByRole } = renderDashboard(
+            <CoverageCard
+                data={{
+                    ...FALLBACK_COVERAGE,
+                    total: 120,
+                    with_alt: 90,
+                    missing: 30,
+                    coverage_percent: 75,
+                }}
+                featureFlags={{ ...baseFlags, workbenchEnabled: true }}
+                queryState={{
+                    ...successQueryState,
+                    status: "pending",
+                    isLoading: true,
+                }}
+                onDrilldown={vi.fn()}
+                onExport={vi.fn()}
+            />,
+        );
+
+        expect(queryByRole("button", { name: /Workbench/i })).toBeNull();
+        expect(queryByRole("button", { name: /Export coverage/i })).toBeNull();
     });
 });

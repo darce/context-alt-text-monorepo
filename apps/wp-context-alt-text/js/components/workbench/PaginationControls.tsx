@@ -156,7 +156,6 @@ export const PaginationControls = ({
                         className="cat-pagination__select"
                         value={perPage}
                         onChange={handlePerPageChange}
-                        disabled={isLoading}
                     >
                         {availablePerPageOptions.map((option) => (
                             <option key={option} value={option}>

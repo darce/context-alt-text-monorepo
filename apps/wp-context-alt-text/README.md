@@ -209,10 +209,13 @@ Override them via `wp-config.php` or WordPress filters (`cat_enable_abilities`, 
 
 Activation triggers a first-run scan that computes the initial count of attachments missing alt text and schedules a cron event for follow-up scans. The dashboard renders the MVP accessibility status line using these counts.
 
+## Roster Sync & Archival
+
+During recognition roster synchronization the plugin now archives remote deletions instead of dropping them silently. Any entry missing from the latest remote snapshot is removed from the active roster, copied into `cat_roster_entries_archived` with an `archivedAt` timestamp, and the `deleted` sync metric is incremented. This preserves local context for audit/debugging while keeping the live roster in sync with the recognition service.
+
 ## TODO
 
 - Install Composer dependencies (`composer install`) to generate the PSR-4 autoloader under `vendor/`.
 - Set up Vite + React admin bundle.
 - Populate `packages/shared-contracts` with shared schemas and import them from PHP/TS.
 - Flesh out the roster service persistence layer and REST API endpoints.
-```

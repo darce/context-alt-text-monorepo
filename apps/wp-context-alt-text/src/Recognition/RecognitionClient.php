@@ -17,6 +17,7 @@ use function sprintf;
 use function trim;
 use function usleep;
 use function wp_json_encode;
+use function wp_remote_get;
 use function wp_remote_post;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_response_code;
@@ -61,6 +62,22 @@ class RecognitionClient
     }
 
     /**
+     * @return array<string,mixed>
+     * @throws RecognitionClientException
+     */
+    public function getHealth(): array
+    {
+        $endpoint = $this->buildUrl('/api/v0/health');
+
+        $args = [
+            'headers' => $this->buildHeaders(),
+            'timeout' => $this->getTimeoutSeconds(),
+        ];
+
+        return $this->requestJson('GET', $endpoint, $args);
+    }
+
+    /**
      * @param array<string,mixed> $payload
      *
      * @return array<string,mixed>
@@ -74,11 +91,27 @@ class RecognitionClient
             'timeout' => $this->getTimeoutSeconds(),
         ];
 
+        return $this->requestJson('POST', $endpoint, $args);
+    }
+
+    /**
+     * @param 'GET'|'POST' $method
+     * @param array<string,mixed> $args
+     *
+     * @return array<string,mixed>
+     * @throws RecognitionClientException
+     */
+    private function requestJson(string $method, string $endpoint, array $args): array
+    {
         $attempts = max(1, self::MAX_ATTEMPTS);
         $lastException = null;
 
         for ($attempt = 0; $attempt < $attempts; $attempt++) {
-            $response = wp_remote_post($endpoint, $args);
+            if ($method === 'GET') {
+                $response = wp_remote_get($endpoint, $args);
+            } else {
+                $response = wp_remote_post($endpoint, $args);
+            }
 
             if (is_wp_error($response)) {
                 /** @var WP_Error $response */
@@ -124,6 +157,7 @@ class RecognitionClient
 
         throw new RecognitionClientException('Recognition service request failed.');
     }
+
 
     /**
      * @return array<string,string>

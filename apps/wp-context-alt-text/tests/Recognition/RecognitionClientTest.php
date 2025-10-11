@@ -96,4 +96,46 @@ final class RecognitionClientTest extends TestCase
             $this->assertStringContainsString('image url missing', $exception->getMessage());
         }
     }
+
+    public function test_get_health_returns_decoded_payload(): void
+    {
+        $GLOBALS['__cat_http_queue'] = [
+            [
+                'response' => [
+                    'code' => 200,
+                    'message' => 'OK',
+                ],
+                'body' => json_encode([
+                    'status' => 'healthy',
+                    'uptime' => 123,
+                ]),
+            ],
+        ];
+
+        $client = new RecognitionClient(new RecognitionSettings());
+        $result = $client->getHealth();
+
+        $this->assertSame('healthy', $result['status']);
+        $this->assertSame('GET', $GLOBALS['__cat_http_calls'][0]['method']);
+    }
+
+    public function test_get_health_throws_exception_on_error_response(): void
+    {
+        $GLOBALS['__cat_http_queue'] = [
+            [
+                'response' => [
+                    'code' => 503,
+                    'message' => 'Service Unavailable',
+                ],
+                'body' => json_encode([
+                    'message' => 'maintenance',
+                ]),
+            ],
+        ];
+
+        $client = new RecognitionClient(new RecognitionSettings());
+
+        $this->expectException(RecognitionClientException::class);
+        $client->getHealth();
+    }
 }

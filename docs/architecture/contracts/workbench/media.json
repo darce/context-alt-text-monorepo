@@ -1,0 +1,34 @@
+{
+    "items": [
+        {
+            "id": 101,
+            "title": "Launch hero",
+            "status": "missing",
+            "thumbnailUrl": "https://example.test/uploads/2024/04/launch-hero.jpg",
+            "updatedAt": "2024-05-01T14:32:10.000Z",
+            "altText": null,
+            "mimeType": "image/jpeg",
+            "dimensions": {
+                "width": 2048,
+                "height": 1365
+            },
+            "editUrl": "https://example.test/wp-admin/post.php?post=101&action=edit"
+        },
+        {
+            "id": 102,
+            "title": "Team headshot",
+            "status": "draft",
+            "thumbnailUrl": "https://example.test/uploads/2024/04/team-headshot.jpg",
+            "updatedAt": "2024-04-30T09:15:04.000Z",
+            "altText": "Draft alt text in review",
+            "mimeType": "image/jpeg",
+            "dimensions": {
+                "width": 1200,
+                "height": 1200
+            },
+            "editUrl": "https://example.test/wp-admin/post.php?post=102&action=edit"
+        }
+    ],
+    "total": 58,
+    "totalPages": 3
+}

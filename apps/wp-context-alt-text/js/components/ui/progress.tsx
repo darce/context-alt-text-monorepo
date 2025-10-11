@@ -11,12 +11,16 @@ type ProgressRef = React.ComponentRef<typeof ProgressPrimitive.Root>;
 export const Progress = React.forwardRef<
     ProgressRef,
     ProgressProps
->(({ indicatorClassName, className, value = 0, ...props }, ref) => {
+>(({ indicatorClassName, className, value = 0, role, ...props }, ref) => {
     const clamped = Math.max(0, Math.min(100, Number(value) || 0));
 
     return (
         <ProgressPrimitive.Root
             ref={ref}
+            role={role ?? "progressbar"}
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={clamped}
             className={`cat-progress ${className ?? ""}`.trim()}
             value={clamped}
             {...props}

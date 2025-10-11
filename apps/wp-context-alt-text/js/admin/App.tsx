@@ -1,6 +1,6 @@
 import React from "react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { MemoryRouter, Routes, Route, Navigate, Link } from "react-router-dom";
+import { MemoryRouter, Routes, Route, Navigate, Link, useNavigate } from "react-router-dom";
 import { __, _n, sprintf } from "@wordpress/i18n";
 
 import { HeroStatusSection } from "@/components/dashboard/HeroStatus";
@@ -142,6 +142,87 @@ interface DashboardRouteProps {
 const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.Element => {
     const coverageQuery = useCoverageMetrics({ initialData: bootstrap.coverage });
     const coverage = coverageQuery.data ?? bootstrap.coverage;
+    const navigate = useNavigate();
+
+    const handleCoverageDrilldown = React.useCallback(() => {
+        if (config.featureFlags?.workbenchEnabled) {
+            navigate("/workbench?status=missing");
+            return;
+        }
+
+        if (typeof window !== "undefined" && typeof config.missingAltMediaUrl === "string") {
+            window.open(config.missingAltMediaUrl, "_blank", "noopener");
+        }
+    }, [config.featureFlags?.workbenchEnabled, config.missingAltMediaUrl, navigate]);
+
+    const handleCoverageExport = React.useCallback(() => {
+        if (typeof window === "undefined" || typeof document === "undefined") {
+            return;
+        }
+
+        const rows: Array<string[]> = [
+            [__("Metric", "context-alt-text"), __("Value", "context-alt-text")],
+            [__("Total items", "context-alt-text"), String(coverage.total)],
+            [__("With alt text", "context-alt-text"), String(coverage.with_alt)],
+            [__("Missing alt text", "context-alt-text"), String(coverage.missing)],
+            [__("Coverage percent", "context-alt-text"), `${coverage.coverage_percent}`],
+        ];
+
+        if (Array.isArray(coverage.trend_series) && coverage.trend_series.length > 0) {
+            rows.push([]);
+            rows.push(
+                [
+                    __("Timestamp", "context-alt-text"),
+                    __("Coverage percent", "context-alt-text"),
+                    __("Total items", "context-alt-text"),
+                    __("With alt text", "context-alt-text"),
+                    __("Missing alt text", "context-alt-text"),
+                ],
+            );
+
+            for (const point of coverage.trend_series) {
+                rows.push([
+                    new Date(point.timestamp).toISOString(),
+                    `${point.coverage}`,
+                    String(point.total),
+                    String(point.with_alt),
+                    String(point.missing),
+                ]);
+            }
+        }
+
+        const escapeCell = (cell: string): string => {
+            if (cell.includes('"')) {
+                return `"${cell.replace(/"/g, '""')}"`;
+            }
+
+            if (cell.includes(",") || cell.includes("\n")) {
+                return `"${cell}"`;
+            }
+
+            return cell;
+        };
+
+        const csvContent = rows
+            .map((row) => row.map((cell) => escapeCell(cell)).join(","))
+            .join("\r\n");
+
+        if (typeof window.URL?.createObjectURL !== "function" || !document.body) {
+            return;
+        }
+
+        const blob = new Blob([csvContent], { type: "text/csv;charset=utf-8" });
+        const url = window.URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = `coverage-report-${new Date().toISOString().slice(0, 10)}.csv`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        window.URL.revokeObjectURL(url);
+    }, [coverage]);
+
+    const enableDrilldown = Boolean(config.featureFlags?.workbenchEnabled || config.missingAltMediaUrl);
 
     return (
         <div className="cat-dashboard">
@@ -160,6 +241,8 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
                         refetch: coverageQuery.refetch,
                         hasEndpoint: coverageQuery.hasEndpoint,
                     }}
+                    onDrilldown={enableDrilldown ? handleCoverageDrilldown : undefined}
+                    onExport={handleCoverageExport}
                 />
                 <ActivityCard data={bootstrap.latestActivity} />
                 <RecognitionCard data={bootstrap.recognition} />
@@ -242,6 +325,8 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
         search: searchTerm,
     });
 
+    const isMediaLoading = mediaQuery.isFetching || mediaQuery.isPending;
+
     React.useEffect(() => {
         const normalizedQuery = normalizeSearchQuery(debouncedSearchInput);
         if (normalizedQuery === searchTerm) {
@@ -320,7 +405,7 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
     const totalPagesCount = mediaQuery.totalPages ?? (totalCount > 0 ? Math.ceil(totalCount / perPage) : 0);
 
     React.useEffect(() => {
-        if (mediaQuery.isFetching) {
+        if (isMediaLoading) {
             return;
         }
 
@@ -334,7 +419,7 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
         if (page > totalPagesCount) {
             setPage(totalPagesCount);
         }
-    }, [mediaQuery.isFetching, page, totalPagesCount]);
+    }, [isMediaLoading, page, totalPagesCount]);
 
     const searchErrorMessage = mediaQuery.isError
         ? __("Unable to load results. Please try again.", "context-alt-text")
@@ -349,7 +434,7 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
     }, [searchInput, searchTerm]);
 
     const searchStatusMessage = React.useMemo(() => {
-        if (mediaQuery.isFetching && hasWorkbenchEndpoint) {
+        if (isMediaLoading && hasWorkbenchEndpoint) {
             return activeSearch
                 ? sprintf(
                     __("Searching for \"%s\"…", "context-alt-text"),
@@ -392,7 +477,7 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
             ),
             totalCount,
         );
-    }, [activeSearch, hasWorkbenchEndpoint, mediaQuery.isError, mediaQuery.isFetching, totalCount]);
+    }, [activeSearch, hasWorkbenchEndpoint, isMediaLoading, mediaQuery.isError, totalCount]);
 
     const handleSearchInputChange = React.useCallback((query: string) => {
         setSearchInput(query);
@@ -419,7 +504,7 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
                 <SearchBar
                     value={searchInput}
                     onSearch={handleSearchInputChange}
-                    isLoading={mediaQuery.isFetching}
+                    isLoading={isMediaLoading}
                     error={searchErrorMessage}
                     onRetry={searchErrorMessage ? handleRetrySearch : undefined}
                     statusMessage={searchStatusMessage ?? undefined}
@@ -438,10 +523,10 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
                 total={totalCount}
                 totalPages={totalPagesCount}
                 onPageChange={setPage}
-                isLoading={mediaQuery.isFetching}
+                isLoading={isMediaLoading}
                 onPerPageChange={handlePerPageChange}
             />
-            {mediaQuery.isFetching && (
+            {isMediaLoading && (
                 <p className="cat-workbench__refresh" role="status" aria-live="polite">
                     {__("Refreshing media queue…", "context-alt-text")}
                 </p>

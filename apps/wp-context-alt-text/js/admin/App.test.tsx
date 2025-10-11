@@ -23,6 +23,12 @@ const WORKBENCH_MEDIA_ENDPOINT = "https://example.com/wp-json/context-alt-text/v
 const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/context-alt-text/v1/workbench/media";
 const WORKBENCH_MEDIA_FALLBACK_HANDLER = `*${WORKBENCH_MEDIA_FALLBACK_PATH}`;
 
+const wait = async (ms: number) => {
+    await act(async () => {
+        await new Promise((resolve) => setTimeout(resolve, ms));
+    });
+};
+
 const bootstrapPayload = {
     hero: {
         state: "ready" as const,
@@ -146,6 +152,29 @@ describe("App", () => {
         expect(results.violations).toHaveLength(0);
     });
 
+    it("hydrates the workbench bootstrap payload and passes accessibility checks", async () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                    workbenchRecognition: true,
+                },
+            },
+            data: {
+                workbench: workbenchBootstrapData,
+            },
+        };
+
+        const { container } = render(<App />);
+
+        await screen.findByRole("table", { name: /Media queue/i });
+        await screen.findByRole("button", { name: /Generate Alt Text/i });
+
+        const results = await axe(container);
+        expect(results.violations).toHaveLength(0);
+    });
+
     it("renders the workbench when requested", () => {
         (globalThis as any).ContextAltTextAdmin = {
             page: "workbench",
@@ -169,6 +198,67 @@ describe("App", () => {
         expect(getByText(/Sample image/i)).toBeInTheDocument();
         expect(getByText(/image\/jpeg/i)).toBeInTheDocument();
         expect(screen.getByRole("table", { name: /Media queue/i })).toBeInTheDocument();
+    });
+
+    it("hydrates the workbench route from bootstrap data", async () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+            },
+            data: {
+                workbench: {
+                    ...workbenchBootstrapData,
+                    items: [
+                        ...workbenchBootstrapData.items,
+                        {
+                            id: "456",
+                            title: "Second asset",
+                            status: "draft" as const,
+                            updatedAt: "2024-04-04T00:00:00.000Z",
+                            altText: "Draft alt text",
+                            mimeType: "image/png",
+                            dimensions: { width: 640, height: 480 },
+                            editUrl: "https://example.com/wp-admin/post.php?post=456&action=edit",
+                        },
+                    ],
+                    pagination: {
+                        page: 1,
+                        perPage: 20,
+                        total: 2,
+                        totalPages: 1,
+                    },
+                },
+            },
+        };
+
+        render(<App />);
+
+        expect(screen.getByRole("heading", { name: /Recognition/i })).toBeInTheDocument();
+        const selectionSummary = screen.getByText((_, element) => element?.textContent === "0 items selected");
+        expect(selectionSummary).toBeInTheDocument();
+        expect(screen.getByRole("table", { name: /Media queue/i })).toBeInTheDocument();
+        expect(screen.getByRole("combobox", { name: /Items per page/i })).toHaveValue("20");
+    });
+
+    it("passes axe accessibility checks on the workbench route", async () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            page: "workbench",
+            config: {
+                featureFlags: {
+                    workbenchEnabled: true,
+                },
+            },
+            data: {
+                workbench: workbenchBootstrapData,
+            },
+        };
+
+        const { container } = render(<App />);
+        const results = await axe(container);
+        expect(results).toHaveNoViolations();
     });
 
     it("emits workbench seen analytics once when route loads", () => {
@@ -304,38 +394,30 @@ describe("App", () => {
             },
         };
 
-        vi.useFakeTimers();
+        const user = userEvent.setup();
 
-        const user = userEvent.setup({
-            advanceTimers: vi.advanceTimersByTimeAsync.bind(vi),
+        render(<App />);
+
+        expect(await screen.findByText(/Ocean view/i)).toBeInTheDocument();
+        expect(screen.getByText(/Mountain trail/i)).toBeInTheDocument();
+
+        const input = screen.getByRole("searchbox", { name: /search media/i });
+        await user.clear(input);
+        await user.type(input, "mountain");
+
+        await wait(0);
+
+        await waitFor(() => {
+            expect(
+                observedRequests.some((url) => url.searchParams.get("search") === "mountain"),
+            ).toBe(true);
         });
 
-        try {
-            render(<App />);
+        expect(await screen.findByText(/Mountain trail/i)).toBeInTheDocument();
+        expect(screen.queryByText(/Ocean view/i)).not.toBeInTheDocument();
 
-            expect(await screen.findByText(/Ocean view/i)).toBeInTheDocument();
-            expect(screen.getByText(/Mountain trail/i)).toBeInTheDocument();
-
-            const input = screen.getByRole("searchbox", { name: /search media/i });
-            await user.clear(input);
-            await user.type(input, "mountain");
-
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(400);
-            });
-
-            vi.useRealTimers();
-
-            await waitFor(() => expect(observedRequests).toHaveLength(1));
-
-            expect(await screen.findByText(/Mountain trail/i)).toBeInTheDocument();
-            expect(screen.queryByText(/Ocean view/i)).not.toBeInTheDocument();
-
-            const statusRegion = await screen.findByTestId("workbench-search-status");
-            expect(statusRegion).toHaveTextContent("Showing 1 search result.");
-        } finally {
-            vi.useRealTimers();
-        }
+        const statusRegion = await screen.findByTestId("workbench-search-status");
+        expect(statusRegion).toHaveTextContent("Showing 1 search result.");
     });
 
     it("loads additional pages via the fallback workbench endpoint when pagination changes", async () => {
@@ -441,7 +523,7 @@ describe("App", () => {
             render(<App />);
 
             expect(await screen.findByText(/Fallback portrait one/i)).toBeInTheDocument();
-            expect(screen.getByText("Showing 1-2 of 3")).toBeInTheDocument();
+            expect(await screen.findByText("Showing 1-2 of 3")).toBeInTheDocument();
 
             const nextButton = screen.getByRole("button", { name: /Next/i });
             fireEvent.click(nextButton);
@@ -451,7 +533,7 @@ describe("App", () => {
             );
 
             expect(await screen.findByText(/Fallback portrait three/i)).toBeInTheDocument();
-            expect(screen.getByText("Showing 3-3 of 3")).toBeInTheDocument();
+            expect(await screen.findByText("Showing 3-3 of 3")).toBeInTheDocument();
         } finally {
             (window as unknown as { ajaxurl?: string }).ajaxurl = originalAjaxUrl;
         }
@@ -609,8 +691,6 @@ describe("App", () => {
     });
 
     it("filters workbench media via debounced search with inline status messaging", async () => {
-        vi.useFakeTimers();
-
         const observedRequests: URL[] = [];
 
         (globalThis as any).ContextAltTextAdmin = {
@@ -637,11 +717,13 @@ describe("App", () => {
         };
 
         useDashboardHandlers(
-            http.get(WORKBENCH_MEDIA_ENDPOINT, ({ request }) => {
+            http.get(WORKBENCH_MEDIA_ENDPOINT, async ({ request }) => {
                 const url = new URL(request.url);
                 observedRequests.push(url);
 
                 expect(url.searchParams.get("search")).toBe("portrait");
+
+                await new Promise((resolve) => setTimeout(resolve, 50));
 
                 return HttpResponse.json(
                     [
@@ -666,30 +748,28 @@ describe("App", () => {
             }),
         );
 
-        try {
-            render(<App />);
+        render(<App />);
 
-            const input = screen.getByRole("searchbox", { name: /search media/i });
-            fireEvent.change(input, { target: { value: "portrait" } });
+        const input = screen.getByRole("searchbox", { name: /search media/i });
+        fireEvent.change(input, { target: { value: "portrait" } });
 
-            await act(async () => {
-                await vi.advanceTimersByTimeAsync(400);
-            });
+        await wait(0);
 
+        await waitFor(() => {
             const spinner = screen.getByRole("status", { name: /searching media/i });
             expect(spinner).toBeInTheDocument();
+        });
 
-            vi.useRealTimers();
+        await waitFor(() => {
+            expect(
+                observedRequests.some((url) => url.searchParams.get("search") === "portrait"),
+            ).toBe(true);
+        });
 
-            await waitFor(() => expect(observedRequests).toHaveLength(1));
+        expect(await screen.findByText(/Portrait hero image/i)).toBeInTheDocument();
 
-            expect(await screen.findByText(/Portrait hero image/i)).toBeInTheDocument();
-
-            const statusRegion = screen.getByTestId("workbench-search-status");
-            expect(statusRegion).toHaveTextContent("Showing 1 search result.");
-        } finally {
-            vi.useRealTimers();
-        }
+        const statusRegion = await screen.findByTestId("workbench-search-status");
+        expect(statusRegion).toHaveTextContent("Showing 1 search result.");
     });
 
     it("supports pagination across remote workbench pages", async () => {

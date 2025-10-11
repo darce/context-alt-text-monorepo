@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from "vitest";
 
-import { getDashboardConfig, getDashboardData } from "./dashboardData";
+import { getDashboardConfig, getDashboardData, getInitialRoute, getWorkbenchData } from "./dashboardData";
 import type { AdminConfig, DashboardData } from "@/admin/types";
 
 describe("dashboardData", () => {
@@ -75,5 +75,74 @@ describe("dashboardData", () => {
         expect(value.missingAltMediaUrl).toBeUndefined();
         expect(value.endpoints?.coverage).toBeUndefined();
         expect(value.restNonce).toBeUndefined();
+    });
+
+    it("returns fallback workbench data when payload is missing", () => {
+        const data = getWorkbenchData();
+
+        expect(data.items).toHaveLength(0);
+        expect(data.viewMode).toBe("list");
+        expect(data.pagination).toMatchObject({ page: 1, perPage: 20, total: 0, totalPages: 0 });
+    });
+
+    it("normalizes workbench bootstrap data from the global payload", () => {
+        (globalThis as any).ContextAltTextAdmin = {
+            data: {
+                workbench: {
+                    viewMode: "grid",
+                    pagination: {
+                        page: 2,
+                        perPage: 15,
+                        total: 30,
+                        totalPages: 2,
+                    },
+                    items: [
+                        {
+                            id: 42,
+                            title: "Sample asset",
+                            status: "draft",
+                            updatedAt: "2024-04-02T00:00:00.000Z",
+                            altText: "Drafted alt text",
+                            mimeType: "image/jpeg",
+                            dimensions: { width: 1200, height: 800 },
+                            editUrl: "https://example.com/edit/42",
+                        },
+                        {
+                            id: null,
+                            title: null,
+                        },
+                    ],
+                },
+            },
+        };
+
+        const data = getWorkbenchData();
+
+        expect(data.items).toEqual([
+            {
+                id: "42",
+                title: "Sample asset",
+                status: "draft",
+                updatedAt: "2024-04-02T00:00:00.000Z",
+                altText: "Drafted alt text",
+                mimeType: "image/jpeg",
+                dimensions: { width: 1200, height: 800 },
+                editUrl: "https://example.com/edit/42",
+                thumbnailUrl: undefined,
+            },
+        ]);
+        expect(data.viewMode).toBe("list");
+        expect(data.pagination).toEqual({ page: 2, perPage: 15, total: 30, totalPages: 2 });
+    });
+
+    it("derives the initial route from the global payload", () => {
+        (globalThis as any).ContextAltTextAdmin = { page: "workbench" };
+        expect(getInitialRoute()).toBe("workbench");
+
+        (globalThis as any).ContextAltTextAdmin = { page: "dashboard" };
+        expect(getInitialRoute()).toBe("dashboard");
+
+        (globalThis as any).ContextAltTextAdmin = { page: "unknown" };
+        expect(getInitialRoute()).toBe("dashboard");
     });
 });

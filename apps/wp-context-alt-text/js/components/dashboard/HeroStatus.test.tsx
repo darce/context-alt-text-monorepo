@@ -73,4 +73,21 @@ describe("HeroStatusSection", () => {
         const results = await axe(container);
         expect(results).toHaveNoViolations();
     });
+
+    it("exposes a polite live region for assistive tech", () => {
+        const data = {
+            state: "ready" as const,
+            message: "Scan complete — fix them now.",
+            cta_label: "Open Alt-Text Workbench",
+            cta_url: "/wp-admin/admin.php?page=context-alt-text",
+            last_updated_human: "5 minutes",
+        };
+
+        const { container } = renderDashboard(<HeroStatusSection data={data} />);
+        const section = container.querySelector(".cat-hero");
+
+        expect(section).not.toBeNull();
+        expect(section).toHaveAttribute("aria-live", "polite");
+        expect(section).toHaveAttribute("role", "status");
+    });
 });

@@ -80,7 +80,10 @@ class RosterEntry:
         now = datetime.now().isoformat()
         if not self.created_timestamp:
             self.created_timestamp = now
-        self.updated_timestamp = now
+        # Only set updated_timestamp if one wasn't provided by the caller.
+        # This preserves deterministic timestamps when tests or callers supply them.
+        if not self.updated_timestamp:
+            self.updated_timestamp = now
     
     def _compute_aggregate_embedding(self):
         """Compute aggregate embedding from reference images."""

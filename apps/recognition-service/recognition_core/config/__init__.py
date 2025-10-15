@@ -6,17 +6,59 @@ Loads from settings.yaml with environment variable overrides.
 """
 
 import os
+import platform
 import yaml
-from typing import List, Optional
+from typing import List, Optional, Mapping, Any
 from pathlib import Path
 from pydantic import BaseSettings, Field
+
+
+def _resolve_default_cache_root() -> Path:
+    """Infer a sensible cache root based on environment and platform."""
+    for env_var in ("INSIGHTFACE_CACHE_DIR", "CACHE_DIR", "LOCAL_CACHE_ROOT"):
+        value = os.getenv(env_var)
+        if value:
+            return Path(value)
+
+    # Hugging Face deployments typically set HF_HOME / HF_HUB_CACHE
+    hf_home = os.getenv("HF_HOME")
+    if hf_home:
+        return Path(hf_home)
+
+    for env_var in ("HF_HUB_CACHE", "TRANSFORMERS_CACHE"):
+        value = os.getenv(env_var)
+        if value:
+            candidate = Path(value)
+            return candidate.parent if candidate.is_file() else candidate
+
+    # macOS local default
+    if platform.system() == "Darwin":
+        butter = Path("/Volumes/Butter")
+        if butter.exists():
+            return butter
+
+    # Fallback to user cache directory
+    return Path.home() / ".cache" / "context-alt-text"
+
+
+def _default_insightface_cache_dir() -> str:
+    root = _resolve_default_cache_root()
+    # If the root already points to a specific directory for insightface, keep it
+    if root.name.lower().startswith("insightface"):
+        return str(root)
+    return str(root / "insightface")
+
+
+def _strip_none_values(data: Mapping[str, Any]) -> dict:
+    """Remove keys that explicitly set None so default factories still run."""
+    return {key: value for key, value in data.items() if value is not None}
 
 
 class InsightFaceSettings(BaseSettings):
     """InsightFace model configuration."""
     model_name: str = "buffalo_l"  # Standard InsightFace model
     device: str = "auto"
-    cache_dir: str = Field(default_factory=lambda: os.getenv("INSIGHTFACE_CACHE_DIR", "/tmp/insightface_models"))
+    cache_dir: str = Field(default_factory=_default_insightface_cache_dir)
     providers: List[str] = []  # Empty list enables auto-detection based on device
 
 
@@ -93,12 +135,12 @@ def load_settings() -> Settings:
     
     # Create nested settings objects
     settings_data = {
-        "insightface": InsightFaceSettings(**config_data.get("insightface", {})),
-        "recognition": RecognitionSettings(**config_data.get("recognition", {})),
-        "embedding_router": EmbeddingRouterSettings(**config_data.get("embedding_router", {})),
-        "cache": CacheSettings(**config_data.get("cache", {})),
-        "performance": PerformanceSettings(**config_data.get("performance", {})),
-        "logging": LoggingSettings(**config_data.get("logging", {})),
+        "insightface": InsightFaceSettings(**_strip_none_values(config_data.get("insightface", {}))),
+        "recognition": RecognitionSettings(**_strip_none_values(config_data.get("recognition", {}))),
+        "embedding_router": EmbeddingRouterSettings(**_strip_none_values(config_data.get("embedding_router", {}))),
+        "cache": CacheSettings(**_strip_none_values(config_data.get("cache", {}))),
+        "performance": PerformanceSettings(**_strip_none_values(config_data.get("performance", {}))),
+        "logging": LoggingSettings(**_strip_none_values(config_data.get("logging", {}))),
     }
     
     return Settings(**settings_data)

@@ -319,6 +319,7 @@ Quality Heuristics:
 - **Import sorting**: automatic via `eslint-plugin-import`
 - **4-space indentation** (enforced by Prettier config)
 - **Arrow functions** for consistency across all modules
+- `npm run lint` enforces the TypeScript-first policy; ESLint blocks new `.js/.jsx` files inside `apps/wp-context-alt-text/js/`. Request architectural approval before adding exceptions and migrate legacy JavaScript modules to TypeScript when they are next touched.
 
 ### CSS/SCSS
 

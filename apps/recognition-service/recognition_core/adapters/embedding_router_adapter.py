@@ -16,6 +16,7 @@ import numpy as np
 from recognition_core.domain.interfaces import EmbeddingRouterPort
 from recognition_core.domain.entities import EmbeddingEntry, MatchResult
 from recognition_core.config import get_settings
+from roster.config import get_config as get_roster_config
 
 logger = logging.getLogger(__name__)
 
@@ -48,8 +49,11 @@ class EmbeddingRouterAdapter(EmbeddingRouterPort):
             
             # Handle different JSON formats
             if isinstance(data, dict):
-                # Format: {"entities": [...]} or direct entity dict
-                entities_data = data.get('entities', [data] if 'unique_id' in data else [])
+                # Format: {"embeddings": [...]} or {"entities": [...]} or single entity dict
+                if 'embeddings' in data and isinstance(data['embeddings'], list):
+                    entities_data = data['embeddings']
+                else:
+                    entities_data = data.get('entities', [data] if 'unique_id' in data else [])
             elif isinstance(data, list):
                 # Format: [{"unique_id": ...}, ...]
                 entities_data = data
@@ -80,13 +84,41 @@ class EmbeddingRouterAdapter(EmbeddingRouterPort):
     def _get_embeddings_path(self) -> str:
         """Get the path to the embeddings file."""
         embeddings_file = self.settings.embedding_router.embeddings_file
-        
-        # If relative path, make it relative to project root
-        if not os.path.isabs(embeddings_file):
+        candidates = []
+
+        if os.path.isabs(embeddings_file):
+            candidates.append(Path(embeddings_file))
+        else:
             project_root = Path(__file__).parent.parent.parent
-            embeddings_file = project_root / embeddings_file.lstrip("/")
-        
-        return str(embeddings_file)
+            candidates.append((project_root / embeddings_file.lstrip("/")).resolve())
+
+        # Fallback to roster storage embedding path if configured
+        try:
+            roster_config = get_roster_config()
+            model = self._infer_model_from_path(embeddings_file)
+            if model:
+                roster_path = Path(roster_config.get_embeddings_file_path(model))
+                candidates.append(roster_path)
+        except Exception as exc:
+            logger.debug(f"⚠️ Unable to resolve roster embedding path fallback: {exc}")
+
+        for candidate in candidates:
+            if candidate.exists():
+                return str(candidate)
+
+        return str(candidates[0])
+
+    def _infer_model_from_path(self, embeddings_file: str) -> Optional[str]:
+        """
+        Best-effort model inference from embeddings filename.
+        Expected patterns like insightface_w600k_embeddings.json.
+        """
+        basename = os.path.basename(embeddings_file)
+        if basename.endswith("_embeddings.json"):
+            return basename.replace("_embeddings.json", "")
+        if basename.endswith(".json"):
+            return basename.replace(".json", "")
+        return None
     
     def _parse_embedding_entry(self, entity_data: Dict[str, Any]) -> Optional[EmbeddingEntry]:
         """Parse a single embedding entry from JSON data."""
@@ -218,3 +250,7 @@ class EmbeddingRouterAdapter(EmbeddingRouterPort):
     def get_loaded_names(self) -> List[str]:
         """Get the names of loaded entities."""
         return [entry.name for entry in self._embeddings]
+
+    def get_embeddings_path(self) -> str:
+        """Return the resolved embeddings file path for observability."""
+        return self._get_embeddings_path()

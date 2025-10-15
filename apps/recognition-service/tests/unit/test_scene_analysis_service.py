@@ -24,12 +24,15 @@ from recognition_core.services import FaceRecognitionService
 class StubRecognitionModel(RecognitionModelPort):
     def __init__(self, faces=None):
         self.called = False
-        self._faces = faces or [
-            FaceEmbedding(
-                embedding=np.array([1.0, 0.0], dtype=np.float32),
-                detection=FaceDetection(bbox=(0, 0, 10, 10), confidence=0.95),
-            )
-        ]
+        if faces is None:
+            self._faces = [
+                FaceEmbedding(
+                    embedding=np.array([1.0, 0.0], dtype=np.float32),
+                    detection=FaceDetection(bbox=(0, 0, 10, 10), confidence=0.95),
+                )
+            ]
+        else:
+            self._faces = faces
 
     async def analyze(self, image: Image.Image):  # type: ignore[override]
         self.called = True

@@ -59,8 +59,14 @@ class StubRecognitionService:
     def __init__(self):
         self.settings = SimpleNamespace(
             recognition=SimpleNamespace(default_threshold=0.5),
-            insightface=SimpleNamespace(model_name="stub-face", device="cpu"),
-            embedding_router=SimpleNamespace(auto_reload=False),
+            insightface=SimpleNamespace(model_name="stub-face", device="cpu", providers=["cpu"]),
+            embedding_router=SimpleNamespace(
+                auto_reload=False,
+                reload_interval=30,
+                embeddings_file="/roster/data/insightface_w600k_embeddings.json",
+            ),
+            performance=SimpleNamespace(batch_size=1, max_concurrent_requests=10),
+            cache=SimpleNamespace(hf_home=None, hf_datasets_cache=None, torch_home=None),
         )
 
     async def recognize_faces(self, image, threshold=None):
@@ -92,12 +98,32 @@ class StubRecognitionService:
 
     async def get_service_info(self):
         return {
-            "model_name": self.settings.insightface.model_name,
-            "device": self.settings.insightface.device,
-            "default_threshold": self.settings.recognition.default_threshold,
-            "loaded_embeddings": 1,
-            "entity_names": ["Test User"],
-            "auto_reload": self.settings.embedding_router.auto_reload,
+            "model": {
+                "name": self.settings.insightface.model_name,
+                "device": self.settings.insightface.device,
+                "providers": self.settings.insightface.providers,
+            },
+            "recognition": {
+                "default_threshold": self.settings.recognition.default_threshold,
+                "max_faces_per_image": 10,
+                "embedding_dimension": 512,
+            },
+            "embedding_router": {
+                "auto_reload": self.settings.embedding_router.auto_reload,
+                "reload_interval_seconds": self.settings.embedding_router.reload_interval,
+                "embeddings_file": self.settings.embedding_router.embeddings_file,
+                "loaded_embeddings": 1,
+                "loaded_entities": ["Test User"],
+            },
+            "performance": {
+                "batch_size": self.settings.performance.batch_size,
+                "max_concurrent_requests": self.settings.performance.max_concurrent_requests,
+            },
+            "cache": {
+                "hf_home": self.settings.cache.hf_home,
+                "hf_datasets_cache": self.settings.cache.hf_datasets_cache,
+                "torch_home": self.settings.cache.torch_home,
+            },
         }
 
     async def reload_embeddings(self):
@@ -134,6 +160,8 @@ class TestSceneAnalysisService(SceneAnalysisService):
 
 
 class StubRosterEntry:
+    FIXED_TIMESTAMP = "2024-01-01T00:00:00"
+
     def __init__(self, name: str, embedding: List[float], metadata: Optional[Dict[str, Any]] = None):
         self.name = name
         self.display_name = name
@@ -141,9 +169,8 @@ class StubRosterEntry:
         self.metadata = metadata or {}
         self.reference_images = [SimpleNamespace(embedding=embedding)]
         self.aggregate_embedding = embedding
-        now = datetime.now().isoformat()
-        self.created_timestamp = now
-        self.updated_timestamp = now
+        self.created_timestamp = self.FIXED_TIMESTAMP
+        self.updated_timestamp = self.FIXED_TIMESTAMP
 
     @property
     def image_count(self) -> int:
@@ -155,7 +182,7 @@ class StubRosterEntry:
             self.metadata.update(metadata)
         arr = np.mean([img.embedding for img in self.reference_images], axis=0)
         self.aggregate_embedding = arr.tolist()
-        self.updated_timestamp = datetime.now().isoformat()
+        self.updated_timestamp = self.FIXED_TIMESTAMP
 
 
 class StubRosterService:
@@ -221,6 +248,8 @@ def client() -> TestClient:
     set_roster_service(stub_roster)
 
     app = FastAPI()
+    app.state.is_initializing = False
+    app.state.initialization_complete = True
     app.include_router(api_router)
     app.dependency_overrides[get_roster_service] = lambda: stub_roster
     return TestClient(app)

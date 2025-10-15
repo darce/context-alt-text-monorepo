@@ -56,6 +56,7 @@ public/assets/dist/
 storybook-static/
 vendor/
 composer.lock
+.phpunit.result.cache
 
 # Vite build output
 apps/wp-context-alt-text/public/assets/dist/

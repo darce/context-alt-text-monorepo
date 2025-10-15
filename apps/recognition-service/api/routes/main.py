@@ -1,6 +1,7 @@
 import io
 import logging
-from typing import Optional
+import os
+from typing import Any, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Request
 from PIL import Image
@@ -9,6 +10,7 @@ from analysis.services.scene_analysis_service import SceneAnalysisService
 from .roster import router as roster_router
 from api.dependencies import get_roster_service
 from api.schemas import AnalyzeSceneRequest, EmbeddingsRequest
+from shared.config import get_config
 from shared.utils.device_utils import get_available_device  # for device resolution if needed
 
 router = APIRouter()
@@ -17,6 +19,40 @@ router.include_router(roster_router)
 # Dependency to get scene composer - will be set by the main app
 _scene_composer: Optional[SceneComposer] = None
 _scene_analysis_service: Optional[SceneAnalysisService] = None
+
+_media_config = get_config().get("media_storage", {}).get("config", {})
+_max_caption_size_mb = int(_media_config.get("max_file_size_mb", 10))
+_max_caption_size_bytes = _max_caption_size_mb * 1024 * 1024
+
+try:  # numpy is present in the service environment but guard to keep import safe for tests.
+    import numpy as _np  # type: ignore
+except Exception:  # pragma: no cover - numpy always available in prod image but tests may stub
+    _np = None
+
+
+def _to_serializable(value: Any) -> Any:
+    """Recursively convert numpy/scalar rich objects into JSON-safe primitives."""
+    if _np is not None:
+        if isinstance(value, (_np.integer,)):
+            return int(value)
+        if isinstance(value, (_np.floating,)):
+            return float(value)
+        if isinstance(value, _np.ndarray):
+            return [_to_serializable(item) for item in value.tolist()]
+
+    if isinstance(value, dict):
+        return {key: _to_serializable(sub_value) for key, sub_value in value.items()}
+
+    if isinstance(value, (list, tuple, set)):
+        return [_to_serializable(item) for item in value]
+
+    if hasattr(value, "to_dict") and callable(getattr(value, "to_dict")):
+        return _to_serializable(value.to_dict())
+
+    if hasattr(value, "__dict__"):
+        return _to_serializable(vars(value))
+
+    return value
 
 
 async def _read_pil_image(file: Optional[UploadFile]) -> Optional[Image.Image]:
@@ -27,6 +63,29 @@ async def _read_pil_image(file: Optional[UploadFile]) -> Optional[Image.Image]:
     data = await file.read()
     image = Image.open(io.BytesIO(data))
     return image.convert("RGB")
+
+
+def _validate_upload_size(upload: Optional[UploadFile], field: str) -> None:
+    """Ensure an uploaded file does not exceed the configured size budget."""
+    if upload is None:
+        return
+
+    if upload.file is None:
+        return
+
+    upload.file.seek(0, os.SEEK_END)
+    size = upload.file.tell()
+    upload.file.seek(0)
+
+    if size > _max_caption_size_bytes:
+        raise HTTPException(
+            status_code=413,
+            detail={
+                "code": "caption_payload_too_large",
+                "field": field,
+                "max_mb": _max_caption_size_mb,
+            },
+        )
 
 def get_scene_composer(request: Request) -> SceneComposer:
     if not getattr(request.app.state, "initialization_complete", False):
@@ -73,6 +132,8 @@ async def caption(
     scene_analysis_service: SceneAnalysisService = Depends(get_scene_analysis_service),
 ):
     try:
+        _validate_upload_size(image, "image")
+        _validate_upload_size(reference_image, "reference_image")
         main_image = await _read_pil_image(image)
         ref_image = await _read_pil_image(reference_image)
         result = scene_analysis_service.generate_caption(
@@ -85,6 +146,8 @@ async def caption(
             "detected_persons": result.get("detected_persons", []),
             "processing_info": result.get("processing_info", {})
         }
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error generating caption: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -96,11 +159,15 @@ async def identify(
     reference_image: UploadFile = File(...),
 ):
     try:
+        _validate_upload_size(image, "image")
+        _validate_upload_size(reference_image, "reference_image")
         main_image = await _read_pil_image(image)
         ref_image = await _read_pil_image(reference_image)
         scene_composer = get_scene_composer(request)
         results = scene_composer.identify_persons_with_reference(main_image, ref_image)
         return {"results": results}
+    except HTTPException:
+        raise
     except Exception as e:
         logging.error(f"Error in /identify endpoint: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -144,26 +211,26 @@ async def analyze_scene(
 
             # Convert to serializable format
             # Build initial result with detected objects/entities
-            detected_entity_dicts = [entity.to_dict() if hasattr(entity, 'to_dict') else entity.__dict__ for entity in scene_context.detected_entities]
+            detected_entity_dicts = [_to_serializable(entity) for entity in scene_context.detected_entities]
             result = {
                 "scene_description": description,
                 "processing_time": proc_time,
-                "detected_objects": [obj.to_dict() if hasattr(obj, 'to_dict') else obj.__dict__ for obj in scene_context.detected_objects],
+                "detected_objects": [_to_serializable(obj) for obj in scene_context.detected_objects],
                 "detected_entities": detected_entity_dicts,
                 # Parallel array of roster match details (None if no match)
                 "roster_matches": [
-                    (entity.roster_match.to_dict() if entity.roster_match else None)
+                    _to_serializable(entity.roster_match) if entity.roster_match else None
                     for entity in scene_context.detected_entities
                 ],
                 "identified_roster_entities": [],
-                "processing_metadata": scene_context.processing_metadata or {}
+                "processing_metadata": _to_serializable(scene_context.processing_metadata or {}),
             }
             
             # Include detailed identified roster entities if any
             if scene_context.identified_roster_entities:
                 # Return matched roster entries directly for client compatibility
                 result["identified_roster_entities"] = [
-                    entity.roster_match.roster_entry.to_dict()
+                    _to_serializable(entity.roster_match.roster_entry)
                     for entity in scene_context.identified_roster_entities
                 ]
             
@@ -190,7 +257,7 @@ async def analyze_scene(
         if threshold is not None:
             response_data["configuration_used"] = {"threshold": threshold}
 
-        return response_data
+        return _to_serializable(response_data)
 
     except Exception as e:
         logging.error(f"Error in /analyze-scene endpoint: {str(e)}")
@@ -224,32 +291,32 @@ async def generate_embeddings(
 
         for idx, face_embedding in enumerate(recognition_result.face_embeddings):
             detection = face_embedding.detection
-            embedding_vector = face_embedding.embedding.tolist()
+            embedding_vector = [float(value) for value in face_embedding.embedding.tolist()]
             candidate_matches = matches_per_face[idx] if idx < len(matches_per_face) else []
 
             response_faces.append(
                 {
-                    "bbox": list(detection.bbox),
+                    "bbox": [float(value) for value in detection.bbox],
                     "confidence": float(detection.confidence),
                     "embedding": embedding_vector,
                     "matches": [
                         {
                             "name": match.entry.name,
                             "unique_id": match.entry.unique_id,
-                            "similarity": match.similarity,
-                            "meets_threshold": match.is_match,
-                            "metadata": match.entry.metadata,
+                            "similarity": float(match.similarity),
+                            "meets_threshold": bool(match.is_match),
+                            "metadata": _to_serializable(match.entry.metadata or {}),
                         }
                         for match in candidate_matches
                     ],
                 }
             )
 
-        return {
+        return _to_serializable({
             "faces": response_faces,
             "processing_time_ms": recognition_result.processing_time_ms,
             "threshold": threshold or recognition_service.settings.recognition.default_threshold,
-        }
+        })
 
     except HTTPException:
         raise

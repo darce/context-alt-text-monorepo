@@ -1,13 +1,35 @@
 {
-  "status": "ok",
-  "data": {
-    "model_name": "stub-face",
-    "device": "cpu",
-    "default_threshold": 0.5,
-    "loaded_embeddings": 1,
-    "entity_names": [
-      "Test User"
-    ],
-    "auto_reload": false
-  }
+    "status": "ok",
+    "data": {
+        "model": {
+            "name": "stub-face",
+            "device": "cpu",
+            "providers": [
+                "cpu"
+            ]
+        },
+        "recognition": {
+            "default_threshold": 0.5,
+            "max_faces_per_image": 10,
+            "embedding_dimension": 512
+        },
+        "embedding_router": {
+            "auto_reload": false,
+            "reload_interval_seconds": 30,
+            "embeddings_file": "/roster/data/insightface_w600k_embeddings.json",
+            "loaded_embeddings": 1,
+            "loaded_entities": [
+                "Test User"
+            ]
+        },
+        "performance": {
+            "batch_size": 1,
+            "max_concurrent_requests": 10
+        },
+        "cache": {
+            "hf_home": null,
+            "hf_datasets_cache": null,
+            "torch_home": null
+        }
+    }
 }

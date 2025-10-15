@@ -409,6 +409,50 @@ async def update_roster_entry(
         )
 
 
+@router.delete("/{model}/clear")
+async def clear_roster(
+    model: str = Path(..., description="Model identifier"),
+    roster_service: RosterService = Depends(get_roster_service)
+):
+    """
+    Clear all entries from a roster (admin operation).
+    """
+    try:
+        # Validate model
+        config = get_config()
+        supported_models = config.get_supported_models()
+        if model not in supported_models:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail=f"Unsupported model: {model}"
+            )
+        
+        # Clear roster
+        success = roster_service.clear_roster(model)
+        
+        if success:
+            return JSONResponse(
+                content={
+                    "success": True,
+                    "message": f"Successfully cleared roster for model: {model}"
+                }
+            )
+        else:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to clear roster"
+            )
+            
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error in clear_roster: {e}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=str(e)
+        )
+
+
 @router.delete("/{model}/{unique_id}", response_model=DeleteEntryResponse)
 async def delete_roster_entry(
     model: str = Path(..., description="Model identifier"),
@@ -449,50 +493,6 @@ async def delete_roster_entry(
         raise
     except Exception as e:
         logger.error(f"Error in delete_roster_entry: {e}")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=str(e)
-        )
-
-
-@router.delete("/{model}/clear")
-async def clear_roster(
-    model: str = Path(..., description="Model identifier"),
-    roster_service: RosterService = Depends(get_roster_service)
-):
-    """
-    Clear all entries from a roster (admin operation).
-    """
-    try:
-        # Validate model
-        config = get_config()
-        supported_models = config.get_supported_models()
-        if model not in supported_models:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail=f"Unsupported model: {model}"
-            )
-        
-        # Clear roster
-        success = roster_service.clear_roster(model)
-        
-        if success:
-            return JSONResponse(
-                content={
-                    "success": True,
-                    "message": f"Successfully cleared roster for model: {model}"
-                }
-            )
-        else:
-            raise HTTPException(
-                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-                detail="Failed to clear roster"
-            )
-            
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error in clear_roster: {e}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=str(e)

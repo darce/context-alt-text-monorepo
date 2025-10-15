@@ -108,21 +108,71 @@ class FaceRecognitionService(RecognitionServicePort):
 
     async def get_service_info(self) -> dict:
         """Get information about the current service state."""
-        model_info: Dict[str, Any] = {}
+        settings = self.settings
+
+        # Model metadata (fallbacks ensure we always expose reasonable defaults)
+        model_info: Dict[str, Any]
         try:
             model_info = self.model.model_info()
         except AttributeError:
-            model_info = {
-                "model_name": getattr(self.settings.insightface, "model_name", "unknown"),
-                "device": getattr(self.settings.insightface, "device", "cpu"),
-            }
+            model_info = {}
+        if not isinstance(model_info, dict):
+            model_info = {}
+
+        providers_value = model_info.get("providers", getattr(settings.insightface, "providers", []))
+        if isinstance(providers_value, str):
+            providers_value = [providers_value]
+
+        model_data = {
+            "name": model_info.get("model_name", getattr(settings.insightface, "model_name", "unknown")),
+            "device": model_info.get("device", getattr(settings.insightface, "device", "cpu")),
+            "providers": providers_value,
+        }
+
+        # Recognition runtime configuration
+        recognition_data = {
+            "default_threshold": settings.recognition.default_threshold,
+            "max_faces_per_image": settings.recognition.max_faces_per_image,
+            "embedding_dimension": settings.recognition.embedding_dimension,
+        }
+
+        # Embedding router observability info
+        get_count = getattr(self.embedding_router, "get_loaded_count", lambda: 0)
+        get_names = getattr(self.embedding_router, "get_loaded_names", lambda: [])
+        get_path = getattr(self.embedding_router, "get_embeddings_path", None)
+
+        embeddings_path = settings.embedding_router.embeddings_file
+        if callable(get_path):
+            try:
+                embeddings_path = get_path()
+            except Exception:  # pragma: no cover - diagnostics only
+                embeddings_path = settings.embedding_router.embeddings_file
+
+        embedding_router_data = {
+            "auto_reload": settings.embedding_router.auto_reload,
+            "reload_interval_seconds": settings.embedding_router.reload_interval,
+            "embeddings_file": embeddings_path,
+            "loaded_embeddings": get_count() or 0,
+            "loaded_entities": get_names() or [],
+        }
+
+        performance_data = {
+            "batch_size": settings.performance.batch_size,
+            "max_concurrent_requests": settings.performance.max_concurrent_requests,
+        }
+
+        cache_data = {
+            "hf_home": settings.cache.hf_home,
+            "hf_datasets_cache": settings.cache.hf_datasets_cache,
+            "torch_home": settings.cache.torch_home,
+        }
 
         return {
-            **model_info,
-            "default_threshold": self.settings.recognition.default_threshold,
-            "loaded_embeddings": self.embedding_router.get_loaded_count(),
-            "entity_names": self.embedding_router.get_loaded_names(),
-            "auto_reload": self.settings.embedding_router.auto_reload,
+            "model": model_data,
+            "recognition": recognition_data,
+            "embedding_router": embedding_router_data,
+            "performance": performance_data,
+            "cache": cache_data,
         }
     
     async def reload_embeddings(self) -> bool:

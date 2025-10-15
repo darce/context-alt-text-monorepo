@@ -7,6 +7,7 @@ import { http, HttpResponse } from "msw";
 import { useCoverageMetrics } from "./useCoverageMetrics";
 import type { CoverageCard } from "@/admin/types";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
+import { setAdminBootstrap } from "@/admin/globals";
 
 const createWrapper = () => {
     const client = new QueryClient({
@@ -32,7 +33,7 @@ const INITIAL_DATA: CoverageCard = {
 
 describe("useCoverageMetrics", () => {
     afterEach(() => {
-        (globalThis as any).ContextAltTextAdmin = undefined;
+        setAdminBootstrap(undefined);
     });
 
     it("returns the initial data when no endpoint is configured", () => {
@@ -46,12 +47,12 @@ describe("useCoverageMetrics", () => {
 
     it("fetches coverage metrics and merges them with the bootstrap data", async () => {
         const endpoint = "http://localhost/wp-json/cat/v1/dashboard/coverage";
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             config: {
                 endpoints: { coverage: endpoint },
                 restNonce: "nonce-value",
             },
-        };
+        });
 
         let capturedNonce: string | null = null;
         const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -91,9 +92,10 @@ describe("useCoverageMetrics", () => {
         expect(fetchSpy).toHaveBeenCalled();
         const [requestUrl, requestInit] = fetchSpy.mock.calls[0] ?? [];
         expect(requestUrl).toBe(endpoint);
-        const headers = new Headers((requestInit as RequestInit | undefined)?.headers);
+        const headers = new Headers((requestInit)?.headers);
         expect(headers.get("accept")).toBe("application/json");
         expect(headers.get("x-wp-nonce")).toBe("nonce-value");
+        expect(capturedNonce).toBe("nonce-value");
 
         expect(result.current.data.missing).toBe(20);
         expect(result.current.data.total).toBe(210);
@@ -106,11 +108,11 @@ describe("useCoverageMetrics", () => {
 
     it("surfaces errors while keeping the bootstrap metrics available", async () => {
         const endpoint = "http://localhost/wp-json/cat/v1/dashboard/coverage";
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             config: {
                 endpoints: { coverage: endpoint },
             },
-        };
+        });
 
         useDashboardHandlers(
             http.get(endpoint, () =>

@@ -441,6 +441,95 @@ body {
   font-weight: 600;
 }
 
+.cat-recognition__metric-link {
+  color: inherit;
+  text-decoration: none;
+}
+
+.cat-recognition__metric-link:hover {
+  text-decoration: underline;
+}
+
+.cat-recognition__actions {
+  margin-top: var(--cat-spacing-sm);
+}
+
+.cat-recognition__meta {
+  margin: var(--cat-spacing-sm) 0 0;
+  font-size: var(--cat-font-size-xs);
+  color: var(--cat-muted);
+}
+
+.cat-recognition__observation-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-recognition__observation {
+  display: grid;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-recognition__observation-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--cat-spacing-sm);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-recognition__observation-label {
+  font-weight: 600;
+}
+
+.cat-recognition__observation-status {
+  font-size: var(--cat-font-size-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--cat-muted);
+}
+
+.cat-recognition__observation-status--needs_review {
+  color: var(--cat-warning, #f59e0b);
+}
+
+.cat-recognition__observation-body {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--cat-spacing-sm);
+  align-items: baseline;
+  font-size: var(--cat-font-size-xs);
+}
+
+.cat-recognition__observation-meta {
+  color: var(--cat-muted);
+}
+
+.cat-recognition__observation-helper {
+  color: var(--cat-muted);
+}
+
+.cat-recognition__observation-link {
+  color: var(--cat-accent);
+  text-decoration: none;
+  font-weight: 600;
+}
+
+.cat-recognition__observation-link:hover {
+  text-decoration: underline;
+}
+
+.cat-roster__filter {
+  display: inline-flex;
+  gap: var(--cat-spacing-xs);
+  align-items: center;
+  font-size: var(--cat-font-size-sm);
+  color: var(--cat-muted);
+}
+
 .cat-activity,
 .cat-recognition,
 .cat-automation {
@@ -769,6 +858,10 @@ body {
   color: var(--cat-text-muted);
 }
 
+.cat-workbench__fileMetaLine--recognition {
+  font-style: italic;
+}
+
 .cat-workbench__metaList {
   margin: 0;
   padding: 0;
@@ -997,8 +1090,607 @@ body {
 }
 
 .cat-workbench__error {
+  margin-top: var(--cat-spacing-sm);
   color: rgb(239, 68, 68);
   font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-lg);
+  font-family: var(--cat-font-family-sans);
+  color: var(--cat-text);
+}
+
+.cat-roster__header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--cat-spacing-lg);
+}
+
+.cat-roster__header h2 {
+  margin: 0;
+  font-size: var(--cat-font-size-lg);
+}
+
+.cat-roster__header p {
+  margin: 0;
+  color: var(--cat-muted);
+}
+
+.cat-roster__header-actions {
+  display: flex;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--cat-spacing-lg);
+  flex-wrap: wrap;
+}
+
+.cat-roster__stats {
+  background: var(--cat-surface);
+  border: 1px solid var(--cat-border);
+  border-radius: var(--cat-radius-lg);
+  padding: var(--cat-spacing-md) var(--cat-spacing-lg);
+  min-width: 280px;
+}
+
+.cat-roster__stats dl {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--cat-spacing-sm);
+  margin: 0;
+}
+
+.cat-roster__stats dt {
+  font-size: var(--cat-font-size-sm);
+  color: var(--cat-muted);
+}
+
+.cat-roster__stats dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.cat-roster__stats-sync {
+  margin: var(--cat-spacing-sm) 0 0;
+  color: var(--cat-muted);
+}
+
+.cat-roster__search {
+  display: flex;
+  align-items: center;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__search-input {
+  min-width: 240px;
+  padding: var(--cat-spacing-xs) var(--cat-spacing-sm);
+  border-radius: var(--cat-radius-md);
+  border: 1px solid var(--cat-border);
+  background: var(--cat-surface);
+  color: inherit;
+}
+
+.cat-roster__search-input:focus-visible {
+  outline: 2px solid var(--cat-accent);
+  outline-offset: 2px;
+}
+
+.cat-roster__search-status {
+  color: var(--cat-muted);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__warning {
+  padding: var(--cat-spacing-sm) var(--cat-spacing-md);
+  border-radius: var(--cat-radius-md);
+  background: color-mix(in srgb, var(--cat-warning) 15%, white);
+  border: 1px solid color-mix(in srgb, var(--cat-warning) 35%, white);
+  color: var(--cat-warning);
+}
+
+.cat-roster__observations {
+  margin-top: var(--cat-spacing-lg);
+  padding: var(--cat-spacing-lg);
+  border-radius: var(--cat-radius-lg);
+  border: 1px solid var(--cat-border);
+  background: var(--cat-surface);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-md);
+}
+
+.cat-roster__observations-header {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--cat-spacing-lg);
+  align-items: flex-start;
+}
+
+.cat-roster__observations-header h3 {
+  margin: 0;
+  font-size: var(--cat-font-size-md);
+}
+
+.cat-roster__observations-header p {
+  margin: var(--cat-spacing-xs) 0 0;
+  color: var(--cat-muted);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__observations-actions {
+  display: flex;
+  gap: var(--cat-spacing-sm);
+  align-items: center;
+}
+
+.cat-roster__observations-status {
+  margin: 0;
+  color: var(--cat-muted);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__observations-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--cat-spacing-md);
+}
+
+.cat-roster__observations-item {
+  border: 1px solid var(--cat-border);
+  border-radius: var(--cat-radius-md);
+  padding: var(--cat-spacing-md);
+  background: var(--cat-surface-muted);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-md);
+}
+
+.cat-roster__observations-attachment {
+  display: flex;
+  justify-content: space-between;
+  gap: var(--cat-spacing-md);
+  flex-wrap: wrap;
+  align-items: baseline;
+}
+
+.cat-roster__observations-attachment strong {
+  font-size: var(--cat-font-size-base);
+}
+
+.cat-roster__observations-link {
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__observations-count {
+  color: var(--cat-muted);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__observations-faces {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__observations-face {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  gap: var(--cat-spacing-sm);
+  align-items: center;
+}
+
+.cat-roster__observations-face-details {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-roster__observations-label {
+  font-weight: 600;
+}
+
+.cat-roster__observations-meta {
+  color: var(--cat-muted);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__observations-face-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-xs);
+  align-items: stretch;
+}
+
+.cat-roster__observations-face-actions select {
+  padding: var(--cat-spacing-xs) var(--cat-spacing-sm);
+  border-radius: var(--cat-radius-md);
+  border: 1px solid var(--cat-border);
+  background: var(--cat-surface-alt);
+}
+
+.cat-roster__observations-thumb {
+  position: relative;
+  width: 120px;
+  border-radius: var(--cat-radius-md);
+  overflow: hidden;
+  background: var(--cat-surface-muted);
+  flex-shrink: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.cat-roster__observations-thumb img {
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  display: block;
+}
+
+.cat-roster__observations-thumb-placeholder {
+  font-weight: 600;
+  color: var(--cat-muted);
+  font-size: var(--cat-font-size-lg);
+}
+
+.cat-roster__observations-highlight {
+  position: absolute;
+  border: 2px solid var(--cat-accent);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--cat-accent) 40%, transparent);
+  pointer-events: none;
+  border-radius: var(--cat-radius-xs);
+}
+
+.cat-roster__observation-callout {
+  margin-top: var(--cat-spacing-lg);
+  padding: var(--cat-spacing-md);
+  border-radius: var(--cat-radius-lg);
+  border: 1px solid var(--cat-border);
+  background: var(--cat-surface-alt);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__observation-callout h3 {
+  margin: 0;
+}
+
+.cat-roster__observation-details {
+  margin: 0;
+  display: grid;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-roster__observation-details > div {
+  display: grid;
+  grid-template-columns: minmax(0, 160px) minmax(0, 1fr);
+  gap: var(--cat-spacing-xxs);
+  font-size: var(--cat-font-size-sm);
+}
+
+.cat-roster__observation-details dt {
+  font-weight: 600;
+  color: var(--cat-muted);
+}
+
+.cat-roster__observation-details dd {
+  margin: 0;
+  word-break: break-word;
+}
+
+.cat-roster__observation-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-roster__layout {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 1fr);
+  gap: var(--cat-spacing-lg);
+}
+
+.cat-roster__table {
+  background: var(--cat-surface);
+  border: 1px solid var(--cat-border);
+  border-radius: var(--cat-radius-lg);
+  padding: var(--cat-spacing-md);
+  overflow: auto;
+}
+
+.cat-roster__table table {
+  width: 100%;
+  border-spacing: 0;
+  border-collapse: collapse;
+}
+
+.cat-roster__table th,
+.cat-roster__table td {
+  text-align: left;
+  padding: var(--cat-spacing-sm);
+  border-bottom: 1px solid var(--cat-border-subtle);
+}
+
+.cat-roster__table tbody tr:last-of-type td {
+  border-bottom: none;
+}
+
+.cat-roster__table--empty {
+  display: grid;
+  place-items: center;
+  min-height: 200px;
+  color: var(--cat-muted);
+}
+
+.cat-roster__avatar {
+  width: 48px;
+  height: 48px;
+  border-radius: var(--cat-radius-full);
+  object-fit: cover;
+  background: var(--cat-surface-alt);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 600;
+  color: var(--cat-muted);
+  border: 1px solid var(--cat-border-subtle);
+}
+
+.cat-roster__avatar--placeholder {
+  font-size: var(--cat-font-size-md);
+}
+
+.cat-roster__meta {
+  margin-top: var(--cat-spacing-xxs);
+  font-size: var(--cat-font-size-sm);
+  color: var(--cat-muted);
+}
+
+.cat-roster__actions {
+  display: flex;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-button--link {
+  background: transparent;
+  color: var(--cat-accent);
+  border: none;
+  padding: 0;
+  font-weight: 600;
+}
+
+.cat-button--danger {
+  color: var(--cat-danger);
+}
+
+.cat-roster__editor {
+  background: var(--cat-surface);
+  border: 1px solid var(--cat-border);
+  border-radius: var(--cat-radius-lg);
+  padding: var(--cat-spacing-lg);
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-md);
+}
+
+.cat-roster__editor form {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-md);
+}
+
+.cat-roster__editor-status {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-sm);
+  background: var(--cat-surface-alt);
+  border: 1px solid var(--cat-border-subtle);
+  border-radius: var(--cat-radius-md);
+  padding: var(--cat-spacing-sm) var(--cat-spacing-md);
+}
+
+.cat-roster__editor-status dl {
+  display: grid;
+  gap: var(--cat-spacing-xs);
+  margin: 0;
+}
+
+.cat-roster__editor-status dt {
+  font-size: var(--cat-font-size-xs);
+  text-transform: uppercase;
+  color: var(--cat-muted);
+}
+
+.cat-roster__editor-status dd {
+  margin: 0;
+  font-weight: 600;
+}
+
+.cat-roster__avatar-field {
+  display: grid;
+  gap: var(--cat-spacing-xs);
+}
+
+.cat-roster__avatar-label {
+  font-size: var(--cat-font-size-sm);
+  font-weight: 600;
+}
+
+.cat-roster__avatar-selector {
+  display: flex;
+  align-items: center;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__editor-context {
+  padding: var(--cat-spacing-sm) var(--cat-spacing-md);
+  border-left: 3px solid var(--cat-accent);
+  background: color-mix(in srgb, var(--cat-accent) 12%, white);
+  border-radius: var(--cat-radius-md);
+  display: grid;
+  gap: var(--cat-spacing-xxs);
+  margin-bottom: var(--cat-spacing-md);
+}
+
+.cat-roster__avatar--preview {
+  width: 72px;
+  height: 72px;
+  border-radius: var(--cat-radius-full);
+  font-size: var(--cat-font-size-lg);
+}
+
+.cat-roster__avatar-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-xxs);
+}
+
+.cat-roster__avatar-actions .cat-button {
+  width: fit-content;
+}
+
+.cat-roster__avatar-meta {
+  font-size: var(--cat-font-size-xs);
+  color: var(--cat-muted);
+}
+
+.cat-field {
+  display: flex;
+  flex-direction: column;
+  gap: var(--cat-spacing-xxs);
+}
+
+.cat-field input {
+  padding: var(--cat-spacing-xs) var(--cat-spacing-sm);
+  border-radius: var(--cat-radius-md);
+  border: 1px solid var(--cat-border);
+  background: var(--cat-surface-alt);
+  color: inherit;
+}
+
+.cat-field input:focus-visible {
+  outline: 2px solid var(--cat-accent);
+  outline-offset: 2px;
+}
+
+.cat-roster__editor-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.cat-roster__badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: var(--cat-radius-full);
+  padding: 0 var(--cat-spacing-sm);
+  min-height: 26px;
+  font-size: var(--cat-font-size-sm);
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.cat-roster__badge--synced {
+  background: color-mix(in srgb, var(--cat-success) 12%, white);
+  color: var(--cat-success);
+}
+
+.cat-roster__badge--local {
+  background: color-mix(in srgb, var(--cat-muted) 15%, white);
+  color: var(--cat-muted);
+}
+
+.cat-roster__badge--conflict {
+  background: color-mix(in srgb, var(--cat-warning) 15%, white);
+  color: var(--cat-warning);
+}
+
+.cat-roster__pagination {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: var(--cat-spacing-lg);
+  flex-wrap: wrap;
+  background: var(--cat-surface);
+  border: 1px solid var(--cat-border);
+  border-radius: var(--cat-radius-lg);
+  padding: var(--cat-spacing-md) var(--cat-spacing-lg);
+}
+
+.cat-roster__pagination-controls {
+  display: flex;
+  align-items: center;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__pagination-meta {
+  display: flex;
+  align-items: center;
+  gap: var(--cat-spacing-sm);
+}
+
+.cat-roster__pagination select {
+  padding: var(--cat-spacing-xxs) var(--cat-spacing-xs);
+  border-radius: var(--cat-radius-md);
+  border: 1px solid var(--cat-border);
+  background: var(--cat-surface-alt);
+}
+
+.cat-roster__disabled {
+  background: var(--cat-surface);
+  border: 1px solid var(--cat-border);
+  border-radius: var(--cat-radius-lg);
+  padding: var(--cat-spacing-lg);
+  color: var(--cat-muted);
+}
+
+@media (max-width: 1200px) {
+  .cat-roster__layout {
+    grid-template-columns: 1fr;
+  }
+
+  .cat-roster__editor {
+    order: -1;
+  }
+}
+
+@media (max-width: 768px) {
+  .cat-roster__stats dl {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .cat-roster__observations-face {
+    grid-template-columns: 1fr;
+    justify-items: start;
+  }
+
+  .cat-roster__summary {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .cat-roster__header {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .cat-roster__header-actions {
+    width: 100%;
+    justify-content: flex-start;
+  }
 }
 
 .cat-workbench__disabled {

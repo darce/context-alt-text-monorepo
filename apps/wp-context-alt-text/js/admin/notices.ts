@@ -17,22 +17,38 @@ export interface NoticeOptions {
 const WP_NOTICE_STORE = "core/notices";
 const FALLBACK_EVENT_NAME = "cat:workbench:notice";
 
-const getWpNoticeDispatcher = () => {
+interface WordPressNoticeDispatcher {
+    createNotice: (type: NoticeStatus, message: string, options?: Record<string, unknown>) => void;
+}
+
+type WordPressWindow = Window & {
+    wp?: {
+        data?: {
+            dispatch?: (store: string) => unknown;
+        };
+    };
+};
+
+const isNoticeDispatcher = (candidate: unknown): candidate is WordPressNoticeDispatcher =>
+    typeof candidate === "object" && candidate !== null &&
+    typeof (candidate as { createNotice?: unknown }).createNotice === "function";
+
+const getWpNoticeDispatcher = (): WordPressNoticeDispatcher | null => {
     if (typeof window === "undefined") {
         return null;
     }
 
-    const wp = (window as any)?.wp;
-    if (!wp || !wp.data || typeof wp.data.dispatch !== "function") {
+    const wp = (window as WordPressWindow).wp;
+    const dispatch = wp?.data?.dispatch;
+
+    if (typeof dispatch !== "function") {
         return null;
     }
 
     try {
-        const dispatcher = wp.data.dispatch(WP_NOTICE_STORE);
-        if (dispatcher && typeof dispatcher.createNotice === "function") {
-            return dispatcher as {
-                createNotice: (type: NoticeStatus, message: string, options?: Record<string, unknown>) => void;
-            };
+        const dispatcher = dispatch(WP_NOTICE_STORE);
+        if (isNoticeDispatcher(dispatcher)) {
+            return dispatcher;
         }
     } catch (error) {
         console.warn("[Context Alt Text] Failed to access WordPress notice store", error);
@@ -81,3 +97,5 @@ export const notifyWarning = (message: string, options?: NoticeOptions) => dispa
 export const notifyError = (message: string, options?: NoticeOptions) => dispatchNotice("error", message, options);
 
 export const NOTICE_EVENT_NAME = FALLBACK_EVENT_NAME;
+
+export type { WordPressWindow };

@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace ContextAltText\Roster;
 
 use ContextAltText\Recognition\RecognitionSettings;
+use function array_filter;
+use function array_merge;
 use function ceil;
 use function implode;
 use function is_array;
+use function is_numeric;
 use function is_string;
 use function json_decode;
 use function max;
@@ -47,7 +50,9 @@ class RosterClient implements RosterRemote
      */
     public function createEntry(array $payload): array
     {
-        return $this->requestJson('POST', '/api/v0/roster', $payload);
+        [$path, $body] = $this->prepareCreatePayload($payload);
+
+        return $this->requestJson('POST', $path, $body);
     }
 
     /**
@@ -60,6 +65,29 @@ class RosterClient implements RosterRemote
      */
     public function updateEntry(string $remoteId, array $payload): array
     {
+        if (isset($payload['embeddings']) && is_array($payload['embeddings']) && $payload['embeddings'] !== []) {
+            $first = $payload['embeddings'][0];
+            $embedding = $this->normalizeEmbeddingVector($first['embedding'] ?? null);
+
+            if ($embedding !== []) {
+                $appendPayload = [
+                    'embedding' => $embedding,
+                ];
+
+                if (isset($first['metadata']) && is_array($first['metadata'])) {
+                    $appendPayload['metadata'] = $first['metadata'];
+                }
+
+                if (!empty($first['image_path']) && is_string($first['image_path'])) {
+                    $appendPayload['image_path'] = $first['image_path'];
+                }
+
+                $appendPayload['model'] = $this->getModelProfile();
+
+                return $this->requestJson('POST', sprintf('/api/v0/roster/%s/embeddings', rawurlencode($remoteId)), $appendPayload);
+            }
+        }
+
         $path = sprintf('/api/v0/roster/%s', rawurlencode($remoteId));
 
         return $this->requestJson('PATCH', $path, $payload);
@@ -89,6 +117,21 @@ class RosterClient implements RosterRemote
     public function generateEmbeddings(array $payload): array
     {
         return $this->requestJson('POST', '/api/v0/embeddings', $payload);
+    }
+
+    /**
+     * Append a reference embedding to an existing roster entry via POST /api/v0/roster/{remote_id}/embeddings.
+     *
+     * @param array<string,mixed> $payload
+     *
+     * @return array<string,mixed>
+     * @throws RosterClientException
+     */
+    public function appendReferenceEmbedding(string $remoteId, array $payload): array
+    {
+        $path = sprintf('/api/v0/roster/%s/embeddings', rawurlencode($remoteId));
+
+        return $this->requestJson('POST', $path, $payload);
     }
 
     /**
@@ -314,5 +357,89 @@ class RosterClient implements RosterRemote
         }
 
         return sprintf('HTTP %d: %s: %s', $statusCode, $message, implode('; ', $details));
+    }
+
+    /**
+     * @return array{0:string,1:array<string,mixed>}
+     */
+    private function prepareCreatePayload(array $payload): array
+    {
+        $label = isset($payload['label']) ? trim((string) $payload['label']) : '';
+        if ($label === '') {
+            throw new RosterClientException('Roster entry requires a label.', 400);
+        }
+
+        $embeddings = $payload['embeddings'] ?? [];
+        if (!is_array($embeddings) || $embeddings === []) {
+            throw new RosterClientException('Roster entry is missing embeddings.', 422);
+        }
+
+        $first = $embeddings[0];
+        $embeddingVector = $this->normalizeEmbeddingVector($first['embedding'] ?? null);
+
+        if ($embeddingVector === []) {
+            throw new RosterClientException('Roster entry embeddings could not be generated.', 422);
+        }
+
+        $metadata = [];
+        if (isset($payload['metadata']) && is_array($payload['metadata'])) {
+            $metadata = $payload['metadata'];
+        }
+
+        if (isset($first['metadata']) && is_array($first['metadata'])) {
+            $metadata = array_merge($metadata, $first['metadata']);
+        }
+
+        if (!empty($payload['type']) && is_string($payload['type'])) {
+            $metadata['type'] = $payload['type'];
+        }
+
+        $metadata['source'] = 'context-alt-text';
+
+        $body = [
+            'name' => $label,
+            'embedding' => $embeddingVector,
+            'metadata' => $metadata,
+        ];
+
+        if (!empty($first['image_path']) && is_string($first['image_path'])) {
+            $body['image_path'] = $first['image_path'];
+        }
+
+        $model = $this->getModelProfile();
+        $path = sprintf('/api/v0/roster/%s/upsert', rawurlencode($model));
+
+        return [$path, $body];
+    }
+
+    /**
+     * @param mixed $embedding
+     * @return array<int,float>
+     */
+    private function normalizeEmbeddingVector($embedding): array
+    {
+        if (!is_array($embedding)) {
+            return [];
+        }
+
+        $vector = [];
+        foreach ($embedding as $value) {
+            if (is_numeric($value)) {
+                $vector[] = (float) $value;
+            }
+        }
+
+        return $vector;
+    }
+
+    private function getModelProfile(): string
+    {
+        $profile = $this->settings->getModelProfile();
+
+        if ($profile === null || trim($profile) === '') {
+            return 'insightface_w600k';
+        }
+
+        return trim($profile);
     }
 }

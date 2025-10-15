@@ -12,12 +12,26 @@ export const dashboardContractPayload: {
             workbenchMedia: "https://example.com/wp-json/context-alt-text/v1/workbench/media",
             recognitionAnalyze: "https://example.com/wp-json/context-alt-text/v1/recognition/analyze",
             recognitionJob: "https://example.com/wp-json/context-alt-text/v1/recognition/job",
+            recognitionObservations: "https://example.com/wp-json/cat/v1/observations",
+            recognitionObservationUpdate: "https://example.com/wp-json/cat/v1/observations/",
+            rosterEntries: "https://example.com/wp-json/context-alt-text/v1/roster",
+            rosterSync: "https://example.com/wp-json/context-alt-text/v1/roster/sync",
+            settingsRecognition: "https://example.com/wp-json/context-alt-text/v1/settings/recognition",
+            settingsRecognitionTest: "https://example.com/wp-json/context-alt-text/v1/settings/recognition/test",
         },
         featureFlags: {
             coverageTrend: true,
             workbenchEnabled: true,
             workbenchRecognition: true,
             workbenchBulkAI: false,
+            abilitiesEnabled: true,
+            rosterEnabled: true,
+            settingsEnabled: false,
+        },
+        settings: {
+            recognition: {
+                canManage: false,
+            },
         },
     },
     data: {
@@ -67,6 +81,11 @@ export const dashboardContractPayload: {
                 pending_faces: 2,
                 pending_brands: 1,
                 unresolved_matches: 3,
+                roster_pending: 4,
+                roster_conflicts: 1,
+                roster_total: 8,
+                last_roster_sync_human: "30 minutes",
+                last_roster_sync_at: "2024-03-16T18:30:00.000Z",
             },
             automation: {
                 queued: 5,
@@ -91,6 +110,37 @@ export const dashboardContractPayload: {
     },
 };
 
+const buildExpectedDashboardConfig = (config: AdminConfig) => ({
+    missingAltMediaUrl: config.missingAltMediaUrl,
+    restNonce: config.restNonce,
+    endpoints: {
+        coverage: config.endpoints?.coverage,
+        workbenchMedia: config.endpoints?.workbenchMedia,
+        recognitionAnalyze: config.endpoints?.recognitionAnalyze,
+        recognitionJob: config.endpoints?.recognitionJob,
+        recognitionObservations: config.endpoints?.recognitionObservations,
+        recognitionObservationUpdate: config.endpoints?.recognitionObservationUpdate,
+        rosterEntries: config.endpoints?.rosterEntries,
+        rosterSync: config.endpoints?.rosterSync,
+        settingsRecognition: config.endpoints?.settingsRecognition,
+        settingsRecognitionTest: config.endpoints?.settingsRecognitionTest,
+    },
+    featureFlags: {
+        coverageTrend: Boolean(config.featureFlags?.coverageTrend),
+        workbenchEnabled: Boolean(config.featureFlags?.workbenchEnabled),
+        workbenchRecognition: Boolean(config.featureFlags?.workbenchRecognition),
+        workbenchBulkAI: Boolean(config.featureFlags?.workbenchBulkAI),
+        abilitiesEnabled: Boolean(config.featureFlags?.abilitiesEnabled),
+        rosterEnabled: Boolean(config.featureFlags?.rosterEnabled),
+        settingsEnabled: Boolean(config.featureFlags?.settingsEnabled),
+    },
+    settings: {
+        recognition: {
+            canManage: Boolean(config.settings?.recognition?.canManage),
+        },
+    },
+});
+
 export const dashboardContractExpectation: {
     data: DashboardData;
     config: ReturnType<typeof buildExpectedDashboardConfig>;
@@ -99,26 +149,7 @@ export const dashboardContractExpectation: {
     config: buildExpectedDashboardConfig(dashboardContractPayload.config),
 };
 
-function buildExpectedDashboardConfig(config: AdminConfig) {
-    return {
-        missingAltMediaUrl: config.missingAltMediaUrl,
-        restNonce: config.restNonce,
-        endpoints: {
-            coverage: config.endpoints?.coverage,
-            workbenchMedia: config.endpoints?.workbenchMedia,
-            recognitionAnalyze: config.endpoints?.recognitionAnalyze,
-            recognitionJob: config.endpoints?.recognitionJob,
-        },
-        featureFlags: {
-            coverageTrend: Boolean(config.featureFlags?.coverageTrend),
-            workbenchEnabled: Boolean(config.featureFlags?.workbenchEnabled),
-            workbenchRecognition: Boolean(config.featureFlags?.workbenchRecognition),
-            workbenchBulkAI: Boolean(config.featureFlags?.workbenchBulkAI),
-        },
-    };
-}
-
-type WorkbenchContractItem = {
+interface WorkbenchContractItem {
     id: string | number;
     title: string;
     status: WorkbenchData["items"][number]["status"];
@@ -128,9 +159,9 @@ type WorkbenchContractItem = {
     dimensions: { width: number; height: number } | null;
     editUrl: string | null;
     thumbnailUrl?: string;
-};
+}
 
-type WorkbenchContractPayload = {
+interface WorkbenchContractPayload {
     data: {
         workbench: {
             viewMode: WorkbenchData["viewMode"];
@@ -138,7 +169,7 @@ type WorkbenchContractPayload = {
             items: WorkbenchContractItem[];
         };
     };
-};
+}
 
 export const workbenchContractPayload: WorkbenchContractPayload = {
     data: {

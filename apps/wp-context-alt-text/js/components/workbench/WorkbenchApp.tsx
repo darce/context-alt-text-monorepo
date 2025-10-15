@@ -5,26 +5,13 @@ import { __ } from "@wordpress/i18n";
 import { SelectionToolbar } from "@/components/workbench/SelectionToolbar";
 import { MediaList } from "@/components/workbench/MediaList";
 import { RecognitionActions } from "@/components/workbench/RecognitionActions";
-import { useRecognitionJob, type RecognitionJobDetails } from "@/admin/hooks/useRecognitionJob";
+import { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
 import { emitDashboardEvent } from "@/admin/analytics";
 import { pushSnackbarNotice } from "@/admin/utils/notices";
+import type { WorkbenchMediaItem as WorkbenchMediaItemType } from "@/admin/types";
 
 export type WorkbenchViewMode = "grid" | "list";
-
-export interface WorkbenchMediaItem {
-    id: string;
-    title: string;
-    status: "missing" | "draft" | "published";
-    thumbnailUrl?: string;
-    updatedAt?: string;
-    altText?: string | null;
-    mimeType?: string | null;
-    dimensions?: {
-        width: number;
-        height: number;
-    } | null;
-    editUrl?: string | null;
-}
+export type WorkbenchMediaItem = WorkbenchMediaItemType;
 
 export interface WorkbenchAppProps {
     items?: WorkbenchMediaItem[];
@@ -44,7 +31,7 @@ export const WorkbenchApp = ({
     const selectedList = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
 
     const recognition = useRecognitionJob();
-    const jobDetails = recognition.jobDetails as RecognitionJobDetails | null;
+    const jobDetails = recognition.jobDetails;
 
     React.useEffect(() => {
         setSelectedIds(new Set());
@@ -120,7 +107,7 @@ export const WorkbenchApp = ({
                 rejected: jobDetails?.rejected ?? [],
             });
         }
-    }, [jobDetails?.status, jobDetails?.error, jobDetails?.id, recognition.lastJob?.jobId]);
+    }, [jobDetails?.status, jobDetails?.error, jobDetails?.id, jobDetails?.attachments, jobDetails?.rejected, recognition.lastJob?.jobId]);
 
     React.useEffect(() => {
         if (!jobDetails || jobDetails.status !== "complete") {

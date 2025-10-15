@@ -210,7 +210,7 @@ describe("CoverageCard", () => {
         );
 
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 
     it("invokes the drill-down handler and emits analytics when the action is clicked", async () => {

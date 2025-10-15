@@ -3,6 +3,8 @@ import { render, screen, fireEvent, act, waitFor } from "@testing-library/react"
 import userEvent from "@testing-library/user-event";
 import { axe } from "vitest-axe";
 import { http, HttpResponse } from "msw";
+import { setAdminBootstrap } from "@/admin/globals";
+import type { DashboardData, GlobalPayload, WorkbenchData } from "@/admin/types";
 
 const { dispatchNoticeMock, notifyErrorMock } = vi.hoisted(() => ({
     dispatchNoticeMock: vi.fn(),
@@ -29,7 +31,7 @@ const wait = async (ms: number) => {
     });
 };
 
-const bootstrapPayload = {
+const bootstrapPayload: DashboardData = {
     hero: {
         state: "ready" as const,
         message: "We found 12 images missing alt text.",
@@ -53,6 +55,11 @@ const bootstrapPayload = {
         pending_faces: 0,
         pending_brands: 0,
         unresolved_matches: 0,
+        roster_pending: 0,
+        roster_conflicts: 0,
+        roster_total: 0,
+        last_roster_sync_human: null,
+        last_roster_sync_at: null,
     },
     automation: {
         queued: 0,
@@ -69,7 +76,7 @@ const bootstrapPayload = {
     },
 };
 
-const workbenchBootstrapData = {
+const workbenchBootstrapData: WorkbenchData = {
     viewMode: "list" as const,
     pagination: {
         page: 1,
@@ -91,22 +98,24 @@ const workbenchBootstrapData = {
     ],
 };
 
+const baseBootstrapPayload: GlobalPayload = {
+    config: {
+        endpoints: {
+            coverage: COVERAGE_ENDPOINT,
+        },
+        restNonce: "dashboard-nonce",
+    },
+    data: {
+        dashboard: bootstrapPayload,
+    },
+};
+
 describe("App", () => {
     beforeEach(() => {
         dispatchNoticeMock.mockReset();
         notifyErrorMock.mockReset();
 
-        (globalThis as any).ContextAltTextAdmin = {
-            config: {
-                endpoints: {
-                    coverage: COVERAGE_ENDPOINT,
-                },
-                restNonce: "dashboard-nonce",
-            },
-            data: {
-                dashboard: bootstrapPayload,
-            },
-        };
+        setAdminBootstrap(baseBootstrapPayload);
 
         useDashboardHandlers(
             http.get(COVERAGE_ENDPOINT, () => {
@@ -138,7 +147,7 @@ describe("App", () => {
     });
 
     afterEach(() => {
-        (globalThis as any).ContextAltTextAdmin = undefined;
+        setAdminBootstrap(undefined);
     });
 
     it("hydrates the dashboard and passes accessibility checks", async () => {
@@ -153,7 +162,7 @@ describe("App", () => {
     });
 
     it("hydrates the workbench bootstrap payload and passes accessibility checks", async () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -164,7 +173,7 @@ describe("App", () => {
             data: {
                 workbench: workbenchBootstrapData,
             },
-        };
+        });
 
         const { container } = render(<App />);
 
@@ -176,7 +185,7 @@ describe("App", () => {
     });
 
     it("renders the workbench when requested", () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -191,7 +200,7 @@ describe("App", () => {
             data: {
                 workbench: workbenchBootstrapData,
             },
-        };
+        });
 
         const { getByText } = render(<App />);
 
@@ -200,8 +209,8 @@ describe("App", () => {
         expect(screen.getByRole("table", { name: /Media queue/i })).toBeInTheDocument();
     });
 
-    it("hydrates the workbench route from bootstrap data", async () => {
-        (globalThis as any).ContextAltTextAdmin = {
+    it("hydrates the workbench route from bootstrap data", () => {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -232,7 +241,7 @@ describe("App", () => {
                     },
                 },
             },
-        };
+        });
 
         render(<App />);
 
@@ -244,7 +253,7 @@ describe("App", () => {
     });
 
     it("passes axe accessibility checks on the workbench route", async () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -254,15 +263,15 @@ describe("App", () => {
             data: {
                 workbench: workbenchBootstrapData,
             },
-        };
+        });
 
         const { container } = render(<App />);
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 
     it("emits workbench seen analytics once when route loads", () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -272,14 +281,15 @@ describe("App", () => {
             data: {
                 workbench: workbenchBootstrapData,
             },
-        };
+        });
 
         const dispatchEventSpy = vi.spyOn(window, "dispatchEvent");
         render(<App />);
 
         const seenEvents = dispatchEventSpy.mock.calls.filter(([event]) => event.type === "cat_workbench_seen");
         expect(seenEvents).toHaveLength(1);
-        const [seenEvent] = seenEvents[0];
+        const seenEvent = seenEvents[0]?.[0];
+        expect(seenEvent).toBeInstanceOf(CustomEvent);
         const seenCustomEvent = seenEvent as CustomEvent<Record<string, unknown>>;
         expect(seenCustomEvent.detail).toMatchObject({
             pagination: {
@@ -352,7 +362,7 @@ describe("App", () => {
             }),
         );
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -366,7 +376,7 @@ describe("App", () => {
                         {
                             id: "alpha",
                             title: "Ocean view",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-01-02T00:00:00.000Z",
                             altText: "A wide shot of the ocean horizon",
                             mimeType: "image/jpeg",
@@ -376,7 +386,7 @@ describe("App", () => {
                         {
                             id: "beta",
                             title: "Mountain trail",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-01-03T00:00:00.000Z",
                             altText: "Hikers ascending a steep trail",
                             mimeType: "image/png",
@@ -392,7 +402,7 @@ describe("App", () => {
                     },
                 },
             },
-        };
+        });
 
         const user = userEvent.setup();
 
@@ -477,7 +487,7 @@ describe("App", () => {
             }),
         );
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -497,7 +507,7 @@ describe("App", () => {
                         {
                             id: "f1",
                             title: "Fallback portrait one",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-03-01T00:00:00.000Z",
                             altText: "",
                             mimeType: "image/jpeg",
@@ -507,7 +517,7 @@ describe("App", () => {
                         {
                             id: "f2",
                             title: "Fallback portrait two",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-03-02T00:00:00.000Z",
                             altText: "",
                             mimeType: "image/jpeg",
@@ -517,7 +527,7 @@ describe("App", () => {
                     ],
                 },
             },
-        };
+        });
 
         try {
             render(<App />);
@@ -578,7 +588,7 @@ describe("App", () => {
             }),
         );
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -598,7 +608,7 @@ describe("App", () => {
                         {
                             id: "page-1",
                             title: "Initial asset 1",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-04-01T00:00:00.000Z",
                             altText: "",
                             mimeType: "image/jpeg",
@@ -608,7 +618,7 @@ describe("App", () => {
                         {
                             id: "page-2",
                             title: "Initial asset 2",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-04-02T00:00:00.000Z",
                             altText: "",
                             mimeType: "image/jpeg",
@@ -618,7 +628,7 @@ describe("App", () => {
                     ],
                 },
             },
-        };
+        });
 
         const user = userEvent.setup();
 
@@ -640,7 +650,7 @@ describe("App", () => {
     });
 
     it("dispatches notices when bulk actions are triggered", () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -652,7 +662,7 @@ describe("App", () => {
             data: {
                 workbench: workbenchBootstrapData,
             },
-        };
+        });
 
         const dispatchEventSpy = vi.spyOn(window, "dispatchEvent");
         render(<App />);
@@ -675,7 +685,9 @@ describe("App", () => {
 
         const bulkEvents = dispatchEventSpy.mock.calls.filter(([event]) => event.type === "cat_workbench_bulk_action");
         expect(bulkEvents).toHaveLength(1);
-        const [bulkEvent] = bulkEvents[0];
+        const firstBulkCall = bulkEvents[0];
+        expect(firstBulkCall).toBeDefined();
+        const [bulkEvent] = firstBulkCall as [Event];
         const bulkCustomEvent = bulkEvent as CustomEvent<Record<string, unknown>>;
         expect(bulkCustomEvent.detail).toMatchObject({
             action: "generate",
@@ -693,7 +705,7 @@ describe("App", () => {
     it("filters workbench media via debounced search with inline status messaging", async () => {
         const observedRequests: URL[] = [];
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -714,7 +726,7 @@ describe("App", () => {
                     },
                 },
             },
-        };
+        });
 
         useDashboardHandlers(
             http.get(WORKBENCH_MEDIA_ENDPOINT, async ({ request }) => {
@@ -775,7 +787,7 @@ describe("App", () => {
     it("supports pagination across remote workbench pages", async () => {
         const observedRequests: URL[] = [];
 
-        const remoteResponses: Record<string, Array<Record<string, unknown>>> = {
+        const remoteResponses: Record<string, Record<string, unknown>[]> = {
             "1": [
                 {
                     id: "p1",
@@ -829,7 +841,7 @@ describe("App", () => {
             }),
         );
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             page: "workbench",
             config: {
                 featureFlags: {
@@ -853,7 +865,7 @@ describe("App", () => {
                         {
                             id: "p1",
                             title: "First portrait",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-02-10T00:00:00.000Z",
                             altText: "",
                             mimeType: "image/jpeg",
@@ -863,7 +875,7 @@ describe("App", () => {
                         {
                             id: "p2",
                             title: "Second portrait",
-                            status: "missing" as const,
+                            status: "missing",
                             updatedAt: "2024-02-11T00:00:00.000Z",
                             altText: "",
                             mimeType: "image/jpeg",
@@ -873,7 +885,7 @@ describe("App", () => {
                     ],
                 },
             },
-        };
+        });
 
         render(<App />);
 

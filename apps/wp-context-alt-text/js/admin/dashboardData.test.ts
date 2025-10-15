@@ -2,10 +2,11 @@ import { describe, it, expect, beforeEach } from "vitest";
 
 import { getDashboardConfig, getDashboardData, getInitialRoute, getWorkbenchData } from "./dashboardData";
 import type { AdminConfig, DashboardData } from "@/admin/types";
+import { setAdminBootstrap } from "@/admin/globals";
 
 describe("dashboardData", () => {
     beforeEach(() => {
-        (globalThis as any).ContextAltTextAdmin = undefined;
+        setAdminBootstrap(undefined);
     });
 
     it("returns fallback values when global payload is missing", () => {
@@ -14,6 +15,8 @@ describe("dashboardData", () => {
         expect(data.hero.message).toContain("Scanning");
         expect(data.coverage.total).toBe(0);
         expect(data.recognition.pending_faces).toBe(0);
+        expect(data.recognition.roster_pending).toBe(0);
+        expect(data.recognition.last_roster_sync_human).toBeNull();
         expect(data.footer.actions).toHaveLength(0);
     });
 
@@ -38,9 +41,9 @@ describe("dashboardData", () => {
             },
         };
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             data: { dashboard: payload },
-        };
+        });
 
         const data = getDashboardData();
 
@@ -60,9 +63,9 @@ describe("dashboardData", () => {
             restNonce: "nonce-wp_rest",
         };
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             config,
-        };
+        });
 
         const value = getDashboardConfig();
         expect(value.missingAltMediaUrl).toBe(config.missingAltMediaUrl);
@@ -86,7 +89,7 @@ describe("dashboardData", () => {
     });
 
     it("normalizes workbench bootstrap data from the global payload", () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             data: {
                 workbench: {
                     viewMode: "grid",
@@ -114,7 +117,7 @@ describe("dashboardData", () => {
                     ],
                 },
             },
-        };
+        });
 
         const data = getWorkbenchData();
 
@@ -131,18 +134,21 @@ describe("dashboardData", () => {
                 thumbnailUrl: undefined,
             },
         ]);
-        expect(data.viewMode).toBe("list");
+        expect(data.viewMode).toBe("grid");
         expect(data.pagination).toEqual({ page: 2, perPage: 15, total: 30, totalPages: 2 });
     });
 
     it("derives the initial route from the global payload", () => {
-        (globalThis as any).ContextAltTextAdmin = { page: "workbench" };
+        setAdminBootstrap({ page: "workbench" });
         expect(getInitialRoute()).toBe("workbench");
 
-        (globalThis as any).ContextAltTextAdmin = { page: "dashboard" };
+        setAdminBootstrap({ page: "roster" });
+        expect(getInitialRoute()).toBe("roster");
+
+        setAdminBootstrap({ page: "dashboard" });
         expect(getInitialRoute()).toBe("dashboard");
 
-        (globalThis as any).ContextAltTextAdmin = { page: "unknown" };
+        setAdminBootstrap({ page: "unknown" });
         expect(getInitialRoute()).toBe("dashboard");
     });
 });

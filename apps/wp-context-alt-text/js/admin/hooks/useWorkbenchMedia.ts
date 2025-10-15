@@ -30,11 +30,11 @@ const mapMediaResponse = (payload: unknown): WorkbenchMediaItem[] => {
         .filter((candidate): candidate is WorkbenchMediaItem => candidate !== null);
 };
 
-type WorkbenchMediaResponse = {
+interface WorkbenchMediaResponse {
     items: WorkbenchMediaItem[];
     total: number;
     totalPages: number;
-};
+}
 
 const resolveOriginCandidate = (candidate: unknown, sourceLabel: string): string | null => {
     if (typeof candidate !== "string") {
@@ -99,7 +99,7 @@ const isViableOrigin = (candidate: string | null | undefined): candidate is stri
     return true;
 };
 
-const takeFirstOrigin = (candidates: Array<string | null | undefined>): string | null => {
+const takeFirstOrigin = (candidates: (string | null | undefined)[]): string | null => {
     for (const candidate of candidates) {
         if (isViableOrigin(candidate)) {
             return candidate.trim();
@@ -302,7 +302,7 @@ export const useWorkbenchMedia = ({
 
     const runtimeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
     if (runtimeProcess?.env?.NODE_ENV === "test") {
-        // eslint-disable-next-line no-console
+         
         console.info("useWorkbenchMedia", {
             hasResolvedEndpoint,
             normalizedSearch,
@@ -370,6 +370,16 @@ export const useWorkbenchMedia = ({
                 url.searchParams.set("search", normalizedSearch);
             }
 
+            if (runtimeProcess?.env?.NODE_ENV === "test") {
+                console.info("workbench media fetch", {
+                    endpoint: url.toString(),
+                    page,
+                    perPage,
+                    status,
+                    search: normalizedSearch,
+                });
+            }
+
             const response = await fetch(url.toString(), {
                 credentials: "same-origin",
                 headers: {
@@ -383,7 +393,7 @@ export const useWorkbenchMedia = ({
                 throw new Error(`Failed to fetch workbench media: ${response.status}`);
             }
 
-            const payload = await response.json();
+            const payload: unknown = await response.json();
             const items = mapMediaResponse(payload);
             const totals = parseTotals(response.headers, bootstrapMeta);
 

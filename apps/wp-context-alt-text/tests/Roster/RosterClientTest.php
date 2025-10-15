@@ -33,8 +33,15 @@ final class RosterClientTest extends TestCase
                     'message' => 'Created',
                 ],
                 'body' => json_encode([
-                    'id' => 'remote-abc',
-                    'label' => 'Sample Person',
+                    'success' => true,
+                    'entry' => [
+                        'unique_id' => 'remote-abc',
+                        'name' => 'Sample Person',
+                        'display_name' => 'Sample Person',
+                        'metadata' => ['type' => 'person'],
+                        'reference_images' => [],
+                        'updated_timestamp' => '2024-01-01T00:00:00Z',
+                    ],
                 ]),
             ],
         ];
@@ -43,14 +50,27 @@ final class RosterClientTest extends TestCase
         $result = $client->createEntry([
             'label' => 'Sample Person',
             'type' => 'person',
+            'metadata' => [],
+            'embeddings' => [[
+                'embedding' => [0.1, 0.2],
+                'metadata' => ['confidence' => 0.9],
+                'image_path' => 'https://example.test/sample.jpg',
+            ]],
         ]);
 
-        self::assertSame('remote-abc', $result['id']);
+        self::assertTrue($result['success']);
+        self::assertSame('remote-abc', $result['entry']['unique_id']);
         self::assertSame('POST', $GLOBALS['__cat_http_calls'][0]['method']);
         self::assertSame(
-            'https://recognition.example/api/v0/roster',
+            'https://recognition.example/api/v0/roster/insightface_w600k/upsert',
             $GLOBALS['__cat_http_calls'][0]['url']
         );
+
+        $decodedBody = json_decode($GLOBALS['__cat_http_calls'][0]['body'], true);
+        self::assertSame('Sample Person', $decodedBody['name']);
+        self::assertSame([0.1, 0.2], $decodedBody['embedding']);
+        self::assertSame('person', $decodedBody['metadata']['type']);
+        self::assertSame('context-alt-text', $decodedBody['metadata']['source']);
     }
 
     public function test_update_entry_throws_exception_on_failure(): void
@@ -99,8 +119,8 @@ final class RosterClientTest extends TestCase
                     'message' => 'OK',
                 ],
                 'body' => json_encode([
-                    'vectors' => [
-                        [0.1, 0.2, 0.3],
+                    'faces' => [
+                        ['embedding' => [0.1, 0.2, 0.3]],
                     ],
                 ]),
             ],
@@ -108,17 +128,40 @@ final class RosterClientTest extends TestCase
 
         $client = new RosterClient(new RecognitionSettings());
         $result = $client->generateEmbeddings([
-            'images' => [
-                [
-                    'image_url' => 'https://example.test/image.png',
-                ],
+            'image' => [
+                'image_url' => 'https://example.test/image.png',
             ],
         ]);
 
-        self::assertArrayHasKey('vectors', $result);
+        self::assertArrayHasKey('faces', $result);
         self::assertSame('POST', $GLOBALS['__cat_http_calls'][0]['method']);
         self::assertSame(
             'https://recognition.example/api/v0/embeddings',
+            $GLOBALS['__cat_http_calls'][0]['url']
+        );
+    }
+
+    public function test_append_reference_embedding_posts_payload(): void
+    {
+        $GLOBALS['__cat_http_queue'] = [
+            [
+                'response' => [
+                    'code' => 200,
+                    'message' => 'OK',
+                ],
+                'body' => json_encode(['status' => 'ok']),
+            ],
+        ];
+
+        $client = new RosterClient(new RecognitionSettings());
+        $client->appendReferenceEmbedding('remote-xyz', [
+            'embedding' => [0.1, 0.2],
+            'image_path' => 'https://example.test/image.png',
+        ]);
+
+        self::assertSame('POST', $GLOBALS['__cat_http_calls'][0]['method']);
+        self::assertSame(
+            'https://recognition.example/api/v0/roster/remote-xyz/embeddings',
             $GLOBALS['__cat_http_calls'][0]['url']
         );
     }

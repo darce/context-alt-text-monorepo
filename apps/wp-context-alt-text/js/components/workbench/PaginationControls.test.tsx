@@ -51,7 +51,7 @@ describe("PaginationControls", () => {
         const input = screen.getByLabelText(/Jump to page/i);
         await user.clear(input);
         await user.type(input, "4");
-        fireEvent.submit(input.closest("form") as HTMLFormElement);
+        fireEvent.submit(input.closest("form")!);
 
         await waitFor(() => expect(onPageChange).toHaveBeenNthCalledWith(3, 4));
     });
@@ -74,7 +74,7 @@ describe("PaginationControls", () => {
 
         await user.clear(input);
         await user.type(input, "99");
-        fireEvent.submit(input.closest("form") as HTMLFormElement);
+        fireEvent.submit(input.closest("form")!);
 
         await waitFor(() => expect(onPageChange).toHaveBeenCalledWith(2));
     });

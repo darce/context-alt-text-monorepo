@@ -4,10 +4,10 @@ declare(strict_types=1);
 
 namespace ContextAltText\Recognition;
 
+use ContextAltText\Shared\Config\SettingsRepository;
+
 use function filter_var;
-use function get_option;
 use function getenv;
-use function is_array;
 use function is_string;
 use function rtrim;
 use function trim;
@@ -16,17 +16,23 @@ use const FILTER_VALIDATE_URL;
 
 class RecognitionSettings
 {
-    private const OPTION_KEY = 'context_alt_text_recognition_settings';
     private const DEFAULT_TIMEOUT_MS = 15000;
+    private SettingsRepository $settingsRepository;
+
+    public function __construct(?SettingsRepository $settingsRepository = null)
+    {
+        $this->settingsRepository = $settingsRepository ?? new SettingsRepository();
+    }
 
     /**
      * Retrieve the configured base URL for the recognition service.
      */
     public function getBaseUrl(): ?string
     {
-        $option = $this->getOption('base_url');
+        $settings = $this->settingsRepository->getRecognitionSettings();
+        $option = $settings['baseUrl'] ?? '';
 
-        if (!$option) {
+        if ($option === '') {
             $option = $this->getEnv('CAT_RECOGNITION_BASE_URL');
         }
 
@@ -54,9 +60,10 @@ class RecognitionSettings
      */
     public function getApiKey(): ?string
     {
-        $option = $this->getOption('api_key');
+        $settings = $this->settingsRepository->getRecognitionSettings();
+        $option = $settings['apiKey'] ?? '';
 
-        if (!$option) {
+        if ($option === '') {
             $option = $this->getEnv('CAT_RECOGNITION_API_KEY');
         }
 
@@ -74,20 +81,13 @@ class RecognitionSettings
      */
     public function getTimeoutMs(): int
     {
-        $option = $this->getOption('timeout_ms');
+        $settings = $this->settingsRepository->getRecognitionSettings();
+        $timeout = (int) ($settings['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS);
 
-        if ($option === null) {
-            $envSetting = $this->getEnv('CAT_RECOGNITION_TIMEOUT_MS');
-            if ($envSetting !== null && $envSetting !== '') {
-                $option = $envSetting;
-            }
+        $envSetting = $this->getEnv('CAT_RECOGNITION_TIMEOUT_MS');
+        if ($envSetting !== null && $envSetting !== '') {
+            $timeout = (int) trim($envSetting);
         }
-
-        if (is_string($option)) {
-            $option = trim($option);
-        }
-
-        $timeout = (int) $option;
 
         if ($timeout <= 0) {
             $timeout = self::DEFAULT_TIMEOUT_MS;
@@ -101,9 +101,10 @@ class RecognitionSettings
      */
     public function getModelProfile(): ?string
     {
-        $option = $this->getOption('model_profile');
+        $settings = $this->settingsRepository->getRecognitionSettings();
+        $option = $settings['modelProfile'] ?? '';
 
-        if (!$option) {
+        if ($option === '') {
             $option = $this->getEnv('CAT_RECOGNITION_MODEL_PROFILE');
         }
 
@@ -119,20 +120,6 @@ class RecognitionSettings
     public function isConfigured(): bool
     {
         return $this->getBaseUrl() !== null;
-    }
-
-    /**
-     * @return mixed|null
-     */
-    private function getOption(string $key)
-    {
-        $option = get_option(self::OPTION_KEY);
-
-        if (!is_array($option)) {
-            return null;
-        }
-
-        return $option[$key] ?? null;
     }
 
     private function getEnv(string $name): ?string

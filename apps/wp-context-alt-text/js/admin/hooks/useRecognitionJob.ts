@@ -10,11 +10,11 @@ export interface RecognitionJobSummary {
     rejected: number[];
 }
 
-type RecognitionErrorOptions = {
+interface RecognitionErrorOptions {
     status?: number;
-    rejected?: Array<number | string>;
+    rejected?: (number | string)[];
     cause?: unknown;
-};
+}
 
 export class RecognitionRequestError extends Error {
     public readonly status?: number;
@@ -31,18 +31,18 @@ export class RecognitionRequestError extends Error {
             : [];
 
         if (options.cause !== undefined) {
-            // eslint-disable-next-line @typescript-eslint/no-unsafe-assignment -- preserve original cause for debugging
+             
             (this as unknown as { cause?: unknown }).cause = options.cause;
         }
     }
 }
 
-export type RecognitionObservationMatch = {
+export interface RecognitionObservationMatch {
     isMatch: boolean;
     similarity: number;
     confidence: number;
     threshold: number;
-};
+}
 
 export type RecognitionObservationRoster = {
     remoteId?: string;
@@ -51,28 +51,31 @@ export type RecognitionObservationRoster = {
     type?: string;
 } | null;
 
-export type RecognitionObservationCandidate = {
-    remoteId: string;
-    name: string;
+export interface RecognitionObservationCandidate {
+    remoteId: string | null;
+    name: string | null;
     similarity: number;
     meetsThreshold: boolean;
-};
+    confidence: number | null;
+}
 
-export type RecognitionObservationRecord = {
+export interface RecognitionObservationRecord {
     observationId: string;
     label: string;
     entityType: string;
     confidence: number;
+    detectionConfidence: number | null;
+    matchConfidence: number | null;
     area: number;
     boundingBox: number[];
-    status: "matched" | "needs_review" | string;
+    status: "matched" | "needs_review" | (string & {});
     source: string;
     match: RecognitionObservationMatch;
     roster: RecognitionObservationRoster;
     candidates: RecognitionObservationCandidate[];
-};
+}
 
-export type RecognitionAttachmentObservations = {
+export interface RecognitionAttachmentObservations {
     jobId: string | null;
     attachmentId: number;
     updatedAt: number | null;
@@ -86,26 +89,26 @@ export type RecognitionAttachmentObservations = {
         needsReview: number;
     };
     observations: RecognitionObservationRecord[];
-};
+}
 
-export type RecognitionJobDetails = {
+export interface RecognitionJobDetails {
     id: string;
     status: string;
     startedAt: number | null;
     completedAt: number | null;
     error: string | null;
-    attachments: Array<{
+    attachments: {
         id: number;
         filename?: string;
         imageUrl?: string;
-    }>;
+    }[];
     rejected: number[];
     observations: RecognitionAttachmentObservations[];
-};
+}
 
 type PollState = "idle" | "polling";
 
-const toUniqueNumericIds = (ids: Array<number | string>): number[] => {
+const toUniqueNumericIds = (ids: (number | string)[]): number[] => {
     const normalized = ids
         .map((value) => Number(value))
         .filter((value) => Number.isFinite(value) && value > 0);
@@ -132,7 +135,30 @@ const ensureString = (value: unknown): string => {
         return "";
     }
 
-    return String(value);
+    if (typeof value === "number" || typeof value === "boolean") {
+        return String(value);
+    }
+
+    if (typeof value === "bigint") {
+        return value.toString();
+    }
+
+    if (value instanceof Date) {
+        return value.toISOString();
+    }
+
+    return "";
+};
+
+const normalizeObservationStatus = (
+    value: unknown,
+): RecognitionObservationRecord["status"] => {
+    const normalized = ensureString(value ?? "needs_review");
+    if (normalized === "matched" || normalized === "needs_review") {
+        return normalized;
+    }
+
+    return (normalized || "needs_review") as RecognitionObservationRecord["status"];
 };
 
 const normalizeCandidates = (candidates: unknown): RecognitionObservationCandidate[] => {
@@ -147,12 +173,17 @@ const normalizeCandidates = (candidates: unknown): RecognitionObservationCandida
             }
 
             const record = candidate as Record<string, unknown>;
+            const remoteIdValue = ensureString(record.remoteId ?? record.unique_id ?? "").trim();
+            const nameValue = ensureString(record.name ?? "").trim();
+            const similarity = toFiniteNumber(record.similarity ?? 0, 0);
+            const confidenceValue = toFiniteNumber(record.confidence ?? record.similarity ?? 0, 0);
 
             return {
-                remoteId: ensureString(record.remoteId ?? record.unique_id ?? ""),
-                name: ensureString(record.name ?? ""),
-                similarity: toFiniteNumber(record.similarity ?? 0, 0),
+                remoteId: remoteIdValue !== "" ? remoteIdValue : null,
+                name: nameValue !== "" ? nameValue : null,
+                similarity,
                 meetsThreshold: Boolean(record.meetsThreshold ?? record.meets_threshold ?? false),
+                confidence: confidenceValue > 0 ? confidenceValue : null,
             } satisfies RecognitionObservationCandidate;
         })
         .filter((candidate): candidate is RecognitionObservationCandidate => candidate !== null);
@@ -215,19 +246,51 @@ const normalizeObservationRecord = (observation: unknown): RecognitionObservatio
 
     const data = observation as Record<string, unknown>;
     const boundingBoxRaw = Array.isArray(data.boundingBox ?? data.bbox) ? (data.boundingBox ?? data.bbox) : [];
+    const detectionConfidence = toFiniteNumber(data.confidence ?? 0, 0);
+    const match = normalizeMatch(data.match ?? data.roster_match);
+    const faceDataCandidates = (() => {
+        const faceData = data.face_data;
+        if (!faceData || typeof faceData !== "object") {
+            return null;
+        }
+
+        const faceDataRecord = faceData as Record<string, unknown>;
+        return Array.isArray(faceDataRecord.candidates) ? faceDataRecord.candidates : null;
+    })();
+    const directCandidates = Array.isArray(data.candidates) ? data.candidates : null;
+    const candidates = normalizeCandidates(directCandidates ?? faceDataCandidates ?? []);
+
+    const bestCandidateConfidence = candidates.reduce((current, candidate) => {
+        if (!candidate) {
+            return current;
+        }
+
+        const value = toFiniteNumber(candidate.confidence ?? candidate.similarity ?? 0, 0);
+        return value > current ? value : current;
+    }, 0);
+
+    const resolvedMatchConfidence = match.confidence > 0
+        ? match.confidence
+        : match.similarity > 0
+            ? match.similarity
+            : bestCandidateConfidence;
+
+    const normalizedConfidence = resolvedMatchConfidence > 0 ? resolvedMatchConfidence : detectionConfidence;
 
     return {
         observationId: ensureString(data.observationId ?? data.id ?? ""),
         label: ensureString(data.label ?? ""),
         entityType: ensureString(data.entityType ?? data.entity_type ?? ""),
-        confidence: toFiniteNumber(data.confidence ?? 0, 0),
+        confidence: normalizedConfidence,
+        detectionConfidence: detectionConfidence > 0 ? detectionConfidence : null,
+        matchConfidence: resolvedMatchConfidence > 0 ? resolvedMatchConfidence : null,
         area: toFiniteNumber(data.area ?? 0, 0),
-        boundingBox: (boundingBoxRaw as Array<number | string>).map((value) => toFiniteNumber(value, 0)),
-        status: ensureString(data.status ?? "needs_review"),
+        boundingBox: (boundingBoxRaw as (number | string)[]).map((value) => toFiniteNumber(value, 0)),
+    status: normalizeObservationStatus(data.status),
         source: ensureString(data.source ?? "recognition-service"),
-        match: normalizeMatch(data.match ?? data.roster_match),
+        match,
         roster: normalizeRoster(data.roster ?? data.roster_entry),
-        candidates: normalizeCandidates(data.candidates ?? data.face_data?.candidates ?? []),
+        candidates,
     } satisfies RecognitionObservationRecord;
 };
 
@@ -236,55 +299,57 @@ const normalizeAttachmentSummaries = (input: unknown): RecognitionAttachmentObse
         return [];
     }
 
-    return input
-        .map((item) => {
-            if (!item || typeof item !== "object") {
-                return null;
-            }
+    const normalized: RecognitionAttachmentObservations[] = [];
 
-            const data = item as Record<string, unknown>;
-            const summary = (data.summary ?? {}) as Record<string, unknown>;
-            const context = (data.context ?? {}) as Record<string, unknown>;
-            const observationsRaw = Array.isArray(data.observations) ? data.observations : [];
+    for (const item of input) {
+        if (!item || typeof item !== "object") {
+            continue;
+        }
 
-            return {
-                jobId: data.jobId != null ? ensureString(data.jobId) : null,
-                attachmentId: toFiniteNumber(data.attachmentId ?? data.attachment_id ?? 0, 0),
-                updatedAt: toNullableTimestamp(data.updatedAt ?? data.updated_at ?? null),
-                context: {
-                    filename: context.filename ? ensureString(context.filename) : undefined,
-                    imageUrl: context.imageUrl ? ensureString(context.imageUrl) : undefined,
-                },
-                summary: {
-                    total: toFiniteNumber(summary.total ?? 0, 0),
-                    matched: toFiniteNumber(summary.matched ?? 0, 0),
-                    needsReview: toFiniteNumber(summary.needsReview ?? summary.needs_review ?? 0, 0),
-                },
-                observations: (observationsRaw as unknown[])
-                    .map((record) => normalizeObservationRecord(record))
-                    .filter((record): record is RecognitionObservationRecord => record !== null),
-            } satisfies RecognitionAttachmentObservations;
-        })
-        .filter((entry): entry is RecognitionAttachmentObservations => entry !== null);
+        const data = item as Record<string, unknown>;
+        const summary = (data.summary ?? {}) as Record<string, unknown>;
+        const context = (data.context ?? {}) as Record<string, unknown>;
+        const observationsRaw = Array.isArray(data.observations) ? data.observations : [];
+
+        normalized.push({
+            jobId: data.jobId != null ? ensureString(data.jobId) : null,
+            attachmentId: toFiniteNumber(data.attachmentId ?? data.attachment_id ?? 0, 0),
+            updatedAt: toNullableTimestamp(data.updatedAt ?? data.updated_at ?? null),
+            context: {
+                filename: context.filename ? ensureString(context.filename) : undefined,
+                imageUrl: context.imageUrl ? ensureString(context.imageUrl) : undefined,
+            },
+            summary: {
+                total: toFiniteNumber(summary.total ?? 0, 0),
+                matched: toFiniteNumber(summary.matched ?? 0, 0),
+                needsReview: toFiniteNumber(summary.needsReview ?? summary.needs_review ?? 0, 0),
+            },
+            observations: (observationsRaw as unknown[])
+                .map((record) => normalizeObservationRecord(record))
+                .filter((record): record is RecognitionObservationRecord => record !== null),
+        });
+    }
+
+    return normalized;
 };
 
 const normalizeJobDetails = (payload: Record<string, unknown>, fallbackId?: string | null): RecognitionJobDetails => {
     const attachmentsRaw = Array.isArray(payload.attachments) ? payload.attachments : [];
-    const attachments = attachmentsRaw
-        .map((item) => {
-            if (!item || typeof item !== "object") {
-                return null;
-            }
+    const attachments: { id: number; filename?: string; imageUrl?: string }[] = [];
 
-            const data = item as Record<string, unknown>;
+    for (const item of attachmentsRaw) {
+        if (!item || typeof item !== "object") {
+            continue;
+        }
 
-            return {
-                id: toFiniteNumber(data.id ?? 0, 0),
-                filename: data.filename ? ensureString(data.filename) : undefined,
-                imageUrl: data.imageUrl ? ensureString(data.imageUrl) : undefined,
-            };
-        })
-        .filter((item): item is { id: number; filename?: string; imageUrl?: string } => item !== null);
+        const data = item as Record<string, unknown>;
+
+        attachments.push({
+            id: toFiniteNumber(data.id ?? 0, 0),
+            filename: data.filename ? ensureString(data.filename) : undefined,
+            imageUrl: data.imageUrl ? ensureString(data.imageUrl) : undefined,
+        });
+    }
 
     const rejected = Array.isArray(payload.rejected) ? payload.rejected : [];
     const status = ensureString(payload.status ?? "processing");
@@ -298,7 +363,7 @@ const normalizeJobDetails = (payload: Record<string, unknown>, fallbackId?: stri
         completedAt: toNullableTimestamp(payload.completedAt ?? payload.completed_at ?? null),
         error,
         attachments,
-        rejected: toUniqueNumericIds(rejected as Array<number | string>),
+        rejected: toUniqueNumericIds(rejected as (number | string)[]),
         observations: normalizeAttachmentSummaries(payload.observations ?? []),
     } satisfies RecognitionJobDetails;
 };
@@ -478,7 +543,7 @@ export const useRecognitionJob = () => {
     );
 
     const triggerRecognition = React.useCallback(
-        (ids: Array<number | string>) => {
+        (ids: (number | string)[]) => {
             if (!canSubmit) {
                 const error = new RecognitionRequestError(
                     __("Recognition service is currently unavailable.", "context-alt-text"),
@@ -538,7 +603,7 @@ export const useRecognitionJob = () => {
                               );
 
                         const rejectedCandidates =
-                            (payload as { data?: { rejected?: Array<number | string> } })?.data?.rejected ?? [];
+                            (payload as { data?: { rejected?: (number | string)[] } })?.data?.rejected ?? [];
 
                         throw new RecognitionRequestError(message, {
                             status: response.status,
@@ -556,8 +621,9 @@ export const useRecognitionJob = () => {
 
                     const accepted = Number(body.accepted ?? 0);
                     const rejectedCandidates = Array.isArray(body.rejected) ? body.rejected : [];
+                    const normalizedJobId = ensureString(body.jobId).trim();
                     const summary: RecognitionJobSummary = {
-                        jobId: String(body.jobId ?? ""),
+                        jobId: normalizedJobId,
                         status: typeof body.status === "string" ? body.status : "processing",
                         accepted: Number.isFinite(accepted) && accepted >= 0 ? accepted : 0,
                         rejected: Array.isArray(rejectedCandidates)
@@ -568,8 +634,8 @@ export const useRecognitionJob = () => {
                     };
 
                     setLastJob(summary);
-                    setCurrentJobId(summary.jobId);
-                    activeJobRef.current = summary.jobId && summary.jobId.trim() !== "" ? summary.jobId : null;
+                    setCurrentJobId(normalizedJobId);
+                    activeJobRef.current = normalizedJobId !== "" ? normalizedJobId : null;
                     setPollState(activeJobRef.current ? "polling" : "idle");
 
                     if (activeJobRef.current) {

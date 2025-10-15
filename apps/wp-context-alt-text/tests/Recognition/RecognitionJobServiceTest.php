@@ -27,6 +27,8 @@ final class RecognitionJobServiceTest extends TestCase
         $GLOBALS['__cat_actions'] = [];
         $GLOBALS['__cat_filters'] = [];
         $GLOBALS['__cat_post_meta'] = [];
+        $GLOBALS['__cat_scheduled'] = [];
+        $GLOBALS['__cat_options'] = [];
 
         add_filter('cat_recognition_should_log_error', static function (bool $shouldLog): bool {
             return false;
@@ -157,10 +159,18 @@ final class RecognitionJobServiceTest extends TestCase
 
         $result = $service->submit([10]);
 
-        $this->assertSame('complete', $result['status']);
+        $this->assertSame('queued', $result['status']);
         $this->assertSame(1, $result['accepted']);
         $this->assertSame([], $result['rejected']);
+        $this->assertSame([], $result['deferred']);
+        $this->assertSame([], $result['deferred']);
         $this->assertSame('uuid-1', $result['jobId']);
+        $scheduledKey = RecognitionJobService::PROCESS_HOOK . '::' . md5(serialize(['uuid-1']));
+        $this->assertArrayHasKey($scheduledKey, $GLOBALS['__cat_scheduled']);
+
+        $this->assertCount(0, $client->calls);
+
+        do_action(RecognitionJobService::PROCESS_HOOK, 'uuid-1');
 
         $this->assertCount(1, $client->calls);
         $payload = $client->calls[0];
@@ -192,6 +202,8 @@ final class RecognitionJobServiceTest extends TestCase
         $this->assertSame(2, $stored['summary']['total']);
         $this->assertSame(1, $stored['summary']['matched']);
         $this->assertSame(1, $stored['summary']['needs_review']);
+        $this->assertSame(92.0, $stored['confidenceScore']);
+        $this->assertSame('roster-123', $stored['sourceRemoteId']);
 
         $matched = $stored['observations'][0];
         $this->assertSame('matched', $matched['status']);
@@ -213,6 +225,13 @@ final class RecognitionJobServiceTest extends TestCase
         $this->assertArrayHasKey('observations', $jobWithObservations);
         $this->assertCount(1, $jobWithObservations['observations']);
         $this->assertSame(10, $jobWithObservations['observations'][0]['attachmentId']);
+
+        $second = $service->submit([10]);
+        $this->assertSame('deferred', $second['status']);
+        $this->assertSame(0, $second['accepted']);
+        $this->assertSame([], $second['rejected']);
+        $this->assertSame([10], $second['deferred']);
+        $this->assertNull($second['job']);
     }
 
     public function test_submit_marks_job_as_error_when_client_fails(): void
@@ -238,9 +257,11 @@ final class RecognitionJobServiceTest extends TestCase
 
         $result = $service->submit([25]);
 
-        $this->assertSame('error', $result['status']);
+        $this->assertSame('queued', $result['status']);
         $this->assertSame(1, $result['accepted']);
         $this->assertSame([], $result['rejected']);
+
+        do_action(RecognitionJobService::PROCESS_HOOK, 'uuid-1');
 
         $job = $repository->find('uuid-1');
         $this->assertNotNull($job);
@@ -275,11 +296,93 @@ final class RecognitionJobServiceTest extends TestCase
             $captured[] = $context;
         });
 
-        $service->submit([77]);
+        $result = $service->submit([77]);
+
+        $this->assertSame('queued', $result['status']);
+
+        do_action(RecognitionJobService::PROCESS_HOOK, 'uuid-1');
 
         $this->assertNotEmpty($captured);
         $this->assertSame('uuid-1', $captured[0]['jobId']);
         $this->assertSame('error', $captured[0]['status']);
         $this->assertSame([77], $captured[0]['attachments']);
+    }
+
+    public function test_detected_entity_auto_matches_when_similarity_exceeds_threshold(): void
+    {
+        $client = new class extends RecognitionClient {
+            public function __construct()
+            {
+                parent::__construct(new RecognitionSettings());
+            }
+
+            public function analyzeScene(array $payload): array
+            {
+                return [
+                    'results' => [
+                        [
+                            'detected_entities' => [
+                                [
+                                    'label' => 'Face',
+                                    'entity_type' => 'person',
+                                    'confidence' => 0.95,
+                                    'area' => 100.0,
+                                    'bbox' => [0, 0, 10, 10],
+                                    'roster_match' => [
+                                        'is_match' => false,
+                                        'similarity_score' => 0.82,
+                                        'match_confidence' => 0.0,
+                                        'confidence_threshold' => 0.7,
+                                        'roster_entry' => [
+                                            'unique_id' => 'remote-555',
+                                            'name' => 'Auto Match',
+                                            'display_name' => 'Auto Match',
+                                            'metadata' => [
+                                                'type' => 'person',
+                                            ],
+                                        ],
+                                    ],
+                                    'face_data' => [
+                                        'candidates' => [
+                                            [
+                                                'unique_id' => 'remote-555',
+                                                'name' => 'Auto Match',
+                                                'similarity' => 0.82,
+                                                'confidence' => 0.82,
+                                                'meets_threshold' => true,
+                                            ],
+                                        ],
+                                    ],
+                                ],
+                            ],
+                        ],
+                    ],
+                ];
+            }
+        };
+
+        $repository = new RecognitionJobRepository();
+        $observations = new RecognitionObservationRepository();
+        $service = new RecognitionJobService($client, $repository, $observations);
+
+        $GLOBALS['__cat_current_user_capabilities']['edit_post'] = true;
+        $this->primeValidAttachment(100);
+
+        $result = $service->submit([100]);
+        $this->assertSame('queued', $result['status']);
+
+        do_action(RecognitionJobService::PROCESS_HOOK, $result['jobId']);
+
+        $stored = get_post_meta(100, '_context_alt_text_recognition_observations', true);
+        $this->assertIsArray($stored);
+        $this->assertSame(1, $stored['summary']['total']);
+        $this->assertSame(1, $stored['summary']['matched']);
+        $this->assertSame(0, $stored['summary']['needs_review']);
+
+        $observation = $stored['observations'][0];
+        $this->assertSame('matched', $observation['status']);
+        $this->assertSame('remote-555', $observation['roster']['remoteId']);
+        $this->assertTrue($observation['match']['isMatch']);
+        $this->assertGreaterThanOrEqual(0.82, $observation['match']['similarity']);
     }
 }

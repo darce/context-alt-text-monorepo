@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ContextAltText\Workbench;
 
+use ContextAltText\Recognition\RecognitionObservationRepository;
 use WP_Post;
 use WP_Query;
 use function class_exists;
@@ -16,14 +17,22 @@ use function is_array;
 use function is_string;
 use function max;
 use function min;
+use function is_scalar;
 use function wp_get_attachment_image_url;
 use function wp_get_attachment_metadata;
 
 class WorkbenchMediaResolver
 {
+    private ?RecognitionObservationRepository $recognitionObservations;
+
+    public function __construct(?RecognitionObservationRepository $recognitionObservations = null)
+    {
+        $this->recognitionObservations = $recognitionObservations;
+    }
+
     /**
      * @param array<string,mixed> $args
-     * @return array{items: array<int,array{id:string,title:string,status:string,thumbnailUrl:?string,updatedAt:?string,altText:?string,mimeType:?string,dimensions:array{width:int,height:int}|null,editUrl:?string}>, total:int, totalPages:int}
+     * @return array{items: array<int,array{id:string,title:string,status:string,thumbnailUrl:?string,updatedAt:?string,altText:?string,mimeType:?string,dimensions:array{width:int,height:int}|null,editUrl:?string,recognition?:array<string,mixed>|null}>, total:int, totalPages:int}
      */
     public function fetch(array $args = []): array
     {
@@ -130,6 +139,7 @@ class WorkbenchMediaResolver
                 'mimeType' => $mimeType ?: null,
                 'dimensions' => $dimensions,
                 'editUrl' => $editUrl,
+                'recognition' => $this->buildRecognitionMetadata($id),
             ];
         }
 
@@ -190,5 +200,78 @@ class WorkbenchMediaResolver
         }
 
         return null;
+    }
+
+    /**
+     * @return array<string,mixed>|null
+     */
+    private function buildRecognitionMetadata(int $attachmentId): ?array
+    {
+        if ($this->recognitionObservations === null) {
+            return null;
+        }
+
+        $record = $this->recognitionObservations->get($attachmentId);
+
+        if (!is_array($record) || !isset($record['summary']) || !is_array($record['summary'])) {
+            return null;
+        }
+
+        $matchedCount = (int) ($record['summary']['matched'] ?? 0);
+        $needsReviewCount = (int) ($record['summary']['needs_review'] ?? 0);
+
+        $status = 'unknown';
+
+        if ($needsReviewCount > 0) {
+            $status = 'needs_review';
+        } elseif ($matchedCount > 0) {
+            $status = 'matched';
+        }
+
+        $matchedRoster = null;
+
+        if (isset($record['observations']) && is_array($record['observations'])) {
+            foreach ($record['observations'] as $observation) {
+                if (!is_array($observation) || ($observation['status'] ?? '') !== 'matched') {
+                    continue;
+                }
+
+                if (!isset($observation['roster']) || !is_array($observation['roster'])) {
+                    continue;
+                }
+
+                $roster = $observation['roster'];
+
+                $matchedRoster = [
+                    'remoteId' => isset($roster['remoteId']) && is_scalar($roster['remoteId'])
+                        ? (string) $roster['remoteId']
+                        : null,
+                    'displayName' => isset($roster['displayName']) && is_scalar($roster['displayName'])
+                        ? (string) $roster['displayName']
+                        : (isset($roster['display_name']) && is_scalar($roster['display_name'])
+                            ? (string) $roster['display_name']
+                            : null),
+                    'name' => isset($roster['name']) && is_scalar($roster['name'])
+                        ? (string) $roster['name']
+                        : null,
+                ];
+
+                break;
+            }
+        }
+
+        if ($status === 'unknown' && $matchedRoster === null && $matchedCount === 0 && $needsReviewCount === 0) {
+            return null;
+        }
+
+        return [
+            'status' => $status,
+            'matchedCount' => max(0, $matchedCount),
+            'needsReviewCount' => max(0, $needsReviewCount),
+            'matchedRoster' => $matchedRoster,
+            'updatedAt' => isset($record['updatedAt']) && is_scalar($record['updatedAt'])
+                ? (int) $record['updatedAt']
+                : null,
+        ];
     }
 }

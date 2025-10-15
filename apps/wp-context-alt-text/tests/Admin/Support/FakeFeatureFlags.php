@@ -36,4 +36,14 @@ final class FakeFeatureFlags extends FeatureFlags
     {
         return $this->flags['workbenchBulkAI'] ?? parent::workbenchBulkAIEnabled();
     }
+
+    public function abilitiesEnabled(): bool
+    {
+        return $this->flags['abilitiesEnabled'] ?? parent::abilitiesEnabled();
+    }
+
+    public function rosterUiEnabled(): bool
+    {
+        return $this->flags['rosterEnabled'] ?? parent::rosterUiEnabled();
+    }
 }

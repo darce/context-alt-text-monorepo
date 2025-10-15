@@ -5,13 +5,11 @@ import { http, HttpResponse } from "msw";
 
 import { renderDashboard } from "@/admin/testing/renderDashboard";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
+import { setAdminBootstrap } from "@/admin/globals";
+import type { AnalyticsClient, GlobalPayload } from "@/admin/types";
 import { WorkbenchApp, type WorkbenchMediaItem } from "@/components/workbench";
 
-type AnalyticsClient = {
-    track: (event: string, detail?: Record<string, unknown>) => void;
-};
-
-type AdminPayload = {
+type AdminPayload = GlobalPayload & {
     config: {
         restNonce?: string;
         endpoints?: {
@@ -21,6 +19,8 @@ type AdminPayload = {
         featureFlags?: {
             workbenchEnabled?: boolean;
             workbenchRecognition?: boolean;
+            abilitiesEnabled?: boolean;
+            rosterEnabled?: boolean;
         };
     };
     data: {
@@ -63,6 +63,8 @@ const setAdminPayload = (overrides: Partial<AdminPayload> = {}) => {
             featureFlags: {
                 workbenchEnabled: true,
                 workbenchRecognition: true,
+                abilitiesEnabled: true,
+                rosterEnabled: true,
             },
         },
         data: {
@@ -109,7 +111,7 @@ const setAdminPayload = (overrides: Partial<AdminPayload> = {}) => {
         analytics: overrides.analytics ?? base.analytics,
     };
 
-    (globalThis as typeof globalThis & { ContextAltTextAdmin: AdminPayload }).ContextAltTextAdmin = payload;
+    setAdminBootstrap(payload);
 };
 
 describe("RecognitionActions integration", () => {
@@ -133,7 +135,7 @@ describe("RecognitionActions integration", () => {
     });
 
     afterEach(() => {
-        delete (globalThis as typeof globalThis & { ContextAltTextAdmin?: unknown }).ContextAltTextAdmin;
+        setAdminBootstrap(undefined);
         delete (globalThis as typeof globalThis & { wp?: unknown }).wp;
         vi.restoreAllMocks();
     });
@@ -152,6 +154,7 @@ describe("RecognitionActions integration", () => {
                 items={[baseItem]}
                 viewMode="list"
             />,
+            { withRouter: true },
         );
 
         await user.click(screen.getByLabelText(/select sample asset/i));
@@ -164,7 +167,7 @@ describe("RecognitionActions integration", () => {
     });
 
     it("submits recognition request and surfaces success state", async () => {
-        const requestBodies: Array<Record<string, unknown>> = [];
+        const requestBodies: Record<string, unknown>[] = [];
 
         useDashboardHandlers(
             http.post("/wp-json/context-alt-text/v1/recognition/analyze", async ({ request }) => {
@@ -263,6 +266,7 @@ describe("RecognitionActions integration", () => {
                 items={[baseItem]}
                 viewMode="list"
             />,
+            { withRouter: true },
         );
 
         await user.click(screen.getByLabelText(/select sample asset/i));
@@ -281,11 +285,24 @@ describe("RecognitionActions integration", () => {
         expect(await screen.findByText(/recognition job completed/i)).toBeInTheDocument();
         expect(screen.getByText(/job id: job-abc/i)).toBeInTheDocument();
 
+        const rosterLink = await screen.findByRole("link", { name: /open roster entry/i });
+        expect(rosterLink).toHaveAttribute("href", expect.stringContaining("remoteId=roster-123"));
+
+        const reviewLink = screen.getByRole("link", { name: /review in roster manager/i });
+        expect(reviewLink).toHaveAttribute("href", expect.stringContaining("mode=create"));
+        expect(reviewLink).toHaveAttribute("href", expect.stringContaining("source=recognition"));
+        expect(reviewLink).toHaveAttribute("href", expect.stringContaining("observationId=job-abc-1"));
+        expect(reviewLink).toHaveAttribute("href", expect.stringContaining("attachmentId=101"));
+
         const needsReviewMetrics = screen.getAllByText(/needs review/i, { selector: "dt" });
         expect(needsReviewMetrics).toHaveLength(2);
 
-        expect(needsReviewMetrics[0].closest("div")?.querySelector("dd")).toHaveTextContent("1");
-        expect(needsReviewMetrics[1].closest("div")?.querySelector("dd")).toHaveTextContent("1");
+        const [firstNeedsReview, secondNeedsReview] = needsReviewMetrics;
+        expect(firstNeedsReview).toBeDefined();
+        expect(secondNeedsReview).toBeDefined();
+
+        expect(firstNeedsReview!.closest("div")?.querySelector("dd")).toHaveTextContent("1");
+        expect(secondNeedsReview!.closest("div")?.querySelector("dd")).toHaveTextContent("1");
 
         const selectedMetric = screen.getAllByText(/selected items/i, { selector: "dt" })[0]?.closest("div");
         expect(selectedMetric?.querySelector("dd")).toHaveTextContent("1");
@@ -307,9 +324,71 @@ describe("RecognitionActions integration", () => {
         expect(createNotice).not.toHaveBeenCalled();
     });
 
+    it("submits only the explicitly selected media items when multiple rows are present", async () => {
+        const requestBodies: Record<string, unknown>[] = [];
+
+        useDashboardHandlers(
+            http.post("/wp-json/context-alt-text/v1/recognition/analyze", async ({ request }) => {
+                const body = (await request.json()) as Record<string, unknown>;
+                requestBodies.push(body);
+
+                return HttpResponse.json({
+                    jobId: "job-multi",
+                    status: "processing",
+                    accepted: 1,
+                    rejected: [],
+                });
+            }),
+            http.get("/wp-json/context-alt-text/v1/recognition/job/:jobId", ({ params }) => {
+                if (params.jobId !== "job-multi") {
+                    return HttpResponse.json({ message: "not-found" }, { status: 404 });
+                }
+
+                return HttpResponse.json({
+                    id: "job-multi",
+                    status: "complete",
+                    attachments: [],
+                    rejected: [],
+                    observations: [],
+                });
+            }),
+        );
+
+        const extraItems: WorkbenchMediaItem[] = [
+            baseItem,
+            {
+                ...baseItem,
+                id: "202",
+                title: "Second asset",
+            },
+            {
+                ...baseItem,
+                id: "303",
+                title: "Third asset",
+            },
+        ];
+
+        const { user } = renderDashboard(
+            <WorkbenchApp
+                items={extraItems}
+                viewMode="list"
+            />,
+            { withRouter: true },
+        );
+
+        await user.click(screen.getByLabelText(/select second asset/i));
+        await user.click(screen.getByRole("button", { name: /trigger recognition/i }));
+
+        await waitFor(() => {
+            expect(requestBodies).toHaveLength(1);
+        });
+
+        expect(requestBodies[0]).toMatchObject({ attachment_ids: [202] });
+    });
+
     it("surfaces error details when recognition fails", async () => {
         useDashboardHandlers(
-            http.post("/wp-json/context-alt-text/v1/recognition/analyze", async () => {
+            http.post("/wp-json/context-alt-text/v1/recognition/analyze", () => {
                 return HttpResponse.json(
                     {
                         code: "cat_recognition_no_valid_attachments",
@@ -329,6 +408,7 @@ describe("RecognitionActions integration", () => {
                 items={[baseItem]}
                 viewMode="list"
             />,
+            { withRouter: true },
         );
 
         await user.click(screen.getByLabelText(/select sample asset/i));

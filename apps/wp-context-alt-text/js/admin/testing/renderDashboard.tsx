@@ -4,9 +4,9 @@ import { render } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter } from "react-router-dom";
 
-type CreateClientOptions = {
+interface CreateClientOptions {
     queryClient?: QueryClient;
-};
+}
 
 type RenderDashboardOptions = CreateClientOptions &
     Parameters<typeof render>[1] & {
@@ -35,7 +35,7 @@ const Provider = ({
 }: {
     children: ReactNode;
     client: QueryClient;
-}): JSX.Element => {
+}): ReactElement => {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
 

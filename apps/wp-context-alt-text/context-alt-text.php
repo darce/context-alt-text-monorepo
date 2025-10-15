@@ -50,7 +50,9 @@ use ContextAltText\Recognition\RecognitionObservationRepository;
 use ContextAltText\Recognition\RecognitionSettings;
 use ContextAltText\Roster\RosterClient;
 use ContextAltText\Roster\RosterCli;
+use ContextAltText\Roster\RosterObservationManager;
 use ContextAltText\Roster\RosterSyncScheduler;
+use ContextAltText\Shared\Config\SettingsRepository;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
 
 if (!defined('ABSPATH')) {
@@ -121,6 +123,19 @@ if (!defined('CONTEXT_ALT_TEXT_VITE_DEV_SERVER')) {
     define('CONTEXT_ALT_TEXT_VITE_DEV_SERVER', $devServer);
 }
 
+function context_alt_text_settings_repository(): SettingsRepository
+{
+    static $repository = null;
+
+    if ($repository instanceof SettingsRepository) {
+        return $repository;
+    }
+
+    $repository = new SettingsRepository();
+
+    return $repository;
+}
+
 function context_alt_text(): ContextAltText
 {
     static $instance = null;
@@ -130,21 +145,13 @@ function context_alt_text(): ContextAltText
     }
 
     $scanner = new MissingAltTextScanner();
-    $featureFlags = new FeatureFlags();
+    $settingsRepository = context_alt_text_settings_repository();
+    $featureFlags = new FeatureFlags($settingsRepository);
     $security = new Security();
     $rosterService = context_alt_text_roster_service($security);
     $rosterScheduler = context_alt_text_roster_sync_scheduler($rosterService);
     $dashboardMetrics = new DashboardMetricsService($scanner);
-    $dashboardPage = new DashboardPage($dashboardMetrics);
-    $workbenchPage = new AltTextWorkbenchPage();
-    $automationQueuePage = new AutomationQueuePage();
-    $rosterPage = new RosterPage($rosterService, $security, $scanner, $rosterScheduler);
-    $settingsPage = new PluginSettingsPage();
-    $settingsPage->init();
-    $accountCenterPage = new AccountCenterPage();
-    $mediaPanel = new MediaLibraryPanel($scanner);
-    $workbenchMediaResolver = new WorkbenchMediaResolver();
-    $recognitionServices = context_alt_text_recognition_services();
+    $recognitionServices = context_alt_text_recognition_services($settingsRepository);
     /** @var RecognitionClient $recognitionClient */
     $recognitionClient = $recognitionServices['client'];
     /** @var RecognitionJobRepository $recognitionJobRepository */
@@ -153,11 +160,47 @@ function context_alt_text(): ContextAltText
     $recognitionObservationRepository = $recognitionServices['observationRepository'];
     /** @var RecognitionJobService $recognitionJobService */
     $recognitionJobService = $recognitionServices['jobService'];
+    $rosterObservationManager = new RosterObservationManager(
+        $recognitionObservationRepository,
+        $recognitionJobService,
+        $rosterService
+    );
+    $recognitionJobService->setRosterObservationManager($rosterObservationManager);
+    $workbenchMediaResolver = new WorkbenchMediaResolver($recognitionObservationRepository);
+    $dashboardPage = new DashboardPage($dashboardMetrics);
+    $workbenchPage = new AltTextWorkbenchPage();
+    $automationQueuePage = new AutomationQueuePage();
+    $rosterPage = new RosterPage($rosterService, $security, $scanner, $rosterScheduler);
+    $settingsPage = new PluginSettingsPage($settingsRepository);
+    $settingsPage->init();
+    $accountCenterPage = new AccountCenterPage();
+    $mediaPanel = new MediaLibraryPanel($scanner);
 
     $instance = new ContextAltText(
-        new Admin($scanner, $dashboardMetrics, $featureFlags, $workbenchMediaResolver),
+        new Admin(
+            $scanner,
+            $dashboardMetrics,
+            $featureFlags,
+            $workbenchMediaResolver,
+            $rosterService,
+            $rosterScheduler,
+            $settingsRepository,
+            $rosterObservationManager
+        ),
         new Frontend(),
-        new Api($dashboardMetrics, $featureFlags, $workbenchMediaResolver, $recognitionJobService),
+        new Api(
+            $dashboardMetrics,
+            $featureFlags,
+            $workbenchMediaResolver,
+            $recognitionJobService,
+            $recognitionObservationRepository,
+            $rosterService,
+            $rosterScheduler,
+            $security,
+            $settingsRepository,
+            $recognitionClient,
+            $rosterObservationManager
+        ),
         new Menu(
             $dashboardPage,
             $workbenchPage,
@@ -187,7 +230,7 @@ function context_alt_text(): ContextAltText
  *     jobService: RecognitionJobService
  * }
  */
-function context_alt_text_recognition_services(): array
+function context_alt_text_recognition_services(?SettingsRepository $settingsRepository = null): array
 {
     static $services = null;
 
@@ -195,7 +238,8 @@ function context_alt_text_recognition_services(): array
         return $services;
     }
 
-    $settings = new RecognitionSettings();
+    $settingsRepository = $settingsRepository ?? context_alt_text_settings_repository();
+    $settings = new RecognitionSettings($settingsRepository);
     $client = new RecognitionClient($settings);
     $jobRepository = new RecognitionJobRepository();
     $observationRepository = new RecognitionObservationRepository();
@@ -210,6 +254,194 @@ function context_alt_text_recognition_services(): array
     ];
 
     return $services;
+}
+
+/**
+ * Fetch a roster snapshot from the recognition service for synchronization.
+ *
+ * @return array<int,array<string,mixed>>|null
+ */
+function context_alt_text_fetch_roster_snapshot(): ?array
+{
+    $services = context_alt_text_recognition_services();
+    /** @var RecognitionSettings $settings */
+    $settings = $services['settings'];
+
+    $settingsData = context_alt_text_settings_repository()->getRecognitionSettings();
+    if (isset($settingsData['enabled']) && !$settingsData['enabled']) {
+        return null;
+    }
+
+    if (!$settings->isConfigured()) {
+        return null;
+    }
+
+    /** @var RecognitionClient $client */
+    $client = $services['client'];
+
+    $page = 1;
+    $perPage = 50;
+    $entries = [];
+
+    $baseUrl = $settings->getBaseUrl();
+    $urlParser = function_exists('wp_parse_url') ? 'wp_parse_url' : 'parse_url';
+    $targetHost = $baseUrl !== null ? (string) $urlParser($baseUrl, PHP_URL_HOST) : null;
+    $httpArgsFilter = null;
+
+    if ($targetHost) {
+        $httpArgsFilter = static function (array $args, string $url) use ($targetHost, $urlParser): array {
+            $host = (string) $urlParser($url, PHP_URL_HOST);
+
+            if ($host === $targetHost) {
+                $timeout = isset($args['timeout']) ? (float) $args['timeout'] : 0.0;
+                if ($timeout <= 0.0 || $timeout > 5.0) {
+                    $args['timeout'] = 5.0;
+                }
+            }
+
+            return $args;
+        };
+
+        add_filter('http_request_args', $httpArgsFilter, 20, 2);
+    }
+
+    try {
+        do {
+            $response = $client->getRosterList($page, $perPage);
+
+            if (!is_array($response) || empty($response['entries']) || !is_array($response['entries'])) {
+                break;
+            }
+
+            foreach ($response['entries'] as $entry) {
+                if (!is_array($entry)) {
+                    continue;
+                }
+
+                $mapped = context_alt_text_normalize_roster_snapshot_entry($entry);
+
+                if ($mapped !== null) {
+                    $entries[] = $mapped;
+                }
+            }
+
+            $pagination = isset($response['pagination']) && is_array($response['pagination'])
+                ? $response['pagination']
+                : [];
+            $hasNext = !empty($pagination['has_next']);
+            $page++;
+
+            if ($page > 20) {
+                // Defensive break to avoid infinite loops on unexpected responses.
+                break;
+            }
+        } while ($hasNext);
+    } catch (\Throwable $exception) {
+        $state = get_option('cat_roster_sync_state');
+        if (!is_array($state)) {
+            $state = [];
+        }
+
+        $state['lastError'] = [
+            'message' => $exception->getMessage(),
+            'code' => $exception->getCode(),
+        ];
+
+        update_option('cat_roster_sync_state', $state);
+
+        return null;
+    } finally {
+        if ($httpArgsFilter !== null) {
+            remove_filter('http_request_args', $httpArgsFilter, 20);
+        }
+    }
+
+    return $entries !== [] ? $entries : null;
+}
+
+/**
+ * Map a recognition roster entry into the snapshot structure expected by the sync service.
+ *
+ * @param array<string,mixed> $entry
+ * @return array<string,mixed>|null
+ */
+function context_alt_text_normalize_roster_snapshot_entry(array $entry): ?array
+{
+    $id = null;
+    foreach (['unique_id', 'id', 'remote_id'] as $key) {
+        if (isset($entry[$key]) && is_scalar($entry[$key])) {
+            $candidate = (string) $entry[$key];
+            if ($candidate !== '') {
+                $id = $candidate;
+                break;
+            }
+        }
+    }
+
+    if ($id === null) {
+        return null;
+    }
+
+    $label = null;
+    foreach (['display_name', 'name', 'label'] as $key) {
+        if (isset($entry[$key]) && is_scalar($entry[$key])) {
+            $candidate = (string) $entry[$key];
+            if ($candidate !== '') {
+                $label = $candidate;
+                break;
+            }
+        }
+    }
+
+    $metadata = [];
+    if (isset($entry['metadata']) && is_array($entry['metadata'])) {
+        $metadata = $entry['metadata'];
+    }
+
+    $type = null;
+    foreach (['type', 'entity_type'] as $key) {
+        if (isset($metadata[$key]) && is_scalar($metadata[$key])) {
+            $candidate = (string) $metadata[$key];
+            if ($candidate !== '') {
+                $type = $candidate;
+                break;
+            }
+        }
+    }
+
+    if ($type === null && isset($entry['type']) && is_scalar($entry['type'])) {
+        $candidate = (string) $entry['type'];
+        if ($candidate !== '') {
+            $type = $candidate;
+        }
+    }
+
+    $referenceImages = [];
+    if (isset($entry['reference_images']) && is_array($entry['reference_images'])) {
+        $referenceImages = $entry['reference_images'];
+    } elseif (isset($entry['referenceImages']) && is_array($entry['referenceImages'])) {
+        $referenceImages = $entry['referenceImages'];
+    }
+
+    $updatedAt = null;
+    foreach (['updated_timestamp', 'updated_at', 'created_timestamp'] as $key) {
+        if (isset($entry[$key]) && is_scalar($entry[$key])) {
+            $candidate = (string) $entry[$key];
+            if ($candidate !== '') {
+                $updatedAt = $candidate;
+                break;
+            }
+        }
+    }
+
+    return [
+        'id' => $id,
+        'label' => $label,
+        'type' => $type,
+        'metadata' => $metadata,
+        'reference_images' => $referenceImages,
+        'updated_at' => $updatedAt,
+    ];
 }
 
 function context_alt_text_roster_service(?Security $security = null): RosterService
@@ -248,6 +480,14 @@ function context_alt_text_roster_sync_scheduler(?RosterService $service = null):
 
 add_action('plugins_loaded', static function (): void {
     context_alt_text()->init();
+});
+
+add_filter('context_alt_text_roster_remote_snapshot', static function ($snapshot) {
+    if (is_array($snapshot) && $snapshot !== []) {
+        return $snapshot;
+    }
+
+    return context_alt_text_fetch_roster_snapshot();
 });
 
 if (defined('WP_CLI') && WP_CLI) {

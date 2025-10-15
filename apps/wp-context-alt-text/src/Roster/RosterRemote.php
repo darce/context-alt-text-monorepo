@@ -28,4 +28,11 @@ interface RosterRemote
      * @return array<string,mixed>
      */
     public function generateEmbeddings(array $payload): array;
+
+    /**
+     * @param array<string,mixed> $payload
+     *
+     * @return array<string,mixed>
+     */
+    public function appendReferenceEmbedding(string $remoteId, array $payload): array;
 }

@@ -14,6 +14,7 @@ final class FakeWorkbenchMediaResolver extends WorkbenchMediaResolver
      */
     public function __construct(array $payload)
     {
+        parent::__construct();
         $this->payload = $payload;
     }
 

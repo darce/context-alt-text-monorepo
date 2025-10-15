@@ -12,6 +12,8 @@ use function is_string;
 use function is_wp_error;
 use function json_decode;
 use function max;
+use function http_build_query;
+use function rawurlencode;
 use function rtrim;
 use function sprintf;
 use function trim;
@@ -48,6 +50,45 @@ class RecognitionClient
         return $this->postJson($endpoint, $payload);
     }
 
+    public function analyzeSceneBase64(array $images, ?float $threshold = null, bool $useRoster = true): array
+    {
+        $payloadImages = [];
+
+        foreach ($images as $index => $image) {
+            if (!is_array($image)) {
+                continue;
+            }
+
+            $base64 = $image['base64'] ?? $image['image_base64'] ?? '';
+            $base64 = is_string($base64) ? trim($base64) : '';
+
+            $filename = $image['filename'] ?? $image['name'] ?? null;
+            if (!is_string($filename) || trim($filename) === '') {
+                $filename = sprintf('image_%d.png', $index);
+            }
+
+            $payloadImages[] = [
+                'filename' => $filename,
+                'image_base64' => $base64,
+            ];
+        }
+
+        if ($payloadImages === []) {
+            throw new RecognitionClientException('No images provided for analyzeSceneBase64.');
+        }
+
+        $payload = [
+            'images' => $payloadImages,
+            'use_roster' => $useRoster,
+        ];
+
+        if ($threshold !== null) {
+            $payload['threshold'] = $threshold;
+        }
+
+        return $this->analyzeScene($payload);
+    }
+
     /**
      * @param array<string,mixed> $payload
      *
@@ -59,6 +100,31 @@ class RecognitionClient
         $endpoint = $this->buildUrl('/api/v0/embeddings');
 
         return $this->postJson($endpoint, $payload);
+    }
+
+    public function generateEmbeddings(array $image, ?float $threshold = null): array
+    {
+        $payload = [
+            'image' => [
+                'filename' => isset($image['filename']) && is_string($image['filename'])
+                    ? trim($image['filename'])
+                    : null,
+                'image_base64' => isset($image['base64']) && is_string($image['base64'])
+                    ? trim($image['base64'])
+                    : (isset($image['image_base64']) && is_string($image['image_base64'])
+                        ? trim($image['image_base64'])
+                        : null),
+                'image_url' => isset($image['image_url']) && is_string($image['image_url'])
+                    ? trim($image['image_url'])
+                    : (isset($image['url']) && is_string($image['url']) ? trim($image['url']) : null),
+            ],
+        ];
+
+        if ($threshold !== null) {
+            $payload['threshold'] = $threshold;
+        }
+
+        return $this->embeddings($payload);
     }
 
     /**
@@ -75,6 +141,46 @@ class RecognitionClient
         ];
 
         return $this->requestJson('GET', $endpoint, $args);
+    }
+
+    public function health(): array
+    {
+        return $this->getHealth();
+    }
+
+    public function getServiceInfo(): array
+    {
+        $endpoint = $this->buildUrl('/api/v0/service/info');
+
+        return $this->requestJson('GET', $endpoint, [
+            'headers' => $this->buildHeaders(),
+            'timeout' => $this->getTimeoutSeconds(),
+        ]);
+    }
+
+    public function getRosterList(int $page = 1, int $perPage = 20, ?string $model = null, bool $includeEmbeddings = false): array
+    {
+        $modelProfile = $model ?? $this->settings->getModelProfile() ?? 'insightface_w600k';
+
+        $query = [
+            'page' => max(1, (int) $page),
+            'per_page' => max(1, (int) $perPage),
+        ];
+
+        if ($includeEmbeddings) {
+            $query['include_embeddings'] = 'true';
+        }
+
+        $endpoint = $this->buildUrl(sprintf('/api/v0/roster/%s', rawurlencode($modelProfile)));
+
+        if ($query !== []) {
+            $endpoint .= '?' . http_build_query($query);
+        }
+
+        return $this->requestJson('GET', $endpoint, [
+            'headers' => $this->buildHeaders(),
+            'timeout' => $this->getTimeoutSeconds(),
+        ]);
     }
 
     /**

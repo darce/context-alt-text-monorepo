@@ -71,7 +71,7 @@ describe("HeroStatusSection", () => {
         const { container } = renderDashboard(<HeroStatusSection data={data} />);
 
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 
     it("exposes a polite live region for assistive tech", () => {

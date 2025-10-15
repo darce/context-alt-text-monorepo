@@ -42,17 +42,17 @@ describe("SearchBar", () => {
 
         expect(onSearch).toHaveBeenCalledWith("test query");
         expect(onSearch).toHaveBeenCalledTimes(1);
-        expect((input as HTMLInputElement).value).toBe("test query");
+        expect(input).toHaveValue("test query");
     });
 
     it("supports controlled value prop", () => {
         const { rerender } = render(<SearchBar onSearch={vi.fn()} value="initial" />);
 
-        const input = screen.getByRole("searchbox") as HTMLInputElement;
-        expect(input.value).toBe("initial");
+        const input = screen.getByRole("searchbox");
+        expect(input).toHaveValue("initial");
 
         rerender(<SearchBar onSearch={vi.fn()} value="updated" />);
-        expect(input.value).toBe("updated");
+        expect(input).toHaveValue("updated");
     });
 
     it("shows clear button when input has value", () => {
@@ -69,13 +69,13 @@ describe("SearchBar", () => {
 
         onSearch.mockClear();
 
-        const input = screen.getByRole("searchbox") as HTMLInputElement;
+        const input = screen.getByRole("searchbox");
         const clearButton = screen.getByRole("button", { name: /clear search/i });
         fireEvent.click(clearButton);
 
         expect(onSearch).toHaveBeenCalledWith("");
         expect(onSearch).toHaveBeenCalledTimes(1);
-        expect(input.value).toBe("");
+        expect(input).toHaveValue("");
     });
 
     it("has accessible label", () => {

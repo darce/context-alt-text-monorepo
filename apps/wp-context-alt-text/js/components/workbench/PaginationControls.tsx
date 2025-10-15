@@ -4,6 +4,8 @@ import { __, sprintf } from "@wordpress/i18n";
 
 import { Button } from "@/components/ui/button";
 
+const runtimeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
+
 export interface PaginationControlsProps {
     page: number;
     perPage: number;
@@ -25,19 +27,7 @@ export const PaginationControls = ({
     onPerPageChange,
     perPageOptions = [10, 20, 50],
 }: PaginationControlsProps): React.JSX.Element | null => {
-    if (total === 0) {
-        return (
-            <nav
-                className="cat-pagination"
-                aria-label={__("Workbench pagination", "context-alt-text")}
-            >
-                <p className="cat-pagination__status">
-                    {__("No media items found", "context-alt-text")}
-                </p>
-            </nav>
-        );
-    }
-
+    // Compute values and hooks unconditionally to satisfy react-hooks rules
     const safePage = Math.max(1, Math.min(page, Math.max(totalPages, 1)));
     const start = total === 0 ? 0 : (safePage - 1) * perPage + 1;
     const end = total === 0 ? 0 : Math.min(total, safePage * perPage);
@@ -69,6 +59,15 @@ export const PaginationControls = ({
 
     const handlePerPageChange: React.ChangeEventHandler<HTMLSelectElement> = (event) => {
         const nextPerPage = Number.parseInt(event.target.value, 10);
+
+        if (runtimeProcess?.env?.NODE_ENV === "test") {
+            console.info("PaginationControls::handlePerPageChange", {
+                current: perPage,
+                nextPerPage,
+                hasHandler: typeof onPerPageChange === "function",
+            });
+        }
+
         if (Number.isFinite(nextPerPage) && nextPerPage > 0 && nextPerPage !== perPage) {
             onPerPageChange?.(nextPerPage);
         }
@@ -156,6 +155,7 @@ export const PaginationControls = ({
                         className="cat-pagination__select"
                         value={perPage}
                         onChange={handlePerPageChange}
+                        disabled={total === 0}
                     >
                         {availablePerPageOptions.map((option) => (
                             <option key={option} value={option}>

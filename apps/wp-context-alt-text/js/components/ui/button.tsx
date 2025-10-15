@@ -34,14 +34,24 @@ export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
         },
         ref,
     ) => {
-        const Component = asChild ? Slot : "button";
         const classes = [variantClassName[variant], sizeClassName[size], className]
             .filter(Boolean)
             .join(" ");
+        const { children, ...restProps } = props;
 
-        const componentProps = asChild ? props : { ...props, type };
+        if (asChild) {
+            return (
+                <Slot ref={ref} className={classes} {...restProps}>
+                    {children}
+                </Slot>
+            );
+        }
 
-        return <Component ref={ref as any} className={classes} {...componentProps} />;
+        return (
+            <button ref={ref} type={type} className={classes} {...restProps}>
+                {children}
+            </button>
+        );
     },
 );
 

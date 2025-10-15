@@ -49,46 +49,14 @@ class RosterPage
 
     public function render_page(): void
     {
-        $summary = $this->scanner->get_summary();
-        $missing = (int) ($summary['missing'] ?? 0);
-        $updatedAt = $summary['updated_at'] ?? null;
 ?>
         <div class="wrap context-alt-text-admin">
             <h1><?php esc_html_e('Context Alt Text', 'context-alt-text'); ?></h1>
-            <p class="cat-status-line">
-                <?php
-                printf(
-                    '%s',
-                    esc_html(sprintf(
-                        /* translators: %d is the count of images missing alt text. */
-                        __('We found %d images missing alt text', 'context-alt-text'),
-                        $missing
-                    ))
-                );
-                ?>
-            </p>
-            <p>
-                <a class="button button-primary" href="<?php echo esc_url(admin_url('upload.php?context_alt_text=missing')); ?>">
-                    <?php esc_html_e('Review in Panel', 'context-alt-text'); ?>
-                </a>
-            </p>
-            <?php if (null === $updatedAt) : ?>
-                <p class="description">
-                    <?php esc_html_e('First-run scan is scheduling. Counts will appear once the scan completes.', 'context-alt-text'); ?>
-                </p>
-            <?php else : ?>
-                <p class="description">
-                    <?php
-                    echo esc_html(
-                        sprintf(
-                            /* translators: %s is a human readable time difference. */
-                            __('Last checked %s ago.', 'context-alt-text'),
-                            human_time_diff((int) $updatedAt, time())
-                        )
-                    );
-                    ?>
-                </p>
-            <?php endif; ?>
+            <div id="<?php echo esc_attr(DashboardPage::ROOT_ID); ?>" class="context-alt-text-admin__app">
+                <noscript>
+                    <?php esc_html_e('Roster management requires JavaScript. Please enable JavaScript in your browser.', 'context-alt-text'); ?>
+                </noscript>
+            </div>
         </div>
 <?php
     }

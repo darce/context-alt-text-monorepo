@@ -1,6 +1,7 @@
 import React from "react";
 
 import { __, _n, sprintf } from "@wordpress/i18n";
+import { Link } from "react-router-dom";
 
 import type {
     RecognitionAttachmentObservations,
@@ -10,6 +11,7 @@ import type {
 } from "@/admin/hooks/useRecognitionJob";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { getDashboardConfig } from "@/admin/dashboardData";
 
 export interface RecognitionActionsProps {
     selectionCount: number;
@@ -32,6 +34,8 @@ export const RecognitionActions = ({
     error = null,
     onTriggerRecognition,
 }: RecognitionActionsProps): React.JSX.Element => {
+    const config = React.useMemo(() => getDashboardConfig(), []);
+    const rosterEnabled = Boolean(config.featureFlags?.rosterEnabled);
     const buttonDisabled = !isEnabled || selectionCount === 0 || isSubmitting;
     const [shouldRenderProgress, setShouldRenderProgress] = React.useState(false);
 
@@ -302,7 +306,11 @@ export const RecognitionActions = ({
                     </h3>
                     <ul className="cat-recognition__results">
                         {jobDetails.observations.map((item) => (
-                            <RecognitionResultRow key={item.attachmentId} observation={item} />
+                            <RecognitionResultRow
+                                key={item.attachmentId}
+                                observation={item}
+                                rosterEnabled={rosterEnabled}
+                            />
                         ))}
                     </ul>
                 </section>
@@ -313,19 +321,21 @@ export const RecognitionActions = ({
 
 const RecognitionResultRow = ({
     observation,
+    rosterEnabled,
 }: {
     observation: RecognitionAttachmentObservations;
+    rosterEnabled: boolean;
 }): React.JSX.Element => {
     const summary = observation.summary;
     const unresolved = Math.max(summary.needsReview, summary.total - summary.matched);
+    const hasObservations = observation.observations.length > 0;
 
     return (
         <li className="cat-recognition__result" data-attachment-id={observation.attachmentId}>
             <div className="cat-recognition__result-header">
                 <strong>
-                    {observation.context.filename
-                        ? observation.context.filename
-                        : sprintf(
+                    {observation.context.filename ??
+                        sprintf(
                             // translators: %d is an attachment identifier.
                             __("Attachment %d", "context-alt-text"),
                             observation.attachmentId,
@@ -356,6 +366,142 @@ const RecognitionResultRow = ({
                     <dd>{unresolved}</dd>
                 </div>
             </dl>
+            {hasObservations && (
+                <ul className="cat-recognition__observation-list">
+                    {observation.observations.map((record) => (
+                        <RecognitionObservationRow
+                            key={record.observationId}
+                            record={record}
+                            rosterEnabled={rosterEnabled}
+                            attachmentId={observation.attachmentId}
+                        />
+                    ))}
+                </ul>
+            )}
+        </li>
+    );
+};
+
+interface RecognitionObservationRowProps {
+    record: RecognitionAttachmentObservations["observations"][number];
+    rosterEnabled: boolean;
+    attachmentId: RecognitionAttachmentObservations["attachmentId"];
+}
+
+const formatStatusLabel = (status: string): string => {
+    switch (status) {
+        case "matched":
+            return __("Matched", "context-alt-text");
+        case "needs_review":
+            return __("Needs review", "context-alt-text");
+        default:
+            return status.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase());
+    }
+};
+
+const RecognitionObservationRow = ({ record, rosterEnabled, attachmentId }: RecognitionObservationRowProps): React.JSX.Element => {
+    const rosterMatch = record.roster;
+    const hasRosterMatch = Boolean(rosterMatch?.remoteId);
+    const needsReview = record.status === "needs_review";
+
+    const rosterSearch = new URLSearchParams();
+    if (hasRosterMatch && rosterMatch?.remoteId) {
+        rosterSearch.set("remoteId", rosterMatch.remoteId);
+    } else {
+        rosterSearch.set("mode", "create");
+        if (record.label) {
+            rosterSearch.set("label", record.label);
+        }
+    }
+
+    if (record.observationId) {
+        rosterSearch.set("observationId", record.observationId);
+    }
+
+    if (attachmentId) {
+        rosterSearch.set("attachmentId", String(attachmentId));
+    }
+
+    rosterSearch.set("source", "recognition");
+
+    const rosterLink = `/roster?${rosterSearch.toString()}`;
+
+    const defaultRosterCta = hasRosterMatch
+        ? __("Open roster entry", "context-alt-text")
+        : __("Add to roster", "context-alt-text");
+    const reviewRosterCta = hasRosterMatch
+        ? __("Review roster entry", "context-alt-text")
+        : __("Review in roster manager", "context-alt-text");
+
+    const displayLabel = record.label ?? record.entityType ?? __("Observation", "context-alt-text");
+
+    const rosterDescription = rosterMatch
+        ? sprintf(
+            /* translators: %s is a roster display name. */
+            __("Linked to roster entry %s", "context-alt-text"),
+            rosterMatch.displayName ?? rosterMatch.name ?? rosterMatch.remoteId ?? __("(unknown)", "context-alt-text"),
+        )
+        : __("No roster match", "context-alt-text");
+
+    let action: React.ReactNode = null;
+
+    if (needsReview) {
+        if (rosterEnabled) {
+            action = (
+                <Button
+                    asChild
+                    variant="primary"
+                    size="sm"
+                >
+                    <Link
+                        to={rosterLink}
+                        aria-label={`${reviewRosterCta}: ${displayLabel}`}
+                    >
+                        {reviewRosterCta}
+                    </Link>
+                </Button>
+            );
+        } else {
+            action = (
+                <span className="cat-recognition__observation-helper">
+                    {__("Enable the roster manager from settings to resolve this observation.", "context-alt-text")}
+                </span>
+            );
+        }
+    } else if (rosterEnabled && hasRosterMatch) {
+        action = (
+            <Link
+                to={rosterLink}
+                className="cat-recognition__observation-link"
+                aria-label={`${defaultRosterCta}: ${displayLabel}`}
+            >
+                {defaultRosterCta}
+            </Link>
+        );
+    } else if (rosterEnabled && record.status !== "matched") {
+        action = (
+            <Link
+                to={rosterLink}
+                className="cat-recognition__observation-link"
+                aria-label={`${defaultRosterCta}: ${displayLabel}`}
+            >
+                {defaultRosterCta}
+            </Link>
+        );
+    }
+
+    return (
+        <li className="cat-recognition__observation">
+            <div className="cat-recognition__observation-header">
+                <span className="cat-recognition__observation-label">{displayLabel}</span>
+                <span className={`cat-recognition__observation-status cat-recognition__observation-status--${record.status}`}>
+                    {formatStatusLabel(record.status)}
+                </span>
+            </div>
+            <div className="cat-recognition__observation-body">
+                <span className="cat-recognition__observation-meta">{rosterDescription}</span>
+                {action}
+            </div>
         </li>
     );
 };

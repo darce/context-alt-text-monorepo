@@ -9,6 +9,7 @@ use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../bootstrap.php';
 require_once __DIR__ . '/Support/FakeRosterClient.php';
+require_once __DIR__ . '/Support/RosterTestFactory.php';
 
 final class RosterServiceFiltersTest extends TestCase
 {
@@ -44,9 +45,16 @@ final class RosterServiceFiltersTest extends TestCase
             2
         );
 
+        update_option('cat_roster_entries', [
+            '1' => ContextAltText\Tests\Roster\Support\RosterTestFactory::entry([
+                'remoteId' => '1',
+                'referenceImages' => [],
+            ]),
+        ]);
+
         $service = new RosterService(new Security(), new FakeRosterClient());
-        self::assertTrue($service->attachReferenceImage(1, ['image' => 'foo']));
-        self::assertFalse($service->attachReferenceImage(2, ['image' => 'foo']));
+        self::assertTrue($service->attachReferenceImage(1, ['image_url' => 'https://example.test/foo.jpg']));
+        self::assertFalse($service->attachReferenceImage(2, ['image_url' => 'https://example.test/bar.jpg']));
     }
 
     public function test_search_uses_filter(): void

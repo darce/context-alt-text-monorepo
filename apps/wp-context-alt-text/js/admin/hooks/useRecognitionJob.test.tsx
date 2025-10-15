@@ -8,6 +8,7 @@ import {
     useRecognitionJob,
 } from "@/admin/hooks/useRecognitionJob";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
+import { setAdminBootstrap } from "@/admin/globals";
 
 const ANALYZE_ENDPOINT = "/wp-json/context-alt-text/v1/recognition/analyze";
 const JOB_ENDPOINT_BASE = "/wp-json/context-alt-text/v1/recognition/job/";
@@ -22,23 +23,23 @@ const createWrapper = () => ({ children }: { children: ReactNode }) => <>{childr
 
 describe("useRecognitionJob", () => {
     beforeEach(() => {
-        (globalThis as any).ContextAltTextAdmin = undefined;
+        setAdminBootstrap(undefined);
     });
 
     afterEach(() => {
-        (globalThis as any).ContextAltTextAdmin = undefined;
+        setAdminBootstrap(undefined);
         vi.useRealTimers();
         vi.restoreAllMocks();
     });
 
     it("disables submissions when recognition feature is not available", () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             config: {
                 featureFlags: {
                     workbenchRecognition: false,
                 },
             },
-        };
+        });
 
         const { result } = renderHook(() => useRecognitionJob(), { wrapper: createWrapper() });
 
@@ -53,10 +54,10 @@ describe("useRecognitionJob", () => {
     });
 
     it("submits recognition, polls job status, and surfaces completed observations", async () => {
-        const analyzePayloads: Array<Record<string, unknown>> = [];
+        const analyzePayloads: Record<string, unknown>[] = [];
         let jobCallCount = 0;
 
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             config: {
                 featureFlags: {
                     workbenchRecognition: true,
@@ -67,11 +68,12 @@ describe("useRecognitionJob", () => {
                     recognitionJob: JOB_ENDPOINT_BASE,
                 },
             },
-        };
+        });
 
         useDashboardHandlers(
             http.post(ANALYZE_ENDPOINT, async ({ request }) => {
-                analyzePayloads.push(await request.json<Record<string, unknown>>());
+                const payload = (await request.json()) as Record<string, unknown>;
+                analyzePayloads.push(payload);
 
                 return HttpResponse.json({
                     jobId: "job-xyz",
@@ -144,7 +146,8 @@ describe("useRecognitionJob", () => {
         await waitFor(() => {
             expect(result.current.canSubmit).toBe(true);
             expect(analyzePayloads).toHaveLength(1);
-            expect(analyzePayloads[0].attachment_ids).toEqual([101]);
+            expect(analyzePayloads).not.toHaveLength(0);
+            expect(analyzePayloads[0]?.attachment_ids).toEqual([101]);
             expect(result.current.lastJob?.jobId).toBe("job-xyz");
         });
 
@@ -172,7 +175,7 @@ describe("useRecognitionJob", () => {
     });
 
     it("surfaces polling errors and stops further refetching", async () => {
-        (globalThis as any).ContextAltTextAdmin = {
+        setAdminBootstrap({
             config: {
                 featureFlags: {
                     workbenchRecognition: true,
@@ -182,7 +185,7 @@ describe("useRecognitionJob", () => {
                     recognitionJob: JOB_ENDPOINT_BASE,
                 },
             },
-        };
+        });
 
         useDashboardHandlers(
             http.post(ANALYZE_ENDPOINT, () =>

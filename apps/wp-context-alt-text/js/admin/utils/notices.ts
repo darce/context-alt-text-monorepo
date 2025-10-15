@@ -1,9 +1,9 @@
 type NoticeStatus = "success" | "info" | "warning" | "error";
 
-type NoticesDispatch = {
+interface NoticesDispatch {
     createNotice?: (status: NoticeStatus, content: string, options?: Record<string, unknown>) => unknown;
     removeNotice?: (id: string) => unknown;
-};
+}
 
 const DEFAULT_NOTICE_ID = "cat-recognition-job-error";
 
@@ -30,7 +30,7 @@ const getNoticeDispatch = (): NoticesDispatch | null => {
             return store as NoticesDispatch;
         }
     } catch (error) {
-        // eslint-disable-next-line no-console -- surfaced only when the WordPress notices store is unavailable
+         
         console.warn("Failed to access WordPress notices store", error);
     }
 

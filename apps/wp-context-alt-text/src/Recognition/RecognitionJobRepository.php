@@ -35,6 +35,7 @@ class RecognitionJobRepository
             'completedAt' => null,
             'result' => null,
             'error' => null,
+            'observations' => [],
         ];
 
         $this->persist($job);

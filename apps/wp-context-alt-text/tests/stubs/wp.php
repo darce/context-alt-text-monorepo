@@ -58,6 +58,13 @@ if (!class_exists('WP_REST_Request')) {
             return $this->params[$key] ?? null;
         }
 
+        public function set_param(string $key, $value): self
+        {
+            $this->params[$key] = $value;
+
+            return $this;
+        }
+
         public function offsetExists(mixed $offset): bool
         {
             return array_key_exists($offset, $this->params);
@@ -430,12 +437,138 @@ if (!function_exists('delete_post_meta')) {
     }
 }
 
+if (!function_exists('sanitize_title')) {
+    function sanitize_title($title)
+    {
+        $value = strtolower((string) $title);
+        $value = preg_replace('/[^a-z0-9]+/i', '-', $value);
+        return trim((string) $value, '-');
+    }
+}
+
 if (!function_exists('sanitize_text_field')) {
     function sanitize_text_field($value)
     {
         $value = (string) $value;
 
         return trim(strip_tags($value));
+    }
+}
+
+if (!function_exists('term_exists')) {
+    function term_exists($term, $taxonomy)
+    {
+        if (!isset($GLOBALS['__cat_terms'][$taxonomy])) {
+            return 0;
+        }
+
+        $slugMap = $GLOBALS['__cat_terms'][$taxonomy]['by_slug'] ?? [];
+
+        if (is_numeric($term)) {
+            $termId = (int) $term;
+            if (isset($GLOBALS['__cat_terms'][$taxonomy]['by_id'][$termId])) {
+                return ['term_id' => $termId, 'term_taxonomy_id' => $termId];
+            }
+
+            return 0;
+        }
+
+        $slug = (string) $term;
+
+        if (isset($slugMap[$slug])) {
+            $termId = $slugMap[$slug];
+            return ['term_id' => $termId, 'term_taxonomy_id' => $termId];
+        }
+
+        return 0;
+    }
+}
+
+if (!function_exists('wp_insert_term')) {
+    function wp_insert_term($term, $taxonomy, $args = [])
+    {
+        if (!isset($GLOBALS['__cat_terms'][$taxonomy])) {
+            $GLOBALS['__cat_terms'][$taxonomy] = [
+                'next_id' => 1,
+                'by_id' => [],
+                'by_slug' => [],
+            ];
+        }
+
+        $slug = isset($args['slug']) ? (string) $args['slug'] : sanitize_title($term);
+
+        if ($slug === '') {
+            $slug = sanitize_title($term . '-' . $GLOBALS['__cat_terms'][$taxonomy]['next_id']);
+        }
+
+        if (isset($GLOBALS['__cat_terms'][$taxonomy]['by_slug'][$slug])) {
+            $existing = $GLOBALS['__cat_terms'][$taxonomy]['by_slug'][$slug];
+
+            return [
+                'term_id' => $existing,
+                'term_taxonomy_id' => $existing,
+            ];
+        }
+
+        $termId = $GLOBALS['__cat_terms'][$taxonomy]['next_id']++;
+
+        $GLOBALS['__cat_terms'][$taxonomy]['by_id'][$termId] = [
+            'term_id' => $termId,
+            'term_taxonomy_id' => $termId,
+            'name' => (string) $term,
+            'slug' => $slug,
+            'taxonomy' => $taxonomy,
+        ];
+
+        $GLOBALS['__cat_terms'][$taxonomy]['by_slug'][$slug] = $termId;
+
+        return [
+            'term_id' => $termId,
+            'term_taxonomy_id' => $termId,
+        ];
+    }
+}
+
+if (!function_exists('wp_get_object_terms')) {
+    function wp_get_object_terms($object_id, $taxonomy, $args = [])
+    {
+        $objectId = (int) $object_id;
+
+        $termIds = $GLOBALS['__cat_object_terms'][$taxonomy][$objectId] ?? [];
+        $terms = [];
+
+        foreach ($termIds as $termId) {
+            if (!isset($GLOBALS['__cat_terms'][$taxonomy]['by_id'][$termId])) {
+                continue;
+            }
+
+            $data = $GLOBALS['__cat_terms'][$taxonomy]['by_id'][$termId];
+            $terms[] = (object) $data;
+        }
+
+        return $terms;
+    }
+}
+
+if (!function_exists('wp_set_post_terms')) {
+    function wp_set_post_terms($object_id, $terms, $taxonomy, $append = false)
+    {
+        $objectId = (int) $object_id;
+        $termIds = is_array($terms) ? array_map('intval', $terms) : [(int) $terms];
+        $termIds = array_values(array_filter($termIds, static fn($id) => $id > 0));
+
+        if (!isset($GLOBALS['__cat_object_terms'][$taxonomy])) {
+            $GLOBALS['__cat_object_terms'][$taxonomy] = [];
+        }
+
+        if ($append && isset($GLOBALS['__cat_object_terms'][$taxonomy][$objectId])) {
+            $existing = $GLOBALS['__cat_object_terms'][$taxonomy][$objectId];
+            $termIds = array_values(array_unique(array_merge($existing, $termIds)));
+        }
+
+        $GLOBALS['__cat_object_terms'][$taxonomy][$objectId] = $termIds;
+
+        return $termIds;
     }
 }
 
@@ -449,6 +582,48 @@ if (!function_exists('wp_generate_uuid4')) {
         $GLOBALS['__cat_uuid_counter']++;
 
         return 'uuid-' . $GLOBALS['__cat_uuid_counter'];
+    }
+}
+
+if (!function_exists('wp_upload_bits')) {
+    function wp_upload_bits($name, $deprecated, $bits)
+    {
+        $directory = sys_get_temp_dir();
+        $unique = uniqid('cat_upload_', true);
+        $path = $directory . '/' . $unique . '_' . $name;
+
+        file_put_contents($path, $bits);
+
+        return [
+            'file' => $path,
+            'url' => 'http://example.test/uploads/' . $name,
+            'error' => false,
+        ];
+    }
+}
+
+if (!function_exists('wp_insert_attachment')) {
+    function wp_insert_attachment($attachment, $filename = '', $parent = 0)
+    {
+        if (!isset($GLOBALS['__cat_attachments'])) {
+            $GLOBALS['__cat_attachments'] = [];
+        }
+
+        $id = isset($attachment['ID']) ? (int) $attachment['ID'] : (count($GLOBALS['__cat_attachments']) + 1);
+        $GLOBALS['__cat_attachments'][$id] = array_merge($attachment, [
+            'ID' => $id,
+            'file' => $filename,
+            'parent' => $parent,
+        ]);
+
+        return $id;
+    }
+}
+
+if (!function_exists('get_attached_file')) {
+    function get_attached_file($attachmentId)
+    {
+        return $GLOBALS['__cat_attachments'][$attachmentId]['file'] ?? null;
     }
 }
 
@@ -473,23 +648,30 @@ if (!function_exists('set_transient')) {
 }
 
 if (!function_exists('wp_next_scheduled')) {
-    function wp_next_scheduled($hook)
+    function wp_next_scheduled($hook, $args = [])
     {
-        return $GLOBALS['__cat_scheduled'][$hook] ?? false;
+        $key = $hook . '::' . md5(serialize($args));
+
+        return $GLOBALS['__cat_scheduled'][$key]['timestamp'] ?? false;
     }
 }
 
 if (!function_exists('wp_schedule_single_event')) {
-    function wp_schedule_single_event($timestamp, $hook): void
+    function wp_schedule_single_event($timestamp, $hook, $args = []): void
     {
-        $GLOBALS['__cat_scheduled'][$hook] = $timestamp;
+        $key = $hook . '::' . md5(serialize($args));
+        $GLOBALS['__cat_scheduled'][$key] = [
+            'timestamp' => $timestamp,
+            'args' => $args,
+        ];
     }
 }
 
 if (!function_exists('wp_clear_scheduled_hook')) {
-    function wp_clear_scheduled_hook($hook): void
+    function wp_clear_scheduled_hook($hook, $args = []): void
     {
-        unset($GLOBALS['__cat_scheduled'][$hook]);
+        $key = $hook . '::' . md5(serialize($args));
+        unset($GLOBALS['__cat_scheduled'][$key]);
     }
 }
 
@@ -694,6 +876,7 @@ if (!function_exists('wp_remote_post')) {
             'url' => $url,
             'args' => $args,
             'method' => 'POST',
+            'body' => $args['body'] ?? '',
         ];
 
         if (!empty($GLOBALS['__cat_http_queue'])) {
@@ -721,6 +904,7 @@ if (!function_exists('wp_remote_get')) {
             'url' => $url,
             'args' => $args,
             'method' => 'GET',
+            'body' => $args['body'] ?? '',
         ];
 
         if (!empty($GLOBALS['__cat_http_queue'])) {
@@ -750,6 +934,7 @@ if (!function_exists('wp_remote_request')) {
             'url' => $url,
             'args' => $args,
             'method' => $method,
+            'body' => $args['body'] ?? '',
         ];
 
         if (!empty($GLOBALS['__cat_http_queue'])) {

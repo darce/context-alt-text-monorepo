@@ -83,6 +83,11 @@ class DashboardMetricsService
             'pending_faces' => 0,
             'pending_brands' => 0,
             'unresolved_matches' => 0,
+            'roster_pending' => 0,
+            'roster_conflicts' => 0,
+            'roster_total' => 0,
+            'last_roster_sync_human' => null,
+            'last_roster_sync_at' => null,
             'links' => [],
         ];
 

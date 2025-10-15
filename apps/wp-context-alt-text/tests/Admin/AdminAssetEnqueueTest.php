@@ -7,8 +7,16 @@ namespace ContextAltText\Tests\Admin;
 use ContextAltText\Admin\Admin;
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
+use ContextAltText\Domain\Roster\RosterService;
+use ContextAltText\Roster\RosterSyncScheduler;
+use ContextAltText\Roster\RosterObservationManager;
+use ContextAltText\Recognition\RecognitionObservationRepository;
+use ContextAltText\Recognition\RecognitionJobService;
+use ContextAltText\Security\Security;
 use ContextAltText\Support\FeatureFlags;
+use ContextAltText\Shared\Config\SettingsRepository;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
+use ContextAltText\Tests\Roster\Support\FakeRosterClient;
 use PHPUnit\Framework\TestCase;
 
 use const JSON_THROW_ON_ERROR;
@@ -51,7 +59,17 @@ final class AdminAssetEnqueueTest extends TestCase
         };
 
         $metrics = $this->fakeMetricsService($scanner);
-        $admin = new Admin($scanner, $metrics, $this->fakeFeatureFlags(), new WorkbenchMediaResolver());
+        [$rosterService, $rosterScheduler, $rosterObservationManager] = $this->buildRosterDependencies();
+        $admin = new Admin(
+            $scanner,
+            $metrics,
+            $this->fakeFeatureFlags(),
+            new WorkbenchMediaResolver(),
+            $rosterService,
+            $rosterScheduler,
+            new SettingsRepository(),
+            $rosterObservationManager
+        );
         $admin->enqueue_script(Admin::DASHBOARD_HOOK);
 
         self::assertArrayHasKey('context-alt-text-admin-entry', $GLOBALS['__cat_scripts']);
@@ -61,6 +79,7 @@ final class AdminAssetEnqueueTest extends TestCase
 
         $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin-entry']['ContextAltTextAdmin'] ?? null;
         self::assertIsArray($localized);
+        self::assertSame('dashboard', $localized['page'] ?? null);
         self::assertArrayHasKey('config', $localized);
         $config = $localized['config'];
         self::assertIsArray($config);
@@ -72,10 +91,22 @@ final class AdminAssetEnqueueTest extends TestCase
         );
         self::assertArrayHasKey('workbenchMedia', $config['endpoints']);
         self::assertSame('', $config['endpoints']['workbenchMedia']);
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/roster',
+            $config['endpoints']['rosterEntries'] ?? null
+        );
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/roster/sync',
+            $config['endpoints']['rosterSync'] ?? null
+        );
         self::assertArrayHasKey('featureFlags', $config);
+        self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
         self::assertFalse($config['featureFlags']['workbenchEnabled']);
+        self::assertTrue($config['featureFlags']['abilitiesEnabled']);
+        self::assertFalse($config['featureFlags']['rosterEnabled']);
         self::assertArrayHasKey('dashboard', $localized['data']);
         self::assertArrayHasKey('workbench', $localized['data']);
+        self::assertArrayHasKey('roster', $localized['data']);
     }
 
     public function test_enqueue_script_loads_manifest_assets_in_production(): void
@@ -110,7 +141,17 @@ final class AdminAssetEnqueueTest extends TestCase
         };
 
         $metrics = $this->fakeMetricsService($scanner);
-        $admin = new Admin($scanner, $metrics, $this->fakeFeatureFlags(), new WorkbenchMediaResolver());
+        [$rosterService, $rosterScheduler, $rosterObservationManager] = $this->buildRosterDependencies();
+        $admin = new Admin(
+            $scanner,
+            $metrics,
+            $this->fakeFeatureFlags(),
+            new WorkbenchMediaResolver(),
+            $rosterService,
+            $rosterScheduler,
+            new SettingsRepository(),
+            $rosterObservationManager
+        );
         $admin->enqueue_script(Admin::DASHBOARD_HOOK);
 
         self::assertArrayHasKey('context-alt-text-admin', $GLOBALS['__cat_scripts']);
@@ -124,6 +165,7 @@ final class AdminAssetEnqueueTest extends TestCase
 
         $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin']['ContextAltTextAdmin'] ?? null;
         self::assertIsArray($localized);
+        self::assertSame('dashboard', $localized['page'] ?? null);
         self::assertArrayHasKey('config', $localized);
         $config = $localized['config'];
         self::assertIsArray($config);
@@ -135,13 +177,66 @@ final class AdminAssetEnqueueTest extends TestCase
         );
         self::assertArrayHasKey('workbenchMedia', $config['endpoints']);
         self::assertSame('', $config['endpoints']['workbenchMedia']);
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/roster',
+            $config['endpoints']['rosterEntries'] ?? null
+        );
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/roster/sync',
+            $config['endpoints']['rosterSync'] ?? null
+        );
         self::assertArrayHasKey('featureFlags', $config);
+        self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
         self::assertFalse($config['featureFlags']['workbenchEnabled']);
+        self::assertTrue($config['featureFlags']['abilitiesEnabled']);
+        self::assertFalse($config['featureFlags']['rosterEnabled']);
         self::assertArrayHasKey('workbench', $localized['data']);
+        self::assertArrayHasKey('roster', $localized['data']);
 
         if (file_exists($manifestPath)) {
             unlink($manifestPath);
         }
+    }
+
+    public function test_force_module_type_adds_attribute_when_missing(): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'production';
+        if (!defined('CONTEXT_ALT_TEXT_VITE_DEV_SERVER')) {
+            define('CONTEXT_ALT_TEXT_VITE_DEV_SERVER', 'http://dev.local:5173');
+        }
+
+        $scanner = new class extends MissingAltTextScanner {
+            public function get_summary(): array
+            {
+                return [
+                    'total' => 0,
+                    'with_alt' => 0,
+                    'missing' => 0,
+                ];
+            }
+        };
+
+        $metrics = $this->fakeMetricsService($scanner);
+        [$rosterService, $rosterScheduler, $rosterObservationManager] = $this->buildRosterDependencies();
+        $admin = new Admin(
+            $scanner,
+            $metrics,
+            $this->fakeFeatureFlags(),
+            new WorkbenchMediaResolver(),
+            $rosterService,
+            $rosterScheduler,
+            new SettingsRepository(),
+            $rosterObservationManager
+        );
+
+        $admin->bootstrap();
+
+        $tag = '<script src="foo.js"></script>';
+        $filtered = apply_filters('script_loader_tag', $tag, 'context-alt-text-admin', 'foo.js');
+        self::assertSame('<script type="module" src="foo.js"></script>', $filtered);
+
+        $other = apply_filters('script_loader_tag', $tag, 'some-other-handle', 'foo.js');
+        self::assertSame($tag, $other);
     }
 
     public function test_enqueue_script_runs_for_workbench_page(): void
@@ -163,7 +258,17 @@ final class AdminAssetEnqueueTest extends TestCase
         };
 
         $metrics = $this->fakeMetricsService($scanner);
-        $admin = new Admin($scanner, $metrics, $this->fakeFeatureFlags(), new WorkbenchMediaResolver());
+        [$rosterService, $rosterScheduler, $rosterObservationManager] = $this->buildRosterDependencies();
+        $admin = new Admin(
+            $scanner,
+            $metrics,
+            $this->fakeFeatureFlags(),
+            new WorkbenchMediaResolver(),
+            $rosterService,
+            $rosterScheduler,
+            new SettingsRepository(),
+            $rosterObservationManager
+        );
 
         $_GET['page'] = 'context-alt-text-workbench';
 
@@ -172,16 +277,101 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertArrayHasKey('context-alt-text-admin-entry', $GLOBALS['__cat_scripts']);
         $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin-entry']['ContextAltTextAdmin'] ?? null;
         self::assertIsArray($localized);
+        self::assertSame('workbench', $localized['page'] ?? null);
         $config = $localized['config'] ?? null;
         self::assertIsArray($config);
         self::assertArrayHasKey('featureFlags', $config);
+        self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
         self::assertTrue($config['featureFlags']['workbenchEnabled']);
+        self::assertTrue($config['featureFlags']['abilitiesEnabled']);
+        self::assertFalse($config['featureFlags']['rosterEnabled']);
         self::assertSame(
             'http://example.test/wp-json/context-alt-text/v1/workbench/media',
             $config['endpoints']['workbenchMedia'] ?? null
         );
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/roster',
+            $config['endpoints']['rosterEntries'] ?? null
+        );
 
         unset($_GET['page']);
+    }
+
+    public function test_enqueue_script_runs_for_roster_page(): void
+    {
+        $_ENV['WP_ENVIRONMENT_TYPE'] = 'development';
+        if (!defined('CONTEXT_ALT_TEXT_VITE_DEV_SERVER')) {
+            define('CONTEXT_ALT_TEXT_VITE_DEV_SERVER', 'http://dev.local:5173');
+        }
+
+        $scanner = new class extends MissingAltTextScanner {
+            public function get_summary(): array
+            {
+                return [
+                    'total' => 0,
+                    'with_alt' => 0,
+                    'missing' => 0,
+                ];
+            }
+        };
+
+        $metrics = $this->fakeMetricsService($scanner);
+        [$rosterService, $rosterScheduler, $rosterObservationManager] = $this->buildRosterDependencies();
+        $admin = new Admin(
+            $scanner,
+            $metrics,
+            $this->fakeFeatureFlags(),
+            new WorkbenchMediaResolver(),
+            $rosterService,
+            $rosterScheduler,
+            new SettingsRepository(),
+            $rosterObservationManager
+        );
+
+        $_GET['page'] = 'context-alt-text-roster';
+
+        $admin->enqueue_script('context-alt-text-dashboard_page_context-alt-text-roster');
+
+        self::assertArrayHasKey('context-alt-text-admin-entry', $GLOBALS['__cat_scripts']);
+        $localized = $GLOBALS['__cat_localized_scripts']['context-alt-text-admin-entry']['ContextAltTextAdmin'] ?? null;
+        self::assertIsArray($localized);
+        self::assertSame('roster', $localized['page'] ?? null);
+        $config = $localized['config'] ?? null;
+        self::assertIsArray($config);
+        self::assertSame(
+            'http://example.test/wp-json/context-alt-text/v1/roster',
+            $config['endpoints']['rosterEntries'] ?? null
+        );
+        self::assertArrayHasKey('featureFlags', $config);
+        self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
+        self::assertTrue($config['featureFlags']['abilitiesEnabled']);
+        self::assertTrue($config['featureFlags']['rosterEnabled']);
+        $data = $localized['data'] ?? [];
+        self::assertIsArray($data['roster'] ?? null);
+
+        unset($_GET['page']);
+    }
+
+    /**
+     * @return array{RosterService,RosterSyncScheduler,RosterObservationManager}
+     */
+    private function buildRosterDependencies(): array
+    {
+        $service = new RosterService(new Security(), new FakeRosterClient());
+
+        /** @var RecognitionObservationRepository&\PHPUnit\Framework\MockObject\MockObject $observationRepository */
+        $observationRepository = $this->createMock(RecognitionObservationRepository::class);
+        $observationRepository->method('findAttachmentIdsNeedingReview')->willReturn([]);
+        $observationRepository->method('getMany')->willReturn([]);
+        $observationRepository->method('updateObservation')->willReturn([]);
+
+        /** @var RecognitionJobService&\PHPUnit\Framework\MockObject\MockObject $jobService */
+        $jobService = $this->createMock(RecognitionJobService::class);
+        $jobService->method('submit')->willReturn([]);
+
+        $manager = new RosterObservationManager($observationRepository, $jobService);
+
+        return [$service, new RosterSyncScheduler($service), $manager];
     }
 
     private function fakeFeatureFlags(): FeatureFlags
@@ -205,6 +395,16 @@ final class AdminAssetEnqueueTest extends TestCase
             public function workbenchBulkAIEnabled(): bool
             {
                 return false;
+            }
+
+            public function rosterUiEnabled(): bool
+            {
+                return false;
+            }
+
+            public function abilitiesEnabled(): bool
+            {
+                return true;
             }
         };
     }
@@ -252,6 +452,11 @@ final class AdminAssetEnqueueTest extends TestCase
                     'pending_faces' => 0,
                     'pending_brands' => 0,
                     'unresolved_matches' => 0,
+                    'roster_pending' => 0,
+                    'roster_conflicts' => 0,
+                    'roster_total' => 0,
+                    'last_roster_sync_human' => null,
+                    'last_roster_sync_at' => null,
                 ];
             }
 

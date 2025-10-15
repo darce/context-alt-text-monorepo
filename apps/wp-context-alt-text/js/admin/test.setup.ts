@@ -1,11 +1,20 @@
+import { expect } from "vitest";
 import "@testing-library/jest-dom/vitest";
 import "@/admin/testing/mswServer";
-import { toHaveNoViolations } from "vitest-axe/matchers";
+import * as matchers from "vitest-axe/matchers";
 
-expect.extend({
-    toHaveNoViolations,
-});
+expect.extend(matchers);
 
 if (typeof HTMLCanvasElement !== "undefined") {
-    HTMLCanvasElement.prototype.getContext = (() => null) as any;
+    const canvasContextStub = function canvasContextStub(
+        this: HTMLCanvasElement,
+        contextId: string,
+        options?: CanvasRenderingContext2DSettings,
+    ): null {
+        void contextId;
+        void options;
+        return null;
+    };
+
+    HTMLCanvasElement.prototype.getContext = canvasContextStub as HTMLCanvasElement["getContext"];
 }

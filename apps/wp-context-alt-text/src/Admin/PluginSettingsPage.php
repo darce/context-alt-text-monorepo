@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ContextAltText\Admin;
 
+use ContextAltText\Shared\Config\SettingsRepository;
 use function __;
 use function add_action;
 use function add_settings_field;
@@ -37,6 +38,12 @@ class PluginSettingsPage
     private const DEFAULT_TIMEOUT_MS = 15000;
     private const MIN_TIMEOUT_MS = 1000;
     private const MAX_TIMEOUT_MS = 120000;
+    private SettingsRepository $settingsRepository;
+
+    public function __construct(?SettingsRepository $settingsRepository = null)
+    {
+        $this->settingsRepository = $settingsRepository ?? new SettingsRepository();
+    }
 
     public function init(): void
     {
@@ -45,7 +52,7 @@ class PluginSettingsPage
 
     public function render(): void
     {
-        ?>
+?>
         <div class="wrap context-alt-text-admin">
             <h1><?php esc_html_e('Context Alt Text Settings', 'context-alt-text'); ?></h1>
             <form method="post" action="options.php">
@@ -60,7 +67,7 @@ class PluginSettingsPage
                 </p>
             </div>
         </div>
-        <?php
+    <?php
     }
 
     public function register_settings(): void
@@ -120,26 +127,25 @@ class PluginSettingsPage
     {
         $settings = $this->get_settings();
         $value = $settings['base_url'];
-        ?>
+    ?>
         <input
             type="url"
             name="<?php echo esc_attr(self::OPTION_NAME); ?>[base_url]"
             id="context-alt-text-recognition-base-url"
             value="<?php echo esc_attr($value); ?>"
             class="regular-text"
-            placeholder="https://example.test/api"
-        />
+            placeholder="https://example.test/api" />
         <p class="description">
             <?php esc_html_e('Base URL for the recognition service (e.g. https://service.example/api).', 'context-alt-text'); ?>
         </p>
-        <?php
+    <?php
     }
 
     public function render_timeout_field(): void
     {
         $settings = $this->get_settings();
         $value = $settings['timeout_ms'];
-        ?>
+    ?>
         <input
             type="number"
             name="<?php echo esc_attr(self::OPTION_NAME); ?>[timeout_ms]"
@@ -148,30 +154,28 @@ class PluginSettingsPage
             max="<?php echo esc_attr((string) self::MAX_TIMEOUT_MS); ?>"
             step="1000"
             value="<?php echo esc_attr((string) $value); ?>"
-            class="small-text"
-        />
+            class="small-text" />
         <p class="description">
             <?php esc_html_e('Maximum duration in milliseconds to wait for recognition responses.', 'context-alt-text'); ?>
         </p>
-        <?php
+    <?php
     }
 
     public function render_model_profile_field(): void
     {
         $settings = $this->get_settings();
         $value = $settings['model_profile'];
-        ?>
+    ?>
         <input
             type="text"
             name="<?php echo esc_attr(self::OPTION_NAME); ?>[model_profile]"
             id="context-alt-text-recognition-model"
             value="<?php echo esc_attr($value); ?>"
-            class="regular-text"
-        />
+            class="regular-text" />
         <p class="description">
             <?php esc_html_e('Optional model/profile identifier to request from the backend service.', 'context-alt-text'); ?>
         </p>
-        <?php
+<?php
     }
 
     /**
@@ -213,6 +217,12 @@ class PluginSettingsPage
         if (array_key_exists('model_profile', $input)) {
             $sanitized['model_profile'] = sanitize_text_field((string) $input['model_profile']);
         }
+
+        $this->settingsRepository->saveRecognitionSettings([
+            'baseUrl' => $sanitized['base_url'],
+            'timeoutMs' => $sanitized['timeout_ms'],
+            'modelProfile' => $sanitized['model_profile'],
+        ]);
 
         return $sanitized;
     }

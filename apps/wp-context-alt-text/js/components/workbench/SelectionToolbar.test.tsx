@@ -1,18 +1,10 @@
+import * as React from "react";
 import { describe, it, expect, vi } from "vitest";
 import { render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { axe } from "vitest-axe";
-import * as axeMatchers from "vitest-axe/matchers";
-import type { AxeMatchers } from "vitest-axe/matchers";
 
 import { SelectionToolbar } from "./SelectionToolbar";
-
-expect.extend(axeMatchers);
-
-declare module "vitest" {
-    interface Assertion<T = any> extends AxeMatchers { }
-    interface AsymmetricMatchersContaining extends AxeMatchers { }
-}
 
 describe("SelectionToolbar", () => {
     it("renders with no selection", () => {
@@ -24,7 +16,7 @@ describe("SelectionToolbar", () => {
         );
 
         // Text is split across elements: "0" + " items" + " selected"
-        expect(screen.getByText('0')).toBeInTheDocument();
+        expect(screen.getByText("0")).toBeInTheDocument();
         expect(screen.getByText(/selected/i)).toBeInTheDocument();
     });
 
@@ -37,7 +29,7 @@ describe("SelectionToolbar", () => {
         );
 
         // Text is split across elements: "5" + " items" + " selected"
-        expect(screen.getByText('5')).toBeInTheDocument();
+        expect(screen.getByText("5")).toBeInTheDocument();
         expect(screen.getByText(/selected/i)).toBeInTheDocument();
     });
 
@@ -115,7 +107,7 @@ describe("SelectionToolbar", () => {
         );
 
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 
     it("supports keyboard navigation", async () => {

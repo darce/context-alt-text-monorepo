@@ -1,3 +1,4 @@
+import React from "react";
 import type { Meta, StoryObj } from "@storybook/react";
 
 import { CoverageCard } from "./CoverageCard";
@@ -125,7 +126,7 @@ export const ErrorState: Story = {
             status: "error",
             isError: true,
             error: new Error("Server returned 500"),
-            refetch: async () => undefined,
+            refetch: () => Promise.resolve(undefined),
         },
     },
 };

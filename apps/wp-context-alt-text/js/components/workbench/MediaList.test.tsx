@@ -80,8 +80,8 @@ describe('MediaList', () => {
 
     it('displays correct status chips', () => {
         const itemsWithStatuses: WorkbenchMediaItem[] = [
-            { ...mockItems[0], status: 'missing' },
-            { ...mockItems[1], status: 'draft' },
+            { ...mockItems[0]!, status: 'missing' },
+            { ...mockItems[1]!, status: 'draft' },
         ];
 
         render(
@@ -180,6 +180,35 @@ describe('MediaList', () => {
         expect(selectedRow).toHaveAttribute('aria-selected', 'true');
     });
 
+    it('renders recognition metadata when provided', () => {
+        const itemsWithRecognition: WorkbenchMediaItem[] = [
+            {
+                ...mockItems[0]!,
+                recognition: {
+                    status: "matched",
+                    matchedCount: 1,
+                    needsReviewCount: 0,
+                    matchedRoster: {
+                        remoteId: "remote-1",
+                        displayName: "Example Person",
+                    },
+                    updatedAt: 1_700_000_000,
+                },
+            },
+        ];
+
+        render(
+            <MediaList
+                items={itemsWithRecognition}
+                selectedIds={new Set()}
+                onToggleSelect={vi.fn()}
+                viewMode="list"
+            />
+        );
+
+        expect(screen.getByText(/Matched 1 recognition \(Example Person\)/i)).toBeInTheDocument();
+    });
+
     it('passes accessibility audit', async () => {
         const { container } = render(
             <MediaList
@@ -191,6 +220,6 @@ describe('MediaList', () => {
         );
 
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 });

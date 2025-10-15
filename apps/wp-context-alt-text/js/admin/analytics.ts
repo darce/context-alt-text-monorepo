@@ -1,29 +1,28 @@
+import { getAdminBootstrap } from "@/admin/globals";
+import type { AnalyticsClient, GlobalPayload } from "@/admin/types";
+
 export type AnalyticsDetail = Record<string, unknown> | undefined;
 
-const getAnalyticsClient = () => {
-    if (typeof window === "undefined") {
+const getAnalyticsClient = (): AnalyticsClient["track"] | null => {
+    const payload: GlobalPayload = getAdminBootstrap();
+    const client: AnalyticsClient | undefined = payload.analytics;
+
+    if (!client || typeof client.track !== "function") {
         return null;
     }
 
-    const payload = (window as any)?.ContextAltTextAdmin;
-    const client = payload?.analytics;
-
-    if (client && typeof client.track === "function") {
-        return client.track.bind(client) as (event: string, detail?: Record<string, unknown>) => void;
-    }
-
-    return null;
+    return (event, detail) => {
+        client.track(event, detail);
+    };
 };
 
-export const emitDashboardEvent = (eventName: string, detail?: AnalyticsDetail) => {
-    if (typeof window === "undefined") {
-        return;
-    }
-
+export const emitDashboardEvent = (eventName: string, detail?: AnalyticsDetail): void => {
     const client = getAnalyticsClient();
     if (client) {
         client(eventName, detail ?? {});
     }
 
-    window.dispatchEvent(new CustomEvent(eventName, { detail }));
+    if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent(eventName, { detail }));
+    }
 };

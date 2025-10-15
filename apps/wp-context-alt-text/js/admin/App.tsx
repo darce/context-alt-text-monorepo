@@ -11,18 +11,20 @@ import { AutomationCard } from "@/components/dashboard/AutomationCard";
 import { ActionFooter } from "@/components/dashboard/ActionFooter";
 import { WorkbenchApp } from "@/components/workbench";
 import { PaginationControls } from "@/components/workbench/PaginationControls";
-import type { DashboardData, WorkbenchData, AdminRouteKey } from "@/admin/types";
+import type { DashboardData, WorkbenchData, AdminRouteKey, RosterData } from "@/admin/types";
 import {
     getDashboardConfig,
     getDashboardData,
     getWorkbenchData,
     getInitialRoute,
+    getRosterData,
 } from "./dashboardData";
 import { useCoverageMetrics } from "./hooks/useCoverageMetrics";
 import { useWorkbenchMedia } from "./hooks/useWorkbenchMedia";
 import { emitDashboardEvent } from "./analytics";
 import { dispatchNotice, notifyError, type NoticeStatus } from "@/admin/notices";
 import { SearchBar } from "@/components/workbench/SearchBar";
+import { RosterRoute } from "@/components/roster/RosterRoute";
 
 import "./styles.scss";
 
@@ -58,6 +60,7 @@ const useDebouncedValue = <T,>(value: T, delay: number): T => {
 export const App = (): React.JSX.Element => {
     const bootstrap = React.useMemo(() => getDashboardData(), []);
     const workbenchBootstrap = React.useMemo(() => getWorkbenchData(), []);
+    const rosterBootstrap = React.useMemo(() => getRosterData(), []);
     const initialRoute = React.useMemo(() => getInitialRoute(), []);
     const config = React.useMemo(() => getDashboardConfig(), []);
     const [queryClient] = React.useState(
@@ -78,6 +81,7 @@ export const App = (): React.JSX.Element => {
                 initialRoute={initialRoute}
                 dashboard={bootstrap}
                 workbench={workbenchBootstrap}
+                roster={rosterBootstrap}
                 config={config}
             />
         </QueryClientProvider>
@@ -88,12 +92,19 @@ interface AdminRouterProps {
     initialRoute: AdminRouteKey;
     dashboard: DashboardData;
     workbench: WorkbenchData;
+    roster: RosterData;
     config: ReturnType<typeof getDashboardConfig>;
 }
 
-const AdminRouter = ({ initialRoute, dashboard, workbench, config }: AdminRouterProps): React.JSX.Element => {
+const AdminRouter = ({ initialRoute, dashboard, workbench, roster, config }: AdminRouterProps): React.JSX.Element => {
     const workbenchEnabled = Boolean(config.featureFlags?.workbenchEnabled);
-    const initialPath = initialRoute === "workbench" && workbenchEnabled ? "/workbench" : "/dashboard";
+    const rosterEnabled = Boolean(config.featureFlags?.rosterEnabled);
+    const initialPath =
+        initialRoute === "workbench" && workbenchEnabled
+            ? "/workbench"
+            : initialRoute === "roster" && rosterEnabled
+                ? "/roster"
+                : "/dashboard";
 
     return (
         <MemoryRouter initialEntries={[initialPath]}>
@@ -109,12 +120,17 @@ const AdminRouter = ({ initialRoute, dashboard, workbench, config }: AdminRouter
                         {__("Alt-Text Workbench", "context-alt-text")}
                     </Link>
                 )}
+                {rosterEnabled && (
+                    <Link to="/roster" data-nav-link>
+                        {__("Roster", "context-alt-text")}
+                    </Link>
+                )}
             </nav>
             <Routes>
                 <Route path="/" element={<Navigate to={initialPath} replace />} />
                 <Route path="/dashboard" element={<DashboardRoute bootstrap={dashboard} config={config} />} />
                 {workbenchEnabled ? (
-                    <Route path="/workbench" element={<WorkbenchRoute bootstrap={workbench} config={config} />} />
+                    <Route path="/workbench" element={<WorkbenchRoute bootstrap={workbench} />} />
                 ) : (
                     <Route
                         path="/workbench"
@@ -122,6 +138,21 @@ const AdminRouter = ({ initialRoute, dashboard, workbench, config }: AdminRouter
                             <p className="cat-workbench__disabled" role="status">
                                 {__(
                                     "The Workbench is currently unavailable. Enable the feature flag to access this surface.",
+                                    "context-alt-text",
+                                )}
+                            </p>
+                        }
+                    />
+                )}
+                {rosterEnabled ? (
+                    <Route path="/roster" element={<RosterRoute bootstrap={roster} config={config} />} />
+                ) : (
+                    <Route
+                        path="/roster"
+                        element={
+                            <p className="cat-roster__disabled" role="status">
+                                {__(
+                                    "Roster management is not enabled. Toggle the feature flag to access this area.",
                                     "context-alt-text",
                                 )}
                             </p>
@@ -146,7 +177,7 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
 
     const handleCoverageDrilldown = React.useCallback(() => {
         if (config.featureFlags?.workbenchEnabled) {
-            navigate("/workbench?status=missing");
+            void navigate("/workbench?status=missing");
             return;
         }
 
@@ -160,7 +191,7 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
             return;
         }
 
-        const rows: Array<string[]> = [
+        const rows: string[][] = [
             [__("Metric", "context-alt-text"), __("Value", "context-alt-text")],
             [__("Total items", "context-alt-text"), String(coverage.total)],
             [__("With alt text", "context-alt-text"), String(coverage.with_alt)],
@@ -222,7 +253,8 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
         window.URL.revokeObjectURL(url);
     }, [coverage]);
 
-    const enableDrilldown = Boolean(config.featureFlags?.workbenchEnabled || config.missingAltMediaUrl);
+    const enableWorkbench = config.featureFlags?.workbenchEnabled ?? false;
+    const enableDrilldown = enableWorkbench || Boolean(config.missingAltMediaUrl);
 
     return (
         <div className="cat-dashboard">
@@ -245,7 +277,10 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
                     onExport={handleCoverageExport}
                 />
                 <ActivityCard data={bootstrap.latestActivity} />
-                <RecognitionCard data={bootstrap.recognition} />
+                <RecognitionCard
+                    data={bootstrap.recognition}
+                    rosterEnabled={Boolean(config.featureFlags?.rosterEnabled)}
+                />
                 <AutomationCard data={bootstrap.automation} />
             </section>
 
@@ -256,16 +291,15 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
 
 interface WorkbenchRouteProps {
     bootstrap: WorkbenchData;
-    config: ReturnType<typeof getDashboardConfig>;
 }
 
 const formatSelectionCount = (count: number): string =>
     sprintf(_n("%d item", "%d items", count, "context-alt-text"), count);
 
-type BulkNoticeBuilder = {
+interface BulkNoticeBuilder {
     status: NoticeStatus;
     buildMessage: (count: number, action: string) => string;
-};
+}
 
 const BULK_ACTION_NOTICE_MAP: Record<string, BulkNoticeBuilder> = {
     generate: {
@@ -304,7 +338,7 @@ const DEFAULT_BULK_NOTICE: BulkNoticeBuilder = {
         ),
 };
 
-const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.Element => {
+const WorkbenchRoute = ({ bootstrap }: WorkbenchRouteProps): React.JSX.Element => {
     const [page, setPage] = React.useState(() => Math.max(1, bootstrap.pagination?.page ?? 1));
     const [perPage, setPerPage] = React.useState(() => Math.max(1, bootstrap.pagination?.perPage ?? 20));
     const [statusFilter] = React.useState<"missing" | "all">("missing");
@@ -325,7 +359,25 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
         search: searchTerm,
     });
 
+    const hasWorkbenchEndpoint = mediaQuery.hasEndpoint;
+    const refetchWorkbenchMedia = mediaQuery.refetch;
     const isMediaLoading = mediaQuery.isFetching || mediaQuery.isPending;
+    const previousPerPageRef = React.useRef(perPage);
+
+    React.useEffect(() => {
+        if (previousPerPageRef.current === perPage) {
+            return;
+        }
+
+        previousPerPageRef.current = perPage;
+
+        if (!hasWorkbenchEndpoint) {
+            return;
+        }
+
+        // Force a remote refresh whenever the page size changes so pagination resyncs immediately.
+        void refetchWorkbenchMedia({ cancelRefetch: true });
+    }, [hasWorkbenchEndpoint, perPage, refetchWorkbenchMedia]);
 
     React.useEffect(() => {
         const normalizedQuery = normalizeSearchQuery(debouncedSearchInput);
@@ -399,7 +451,6 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
         hasShownErrorNotice.current = false;
     }, [mediaQuery.isError]);
 
-    const hasWorkbenchEndpoint = mediaQuery.hasEndpoint;
     const items = mediaQuery.data ?? bootstrap.items;
     const totalCount = mediaQuery.total ?? items.length;
     const totalPagesCount = mediaQuery.totalPages ?? (totalCount > 0 ? Math.ceil(totalCount / perPage) : 0);
@@ -483,19 +534,24 @@ const WorkbenchRoute = ({ bootstrap, config }: WorkbenchRouteProps): React.JSX.E
         setSearchInput(query);
     }, []);
 
-    const handlePerPageChange = React.useCallback((nextPerPage: number) => {
-        setPerPage((current) => {
-            if (current === nextPerPage) {
-                return current;
+    const handlePerPageChange = React.useCallback(
+        (nextPerPage: number) => {
+            if (runtimeProcess?.env?.NODE_ENV === "test") {
+                console.info("handlePerPageChange", { current: perPage, next: nextPerPage });
             }
 
+            if (perPage === nextPerPage) {
+                return;
+            }
+
+            setPerPage(nextPerPage);
             setPage(1);
-            return nextPerPage;
-        });
-    }, []);
+        },
+        [perPage],
+    );
 
     const handleRetrySearch = React.useCallback(() => {
-        mediaQuery.refetch();
+        void mediaQuery.refetch();
     }, [mediaQuery]);
 
     return (

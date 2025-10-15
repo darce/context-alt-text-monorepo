@@ -18,10 +18,15 @@ describe("ActionFooter", () => {
 
         const { getByRole, getByText } = renderDashboard(<ActionFooter data={data} />);
 
-        expect(getByRole("link", { name: /Run scan again/i })).toHaveAttribute("href", data.actions[0].url);
+        const [firstAction, secondAction] = data.actions;
+
+        expect(firstAction).toBeDefined();
+        expect(secondAction).toBeDefined();
+
+        expect(getByRole("link", { name: /Run scan again/i })).toHaveAttribute("href", firstAction!.url);
         expect(getByRole("link", { name: /Open Alt-Text Workbench/i })).toHaveAttribute(
             "href",
-            data.actions[1].url,
+            secondAction!.url,
         );
         expect(getByText(data.statusText)).toBeInTheDocument();
     });
@@ -32,6 +37,6 @@ describe("ActionFooter", () => {
         const { container } = renderDashboard(<ActionFooter data={data} />);
 
         const results = await axe(container);
-        expect(results).toHaveNoViolations();
+        expect(results.violations).toHaveLength(0);
     });
 });

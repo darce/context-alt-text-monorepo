@@ -58,6 +58,11 @@ final class DashboardPageTest extends TestCase
                     'pending_faces' => 3,
                     'pending_brands' => 1,
                     'unresolved_matches' => 2,
+                    'roster_pending' => 4,
+                    'roster_conflicts' => 1,
+                    'roster_total' => 10,
+                    'last_roster_sync_human' => '15 minutes',
+                    'last_roster_sync_at' => '2024-03-17T00:00:00Z',
                 ];
             }
 

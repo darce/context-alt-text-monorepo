@@ -1,6 +1,6 @@
 import React from "react";
 
-import { __, sprintf } from "@wordpress/i18n";
+import { __, sprintf, _n } from "@wordpress/i18n";
 
 import type { WorkbenchMediaItem, WorkbenchViewMode } from "@/components/workbench/WorkbenchApp";
 import { Button } from "@/components/ui/button";
@@ -58,13 +58,14 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                 {items.map((item) => {
                     const isSelected = selectedIds.has(item.id);
                     const formattedUpdatedAt = formatWorkbenchDate(item.updatedAt);
-                    const dimensions = item.dimensions
-                        ? `${item.dimensions.width}×${item.dimensions.height}px`
-                        : null;
+                    const width = item.dimensions?.width;
+                    const height = item.dimensions?.height;
+                    const dimensions = width && height ? `${width}×${height}px` : null;
+                    const recognitionMeta = getRecognitionMeta(item);
 
                     const handleRowClick: React.MouseEventHandler<HTMLTableRowElement> = (event) => {
                         const target = event.target as HTMLElement | null;
-                        if (target && target.closest("button, a, input")) {
+                        if (target?.closest("button, a, input")) {
                             return;
                         }
 
@@ -120,13 +121,18 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                                                 item.title
                                             )}
                                         </h3>
+                                        {recognitionMeta && (
+                                            <p className="cat-workbench__fileMetaLine cat-workbench__fileMetaLine--recognition">
+                                                {recognitionMeta}
+                                            </p>
+                                        )}
                                         {item.mimeType && <p className="cat-workbench__fileMetaLine">{item.mimeType}</p>}
                                     </div>
                                 </div>
                             </td>
                             <td className="cat-workbench__cell cat-workbench__cell--alt">
                                 <p className="cat-workbench__media-alt-value">
-                                    {item.altText && item.altText.trim().length > 0
+                                    {item.altText?.trim()?.length
                                         ? truncateAltText(item.altText)
                                         : __("Alt text not yet provided", "context-alt-text")}
                                 </p>
@@ -164,7 +170,7 @@ const getStatusCopy = (status: WorkbenchMediaItem["status"]): string => {
         case "published":
             return __("Alt text published", "context-alt-text");
         default:
-            return status;
+            return __("Needs alt text", "context-alt-text");
     }
 };
 
@@ -175,4 +181,55 @@ const truncateAltText = (value: string): string => {
     }
 
     return `${trimmed.slice(0, MAX_ALT_PREVIEW_LENGTH - 3)}...`;
+};
+
+const getRecognitionMeta = (item: WorkbenchMediaItem): string | null => {
+    const recognition = item.recognition;
+
+    if (!recognition) {
+        return null;
+    }
+
+    const { status, matchedCount, needsReviewCount, matchedRoster } = recognition;
+
+    if (status === "matched" && matchedCount > 0) {
+        const rosterName = matchedRoster?.displayName ?? matchedRoster?.name ?? matchedRoster?.remoteId ?? null;
+
+        if (rosterName) {
+            return sprintf(
+                _n(
+                    "Matched %1$d recognition (%2$s)",
+                    "Matched %1$d recognitions (%2$s)",
+                    matchedCount,
+                    "context-alt-text",
+                ),
+                matchedCount,
+                rosterName,
+            );
+        }
+
+        return sprintf(
+            _n(
+                "Matched %d recognition",
+                "Matched %d recognitions",
+                matchedCount,
+                "context-alt-text",
+            ),
+            matchedCount,
+        );
+    }
+
+    if (status === "needs_review" && needsReviewCount > 0) {
+        return sprintf(
+            _n(
+                "%d recognition needs review",
+                "%d recognitions need review",
+                needsReviewCount,
+                "context-alt-text",
+            ),
+            needsReviewCount,
+        );
+    }
+
+    return null;
 };

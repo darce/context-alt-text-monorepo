@@ -3,9 +3,9 @@
 
 # InsightFace Model Configuration
 insightface:
-  model_name: "buffalo_l"  # Standard InsightFace model: buffalo_l (large), buffalo_m (medium), buffalo_s (small)
+  model_name: "buffalo_l" # Standard InsightFace model: buffalo_l (large), buffalo_m (medium), buffalo_s (small)
   device: "auto" # auto detection using GPU manager - will use CUDA in production, MPS on macOS, CPU as fallback
-  cache_dir: "${INSIGHTFACE_CACHE_DIR:/tmp/insightface_models}" # Use environment variable with fallback
+  cache_dir: null # Resolved at runtime from environment/startup configuration
   providers: [] # Auto-detected based on device - will be set by GPU manager
 
 # Recognition Settings

@@ -3,13 +3,45 @@ Platform Configuration Management
 """
 
 import os
+import platform
 import logging
+from pathlib import Path
 from typing import Dict
-from dotenv import load_dotenv
+from dotenv import load_dotenv  # type: ignore[import]
 from .settings import get_config
 
 # Load environment variables from .env file
 load_dotenv()
+
+def _infer_default_cache_root() -> Path:
+    """Determine a cache root based on environment and runtime context."""
+    for env_var in ("CACHE_DIR", "LOCAL_CACHE_ROOT"):
+        value = os.getenv(env_var)
+        if value:
+            return Path(value)
+
+    # Hugging Face deployments define HF_HOME/HF_HUB_CACHE
+    hf_home = os.getenv("HF_HOME")
+    if hf_home:
+        return Path(hf_home)
+
+    for env_var in ("HF_HUB_CACHE", "TRANSFORMERS_CACHE"):
+        value = os.getenv(env_var)
+        if value:
+            candidate = Path(value)
+            return candidate.parent if candidate.is_file() else candidate
+
+    if platform.system() == "Darwin":
+        butter = Path("/Volumes/Butter")
+        if butter.exists():
+            return butter
+
+    return Path.home() / ".cache" / "context-alt-text"
+
+
+def _ensure_leaf(base: Path, leaf: str) -> Path:
+    return base if base.name.lower() == leaf else base / leaf
+
 
 def setup_environment() -> Dict[str, str]:
     """
@@ -24,23 +56,28 @@ def setup_environment() -> Dict[str, str]:
     # Get base cache directory from environment or settings
     base_cache_dir = os.getenv('CACHE_DIR') or startup_cfg.get('cache_dir')
     if not base_cache_dir:
-        raise RuntimeError('CACHE_DIR environment variable or startup.cache_dir setting must be provided')
+        base_cache_dir = str(_infer_default_cache_root())
+
+    base_cache_path = Path(base_cache_dir)
     
     # Create base cache directory
-    os.makedirs(base_cache_dir, exist_ok=True)
+    os.makedirs(base_cache_path, exist_ok=True)
     
     # Define specific cache paths under base directory
-    hf_cache_dir = os.path.join(base_cache_dir, 'huggingface_cache')
+    hf_cache_dir = os.path.join(str(base_cache_path), 'huggingface_cache')
     cache_dirs = {
         'HF_HOME': hf_cache_dir,
         'HF_HUB_CACHE': hf_cache_dir,
         'TRANSFORMERS_CACHE': hf_cache_dir,
-        'TORCH_HOME': os.path.join(base_cache_dir, 'torch'),
-        'YOLO_CONFIG_DIR': os.path.join(base_cache_dir, 'yolo'),
-        'MPLCONFIGDIR': os.path.join(base_cache_dir, 'matplotlib'),
-        'INSIGHTFACE_CACHE_DIR': os.path.join(base_cache_dir, 'insightface'),
+    'TORCH_HOME': os.path.join(str(base_cache_path), 'torch'),
+    'YOLO_CONFIG_DIR': os.path.join(str(base_cache_path), 'yolo'),
+    'MPLCONFIGDIR': os.path.join(str(base_cache_path), 'matplotlib'),
+    'INSIGHTFACE_CACHE_DIR': str(_ensure_leaf(base_cache_path, 'insightface')),
     }
     
+    # Ensure CACHE_DIR is globally available
+    os.environ['CACHE_DIR'] = str(base_cache_path)
+
     # Export cache environment variables
     for env_var, path in cache_dirs.items():
         try:

@@ -16,9 +16,10 @@ from shared.enums.startup_phase import StartupPhase
 from analysis.services.scene_analysis_service import SceneAnalysisService
 from api.routes.main import router as main_router
 from api.routes.media import router as media_router
-from api.routes.roster import router as roster_router
+from api.routes.roster import router as legacy_roster_router
 from api.routes.main import set_scene_analysis_service
 from recognition_core.config import get_settings as get_recognition_settings
+from roster.ports.api_router import router as roster_api_router
 import asyncio
 
 # Configure cache directories before any model loads
@@ -45,14 +46,19 @@ def configure_cache_dirs() -> None:
             )
         return os.path.expanduser(os.path.expandvars(raw_value))
 
+    cache_root = Path(os.getenv("RECOG_CACHE_ROOT", Path(__file__).resolve().parent / ".cache"))
+    cache_root.mkdir(parents=True, exist_ok=True)
+
     targets = {
-        "HF_HOME": cache.hf_home,
-        "HF_DATASETS_CACHE": cache.hf_datasets_cache,
-        "TORCH_HOME": cache.torch_home,
+        "HF_HOME": cache.hf_home or str(cache_root / "huggingface"),
+        "HF_DATASETS_CACHE": cache.hf_datasets_cache or str(cache_root / "datasets"),
+        "TORCH_HOME": cache.torch_home or str(cache_root / "torch"),
     }
 
     for env_var, configured in targets.items():
-        os.environ[env_var] = resolve(env_var, configured)
+        path = Path(resolve(env_var, configured))
+        path.mkdir(parents=True, exist_ok=True)
+        os.environ[env_var] = str(path)
 
 
 configure_cache_dirs()
@@ -142,6 +148,7 @@ def initialize_application(app: FastAPI):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    global scene_composer, scene_analysis_service, startup_manager
     logger.info("===== Application Startup at %s =====", datetime.now().strftime("%Y-%m-%d %H:%M:%S"))
     
     # Start background initialization in a separate thread
@@ -174,6 +181,7 @@ async def lifespan(app: FastAPI):
     
     # Reset global variables
     scene_composer = None
+    scene_analysis_service = None
     startup_manager = None
 
 # --- FastAPI app creation ---
@@ -186,7 +194,8 @@ app.include_router(main_router, prefix="/api/v0")
 # Media upload endpoints
 app.include_router(media_router, prefix="/api/v0")
 # Roster management endpoints
-app.include_router(roster_router, prefix="/api/v0")
+app.include_router(legacy_roster_router, prefix="/api/v0")
+app.include_router(roster_api_router)
 # Recognition service endpoints
 # Legacy recognition routes removed; all endpoints served via api routes.
 

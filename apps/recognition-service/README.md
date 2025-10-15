@@ -67,28 +67,42 @@ Verify the endpoints (examples in `api/examples/`):
 - `GET  http://localhost:7860/api/v0/service/info`
 - `GET  http://localhost:7860/api/v0/health`
 
+You can run the automated smoke tests without launching uvicorn separately:
+
+```bash
+pytest tests/integration/test_api_endpoints.py -q
+```
+
 InsightFace weights download on first run. Adjust model/device/thresholds in `recognition_core/config/settings.yaml` or override via `RECOG_SETTINGS`.
 
 ---
+
 ## 3. Deploying to Hugging Face Spaces (Recognition MVP)
 
 Only the recognition stack ships today. Caption generation will be enabled later.
 
 1. **Create a Docker Space**
-   ```bash
-   huggingface-cli repo create <user>/context-alt-text-recognition --type space --sdk docker
-   ```
-2. **Push the app**
-   ```bash
-   git remote add hf https://huggingface.co/spaces/<user>/context-alt-text-recognition
-   git push hf main
-   ```
-3. **Configure environment variables**
-   - `RECOG_SETTINGS` (optional) to point at a custom settings file.
-   - Any private Hugging Face tokens if you pull gated weights.
-4. **Smoke-test the deployment** using the same four endpoints above. Share the Space URL with the WP team only after `/api/v0/health` and `/api/v0/service/info` succeed.
+
+  ```bash
+  huggingface-cli repo create <user>/context-alt-text-recognition --type space --sdk docker
+  ```
+
+1. **Push the app**
+
+  ```bash
+  git remote add hf https://huggingface.co/spaces/<user>/context-alt-text-recognition
+  git push hf main
+  ```
+
+1. **Configure environment variables**
+
+  - `RECOG_SETTINGS` (optional) to point at a custom settings file.
+  - Any private Hugging Face tokens if you pull gated weights.
+
+1. **Smoke-test the deployment** using the same four endpoints above. Share the Space URL with the WP team only after `/api/v0/health` and `/api/v0/service/info` succeed.
 
 ---
+
 ## 4. Configuration (Pydantic Settings)
 
 `recognition_core/config/__init__.py` loads `recognition_core/config/settings.yaml` (override via `RECOG_SETTINGS`). Key sections:
@@ -132,11 +146,10 @@ caption_generator:
 
 Flash Attention + caption models are still in the tree for future phases (see the “Flash Attention Configuration” section below), but they are disabled by default.
 
-Cache directories (`HF_HOME`, `HF_DATASETS_CACHE`, `TORCH_HOME`) must be defined either in `settings.yaml` (`cache.*`) or via environment variables (e.g., `.env`, deployment secrets). If a value is missing the service aborts during startup, ensuring configuration gaps are caught immediately.
-
-This removes the need to hard-code cache paths in shell profiles while keeping the configuration canonical per environment.
+Cache directories (`HF_HOME`, `HF_DATASETS_CACHE`, `TORCH_HOME`) default to subfolders inside `apps/recognition-service/.cache/` (`huggingface/`, `datasets/`, `torch/`). Override them in `settings.yaml` (`cache.*`) or via environment variables if you want to persist caches elsewhere. The startup helper ensures the directories exist so a plain `uvicorn app:app --reload` succeeds without additional setup.
 
 ---
+
 ## 5. API Reference (JSON version)
 
 All DTO examples live in `api/examples/`.
@@ -176,6 +189,7 @@ healthcheck:
 Monitoring systems ingesting JSON (Prometheus pushgateway sidecars, lightweight cron jobs, etc.) can re-use these endpoints without additional dependencies. For smoke testing, run `pytest tests/integration/test_api_endpoints.py -v` and `pytest tests/unit/test_scene_analysis_service.py -v` after setting `CACHE_DIR` so the service can locate model caches.
 
 ---
+
 ## 6. Development Guide
 
 ### Dependency management (pip-tools)
@@ -210,8 +224,8 @@ pytest tests/unit/test_scene_analysis_service.py -v
 
 Remove of legacy multi-model stack completed; only InsightFace code remains.
 
----
 ## 7. Flash Attention & Captioning (Deferred)
+
 
 Flash Attention 2 is available for the Phi-3.5 caption pathway. It remains disabled until we switch the caption service on.
 
@@ -226,8 +240,8 @@ caption_generator:
 
 To experiment locally, enable Flash Attention in settings and install the wheel referenced in the Dockerfile snippet (CUDA-only).
 
----
 ## 8. Troubleshooting
+
 
 | Issue | Fix |
 | --- | --- |
@@ -236,14 +250,14 @@ To experiment locally, enable Flash Attention in settings and install the wheel 
 | No roster matches | Verify embeddings JSON path (`embedding_router.embeddings_file`) and format. |
 | CUDA errors | Force CPU via `insightface.device: "cpu"` in settings. |
 
----
 ## 9. Roadmap Hooks
+
 
 - WordPress plugin consumes the JSON DTOs defined here; keep `api/examples/` in sync with frontend fixtures.
 - Hugging Face deployment runs the same Docker image; maintain parity between local and remote configs.
 - Caption generation, Flash Attention, and multi-model extensions are deferred until after MVP recognition stability.
 
----
 ## 10. Legacy README
+
 
 The older `recognition_core/README.md` has been superseded by this document and will be removed in a future cleanup to avoid drift.

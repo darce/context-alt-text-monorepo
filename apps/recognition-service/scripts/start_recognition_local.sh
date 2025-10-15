@@ -82,6 +82,7 @@ install_deps() {
 start_service() {
   export RECOG_SETTINGS="${PROJECT_ROOT}/recognition_core/config/settings.yaml"
   export LOCAL_CACHE_ROOT="${LOCAL_CACHE_ROOT:-/Volumes/Butter}"
+  export CACHE_DIR="${CACHE_DIR:-${LOCAL_CACHE_ROOT}}"
 
   if [[ ! -d "${LOCAL_CACHE_ROOT}" ]]; then
     echo "[recognition-local] Warning: LOCAL_CACHE_ROOT (${LOCAL_CACHE_ROOT}) does not exist." >&2
@@ -95,8 +96,10 @@ start_service() {
     exit 1
   fi
 
+  cd "${PROJECT_ROOT}"
+
   echo "[recognition-local] Starting uvicorn on ${HOST_VALUE}:${PORT_VALUE}" >&2
-  exec uvicorn app:app --host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload
+  exec uvicorn app:app --host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload --reload-dir "${PROJECT_ROOT}"
 }
 
 stop_service() {

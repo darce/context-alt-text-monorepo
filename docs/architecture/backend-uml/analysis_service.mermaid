@@ -1,54 +1,61 @@
 ---
-title: Scene Analysis Service (InsightFace Only)
+title: Scene Analysis Service (Objects + Faces)
 ---
 flowchart TB
     subgraph ports["Ports"]
         object_port["ObjectDetectionPort\ndetect_objects(image)"]
         caption_port["CaptionGeneratorPort\ngenerate_caption(image, context)"]
         recognition_port["RecognitionServicePort\nrecognize_faces(image, threshold)"]
+        roster_port["RosterServicePort\nget_entries(model)\nupdate_entry()"]; 
     end
 
     subgraph domain["Domain Layer"]
-        scene_service["SceneAnalysisService\n- orchestrates detectors + captions\n- normalizes roster matches\n- emits SceneContext"]
-        scene_composer["SceneComposer\n- wraps detector/caption adapters"]
-        scene_entities["Domain Entities\nDetectedObject\nDetectedEntity\nSceneContext"]
+        scene_service["SceneAnalysisService\n- orchestrates detection + recognition\n- enriches roster matches\n- returns SceneContext + metadata"]
+        scene_composer["SceneComposer\n- wraps detector/caption adapters\n- exposes caption_generator/object_detector"]
+        scene_entities["Domain Entities\nDetectedObject\nDetectedEntity\nSceneContext\nRosterMatch"]
     end
 
-    subgraph adapters["Adapters"]
+    subgraph adapters["Adapters & Services"]
         yolo_adapter["YOLOAdapter"]
         caption_adapter["Phi3CaptionAdapter"]
         recognition_service_adapter["FaceRecognitionService (InsightFace)"]
+        roster_service_adapter["RosterService\n(file-backed cache)"]
     end
 
     subgraph external["External Dependencies"]
         yolo_weights["YOLO weights"]
         phi3_weights["Phi-3 weights"]
         recognition_stack["InsightFace recognition stack"]
+        roster_embeddings["Roster embeddings +\nmetadata (JSON)"]
         settings_yaml["ConfigService / recognition_core settings"]
     end
 
     object_port --> scene_composer
     caption_port --> scene_composer
     recognition_port --> scene_service
+    roster_port --> scene_service
 
     scene_composer --> scene_service
     scene_service --> scene_entities
+    scene_service --> settings_yaml
+    scene_service --> roster_service_adapter
 
     scene_composer --> yolo_adapter
     scene_composer --> caption_adapter
     scene_service --> recognition_service_adapter
+    scene_service --> roster_service_adapter
 
     yolo_adapter --> yolo_weights
     caption_adapter --> phi3_weights
     recognition_service_adapter --> recognition_stack
-    scene_service --> settings_yaml
+    roster_service_adapter --> roster_embeddings
 
     classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
     classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px
     classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
     classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class ports,object_port,caption_port,recognition_port portsClass
+    class ports,object_port,caption_port,recognition_port,roster_port portsClass
     class domain,scene_service,scene_composer,scene_entities domainClass
-    class adapters,yolo_adapter,caption_adapter,recognition_service_adapter adapterClass
-    class external,yolo_weights,phi3_weights,recognition_stack,settings_yaml externalClass
+    class adapters,yolo_adapter,caption_adapter,recognition_service_adapter,roster_service_adapter adapterClass
+    class external,yolo_weights,phi3_weights,recognition_stack,roster_embeddings,settings_yaml externalClass

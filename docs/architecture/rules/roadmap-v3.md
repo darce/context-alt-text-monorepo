@@ -92,10 +92,12 @@ The Dashboard provides a at-a-glance status of the plugin's recognition, alt-tex
 
 * Declare plugin capabilities as Abilities and expose them as MCP tools via MCP Adapter (Deferred: post‑MVP):
 
+<!--
 * cat/generate_alt_text
 * cat/regenerate_alt_texts (batch)
 * cat/create_roster_entry (delegates embeddings/recognition to backend service)
 * cat/propagate (applies backend-provided matches to local media)
+-->
 
 * LLM access is model-agnostic through the PHP AI Client SDK (GPT/Claude/Gemini, etc.).
 

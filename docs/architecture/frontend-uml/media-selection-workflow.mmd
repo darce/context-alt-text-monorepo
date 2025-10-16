@@ -8,7 +8,7 @@ flowchart TD
     Filters -- Yes --> Refetch[useWorkbenchMedia fetches /workbench/media]
     Filters -- No --> ShowQueue[Render initial items from payload]
     Refetch --> ShowQueue
-    ShowQueue --> RenderList[List-style rows rendered (thumbnail, metadata, alt preview)]
+    ShowQueue --> RenderList["List-style rows rendered (thumbnail, metadata, alt preview)"]
     RenderList --> RosterLink{Roster link available?}
     RosterLink -- Yes --> RosterManager[Open roster manager with context]
     RosterLink -- No --> RenderList

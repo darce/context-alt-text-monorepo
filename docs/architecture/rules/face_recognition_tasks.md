@@ -37,6 +37,16 @@ This plan unifies the Workbench recognition flow with the roster-oriented diagra
   - For unknown faces, allow inline association with existing roster entries or creation of a new entry (launches roster reference upload flow).
   - Upon labeling, call backend to confirm match and refresh Workbench data (update queue + roster counts).
 
+## Observation Queue & Roster Integration
+
+- [ ] Re-rank unresolved observations by highest recognition similarity and display the top roster candidate using the model-provided confidence percentage (avoid falling back to raw detection score).
+- [ ] Persist roster match similarity separately from detection confidence in storage and update Workbench copy so the distinction is clear; suppress detection fallback when roster scores exist.
+- [ ] Update auto-resolve so new embeddings stay pending until an operator confirms them; store pending references per roster entry instead of averaging immediately.
+- [ ] Add regression coverage (Python recognition job + WP resolver) that repeatedly labels the same face and asserts similarity remains within tolerance after the auto-resolve adjustment.
+- [ ] Register dedicated taxonomy `cat_roster_entity` for attachments and roster storage, expose it via REST/UI, and document required capabilities for roster operations.
+- [ ] Migrate existing `cat_roster_` post tags into the dedicated taxonomy, re-link attachment relationships, and leave an optional setting to retain legacy tags for editorial discovery.
+- [ ] Update recognition tag syncing to write to `cat_roster_entity`, provide a CLI repair utility, refresh Storybook fixtures, and ensure REST payloads surface the new taxonomy values.
+
 ## Telemetry & Notifications
 
 - [ ] Emit `cat_workbench_recognition_triggered` with `{ ids, count, mode }`.

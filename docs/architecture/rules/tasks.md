@@ -190,14 +190,6 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - [ ] Integration tests for recognition settings routes and repository migration
 
 - [ ] Observation Labeling Workflow
-  - **Coordination & Planning**
-    - [ ] Schedule WP + recognition owner sync on `cat_observation` scope (proposed agenda: schema contract, dbDelta strategy, rollout timeline, dual-write plan).
-      - [ ] Target slot: week of **Mar 17** @ 10:00 PT with WP platform + HF recognition leads; send calendar invite once availability confirmed.
-      - [ ] Prep pre-read summarizing current meta-based storage, target columns, and migration risks; circulate 48h ahead of sync.
-      - [ ] Capture decisions + follow-up actions in `docs/architecture/rules/local_integration_guide.md` appendix.
-    - [ ] Break remaining gaps into tickets under `CAT-OBS-*` epic once priorities are confirmed.
-      - [ ] Draft ticket stubs with owner, acceptance criteria, and test hooks; link back to this checklist for traceability.
-      - [ ] After priority order lock-in, mirror each stub into the delivery tracker (Jira/Linear) with committed sprint targets and attach pre-read outcomes.
   - **Shipped surface area**
     - [x] Recognition jobs persist observation payloads (status, bbox, roster matches, candidates) via `RecognitionJobService::persistObservations()` and `RecognitionObservationRepository::store()`; matched roster tags sync automatically with `syncAttachmentTags()` (`apps/wp-context-alt-text/src/Recognition/RecognitionJobService.php:407`, `apps/wp-context-alt-text/src/Recognition/RecognitionObservationRepository.php:34`, `apps/wp-context-alt-text/src/Recognition/RecognitionObservationRepository.php:564`).
     - [x] Workbench queue hydrates from `GET /wp-json/context-alt-text/v1/observations` with `status=needs_review` and React Query hook `useRecognitionObservations` (`apps/wp-context-alt-text/src/Api/Api.php:369`, `apps/wp-context-alt-text/js/admin/hooks/useRecognitionObservations.ts:1`).
@@ -206,26 +198,25 @@ This sprint plan ensures both services land the same contracts, feature flags, a
     - [x] Dashboard/resolver flow refreshes counts through React Query refetch + notices (`apps/wp-context-alt-text/js/components/roster/RosterRoute.tsx:280`).
   - **Remaining gaps**
     - [ ] Promote observation storage into dedicated `cat_observation` table (dbDelta migration, repository adapters, PHPUnit coverage); retain meta mirror until migration completes.
-      - Ticket stub `CAT-OBS-101`: deliver dbDelta migration + repository dual-write layer with regression tests (owner: WP platform).
       - [ ] Capture explicit `detected_at`, `source_job_id`, `detection_metadata` columns and index `(status, detected_at)` for queue fetches.
       - [ ] Update `RecognitionObservationRepository` to read/write through table while keeping tag sync behaviour.
     - [ ] Observation API hardening: add pagination cursors, `If-None-Match` caching, and richer filters (`attachment`, `entity_type`, `detected_at` range); document contract in `docs/architecture/rules/recognition-configuration.md`.
-      - Ticket stub `CAT-OBS-102`: extend REST controller + client hook for pagination/caching; update docs + tests (owner: WP API).
     - [ ] UI defer / snooze flow: allow operators to triage later with reason codes, bubble metrics into dashboard and telemetry (`cat_workbench_recognition_labelled`).
-      - Ticket stub `CAT-OBS-103`: Workbench UX + telemetry wiring for deferral flow, including analytics events (owner: WP UX).
     - [ ] Generate cropped reference thumbnails from bounding boxes, persist attachment derivatives, and plumb through `referenceImages` to seeding pipeline.
-      - Ticket stub `CAT-OBS-104`: crop generation service + pipeline wiring, ensure uploads pass to recognition service (owner: Recognition backend).
     - [ ] Add aria-live updates + matched roster badges in Workbench row list; surface remote ID chip + candidate confidence hints.
-      - Ticket stub `CAT-OBS-105`: accessibility polish, roster badge component, tests (owner: WP frontend).
     - [ ] Nightly reconciliation job to compare WP media tags vs observation state, queue repairs, and document manual remediation steps in `local_integration_guide.md#observation-labeling`.
-      - Ticket stub `CAT-OBS-106`: scheduled audit job + documentation updates (owner: WP ops).
     - [ ] Review queue sorts unresolved observations by highest recognition similarity and surfaces the top roster candidate with the model-provided confidence %, not the raw face-detection score (update UI + payload contract).
+  - [ ] Persist roster match similarity separately from detection confidence and update Workbench UI copy to make the distinction clear; hide detection confidence fallback when roster scores are available.
+  - [ ] Tweak auto-resolve flow so new embeddings queue for confirmation instead of immediately averaging into roster vectors; store pending references per entry until operator approval.
+  - [ ] Add regression test (Python recognition job + WP resolver) that repeatedly labels the same face and asserts returned similarity stays within tolerance once auto-resolve is adjusted.
+  - [ ] Register dedicated taxonomy `cat_roster_entity` for attachments and roster storage (REST + UI support, admin filters, CLI access); document capability requirements.
+  - [ ] Update recognition tag sync to target `cat_roster_entity` (replace `post_tag` usage), add CLI repair command, adjust Storybook fixtures, and ensure new taxonomy values flow through REST payloads.
+  - [ ] Migration path: scan existing `post_tag` terms prefixed `cat_roster_`, create equivalent `cat_roster_entity` terms, reassign attachment relationships, and leave optional flag to keep legacy tags for discoverability.
     - [ ] Persist any automatic or operator-confirmed face match back into recognition embeddings for that roster entry so future detections improve.
     - [ ] Surface matched roster WP tags in media list/detail views so editors can filter by identity without leaving the library.
-
-- [ ] Roster Entry Media Mapping (Many↔Many)
-  - [ ] Track associations between roster entries and media attachments (multiple attachments per roster, multiple roster matches per attachment) in `cat_roster_media` join table with migrations + APIs.
-  - [ ] Update roster admin table “Images” column to list linked attachments (count + quick links), and display roster matches inside Workbench media metadata.
+    - [ ] Roster Entry Media Mapping (Many↔Many)
+    - [ ] Track associations between roster entries and media attachments (multiple attachments per roster, multiple roster matches per attachment) in `cat_roster_media` join table with migrations + APIs.
+    - [ ] Update roster admin table “Images” column to list linked attachments (count + quick links), and display roster matches inside Workbench media metadata.
 
 1. Observability & Diagnostics (Shared)
 

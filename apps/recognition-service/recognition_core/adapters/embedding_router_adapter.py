@@ -183,7 +183,8 @@ class EmbeddingRouterAdapter(EmbeddingRouterPort):
         if norm > 0:
             query_embedding = query_embedding / norm
         
-        matches = []
+        matches: List[MatchResult] = []
+        fallback: List[MatchResult] = []
         
         for entry in self._embeddings:
             try:
@@ -198,9 +199,11 @@ class EmbeddingRouterAdapter(EmbeddingRouterPort):
                     threshold=threshold,
                     is_match=is_match
                 )
-                
+
                 if is_match:
                     matches.append(match_result)
+                else:
+                    fallback.append(match_result)
                     
             except Exception as e:
                 logger.warning(f"⚠️ Error calculating similarity for {entry.unique_id}: {e}")
@@ -208,9 +211,27 @@ class EmbeddingRouterAdapter(EmbeddingRouterPort):
         
         # Sort by similarity (highest first)
         matches.sort(key=lambda x: x.similarity, reverse=True)
-        
-        logger.info(f"🎯 Found {len(matches)} matches above threshold {threshold}")
-        return matches
+        fallback.sort(key=lambda x: x.similarity, reverse=True)
+
+        max_candidates = max(1, getattr(self.settings.recognition, "max_candidates", 5))
+
+        combined: List[MatchResult] = []
+        combined.extend(matches)
+
+        if len(combined) < max_candidates and fallback:
+            needed = max_candidates - len(combined)
+            combined.extend(fallback[:needed])
+
+        combined = combined[:max_candidates]
+
+        logger.info(
+            "🎯 Found %s matches above threshold %s (returning %s candidates)",
+            len(matches),
+            threshold,
+            len(combined),
+        )
+
+        return combined
     
     async def reload_if_needed(self) -> bool:
         """Check if embeddings need reloading and reload if necessary."""

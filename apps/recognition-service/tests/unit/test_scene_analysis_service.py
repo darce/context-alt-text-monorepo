@@ -148,3 +148,43 @@ async def test_scene_analysis_builds_entities():
     assert entity.roster_match is not None
     assert entity.roster_match.roster_entry.name == "Test User"
     assert context.processing_metadata["faces_detected"] == 1
+
+
+@pytest.mark.asyncio
+async def test_scene_analysis_includes_candidates_below_threshold():
+    scene_composer = SceneComposer(
+        object_detector=StubObjectDetector(),
+        entity_identifiers=[],
+        caption_generator=StubCaptionGenerator(),
+    )
+
+    low_match = MatchResult(
+        entry=EmbeddingEntry(
+            unique_id="fallback-1",
+            name="Fallback User",
+            display_name="Fallback User",
+            aggregate_embedding=np.array([1.0, 0.0], dtype=np.float32),
+            metadata={},
+        ),
+        similarity=0.42,
+        threshold=0.6,
+        is_match=False,
+    )
+
+    recognition_service = FaceRecognitionService(
+        model=StubRecognitionModel(),
+        embedding_router=StubEmbeddingRouter(matches=[low_match]),
+    )
+
+    service = SceneAnalysisService(scene_composer=scene_composer, recognition_service=recognition_service)
+
+    dummy_image = Image.new("RGB", (10, 10), color="white")
+    context: SceneContext = await service.analyze_scene(dummy_image)
+
+    assert len(context.detected_entities) == 1
+    entity = context.detected_entities[0]
+    assert entity.roster_match is None
+    assert entity.face_data is not None
+    candidates = entity.face_data.get("candidates") if entity.face_data else None
+    assert isinstance(candidates, list)
+    assert candidates and candidates[0]["unique_id"] == "fallback-1"

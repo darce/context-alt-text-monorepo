@@ -1,0 +1,54 @@
+sequenceDiagram
+    participant UI as Roster Manager UI
+    participant Hook as useRecognitionObservations
+    participant API as WP REST API
+    participant Manager as RosterObservationManager
+    participant Repo as ObservationRepository
+    participant Roster as RosterService
+    participant Backend as Recognition API
+
+    Note over UI,Backend: Recognition Observation Workflow
+
+    UI->>Hook: Load observations (status: needs_review)
+    Hook->>API: GET /cat/v1/observations?status=needs_review
+    API->>Repo: Query observations from post_meta
+    Repo-->>API: Return observation records + attachments
+    API-->>Hook: Observation list with confidence scores
+    Hook-->>UI: Display pending observations panel
+
+    Note over UI: Operator reviews observation<br/>(face detection with unknown identity)
+
+    alt Create New Roster Entry
+        UI->>UI: User clicks "Create new entry"
+        UI->>UI: Opens roster editor with observation context
+        UI->>API: POST /context-alt-text/v1/roster
+        Note over API: Creates local roster entry
+        API->>Roster: createAndSync(label, type, metadata)
+        Roster->>Backend: POST /api/v0/roster (upsert embedding)
+        Backend-->>Roster: Remote ID assigned
+        Roster-->>API: RosterEntry with remoteId
+        API->>Manager: autoAssignPending(remoteId)
+        Manager->>Repo: Update matching observations
+        Repo->>Repo: Set observation status to "assigned"
+        API-->>UI: Entry created + observations auto-assigned
+    else Assign to Existing Entry
+        UI->>API: PATCH /cat/v1/observations/{id}
+        Note over API: Assigns observation to roster entry
+        API->>Manager: assignObservation(observationId, remoteId)
+        Manager->>Repo: Update observation status
+        Repo->>Repo: Link observation to remoteId
+        API-->>UI: Observation assigned
+    else Dismiss/Ignore
+        UI->>API: PATCH /cat/v1/observations/{id}
+        Note over API: Marks observation as reviewed
+        API->>Repo: Update status to "dismissed"
+        Repo-->>API: Observation hidden from queue
+        API-->>UI: Observation dismissed
+    end
+
+    UI->>Hook: Refetch observations
+    Hook->>API: GET /cat/v1/observations?status=needs_review
+    API-->>Hook: Updated observation list
+    Hook-->>UI: Refresh panel (pending count updated)
+
+    Note over UI,Backend: Observations enable incremental roster building<br/>as recognition jobs discover new faces

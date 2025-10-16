@@ -51,6 +51,7 @@ use ContextAltText\Recognition\RecognitionSettings;
 use ContextAltText\Roster\RosterClient;
 use ContextAltText\Roster\RosterCli;
 use ContextAltText\Roster\RosterObservationManager;
+use ContextAltText\Roster\RosterTaxonomy;
 use ContextAltText\Roster\RosterSyncScheduler;
 use ContextAltText\Shared\Config\SettingsRepository;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
@@ -166,6 +167,7 @@ function context_alt_text(): ContextAltText
         $rosterService
     );
     $recognitionJobService->setRosterObservationManager($rosterObservationManager);
+    context_alt_text_roster_taxonomy();
     $workbenchMediaResolver = new WorkbenchMediaResolver($recognitionObservationRepository);
     $dashboardPage = new DashboardPage($dashboardMetrics);
     $workbenchPage = new AltTextWorkbenchPage();
@@ -254,6 +256,20 @@ function context_alt_text_recognition_services(?SettingsRepository $settingsRepo
     ];
 
     return $services;
+}
+
+function context_alt_text_roster_taxonomy(): RosterTaxonomy
+{
+    static $taxonomy = null;
+
+    if ($taxonomy instanceof RosterTaxonomy) {
+        return $taxonomy;
+    }
+
+    $taxonomy = new RosterTaxonomy();
+    $taxonomy->init();
+
+    return $taxonomy;
 }
 
 /**
@@ -499,9 +515,10 @@ if (defined('WP_CLI') && WP_CLI) {
         );
 
         $rosterService = context_alt_text_roster_service();
+        $taxonomy = context_alt_text_roster_taxonomy();
         \WP_CLI::add_command(
             'cat-roster',
-            new RosterCli($rosterService)
+            new RosterCli($rosterService, $taxonomy)
         );
     });
 }

@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ContextAltText\Roster;
 
 use ContextAltText\Domain\Roster\RosterService;
+use ContextAltText\Roster\RosterTaxonomy;
 use WP_CLI;
 use WP_CLI_Command;
 use function sprintf;
@@ -14,10 +15,12 @@ use function is_array;
 class RosterCli extends WP_CLI_Command
 {
     private RosterService $service;
+    private RosterTaxonomy $taxonomy;
 
-    public function __construct(RosterService $service)
+    public function __construct(RosterService $service, RosterTaxonomy $taxonomy)
     {
         $this->service = $service;
+        $this->taxonomy = $taxonomy;
     }
 
     /**
@@ -77,5 +80,41 @@ class RosterCli extends WP_CLI_Command
         } else {
             WP_CLI::warning('Roster sync did not report any changes.');
         }
+    }
+
+    /**
+     * Migrate legacy post tags with cat_roster_ or cat-recognition- prefixes into the dedicated roster taxonomy.
+     *
+     * ## OPTIONS
+     *
+     * [--keep-legacy]
+     * : Retain the legacy post_tag assignments after migration.
+     *
+     * ## EXAMPLES
+     *
+     *     wp cat-roster migrate-tags
+     *     wp cat-roster migrate-tags --keep-legacy
+     */
+    public function migrate_tags(array $args, array $assocArgs): void
+    {
+        unset($args);
+
+        $keepLegacy = isset($assocArgs['keep-legacy']);
+        WP_CLI::log('Migrating roster tags to cat_roster_entity taxonomy...');
+        $results = $this->taxonomy->migrateLegacyTags($keepLegacy);
+
+        WP_CLI::log(sprintf('  Processed terms: %d', $results['processed_terms']));
+        WP_CLI::log(sprintf('  Created terms: %d', $results['created_terms']));
+        WP_CLI::log(sprintf('  Updated terms: %d', $results['updated_terms']));
+        WP_CLI::log(sprintf('  Migrated relationships: %d', $results['migrated_relationships']));
+        WP_CLI::log(sprintf('  Skipped terms: %d', $results['skipped_terms']));
+
+        if ($keepLegacy) {
+            WP_CLI::log('  Legacy post_tag assignments retained.');
+        } else {
+            WP_CLI::log(sprintf('  Legacy relationships removed: %d', $results['removed_legacy']));
+        }
+
+        WP_CLI::success('Roster tag migration completed.');
     }
 }

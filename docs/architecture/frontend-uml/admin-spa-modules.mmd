@@ -8,17 +8,11 @@ graph TD
 		dashboardRoute["/dashboard"]
 		workbenchRoute["/workbench"]
 		rosterRoute["/roster"]
-		automationRoute["/automation"]
-		settingsRoute["/settings"]
-		accountRoute["/account"]
 	end
 
 	layout --> dashboardRoute
 	layout --> workbenchRoute
 	layout --> rosterRoute
-	layout --> automationRoute
-	layout --> settingsRoute
-	layout --> accountRoute
 
 	subgraph Dashboard
 		hero[HeroStatusSection]
@@ -60,39 +54,34 @@ graph TD
 	rosterRoute --> observationPanel
 	rosterRoute --> rosterDialogs
 
-	automationRoute --> automationList[AutomationQueueView]
-	settingsRoute --> recognitionSettings[RecognitionSettingsPanel]
-	settingsRoute --> featureFlags[FeatureFlagSection]
-	accountRoute --> accountCenter[AccountCenterShell]
-
 	subgraph DataLayer
 		queryClient[QueryClient]
 		coverageHook[useCoverageMetrics]
-		activityHook[useDashboardActivity]
-		recognitionQueueHook[useRecognitionQueue]
+		workbenchHook[useWorkbenchMedia]
+		observationsHook2[useRecognitionObservations]
 		rosterClient[RosterRestClient]
 	end
 
 	providers --> queryClient
 	coverageHook --> queryClient
-	activityHook --> queryClient
-	recognitionQueueHook --> queryClient
+	workbenchHook --> queryClient
+	observationsHook2 --> queryClient
 	rosterHook --> rosterClient
-	observationsHook --> recognitionQueueHook
+	observationsHook --> observationsHook2
 
 	subgraph REST
 		dashboardApi["context-alt-text/v1/dashboard/*"]
 		recognitionApi["context-alt-text/v1/recognition/*"]
 		rosterApi["context-alt-text/v1/roster/*"]
+		observationApi["cat/v1/observations"]
 	end
 
 	coverageHook --> dashboardApi
-	activityHook --> dashboardApi
-	recognitionQueueHook --> recognitionApi
+	workbenchHook --> dashboardApi
+	observationsHook2 --> observationApi
 	recognitionActions --> recognitionApi
-	automationList --> recognitionApi
 	rosterClient --> rosterApi
-	observationPanel --> recognitionApi
+	observationPanel --> observationApi
 
 	note["Keyboard accessibility helpers wrap ApplicationLayout; analytics hooks live with widgets."]
 	layout -. "focus+analytics" .-> note

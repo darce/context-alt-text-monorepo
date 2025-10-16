@@ -1,73 +1,178 @@
 classDiagram
     class ContextAltText {
-      +init(): void
-      +register_blocks(): void
-      +i18n(): void
+        <<Plugin Bootstrap>>
+        +init(): void
+        +registerAssets(): void
+        +registerRestControllers(): void
+        +registerMenus(): void
+        +maybeBootAbilities(): void
     }
 
     class Menu {
-      +init(): void
-      +menu(): void
-      +admin_page(): void
-      +render_roster_page(): void
+        <<Admin Menu>>
+        +registerDashboard(): void
+        +registerWorkbench(): void
+        +registerRoster(): void
+        +registerAutomation(): void
+        +registerSettings(): void
+        +registerAccountCenter(): void
+    }
+
+    class AbilitiesRegistrar {
+        <<Feature Flagged>>
+        +registerAbilities(): void
+        +tools: array
+        +isEnabled(): bool
+    }
+
+    class McpAdapter {
+        <<Deferred Adapter>>
+        +registerTools(abilities): void
+        +serve(): void
     }
 
     class Admin {
-      +bootstrap(): void
-      +enqueue_script($hook_suffix): void
-      +get_config(): array
-      +get_data(): array
+        +bootstrap(): void
+        +enqueue_script(hookSuffix): void
+        +force_module_type(tag, handle, src): string
+        +get_config(): array
+        +get_data(): array
+        -scanner: MissingAltTextScanner
+        -metrics: DashboardMetricsService
+        -featureFlags: FeatureFlags
+        -mediaResolver: WorkbenchMediaResolver
+        -rosterService: RosterDomainService
+        -rosterScheduler: RosterSyncScheduler
+        -settingsRepository: SettingsRepository
+        -rosterObservations: RosterObservationManager
     }
 
     class Frontend {
-      +bootstrap(): void
-      +enqueue_script($screen): void
-      +get_config(): array
-      +get_data(): array
+        +bootstrap(): void
+        +enqueue_script(screen): void
+        +get_config(): array
+        +get_data(): array
     }
 
     class API {
-      +init(): void
+        +init(): void
     }
 
     class Template {
-      +init(): void
-      +custom_template($templates): array
-      +load_custom_template($template): string
+        +init(): void
+        +custom_template(templates): array
+        +load_custom_template(template): string
+    }
+
+    class DashboardPage {
+        +render(): void
+        +register_screen(): void
+    }
+
+    class AltTextWorkbenchPage {
+        +render(): void
+        +register_screen(): void
     }
 
     class RosterPage {
-      +enqueue_scripts($hook): void
-      +render_page(): void
-      -render_roster_table(): void
-      +handle_ajax_actions(): void
+        +render(): void
+        +register_screen(): void
+        +render_observations_panel(): string
     }
 
-    class RosterService {
-      +exists($label, $type, $excludeId): bool
-      +getLocalRoster($filters): array
-      +syncFromRemote(): bool
-      +createAndSync($data, $options): ?RosterEntry
-      +updateAndSync($id, $data, $options): ?RosterEntry
-      +attachReferenceImage($entryId, $reference): bool
-      +search($query, $limit): array
-      +validate($data): array
+    class AutomationQueuePage {
+        +render(): void
+        +register_screen(): void
     }
 
-    class Security {
-      +can_manage_roster(): bool
-      +verify_admin_nonce($action, $field, $request): bool
-      +sanitize_roster_data($data): array|null
-      +create_nonce($action): string
+    class PluginSettingsPage {
+        +render(): void
+        +register_settings(): void
+    }
+
+    class AccountCenterPage {
+        +render(): void
+    }
+
+    class DashboardMetricsService {
+        +getHeroStatus(): array
+        +getCoverageCard(): array
+        +getLatestActivityCard(): array
+        +getRecognitionInsightsCard(): array
+        +getAutomationPipelineCard(): array
+    }
+
+    class MissingAltTextScanner {
+        +get_summary(): array
+        +prime_counts(): void
+    }
+
+    class WorkbenchMediaResolver {
+        +fetch(filters): array
+    }
+
+    class RosterSyncScheduler {
+        +registerHooks(): void
+        +schedule(): void
+    }
+
+    class RosterObservationManager {
+        +autoAssignPending(entries): array
+        +resolveObservationWithRoster(resolution, entry): array
+        +retryPendingForEntries(entries): void
+    }
+
+    class RosterDomainService {
+        +syncFromRemote(): bool
+        +getLocalRoster(filters): array
+        +resolveObservation(observation, entry): array
+    }
+
+    class FeatureFlags {
+        +abilitiesEnabled(): bool
+        +rosterUiEnabled(): bool
+        +workbenchEnabled(): bool
+        +workbenchRecognitionEnabled(): bool
+    }
+
+    class SettingsRepository {
+        +getAll(): array
+        +getRecognitionSettings(): array
+        +persistRecognitionSettings(data): bool
     }
 
     ContextAltText --> Menu : bootstraps
     ContextAltText --> Admin : bootstraps
-    ContextAltText --> Frontend : bootstraps
     ContextAltText --> API : initializes
     ContextAltText --> Template : registers
-    ContextAltText --> RosterPage : instantiates
-    RosterPage --> RosterService : uses
-    RosterService --> Security : sanitizes
-    Admin --> Template : reads template constants
-    Frontend --> Template : reads template constants
+    ContextAltText --> Frontend : bootstraps FE hooks
+    ContextAltText --> AbilitiesRegistrar : feature gate
+    AbilitiesRegistrar --> McpAdapter : registers tools
+
+    Menu --> DashboardPage : registers
+    Menu --> AltTextWorkbenchPage : registers
+    Menu --> RosterPage : registers
+    Menu --> AutomationQueuePage : registers
+    Menu --> PluginSettingsPage : registers
+    Menu --> AccountCenterPage : registers
+
+    Admin --> DashboardMetricsService : pulls cards
+    Admin --> MissingAltTextScanner : primes counts
+    Admin --> FeatureFlags : reads
+    Admin --> WorkbenchMediaResolver : loads queue
+    Admin --> RosterDomainService : sync + data
+    Admin --> RosterSyncScheduler : ensures cron
+    Admin --> SettingsRepository : loads/persists
+    Admin --> RosterObservationManager : triage queue
+
+    RosterPage --> RosterDomainService : fetches entries
+    RosterPage --> RosterObservationManager : integrates queue
+    RosterPage --> DashboardMetricsService : renders stats
+
+    PluginSettingsPage --> SettingsRepository : persists config
+    AutomationQueuePage --> WorkbenchMediaResolver : reads jobs
+
+    Admin --> Template : reads constants
+    Frontend --> Template : reads constants
+
+    note for AbilitiesRegistrar "Feature gated by CAT_ENABLE_ABILITIES / CAT_ENABLE_MCP; disabled for MVP"

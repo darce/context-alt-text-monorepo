@@ -1,83 +1,102 @@
 flowchart TD
     subgraph WorkbenchRoute
-        APP[Workbench App]
-        LIST[MediaList]
-        ROW[List Row Renderer]
-        TOOLBAR[SelectionToolbar]
-        ACTIONS[BulkAltTextPanel]
-        RECOG[RecognitionActions]
-        PREVIEW[MediaPreview]
-        NOTICE[ToastBus]
+        app[Workbench App]
+        mediaList[MediaList]
+        rowRenderer[List Row Renderer]
+        selectionToolbar[SelectionToolbar]
+        bulkPanel[BulkAltTextPanel]
+        recognitionPanel[RecognitionActions]
+        previewPanel[MediaPreview]
+        notices[ToastBus]
     end
 
     subgraph DataLayer
-        HOOK_MEDIA[useWorkbenchMedia]
-        HOOK_SELECTION[useSelection]
-        QUERY[(QueryClient)]
+        useMedia[useWorkbenchMedia]
+        useSelection[useSelection]
+        useObservations[useRecognitionObservations]
+        queryClient[(QueryClient)]
     end
 
     subgraph Config
-        GLOBAL[ContextAltTextAdmin.data.workbench]
-        FLAGS[Feature Flags]
+        bootstrapData[ContextAltTextAdmin.data.workbench]
+        featureFlags[Feature Flags]
     end
 
     subgraph REST
-        MEDIA_API[wp-json/cat/v1/workbench/media]
-        BULK_API[wp-json/cat/v1/alt-text/bulk]
-        RECOG_API[wp-json/cat/v1/recognition/run]
+        mediaApi[wp-json/context-alt-text/v1/workbench/media]
+        recognitionApi[wp-json/context-alt-text/v1/recognition/analyze]
+        observationApi[wp-json/cat/v1/observations]
+        observationUpdateApi[wp-json/cat/v1/observations/{id}]
+        bulkAltTextApi[wp-json/context-alt-text/v1/alt-text/bulk]
+    end
+
+    subgraph Backend["Recognition Service"]
+        analyzeScene[/api/v0/analyze-scene]
+        rosterEndpoints[/api/v0/roster/*]
+        reloadEmbeddings[/api/v0/service/reload-embeddings]
+    end
+
+    subgraph BackendState["WP Services"]
+        rosterService[Domain\\Roster\\RosterService]
+        observationManager[RosterObservationManager]
+        jobService[RecognitionJobService]
     end
 
     subgraph Analytics
-        TRACK[emitDashboardEvent]
-        EVENTS{Workbench Events}
+        dashboardBus[emitDashboardEvent]
+        eventStream{Workbench Events}
     end
 
-    subgraph BackendIntegration["Backend Recognition Service"]
-        BACKEND_RECOG[Recognition API - analyze-scene]
-        BACKEND_ROSTER[Roster API - backend-only]
-    end
-    
-    subgraph PostMVP["Post-MVP: Roster UI"]
-        ROSTER_MANAGER[Roster Manager surface]
-    end
+    app --> mediaList
+    mediaList --> rowRenderer
+    app --> selectionToolbar
+    app --> bulkPanel
+    app --> recognitionPanel
+    app --> previewPanel
+    app --> notices
+    app --> observationBanner
 
-    APP --> LIST
-    LIST --> ROW
-    APP --> TOOLBAR
-    APP --> ACTIONS
-    APP --> RECOG
-    APP --> PREVIEW
-    APP --> NOTICE
+    rowRenderer --> useMedia
+    useMedia --> queryClient
+    useMedia --> mediaApi
 
-    ROW -->|requests| HOOK_MEDIA
-    HOOK_MEDIA --> QUERY
-    HOOK_MEDIA --> MEDIA_API
-    GLOBAL --> HOOK_MEDIA
-    GLOBAL --> HOOK_SELECTION
+    selectionToolbar --> useSelection
+    useSelection --> queryClient
 
-    RECOG --> RECOG_API
-    RECOG_API -->|delegates to| BACKEND_RECOG
-    BACKEND_RECOG -.->|uses| BACKEND_ROSTER
+    recognitionPanel --> recognitionApi
+    recognitionApi --> analyzeScene
+    analyzeScene --> rosterEndpoints
+    analyzeScene --> reloadEmbeddings
+    reloadEmbeddings --> analyzeScene
 
-    TOOLBAR --> HOOK_SELECTION
-    HOOK_SELECTION --> QUERY
+    observationBanner --> useObservations
+    useObservations --> observationApi
+    useObservations --> queryClient
 
-    TOOLBAR --> ACTIONS
-    ACTIONS --> BULK_API
-    ACTIONS --> NOTICE
+    observationBanner --> observationUpdateApi
+    observationUpdateApi --> rosterService
+    rosterService --> rosterEndpoints
+    rosterService --> reloadEmbeddings
 
-    RECOG --> RECOG_API
-    RECOG --> NOTICE
+    jobService --> observationManager
+    observationManager --> observationUpdateApi
+    observationManager --> useObservations
 
-    APP --> TRACK
-    TRACK --> EVENTS
-    EVENTS -->|cat_workbench_seen| TRACK
-    EVENTS -->|cat_workbench_bulk_action| TRACK
-    EVENTS -->|cat_workbench_recognition_triggered| TRACK
+    bulkPanel --> bulkAltTextApi
+    bulkPanel --> notices
 
-    FLAGS --> APP
-    FLAGS --> RECOG
-    FLAGS --> ACTIONS
+    recognitionPanel --> notices
 
-    PREVIEW --> HOOK_MEDIA
-    RECOG --> ROSTER_MANAGER
+    bootstrapData --> useMedia
+    bootstrapData --> useSelection
+    bootstrapData --> useObservations
+    featureFlags --> app
+    featureFlags --> recognitionPanel
+    featureFlags --> bulkPanel
+
+    app --> dashboardBus
+    dashboardBus --> eventStream
+    eventStream -->|cat_workbench_seen| dashboardBus
+    eventStream -->|cat_workbench_bulk_action| dashboardBus
+    eventStream -->|cat_workbench_recognition_triggered| dashboardBus
+```

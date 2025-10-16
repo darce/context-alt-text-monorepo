@@ -1,46 +1,98 @@
-```mermaid.radar
+%% Context Alt Text Admin SPA Module Map (MVP + Planned)
 graph TD
-    A[main.tsx] --> B[App.tsx]
-    B --> C[QueryClientProvider]
-    C --> D[DashboardShell]
-    D --> D1[HeroStatusSection]
-    D1 --> D1a["Missing alt text count + Review in Panel CTA"]
-    
-    subgraph QuarantinedComponents["Quarantined (Post-MVP)"]
-        Q1[CoverageCard with donut]
-        Q2[ActivityCard]
-        Q3[RecognitionCard]
-        Q4[AutomationCard]
-        Q5[ActionFooter]
-    end
-    
-    subgraph ActiveRoutes["Active MVP Routes"]
-        R3[Alt-Text Workbench]
-    end
-    
-    subgraph FutureRoutes["Post-MVP Routes (Backend-Managed)"]
-        R1[Automation Queue]
-        R2[Roster Manager - Backend Only via HF Spaces UI]
-        R4[Settings]
-        R5[Account Center]
-    end
-    
-    note1["⚠️ Roster Management: All roster CRUD operations happen in backend service.<br/>Frontend only displays recognition results from backend roster matches."]
-    C --> ActiveRoutes
-    C -. planned routes .-> FutureRoutes
+	entry[main.tsx] --> app[App.tsx]
+	app --> providers["Providers<br/>(QueryClientProvider + RouterProvider)"]
+	providers --> layout[ApplicationLayout]
 
-    subgraph DataLayer
-        Q[QueryClient]
-        H[useCoverageMetrics]
-        H --> Q
-        H --> F[fetch /dashboard/coverage]
-    end
-    C --> Q
+	subgraph Routes
+		dashboardRoute["/dashboard"]
+		workbenchRoute["/workbench"]
+		rosterRoute["/roster"]
+		automationRoute["/automation"]
+		settingsRoute["/settings"]
+		accountRoute["/account"]
+	end
 
-    subgraph REST
-        API[(context-alt-text/v1)]
-        API --> Cov[/dashboard/coverage/]
-        API --> Other[(other planned endpoints)]
-    end
+	layout --> dashboardRoute
+	layout --> workbenchRoute
+	layout --> rosterRoute
+	layout --> automationRoute
+	layout --> settingsRoute
+	layout --> accountRoute
 
-    F --> Cov
+	subgraph Dashboard
+		hero[HeroStatusSection]
+		coverage[CoverageCard]
+		activity[ActivityCard]
+		recognitionWidget[RecognitionInsightsCard]
+		automationWidget[AutomationPipelineCard]
+		actions[ActionFooter]
+	end
+
+	dashboardRoute --> hero
+	dashboardRoute --> coverage
+	dashboardRoute --> activity
+	dashboardRoute --> recognitionWidget
+	dashboardRoute --> automationWidget
+	dashboardRoute --> actions
+
+	subgraph Workbench
+		queueHook[useWorkbenchMedia]
+		selection[SelectionToolbar]
+		recognitionActions[RecognitionActionsPanel]
+		bulk[BulkAltTextPanel]
+	end
+
+	workbenchRoute --> queueHook
+	workbenchRoute --> selection
+	workbenchRoute --> recognitionActions
+	workbenchRoute --> bulk
+
+	subgraph RosterManager
+		rosterHook[useRoster]
+		observationsHook[useRecognitionObservations]
+		observationPanel[RosterObservationsPanel]
+		rosterDialogs[RosterForm + Dialogs]
+	end
+
+	rosterRoute --> rosterHook
+	rosterRoute --> observationsHook
+	rosterRoute --> observationPanel
+	rosterRoute --> rosterDialogs
+
+	automationRoute --> automationList[AutomationQueueView]
+	settingsRoute --> recognitionSettings[RecognitionSettingsPanel]
+	settingsRoute --> featureFlags[FeatureFlagSection]
+	accountRoute --> accountCenter[AccountCenterShell]
+
+	subgraph DataLayer
+		queryClient[QueryClient]
+		coverageHook[useCoverageMetrics]
+		activityHook[useDashboardActivity]
+		recognitionQueueHook[useRecognitionQueue]
+		rosterClient[RosterRestClient]
+	end
+
+	providers --> queryClient
+	coverageHook --> queryClient
+	activityHook --> queryClient
+	recognitionQueueHook --> queryClient
+	rosterHook --> rosterClient
+	observationsHook --> recognitionQueueHook
+
+	subgraph REST
+		dashboardApi["context-alt-text/v1/dashboard/*"]
+		recognitionApi["context-alt-text/v1/recognition/*"]
+		rosterApi["context-alt-text/v1/roster/*"]
+	end
+
+	coverageHook --> dashboardApi
+	activityHook --> dashboardApi
+	recognitionQueueHook --> recognitionApi
+	recognitionActions --> recognitionApi
+	automationList --> recognitionApi
+	rosterClient --> rosterApi
+	observationPanel --> recognitionApi
+
+	note["Keyboard accessibility helpers wrap ApplicationLayout; analytics hooks live with widgets."]
+	layout -. "focus+analytics" .-> note

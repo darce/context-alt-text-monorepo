@@ -4,25 +4,41 @@ flowchart TD
     Summary --> AdminBootstrap[Admin SPA enqueued on dashboard/workbench routes]
     AdminBootstrap --> Localize[ContextAltTextAdmin payload includes workbench.items]
     Localize --> WorkbenchUI[Workbench App mounts]
-    WorkbenchUI --> Filters{User filters queue?}
-    Filters -- Yes --> Refetch[useWorkbenchMedia fetches /workbench/media]
-    Filters -- No --> ShowQueue[Render initial items from payload]
-    ShowQueue --> Select{User selects media?}
-    Select -- Yes --> SelectionToolbar[SelectionToolbar captures selection state]
-    SelectionToolbar --> BulkActions{Trigger bulk action?}
-    BulkActions -- Trigger Recognition --> RecogDispatch[POST to WP REST recognition endpoint]
-    RecogDispatch --> BackendRecog[Backend Recognition Service /api/v0/analyze-scene]
-    BackendRecog --> RosterMatch[Backend checks roster for face matches]
-    RosterMatch --> ReturnResults[Return SceneAnalysisResult to WP]
-    ReturnResults --> StoreObservations[Store observations in WP database]
-    StoreObservations --> QueueRefresh[Refetch workbench queue]
-    BulkActions -- Generate Alt Text --> Dispatch[emitDashboardEvent + enqueue background job]
-    BulkActions -- Review or other --> UpdateUI[Optimistic UI updates]
-    Dispatch --> BackendJob[Backend service generates alt text with context]
-    BackendJob --> QueueRefresh
-    QueueRefresh --> WorkbenchUI
-    
-    note1["⚠️ BACKEND-ONLY: All face detection, recognition, roster CRUD, and matching happens in backend service"]
-    note2["Frontend ONLY displays results and provides confirmation UI - NO roster management pages in MVP"]
-    BackendRecog -.-> note1
-    BackendRecog -.-> note2
+    WorkbenchUI --> dashboardUI[Dashboard route]
+    WorkbenchUI --> workbench[Alt-Text Workbench route]
+    WorkbenchUI --> rosterUI[Roster Manager route]
+    WorkbenchUI --> automationUI[Automation Queue route]
+
+    workbench --> selectMedia{Attachments selected?}
+    selectMedia -- yes --> recognitionRequest[POST /wp-json/context-alt-text/v1/recognition/analyze]
+    backendAnalyze(["/api/v0/analyze-scene"])
+    recognitionRequest --> backendAnalyze
+    backendAnalyze --> recognitionPipeline[SceneAnalysisService + FaceRecognitionService]
+    recognitionPipeline --> rosterMatches[Matches + observations persisted]
+    rosterMatches --> storeObs[RecognitionObservationRepository::persistObservations]
+    storeObs --> workbenchRefresh[useWorkbenchMedia refetch]
+    workbenchRefresh --> workbench
+
+    rosterUI --> observationPanel[RosterObservationsPanel]
+    observationPanel --> autoAssign[RosterObservationManager::autoAssignPending]
+    autoAssign --> observationUpdates[RecognitionObservationRepository updates]
+    observationPanel --> manualResolve{Operator assigns roster match?}
+    manualResolve -- yes --> resolveRequest[POST /wp-json/context-alt-text/v1/roster/resolve]
+    rosterDomain(["Domain\\Roster\\RosterService create/update"])
+    recognitionServiceAPI(["/api/v0/roster/*"])
+    resolveRequest --> rosterDomain
+    rosterDomain --> recognitionServiceAPI
+    reloadEmbeddings(["POST /api/v0/service/reload-embeddings"])
+    recognitionServiceAPI --> reloadEmbeddings
+    reloadEmbeddings --> embeddingRouter[Embedding cache refreshed]
+    embeddingRouter --> backendAnalyze
+
+    automationUI --> automationJobs["Background jobs (cron + queue)"]
+    automationJobs --> recognitionServiceAPI
+    automationJobs --> recognitionRequest
+
+    dashboardUI --> dashboardHooks[React Query hooks /dashboard/*]
+    dashboardHooks --> recognitionRequest
+
+    note["Roster CRUD now runs through WP services + backend API; SPA exposes review + assignment with keyboard-first flows."]
+    rosterUI -. accessibility overlays .- note

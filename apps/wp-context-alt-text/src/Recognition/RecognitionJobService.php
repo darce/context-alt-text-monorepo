@@ -326,19 +326,16 @@ class RecognitionJobService
 
     private function dispatchJob(string $jobId): void
     {
-        if (!function_exists('wp_schedule_single_event')) {
-            // Scheduling unavailable (e.g., tests); process immediately.
-            $this->processJob($jobId);
-            return;
+        if (function_exists('wp_schedule_single_event') && !(\defined('DISABLE_WP_CRON') && \constant('DISABLE_WP_CRON'))) {
+            $timestamp = time() + self::JOB_RETRY_DELAY;
+
+            if (!function_exists('wp_next_scheduled') || !wp_next_scheduled(self::PROCESS_HOOK, [$jobId])) {
+                wp_schedule_single_event($timestamp, self::PROCESS_HOOK, [$jobId]);
+            }
         }
 
-        $timestamp = time() + self::JOB_RETRY_DELAY;
-
-        if (function_exists('wp_next_scheduled') && wp_next_scheduled(self::PROCESS_HOOK, [$jobId])) {
-            return;
-        }
-
-        wp_schedule_single_event($timestamp, self::PROCESS_HOOK, [$jobId]);
+        // Always process immediately so the admin UI receives a definitive status, even when cron is disabled.
+        $this->processJob($jobId);
     }
 
     /**

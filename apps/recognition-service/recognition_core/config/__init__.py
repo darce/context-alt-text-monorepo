@@ -67,6 +67,7 @@ class RecognitionSettings(BaseSettings):
     default_threshold: float = 0.45
     max_faces_per_image: int = 10
     embedding_dimension: int = 512
+    max_candidates: int = 5
 
 
 class EmbeddingRouterSettings(BaseSettings):

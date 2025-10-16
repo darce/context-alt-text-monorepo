@@ -13,6 +13,7 @@ recognition:
   default_threshold: 0.45
   max_faces_per_image: 10
   embedding_dimension: 512
+  max_candidates: 5
 
 # Embedding Router Configuration
 embedding_router:

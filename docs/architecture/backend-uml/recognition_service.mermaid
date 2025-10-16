@@ -1,49 +1,63 @@
 ---
-title: InsightFace Recognition Service (Modular)
+title: InsightFace Recognition Service (2024 pipeline)
 ---
-flowchart TB
+flowchart LR
     subgraph ports["Ports"]
-        recognition_port["RecognitionServicePort\nrecognize_faces()\nget_service_info()"]
+        recognition_port["RecognitionServicePort\nrecognize_faces(image, threshold)"]
+        diagnostics_port["DiagnosticsPort\nget_service_info()\nreload_embeddings()"]
         model_port["RecognitionModelPort\nanalyze(image)\nmodel_info()"]
-        embedding_port["EmbeddingRouterPort\nload_embeddings()\nfind_matches()\nreload_if_needed()"]; 
+        embedding_port["EmbeddingRouterPort\nload_embeddings(model)\nfind_matches(vector, threshold)\nreload_if_needed()"]; 
     end
 
     subgraph domain["Domain Layer"]
-        recognition_service["FaceRecognitionService\n- orchestrates analyze + match\n- aggregates per-face matches\n- exposes diagnostics"]
-        recognition_entities["Domain Entities\nFaceDetection / FaceEmbedding\nRecognitionResult / MatchResult"]
-        recognition_settings["Settings (Pydantic)\ninsightface, recognition, router"]
+        recognition_service["FaceRecognitionService\n- reloads roster cache on demand\n- orchestrates detection → embedding → matches\n- emits RecognitionResult + metrics"]
+        recognition_entities["Domain Entities\nFaceDetection\nFaceEmbedding\nMatchResult\nRecognitionResult"]
+        recognition_settings["Settings (Pydantic)\ninsightface, recognition, router, cache"]
+        maintenance_tasks["Maintenance Tasks\n• reload_embeddings()\n• get_service_info()\n• timing + counts"]
     end
 
-    subgraph adapters["Adapters"]
-        insightface_adapter["InsightFaceAdapter\nimplements RecognitionModelPort\n- lazy load model\n- analyze → FaceEmbedding list"]
-        embedding_router["EmbeddingRouterAdapter\nimplements EmbeddingRouterPort\n- JSON roster store\n- cosine similarity"]
+    subgraph adapters["Adapters & Helpers"]
+        insightface_adapter["InsightFaceAdapter\n(GPU aware)\nimplements RecognitionModelPort"]
+        embedding_router["EmbeddingRouterAdapter\n(JSON roster cache)\nimplements EmbeddingRouterPort"]
+        reload_scheduler["EmbeddingReloadPolicy\n(auto reload interval)\n(get_loaded_count)"]
+        metrics_helper["RecognitionMetrics\nprocessing_time_ms\nloaded_entities"]
     end
 
     subgraph external["External Dependencies"]
         insightface_weights["InsightFace weights / providers"]
         embeddings_file["Roster embeddings JSON"]
-        settings_yaml["recognition_core/config/settings.yaml + env"]
+        roster_index["RosterService.merge()\n(synced entries)"]
+        settings_yaml["recognition_core/config/settings.yaml\nshared/settings.yaml"]
+        cache_dirs["HF_HOME / TORCH_HOME"]
     end
 
     recognition_port --> recognition_service
+    diagnostics_port --> recognition_service
     recognition_service --> recognition_entities
     recognition_service --> recognition_settings
+    recognition_service --> maintenance_tasks
     recognition_service --> model_port
     recognition_service --> embedding_port
+    recognition_service --> metrics_helper
 
     model_port --> insightface_adapter
     embedding_port --> embedding_router
+    embedding_router --> reload_scheduler
+    maintenance_tasks --> embedding_router
+    maintenance_tasks --> metrics_helper
 
     insightface_adapter --> insightface_weights
     embedding_router --> embeddings_file
+    embedding_router --> roster_index
     recognition_settings --> settings_yaml
+    recognition_settings --> cache_dirs
 
     classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
     classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px
     classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
     classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class ports,recognition_port,model_port,embedding_port portsClass
-    class domain,recognition_service,recognition_entities,recognition_settings domainClass
-    class adapters,insightface_adapter,embedding_router adapterClass
-    class external,insightface_weights,embeddings_file,settings_yaml externalClass
+    class ports,recognition_port,diagnostics_port,model_port,embedding_port portsClass
+    class domain,recognition_service,recognition_entities,recognition_settings,maintenance_tasks domainClass
+    class adapters,insightface_adapter,embedding_router,reload_scheduler,metrics_helper adapterClass
+    class external,insightface_weights,embeddings_file,roster_index,settings_yaml,cache_dirs externalClass

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ContextAltText\Recognition;
 
+use ContextAltText\Roster\RosterTaxonomy;
 use function array_filter;
 use function array_flip;
 use function array_intersect_key;
@@ -38,7 +39,7 @@ class RecognitionObservationRepository
 {
     private const META_KEY = '_context_alt_text_recognition_observations';
     private const INDEX_OPTION = 'cat_recognition_observation_index';
-    private const TAG_TAXONOMY = 'post_tag';
+    private const TAG_TAXONOMY = RosterTaxonomy::TAXONOMY;
     private const TAG_PREFIX = 'cat-recognition-';
 
     /**
@@ -722,5 +723,4 @@ class RecognitionObservationRepository
             update_post_meta($attachmentId, '_cat_recognition_roster_ids', $remoteIds);
         }
     }
-
 }

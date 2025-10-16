@@ -1,44 +1,33 @@
 flowchart TD
-    Start([Plugin Loaded]) --> Scan[MissingAltTextScanner handles initial scan]
-    Scan --> Summary[DashboardMetricsService stores summary counts]
-    Summary --> AdminBootstrap[Admin SPA enqueued on dashboard/workbench routes]
-    AdminBootstrap --> Localize[ContextAltTextAdmin payload includes workbench.items]
-    Localize --> WorkbenchUI[Workbench App mounts]
-    WorkbenchUI --> dashboardUI[Dashboard route]
-    WorkbenchUI --> workbench[Alt-Text Workbench route]
-    WorkbenchUI --> rosterUI[Roster Manager route]
-    WorkbenchUI --> automationUI[Automation Queue route]
+    Start([Admin opens Workbench]) --> SelectMedia{Select attachments}
+    SelectMedia --> TriggerRecognition[Click Run Recognition]
+    
+    TriggerRecognition --> RecognitionRequest[POST /recognition/analyze]
+    RecognitionRequest --> BackendAnalyze[Backend: /api/v0/analyze-scene]
+    BackendAnalyze --> RecognitionPipeline[Face detection + roster matching]
+    
+    RecognitionPipeline --> PersistObs[Store observations in post_meta]
+    PersistObs --> RefreshWorkbench[Workbench refreshes with results]
+    
+    RefreshWorkbench --> ReviewObs{Review observations?}
+    ReviewObs -->|Yes| RosterManager[Open Roster Manager]
+    ReviewObs -->|No| SelectMedia
+    
+    RosterManager --> ObservationPanel[View pending observations]
+    ObservationPanel --> ResolveObs{Resolve observation}
+    
+    ResolveObs -->|Create new entry| CreateEntry[POST /roster]
+    ResolveObs -->|Assign existing| AssignEntry[PATCH /observations/id]
+    ResolveObs -->|Dismiss| DismissObs[Mark as dismissed]
+    
+    CreateEntry --> SyncBackend[Sync with backend roster]
+    SyncBackend --> AutoAssign[Auto-assign matching observations]
+    AutoAssign --> ObservationPanel
+    
+    AssignEntry --> ObservationPanel
+    DismissObs --> ObservationPanel
+    
+    ObservationPanel --> Done([Observations resolved])
 
-    workbench --> selectMedia{Attachments selected?}
-    selectMedia -- yes --> recognitionRequest[POST /wp-json/context-alt-text/v1/recognition/analyze]
-    backendAnalyze(["/api/v0/analyze-scene"])
-    recognitionRequest --> backendAnalyze
-    backendAnalyze --> recognitionPipeline[SceneAnalysisService + FaceRecognitionService]
-    recognitionPipeline --> rosterMatches[Matches + observations persisted]
-    rosterMatches --> storeObs[RecognitionObservationRepository::persistObservations]
-    storeObs --> workbenchRefresh[useWorkbenchMedia refetch]
-    workbenchRefresh --> workbench
-
-    rosterUI --> observationPanel[RosterObservationsPanel]
-    observationPanel --> autoAssign[RosterObservationManager::autoAssignPending]
-    autoAssign --> observationUpdates[RecognitionObservationRepository updates]
-    observationPanel --> manualResolve{Operator assigns roster match?}
-    manualResolve -- yes --> resolveRequest[POST /wp-json/context-alt-text/v1/roster/resolve]
-    rosterDomain(["Domain\\Roster\\RosterService create/update"])
-    recognitionServiceAPI(["/api/v0/roster/*"])
-    resolveRequest --> rosterDomain
-    rosterDomain --> recognitionServiceAPI
-    reloadEmbeddings(["POST /api/v0/service/reload-embeddings"])
-    recognitionServiceAPI --> reloadEmbeddings
-    reloadEmbeddings --> embeddingRouter[Embedding cache refreshed]
-    embeddingRouter --> backendAnalyze
-
-    automationUI --> automationJobs["Background jobs (cron + queue)"]
-    automationJobs --> recognitionServiceAPI
-    automationJobs --> recognitionRequest
-
-    dashboardUI --> dashboardHooks[React Query hooks /dashboard/*]
-    dashboardHooks --> recognitionRequest
-
-    note["Roster CRUD now runs through WP services + backend API; SPA exposes review + assignment with keyboard-first flows."]
-    rosterUI -. accessibility overlays .- note
+    note1["Recognition creates observations for unmatched faces.<br/>Operator resolves observations in Roster Manager.<br/>New roster entries auto-sync to backend."]
+    RosterManager -.- note1

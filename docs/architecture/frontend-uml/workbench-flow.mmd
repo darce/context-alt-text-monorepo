@@ -26,18 +26,18 @@ flowchart TD
         mediaApi[wp-json/context-alt-text/v1/workbench/media]
         recognitionApi[wp-json/context-alt-text/v1/recognition/analyze]
         observationApi[wp-json/cat/v1/observations]
-        observationUpdateApi[wp-json/cat/v1/observations/{id}]
+        observationUpdateApi[wp-json/cat/v1/observations/id]
         bulkAltTextApi[wp-json/context-alt-text/v1/alt-text/bulk]
     end
 
     subgraph Backend["Recognition Service"]
-        analyzeScene[/api/v0/analyze-scene]
-        rosterEndpoints[/api/v0/roster/*]
-        reloadEmbeddings[/api/v0/service/reload-embeddings]
+        analyzeScene[api/v0/analyze-scene]
+        rosterEndpoints[api/v0/roster/*]
+        reloadEmbeddings[api/v0/service/reload-embeddings]
     end
 
     subgraph BackendState["WP Services"]
-        rosterService[Domain\\Roster\\RosterService]
+        rosterService[RosterService]
         observationManager[RosterObservationManager]
         jobService[RecognitionJobService]
     end

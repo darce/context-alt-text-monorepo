@@ -8,6 +8,9 @@ Repo coordination docs, roadmaps, and UML diagrams live under `docs/architecture
 - `docs/architecture/rules/tasks.md` — Current sprint tasks, recognition-service backlog prompts, cross-team coordination
 - `docs/architecture/rules/roadmap-v3.md` — MVP roadmap and epic status
 - `docs/architecture/rules/recognition-service-tasks.md` — Action plan for InsightFace backend integration
+- `docs/architecture/rules/roster_taxonomy_guide.md` — Roster taxonomy system, WP-CLI commands, admin operations
+- `docs/architecture/rules/roster_nuclear_reset_guide.md` — Development nuclear reset command (destructive data cleanup)
+- `docs/architecture/rules/roster_cli_quick_reference.md` — Quick reference for all WP-CLI roster commands
 - `docs/architecture/backend-uml/` — Backend service diagrams (HF recognition stack)
 - `docs/architecture/frontend-uml/` — Frontend/plugin sequence & class diagrams
 

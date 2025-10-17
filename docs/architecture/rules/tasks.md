@@ -19,6 +19,27 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 - [x] Document resulting structure in `docs/architecture/rules/instructions.md` and root index
 - [ ] Verify `git status` is clean and run full test suites post-move (`composer test`, `npx vitest run`, `pytest`)
 
+## Critical Tech Debt Remediation (Do Immediately)
+
+- [ ] **Consolidate REST API namespaces to `cat/v1`** — eliminate dual namespace technical debt
+  - **Context**: Currently using both `context-alt-text/v1` (legacy workbench, roster GET, settings) and `cat/v1` (newer observations, roster mutations, retry). This creates confusion, inconsistent endpoint discovery, and maintenance overhead.
+  - **Migration plan**:
+    - [ ] Audit all REST endpoints in `apps/wp-context-alt-text/src/Api/Api.php` and categorize by current namespace
+    - [ ] Create migration branch `refactor/consolidate-rest-namespace`
+    - [ ] Register all endpoints under `cat/v1` namespace while maintaining `context-alt-text/v1` aliases for backward compatibility (deprecation period)
+    - [ ] Update Admin.php endpoint configuration to use `cat/v1` URLs (lines 230-270)
+    - [ ] Update all frontend hooks (`useRoster`, `useRecognitionObservations`, `useWorkbenchMedia`, etc.) to target `cat/v1`
+    - [ ] Add deprecation notices to `context-alt-text/v1` endpoints with sunset timeline (e.g., 2 releases)
+    - [ ] Update API documentation, OpenAPI spec, and integration tests to reflect consolidated namespace
+    - [ ] Run full test suite (PHPUnit + Vitest) to ensure no regressions
+    - [ ] After deprecation period, remove `context-alt-text/v1` aliases and update CHANGELOG
+  - **Files to modify**:
+    - `apps/wp-context-alt-text/src/Api/Api.php` (endpoint registration)
+    - `apps/wp-context-alt-text/src/Admin/Admin.php` (config localization)
+    - `apps/wp-context-alt-text/js/admin/hooks/*.ts` (fetch URLs)
+    - `apps/wp-context-alt-text/tests/**/*Test.php` (endpoint assertions)
+  - **Success criteria**: All REST endpoints accessible via `cat/v1`; frontend makes zero calls to `context-alt-text/v1`; documentation updated; tests green
+
 ## Cross-Service Integration Sync
 
 - [ ] Weekly handshake (15 min) to review contract diffs (`api/openapi.yaml` vs PHP DTOs) and backlog rollovers

@@ -359,7 +359,7 @@ wp cat-roster status
 wp cat-roster sync
 
 # Configuration
-wp option get context_alt_text_recognition_settings --format=json
+wp option get cat_settings --format=json
 ```
 
 **Browser Testing:**

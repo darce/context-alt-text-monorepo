@@ -147,9 +147,12 @@ class FeatureFlagsTest extends TestCase
     public function test_recognizes_service_configured_via_database_option(): void
     {
         // Configure via WordPress option (database)
-        $GLOBALS['__cat_options']['context_alt_text_recognition_settings'] = [
-            'base_url' => 'http://localhost:7860',
-            'timeout_ms' => 30000,
+        $GLOBALS['__cat_options']['cat_settings'] = [
+            'recognition' => [
+                'baseUrl' => 'http://localhost:7860',
+                'timeoutMs' => 30000,
+                'enabled' => true,
+            ],
         ];
 
         $featureFlags = new FeatureFlags();

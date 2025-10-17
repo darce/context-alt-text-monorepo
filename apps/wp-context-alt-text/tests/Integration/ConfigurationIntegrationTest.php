@@ -101,11 +101,14 @@ class ConfigurationIntegrationTest extends TestCase
     public function test_environment_variables_take_priority_over_database(): void
     {
         // Set database options
-        $GLOBALS['__cat_options']['context_alt_text_recognition_settings'] = [
-            'base_url' => 'http://from-database.local',
-            'api_key' => 'db-key',
-            'timeout_ms' => 20000,
-            'model_profile' => 'db-profile',
+        $GLOBALS['__cat_options']['cat_settings'] = [
+            'recognition' => [
+                'baseUrl' => 'http://from-database.local',
+                'apiKey' => 'db-key',
+                'timeoutMs' => 20000,
+                'modelProfile' => 'db-profile',
+                'enabled' => true,
+            ],
         ];
 
         // Set environment variables
@@ -218,8 +221,10 @@ class ConfigurationIntegrationTest extends TestCase
         Env::load('/non/existent/.env');
 
         // Settings should still work with database fallback
-        $GLOBALS['__cat_options']['context_alt_text_recognition_settings'] = [
-            'base_url' => 'http://from-database.local',
+        $GLOBALS['__cat_options']['cat_settings'] = [
+            'recognition' => [
+                'baseUrl' => 'http://from-database.local',
+            ],
         ];
 
         $settings = new RecognitionSettings();

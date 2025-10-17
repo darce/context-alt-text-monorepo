@@ -312,8 +312,8 @@ wp option update cat_settings \
 **Goal:** Eliminate 260+ lines of duplication in frontend hooks
 
 **Progress Tracker:**
-- [ ] Task 2.1: Create Shared Normalization Utilities
-- [ ] Task 2.2: Create Shared HTTP Utilities
+- [x] Task 2.1: Create Shared Normalization Utilities
+- [x] Task 2.2: Create Shared HTTP Utilities
 
 ---
 
@@ -321,7 +321,7 @@ wp option update cat_settings \
 **Priority:** 🔴 Critical  
 **Time:** 2 hours  
 **Impact:** -200 lines  
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 
 **Context:** [FRONTEND_AUDITS.md - Duplicated Normalization Logic](apps/wp-context-alt-text/FRONTEND_AUDITS.md#-1-duplicated-normalization-logic)
 
@@ -379,7 +379,7 @@ utils/
 **Priority:** 🔴 Critical  
 **Time:** 1 hour  
 **Impact:** -60 lines  
-**Status:** [ ] Not Started
+**Status:** [x] Complete
 
 **Context:** [FRONTEND_AUDITS.md - Duplicated URL Building](apps/wp-context-alt-text/FRONTEND_AUDITS.md#-2-duplicated-url-building-logic)
 

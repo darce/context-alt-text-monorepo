@@ -232,10 +232,10 @@ Implementation:
 * [x] Analytics instrumentation (IntersectionObserver, event emission)
 * [x] Comprehensive test coverage (Vitest + Testing Library)
 * [ ] Storybook stories for all dashboard components
-* [ ] REST endpoint for live Coverage Card refresh (`/wp-json/context-alt-text/v1/dashboard/coverage`)
-* [ ] REST endpoint for Activity Card data (`/wp-json/context-alt-text/v1/dashboard/activity`)
-* [ ] REST endpoint for Recognition Insights (`/wp-json/context-alt-text/v1/dashboard/recognition`)
-* [ ] REST endpoint for Automation Pipeline status (`/wp-json/context-alt-text/v1/dashboard/automation`)
+* [ ] REST endpoint for live Coverage Card refresh (`/wp-json/cat/v1/dashboard/coverage`)
+* [ ] REST endpoint for Activity Card data (`/wp-json/cat/v1/dashboard/activity`)
+* [ ] REST endpoint for Recognition Insights (`/wp-json/cat/v1/dashboard/recognition`)
+* [ ] REST endpoint for Automation Pipeline status (`/wp-json/cat/v1/dashboard/automation`)
 * [ ] PHP service layer: `DashboardMetricsService` aggregating data from domain services
 * [ ] First-run scan integration (<30s after activation)
 * [ ] Persistent user preferences (dismissed notices, view settings)

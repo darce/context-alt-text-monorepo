@@ -5,6 +5,7 @@ export interface DashboardEndpoints {
     recognitionJob?: string;
     recognitionObservations?: string;
     recognitionObservationUpdate?: string;
+    observationsRetry?: string;
     rosterEntries?: string;
     rosterSync?: string;
     settingsRecognition?: string;

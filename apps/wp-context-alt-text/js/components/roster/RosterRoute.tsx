@@ -111,10 +111,24 @@ const getRosterConfidenceValue = (
     record: RecognitionObservationRecord,
     top: RecognitionObservationCandidate | null,
 ): number | null => {
+    // Only show confidence if there's an actual roster match or valid candidates
+    const hasRosterMatch = Boolean(record?.roster?.remoteId) || Boolean(record?.match?.isMatch);
+    const hasValidCandidates = Array.isArray(record?.candidates) && record.candidates.length > 0;
+
+    if (!hasRosterMatch && !hasValidCandidates) {
+        return null;
+    }
+
+    // Prioritize roster similarity (recognition match score) over detection confidence
+    const matchSimilarity = normalizeConfidence(record?.match?.similarity);
+    if (matchSimilarity !== null && matchSimilarity > 0) {
+        return matchSimilarity;
+    }
+
     const candidates = [
         normalizeConfidence(record?.match?.confidence),
         normalizeConfidence(record?.matchConfidence),
-        normalizeConfidence(record?.confidence),
+        normalizeConfidence(top?.similarity),
         normalizeConfidence(top?.confidence),
     ];
 
@@ -124,7 +138,7 @@ const getRosterConfidenceValue = (
         }
     }
 
-    return candidates.find((value): value is number => value !== null) ?? null;
+    return null;
 };
 
 const formatPercentage = (value: number | null | undefined): string | null => {
@@ -383,10 +397,10 @@ const RosterObservationsPanel = ({
                             <button
                                 type="button"
                                 className="cat-button cat-button--subtle"
-                                onClick={onRefresh}
+                                onClick={() => void onRefresh()}
                                 disabled={isLoading}
                             >
-                                {isLoading ? __("Refreshing…", "context-alt-text") : __("Refresh queue", "context-alt-text")}
+                                {isLoading ? __("Re-running…", "context-alt-text") : __("Re-run recognition", "context-alt-text")}
                             </button>
                         </div>
                     </header>
@@ -963,18 +977,53 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
     const handleSubmit = async (values: RosterFormValues) => {
         try {
             setIsSubmitting(true);
-            const action = values.remoteId ? updateEntry : createEntry;
-            const entry = await action(values);
 
-            if (entry) {
-                dispatchNotice("success", __("Roster entry saved.", "context-alt-text"), {
-                    id: "cat-roster-save",
-                });
-                setEditing(null);
+            if (values.remoteId) {
+                // Update existing entry
+                const entry = await updateEntry(values);
+                if (entry) {
+                    dispatchNotice("success", __("Roster entry saved.", "context-alt-text"), {
+                        id: "cat-roster-save",
+                    });
+                    setEditing(null);
+                } else {
+                    dispatchNotice("success", __("Roster entry processed.", "context-alt-text"), {
+                        id: "cat-roster-save-generic",
+                    });
+                }
             } else {
-                dispatchNotice("success", __("Roster entry processed.", "context-alt-text"), {
-                    id: "cat-roster-save-generic",
-                });
+                // Create new entry
+                const result = await createEntry(values);
+                const entry = result?.entry ?? null;
+                const autoMatched = result?.autoMatched ?? [];
+
+                if (entry) {
+                    const matchCount = autoMatched.length;
+                    if (matchCount > 0) {
+                        dispatchNotice(
+                            "success",
+                            sprintf(
+                                _n(
+                                    "Roster entry created and %d observation auto-matched.",
+                                    "Roster entry created and %d observations auto-matched.",
+                                    matchCount,
+                                    "context-alt-text"
+                                ),
+                                matchCount
+                            ),
+                            { id: "cat-roster-save" }
+                        );
+                    } else {
+                        dispatchNotice("success", __("Roster entry saved.", "context-alt-text"), {
+                            id: "cat-roster-save",
+                        });
+                    }
+                    setEditing(null);
+                } else {
+                    dispatchNotice("success", __("Roster entry processed.", "context-alt-text"), {
+                        id: "cat-roster-save-generic",
+                    });
+                }
             }
 
             if (observationPrompt) {
@@ -1180,9 +1229,26 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
                 entries={entries}
                 onCreate={handleObservationSelect}
                 onAssign={handleAssignToRoster}
-                onRefresh={() => {
-                    if (observations.hasEndpoint) {
-                        void observations.query.refetch();
+                onRefresh={async () => {
+                    if (!observations.hasEndpoint) {
+                        return;
+                    }
+
+                    try {
+                        // Trigger re-recognition for pending observations
+                        const result = await observations.retryRecognition();
+
+                        dispatchNotice("success", result.message, {
+                            id: "cat-observations-retry",
+                        });
+
+                        // Refetch after a delay to allow recognition jobs to start
+                        setTimeout(() => {
+                            void observations.query.refetch();
+                        }, 2000);
+                    } catch (error) {
+                        const message = error instanceof Error ? error.message : String(error);
+                        notifyError(message, { id: "cat-observations-retry-error" });
                     }
                 }}
             />
@@ -1275,7 +1341,7 @@ interface RosterObservationsPanelProps {
         attachment: RecognitionObservationAttachment,
         remoteId: string,
     ) => Promise<void> | void;
-    onRefresh: () => void;
+    onRefresh: () => void | Promise<void>;
 }
 
 // Duplicate implementation removed below. Single source of truth defined above.
@@ -1332,10 +1398,10 @@ interface RosterObservationsPanelProps {
                             <button
                                 type="button"
                                 className="cat-button cat-button--subtle"
-                                onClick={onRefresh}
+                                onClick={() => void onRefresh()}
                                 disabled={isLoading}
                             >
-                                {isLoading ? __("Refreshing…", "context-alt-text") : __("Refresh queue", "context-alt-text")}
+                                {isLoading ? __("Re-running…", "context-alt-text") : __("Re-run recognition", "context-alt-text")}
                             </button>
                         </div>
                     </header>

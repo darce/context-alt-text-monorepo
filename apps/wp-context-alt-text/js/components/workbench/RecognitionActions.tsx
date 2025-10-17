@@ -22,6 +22,8 @@ export interface RecognitionActionsProps {
     jobDetails?: RecognitionJobDetails | null;
     error?: RecognitionRequestError | null;
     onTriggerRecognition?: () => void;
+    onRetryRecognition?: () => void;
+    onResetRecognition?: () => void;
 }
 
 export const RecognitionActions = ({
@@ -33,6 +35,8 @@ export const RecognitionActions = ({
     jobDetails = null,
     error = null,
     onTriggerRecognition,
+    onRetryRecognition,
+    onResetRecognition,
 }: RecognitionActionsProps): React.JSX.Element => {
     const config = React.useMemo(() => getDashboardConfig(), []);
     const rosterEnabled = Boolean(config.featureFlags?.rosterEnabled);
@@ -214,6 +218,17 @@ export const RecognitionActions = ({
         );
     }, [error]);
 
+    const handleRetryClick = React.useCallback(() => {
+        if (onResetRecognition) {
+            onResetRecognition();
+        }
+        if (onRetryRecognition) {
+            onRetryRecognition();
+        }
+    }, [onResetRecognition, onRetryRecognition]);
+
+    const showRetryButton = Boolean(error && onRetryRecognition && !isSubmitting);
+
     return (
         <section
             className="cat-workbench__panel"
@@ -296,6 +311,16 @@ export const RecognitionActions = ({
                 <div className="cat-alert cat-alert--error" role="alert">
                     <span>{errorMessage}</span>
                     {errorRejectedMessage && <span className="cat-alert__detail">{errorRejectedMessage}</span>}
+                    {showRetryButton && (
+                        <Button
+                            variant="default"
+                            size="sm"
+                            onClick={handleRetryClick}
+                            className="cat-alert__action"
+                        >
+                            {__("Retry", "context-alt-text")}
+                        </Button>
+                    )}
                 </div>
             )}
 
@@ -329,6 +354,16 @@ const RecognitionResultRow = ({
     const summary = observation.summary;
     const unresolved = Math.max(summary.needsReview, summary.total - summary.matched);
     const hasObservations = observation.observations.length > 0;
+
+    const matchedObservations = React.useMemo(
+        () => observation.observations.filter((record) => record.status === "matched"),
+        [observation.observations],
+    );
+
+    const needsReviewObservations = React.useMemo(
+        () => observation.observations.filter((record) => record.status === "needs_review"),
+        [observation.observations],
+    );
 
     return (
         <li className="cat-recognition__result" data-attachment-id={observation.attachmentId}>
@@ -367,16 +402,48 @@ const RecognitionResultRow = ({
                 </div>
             </dl>
             {hasObservations && (
-                <ul className="cat-recognition__observation-list">
-                    {observation.observations.map((record) => (
-                        <RecognitionObservationRow
-                            key={record.observationId}
-                            record={record}
-                            rosterEnabled={rosterEnabled}
-                            attachmentId={observation.attachmentId}
-                        />
-                    ))}
-                </ul>
+                <div className="cat-recognition__observation-groups">
+                    {matchedObservations.length > 0 && (
+                        <section
+                            className="cat-recognition__observation-section"
+                            aria-label={__("Matched observations", "context-alt-text")}
+                        >
+                            <h4 className="cat-recognition__observation-section-title">
+                                {__("Matched", "context-alt-text")}
+                            </h4>
+                            <ul className="cat-recognition__observation-list">
+                                {matchedObservations.map((record) => (
+                                    <RecognitionObservationRow
+                                        key={record.observationId}
+                                        record={record}
+                                        rosterEnabled={rosterEnabled}
+                                        attachmentId={observation.attachmentId}
+                                    />
+                                ))}
+                            </ul>
+                        </section>
+                    )}
+                    {needsReviewObservations.length > 0 && (
+                        <section
+                            className="cat-recognition__observation-section"
+                            aria-label={__("Observations needing review", "context-alt-text")}
+                        >
+                            <h4 className="cat-recognition__observation-section-title">
+                                {__("Needs Review", "context-alt-text")}
+                            </h4>
+                            <ul className="cat-recognition__observation-list">
+                                {needsReviewObservations.map((record) => (
+                                    <RecognitionObservationRow
+                                        key={record.observationId}
+                                        record={record}
+                                        rosterEnabled={rosterEnabled}
+                                        attachmentId={observation.attachmentId}
+                                    />
+                                ))}
+                            </ul>
+                        </section>
+                    )}
+                </div>
             )}
         </li>
     );

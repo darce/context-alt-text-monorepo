@@ -2,6 +2,12 @@ import React from "react";
 import { __, sprintf } from "@wordpress/i18n";
 
 import { getDashboardConfig } from "@/admin/dashboardData";
+import {
+    toUniqueNumericIds,
+    toFiniteNumber,
+    toNullableTimestamp,
+    ensureString,
+} from "@/admin/utils/normalization";
 
 export interface RecognitionJobSummary {
     jobId: string;
@@ -107,48 +113,6 @@ export interface RecognitionJobDetails {
 }
 
 type PollState = "idle" | "polling";
-
-const toUniqueNumericIds = (ids: (number | string)[]): number[] => {
-    const normalized = ids
-        .map((value) => Number(value))
-        .filter((value) => Number.isFinite(value) && value > 0);
-
-    return Array.from(new Set(normalized));
-};
-
-const toFiniteNumber = (value: unknown, fallback = 0): number => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) ? numeric : fallback;
-};
-
-const toNullableTimestamp = (value: unknown): number | null => {
-    const numeric = Number(value);
-    return Number.isFinite(numeric) && numeric > 0 ? numeric : null;
-};
-
-const ensureString = (value: unknown): string => {
-    if (typeof value === "string") {
-        return value;
-    }
-
-    if (value === undefined || value === null) {
-        return "";
-    }
-
-    if (typeof value === "number" || typeof value === "boolean") {
-        return String(value);
-    }
-
-    if (typeof value === "bigint") {
-        return value.toString();
-    }
-
-    if (value instanceof Date) {
-        return value.toISOString();
-    }
-
-    return "";
-};
 
 const normalizeObservationStatus = (
     value: unknown,

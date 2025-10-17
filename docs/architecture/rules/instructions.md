@@ -35,7 +35,7 @@ This repo follows the **WordPress AI Building Blocks**:
 - **Abilities API** → declare what this plugin can do (schemas, permissions, execute callbacks)
 - **MCP Adapter** → exposes those abilities as MCP tools over **Streamable HTTP** and **REST**
 - **PHP AI Client SDK** → provider-agnostic LLM/SLM access for captioning, embeddings
-- **WordPress REST API** → canonical transport for admin surfaces; all SPA data flows through REST routes (registered under `context-alt-text/v1/**`) and localized boot payloads.
+- **WordPress REST API** → canonical transport for admin surfaces; all SPA data flows through REST routes (registered under `cat/v1/**`) and localized boot payloads.
 
 ## 1) Local Setup (LocalWP)
 

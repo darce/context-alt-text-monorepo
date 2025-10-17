@@ -35,7 +35,7 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 
 ### Search & Filtering
 
-- [x] Wire media search input to custom REST endpoint `/context-alt-text/v1/workbench/media`
+- [x] Wire media search input to custom REST endpoint `/cat/v1/workbench/media`
 - [x] Server-backed search integrated with WP_Query search functionality
 - [x] React Query caching with filter state preservation during search
 - [x] Supports `search`, `status`, pagination query params
@@ -100,7 +100,7 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 **MVP Recognition Flow** (Backend-Only Architecture per Roadmap):
 
 1. Workbench triggers recognition via `onTriggerRecognition` callback
-2. WP REST endpoint `/context-alt-text/v1/recognition/analyze`
+2. WP REST endpoint `/cat/v1/recognition/analyze`
 3. Backend Recognition Service processes request (`/api/v0/analyze-scene`)
 4. **All face detection, recognition, and roster matching happens in backend**
 5. Results stored as observations in WP database
@@ -216,18 +216,18 @@ Admin surface for prioritizing attachments missing descriptive text, triaging re
 
 ### Required Endpoints
 
-- [x] `GET /wp-json/context-alt-text/v1/workbench/media` (implemented)
+- [x] `GET /wp-json/cat/v1/workbench/media` (implemented)
   - Query params: `search`, `status`, `page`, `per_page`
   - Returns: paginated media items with alt-text status
-- [ ] `POST /wp-json/context-alt-text/v1/alt-text/bulk`
+- [ ] `POST /wp-json/cat/v1/alt-text/bulk`
   - Body: `{ action: 'generate'|'regenerate'|'mark_reviewed', attachment_ids: number[] }`
   - Returns: job_id or immediate results for small batches
-- [ ] `POST /wp-json/context-alt-text/v1/recognition/analyze`
+- [ ] `POST /wp-json/cat/v1/recognition/analyze`
   - Body: `{ attachment_ids: number[] }`
   - Returns: job_id or immediate analysis results
-- [ ] `GET /wp-json/context-alt-text/v1/workbench/filters`
+- [ ] `GET /wp-json/cat/v1/workbench/filters`
   - Returns: available filter options and counts
-- [ ] `PUT /wp-json/context-alt-text/v1/user-preferences`
+- [ ] `PUT /wp-json/cat/v1/user-preferences`
   - Body: `{ layout: 'grid'|'list', columns: string[], auto_save_interval: number }`
   - Returns: updated preferences
 

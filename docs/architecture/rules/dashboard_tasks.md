@@ -30,7 +30,7 @@ All components are React/TypeScript with comprehensive test coverage, accessibil
 
 ### Backend Work
 * [ ] PHP `HeroStatusService` calculates current state
-* [ ] REST endpoint `/wp-json/context-alt-text/v1/dashboard/hero` (optional live refresh)
+* [ ] REST endpoint `/wp-json/cat/v1/dashboard/hero` (optional live refresh)
 * [ ] Hook into first-run scan completion to update state
 * [ ] Admin notice integration for critical states
 
@@ -122,7 +122,7 @@ Shows recent plugin activity timestamps (alt-text generation, recognition jobs, 
 * [ ] Real-time updates for new activities
 
 ### Backend Work
-* [ ] Create `GET /wp-json/context-alt-text/v1/dashboard/activity` endpoint
+* [ ] Create `GET /wp-json/cat/v1/dashboard/activity` endpoint
 * [ ] Return array of activity objects with type, message, timestamp, user, attachment_id
 * [ ] Add pagination support (?page=1&per_page=10)
 * [ ] Add filtering by activity type (?type=generation,recognition,manual)
@@ -159,7 +159,7 @@ Shows recognition insights: pending faces/brands, unresolved matches, confidence
 * [ ] "Sync Roster" action button
 
 ### Backend Work
-* [ ] Create `GET /wp-json/context-alt-text/v1/dashboard/recognition` endpoint
+* [ ] Create `GET /wp-json/cat/v1/dashboard/recognition` endpoint
 * [ ] Return counts of pending detections, unresolved matches
 * [ ] Include sample of top unresolved matches with thumbnails
 * [ ] Add average confidence score calculation
@@ -196,7 +196,7 @@ Shows pipeline status: queued jobs, running jobs, completed jobs, error states.
 * [ ] Retry action for failed jobs
 
 ### Backend Work
-* [ ] Create `GET /wp-json/context-alt-text/v1/dashboard/automation` endpoint
+* [ ] Create `GET /wp-json/cat/v1/dashboard/automation` endpoint
 * [ ] Return job counts by status (queued, running, completed, failed)
 * [ ] Include running jobs with progress percentages
 * [ ] Include failed jobs with error messages
@@ -331,7 +331,7 @@ Call-to-action footer with primary action buttons and quick links.
 
 ## 10. Dependencies
 
-* **WordPress REST API**: All dashboard endpoints under `/wp-json/context-alt-text/v1/dashboard/*`
+* **WordPress REST API**: All dashboard endpoints under `/wp-json/cat/v1/dashboard/*`
 * **React Query**: For data fetching, caching, and synchronization
 * **Action Scheduler**: For job queue metrics (AutomationCard)
 * **Custom Tables**: Recognition observations, activity log

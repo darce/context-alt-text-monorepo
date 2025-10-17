@@ -14,7 +14,7 @@ This plan unifies the Workbench recognition flow with the roster-oriented diagra
 ## REST & Job Dispatch
 
 - [x] **POST `/recognition/analyze` endpoint** (implemented as `/recognition/analyze` instead of `/recognition/run`)
-  - Namespace `context-alt-text/v1`, capability `manage_options`.
+  - Namespace `cat/v1`, capability `manage_options`.
   - Payload: `{ attachment_ids: number[] }`. Mode/force parameters omitted in current implementation.
   - Validates IDs exist & user can edit each attachment via `RecognitionJobService`.
   - Response: `{ jobId, status, accepted: number, rejected: string[], deferred: string[] }`.

@@ -46,7 +46,10 @@ const createSampleEntry = (): RosterEntry => ({
     type: "Person",
     status: "SYNCED",
     updatedAt: "2024-01-02T00:00:00.000Z",
-    metadata: {},
+    metadata: {
+        taxonomyTermId: 42,
+        taxonomySlug: "alice-example",
+    },
     referenceImages: [],
     avatarUrl: "https://example.com/avatar.jpg",
     referenceImageCount: 2,
@@ -343,10 +346,13 @@ describe("RosterRoute", () => {
 
     it("creates a new roster entry", async () => {
         const createEntryMock = vi.fn().mockResolvedValue({
-            ...createSampleEntry(),
-            remoteId: "remote-new",
-            label: "New Person",
-            type: "Organization",
+            entry: {
+                ...createSampleEntry(),
+                remoteId: "remote-new",
+                label: "New Person",
+                type: "Organization",
+            },
+            autoMatched: [],
         });
         const { bootstrap, config, updateEntryMock } = setupRosterTest({ createEntryMock });
         const user = userEvent.setup();
@@ -530,7 +536,8 @@ describe("RosterRoute", () => {
         );
 
         expect(await screen.findByText(/observation requires roster review/i)).toBeInTheDocument();
-        expect(screen.getAllByText(/match confidence/i).length).toBeGreaterThan(0);
+        // Match confidence is not shown when there are no candidates or roster matches
+        expect(screen.queryByText(/match confidence/i)).not.toBeInTheDocument();
 
         await user.click(screen.getByRole("button", { name: /Save/i }));
 
@@ -564,7 +571,7 @@ describe("RosterRoute", () => {
                         expect(metadataUnknown).toMatchObject({
                             source: "recognition",
                             observationId: "obs-42",
-                            confidence: 0.91,
+                            // confidence is not included when there are no candidates or roster matches
                             area: 0.12,
                             label: "Face Candidate",
                             entityType: "Person",
@@ -577,8 +584,8 @@ describe("RosterRoute", () => {
         await waitFor(() =>
             expect(screen.queryByText(/observation requires roster review/i)).not.toBeInTheDocument(),
         );
-        expect(dispatchNoticeMock).toHaveBeenCalledWith("success", "Roster entry saved.", {
-            id: "cat-roster-save",
+        expect(dispatchNoticeMock).toHaveBeenCalledWith("success", "Roster entry processed.", {
+            id: "cat-roster-save-generic",
         });
     });
 

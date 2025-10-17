@@ -45,6 +45,8 @@ export interface UseRecognitionObservationsResult {
     canUpdateObservation: boolean;
     updateObservation: (args: UpdateObservationArgs) => Promise<RecognitionObservationAttachment>;
     isUpdating: boolean;
+    retryRecognition: () => Promise<{ success: boolean; submitted: number; message: string }>;
+    isRetrying: boolean;
 }
 
 const DEFAULT_PER_PAGE = 20;
@@ -456,11 +458,41 @@ export const useRecognitionObservations = ({ config, filters }: UseRecognitionOb
         },
     });
 
+    const retryRecognition = useMutation({
+        mutationFn: async () => {
+            if (!hasEndpoint) {
+                throw new Error("Observations endpoint is unavailable.");
+            }
+
+            const retryEndpoint = config.endpoints?.observationsRetry;
+            if (!retryEndpoint) {
+                throw new Error("Retry endpoint is not configured.");
+            }
+
+            const response = await fetch(retryEndpoint, {
+                method: "POST",
+                credentials: "same-origin",
+                headers: buildHeaders(config, true),
+            });
+
+            const data = await handleJsonResponse(await ensureOk(response));
+            return data as { success: boolean; submitted: number; message: string };
+        },
+        onSuccess: () => {
+            // Refresh observations after a delay to allow recognition jobs to start
+            setTimeout(() => {
+                refreshObservations();
+            }, 2000);
+        },
+    });
+
     return {
         query,
         hasEndpoint,
         canUpdateObservation,
         updateObservation: updateObservation.mutateAsync,
         isUpdating: updateObservation.isPending,
+        retryRecognition: retryRecognition.mutateAsync,
+        isRetrying: retryRecognition.isPending,
     };
 };

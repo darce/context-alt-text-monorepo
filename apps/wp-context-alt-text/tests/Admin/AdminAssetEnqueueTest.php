@@ -86,17 +86,17 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertSame('nonce-wp_rest', $config['restNonce']);
         self::assertIsArray($config['endpoints'] ?? null);
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/dashboard/coverage',
+            'http://example.test/wp-json/cat/v1/dashboard/coverage',
             $config['endpoints']['coverage'] ?? null
         );
         self::assertArrayHasKey('workbenchMedia', $config['endpoints']);
         self::assertSame('', $config['endpoints']['workbenchMedia']);
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/roster',
+            'http://example.test/wp-json/cat/v1/roster',
             $config['endpoints']['rosterEntries'] ?? null
         );
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/roster/sync',
+            'http://example.test/wp-json/cat/v1/roster/sync',
             $config['endpoints']['rosterSync'] ?? null
         );
         self::assertArrayHasKey('featureFlags', $config);
@@ -172,17 +172,17 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertSame('nonce-wp_rest', $config['restNonce']);
         self::assertIsArray($config['endpoints'] ?? null);
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/dashboard/coverage',
+            'http://example.test/wp-json/cat/v1/dashboard/coverage',
             $config['endpoints']['coverage'] ?? null
         );
         self::assertArrayHasKey('workbenchMedia', $config['endpoints']);
         self::assertSame('', $config['endpoints']['workbenchMedia']);
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/roster',
+            'http://example.test/wp-json/cat/v1/roster',
             $config['endpoints']['rosterEntries'] ?? null
         );
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/roster/sync',
+            'http://example.test/wp-json/cat/v1/roster/sync',
             $config['endpoints']['rosterSync'] ?? null
         );
         self::assertArrayHasKey('featureFlags', $config);
@@ -286,11 +286,11 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertTrue($config['featureFlags']['abilitiesEnabled']);
         self::assertTrue($config['featureFlags']['rosterEnabled']);
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/workbench/media',
+            'http://example.test/wp-json/cat/v1/workbench/media',
             $config['endpoints']['workbenchMedia'] ?? null
         );
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/roster',
+            'http://example.test/wp-json/cat/v1/roster',
             $config['endpoints']['rosterEntries'] ?? null
         );
 
@@ -339,7 +339,7 @@ final class AdminAssetEnqueueTest extends TestCase
         $config = $localized['config'] ?? null;
         self::assertIsArray($config);
         self::assertSame(
-            'http://example.test/wp-json/context-alt-text/v1/roster',
+            'http://example.test/wp-json/cat/v1/roster',
             $config['endpoints']['rosterEntries'] ?? null
         );
         self::assertArrayHasKey('featureFlags', $config);

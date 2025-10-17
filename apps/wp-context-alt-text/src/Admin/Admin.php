@@ -202,13 +202,13 @@ class Admin
         $featureFlags = $this->get_feature_flags_config();
 
         $coverageEndpoint = function_exists('rest_url')
-            ? rest_url('context-alt-text/v1/dashboard/coverage')
+            ? rest_url('cat/v1/dashboard/coverage')
             : '';
 
         $workbenchEnabled = $featureFlags['workbenchEnabled'] ?? false;
         $workbenchEndpoint = '';
         if ($workbenchEnabled && function_exists('rest_url')) {
-            $workbenchEndpoint = rest_url('context-alt-text/v1/workbench/media');
+            $workbenchEndpoint = rest_url('cat/v1/workbench/media');
         }
 
         $recognitionEnabled = $this->featureFlags->workbenchRecognitionEnabled();
@@ -232,8 +232,8 @@ class Admin
         $rosterSyncEndpoint = '';
 
         if ($recognitionEnabled && function_exists('rest_url')) {
-            $recognitionAnalyzeEndpoint = rest_url('context-alt-text/v1/recognition/analyze');
-            $recognitionJobEndpoint = rtrim(rest_url('context-alt-text/v1/recognition/job/'), '/') . '/';
+            $recognitionAnalyzeEndpoint = rest_url('cat/v1/recognition/analyze');
+            $recognitionJobEndpoint = rtrim(rest_url('cat/v1/recognition/job/'), '/') . '/';
         }
 
         // Observations endpoints available when recognition OR roster is enabled
@@ -248,8 +248,8 @@ class Admin
         }
 
         if ($rosterEnabled && function_exists('rest_url')) {
-            $rosterEndpoint = rest_url('context-alt-text/v1/roster');
-            $rosterSyncEndpoint = rest_url('context-alt-text/v1/roster/sync');
+            $rosterEndpoint = rest_url('cat/v1/roster');
+            $rosterSyncEndpoint = rest_url('cat/v1/roster/sync');
         }
 
         $settingsEndpoints = $this->get_settings_endpoints();
@@ -463,8 +463,8 @@ class Admin
         $recognitionTestEndpoint = '';
 
         if (function_exists('rest_url')) {
-            $recognitionEndpoint = rest_url('context-alt-text/v1/settings/recognition');
-            $recognitionTestEndpoint = rest_url('context-alt-text/v1/settings/recognition/test');
+            $recognitionEndpoint = rest_url('cat/v1/settings/recognition');
+            $recognitionTestEndpoint = rest_url('cat/v1/settings/recognition/test');
         }
 
         return [

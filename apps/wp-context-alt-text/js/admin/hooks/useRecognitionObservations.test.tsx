@@ -8,7 +8,7 @@ import { useRecognitionObservations } from "@/admin/hooks/useRecognitionObservat
 import type { AdminConfig } from "@/admin/types";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 
-const OBSERVATIONS_ENDPOINT = "http://example.test/wp-json/context-alt-text/v1/observations";
+const OBSERVATIONS_ENDPOINT = "http://example.test/wp-json/cat/v1/observations";
 
 const createWrapper = () => {
     const client = new QueryClient({

@@ -100,10 +100,44 @@ class Api
         add_action('rest_api_init', [$this, 'register_routes']);
     }
 
+    /**
+     * Register an endpoint under cat/v1 with a deprecated context-alt-text/v1 alias
+     *
+     * @param string $route The route pattern (e.g., '/settings/recognition')
+     * @param array<string,mixed> $args The endpoint configuration
+     */
+    private function register_endpoint_with_alias(string $route, array $args): void
+    {
+        // Register primary endpoint under cat/v1
+        register_rest_route('cat/v1', $route, $args);
+
+        // Register deprecated alias under context-alt-text/v1
+        $deprecatedArgs = $args;
+        $originalCallback = $args['callback'] ?? null;
+
+        if ($originalCallback !== null) {
+            $deprecatedArgs['callback'] = function ($request) use ($originalCallback) {
+                // Log deprecation notice
+                if (function_exists('error_log')) {
+                    error_log(sprintf(
+                        '[CAT] Deprecated API call: context-alt-text/v1%s - Use cat/v1%s instead',
+                        $request->get_route(),
+                        str_replace('/context-alt-text/v1', '', $request->get_route())
+                    ));
+                }
+
+                // Call original callback
+                return call_user_func($originalCallback, $request);
+            };
+        }
+
+        register_rest_route('context-alt-text/v1', $route, $deprecatedArgs);
+    }
+
     public function register_routes(): void
     {
-        register_rest_route(
-            'context-alt-text/v1',
+        // Settings endpoints
+        $this->register_endpoint_with_alias(
             '/settings/recognition',
             [
                 'methods' => 'GET',
@@ -112,8 +146,7 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/settings/recognition',
             [
                 'methods' => ['POST', 'PUT', 'PATCH'],
@@ -123,8 +156,7 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/settings/recognition/test',
             [
                 'methods' => 'POST',
@@ -133,8 +165,8 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        // Dashboard endpoints
+        $this->register_endpoint_with_alias(
             '/dashboard/coverage',
             [
                 'methods' => 'GET',
@@ -144,8 +176,7 @@ class Api
         );
 
         if ($this->featureFlags->workbenchEnabled()) {
-            register_rest_route(
-                'context-alt-text/v1',
+            $this->register_endpoint_with_alias(
                 '/workbench/media',
                 [
                     'methods' => 'GET',
@@ -157,8 +188,7 @@ class Api
         }
 
         if ($this->featureFlags->workbenchRecognitionEnabled()) {
-            register_rest_route(
-                'context-alt-text/v1',
+            $this->register_endpoint_with_alias(
                 '/recognition/analyze',
                 [
                     'methods' => 'POST',
@@ -168,8 +198,7 @@ class Api
                 ]
             );
 
-            register_rest_route(
-                'context-alt-text/v1',
+            $this->register_endpoint_with_alias(
                 '/recognition/job/(?P<id>[a-zA-Z0-9\-]+)',
                 [
                     'methods' => 'GET',
@@ -178,6 +207,7 @@ class Api
                 ]
             );
 
+            // Observations endpoints (already on cat/v1, no alias needed)
             register_rest_route(
                 'cat/v1',
                 '/observations',
@@ -622,8 +652,7 @@ class Api
 
     private function register_roster_routes(): void
     {
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/roster',
             [
                 'methods' => 'GET',
@@ -633,8 +662,7 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/roster',
             [
                 'methods' => 'POST',
@@ -644,8 +672,7 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/roster/sync',
             [
                 'methods' => 'POST',
@@ -654,8 +681,7 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/roster/(?P<id>[a-zA-Z0-9\-_]+)',
             [
                 'methods' => ['PATCH', 'POST', 'PUT'],
@@ -665,8 +691,7 @@ class Api
             ]
         );
 
-        register_rest_route(
-            'context-alt-text/v1',
+        $this->register_endpoint_with_alias(
             '/roster/(?P<id>[a-zA-Z0-9\-_]+)',
             [
                 'methods' => 'DELETE',

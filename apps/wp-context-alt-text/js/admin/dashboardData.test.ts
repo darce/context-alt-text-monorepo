@@ -58,7 +58,7 @@ describe("dashboardData", () => {
         const config: AdminConfig = {
             missingAltMediaUrl: "/wp-admin/upload.php",
             endpoints: {
-                coverage: "https://example.com/wp-json/context-alt-text/v1/dashboard/coverage",
+                coverage: "https://example.com/wp-json/cat/v1/dashboard/coverage",
             },
             restNonce: "nonce-wp_rest",
         };

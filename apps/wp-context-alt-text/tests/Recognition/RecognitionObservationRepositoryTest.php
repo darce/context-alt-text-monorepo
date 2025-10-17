@@ -192,13 +192,13 @@ final class RecognitionObservationRepositoryTest extends TestCase
             ],
         ]);
 
-        $tagAssignments = $GLOBALS['__cat_object_terms']['post_tag'] ?? [];
+        $tagAssignments = $GLOBALS['__cat_object_terms']['cat_roster_entity'] ?? [];
         $postTagAssignments = $tagAssignments[42] ?? [];
 
         $this->assertCount(1, $postTagAssignments);
 
         $termId = $postTagAssignments[0];
-        $terms = $GLOBALS['__cat_terms']['post_tag']['by_id'] ?? [];
+        $terms = $GLOBALS['__cat_terms']['cat_roster_entity']['by_id'] ?? [];
         $term = $terms[$termId] ?? null;
 
         $this->assertNotNull($term);
@@ -230,7 +230,7 @@ final class RecognitionObservationRepositoryTest extends TestCase
             ],
         ]);
 
-        $objectTerms = $GLOBALS['__cat_object_terms']['post_tag'] ?? [];
+        $objectTerms = $GLOBALS['__cat_object_terms']['cat_roster_entity'] ?? [];
         $initialAssignments = $objectTerms[55] ?? [];
         $this->assertNotEmpty($initialAssignments);
 
@@ -239,7 +239,7 @@ final class RecognitionObservationRepositoryTest extends TestCase
             'roster' => null,
         ]);
 
-        $objectTerms = $GLOBALS['__cat_object_terms']['post_tag'] ?? [];
+        $objectTerms = $GLOBALS['__cat_object_terms']['cat_roster_entity'] ?? [];
         $updatedAssignments = $objectTerms[55] ?? [];
 
         $this->assertSame([], $updatedAssignments);

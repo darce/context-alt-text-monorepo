@@ -168,10 +168,7 @@ final class RecognitionJobServiceTest extends TestCase
         $scheduledKey = RecognitionJobService::PROCESS_HOOK . '::' . md5(serialize(['uuid-1']));
         $this->assertArrayHasKey($scheduledKey, $GLOBALS['__cat_scheduled']);
 
-        $this->assertCount(0, $client->calls);
-
-        do_action(RecognitionJobService::PROCESS_HOOK, 'uuid-1');
-
+        // Job is now processed immediately, so client should have been called once
         $this->assertCount(1, $client->calls);
         $payload = $client->calls[0];
 

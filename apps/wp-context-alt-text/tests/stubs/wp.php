@@ -553,6 +553,13 @@ if (!function_exists('wp_get_object_terms')) {
 if (!function_exists('wp_set_post_terms')) {
     function wp_set_post_terms($object_id, $terms, $taxonomy, $append = false)
     {
+        return wp_set_object_terms($object_id, $terms, $taxonomy, $append);
+    }
+}
+
+if (!function_exists('wp_set_object_terms')) {
+    function wp_set_object_terms($object_id, $terms, $taxonomy, $append = false)
+    {
         $objectId = (int) $object_id;
         $termIds = is_array($terms) ? array_map('intval', $terms) : [(int) $terms];
         $termIds = array_values(array_filter($termIds, static fn($id) => $id > 0));

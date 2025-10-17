@@ -88,7 +88,10 @@ describe("dispatchNotice", () => {
     expect(noticeEvent.type).toBe(NOTICE_EVENT_NAME);
         expect(detail.status).toBe("info");
         expect(detail.message).toBe("Hello there");
-        expect(infoSpy).toHaveBeenCalledWith("[Context Alt Text] Hello there");
+        // Logger now adds timestamps, so we need to check it was called with the message
+        expect(infoSpy).toHaveBeenCalled();
+        const callArgs = infoSpy.mock.calls[0];
+        expect(callArgs).toContain("Hello there");
 
         window.removeEventListener(NOTICE_EVENT_NAME, listener);
         infoSpy.mockRestore();

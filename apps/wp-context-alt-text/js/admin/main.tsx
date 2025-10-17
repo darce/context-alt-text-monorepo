@@ -7,6 +7,7 @@ import { App } from "./App";
 import { RecognitionSettingsPanel } from "./settings/RecognitionSettingsPanel";
 import { getDashboardConfig, getSettingsData } from "./dashboardData";
 import { getAdminBootstrap, setAdminBootstrap } from "./globals";
+import logger from "./logger";
 
 if (typeof window !== "undefined") {
     const existingWp = (window as { wp?: unknown }).wp;
@@ -81,8 +82,8 @@ if (!tryRenderSettings()) {
         );
     } else if (import.meta.env.DEV) {
         const ids = candidates.map((candidate) => `#${candidate.id}`).join(", ");
-        console.warn(
-            `[Context Alt Text] Could not find a mount element. Ensure one of the following exists: ${ids}.`,
+        logger.warn(
+            `Could not find a mount element. Ensure one of the following exists: ${ids}.`,
         );
     }
 }

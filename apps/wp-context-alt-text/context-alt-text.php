@@ -20,8 +20,6 @@
 
 declare(strict_types=1);
 
-require_once __DIR__ . '/src/Support/WpFunctionStubs.php';
-
 use ContextAltText\Admin\AccountCenterPage;
 use ContextAltText\Admin\Admin;
 use ContextAltText\Admin\AltTextWorkbenchPage;
@@ -54,6 +52,7 @@ use ContextAltText\Roster\RosterObservationManager;
 use ContextAltText\Roster\RosterTaxonomy;
 use ContextAltText\Roster\RosterSyncScheduler;
 use ContextAltText\Shared\Config\SettingsRepository;
+use ContextAltText\Shared\Logger;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
 
 if (!defined('ABSPATH')) {
@@ -495,6 +494,19 @@ function context_alt_text_roster_sync_scheduler(?RosterService $service = null):
 }
 
 add_action('plugins_loaded', static function (): void {
+    // Initialize logger silently - only log actual events, not initialization
+    if (defined('WP_DEBUG') && WP_DEBUG) {
+        Logger::setEnabled(true);
+        $logDir = WP_CONTENT_DIR . '/uploads/cat-logs';
+        if (!file_exists($logDir)) {
+            wp_mkdir_p($logDir);
+        }
+        $logFile = $logDir . '/debug-' . gmdate('Y-m-d') . '.log';
+        Logger::setLogFile($logFile);
+    } else {
+        Logger::setEnabled(false);
+    }
+
     context_alt_text()->init();
 });
 

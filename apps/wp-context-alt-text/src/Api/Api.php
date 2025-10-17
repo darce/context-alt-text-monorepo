@@ -47,6 +47,7 @@ use function register_rest_route;
 use function reset;
 use function rest_ensure_response;
 use function sanitize_text_field;
+use function sprintf;
 use function str_contains;
 use function trim;
 
@@ -195,6 +196,23 @@ class Api
                     'methods' => ['POST', 'PUT', 'PATCH'],
                     'callback' => [$this, 'patch_recognition_observation'],
                     'permission_callback' => [$this, 'can_manage_recognition'],
+                ]
+            );
+
+            register_rest_route(
+                'cat/v1',
+                '/observations/retry',
+                [
+                    'methods' => 'POST',
+                    'callback' => [$this, 'post_retry_observations'],
+                    'permission_callback' => [$this, 'can_manage_recognition'],
+                    'args' => [
+                        'entityType' => [
+                            'description' => __('Filter observations by entity type (e.g., person, face).', 'context-alt-text'),
+                            'type' => 'string',
+                            'required' => false,
+                        ],
+                    ],
                 ]
             );
         }
@@ -572,6 +590,36 @@ class Api
         ]);
     }
 
+    public function post_retry_observations(WP_REST_Request $request)
+    {
+        $entityType = $this->sanitize_string_param($request->get_param('entityType'));
+        $entityType = $entityType !== '' ? $entityType : null;
+
+        $attachmentIds = $this->recognitionObservations->findAttachmentIdsNeedingReview(
+            $entityType,
+            100
+        );
+
+        if ($attachmentIds === []) {
+            return rest_ensure_response([
+                'success' => true,
+                'submitted' => 0,
+                'message' => __('No observations found that need review.', 'context-alt-text'),
+            ]);
+        }
+
+        $this->recognitionJobs->submit($attachmentIds);
+
+        return rest_ensure_response([
+            'success' => true,
+            'submitted' => count($attachmentIds),
+            'message' => sprintf(
+                __('%d attachments submitted for re-recognition.', 'context-alt-text'),
+                count($attachmentIds)
+            ),
+        ]);
+    }
+
     private function register_roster_routes(): void
     {
         register_rest_route(
@@ -626,7 +674,6 @@ class Api
                 'permission_callback' => [$this, 'can_manage_roster'],
             ]
         );
-
     }
 
     public function can_manage_roster(): bool
@@ -730,9 +777,16 @@ class Api
             $observationRecord = $this->rosterObservationManager->resolveObservationWithRoster($resolution, $entry);
         }
 
+        // Auto-assign observations that already have this entry as a candidate
+        // Note: Observations need updated candidates (from re-recognition) to be matched
         $autoMatches = $entry !== null
             ? $this->rosterObservationManager->autoAssignPending([$entry])
             : [];
+
+        // Refresh entry after operations to get updated reference image count
+        if ($remoteId !== null) {
+            $entry = $this->get_normalized_roster_entry($remoteId);
+        }
 
         $snapshot = $this->build_roster_snapshot();
 
@@ -797,6 +851,9 @@ class Api
         $autoMatches = $entry !== null
             ? $this->rosterObservationManager->autoAssignPending([$entry])
             : [];
+
+        // Refresh entry after auto-matching to get updated reference image count
+        $entry = $this->get_normalized_roster_entry($remoteId);
 
         $snapshot = $this->build_roster_snapshot();
 

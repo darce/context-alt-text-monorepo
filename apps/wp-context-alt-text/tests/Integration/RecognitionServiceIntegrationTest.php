@@ -38,9 +38,12 @@ final class RecognitionServiceIntegrationTest extends TestCase
         }
 
         // Set up recognition settings for local service
-        update_option('context_alt_text_recognition_settings', [
-            'base_url' => 'http://localhost:7860',
-            'timeout_ms' => '30000',
+        update_option('cat_settings', [
+            'recognition' => [
+                'baseUrl' => 'http://localhost:7860',
+                'timeoutMs' => 30000,
+                'enabled' => true,
+            ],
         ]);
 
         $this->settings = new RecognitionSettings();
@@ -49,7 +52,7 @@ final class RecognitionServiceIntegrationTest extends TestCase
 
     protected function tearDown(): void
     {
-        delete_option('context_alt_text_recognition_settings');
+        delete_option('cat_settings');
         parent::tearDown();
     }
 
@@ -203,9 +206,12 @@ final class RecognitionServiceIntegrationTest extends TestCase
     public function test_connection_timeout_handling(): void
     {
         // Create client with very short timeout
-        update_option('context_alt_text_recognition_settings', [
-            'base_url' => 'http://localhost:7860',
-            'timeout_ms' => '1', // 1ms - should timeout
+        update_option('cat_settings', [
+            'recognition' => [
+                'baseUrl' => 'http://localhost:7860',
+                'timeoutMs' => 1, // 1ms - should timeout
+                'enabled' => true,
+            ],
         ]);
 
         $shortTimeoutSettings = new RecognitionSettings();
@@ -223,9 +229,12 @@ final class RecognitionServiceIntegrationTest extends TestCase
 
     public function test_invalid_base_url_throws_exception(): void
     {
-        update_option('context_alt_text_recognition_settings', [
-            'base_url' => 'http://localhost:9999', // Non-existent service
-            'timeout_ms' => '2000',
+        update_option('cat_settings', [
+            'recognition' => [
+                'baseUrl' => 'http://localhost:9999', // Non-existent service
+                'timeoutMs' => 2000,
+                'enabled' => true,
+            ],
         ]);
 
         $invalidSettings = new RecognitionSettings();

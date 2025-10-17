@@ -17,10 +17,13 @@ final class RosterClientTest extends TestCase
 
         $GLOBALS['__cat_http_queue'] = [];
         $GLOBALS['__cat_http_calls'] = [];
-        $GLOBALS['__cat_options']['context_alt_text_recognition_settings'] = [
-            'base_url' => 'https://recognition.example',
-            'timeout_ms' => 15000,
-            'model_profile' => '',
+        $GLOBALS['__cat_options']['cat_settings'] = [
+            'recognition' => [
+                'baseUrl' => 'https://recognition.example',
+                'timeoutMs' => 15000,
+                'modelProfile' => '',
+                'enabled' => true,
+            ],
         ];
     }
 

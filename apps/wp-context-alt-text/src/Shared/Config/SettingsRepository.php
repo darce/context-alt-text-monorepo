@@ -26,7 +26,6 @@ use const FILTER_NULL_ON_FAILURE;
 class SettingsRepository
 {
     public const OPTION_KEY = 'cat_settings';
-    private const LEGACY_RECOGNITION_OPTION = 'context_alt_text_recognition_settings';
     private const DEFAULT_TIMEOUT_MS = 15000;
 
     /**
@@ -43,9 +42,6 @@ class SettingsRepository
         }
 
         $normalized = $this->normalizePayload($stored);
-
-        // Back-fill from legacy option if available and new settings are empty.
-        $normalized = $this->mergeLegacyRecognitionSettings($normalized);
 
         return $normalized;
     }
@@ -97,7 +93,6 @@ class SettingsRepository
         $next['recognition'] = $this->sanitizeRecognitionSettings($payload, $next['recognition']);
 
         $this->persist($next);
-        $this->syncLegacyRecognitionOption($next['recognition']);
 
         return $this->getRecognitionSettings();
     }
@@ -114,7 +109,6 @@ class SettingsRepository
         $next['recognition']['enabled'] = $enabled;
 
         $this->persist($next);
-        $this->syncLegacyRecognitionOption($next['recognition']);
     }
 
     /**
@@ -200,63 +194,6 @@ class SettingsRepository
         }
 
         return $next;
-    }
-
-    /**
-     * Merge data from the legacy option if the new payload is missing values.
-     *
-     * @param array<string,mixed> $payload
-     * @return array<string,mixed>
-     */
-    private function mergeLegacyRecognitionSettings(array $payload): array
-    {
-        $legacy = get_option(self::LEGACY_RECOGNITION_OPTION);
-
-        if (!is_array($legacy)) {
-            return $payload;
-        }
-
-        $recognition = $payload['recognition'];
-
-        if (($recognition['baseUrl'] ?? '') === '' && isset($legacy['base_url']) && is_string($legacy['base_url'])) {
-            $candidate = trim($legacy['base_url']);
-            if ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_URL) !== false) {
-                $recognition['baseUrl'] = rtrim($candidate, '/');
-            }
-        }
-
-        if (($recognition['timeoutMs'] ?? 0) === self::DEFAULT_TIMEOUT_MS && isset($legacy['timeout_ms'])) {
-            $recognition['timeoutMs'] = $this->sanitizeTimeout($legacy['timeout_ms']);
-        }
-
-        if (($recognition['modelProfile'] ?? '') === '' && isset($legacy['model_profile']) && is_string($legacy['model_profile'])) {
-            $recognition['modelProfile'] = trim($legacy['model_profile']);
-        }
-
-        if (!($recognition['enabled'] ?? false) && ($recognition['baseUrl'] ?? '') !== '') {
-            $recognition['enabled'] = true;
-        }
-
-        $payload['recognition'] = $recognition;
-        $payload['featureFlags']['recognitionEnabled'] = $recognition['enabled'];
-
-        return $payload;
-    }
-
-    /**
-     * Ensure the legacy option stays in sync for backwards compatibility.
-     *
-     * @param array<string,mixed> $recognition
-     */
-    private function syncLegacyRecognitionOption(array $recognition): void
-    {
-        $legacy = [
-            'base_url' => $recognition['baseUrl'] ?? '',
-            'timeout_ms' => $recognition['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS,
-            'model_profile' => $recognition['modelProfile'] ?? '',
-        ];
-
-        update_option(self::LEGACY_RECOGNITION_OPTION, $legacy);
     }
 
     /**

@@ -238,6 +238,10 @@ export const getDashboardConfig = (): AdminConfig => {
                 typeof endpoints.recognitionObservationUpdate === "string"
                     ? endpoints.recognitionObservationUpdate
                     : undefined,
+            observationsRetry:
+                typeof endpoints.observationsRetry === "string"
+                    ? endpoints.observationsRetry
+                    : undefined,
             rosterEntries: typeof endpoints.rosterEntries === "string" ? endpoints.rosterEntries : undefined,
             rosterSync: typeof endpoints.rosterSync === "string" ? endpoints.rosterSync : undefined,
             settingsRecognition:

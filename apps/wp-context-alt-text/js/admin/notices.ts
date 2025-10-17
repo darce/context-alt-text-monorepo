@@ -1,3 +1,5 @@
+import logger from "./logger";
+
 export type NoticeStatus = "success" | "info" | "warning" | "error";
 
 export interface NoticeAction {
@@ -51,7 +53,7 @@ const getWpNoticeDispatcher = (): WordPressNoticeDispatcher | null => {
             return dispatcher;
         }
     } catch (error) {
-        console.warn("[Context Alt Text] Failed to access WordPress notice store", error);
+        logger.warn("Failed to access WordPress notice store", error);
     }
 
     return null;
@@ -87,8 +89,11 @@ export const dispatchNotice = (status: NoticeStatus, message: string, options?: 
 
     emitFallbackNotice(status, message, options);
 
-    const logger = status === "error" ? console.error : console.info;
-    logger.call(console, `[Context Alt Text] ${message}`);
+    if (status === "error") {
+        logger.error(message);
+    } else {
+        logger.info(message);
+    }
 };
 
 export const notifySuccess = (message: string, options?: NoticeOptions) => dispatchNotice("success", message, options);

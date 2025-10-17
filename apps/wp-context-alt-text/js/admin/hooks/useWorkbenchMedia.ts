@@ -18,7 +18,7 @@ interface UseWorkbenchMediaOptions {
     search?: string | null;
 }
 
-const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/context-alt-text/v1/workbench/media";
+const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/cat/v1/workbench/media";
 
 const mapMediaResponse = (payload: unknown): WorkbenchMediaItem[] => {
     if (!Array.isArray(payload)) {

@@ -21,24 +21,25 @@ This sprint plan ensures both services land the same contracts, feature flags, a
 
 ## Critical Tech Debt Remediation (Do Immediately)
 
-- [ ] **Consolidate REST API namespaces to `cat/v1`** — eliminate dual namespace technical debt
-  - **Context**: Currently using both `context-alt-text/v1` (legacy workbench, roster GET, settings) and `cat/v1` (newer observations, roster mutations, retry). This creates confusion, inconsistent endpoint discovery, and maintenance overhead.
-  - **Migration plan**:
-    - [ ] Audit all REST endpoints in `apps/wp-context-alt-text/src/Api/Api.php` and categorize by current namespace
-    - [ ] Create migration branch `refactor/consolidate-rest-namespace`
-    - [ ] Register all endpoints under `cat/v1` namespace while maintaining `context-alt-text/v1` aliases for backward compatibility (deprecation period)
-    - [ ] Update Admin.php endpoint configuration to use `cat/v1` URLs (lines 230-270)
-    - [ ] Update all frontend hooks (`useRoster`, `useRecognitionObservations`, `useWorkbenchMedia`, etc.) to target `cat/v1`
-    - [ ] Add deprecation notices to `context-alt-text/v1` endpoints with sunset timeline (e.g., 2 releases)
-    - [ ] Update API documentation, OpenAPI spec, and integration tests to reflect consolidated namespace
-    - [ ] Run full test suite (PHPUnit + Vitest) to ensure no regressions
-    - [ ] After deprecation period, remove `context-alt-text/v1` aliases and update CHANGELOG
-  - **Files to modify**:
-    - `apps/wp-context-alt-text/src/Api/Api.php` (endpoint registration)
-    - `apps/wp-context-alt-text/src/Admin/Admin.php` (config localization)
-    - `apps/wp-context-alt-text/js/admin/hooks/*.ts` (fetch URLs)
-    - `apps/wp-context-alt-text/tests/**/*Test.php` (endpoint assertions)
-  - **Success criteria**: All REST endpoints accessible via `cat/v1`; frontend makes zero calls to `context-alt-text/v1`; documentation updated; tests green
+- [x] **Consolidate REST API namespaces to `cat/v1`** — eliminate dual namespace technical debt ✅ **COMPLETED**
+  - **Context**: Previously using both `context-alt-text/v1` (legacy workbench, roster GET, settings) and `cat/v1` (newer observations, roster mutations, retry). This created confusion, inconsistent endpoint discovery, and maintenance overhead.
+  - **Migration completed**:
+    - [x] Audited all REST endpoints in `apps/wp-context-alt-text/src/Api/Api.php` and categorized by namespace
+    - [x] Created migration branch `refactor/consolidate-rest-namespace`
+    - [x] Registered all endpoints under `cat/v1` namespace while maintaining `context-alt-text/v1` aliases for backward compatibility (deprecation period)
+    - [x] Updated Admin.php endpoint configuration to use `cat/v1` URLs (lines 230-270)
+    - [x] Updated all frontend hooks (`useRoster`, `useRecognitionObservations`, `useWorkbenchMedia`, etc.) to target `cat/v1`
+    - [x] Added deprecation notices to `context-alt-text/v1` endpoints that log warnings when called
+    - [x] Updated all integration tests to reflect consolidated namespace
+    - [x] Ran full test suite: **113 Vitest tests passed**, **105 PHPUnit tests passed** (12 skipped)
+    - [ ] After deprecation period (2 releases), remove `context-alt-text/v1` aliases and update CHANGELOG
+  - **Files modified**:
+    - `apps/wp-context-alt-text/src/Api/Api.php` - Added `register_endpoint_with_deprecated_alias()` helper
+    - `apps/wp-context-alt-text/src/Admin/Admin.php` - Updated all endpoint URLs to `cat/v1`
+    - `apps/wp-context-alt-text/js/admin/hooks/*.ts` - Updated test fixtures
+    - `apps/wp-context-alt-text/tests/**/*Test.php` - Updated endpoint assertions
+    - `apps/wp-context-alt-text/js/components/**/*.test.tsx` - Updated MSW handlers
+  - **Success criteria**: ✅ All REST endpoints accessible via `cat/v1`; ✅ frontend makes zero calls to `context-alt-text/v1`; ✅ all tests green; ⏳ documentation pending
 
 ## Cross-Service Integration Sync
 

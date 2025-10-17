@@ -79,14 +79,17 @@ const createBootstrap = (): RosterData => ({
 
 const createConfig = (): AdminConfig => ({
     endpoints: {
-        rosterEntries: "/wp-json/context-alt-text/v1/roster",
-        rosterSync: "/wp-json/context-alt-text/v1/roster/sync",
+        recognitionObservations: "/wp-json/cat/v1/observations",
+        recognitionObservationUpdate: "/wp-json/cat/v1/observations/",
+        rosterEntries: "/wp-json/cat/v1/roster",
+        rosterSync: "/wp-json/cat/v1/roster/sync",
     },
-    restNonce: "test-nonce",
     featureFlags: {
         rosterEnabled: true,
     },
-});
+    restNonce: "test-nonce",
+    missingAltMediaUrl: "/wp-admin/upload.php?context_alt_text=missing",
+} as AdminConfig);
 
 const createQueryData = (bootstrap: RosterData) => ({
     entries: bootstrap.entries,

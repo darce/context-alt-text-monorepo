@@ -21,8 +21,8 @@ import { App } from "./App";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 
 const COVERAGE_ENDPOINT = "https://example.com/wp-json/cat/v1/dashboard/coverage";
-const WORKBENCH_MEDIA_ENDPOINT = "https://example.com/wp-json/context-alt-text/v1/workbench/media";
-const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/context-alt-text/v1/workbench/media";
+const WORKBENCH_MEDIA_ENDPOINT = "https://example.com/wp-json/cat/v1/workbench/media";
+const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/cat/v1/workbench/media";
 const WORKBENCH_MEDIA_FALLBACK_HANDLER = `*${WORKBENCH_MEDIA_FALLBACK_PATH}`;
 
 const wait = async (ms: number) => {
@@ -194,7 +194,7 @@ describe("App", () => {
                     workbenchBulkAI: true,
                 },
                 endpoints: {
-                    workbenchMedia: "https://example.com/wp-json/context-alt-text/v1/workbench/media",
+                    workbenchMedia: "https://example.com/wp-json/cat/v1/workbench/media",
                 },
             },
             data: {

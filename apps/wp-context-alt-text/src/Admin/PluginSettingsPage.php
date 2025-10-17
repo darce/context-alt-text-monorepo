@@ -31,7 +31,7 @@ class PluginSettingsPage
 {
     public const ROOT_ID = 'context-alt-text-settings-root';
 
-    private const OPTION_NAME = 'context_alt_text_recognition_settings';
+    private const OPTION_NAME = 'cat_settings';
     private const SETTINGS_GROUP = 'context-alt-text-settings';
     private const PAGE_SLUG = 'context-alt-text-settings';
     private const SECTION_ID = 'context-alt-text-recognition';

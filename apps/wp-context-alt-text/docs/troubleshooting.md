@@ -106,7 +106,7 @@ cat .env | grep CAT_RECOGNITION_BASE_URL
 
 ```bash
 # Check settings in database
-wp option get context_alt_text_recognition_settings --format=json
+wp option get cat_settings --format=json
 
 # Check what plugin resolves (environment variables take precedence)
 wp eval 'echo (new \ContextAltText\Recognition\RecognitionSettings())->getBaseUrl();'
@@ -151,10 +151,10 @@ wp eval 'echo (new \ContextAltText\Recognition\RecognitionSettings())->getBaseUr
 
 1. **Check if service is configured:**
    ```bash
-   wp option get context_alt_text_recognition_settings --format=json
+   wp option get cat_settings --format=json
    ```
    
-   Should return: `{"base_url":"http://localhost:7860","timeout_ms":"30000"}`
+   Should return: `{"recognition":{"baseUrl":"http://localhost:7860","timeoutMs":30000,"enabled":true}}`
 
 2. **Clear browser cache:**
    - Hard refresh the Workbench page (Cmd+Shift+R or Ctrl+Shift+R)
@@ -190,7 +190,7 @@ wp eval 'echo (new \ContextAltText\Recognition\RecognitionSettings())->getBaseUr
 1. **Increase timeout for first run:**
    ```bash
    # Via WP-CLI
-   wp option patch update context_alt_text_recognition_settings timeout_ms 60000
+   wp option patch update cat_settings recognition timeoutMs 60000
    
    # Or edit .env
    echo "CAT_RECOGNITION_TIMEOUT_MS=60000" >> .env

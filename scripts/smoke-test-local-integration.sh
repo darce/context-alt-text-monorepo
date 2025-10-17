@@ -120,25 +120,25 @@ echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━�
 echo -e "${YELLOW}Test 4: Recognition Settings Configuration${NC}"
 echo -e "${YELLOW}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
 
-SETTINGS=$(wp option get context_alt_text_recognition_settings --format=json --path="$WP_PATH" 2>/dev/null || echo "{}")
+SETTINGS=$(wp option get cat_settings --format=json --path="$WP_PATH" 2>/dev/null || echo "{}")
 if [ "$SETTINGS" = "{}" ] || [ -z "$SETTINGS" ]; then
     echo -e "${YELLOW}⚠ Recognition settings not configured. Configuring now...${NC}"
-    wp option update context_alt_text_recognition_settings "{\"base_url\":\"$RECOGNITION_URL\",\"timeout_ms\":\"30000\"}" --format=json --path="$WP_PATH"
-    SETTINGS=$(wp option get context_alt_text_recognition_settings --format=json --path="$WP_PATH" 2>/dev/null)
+    wp option update cat_settings "{\"recognition\":{\"baseUrl\":\"$RECOGNITION_URL\",\"timeoutMs\":30000,\"enabled\":true}}" --format=json --path="$WP_PATH"
+    SETTINGS=$(wp option get cat_settings --format=json --path="$WP_PATH" 2>/dev/null)
     echo -e "${GREEN}✓ Settings configured${NC}"
 else
     echo -e "${GREEN}✓ Recognition settings found${NC}"
 fi
 
-BASE_URL=$(echo "$SETTINGS" | jq -r '.base_url' 2>/dev/null || echo "")
-TIMEOUT_MS=$(echo "$SETTINGS" | jq -r '.timeout_ms' 2>/dev/null || echo "")
+BASE_URL=$(echo "$SETTINGS" | jq -r '.recognition.baseUrl' 2>/dev/null || echo "")
+TIMEOUT_MS=$(echo "$SETTINGS" | jq -r '.recognition.timeoutMs' 2>/dev/null || echo "")
 
 echo "  Base URL: $BASE_URL"
 echo "  Timeout: $TIMEOUT_MS ms"
 
 if [ "$BASE_URL" != "$RECOGNITION_URL" ]; then
     echo -e "${YELLOW}  ⚠ Base URL mismatch. Updating...${NC}"
-    wp option patch update context_alt_text_recognition_settings base_url "$RECOGNITION_URL" --path="$WP_PATH"
+    wp option patch update cat_settings recognition.baseUrl "$RECOGNITION_URL" --path="$WP_PATH"
 fi
 echo ""
 

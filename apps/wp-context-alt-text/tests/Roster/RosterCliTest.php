@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Roster\RosterCli;
+use ContextAltText\Roster\RosterTaxonomy;
 use ContextAltText\Tests\Roster\Support\FakeRosterClient;
 use ContextAltText\Security\Security;
 use PHPUnit\Framework\TestCase;
@@ -32,7 +33,10 @@ final class RosterCliTest extends TestCase
             'conflicts' => 0,
         ]);
 
-        $cli = new RosterCli(new RosterService(new Security(), new FakeRosterClient()));
+        $cli = new RosterCli(
+            new RosterService(new Security(), new FakeRosterClient()),
+            new RosterTaxonomy()
+        );
         $cli->status([], []);
 
         self::assertNotEmpty(WP_CLI::$messages['log']);
@@ -49,7 +53,7 @@ final class RosterCliTest extends TestCase
             }
         };
 
-        $cli = new RosterCli($service);
+        $cli = new RosterCli($service, new RosterTaxonomy());
         $cli->sync([], []);
 
         self::assertSame('Roster sync did not report any changes.', WP_CLI::$messages['warning'][0]);
@@ -64,7 +68,7 @@ final class RosterCliTest extends TestCase
             }
         };
 
-        $cli = new RosterCli($service);
+        $cli = new RosterCli($service, new RosterTaxonomy());
         $cli->sync([], []);
 
         self::assertSame('Roster sync completed.', WP_CLI::$messages['success'][0]);

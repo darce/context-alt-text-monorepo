@@ -103,7 +103,7 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
         self::assertFalse($config['featureFlags']['workbenchEnabled']);
         self::assertTrue($config['featureFlags']['abilitiesEnabled']);
-        self::assertFalse($config['featureFlags']['rosterEnabled']);
+        self::assertTrue($config['featureFlags']['rosterEnabled']);
         self::assertArrayHasKey('dashboard', $localized['data']);
         self::assertArrayHasKey('workbench', $localized['data']);
         self::assertArrayHasKey('roster', $localized['data']);
@@ -189,7 +189,7 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
         self::assertFalse($config['featureFlags']['workbenchEnabled']);
         self::assertTrue($config['featureFlags']['abilitiesEnabled']);
-        self::assertFalse($config['featureFlags']['rosterEnabled']);
+        self::assertTrue($config['featureFlags']['rosterEnabled']);
         self::assertArrayHasKey('workbench', $localized['data']);
         self::assertArrayHasKey('roster', $localized['data']);
 
@@ -284,7 +284,7 @@ final class AdminAssetEnqueueTest extends TestCase
         self::assertArrayHasKey('rosterEnabled', $config['featureFlags']);
         self::assertTrue($config['featureFlags']['workbenchEnabled']);
         self::assertTrue($config['featureFlags']['abilitiesEnabled']);
-        self::assertFalse($config['featureFlags']['rosterEnabled']);
+        self::assertTrue($config['featureFlags']['rosterEnabled']);
         self::assertSame(
             'http://example.test/wp-json/context-alt-text/v1/workbench/media',
             $config['endpoints']['workbenchMedia'] ?? null
@@ -399,7 +399,7 @@ final class AdminAssetEnqueueTest extends TestCase
 
             public function rosterUiEnabled(): bool
             {
-                return false;
+                return true;
             }
 
             public function abilitiesEnabled(): bool

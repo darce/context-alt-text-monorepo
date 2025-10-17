@@ -31,7 +31,8 @@ use function str_starts_with;
 use function term_exists;
 use function wp_get_object_terms;
 use function wp_insert_term;
-use function wp_set_post_terms;
+use function wp_set_object_terms;
+use function wp_update_term;
 use function is_wp_error;
 use function sprintf;
 
@@ -568,7 +569,7 @@ class RecognitionObservationRepository
     {
         if (
             !function_exists('wp_get_object_terms')
-            || !function_exists('wp_set_post_terms')
+            || !function_exists('wp_set_object_terms')
             || !function_exists('wp_insert_term')
             || !function_exists('term_exists')
         ) {
@@ -708,7 +709,7 @@ class RecognitionObservationRepository
         }
 
         $finalIds = array_values(array_unique(array_merge($otherTermIds, $managedIds)));
-        wp_set_post_terms($attachmentId, $finalIds, self::TAG_TAXONOMY, false);
+        wp_set_object_terms($attachmentId, $finalIds, self::TAG_TAXONOMY, false);
 
         if (function_exists('update_post_meta')) {
             $remoteIds = array_values(

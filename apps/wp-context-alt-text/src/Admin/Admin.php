@@ -212,21 +212,42 @@ class Admin
         }
 
         $recognitionEnabled = $this->featureFlags->workbenchRecognitionEnabled();
+        $rosterEnabled = $featureFlags['rosterEnabled'] ?? false;
+
+        // Debug: Log the flag values
+        if (function_exists('error_log')) {
+            error_log(sprintf(
+                '[CAT] Config: recognitionEnabled=%s, rosterEnabled=%s',
+                $recognitionEnabled ? 'true' : 'false',
+                $rosterEnabled ? 'true' : 'false'
+            ));
+        }
+
         $recognitionAnalyzeEndpoint = '';
         $recognitionJobEndpoint = '';
         $recognitionObservationsEndpoint = '';
         $recognitionObservationUpdateEndpoint = '';
+        $observationsRetryEndpoint = '';
         $rosterEndpoint = '';
         $rosterSyncEndpoint = '';
 
         if ($recognitionEnabled && function_exists('rest_url')) {
             $recognitionAnalyzeEndpoint = rest_url('context-alt-text/v1/recognition/analyze');
             $recognitionJobEndpoint = rtrim(rest_url('context-alt-text/v1/recognition/job/'), '/') . '/';
+        }
+
+        // Observations endpoints available when recognition OR roster is enabled
+        if (($recognitionEnabled || $rosterEnabled) && function_exists('rest_url')) {
             $recognitionObservationsEndpoint = rest_url('cat/v1/observations');
             $recognitionObservationUpdateEndpoint = rtrim(rest_url('cat/v1/observations/'), '/') . '/';
         }
 
-        if (($featureFlags['abilitiesEnabled'] ?? false) && function_exists('rest_url')) {
+        // Retry endpoint available when recognition OR roster is enabled
+        if (($recognitionEnabled || $rosterEnabled) && function_exists('rest_url')) {
+            $observationsRetryEndpoint = rest_url('cat/v1/observations/retry');
+        }
+
+        if ($rosterEnabled && function_exists('rest_url')) {
             $rosterEndpoint = rest_url('context-alt-text/v1/roster');
             $rosterSyncEndpoint = rest_url('context-alt-text/v1/roster/sync');
         }
@@ -243,6 +264,7 @@ class Admin
                 'recognitionJob' => $recognitionJobEndpoint,
                 'recognitionObservations' => $recognitionObservationsEndpoint,
                 'recognitionObservationUpdate' => $recognitionObservationUpdateEndpoint,
+                'observationsRetry' => $observationsRetryEndpoint,
                 'rosterEntries' => $rosterEndpoint,
                 'rosterSync' => $rosterSyncEndpoint,
                 'settingsRecognition' => $settingsEndpoints['recognition'],

@@ -33,9 +33,9 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 ### What's Included
 
 **Tactical Tasks (Phases 1-10):**
-1. **Greenfield cleanup** - Remove 713 unnecessary lines before production
-2. **Shared utilities** - Eliminate 260+ lines of duplication
-3. **Hook simplification** - Refactor 3 complex hooks (340 lines reduced)
+1. **Greenfield cleanup** - Remove 713 unnecessary lines before production ✓
+2. **Shared utilities** - Eliminate 260+ lines of duplication ✓
+3. **Hook simplification** - Fix state management with useReducer, refactor 3 complex hooks
 4. **PHP utilities** - Extract common patterns (80 lines reduced)
 5. **Cross-stack alignment** - Better frontend/backend symmetry
 6. **Component improvements** - Break down large files
@@ -67,9 +67,9 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 
 **Tactical Refactoring (Phases 1-10):**
 
-- [ ] **Phase 1:** Greenfield Cleanup (1h) - 0/5 tasks complete
-- [ ] **Phase 2:** Frontend Utilities (3h) - 0/2 tasks complete
-- [ ] **Phase 3:** Frontend Hooks (7h) - 0/2 tasks complete
+- [x] **Phase 1:** Greenfield Cleanup (1h) - 5/5 tasks complete ✓
+- [x] **Phase 2:** Frontend Utilities (3h) - 2/2 tasks complete ✓
+- [ ] **Phase 3:** Frontend Hooks (5-7h) - 0/3 tasks complete
 - [ ] **Phase 4:** PHP Utilities (3h) - 0/4 tasks complete
 - [ ] **Phase 5:** Frontend Components (4h) - 0/2 tasks complete
 - [ ] **Phase 6:** Cross-Stack Alignment (6h) - 0/3 tasks complete
@@ -78,7 +78,7 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 - [ ] **Phase 9:** Documentation (2h) - 0/2 tasks complete
 - [ ] **Phase 10:** Polish (10h) - 0/4 tasks complete
 
-**Total: 0/33 tactical tasks complete (0%)**
+**Total: 7/34 tactical tasks complete (21%)**
 
 **Strategic Architecture (Phase 11):**
 
@@ -95,9 +95,9 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 
 | Priority | Category | Tasks | Time | Impact |
 |----------|----------|-------|------|--------|
-| 🔴 Critical | Greenfield Cleanup | 5 | 1h | Remove 713 lines |
-| 🔴 Critical | Frontend Utilities | 2 | 3h | Remove 260 lines |
-| 🔴 Critical | Frontend Hooks | 2 | 7h | Remove 340 lines |
+| 🔴 Critical | Greenfield Cleanup | 5 | 1h | Remove 713 lines ✓ |
+| 🔴 Critical | Frontend Utilities | 2 | 3h | Remove 260 lines ✓ |
+| 🔴 Critical | Frontend Hooks | 3 | 5-7h | Fix state management + Remove 340 lines |
 | 🟡 High | PHP Utilities | 4 | 3h | Remove 80 lines |
 | 🟡 High | Frontend Components | 2 | 4h | Improve structure |
 | 🟡 High | Cross-Stack Alignment | 3 | 6h | Better symmetry |
@@ -106,7 +106,7 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 | 🟢 Medium | Documentation | 2 | 2h | Update after refactoring |
 | 🟢 Low | Polish | 4 | 10h | Optional improvements |
 
-**Tactical Subtotal:** 46-58 hours, ~1,473 lines reduced, +10-15% test coverage
+**Tactical Subtotal:** 44-58 hours, ~1,473 lines reduced, +10-15% test coverage
 
 ### Strategic Architecture (Long-term Improvements)
 
@@ -426,96 +426,237 @@ export const fetchApi = async <T = unknown>(
 
 ---
 
-## 🔴 PHASE 3: Critical - Frontend Hook Refactoring (7 hours)
+## 🧠 State Management Decision (Phase 3 Foundation)
 
-**Goal:** Simplify overly complex hooks
+**Problem Identified:** Multiple hooks (especially `useRecognitionJob.ts`) use 6+ separate `useState` hooks, leading to:
+- Race conditions (non-atomic state updates)
+- Inconsistent states (e.g., `isSubmitting=true` with `lastError` set)
+- Complex coordination logic
+- Multiple re-renders
 
-**Progress Tracker:**
-- [ ] Task 3.1: Refactor useRecognitionJob.ts
-- [ ] Task 3.2: Simplify useWorkbenchMedia.ts
+**Solution Evaluated:**
+
+| Option | Pros | Cons | Verdict |
+|--------|------|------|---------|
+| **Redux/Zustand** | Global state, dev tools | ❌ Overkill, React Query handles server state | ❌ Not needed |
+| **XState** | Explicit state machines, visualizer | ❌ 18KB, learning curve | 🟡 Optional if complexity grows |
+| **useReducer** | ✅ Zero dependencies, atomic updates, type-safe | None for this use case | ✅ **SELECTED** |
+
+**Decision: useReducer + TypeScript Discriminated Unions**
+
+**Why:**
+- ✅ Built into React (zero new dependencies)
+- ✅ Perfect for state machines (job flow: idle → submitting → polling → complete/error)
+- ✅ Atomic state updates (eliminates race conditions)
+- ✅ Type-safe with discriminated unions (impossible states become impossible)
+- ✅ Industry standard for complex useState scenarios
+- ✅ Easy to test (pure reducer function)
+- ✅ Works seamlessly with React Query for data fetching
+
+**Implementation Pattern:**
+```typescript
+type JobState = 
+  | { status: "idle" }
+  | { status: "submitting"; attachmentIds: number[] }
+  | { status: "polling"; jobId: string }
+  | { status: "complete"; job: RecognitionJobDetails }
+  | { status: "error"; error: RecognitionRequestError };
+
+function jobReducer(state: JobState, action: JobAction): JobState { ... }
+
+const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
+```
+
+**Reference:** [FRONTEND_AUDITS.md - State Management Section](apps/wp-context-alt-text/FRONTEND_AUDITS.md#4-state-management-react-query--usestate-no-reduxzustand-needed)
 
 ---
 
-### Task 3.1: Refactor useRecognitionJob.ts
+## 🔴 PHASE 3: Critical - Frontend Hook Refactoring (5-7 hours)
+
+**Goal:** Fix state management issues and simplify overly complex hooks
+
+**Progress Tracker:**
+- [ ] Task 3.1: Refactor useRecognitionJob with useReducer + state machine
+- [ ] Task 3.2: Refactor useRoster form submission with useReducer
+- [ ] Task 3.3: Simplify useWorkbenchMedia.ts
+
+---
+
+### Task 3.1: Refactor useRecognitionJob with useReducer State Machine
 **Priority:** 🔴 Critical  
-**Time:** 5 hours  
-**Impact:** -355 lines (585 → ~230)  
+**Time:** 2-3 hours  
+**Impact:** -150 lines, eliminates race conditions  
 **Status:** [ ] Not Started
 
 **Context:** [FRONTEND_AUDITS.md - useRecognitionJob Critical Bloat](apps/wp-context-alt-text/FRONTEND_AUDITS.md#2-userecognitionjobts--critical-bloat-585-lines)
 
 **Current Issues:**
 - 585 lines (should be <200)
+- **6 separate useState hooks** creating race conditions and inconsistent states
 - Manual polling implementation (60+ lines)
-- 6 separate state hooks (should be state machine)
-- Complex normalization (80 lines - move to utils)
+- Complex normalization (80 lines - already moved to utils in Phase 2)
+- Brittle state coordination
+
+**Root Problem:**
+```typescript
+// ❌ BAD: Multiple useState hooks - not atomic, race conditions
+const [lastJob, setLastJob] = useState<RecognitionJobSummary | null>(null);
+const [lastError, setLastError] = useState<RecognitionRequestError | null>(null);
+const [jobDetails, setJobDetails] = useState<RecognitionJobDetails | null>(null);
+const [isSubmitting, setIsSubmitting] = useState(false);
+const [pollState, setPollState] = useState<PollState>("idle");
+const [currentJobId, setCurrentJobId] = useState<string | null>(null);
+```
+
+**Solution: useReducer + TypeScript Discriminated Unions**
+
+**Why useReducer:**
+- ✅ Zero new dependencies (built into React)
+- ✅ Atomic state updates (no race conditions)
+- ✅ Impossible states become impossible
+- ✅ Type-safe with discriminated unions
+- ✅ Perfect for state machines
+- ✅ Industry standard for complex useState scenarios
+- ✅ Easy to test (pure reducer function)
 
 **Refactoring Strategy:**
 
-1. **Extract polling logic** to use React Query's built-in polling
-2. **Split into 3 focused hooks:**
-   - `useRecognitionSubmit.ts` (~100 lines) - Job submission
-   - `useRecognitionPoll.ts` (~80 lines) - Job polling
-   - `useRecognitionJob.ts` (~50 lines) - Compose both
-
-3. **Use normalization utilities** from Task 2.1
-
-**New Structure:**
+1. **Define state machine with discriminated union:**
 ```typescript
-// hooks/useRecognitionSubmit.ts
-export const useRecognitionSubmit = () => {
-  const mutation = useMutation({
-    mutationFn: async (attachmentIds: number[]) => { ... },
-    onSuccess: (job) => { ... },
-  });
-  
-  return {
-    submitJob: mutation.mutate,
-    isSubmitting: mutation.isPending,
-    submitError: mutation.error,
-  };
-};
+type JobState = 
+  | { status: "idle" }
+  | { status: "submitting"; attachmentIds: number[] }
+  | { status: "polling"; jobId: string; attempts: number }
+  | { status: "complete"; job: RecognitionJobDetails }
+  | { status: "error"; error: RecognitionRequestError; retryable: boolean };
 
-// hooks/useRecognitionPoll.ts
-export const useRecognitionPoll = (jobId: string | null) => {
-  const query = useQuery({
-    queryKey: ["recognition-job", jobId],
-    queryFn: async () => { ... },
-    refetchInterval: (data) => {
-      // Poll every 2s until complete
-      return data?.status === "complete" ? false : 2000;
-    },
-    enabled: !!jobId,
-  });
-  
-  return {
-    jobDetails: query.data,
-    isPolling: query.isLoading,
-    pollError: query.error,
-  };
-};
-
-// hooks/useRecognitionJob.ts
-export const useRecognitionJob = () => {
-  const [currentJobId, setCurrentJobId] = useState<string | null>(null);
-  const submit = useRecognitionSubmit();
-  const poll = useRecognitionPoll(currentJobId);
-  
-  const startJob = (attachmentIds: number[]) => {
-    submit.submitJob(attachmentIds, {
-      onSuccess: (job) => setCurrentJobId(job.id),
-    });
-  };
-  
-  return {
-    startJob,
-    isSubmitting: submit.isSubmitting,
-    isPolling: poll.isPolling,
-    jobDetails: poll.jobDetails,
-    error: submit.submitError || poll.pollError,
-  };
-};
+type JobAction =
+  | { type: "SUBMIT_START"; attachmentIds: number[] }
+  | { type: "SUBMIT_SUCCESS"; jobId: string }
+  | { type: "SUBMIT_ERROR"; error: RecognitionRequestError }
+  | { type: "POLL_UPDATE"; job: RecognitionJobDetails }
+  | { type: "POLL_COMPLETE"; job: RecognitionJobDetails }
+  | { type: "RESET" };
 ```
+
+2. **Create pure reducer function:**
+```typescript
+function jobReducer(state: JobState, action: JobAction): JobState {
+  switch (action.type) {
+    case "SUBMIT_START":
+      return { status: "submitting", attachmentIds: action.attachmentIds };
+    
+    case "SUBMIT_SUCCESS":
+      return { status: "polling", jobId: action.jobId, attempts: 0 };
+    
+    case "SUBMIT_ERROR":
+      return { status: "error", error: action.error, retryable: true };
+    
+    case "POLL_UPDATE":
+      if (state.status !== "polling") return state;
+      return { ...state, attempts: state.attempts + 1 };
+    
+    case "POLL_COMPLETE":
+      return { status: "complete", job: action.job };
+    
+    case "RESET":
+      return { status: "idle" };
+    
+    default:
+      return state;
+  }
+}
+```
+
+3. **Replace manual polling with React Query:**
+```typescript
+function useRecognitionJob() {
+  const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
+  
+  // React Query handles polling automatically
+  const { data } = useQuery({
+    queryKey: ["recognition-job", state.status === "polling" ? state.jobId : null],
+    queryFn: () => fetchJob(state.jobId),
+    refetchInterval: (data) => data?.status === "complete" ? false : 2000,
+    enabled: state.status === "polling",
+    onSuccess: (data) => {
+      if (data.status === "complete") {
+        dispatch({ type: "POLL_COMPLETE", job: data });
+      } else {
+        dispatch({ type: "POLL_UPDATE", job: data });
+      }
+    },
+  });
+  
+  const submitJob = async (attachmentIds: number[]) => {
+    dispatch({ type: "SUBMIT_START", attachmentIds });
+    try {
+      const response = await submitJobApi(attachmentIds);
+      dispatch({ type: "SUBMIT_SUCCESS", jobId: response.jobId });
+    } catch (error) {
+      dispatch({ type: "SUBMIT_ERROR", error });
+    }
+  };
+  
+  return {
+    state,
+    submitJob,
+    reset: () => dispatch({ type: "RESET" }),
+    isSubmitting: state.status === "submitting",
+    isPolling: state.status === "polling",
+    isComplete: state.status === "complete",
+    hasError: state.status === "error",
+  };
+}
+```
+
+**Benefits:**
+- Eliminates 6 useState hooks → 1 useReducer
+- Impossible to be in `submitting` state with `error` set
+- Single source of truth
+- Type-safe exhaustive case handling
+- React Query handles polling complexity
+- Easy to add new states (e.g., "paused", "canceling")
+
+**Testing:** Reducer is pure function - easy to unit test
+
+---
+
+### Task 3.2: Refactor useRoster Form Submission with useReducer
+**Priority:** 🟡 Medium  
+**Time:** 1-2 hours  
+**Impact:** Better form state management  
+**Status:** [ ] Not Started
+
+**Context:** [FRONTEND_AUDITS.md - useRoster Complex State](apps/wp-context-alt-text/FRONTEND_AUDITS.md#4-userosterjs--moderate-complexity-432-lines)
+
+**Apply same useReducer pattern to roster form submission flow:**
+
+```typescript
+type RosterFormState =
+  | { status: "idle" }
+  | { status: "creating"; values: RosterFormValues }
+  | { status: "updating"; id: number; values: RosterFormValues }
+  | { status: "deleting"; id: number }
+  | { status: "success"; entry: RosterEntry }
+  | { status: "error"; error: RosterError };
+```
+
+**Benefits:**
+- Cleaner form submission logic
+- Type-safe form states
+- Easier to add loading indicators
+- Better error handling
+
+---
+
+### Task 3.3: Simplify useWorkbenchMedia.ts
+**Priority:** 🟡 Medium  
+**Time:** 2 hours  
+**Impact:** -197 lines (347 → ~150)  
+**Status:** [ ] Not Started
+
+**Context:** [FRONTEND_AUDITS.md - useWorkbenchMedia Extremely Brittle](apps/wp-context-alt-text/FRONTEND_AUDITS.md#5-useworkbenchmediats--extremely-brittle-347-lines)
 
 ---
 

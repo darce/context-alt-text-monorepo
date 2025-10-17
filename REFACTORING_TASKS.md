@@ -476,7 +476,7 @@ const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
 **Goal:** Fix state management issues and simplify overly complex hooks
 
 **Progress Tracker:**
-- [ ] Task 3.1: Refactor useRecognitionJob with useReducer + state machine
+- [~] Task 3.1: Refactor useRecognitionJob with useReducer + state machine (IN PROGRESS)
 - [ ] Task 3.2: Refactor useRoster form submission with useReducer
 - [ ] Task 3.3: Simplify useWorkbenchMedia.ts
 
@@ -486,7 +486,13 @@ const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
 **Priority:** 🔴 Critical  
 **Time:** 2-3 hours  
 **Impact:** -150 lines, eliminates race conditions  
-**Status:** [ ] Not Started
+**Status:** [~] In Progress - Steps 1-2 of 4 complete (foundation laid)
+
+**Progress:**
+- ✅ Step 1: Extract normalization utilities (-42 lines)
+- ✅ Step 2: Add state machine types and reducer
+- ⏳ Step 3: Replace 6 useState hooks with single useReducer
+- ⏳ Step 4: Update ~20 setState calls to dispatch actions and test
 
 **Context:** [FRONTEND_AUDITS.md - useRecognitionJob Critical Bloat](apps/wp-context-alt-text/FRONTEND_AUDITS.md#2-userecognitionjobts--critical-bloat-585-lines)
 

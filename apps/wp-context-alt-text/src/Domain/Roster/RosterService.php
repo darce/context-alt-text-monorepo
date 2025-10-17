@@ -608,13 +608,23 @@ class RosterService
             );
         }
 
+        // Use image_count from API if available, otherwise fallback to counting referenceImages
+        $imageCount = 0;
+        if (isset($default['image_count']) && is_numeric($default['image_count'])) {
+            $imageCount = (int) $default['image_count'];
+        } elseif (isset($fallback['referenceImageCount']) && is_numeric($fallback['referenceImageCount'])) {
+            $imageCount = (int) $fallback['referenceImageCount'];
+        } else {
+            $imageCount = is_array($referenceImages) ? count($referenceImages) : 0;
+        }
+
         return [
             'remoteId' => $remoteId,
             'label' => $label,
             'type' => $type,
             'metadata' => $metadata,
             'referenceImages' => $referenceImages,
-            'referenceImageCount' => is_array($referenceImages) ? count($referenceImages) : 0,
+            'referenceImageCount' => $imageCount,
             'media' => $media,
             'mediaCount' => count($media),
             'updatedAt' => $updatedAt ?: $this->currentTimestamp(),

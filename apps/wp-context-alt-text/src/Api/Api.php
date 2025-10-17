@@ -15,6 +15,7 @@ use ContextAltText\Roster\RosterSyncScheduler;
 use ContextAltText\Roster\RosterObservationManager;
 use ContextAltText\Security\Security;
 use ContextAltText\Shared\Config\SettingsRepository;
+use ContextAltText\Shared\Logger;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
 use WP_Error;
@@ -625,12 +626,20 @@ class Api
         $entityType = $this->sanitize_string_param($request->get_param('entityType'));
         $entityType = $entityType !== '' ? $entityType : null;
 
+        Logger::info('Retry observations request', ['entityType' => $entityType]);
+
         $attachmentIds = $this->recognitionObservations->findAttachmentIdsNeedingReview(
             $entityType,
             100
         );
 
+        Logger::debug('Found attachments needing review', [
+            'count' => count($attachmentIds),
+            'ids' => $attachmentIds,
+        ]);
+
         if ($attachmentIds === []) {
+            Logger::info('No observations found needing review');
             return rest_ensure_response([
                 'success' => true,
                 'submitted' => 0,
@@ -638,15 +647,51 @@ class Api
             ]);
         }
 
-        $this->recognitionJobs->submit($attachmentIds);
+        // Skip cooldown for manual retries via the API
+        $result = $this->recognitionJobs->submit($attachmentIds, true);
+
+        Logger::info('Job submission result', [
+            'status' => $result['status'] ?? 'unknown',
+            'accepted' => $result['accepted'] ?? 0,
+            'rejected' => count($result['rejected'] ?? []),
+            'deferred' => count($result['deferred'] ?? []),
+            'jobId' => $result['jobId'] ?? null,
+        ]);
+
+        $deferredCount = count($result['deferred'] ?? []);
+        $acceptedCount = $result['accepted'] ?? 0;
+
+        if ($deferredCount > 0 && $acceptedCount === 0) {
+            return rest_ensure_response([
+                'success' => false,
+                'submitted' => 0,
+                'deferred' => $deferredCount,
+                'message' => sprintf(
+                    __('%d attachments deferred due to cooldown period (5 min). Please wait before retrying.', 'context-alt-text'),
+                    $deferredCount
+                ),
+            ]);
+        }
+
+        $message = $acceptedCount > 0
+            ? sprintf(
+                __('%d attachments submitted for re-recognition.', 'context-alt-text'),
+                $acceptedCount
+            )
+            : __('No attachments were submitted.', 'context-alt-text');
+
+        if ($deferredCount > 0) {
+            $message .= ' ' . sprintf(
+                __('%d deferred due to cooldown.', 'context-alt-text'),
+                $deferredCount
+            );
+        }
 
         return rest_ensure_response([
-            'success' => true,
-            'submitted' => count($attachmentIds),
-            'message' => sprintf(
-                __('%d attachments submitted for re-recognition.', 'context-alt-text'),
-                count($attachmentIds)
-            ),
+            'success' => $acceptedCount > 0,
+            'submitted' => $acceptedCount,
+            'deferred' => $deferredCount,
+            'message' => $message,
         ]);
     }
 
@@ -802,6 +847,11 @@ class Api
             $observationRecord = $this->rosterObservationManager->resolveObservationWithRoster($resolution, $entry);
         }
 
+        // Update all observations matched to this roster entry with the current label
+        if ($entry !== null) {
+            $this->rosterObservationManager->updateObservationsForRosterEntry($entry);
+        }
+
         // Auto-assign observations that already have this entry as a candidate
         // Note: Observations need updated candidates (from re-recognition) to be matched
         $autoMatches = $entry !== null
@@ -871,6 +921,11 @@ class Api
 
         if ($resolution !== null && $entry !== null) {
             $observationRecord = $this->rosterObservationManager->resolveObservationWithRoster($resolution, $entry);
+        }
+
+        // Update all observations matched to this roster entry with the current label
+        if ($entry !== null) {
+            $this->rosterObservationManager->updateObservationsForRosterEntry($entry);
         }
 
         $autoMatches = $entry !== null

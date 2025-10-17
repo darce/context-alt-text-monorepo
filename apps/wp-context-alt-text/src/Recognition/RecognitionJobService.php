@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace ContextAltText\Recognition;
 
 use ContextAltText\Roster\RosterObservationManager;
+use ContextAltText\Shared\Logger;
 use function __;
 use function add_action;
 use function apply_filters;
@@ -74,11 +75,12 @@ class RecognitionJobService
     }
 
     /**
-     * @param array<int|numeric-string> $attachmentIds
+     * @param array<int> $attachmentIds
+     * @param bool $skipCooldown Skip the retry cooldown (for manual retries)
      *
      * @return array<string,mixed>
      */
-    public function submit(array $attachmentIds): array
+    public function submit(array $attachmentIds, bool $skipCooldown = false): array
     {
         $normalizedIds = $this->normalizeAttachmentIds($attachmentIds);
 
@@ -132,7 +134,7 @@ class RecognitionJobService
             ];
         }
 
-        [$eligible, $deferred] = $this->filterEligibleAttachments($accepted);
+        [$eligible, $deferred] = $this->filterEligibleAttachments($accepted, $skipCooldown);
 
         if ($eligible === []) {
             return [
@@ -189,14 +191,18 @@ class RecognitionJobService
             return;
         }
 
+        Logger::debug('Processing recognition job', ['jobId' => $jobId]);
+
         $job = $this->repository->find($jobId);
 
         if ($job === null) {
+            Logger::warn('Job not found', ['jobId' => $jobId]);
             return;
         }
 
         $status = is_string($job['status'] ?? null) ? $job['status'] : '';
         if ($status === 'processing' || $status === 'complete') {
+            Logger::debug('Job already processed', ['jobId' => $jobId, 'status' => $status]);
             return;
         }
 
@@ -205,12 +211,19 @@ class RecognitionJobService
             : [];
 
         if ($attachments === []) {
+            Logger::error('Job missing attachment data', ['jobId' => $jobId]);
             $job['status'] = 'error';
             $job['error'] = __('Recognition job is missing attachment data.', 'context-alt-text');
             $this->repository->save($job);
 
             return;
         }
+
+        Logger::info('Starting job processing', [
+            'jobId' => $jobId,
+            'attachmentCount' => count($attachments),
+            'attachmentIds' => array_map(fn($a) => $a['id'] ?? null, $attachments),
+        ]);
 
         $job['status'] = 'processing';
         $job['startedAt'] = time();
@@ -250,12 +263,27 @@ class RecognitionJobService
 
             $response = $this->client->analyzeScene($payload);
 
+            Logger::info('Recognition completed', [
+                'jobId' => $jobId,
+                'imageCount' => count($payload['images']),
+                'entitiesDetected' => count($response['detected_entities'] ?? []),
+            ]);
+
             $job['status'] = 'complete';
             $job['result'] = $response;
             $job['completedAt'] = time();
             $job['observations'] = $this->persistObservations($job, $attachments, $response);
             $this->repository->save($job);
+
+            Logger::debug('Observations persisted', [
+                'jobId' => $jobId,
+                'observationCount' => count($job['observations'] ?? []),
+            ]);
         } catch (RecognitionClientException $exception) {
+            Logger::error('Recognition failed', [
+                'jobId' => $jobId,
+                'error' => $exception->getMessage(),
+            ]);
             $job['status'] = 'error';
             $job['error'] = $exception->getMessage();
             $job['completedAt'] = null;
@@ -289,7 +317,7 @@ class RecognitionJobService
      * @param array<int,array{id:int,image_url:string,filename:string}> $accepted
      * @return array{0:array<int,array{id:int,imageUrl:string,filename:string}>,1:array<int>}
      */
-    private function filterEligibleAttachments(array $accepted): array
+    private function filterEligibleAttachments(array $accepted, bool $skipCooldown = false): array
     {
         $log = $this->loadRetryLog();
         $now = time();
@@ -303,9 +331,24 @@ class RecognitionJobService
             }
 
             $lastAttempt = $log[$attachmentId] ?? 0;
-            $cooldownRemaining = $lastAttempt !== 0 && ($now - $lastAttempt) < self::RETRY_COOLDOWN_SECONDS;
+            $cooldownRemaining = !$skipCooldown && $lastAttempt !== 0 && ($now - $lastAttempt) < self::RETRY_COOLDOWN_SECONDS;
 
-            if ($cooldownRemaining || count($eligible) >= self::MAX_BATCH_SIZE) {
+            if ($cooldownRemaining) {
+                $waitTime = self::RETRY_COOLDOWN_SECONDS - ($now - $lastAttempt);
+                Logger::debug('Attachment deferred due to cooldown', [
+                    'attachmentId' => $attachmentId,
+                    'lastAttempt' => $lastAttempt,
+                    'waitTimeSeconds' => $waitTime,
+                ]);
+                $deferred[] = $attachmentId;
+                continue;
+            }
+
+            if (count($eligible) >= self::MAX_BATCH_SIZE) {
+                Logger::debug('Attachment deferred due to batch size limit', [
+                    'attachmentId' => $attachmentId,
+                    'batchSize' => self::MAX_BATCH_SIZE,
+                ]);
                 $deferred[] = $attachmentId;
                 continue;
             }
@@ -788,8 +831,33 @@ class RecognitionJobService
     private function autoResolveRosterMatches(int $attachmentId, array $observations): void
     {
         if ($this->rosterObservationManager === null) {
+            Logger::debug('Skipping auto-resolve: no roster manager', ['attachmentId' => $attachmentId]);
             return;
         }
+
+        $matchedCount = 0;
+        foreach ($observations as $observation) {
+            if (!is_array($observation)) {
+                continue;
+            }
+
+            if (($observation['status'] ?? '') !== 'matched') {
+                continue;
+            }
+
+            $roster = $observation['roster'] ?? null;
+            if (!is_array($roster)) {
+                continue;
+            }
+
+            $matchedCount++;
+        }
+
+        Logger::debug('Auto-resolving roster matches', [
+            'attachmentId' => $attachmentId,
+            'totalObservations' => count($observations),
+            'matchedObservations' => $matchedCount,
+        ]);
 
         foreach ($observations as $observation) {
             if (!is_array($observation)) {

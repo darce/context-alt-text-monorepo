@@ -7,6 +7,7 @@ namespace ContextAltText\Roster;
 use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Recognition\RecognitionJobService;
 use ContextAltText\Recognition\RecognitionObservationRepository;
+use ContextAltText\Shared\Logger;
 use function array_filter;
 use function in_array;
 use function is_array;
@@ -514,6 +515,103 @@ final class RosterObservationManager
         }
 
         return '';
+    }
+
+    /**
+     * Update all observations matched to a roster entry with the entry's current label
+     *
+     * @param array<string,mixed> $entry
+     * @return int Number of observations updated
+     */
+    public function updateObservationsForRosterEntry(array $entry): int
+    {
+        $remoteId = $this->extractScalar($entry['remoteId'] ?? $entry['remote_id'] ?? null);
+        $label = $this->extractScalar($entry['label'] ?? $entry['name'] ?? null);
+        $entityType = $this->extractScalar($entry['type'] ?? null);
+
+        if ($remoteId === '' || $label === '') {
+            Logger::warn('Cannot update observations: missing remote ID or label', [
+                'remoteId' => $remoteId,
+                'label' => $label,
+            ]);
+            return 0;
+        }
+
+        Logger::debug('Updating observations for roster entry', [
+            'remoteId' => $remoteId,
+            'label' => $label,
+            'type' => $entityType,
+        ]);
+
+        // Find all observations matched to this roster entry
+        $allObservations = $this->observations->findByRosterId($remoteId);
+
+        Logger::debug('Found observation records', [
+            'remoteId' => $remoteId,
+            'recordCount' => count($allObservations),
+        ]);
+
+        $updated = 0;
+
+        foreach ($allObservations as $record) {
+            if (!is_array($record) || !isset($record['observations'])) {
+                continue;
+            }
+
+            $attachmentId = (int) ($record['attachmentId'] ?? 0);
+            if ($attachmentId <= 0) {
+                continue;
+            }
+
+            foreach ($record['observations'] as $obs) {
+                if (!is_array($obs)) {
+                    continue;
+                }
+
+                $observationId = $this->extractScalar($obs['observationId'] ?? null);
+                $currentRosterId = $this->extractScalar($obs['roster']['remoteId'] ?? null);
+
+                // Only update if this observation is matched to this roster entry
+                if ($observationId === '' || $currentRosterId !== $remoteId) {
+                    Logger::debug('Skipping observation', [
+                        'attachmentId' => $attachmentId,
+                        'observationId' => $observationId,
+                        'currentRosterId' => $currentRosterId,
+                        'expectedRosterId' => $remoteId,
+                        'reason' => $observationId === '' ? 'no ID' : 'roster ID mismatch',
+                    ]);
+                    continue;
+                }
+
+                $updates = [
+                    'label' => $label,
+                    'roster' => [
+                        'remoteId' => $remoteId,
+                        'name' => $label,
+                        'displayName' => $label,
+                        'type' => $entityType !== '' ? $entityType : ($obs['roster']['type'] ?? 'person'),
+                    ],
+                ];
+
+                $result = $this->observations->updateObservation($attachmentId, $observationId, $updates);
+                if ($result !== null) {
+                    $updated++;
+                    Logger::debug('Updated observation label', [
+                        'attachmentId' => $attachmentId,
+                        'observationId' => $observationId,
+                        'newLabel' => $label,
+                    ]);
+                }
+            }
+        }
+
+        Logger::info('Completed observation label updates', [
+            'remoteId' => $remoteId,
+            'label' => $label,
+            'updated' => $updated,
+        ]);
+
+        return $updated;
     }
 
     /**

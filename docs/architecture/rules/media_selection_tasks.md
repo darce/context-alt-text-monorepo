@@ -5,7 +5,7 @@ These tasks extend the Alt-Text Workbench slice described in the UML diagram `fr
 ## REST + Data Plumbing
 
 - [ ] **Expose `GET /workbench/media`**
-  - Route namespace: `context-alt-text/v1`.
+  - Route namespace: `cat/v1`.
   - Capability: `manage_options` (match dashboard surface).
   - Query params: pagination (`page`, `per_page`), filters (`status`, `updated_after`, `search`), sort (`order`, `orderby`).
   - Response schema: array of normalized media items `{ id, title, status: "missing"|"draft"|"published", thumbnailUrl, updatedAt }` plus pagination headers. Reuse DTOs in the JS bootstrap (`dashboardData.ts`).

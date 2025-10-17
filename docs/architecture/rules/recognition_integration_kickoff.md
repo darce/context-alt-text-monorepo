@@ -19,8 +19,8 @@ Curated task clusters required to light up end-to-end communication between the 
 
 - [x] Add plugin settings for `recognitionBaseUrl`, `timeoutMs`, and model/profile selection. (Admin settings form now registers/stores these options.)
 - [x] Harden the PHP `RecognitionClient` with retries, circuit breaker defaults, and structured error mapping for `/api/v0/analyze-scene` and `/api/v0/embeddings`. (Added bounded retry loop, exponential backoff, and JSON error parsing.)
-- [x] Implement `POST /wp-json/context-alt-text/v1/recognition/analyze` (aliased as `/recognition/run` in planning) to queue recognition jobs, validate attachment IDs, and fan out to the backend client.
-- [x] Persist recognition job state (pending, processing, complete, error) and expose `/wp-json/context-alt-text/v1/recognition/job/<id>` for polling results. (Transient-backed repository now tracks pending → processing → complete/error with timestamps.)
+- [x] Implement `POST /wp-json/cat/v1/recognition/analyze` (aliased as `/recognition/run` in planning) to queue recognition jobs, validate attachment IDs, and fan out to the backend client.
+- [x] Persist recognition job state (pending, processing, complete, error) and expose `/wp-json/cat/v1/recognition/job/<id>` for polling results. (Transient-backed repository now tracks pending → processing → complete/error with timestamps.)
 - [x] Ensure recognition results are stored as observations linked to attachments and roster entities. (Persisted via `RecognitionJobService::persistObservations()` and `RecognitionObservationRepository`.)
 - [x] Add WP-CLI commands (`cat-recognition health`, `cat-recognition analyze <attachment_id>`) for operational smoke tests.
 

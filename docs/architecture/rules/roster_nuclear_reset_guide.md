@@ -236,7 +236,7 @@ Instead of deleting, update existing entries with new references:
 
 ```php
 // Via REST API
-PATCH /context-alt-text/v1/roster/{remoteId}
+PATCH /cat/v1/roster/{remoteId}
 ```
 
 ### Repair Taxonomy

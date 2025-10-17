@@ -11,7 +11,7 @@ When a new roster entry is created, the system automatically attempts to match i
 When a user creates a new roster entry via the Roster Manager:
 
 ```typescript
-POST /context-alt-text/v1/roster
+POST /cat/v1/roster
 {
   "label": "John Doe",
   "type": "person",

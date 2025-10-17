@@ -112,6 +112,95 @@ export interface RecognitionJobDetails {
     observations: RecognitionAttachmentObservations[];
 }
 
+// ============================================================================
+// State Machine Types
+// ============================================================================
+
+/**
+ * Job state machine using discriminated unions for type safety.
+ * Ensures impossible states are impossible (e.g., can't be submitting AND have error).
+ */
+type JobState =
+    | { status: "idle" }
+    | { status: "submitting"; attachmentIds: number[] }
+    | { 
+        status: "polling"; 
+        jobId: string; 
+        attempts: number;
+        lastJob: RecognitionJobSummary;
+    }
+    | { status: "complete"; details: RecognitionJobDetails }
+    | { status: "error"; error: RecognitionRequestError; retryable: boolean };
+
+type JobAction =
+    | { type: "SUBMIT_START"; attachmentIds: number[] }
+    | { type: "SUBMIT_SUCCESS"; job: RecognitionJobSummary }
+    | { type: "SUBMIT_ERROR"; error: RecognitionRequestError }
+    | { type: "POLL_UPDATE"; attempts: number }
+    | { type: "POLL_COMPLETE"; details: RecognitionJobDetails }
+    | { type: "POLL_ERROR"; error: RecognitionRequestError }
+    | { type: "RESET" };
+
+// ============================================================================
+// State Machine Reducer
+// ============================================================================
+
+/**
+ * Pure reducer function for job state transitions.
+ * Ensures atomic state updates and type-safe state transitions.
+ */
+const jobReducer = (state: JobState, action: JobAction): JobState => {
+    switch (action.type) {
+        case "SUBMIT_START":
+            return { status: "submitting", attachmentIds: action.attachmentIds };
+
+        case "SUBMIT_SUCCESS":
+            return {
+                status: "polling",
+                jobId: action.job.jobId,
+                attempts: 0,
+                lastJob: action.job,
+            };
+
+        case "SUBMIT_ERROR":
+            return {
+                status: "error",
+                error: action.error,
+                retryable: true,
+            };
+
+        case "POLL_UPDATE":
+            if (state.status !== "polling") return state;
+            return {
+                ...state,
+                attempts: action.attempts,
+            };
+
+        case "POLL_COMPLETE":
+            return {
+                status: "complete",
+                details: action.details,
+            };
+
+        case "POLL_ERROR":
+            return {
+                status: "error",
+                error: action.error,
+                retryable: false,
+            };
+
+        case "RESET":
+            return { status: "idle" };
+
+        default:
+            return state;
+    }
+}
+
+// ============================================================================
+// Normalization Utilities (Domain-specific)
+// ============================================================================
+
 type PollState = "idle" | "polling";
 
 const normalizeObservationStatus = (

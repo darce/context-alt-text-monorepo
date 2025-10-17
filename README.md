@@ -1,79 +1,186 @@
 # Context Alt Text Monorepo
 
-This repository tracks both halves of the Context Alt Text project:
+AI-powered alternative text generation for WordPress media, with facial recognition and roster management.
 
-- `apps/wp-context-alt-text/` — the WordPress plugin surface (greenfield rebuild).
-- `apps/recognition-service/` — the Hugging Face/CPU deployment that provides scene analysis, embeddings, and roster APIs.
-- `packages/` — shared contracts and tooling that must stay in sync across services.
-- `docs/architecture/` — authoritative roadmap, diagrams, and engineering process.
+[![Tests](https://img.shields.io/badge/tests-163%20passing-success)]() [![PHP](https://img.shields.io/badge/PHP-8.2%2B-777BB4)]() [![WordPress](https://img.shields.io/badge/WordPress-6.0%2B-21759B)]() [![Python](https://img.shields.io/badge/Python-3.10%2B-3776AB)]()
 
-## Working with LocalWP
+---
 
-The plugin source of truth lives in `apps/wp-context-alt-text/`. To run it inside a LocalWP instance:
+## 🚀 Quick Start
+
+### **New Contributors**
+
+Start here: **[`docs/getting-started.md`](docs/getting-started.md)**
+
+### **WordPress Plugin Development**
 
 ```bash
-# from the LocalWP site root (e.g., ~/Development/wp-context-alt-text/app/public/wp-content/plugins)
-rm -rf context-alt-text
-ln -s ../../../../../context-alt-text/apps/wp-context-alt-text context-alt-text
+cd apps/wp-context-alt-text
+npm install && composer install
+./scripts/switch-env.sh local
+npm run dev
 ```
 
-Keep all plugin changes on the monorepo side; the LocalWP folder only contains the symlink and should not be committed.
+📖 **Full guide:** [`apps/wp-context-alt-text/README.md`](apps/wp-context-alt-text/README.md)
 
-
-## Repository Management
-
-This monorepo is the single source of truth for both the plugin and the recognition service.
+### **Recognition Service Development**
 
 ```bash
-# clone once
-git clone git@github.com:darce/context-alt-text-monorepo.git
+cd apps/recognition-service
+pip install -r requirements_local.txt
+./scripts/start_recognition_local.sh start
+```
 
-# work from feature branches at the root
-git checkout -b feature/<short-description>
+📖 **Full guide:** [`apps/recognition-service/README.md`](apps/recognition-service/README.md)
 
-# commit from the root so frontend + backend changes land together
+---
+
+## 📦 Monorepo Structure
+
+```
+context-alt-text-monorepo/
+├── apps/
+│   ├── wp-context-alt-text/      # WordPress Plugin (PHP + TypeScript/React)
+│   └── recognition-service/      # Face Recognition API (Python FastAPI + InsightFace)
+├── packages/
+│   ├── shared-contracts/         # TypeScript API contracts between services
+│   └── wp-testing-helpers/       # WordPress PHPUnit test utilities
+├── docs/                         # Monorepo documentation
+│   ├── getting-started.md       # 👈 Start here
+│   ├── architecture/            # System design, UML diagrams
+│   ├── literature/              # Reference materials
+│   └── PROMPTS_INDEX.md         # Agentic development prompts
+└── scripts/                      # Monorepo-level scripts
+```
+
+---
+
+## 📚 Documentation
+
+### Monorepo-Level
+
+- **[Getting Started](docs/getting-started.md)** - Contributor onboarding
+- **[Architecture](docs/architecture/)** - System design, UML diagrams
+- **[Prompts Index](docs/PROMPTS_INDEX.md)** - Agentic development
+
+### Project-Specific
+
+**WordPress Plugin:**
+- [README](apps/wp-context-alt-text/README.md) - Quick start
+- [Configuration](apps/wp-context-alt-text/docs/configuration.md) - Environment profiles
+- [Development](apps/wp-context-alt-text/docs/development.md) - Contributing guide
+- [API Reference](apps/wp-context-alt-text/docs/api-reference.md) - REST API
+- [Troubleshooting](apps/wp-context-alt-text/docs/troubleshooting.md) - Common issues
+
+**Recognition Service:**
+- [README](apps/recognition-service/README.md) - Complete documentation
+
+---
+
+## 🏗️ Architecture
+
+```
+WordPress Admin (React/TypeScript)
+         │
+         ├─> Dashboard     (Coverage metrics)
+         ├─> Workbench     (Media management, recognition trigger)
+         └─> Roster UI     (Entity management)
+         │
+         ▼
+   REST API (cat/v1)
+   (PHP Backend)
+         │
+         ├─> Settings      (Configuration)
+         ├─> Recognition   (Job management)
+         ├─> Observations  (Face detection results)
+         └─> Roster        (Entity CRUD, sync with recognition service)
+         │
+         ▼
+Recognition Service
+(Python FastAPI + InsightFace)
+         │
+         ├─> Face Detection
+         ├─> Face Recognition (w600k model)
+         └─> Roster Management
+```
+
+📖 **Detailed architecture:** [`docs/architecture/`](docs/architecture/)
+
+---
+
+## 🧪 Testing
+
+### WordPress Plugin
+```bash
+cd apps/wp-context-alt-text
+composer test              # PHP tests (PHPUnit)
+npm run test              # TypeScript tests (Vitest)
+```
+
+**Status:** 163 PHP tests, 653 assertions, all passing ✅
+
+### Recognition Service
+```bash
+cd apps/recognition-service
+pytest --cov=analysis --cov=recognition_core
+```
+
+---
+
+## 🤝 Contributing
+
+1. **Read** [`docs/getting-started.md`](docs/getting-started.md)
+2. **Choose** a project (WordPress plugin or recognition service)
+3. **Set up** your development environment
+4. **Find** an issue labeled [`good-first-issue`](https://github.com/darce/context-alt-text-monorepo/labels/good-first-issue)
+5. **Follow** [Conventional Commits](https://www.conventionalcommits.org/)
+
+```bash
+# Create feature branch
+git checkout -b feature/<description>
+
+# Commit from monorepo root
 git add apps/ packages/ docs/
-git commit -m "feat: ..."
+git commit -m "feat: add roster import feature"
 ```
 
-Avoid nested Git repositories or submodules inside `apps/`. If a legacy `.git` directory exists (for example under `apps/recognition-service`), remove it so all history is captured by the root repo.
+📖 **Full guide:** [`docs/getting-started.md#contributing`](docs/getting-started.md#contributing)
 
-## Deploying the Recognition Service to Hugging Face
+---
 
-The Space should mirror `apps/recognition-service`. After CI passes on `main`, push the subtree to Hugging Face:
+## 🚢 Deployment
 
+### WordPress Plugin
 ```bash
-# add once
-git remote add hf git@hf.co:spaces/dearce/recognition-service
+cd apps/wp-context-alt-text
+./scripts/switch-env.sh production
+npm run build
+# Deploy to WordPress hosting
+```
 
-# publish the latest main branch
+### Recognition Service
+```bash
+# Deploy to Hugging Face Space
+git remote add hf git@hf.co:spaces/dearce/recognition-service
 git subtree push --prefix=apps/recognition-service hf main
 ```
 
-Automate this flow with GitHub Actions: run pytest for the backend, then execute the subtree push whenever `main` is updated.
+---
 
+## 📞 Support
 
+- **Documentation:** [`docs/`](docs/) and project-specific docs
+- **Issues:** [GitHub Issues](https://github.com/darce/context-alt-text-monorepo/issues)
+- **Discussions:** [GitHub Discussions](https://github.com/darce/context-alt-text-monorepo/discussions)
 
-## Suggested Directory Layout
+---
 
-```
-apps/
-  wp-context-alt-text/          # plugin source
-  recognition-service/          # FastAPI backend
-packages/
-  shared-contracts/             # JSON schemas, DTOs
-  wp-testing-helpers/           # reusable test utilities
-.tools/
-  scripts/                      # local dev scripts
-docs/architecture/             # roadmap + UML (do not delete)
-```
+## 📄 License
 
-As the rebuild progresses, move any shared JSON schemas or PHP/TS DTO definitions into `packages/shared-contracts` so both apps import from the same source.
+MIT License - see [LICENSE](LICENSE) file for details.
 
-## Contributing Workflow
-
-1. Make changes under the relevant `apps/` directory.
-2. Update shared contracts/tests in `packages/` when API shapes change.
-3. Refresh architecture docs under `docs/` (roadmap status, UML) before merging.
-4. Run service-specific test suites (`composer test`, `npm test`, `pytest`) from each app.
-5. Commit from the repository root so history reflects coordinated changes.
+**Key Points:**
+- ✅ Commercial use permitted
+- ✅ Modification and redistribution allowed
+- ✅ Can include other MIT-licensed libraries
+- ⚠️ No warranty or liability

@@ -1,8 +1,21 @@
 # Recognition Service
 
-InsightFace-only FastAPI service that powers Context Alt Text’s face detection, embedding, and roster matching. This document consolidates all instructions (local dev + Hugging Face deployment) and supersedes the older `recognition/README.md`.
+InsightFace-only FastAPI service that powers Context Alt Text's face detection, embedding, and roster matching. This document consolidates all instructions (local dev + Hugging Face deployment) and supersedes the older `recognition/README.md`.
 
 ---
+
+## License
+
+MIT License - see [LICENSE](../../LICENSE) file for details.
+
+**Key Points:**
+- ✅ Commercial use permitted
+- ✅ Modification and redistribution allowed
+- ✅ Can include other MIT-licensed libraries
+- ⚠️ No warranty or liability
+
+---
+
 ## 1. Architecture Overview
 
 ```

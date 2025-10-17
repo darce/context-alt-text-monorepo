@@ -1,3 +1,5 @@
+import logger from "../../admin/logger";
+
 export const formatWorkbenchDate = (iso?: string): string | null => {
     if (!iso) {
         return null;
@@ -14,7 +16,7 @@ export const formatWorkbenchDate = (iso?: string): string | null => {
             timeStyle: "short",
         }).format(date);
     } catch (error) {
-        console.warn("[Context Alt Text] Failed to format date", error);
+        logger.warn("Failed to format date", error);
         return date.toISOString();
     }
 };

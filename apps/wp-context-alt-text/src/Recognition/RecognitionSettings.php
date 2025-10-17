@@ -26,14 +26,21 @@ class RecognitionSettings
 
     /**
      * Retrieve the configured base URL for the recognition service.
+     * 
+     * Priority order (12-factor app principle):
+     * 1. Environment variable (CAT_RECOGNITION_BASE_URL)
+     * 2. WordPress database option (admin UI override)
      */
     public function getBaseUrl(): ?string
     {
-        $settings = $this->settingsRepository->getRecognitionSettings();
-        $option = $settings['baseUrl'] ?? '';
-
-        if ($option === '') {
-            $option = $this->getEnv('CAT_RECOGNITION_BASE_URL');
+        // Check environment variable first
+        $envValue = $this->getEnv('CAT_RECOGNITION_BASE_URL');
+        if ($envValue !== null && $envValue !== '') {
+            $option = $envValue;
+        } else {
+            // Fallback to database option
+            $settings = $this->settingsRepository->getRecognitionSettings();
+            $option = $settings['baseUrl'] ?? '';
         }
 
         if (!is_string($option)) {
@@ -57,14 +64,21 @@ class RecognitionSettings
 
     /**
      * Retrieve the API key (if any) for authenticating against the recognition service.
+     * 
+     * Priority order (12-factor app principle):
+     * 1. Environment variable (CAT_RECOGNITION_API_KEY)
+     * 2. WordPress database option (admin UI override)
      */
     public function getApiKey(): ?string
     {
-        $settings = $this->settingsRepository->getRecognitionSettings();
-        $option = $settings['apiKey'] ?? '';
-
-        if ($option === '') {
-            $option = $this->getEnv('CAT_RECOGNITION_API_KEY');
+        // Check environment variable first
+        $envValue = $this->getEnv('CAT_RECOGNITION_API_KEY');
+        if ($envValue !== null && $envValue !== '') {
+            $option = $envValue;
+        } else {
+            // Fallback to database option
+            $settings = $this->settingsRepository->getRecognitionSettings();
+            $option = $settings['apiKey'] ?? '';
         }
 
         if (!is_string($option)) {
@@ -78,15 +92,22 @@ class RecognitionSettings
 
     /**
      * Timeout in milliseconds for outbound HTTP requests to the recognition service.
+     * 
+     * Priority order (12-factor app principle):
+     * 1. Environment variable (CAT_RECOGNITION_TIMEOUT_MS)
+     * 2. WordPress database option (admin UI override)
+     * 3. Default value (15000ms)
      */
     public function getTimeoutMs(): int
     {
-        $settings = $this->settingsRepository->getRecognitionSettings();
-        $timeout = (int) ($settings['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS);
-
+        // Check environment variable first
         $envSetting = $this->getEnv('CAT_RECOGNITION_TIMEOUT_MS');
         if ($envSetting !== null && $envSetting !== '') {
             $timeout = (int) trim($envSetting);
+        } else {
+            // Fallback to database option
+            $settings = $this->settingsRepository->getRecognitionSettings();
+            $timeout = (int) ($settings['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS);
         }
 
         if ($timeout <= 0) {
@@ -98,14 +119,21 @@ class RecognitionSettings
 
     /**
      * Optional model profile identifier that should be requested from the backend.
+     * 
+     * Priority order (12-factor app principle):
+     * 1. Environment variable (CAT_RECOGNITION_MODEL_PROFILE)
+     * 2. WordPress database option (admin UI override)
      */
     public function getModelProfile(): ?string
     {
-        $settings = $this->settingsRepository->getRecognitionSettings();
-        $option = $settings['modelProfile'] ?? '';
-
-        if ($option === '') {
-            $option = $this->getEnv('CAT_RECOGNITION_MODEL_PROFILE');
+        // Check environment variable first
+        $envValue = $this->getEnv('CAT_RECOGNITION_MODEL_PROFILE');
+        if ($envValue !== null && $envValue !== '') {
+            $option = $envValue;
+        } else {
+            // Fallback to database option
+            $settings = $this->settingsRepository->getRecognitionSettings();
+            $option = $settings['modelProfile'] ?? '';
         }
 
         if (!is_string($option)) {

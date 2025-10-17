@@ -827,7 +827,7 @@ final class ApiTest extends TestCase
                 // Intentionally bypass parent dependencies; this stub only records submissions.
             }
 
-            public function submit(array $attachmentIds): array
+            public function submit(array $attachmentIds, bool $skipCooldown = false): array
             {
                 $this->submittedBatches[] = $attachmentIds;
 

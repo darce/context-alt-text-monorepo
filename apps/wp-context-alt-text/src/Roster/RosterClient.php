@@ -88,19 +88,21 @@ class RosterClient implements RosterRemote
             }
         }
 
-        $path = sprintf('/api/v0/roster/%s', rawurlencode($remoteId));
+        $model = $this->getModelProfile();
+        $path = sprintf('/api/v0/roster/%s/%s', rawurlencode($model), rawurlencode($remoteId));
 
-        return $this->requestJson('PATCH', $path, $payload);
+        return $this->requestJson('PUT', $path, $payload);
     }
 
     /**
-     * Delete a roster entry via DELETE /api/v0/roster/{remote_id}.
+     * Delete a roster entry via DELETE /api/v0/roster/{model}/{remote_id}.
      *
      * @throws RosterClientException
      */
     public function deleteEntry(string $remoteId): bool
     {
-        $path = sprintf('/api/v0/roster/%s', rawurlencode($remoteId));
+        $model = $this->getModelProfile();
+        $path = sprintf('/api/v0/roster/%s/%s', rawurlencode($model), rawurlencode($remoteId));
         $this->requestVoid('DELETE', $path);
 
         return true;

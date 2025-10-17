@@ -286,10 +286,22 @@ interface UseRosterArgs {
     filters: RosterFilters;
 }
 
+export interface RosterAutoMatchResult {
+    attachmentId: number;
+    observationId: string;
+    remoteId: string;
+    label?: string;
+}
+
+export interface RosterEntryCreateResult {
+    entry: RosterEntry | null;
+    autoMatched: RosterAutoMatchResult[];
+}
+
 interface UseRosterResult {
     query: UseQueryResult<RosterQueryResult, Error>;
     hasEndpoint: boolean;
-    createEntry: (values: RosterFormValues) => Promise<RosterEntry | null>;
+    createEntry: (values: RosterFormValues) => Promise<RosterEntryCreateResult>;
     updateEntry: (values: RosterFormValues) => Promise<RosterEntry | null>;
     deleteEntry: (remoteId: string) => Promise<boolean>;
     syncRoster: () => Promise<RosterQueryResult>;
@@ -363,11 +375,16 @@ export const useRoster = ({ initialData, config, filters }: UseRosterArgs): UseR
             });
 
             const payload = await handleJsonResponse(await ensureOk(response));
-            const entry = normalizeRosterEntry((payload as Record<string, unknown>).entry as Partial<RosterEntry> | undefined);
+            const payloadRecord = payload as Record<string, unknown>;
+            const entry = normalizeRosterEntry(payloadRecord.entry as Partial<RosterEntry> | undefined);
 
             invalidateObservations(payload);
 
-            return entry;
+            // Return both entry and autoMatched observations
+            return {
+                entry,
+                autoMatched: Array.isArray(payloadRecord.autoMatched) ? payloadRecord.autoMatched : [],
+            };
         },
         onSuccess: () => {
             refreshRoster();

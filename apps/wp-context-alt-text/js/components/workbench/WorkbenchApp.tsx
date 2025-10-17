@@ -42,6 +42,7 @@ export const WorkbenchApp = ({
     const requestErrorEventRef = React.useRef<string | null>(null);
     const jobErrorEventRef = React.useRef<string | null>(null);
     const completedJobEventRef = React.useRef<string | null>(null);
+    const lastAttemptedIdsRef = React.useRef<string[]>([]);
 
     React.useEffect(() => {
         if (!recognition.error) {
@@ -193,6 +194,7 @@ export const WorkbenchApp = ({
             return;
         }
         const selectionSnapshot = [...selectedList];
+        lastAttemptedIdsRef.current = selectionSnapshot;
 
         requestErrorEventRef.current = null;
         jobErrorEventRef.current = null;
@@ -207,6 +209,27 @@ export const WorkbenchApp = ({
             // Errors are surfaced via the hook state; no additional handling needed here.
         });
     }, [recognition, selectedList]);
+
+    const handleRetryRecognition = React.useCallback(() => {
+        const retryIds = lastAttemptedIdsRef.current;
+
+        if (retryIds.length === 0 || !recognition.canSubmit) {
+            return;
+        }
+
+        requestErrorEventRef.current = null;
+        jobErrorEventRef.current = null;
+
+        emitDashboardEvent("cat_workbench_recognition_triggered", {
+            selection: retryIds,
+            count: retryIds.length,
+            retry: true,
+        });
+
+        void recognition.triggerRecognition(retryIds).catch(() => {
+            // Errors are surfaced via the hook state; no additional handling needed here.
+        });
+    }, [recognition]);
 
     return (
         <div
@@ -231,6 +254,8 @@ export const WorkbenchApp = ({
                     jobDetails={jobDetails}
                     error={recognition.error}
                     onTriggerRecognition={handleTriggerRecognition}
+                    onRetryRecognition={handleRetryRecognition}
+                    onResetRecognition={recognition.reset}
                 />
                 <MediaList
                     items={items}

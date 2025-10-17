@@ -130,12 +130,12 @@ final class AdminContractTest extends TestCase
         self::assertSame('nonce-wp_rest', $config['restNonce']);
         self::assertArrayHasKey('endpoints', $config);
         self::assertIsArray($config['endpoints']);
-        self::assertSame('http://example.test/wp-json/context-alt-text/v1/dashboard/coverage', $config['endpoints']['coverage']);
-        self::assertSame('http://example.test/wp-json/context-alt-text/v1/workbench/media', $config['endpoints']['workbenchMedia']);
-        self::assertSame('http://example.test/wp-json/context-alt-text/v1/recognition/analyze', $config['endpoints']['recognitionAnalyze']);
-        self::assertSame('http://example.test/wp-json/context-alt-text/v1/recognition/job/', $config['endpoints']['recognitionJob']);
-        self::assertSame('http://example.test/wp-json/context-alt-text/v1/roster', $config['endpoints']['rosterEntries']);
-        self::assertSame('http://example.test/wp-json/context-alt-text/v1/roster/sync', $config['endpoints']['rosterSync']);
+        self::assertSame('http://example.test/wp-json/cat/v1/dashboard/coverage', $config['endpoints']['coverage']);
+        self::assertSame('http://example.test/wp-json/cat/v1/workbench/media', $config['endpoints']['workbenchMedia']);
+        self::assertSame('http://example.test/wp-json/cat/v1/recognition/analyze', $config['endpoints']['recognitionAnalyze']);
+        self::assertSame('http://example.test/wp-json/cat/v1/recognition/job/', $config['endpoints']['recognitionJob']);
+        self::assertSame('http://example.test/wp-json/cat/v1/roster', $config['endpoints']['rosterEntries']);
+        self::assertSame('http://example.test/wp-json/cat/v1/roster/sync', $config['endpoints']['rosterSync']);
         self::assertArrayHasKey('featureFlags', $config);
         self::assertTrue($config['featureFlags']['coverageTrend']);
         self::assertTrue($config['featureFlags']['workbenchEnabled']);

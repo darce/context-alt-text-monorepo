@@ -57,8 +57,8 @@ const setAdminPayload = (overrides: Partial<AdminPayload> = {}) => {
         config: {
             restNonce: "nonce-test",
             endpoints: {
-                recognitionAnalyze: "/wp-json/context-alt-text/v1/recognition/analyze",
-                recognitionJob: "/wp-json/context-alt-text/v1/recognition/job/",
+                recognitionAnalyze: "/wp-json/cat/v1/recognition/analyze",
+                recognitionJob: "/wp-json/cat/v1/recognition/job/",
             },
             featureFlags: {
                 workbenchEnabled: true,
@@ -170,7 +170,7 @@ describe("RecognitionActions integration", () => {
         const requestBodies: Record<string, unknown>[] = [];
 
         useDashboardHandlers(
-            http.post("/wp-json/context-alt-text/v1/recognition/analyze", async ({ request }) => {
+            http.post("/wp-json/cat/v1/recognition/analyze", async ({ request }) => {
                 const body = (await request.json()) as Record<string, unknown>;
                 requestBodies.push(body);
 
@@ -181,7 +181,7 @@ describe("RecognitionActions integration", () => {
                     rejected: [],
                 });
             }),
-            http.get("/wp-json/context-alt-text/v1/recognition/job/:jobId", ({ params }) => {
+            http.get("/wp-json/cat/v1/recognition/job/:jobId", ({ params }) => {
                 if (params.jobId !== "job-abc") {
                     return HttpResponse.json({ message: "Not found" }, { status: 404 });
                 }
@@ -328,7 +328,7 @@ describe("RecognitionActions integration", () => {
         const requestBodies: Record<string, unknown>[] = [];
 
         useDashboardHandlers(
-            http.post("/wp-json/context-alt-text/v1/recognition/analyze", async ({ request }) => {
+            http.post("/wp-json/cat/v1/recognition/analyze", async ({ request }) => {
                 const body = (await request.json()) as Record<string, unknown>;
                 requestBodies.push(body);
 
@@ -339,7 +339,7 @@ describe("RecognitionActions integration", () => {
                     rejected: [],
                 });
             }),
-            http.get("/wp-json/context-alt-text/v1/recognition/job/:jobId", ({ params }) => {
+            http.get("/wp-json/cat/v1/recognition/job/:jobId", ({ params }) => {
                 if (params.jobId !== "job-multi") {
                     return HttpResponse.json({ message: "not-found" }, { status: 404 });
                 }
@@ -388,7 +388,7 @@ describe("RecognitionActions integration", () => {
 
     it("surfaces error details when recognition fails", async () => {
         useDashboardHandlers(
-            http.post("/wp-json/context-alt-text/v1/recognition/analyze", () => {
+            http.post("/wp-json/cat/v1/recognition/analyze", () => {
                 return HttpResponse.json(
                     {
                         code: "cat_recognition_no_valid_attachments",

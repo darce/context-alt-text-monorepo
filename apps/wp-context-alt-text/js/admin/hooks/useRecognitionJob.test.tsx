@@ -10,8 +10,8 @@ import {
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 import { setAdminBootstrap } from "@/admin/globals";
 
-const ANALYZE_ENDPOINT = "/wp-json/context-alt-text/v1/recognition/analyze";
-const JOB_ENDPOINT_BASE = "/wp-json/context-alt-text/v1/recognition/job/";
+const ANALYZE_ENDPOINT = "/wp-json/cat/v1/recognition/analyze";
+const JOB_ENDPOINT_BASE = "/wp-json/cat/v1/recognition/job/";
 const TEST_POLL_INTERVAL_MS = 50;
 const wait = async (ms: number) => {
     await act(async () => {

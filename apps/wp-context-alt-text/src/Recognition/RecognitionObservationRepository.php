@@ -724,4 +724,46 @@ class RecognitionObservationRepository
             update_post_meta($attachmentId, '_cat_recognition_roster_ids', $remoteIds);
         }
     }
+
+    /**
+     * Find all observations matched to a specific roster entry
+     *
+     * @param string $rosterId The remote ID of the roster entry
+     * @return array<int,array<string,mixed>>
+     */
+    public function findByRosterId(string $rosterId): array
+    {
+        if ($rosterId === '' || !function_exists('get_posts')) {
+            return [];
+        }
+
+        // Query attachments that have this roster ID in their meta
+        $attachments = get_posts([
+            'post_type' => 'attachment',
+            'post_status' => 'inherit',
+            'posts_per_page' => 100,
+            'meta_query' => [
+                [
+                    'key' => '_cat_recognition_roster_ids',
+                    'value' => serialize(strval($rosterId)),
+                    'compare' => 'LIKE',
+                ],
+            ],
+            'fields' => 'ids',
+        ]);
+
+        if (!is_array($attachments) || $attachments === []) {
+            return [];
+        }
+
+        $results = [];
+        foreach ($attachments as $attachmentId) {
+            $record = $this->get((int) $attachmentId);
+            if ($record !== null) {
+                $results[] = $record;
+            }
+        }
+
+        return $results;
+    }
 }

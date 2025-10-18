@@ -1,0 +1,75 @@
+%% RosterRoute Refactoring Roadmap
+%% Shows step-by-step transformation from 2,543-line monolith to maintainable architecture
+
+graph TB
+    Start["🔴 CURRENT STATE<br/>RosterRoute.tsx<br/>2,543 lines<br/>14+ useState<br/>6+ useEffect<br/>Unmaintainable"]
+    
+    subgraph "Phase 1: Extract State Management (Week 1)"
+        P1A["Create useRosterState.ts<br/>Move all useState to useReducer<br/>Define RosterState type<br/>Define RosterAction union<br/>Implement reducer function<br/>Keep 1 effect for search debounce<br/>Target: 80 lines"]
+        P1B["Update RosterRoute.tsx<br/>Replace 14 useState with 1 useReducer<br/>Replace setters with dispatch calls<br/>Remove 4 useEffect hooks<br/>Reduction: -200 lines"]
+    end
+    
+    subgraph "Phase 2: Extract Data Fetching (Week 1-2)"
+        P2A["Create useRosterData.ts<br/>Wrap useRoster + useRecognitionObservations<br/>Coordinate loading states<br/>Transform data with normalizers<br/>Target: 120 lines"]
+        P2B["Update RosterRoute.tsx<br/>Replace direct API hooks with useRosterData<br/>Remove manual data transformation<br/>Reduction: -150 lines"]
+    end
+    
+    subgraph "Phase 3: Extract Toolbar (Week 2)"
+        P3A["Create RosterToolbar.tsx<br/>Search + Filter UI<br/>Props: searchInput, statusFilter, handlers<br/>Target: 80 lines"]
+        P3B["Create SearchInput.tsx<br/>Reusable search component<br/>Target: 40 lines"]
+        P3C["Create FilterSelect.tsx<br/>Reusable filter dropdown<br/>Target: 40 lines"]
+        P3D["Update RosterRoute.tsx<br/>Replace inline toolbar JSX<br/>Reduction: -140 lines"]
+    end
+    
+    subgraph "Phase 4: Extract Table (Week 2-3)"
+        P4A["Create RosterTable.tsx<br/>Table structure + sorting<br/>Props: entries, selection, handlers<br/>Target: 200 lines"]
+        P4B["Create RosterRow.tsx<br/>Single table row<br/>Avatar + badges + actions<br/>Target: 80 lines"]
+        P4C["Create Pagination.tsx<br/>Reusable pagination controls<br/>Target: 40 lines"]
+        P4D["Update RosterRoute.tsx<br/>Replace inline table JSX<br/>Reduction: -480 lines"]
+    end
+    
+    subgraph "Phase 5: Extract Modals (Week 3-4)"
+        P5A["Create RosterModals.tsx<br/>Modal orchestration component<br/>Manages which modal is open<br/>Target: 150 lines"]
+        P5B["Create EditEntryModal.tsx<br/>Edit form modal<br/>Form validation<br/>Target: 120 lines"]
+        P5C["Create ObservationDialog.tsx<br/>Recognition gallery + matching<br/>Image grid + selection<br/>Target: 200 lines"]
+        P5D["Create ImagePreviewModal.tsx<br/>Lightbox modal<br/>Image zoom + navigation<br/>Target: 80 lines"]
+        P5E["Update RosterRoute.tsx<br/>Replace inline modal JSX<br/>Reduction: -1,000 lines"]
+    end
+    
+    subgraph "Phase 6: Extract Utilities (Week 4)"
+        P6A["Create roster-normalizers.ts<br/>Data transformation functions<br/>Pure functions<br/>Target: 80 lines"]
+        P6B["Update useRosterData.ts<br/>Use imported normalizers<br/>Remove inline transformations"]
+        P6C["Update RosterRoute.tsx<br/>Remove remaining inline utils<br/>Reduction: -150 lines"]
+    end
+    
+    End["✅ FINAL STATE<br/>RosterRoute.tsx<br/>~250 lines<br/>2 custom hooks<br/>0 useEffect<br/>Maintainable<br/><br/>Plus 10 new files (~1,010 lines)<br/>Total: ~1,260 lines (50% reduction)<br/>Each file < 200 lines"]
+    
+    Start --> P1A
+    P1A --> P1B
+    P1B --> P2A
+    P2A --> P2B
+    P2B --> P3A
+    P3A --> P3B
+    P3B --> P3C
+    P3C --> P3D
+    P3D --> P4A
+    P4A --> P4B
+    P4B --> P4C
+    P4C --> P4D
+    P4D --> P5A
+    P5A --> P5B
+    P5B --> P5C
+    P5C --> P5D
+    P5D --> P5E
+    P5E --> P6A
+    P6A --> P6B
+    P6B --> P6C
+    P6C --> End
+    
+    classDef current fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:4px
+    classDef phase fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    classDef final fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:4px
+    
+    class Start current
+    class P1A,P1B,P2A,P2B,P3A,P3B,P3C,P3D,P4A,P4B,P4C,P4D,P5A,P5B,P5C,P5D,P5E,P6A,P6B,P6C phase
+    class End final

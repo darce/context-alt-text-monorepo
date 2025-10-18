@@ -1,0 +1,78 @@
+%% Ideal Component Architecture for React Components
+%% Demonstrates proper composition, state management, and separation of concerns
+
+graph TB
+    subgraph "Smart Container Layer (Page/Route)"
+        Container["PageRoute.tsx<br/>200-400 lines<br/>Orchestrates features<br/>Max 5 useState or 1 useReducer<br/>Max 3 useEffect"]
+    end
+    
+    subgraph "Custom Hooks Layer"
+        StateHook["usePageState.ts<br/>State management<br/>useReducer pattern<br/>80-120 lines"]
+        DataHook["usePageData.ts<br/>Data fetching coordination<br/>Combines multiple API hooks<br/>100-150 lines"]
+    end
+    
+    subgraph "Presentational Components (Dumb)"
+        Toolbar["Toolbar.tsx<br/>Search + Filters<br/>Props-driven<br/>60-100 lines"]
+        Content["MainContent.tsx<br/>Primary UI<br/>Props-driven<br/>150-250 lines"]
+        Modals["ModalManager.tsx<br/>Modal orchestration<br/>Props-driven<br/>100-150 lines"]
+    end
+    
+    subgraph "Reusable UI Primitives"
+        Search["SearchInput.tsx<br/>30-50 lines"]
+        Filter["FilterSelect.tsx<br/>30-50 lines"]
+        Table["DataTable.tsx<br/>80-120 lines"]
+        Row["TableRow.tsx<br/>50-80 lines"]
+        Pagination["Pagination.tsx<br/>30-50 lines"]
+        Modal1["FormModal.tsx<br/>80-120 lines"]
+        Modal2["ConfirmDialog.tsx<br/>40-60 lines"]
+        Modal3["PreviewModal.tsx<br/>60-100 lines"]
+    end
+    
+    subgraph "Utility Layer"
+        Normalizers["normalizers.ts<br/>Data transformation<br/>Pure functions<br/>80-150 lines"]
+        Validators["validators.ts<br/>Form validation<br/>Pure functions<br/>50-100 lines"]
+    end
+    
+    subgraph "API Hooks (External)"
+        API1["useAPIResource1<br/>React Query"]
+        API2["useAPIResource2<br/>React Query"]
+    end
+    
+    Container --> StateHook
+    Container --> DataHook
+    Container --> Toolbar
+    Container --> Content
+    Container --> Modals
+    
+    StateHook -.->|"State updates"| Container
+    DataHook --> API1
+    DataHook --> API2
+    DataHook --> Normalizers
+    DataHook -.->|"Transformed data"| Container
+    
+    Toolbar --> Search
+    Toolbar --> Filter
+    
+    Content --> Table
+    Content --> Pagination
+    Table --> Row
+    
+    Modals --> Modal1
+    Modals --> Modal2
+    Modals --> Modal3
+    
+    Modal1 --> Validators
+    
+    classDef smartComponent fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:3px
+    classDef hookComponent fill:#339af0,stroke:#1864ab,color:#fff,stroke-width:2px
+    classDef presentational fill:#e0e0e0,stroke:#666,stroke-width:2px
+    classDef primitive fill:#f8f9fa,stroke:#adb5bd,stroke-width:1px
+    classDef utility fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    classDef external fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:1px
+    
+    class Container smartComponent
+    class StateHook,DataHook hookComponent
+    class Toolbar,Content,Modals presentational
+    class Search,Filter,Table,Row,Pagination,Modal1,Modal2,Modal3 primitive
+    class Normalizers,Validators utility
+    class API1,API2 external

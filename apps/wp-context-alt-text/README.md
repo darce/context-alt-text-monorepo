@@ -65,11 +65,11 @@ wp plugin activate context-alt-text
 
 The plugin supports three environment profiles:
 
-| Profile | Use Case | WordPress | Recognition Service |
-|---------|----------|-----------|---------------------|
-| **local** | Full local development | LocalWP (localhost) | Local Python (localhost:7860) |
-| **dev-remote** | Frontend development | LocalWP (localhost) | Remote (Hugging Face Space) |
-| **production** | Live deployment | Production server | Production service |
+| Profile        | Use Case               | WordPress           | Recognition Service           |
+| -------------- | ---------------------- | ------------------- | ----------------------------- |
+| **local**      | Full local development | LocalWP (localhost) | Local Python (localhost:7860) |
+| **dev-remote** | Frontend development   | LocalWP (localhost) | Remote (Hugging Face Space)   |
+| **production** | Live deployment        | Production server   | Production service            |
 
 **Switch environments:**
 
@@ -103,11 +103,13 @@ npm run storybook
 **Vite Dev Server:** `http://localhost:5173`
 
 **LocalWP Integration:**
+
 1. Set `WP_ENVIRONMENT_TYPE` to `development` in `wp-config.php`
 2. Run `npm run dev` to start Vite
 3. Visit WordPress admin dashboard - assets load from dev server with HMR
 
 **Stopping the dev server:**
+
 - Foreground: Press `Ctrl+C`
 - Background: `pkill -f "vite"` or `kill $(lsof -ti:5173)`
 
@@ -314,10 +316,10 @@ ENV CAT_RECOGNITION_API_KEY=your-api-key
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: context-alt-text-config
+    name: context-alt-text-config
 data:
-  CAT_RECOGNITION_BASE_URL: "https://recognition.production.com"
-  CAT_RECOGNITION_TIMEOUT_MS: "30000"
+    CAT_RECOGNITION_BASE_URL: "https://recognition.production.com"
+    CAT_RECOGNITION_TIMEOUT_MS: "30000"
 ```
 
 **📖 CI/CD integration:** [`docs/configuration.md#cicd-integration`](docs/configuration.md#cicd-integration)
@@ -431,6 +433,7 @@ apps/wp-context-alt-text/
 MIT License - see [LICENSE](../../LICENSE) file for details.
 
 **Key Points:**
+
 - ✅ Commercial use permitted
 - ✅ Modification and redistribution allowed
 - ✅ Can include other MIT-licensed libraries

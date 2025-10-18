@@ -32,7 +32,8 @@ type WordPressWindow = Window & {
 };
 
 const isNoticeDispatcher = (candidate: unknown): candidate is WordPressNoticeDispatcher =>
-    typeof candidate === "object" && candidate !== null &&
+    typeof candidate === "object" &&
+    candidate !== null &&
     typeof (candidate as { createNotice?: unknown }).createNotice === "function";
 
 const getWpNoticeDispatcher = (): WordPressNoticeDispatcher | null => {

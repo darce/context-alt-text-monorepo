@@ -33,6 +33,7 @@ cd apps/wp-context-alt-text
 ```
 
 **What happens when you switch?**
+
 - ✅ Copies the selected profile (`.env.{profile}`) to `.env`
 - ✅ Validates the profile exists
 - ✅ Shows confirmation with active configuration
@@ -44,11 +45,11 @@ cd apps/wp-context-alt-text
 
 ### Overview
 
-| Profile | WordPress | Recognition Service | Typical Use Case |
-|---------|-----------|---------------------|------------------|
-| **local** | LocalWP (`localhost`) | Local Python service (`localhost:7860`) | Full local development, debugging both services |
-| **dev-remote** | LocalWP (`localhost`) | Remote Hugging Face Space | Frontend development with stable remote recognition |
-| **production** | Production server | Production recognition service | Live deployment |
+| Profile        | WordPress             | Recognition Service                     | Typical Use Case                                    |
+| -------------- | --------------------- | --------------------------------------- | --------------------------------------------------- |
+| **local**      | LocalWP (`localhost`) | Local Python service (`localhost:7860`) | Full local development, debugging both services     |
+| **dev-remote** | LocalWP (`localhost`) | Remote Hugging Face Space               | Frontend development with stable remote recognition |
+| **production** | Production server     | Production recognition service          | Live deployment                                     |
 
 ---
 
@@ -62,16 +63,18 @@ cd apps/wp-context-alt-text
 ```
 
 **What this configures:**
+
 - Vite dev server: `http://localhost:5173`
 - Recognition service: `http://localhost:7860`
 - Timeout: 30 seconds (longer for local debugging)
 
 **Next steps:**
+
 1. Start the recognition service:
-   ```bash
-   cd ../recognition-service
-   ./scripts/start_recognition_local.sh
-   ```
+    ```bash
+    cd ../recognition-service
+    ./scripts/start_recognition_local.sh
+    ```
 2. Start Vite: `npm run dev`
 3. Open WordPress dashboard
 
@@ -87,15 +90,18 @@ cd apps/wp-context-alt-text
 ```
 
 **What this configures:**
+
 - Vite dev server: `http://localhost:5173`
 - Recognition service: `https://your-username-recognition.hf.space` (edit `.env.dev-remote`)
 - Timeout: 60 seconds (longer for remote API calls)
 
 **Customization:**
+
 1. Edit `.env.dev-remote` with your actual Hugging Face Space URL
 2. Re-run `./scripts/switch-env.sh dev-remote` to apply changes
 
 **Next steps:**
+
 1. Start Vite: `npm run dev`
 2. Open WordPress dashboard
 3. Recognition service is already running remotely
@@ -112,15 +118,18 @@ cd apps/wp-context-alt-text
 ```
 
 **What this configures:**
+
 - Vite: Production build (no dev server)
 - Recognition service: Production URL (edit `.env.production`)
 - Timeout: 30 seconds (production-optimized)
 
 **Customization:**
+
 1. Edit `.env.production` with your production URLs
 2. Re-run `./scripts/switch-env.sh production` to apply changes
 
 **Production checklist:**
+
 - [ ] Build assets: `npm run build`
 - [ ] Test production build locally
 - [ ] Deploy plugin to production server
@@ -326,20 +335,20 @@ ENV CAT_RECOGNITION_API_KEY=your-production-api-key
 apiVersion: v1
 kind: ConfigMap
 metadata:
-  name: context-alt-text-config
+    name: context-alt-text-config
 data:
-  CAT_RECOGNITION_BASE_URL: "https://recognition.production.com"
-  CAT_RECOGNITION_TIMEOUT_MS: "30000"
-  
+    CAT_RECOGNITION_BASE_URL: "https://recognition.production.com"
+    CAT_RECOGNITION_TIMEOUT_MS: "30000"
+
 ---
 # Secret
 apiVersion: v1
 kind: Secret
 metadata:
-  name: context-alt-text-secrets
+    name: context-alt-text-secrets
 type: Opaque
 stringData:
-  CAT_RECOGNITION_API_KEY: "your-production-api-key"
+    CAT_RECOGNITION_API_KEY: "your-production-api-key"
 ```
 
 ### GitHub Actions
@@ -348,14 +357,14 @@ stringData:
 # .github/workflows/deploy.yml
 - name: Configure Production Environment
   run: |
-    cd apps/wp-context-alt-text
-    ./scripts/switch-env.sh production
-    
+      cd apps/wp-context-alt-text
+      ./scripts/switch-env.sh production
+
 - name: Override with Secrets
   env:
-    CAT_RECOGNITION_API_KEY: ${{ secrets.RECOGNITION_API_KEY }}
+      CAT_RECOGNITION_API_KEY: ${{ secrets.RECOGNITION_API_KEY }}
   run: |
-    echo "CAT_RECOGNITION_API_KEY=${CAT_RECOGNITION_API_KEY}" >> .env
+      echo "CAT_RECOGNITION_API_KEY=${CAT_RECOGNITION_API_KEY}" >> .env
 ```
 
 ---
@@ -365,107 +374,120 @@ stringData:
 ### "Recognition service not connected"
 
 1. **Check which profile is active:**
-   ```bash
-   cat .env | grep CAT_RECOGNITION_BASE_URL
-   ```
+
+    ```bash
+    cat .env | grep CAT_RECOGNITION_BASE_URL
+    ```
 
 2. **Verify the service is accessible:**
-   ```bash
-   # For local:
-   curl http://localhost:7860/api/v0/health
-   
-   # For remote:
-   curl https://your-username-recognition.hf.space/api/v0/health
-   ```
+
+    ```bash
+    # For local:
+    curl http://localhost:7860/api/v0/health
+
+    # For remote:
+    curl https://your-username-recognition.hf.space/api/v0/health
+    ```
 
 3. **Check WordPress admin:**
-   - Go to **Context Alt Text → Settings**
-   - Look for the service status indicator
+    - Go to **Context Alt Text → Settings**
+    - Look for the service status indicator
 
 4. **Use WP-CLI:**
-   ```bash
-   wp cat-recognition health
-   ```
+    ```bash
+    wp cat-recognition health
+    ```
 
 ### "Trigger Recognition" button still disabled
 
 1. **Check configuration:**
-   ```bash
-   wp option get cat_settings --format=json
-   ```
-   Should return: `{"recognition":{"baseUrl":"http://localhost:7860","timeoutMs":30000,"enabled":true}}`
+
+    ```bash
+    wp option get cat_settings --format=json
+    ```
+
+    Should return: `{"recognition":{"baseUrl":"http://localhost:7860","timeoutMs":30000,"enabled":true}}`
 
 2. **Clear browser cache:**
-   - Hard refresh the Workbench page (Cmd+Shift+R or Ctrl+Shift+R)
+    - Hard refresh the Workbench page (Cmd+Shift+R or Ctrl+Shift+R)
 
 3. **Verify recognition service is running:**
-   ```bash
-   curl http://localhost:7860/api/v0/health
-   ```
-   Should return: `{"status":"ok"}`
+
+    ```bash
+    curl http://localhost:7860/api/v0/health
+    ```
+
+    Should return: `{"status":"ok"}`
 
 4. **Check feature flag override:**
-   ```bash
-   # Look for CAT_FEATURE_WORKBENCH_RECOGNITION in wp-config.php
-   grep CAT_FEATURE_WORKBENCH_RECOGNITION wp-config.php
-   ```
-   If it's set to `false`, either remove it or set to `true`
+    ```bash
+    # Look for CAT_FEATURE_WORKBENCH_RECOGNITION in wp-config.php
+    grep CAT_FEATURE_WORKBENCH_RECOGNITION wp-config.php
+    ```
+    If it's set to `false`, either remove it or set to `true`
 
 ### "Vite dev server not working"
 
 1. **Ensure Vite is running:**
-   ```bash
-   npm run dev
-   ```
+
+    ```bash
+    npm run dev
+    ```
 
 2. **Check the dev server URL:**
-   ```bash
-   cat .env | grep CAT_VITE_DEV_SERVER
-   ```
+
+    ```bash
+    cat .env | grep CAT_VITE_DEV_SERVER
+    ```
 
 3. **Verify LocalWP environment type:**
-   - Add to `wp-config.php`: `define('WP_ENVIRONMENT_TYPE', 'development');`
+    - Add to `wp-config.php`: `define('WP_ENVIRONMENT_TYPE', 'development');`
 
 ### "Switch script not working"
 
 1. **Make script executable:**
-   ```bash
-   chmod +x scripts/switch-env.sh
-   ```
+
+    ```bash
+    chmod +x scripts/switch-env.sh
+    ```
 
 2. **Run with explicit profile:**
-   ```bash
-   ./scripts/switch-env.sh local
-   ```
+
+    ```bash
+    ./scripts/switch-env.sh local
+    ```
 
 3. **Check profile file exists:**
-   ```bash
-   ls -la .env.*
-   ```
+    ```bash
+    ls -la .env.*
+    ```
 
 ### Recognition runs but fails
 
 1. **Increase timeout for first run:**
-   ```bash
-   wp option patch update cat_settings recognition timeoutMs 60000
-   ```
+
+    ```bash
+    wp option patch update cat_settings recognition timeoutMs 60000
+    ```
 
 2. **Check WordPress debug log:**
-   ```bash
-   tail -f wp-content/uploads/cat-logs/debug-$(date +%Y-%m-%d).log
-   ```
+
+    ```bash
+    tail -f wp-content/uploads/cat-logs/debug-$(date +%Y-%m-%d).log
+    ```
 
 3. **Check recognition service logs:**
    Look at the terminal where the service is running
 
 4. **Test with WP-CLI:**
-   ```bash
-   # Upload test image
-   wp media import /path/to/image.jpg --post_id=0
-   
-   # Run recognition (use attachment ID from previous command)
-   wp cat-recognition analyze 123
-   ```
+
+    ```bash
+    # Upload test image
+    wp media import /path/to/image.jpg --post_id=0
+
+    # Run recognition (use attachment ID from previous command)
+    wp cat-recognition analyze 123
+    ```
 
 ---
 
@@ -490,6 +512,7 @@ composer test
 ```
 
 **Test Coverage:**
+
 - ✅ Environment variable priority over database settings (32 tests)
 - ✅ Database fallback when env vars not set (12 tests)
 - ✅ URL validation and normalization
@@ -524,6 +547,7 @@ wp cat-roster sync
 ### Development
 
 ✅ **DO:**
+
 - Use `local` profile for full-stack development
 - Use `dev-remote` profile when recognition service is stable
 - Commit `.env.template`, `.env.local`, `.env.dev-remote`, `.env.production`
@@ -531,6 +555,7 @@ wp cat-roster sync
 - Test with production profile locally before deploying
 
 ❌ **DON'T:**
+
 - Commit `.env` (it's gitignored - contains active environment)
 - Commit `.env.*.local` (user-specific overrides)
 - Hard-code API keys in profile files (use environment variables or secrets)
@@ -538,6 +563,7 @@ wp cat-roster sync
 ### Production
 
 ✅ **DO:**
+
 - Use environment variables in Docker/K8s (overrides `.env`)
 - Set API keys via secrets management (not in `.env` files)
 - Test with production profile locally before deploying
@@ -545,6 +571,7 @@ wp cat-roster sync
 - Set appropriate timeouts for your infrastructure
 
 ❌ **DON'T:**
+
 - Deploy with `local` or `dev-remote` profiles active
 - Use development timeouts in production
 - Expose API keys in version control
@@ -565,13 +592,13 @@ public function getBaseUrl(): string
 {
     // Check environment variable first
     $url = $this->getEnv('CAT_RECOGNITION_BASE_URL');
-    
+
     // Fall back to database settings
     if (empty($url)) {
         $settings = $this->settingsRepository->getRecognitionSettings();
         $url = $settings['baseUrl'] ?? '';
     }
-    
+
     return $url;
 }
 ```
@@ -597,6 +624,7 @@ public function workbenchRecognitionEnabled(): bool
 ```
 
 This ensures:
+
 - Constants take precedence (explicit override)
 - Auto-enable when service is configured (convenience)
 - Filters can still override (flexibility)
@@ -606,6 +634,7 @@ This ensures:
 ## Support
 
 For issues or questions:
+
 - Check the [Troubleshooting](#troubleshooting) section
 - Review the [main README](../README.md)
 - Check WordPress logs: `/wp-content/uploads/cat-logs/debug-YYYY-MM-DD.log`

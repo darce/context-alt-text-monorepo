@@ -101,45 +101,45 @@ export const PaginationControls = ({
         setPageInputValue(String(clamped));
     };
 
-    const baseStatus = total === 0
-        ? ""
-        : sprintf(
-            /* translators: 1: first item index in the current page, 2: last item index in the current page, 3: total number of items */
-            __("Showing %1$d-%2$d of %3$d", "context-alt-text"),
-            start,
-            end,
-            total,
-        );
+    const baseStatus =
+        total === 0
+            ? ""
+            : sprintf(
+                  /* translators: 1: first item index in the current page, 2: last item index in the current page, 3: total number of items */
+                  __("Showing %1$d-%2$d of %3$d", "context-alt-text"),
+                  start,
+                  end,
+                  total,
+              );
 
-    const statusMessage = total === 0
-        ? __("No media items found", "context-alt-text")
-        : isLoading
+    const statusMessage =
+        total === 0
+            ? __("No media items found", "context-alt-text")
+            : isLoading
+              ? sprintf(
+                    /* translators: 1: pagination status message, 2: indicates data is updating */
+                    __("%1$s (%2$s)", "context-alt-text"),
+                    baseStatus,
+                    __("updating", "context-alt-text"),
+                )
+              : baseStatus;
+
+    const pageSummary =
+        totalPages > 0
             ? sprintf(
-                /* translators: 1: pagination status message, 2: indicates data is updating */
-                __("%1$s (%2$s)", "context-alt-text"),
-                baseStatus,
-                __("updating", "context-alt-text"),
-            )
-            : baseStatus;
-
-    const pageSummary = totalPages > 0
-        ? sprintf(
-            /* translators: 1: current page number, 2: total number of pages */
-            __("Page %1$d of %2$d", "context-alt-text"),
-            safePage,
-            totalPages,
-        )
-        : sprintf(
-            /* translators: %d: current page number */
-            __("Page %d", "context-alt-text"),
-            safePage,
-        );
+                  /* translators: 1: current page number, 2: total number of pages */
+                  __("Page %1$d of %2$d", "context-alt-text"),
+                  safePage,
+                  totalPages,
+              )
+            : sprintf(
+                  /* translators: %d: current page number */
+                  __("Page %d", "context-alt-text"),
+                  safePage,
+              );
 
     return (
-        <nav
-            className="cat-pagination"
-            aria-label={__("Workbench pagination", "context-alt-text")}
-        >
+        <nav className="cat-pagination" aria-label={__("Workbench pagination", "context-alt-text")}>
             <p className="cat-pagination__status">{statusMessage}</p>
             <div
                 className="cat-pagination__controls"
@@ -181,12 +181,7 @@ export const PaginationControls = ({
                             aria-label={__("Jump to page", "context-alt-text")}
                             disabled={isLoading || total === 0}
                         />
-                        <Button
-                            type="submit"
-                            variant="subtle"
-                            size="sm"
-                            disabled={isLoading || total === 0}
-                        >
+                        <Button type="submit" variant="subtle" size="sm" disabled={isLoading || total === 0}>
                             {__("Go", "context-alt-text")}
                         </Button>
                     </div>
@@ -207,7 +202,12 @@ export const PaginationControls = ({
                         variant="subtle"
                         size="sm"
                         onClick={handleNext}
-                        disabled={!showNavigationButtons || (totalPages > 0 && safePage >= totalPages) || total === 0 || isLoading}
+                        disabled={
+                            !showNavigationButtons ||
+                            (totalPages > 0 && safePage >= totalPages) ||
+                            total === 0 ||
+                            isLoading
+                        }
                     >
                         {__("Next", "context-alt-text")}
                     </Button>

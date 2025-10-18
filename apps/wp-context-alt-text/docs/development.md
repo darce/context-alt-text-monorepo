@@ -47,25 +47,27 @@ wp plugin activate context-alt-text
 ### Environment Setup
 
 1. **Configure WordPress for development:**
-   ```php
-   // Add to wp-config.php
-   define('WP_ENVIRONMENT_TYPE', 'development');
-   define('WP_DEBUG', true);
-   define('WP_DEBUG_LOG', true);
-   define('WP_DEBUG_DISPLAY', false);
-   ```
+
+    ```php
+    // Add to wp-config.php
+    define('WP_ENVIRONMENT_TYPE', 'development');
+    define('WP_DEBUG', true);
+    define('WP_DEBUG_LOG', true);
+    define('WP_DEBUG_DISPLAY', false);
+    ```
 
 2. **Start recognition service (optional):**
-   ```bash
-   cd ../recognition-service
-   ./scripts/start_recognition_local.sh
-   ```
+
+    ```bash
+    cd ../recognition-service
+    ./scripts/start_recognition_local.sh
+    ```
 
 3. **Start Vite dev server:**
-   ```bash
-   cd apps/wp-context-alt-text
-   npm run dev
-   ```
+    ```bash
+    cd apps/wp-context-alt-text
+    npm run dev
+    ```
 
 ---
 
@@ -74,38 +76,42 @@ wp plugin activate context-alt-text
 ### Feature Development
 
 1. **Create feature branch:**
-   ```bash
-   git checkout -b feature/your-feature-name
-   ```
+
+    ```bash
+    git checkout -b feature/your-feature-name
+    ```
 
 2. **Switch to appropriate environment:**
-   ```bash
-   ./scripts/switch-env.sh local
-   ```
+
+    ```bash
+    ./scripts/switch-env.sh local
+    ```
 
 3. **Start development servers:**
-   ```bash
-   npm run dev        # Vite dev server
-   npm run storybook  # Component workbench (optional)
-   ```
+
+    ```bash
+    npm run dev        # Vite dev server
+    npm run storybook  # Component workbench (optional)
+    ```
 
 4. **Make changes:**
-   - PHP code in `src/`
-   - TypeScript/React in `js/`
-   - Tests in `tests/` (PHP) or `js/**/*.test.ts` (TypeScript)
+    - PHP code in `src/`
+    - TypeScript/React in `js/`
+    - Tests in `tests/` (PHP) or `js/**/*.test.ts` (TypeScript)
 
 5. **Test your changes:**
-   ```bash
-   composer test      # PHP tests
-   npm run test       # TypeScript tests
-   ```
+
+    ```bash
+    composer test      # PHP tests
+    npm run test       # TypeScript tests
+    ```
 
 6. **Commit and push:**
-   ```bash
-   git add .
-   git commit -m "feat: add your feature"
-   git push origin feature/your-feature-name
-   ```
+    ```bash
+    git add .
+    git commit -m "feat: add your feature"
+    git push origin feature/your-feature-name
+    ```
 
 ### Hot Module Replacement (HMR)
 
@@ -144,18 +150,19 @@ class RecognitionSettings
     {
         // Check environment variable first
         $url = $this->getEnv('CAT_RECOGNITION_BASE_URL');
-        
+
         if (empty($url)) {
             $settings = $this->settingsRepository->getRecognitionSettings();
             $url = $settings['baseUrl'] ?? '';
         }
-        
+
         return $url;
     }
 }
 ```
 
 **Best Practices:**
+
 - ✅ Type declarations on all methods
 - ✅ Property promotion in constructors
 - ✅ Dependency injection over global state
@@ -183,16 +190,17 @@ export function RecognitionPanel({
   onError,
 }: RecognitionPanelProps): JSX.Element {
   const [status, setStatus] = useState<RecognitionStatus>('idle');
-  
+
   useEffect(() => {
     // Component logic
   }, [attachmentId]);
-  
+
   return <div>{/* Component JSX */}</div>;
 }
 ```
 
 **Best Practices:**
+
 - ✅ Explicit types for props, state, and returns
 - ✅ Use `interface` for object shapes
 - ✅ Use `type` for unions and primitives
@@ -219,23 +227,24 @@ interface ComponentProps {
 export function Component({ prop1, prop2 }: ComponentProps) {
   // 4. Hooks
   const [state, setState] = useState();
-  
+
   // 5. Effects
   useEffect(() => {
     // Effect logic
   }, [dependencies]);
-  
+
   // 6. Handlers
   const handleClick = () => {
     // Handler logic
   };
-  
+
   // 7. Render
   return <div>{/* JSX */}</div>;
 }
 ```
 
 **Best Practices:**
+
 - ✅ Keep components small and focused
 - ✅ Extract reusable UI to `js/components/ui/`
 - ✅ Extract feature logic to custom hooks
@@ -287,10 +296,10 @@ class RecognitionSettingsTest extends TestCase
         // Arrange
         putenv('CAT_RECOGNITION_BASE_URL=http://env.test');
         $settings = new RecognitionSettings($this->mockRepository);
-        
+
         // Act
         $url = $settings->getBaseUrl();
-        
+
         // Assert
         $this->assertEquals('http://env.test', $url);
     }
@@ -298,6 +307,7 @@ class RecognitionSettingsTest extends TestCase
 ```
 
 **Test Structure:**
+
 - `tests/unit/` - Unit tests (isolated, fast)
 - `tests/Integration/` - Integration tests (multiple components)
 - `tests/Recognition/` - Recognition service tests
@@ -334,11 +344,11 @@ describe('Button', () => {
     render(<Button>Click me</Button>);
     expect(screen.getByText('Click me')).toBeInTheDocument();
   });
-  
+
   it('calls onClick when clicked', () => {
     const handleClick = vi.fn();
     render(<Button onClick={handleClick}>Click me</Button>);
-    
+
     fireEvent.click(screen.getByText('Click me'));
     expect(handleClick).toHaveBeenCalledTimes(1);
   });
@@ -363,6 +373,7 @@ wp option get cat_settings --format=json
 ```
 
 **Browser Testing:**
+
 1. Visit WordPress admin dashboard
 2. Navigate to **Context Alt Text → Workbench**
 3. Upload test image with faces
@@ -388,45 +399,46 @@ npm run storybook:build
 
 ```typescript
 // Button.stories.tsx
-import type { Meta, StoryObj } from '@storybook/react';
-import { Button } from './Button';
+import type { Meta, StoryObj } from "@storybook/react";
+import { Button } from "./Button";
 
 const meta: Meta<typeof Button> = {
-  title: 'UI/Button',
-  component: Button,
-  argTypes: {
-    variant: {
-      control: 'select',
-      options: ['default', 'primary', 'secondary'],
+    title: "UI/Button",
+    component: Button,
+    argTypes: {
+        variant: {
+            control: "select",
+            options: ["default", "primary", "secondary"],
+        },
     },
-  },
 };
 
 export default meta;
 type Story = StoryObj<typeof Button>;
 
 export const Default: Story = {
-  args: {
-    children: 'Button',
-  },
+    args: {
+        children: "Button",
+    },
 };
 
 export const Primary: Story = {
-  args: {
-    children: 'Primary Button',
-    variant: 'primary',
-  },
+    args: {
+        children: "Primary Button",
+        variant: "primary",
+    },
 };
 
 export const Loading: Story = {
-  args: {
-    children: 'Loading...',
-    disabled: true,
-  },
+    args: {
+        children: "Loading...",
+        disabled: true,
+    },
 };
 ```
 
 **Story Guidelines:**
+
 - ✅ Create stories for all component variants
 - ✅ Include loading, empty, error states
 - ✅ Document props with Storybook controls
@@ -438,6 +450,7 @@ export const Loading: Story = {
 **Reusable UI Components:**
 
 Place in `js/components/ui/`:
+
 - Buttons, inputs, dialogs, dropdowns
 - Use Radix UI primitives
 - Style with SCSS modules
@@ -446,6 +459,7 @@ Place in `js/components/ui/`:
 **Feature Components:**
 
 Place in `js/components/<feature>/`:
+
 - Dashboard-specific components
 - Feature-specific logic
 - Compose UI components
@@ -499,13 +513,13 @@ xdebug.client_port=9003
 **Adding Debug Logging:**
 
 ```typescript
-import { createLogger } from '../admin/logger';
+import { createLogger } from "../admin/logger";
 
-const logger = createLogger('RecognitionPanel');
+const logger = createLogger("RecognitionPanel");
 
-logger.debug('Recognition triggered', { attachmentId });
-logger.info('Recognition complete', { observations });
-logger.error('Recognition failed', error);
+logger.debug("Recognition triggered", { attachmentId });
+logger.info("Recognition complete", { observations });
+logger.error("Recognition failed", error);
 ```
 
 **VS Code Debugging:**
@@ -514,11 +528,11 @@ Add to `.vscode/launch.json`:
 
 ```json
 {
-  "type": "chrome",
-  "request": "launch",
-  "name": "Debug WordPress Admin",
-  "url": "http://localhost:10008/wp-admin",
-  "webRoot": "${workspaceFolder}/apps/wp-context-alt-text"
+    "type": "chrome",
+    "request": "launch",
+    "name": "Debug WordPress Admin",
+    "url": "http://localhost:10008/wp-admin",
+    "webRoot": "${workspaceFolder}/apps/wp-context-alt-text"
 }
 ```
 

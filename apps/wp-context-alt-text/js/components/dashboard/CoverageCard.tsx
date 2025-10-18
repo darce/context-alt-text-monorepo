@@ -81,33 +81,34 @@ export const CoverageCard = ({
 
     const coverageSummaryText = hasLibrary
         ? sprintf(
-            /* translators: 1: coverage percentage, 2: number of images missing alt text */
-            _n(
-                "Media library coverage is %1$s percent with %2$s image missing alt text.",
-                "Media library coverage is %1$s percent with %2$s images missing alt text.",
-                missingCount,
-                "context-alt-text",
-            ),
-            formatPercent(percent),
-            missingCount,
-        )
+              /* translators: 1: coverage percentage, 2: number of images missing alt text */
+              _n(
+                  "Media library coverage is %1$s percent with %2$s image missing alt text.",
+                  "Media library coverage is %1$s percent with %2$s images missing alt text.",
+                  missingCount,
+                  "context-alt-text",
+              ),
+              formatPercent(percent),
+              missingCount,
+          )
         : __("Media library is empty. Upload images to track coverage.", "context-alt-text");
 
-    const deltaText = delta === null
-        ? __("Trend data is not yet available.", "context-alt-text")
-        : delta === 0
-            ? __("Coverage is unchanged since the previous scan.", "context-alt-text")
-            : delta > 0
+    const deltaText =
+        delta === null
+            ? __("Trend data is not yet available.", "context-alt-text")
+            : delta === 0
+              ? __("Coverage is unchanged since the previous scan.", "context-alt-text")
+              : delta > 0
                 ? sprintf(
-                    /* translators: %s: number of points coverage increased */
-                    __("Coverage increased by %s points since the previous scan.", "context-alt-text"),
-                    formatPercent(Math.abs(delta ?? 0)),
-                )
+                      /* translators: %s: number of points coverage increased */
+                      __("Coverage increased by %s points since the previous scan.", "context-alt-text"),
+                      formatPercent(Math.abs(delta ?? 0)),
+                  )
                 : sprintf(
-                    /* translators: %s: number of points coverage decreased */
-                    __("Coverage decreased by %s points since the previous scan.", "context-alt-text"),
-                    formatPercent(Math.abs(delta ?? 0)),
-                );
+                      /* translators: %s: number of points coverage decreased */
+                      __("Coverage decreased by %s points since the previous scan.", "context-alt-text"),
+                      formatPercent(Math.abs(delta ?? 0)),
+                  );
 
     const handleRetry = React.useCallback(() => {
         if (refetch) {
@@ -193,11 +194,7 @@ export const CoverageCard = ({
         : null;
 
     return (
-        <Card
-            ref={cardRef}
-            title={__("Coverage Progress", "context-alt-text")}
-            className="cat-card--coverage"
-        >
+        <Card ref={cardRef} title={__("Coverage Progress", "context-alt-text")} className="cat-card--coverage">
             <div className="cat-coverage">
                 <span id={coverageDescriptionId} className="cat-sr-only">
                     {coverageSummaryText} {deltaText}
@@ -241,7 +238,10 @@ export const CoverageCard = ({
                     </>
                 ) : (
                     <p className="cat-coverage__empty" role="status">
-                        {__("No Media Library items yet. Upload images to start tracking coverage.", "context-alt-text")}
+                        {__(
+                            "No Media Library items yet. Upload images to start tracking coverage.",
+                            "context-alt-text",
+                        )}
                     </p>
                 )}
             </div>
@@ -253,12 +253,7 @@ export const CoverageCard = ({
                         {errorMessage && <span className="cat-alert__detail"> {errorMessage}</span>}
                     </div>
                     {refetch && (
-                        <Button
-                            type="button"
-                            variant="subtle"
-                            size="sm"
-                            onClick={handleRetry}
-                        >
+                        <Button type="button" variant="subtle" size="sm" onClick={handleRetry}>
                             {__("Try again", "context-alt-text")}
                         </Button>
                     )}
@@ -281,21 +276,12 @@ export const CoverageCard = ({
             {showActions && (
                 <div className="cat-coverage__actions">
                     {canDrilldown && (
-                        <Button
-                            type="button"
-                            variant="primary"
-                            size="sm"
-                            onClick={handleDrilldown}
-                        >
+                        <Button type="button" variant="primary" size="sm" onClick={handleDrilldown}>
                             {drilldownLabel}
                         </Button>
                     )}
                     {canExport && (
-                        <Button
-                            type="button"
-                            size="sm"
-                            onClick={handleExport}
-                        >
+                        <Button type="button" size="sm" onClick={handleExport}>
                             {__("Export coverage CSV", "context-alt-text")}
                         </Button>
                     )}

@@ -82,8 +82,6 @@ if (!tryRenderSettings()) {
         );
     } else if (import.meta.env.DEV) {
         const ids = candidates.map((candidate) => `#${candidate.id}`).join(", ");
-        logger.warn(
-            `Could not find a mount element. Ensure one of the following exists: ${ids}.`,
-        );
+        logger.warn(`Could not find a mount element. Ensure one of the following exists: ${ids}.`);
     }
 }

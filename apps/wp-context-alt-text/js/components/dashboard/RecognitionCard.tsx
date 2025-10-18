@@ -26,26 +26,15 @@ const formatRosterSyncMessage = (value: string | null, total: number): string =>
     return __("Roster sync has not run yet.", "context-alt-text");
 };
 
-const renderMetricValue = (
-    label: string,
-    value: number,
-    warnThreshold: number,
-    link?: string | null,
-): ReactNode => {
-    const content = (
-        <strong className={value > warnThreshold ? "cat-text-warning" : undefined}>{value}</strong>
-    );
+const renderMetricValue = (label: string, value: number, warnThreshold: number, link?: string | null): ReactNode => {
+    const content = <strong className={value > warnThreshold ? "cat-text-warning" : undefined}>{value}</strong>;
 
     if (!link) {
         return content;
     }
 
     return (
-        <Link
-            to={link}
-            className="cat-recognition__metric-link"
-            aria-label={`${label}: ${value}`}
-        >
+        <Link to={link} className="cat-recognition__metric-link" aria-label={`${label}: ${value}`}>
             {content}
         </Link>
     );

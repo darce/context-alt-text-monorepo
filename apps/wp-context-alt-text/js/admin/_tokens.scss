@@ -19,34 +19,40 @@ $cat-spacing-md: 1rem;
 $cat-spacing-sm: 0.75rem;
 $cat-spacing-xs: 0.35rem;
 
-$cat-font-family-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+$cat-font-family-sans:
+    "Inter",
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    sans-serif;
 $cat-font-size-base: 16px;
 $cat-font-size-lg: 1.6rem;
 $cat-font-size-md: 1.1rem;
 $cat-font-size-sm: 0.875rem;
 
 :root {
-  --cat-accent: #{$cat-accent};
-  --cat-accent-soft: #{$cat-accent-soft};
-  --cat-warning: #{$cat-warning};
-  --cat-danger: #{$cat-danger};
-  --cat-background: #{$cat-background};
-  --cat-surface: #{$cat-surface};
-  --cat-border: #{$cat-border};
-  --cat-text: #{$cat-text};
-  --cat-muted: #{$cat-muted};
-  --cat-radius-full: #{$cat-radius-full};
-  --cat-radius-lg: #{$cat-radius-lg};
-  --cat-radius-md: #{$cat-radius-md};
-  --cat-radius-sm: #{$cat-radius-sm};
-  --cat-spacing-xl: #{$cat-spacing-xl};
-  --cat-spacing-lg: #{$cat-spacing-lg};
-  --cat-spacing-md: #{$cat-spacing-md};
-  --cat-spacing-sm: #{$cat-spacing-sm};
-  --cat-spacing-xs: #{$cat-spacing-xs};
-  --cat-font-family-sans: #{$cat-font-family-sans};
-  --cat-font-size-base: #{$cat-font-size-base};
-  --cat-font-size-lg: #{$cat-font-size-lg};
-  --cat-font-size-md: #{$cat-font-size-md};
-  --cat-font-size-sm: #{$cat-font-size-sm};
+    --cat-accent: #{$cat-accent};
+    --cat-accent-soft: #{$cat-accent-soft};
+    --cat-warning: #{$cat-warning};
+    --cat-danger: #{$cat-danger};
+    --cat-background: #{$cat-background};
+    --cat-surface: #{$cat-surface};
+    --cat-border: #{$cat-border};
+    --cat-text: #{$cat-text};
+    --cat-muted: #{$cat-muted};
+    --cat-radius-full: #{$cat-radius-full};
+    --cat-radius-lg: #{$cat-radius-lg};
+    --cat-radius-md: #{$cat-radius-md};
+    --cat-radius-sm: #{$cat-radius-sm};
+    --cat-spacing-xl: #{$cat-spacing-xl};
+    --cat-spacing-lg: #{$cat-spacing-lg};
+    --cat-spacing-md: #{$cat-spacing-md};
+    --cat-spacing-sm: #{$cat-spacing-sm};
+    --cat-spacing-xs: #{$cat-spacing-xs};
+    --cat-font-family-sans: #{$cat-font-family-sans};
+    --cat-font-size-base: #{$cat-font-size-base};
+    --cat-font-size-lg: #{$cat-font-size-lg};
+    --cat-font-size-md: #{$cat-font-size-md};
+    --cat-font-size-sm: #{$cat-font-size-sm};
 }

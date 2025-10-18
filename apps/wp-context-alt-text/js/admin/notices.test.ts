@@ -19,12 +19,7 @@ const isNoticePayload = (candidate: unknown): candidate is NoticePayload => {
         options?: unknown;
     };
 
-    return (
-        typeof status === "string" &&
-        typeof message === "string" &&
-        typeof options === "object" &&
-        options !== null
-    );
+    return typeof status === "string" && typeof message === "string" && typeof options === "object" && options !== null;
 };
 
 describe("dispatchNotice", () => {
@@ -78,14 +73,14 @@ describe("dispatchNotice", () => {
             throw new Error("Expected fallback notice event to be dispatched");
         }
 
-    const noticeEvent = fallbackEvent as CustomEvent<unknown>;
-    const { detail } = noticeEvent;
+        const noticeEvent = fallbackEvent as CustomEvent<unknown>;
+        const { detail } = noticeEvent;
 
         if (!isNoticePayload(detail)) {
             throw new Error("Fallback notice event did not include the expected payload");
         }
 
-    expect(noticeEvent.type).toBe(NOTICE_EVENT_NAME);
+        expect(noticeEvent.type).toBe(NOTICE_EVENT_NAME);
         expect(detail.status).toBe("info");
         expect(detail.message).toBe("Hello there");
         // Logger now adds timestamps, so we need to check it was called with the message

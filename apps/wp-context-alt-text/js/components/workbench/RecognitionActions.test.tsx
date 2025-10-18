@@ -149,13 +149,7 @@ describe("RecognitionActions integration", () => {
             },
         });
 
-        const { user } = renderDashboard(
-            <WorkbenchApp
-                items={[baseItem]}
-                viewMode="list"
-            />,
-            { withRouter: true },
-        );
+        const { user } = renderDashboard(<WorkbenchApp items={[baseItem]} viewMode="list" />, { withRouter: true });
 
         await user.click(screen.getByLabelText(/select sample asset/i));
 
@@ -261,13 +255,7 @@ describe("RecognitionActions integration", () => {
             }),
         );
 
-        const { user } = renderDashboard(
-            <WorkbenchApp
-                items={[baseItem]}
-                viewMode="list"
-            />,
-            { withRouter: true },
-        );
+        const { user } = renderDashboard(<WorkbenchApp items={[baseItem]} viewMode="list" />, { withRouter: true });
 
         await user.click(screen.getByLabelText(/select sample asset/i));
         await user.click(screen.getByRole("button", { name: /trigger recognition/i }));
@@ -368,13 +356,7 @@ describe("RecognitionActions integration", () => {
             },
         ];
 
-        const { user } = renderDashboard(
-            <WorkbenchApp
-                items={extraItems}
-                viewMode="list"
-            />,
-            { withRouter: true },
-        );
+        const { user } = renderDashboard(<WorkbenchApp items={extraItems} viewMode="list" />, { withRouter: true });
 
         await user.click(screen.getByLabelText(/select second asset/i));
         await user.click(screen.getByRole("button", { name: /trigger recognition/i }));
@@ -403,13 +385,7 @@ describe("RecognitionActions integration", () => {
             }),
         );
 
-        const { user } = renderDashboard(
-            <WorkbenchApp
-                items={[baseItem]}
-                viewMode="list"
-            />,
-            { withRouter: true },
-        );
+        const { user } = renderDashboard(<WorkbenchApp items={[baseItem]} viewMode="list" />, { withRouter: true });
 
         await user.click(screen.getByLabelText(/select sample asset/i));
         await user.click(screen.getByRole("button", { name: /trigger recognition/i }));

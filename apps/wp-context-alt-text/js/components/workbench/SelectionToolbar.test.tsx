@@ -8,12 +8,7 @@ import { SelectionToolbar } from "./SelectionToolbar";
 
 describe("SelectionToolbar", () => {
     it("renders with no selection", () => {
-        render(
-            <SelectionToolbar
-                selectionCount={0}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={0} onClearSelection={vi.fn()} />);
 
         // Text is split across elements: "0" + " items" + " selected"
         expect(screen.getByText("0")).toBeInTheDocument();
@@ -21,12 +16,7 @@ describe("SelectionToolbar", () => {
     });
 
     it("renders with selection count", () => {
-        render(
-            <SelectionToolbar
-                selectionCount={5}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={5} onClearSelection={vi.fn()} />);
 
         // Text is split across elements: "5" + " items" + " selected"
         expect(screen.getByText("5")).toBeInTheDocument();
@@ -34,12 +24,7 @@ describe("SelectionToolbar", () => {
     });
 
     it("disables action buttons when no items selected", () => {
-        render(
-            <SelectionToolbar
-                selectionCount={0}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={0} onClearSelection={vi.fn()} />);
 
         const generateBtn = screen.getByRole("button", { name: "Generate Alt Text" });
         const regenerateBtn = screen.getByRole("button", { name: "Regenerate" });
@@ -51,12 +36,7 @@ describe("SelectionToolbar", () => {
     });
 
     it("enables action buttons when items selected", () => {
-        render(
-            <SelectionToolbar
-                selectionCount={3}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={3} onClearSelection={vi.fn()} />);
 
         const generateBtn = screen.getByRole("button", { name: "Generate Alt Text" });
         const regenerateBtn = screen.getByRole("button", { name: "Regenerate" });
@@ -74,12 +54,7 @@ describe("SelectionToolbar", () => {
         const user = userEvent.setup();
         const onClearSelection = vi.fn();
 
-        render(
-            <SelectionToolbar
-                selectionCount={5}
-                onClearSelection={onClearSelection}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={5} onClearSelection={onClearSelection} />);
 
         const clearBtn = screen.getByRole("button", { name: "Clear Selection" });
         await user.click(clearBtn);
@@ -88,23 +63,13 @@ describe("SelectionToolbar", () => {
     });
 
     it("shows clear button when items selected", () => {
-        render(
-            <SelectionToolbar
-                selectionCount={3}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={3} onClearSelection={vi.fn()} />);
 
         expect(screen.getByRole("button", { name: "Clear Selection" })).toBeInTheDocument();
     });
 
     it("has no accessibility violations", async () => {
-        const { container } = render(
-            <SelectionToolbar
-                selectionCount={3}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        const { container } = render(<SelectionToolbar selectionCount={3} onClearSelection={vi.fn()} />);
 
         const results = await axe(container);
         expect(results.violations).toHaveLength(0);
@@ -113,12 +78,7 @@ describe("SelectionToolbar", () => {
     it("supports keyboard navigation", async () => {
         const user = userEvent.setup();
 
-        render(
-            <SelectionToolbar
-                selectionCount={2}
-                onClearSelection={vi.fn()}
-            />,
-        );
+        render(<SelectionToolbar selectionCount={2} onClearSelection={vi.fn()} />);
 
         const generateBtn = screen.getByRole("button", { name: "Generate Alt Text" });
 

@@ -149,34 +149,29 @@ export const RecognitionActions = ({
         const { accepted, rejected, jobId, status } = lastJob;
         const effectiveStatus = jobDetails?.status ?? status;
         const acceptedCopy = sprintf(
-            _n(
-                "Queued %d item for recognition.",
-                "Queued %d items for recognition.",
-                accepted,
-                "context-alt-text",
-            ),
+            _n("Queued %d item for recognition.", "Queued %d items for recognition.", accepted, "context-alt-text"),
             accepted,
         );
 
         const jobIdCopy = jobId
             ? sprintf(
-                // translators: %s is the recognition job identifier.
-                __("Job ID: %s.", "context-alt-text"),
-                jobId,
-            )
+                  // translators: %s is the recognition job identifier.
+                  __("Job ID: %s.", "context-alt-text"),
+                  jobId,
+              )
             : null;
 
         const rejectedCount = rejected.length;
         const rejectedCopy = rejectedCount
             ? sprintf(
-                _n(
-                    "Skipped %d unsupported item.",
-                    "Skipped %d unsupported items.",
-                    rejectedCount,
-                    "context-alt-text",
-                ),
-                rejectedCount,
-            )
+                  _n(
+                      "Skipped %d unsupported item.",
+                      "Skipped %d unsupported items.",
+                      rejectedCount,
+                      "context-alt-text",
+                  ),
+                  rejectedCount,
+              )
             : null;
 
         let statusCopy: string;
@@ -197,7 +192,10 @@ export const RecognitionActions = ({
         } else if (isPolling) {
             statusCopy = __("Recognition job is running. Results will update automatically.", "context-alt-text");
         } else {
-            statusCopy = __("Recognition job queued. Results will appear once processing finishes.", "context-alt-text");
+            statusCopy = __(
+                "Recognition job queued. Results will appear once processing finishes.",
+                "context-alt-text",
+            );
         }
 
         return [acceptedCopy, jobIdCopy, rejectedCopy, statusCopy].filter(Boolean).join(" ");
@@ -230,22 +228,12 @@ export const RecognitionActions = ({
     const showRetryButton = Boolean(error && onRetryRecognition && !isSubmitting);
 
     return (
-        <section
-            className="cat-workbench__panel"
-            aria-label={__("Recognition actions", "context-alt-text")}
-        >
+        <section className="cat-workbench__panel" aria-label={__("Recognition actions", "context-alt-text")}>
             <header>
                 <h2>{__("Recognition", "context-alt-text")}</h2>
-                <p>
-                    {__("Run face and brand detection to enrich context for selected items.", "context-alt-text")}
-                </p>
+                <p>{__("Run face and brand detection to enrich context for selected items.", "context-alt-text")}</p>
             </header>
-            <Button
-                variant="default"
-                size="md"
-                onClick={handleTriggerClick}
-                disabled={buttonDisabled}
-            >
+            <Button variant="default" size="md" onClick={handleTriggerClick} disabled={buttonDisabled}>
                 {isSubmitting ? __("Triggering…", "context-alt-text") : __("Trigger Recognition", "context-alt-text")}
             </Button>
 
@@ -287,11 +275,7 @@ export const RecognitionActions = ({
             )}
 
             {showProgress && progressLabel && (
-                <div
-                    className="cat-recognition__progress"
-                    role="status"
-                    aria-live="polite"
-                >
+                <div className="cat-recognition__progress" role="status" aria-live="polite">
                     <p>{progressLabel}</p>
                     <Progress value={progressValue} aria-label={progressLabel} />
                 </div>
@@ -312,12 +296,7 @@ export const RecognitionActions = ({
                     <span>{errorMessage}</span>
                     {errorRejectedMessage && <span className="cat-alert__detail">{errorRejectedMessage}</span>}
                     {showRetryButton && (
-                        <Button
-                            variant="default"
-                            size="sm"
-                            onClick={handleRetryClick}
-                            className="cat-alert__action"
-                        >
+                        <Button variant="default" size="sm" onClick={handleRetryClick} className="cat-alert__action">
                             {__("Retry", "context-alt-text")}
                         </Button>
                     )}
@@ -326,9 +305,7 @@ export const RecognitionActions = ({
 
             {jobDetails && jobDetails.observations.length > 0 && (
                 <section aria-label={__("Recognition results", "context-alt-text")}>
-                    <h3 className="cat-recognition__results-title">
-                        {__("Recognition results", "context-alt-text")}
-                    </h3>
+                    <h3 className="cat-recognition__results-title">{__("Recognition results", "context-alt-text")}</h3>
                     <ul className="cat-recognition__results">
                         {jobDetails.observations.map((item) => (
                             <RecognitionResultRow
@@ -466,7 +443,11 @@ const formatStatusLabel = (status: string): string => {
     }
 };
 
-const RecognitionObservationRow = ({ record, rosterEnabled, attachmentId }: RecognitionObservationRowProps): React.JSX.Element => {
+const RecognitionObservationRow = ({
+    record,
+    rosterEnabled,
+    attachmentId,
+}: RecognitionObservationRowProps): React.JSX.Element => {
     const rosterMatch = record.roster;
     const hasRosterMatch = Boolean(rosterMatch?.remoteId);
     const needsReview = record.status === "needs_review";
@@ -504,10 +485,13 @@ const RecognitionObservationRow = ({ record, rosterEnabled, attachmentId }: Reco
 
     const rosterDescription = rosterMatch
         ? sprintf(
-            /* translators: %s is a roster display name. */
-            __("Linked to roster entry %s", "context-alt-text"),
-            rosterMatch.displayName ?? rosterMatch.name ?? rosterMatch.remoteId ?? __("(unknown)", "context-alt-text"),
-        )
+              /* translators: %s is a roster display name. */
+              __("Linked to roster entry %s", "context-alt-text"),
+              rosterMatch.displayName ??
+                  rosterMatch.name ??
+                  rosterMatch.remoteId ??
+                  __("(unknown)", "context-alt-text"),
+          )
         : __("No roster match", "context-alt-text");
 
     let action: React.ReactNode = null;
@@ -515,15 +499,8 @@ const RecognitionObservationRow = ({ record, rosterEnabled, attachmentId }: Reco
     if (needsReview) {
         if (rosterEnabled) {
             action = (
-                <Button
-                    asChild
-                    variant="primary"
-                    size="sm"
-                >
-                    <Link
-                        to={rosterLink}
-                        aria-label={`${reviewRosterCta}: ${displayLabel}`}
-                    >
+                <Button asChild variant="primary" size="sm">
+                    <Link to={rosterLink} aria-label={`${reviewRosterCta}: ${displayLabel}`}>
                         {reviewRosterCta}
                     </Link>
                 </Button>
@@ -561,7 +538,9 @@ const RecognitionObservationRow = ({ record, rosterEnabled, attachmentId }: Reco
         <li className="cat-recognition__observation">
             <div className="cat-recognition__observation-header">
                 <span className="cat-recognition__observation-label">{displayLabel}</span>
-                <span className={`cat-recognition__observation-status cat-recognition__observation-status--${record.status}`}>
+                <span
+                    className={`cat-recognition__observation-status cat-recognition__observation-status--${record.status}`}
+                >
                     {formatStatusLabel(record.status)}
                 </span>
             </div>

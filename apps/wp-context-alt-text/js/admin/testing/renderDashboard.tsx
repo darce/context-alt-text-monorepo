@@ -29,24 +29,13 @@ const createQueryClient = (): QueryClient =>
         },
     });
 
-const Provider = ({
-    children,
-    client,
-}: {
-    children: ReactNode;
-    client: QueryClient;
-}): ReactElement => {
+const Provider = ({ children, client }: { children: ReactNode; client: QueryClient }): ReactElement => {
     return <QueryClientProvider client={client}>{children}</QueryClientProvider>;
 };
 
 export const renderDashboard = (
     ui: ReactElement,
-    {
-        queryClient: providedClient,
-        withRouter = false,
-        routerEntries = ["/"],
-        ...options
-    }: RenderDashboardOptions = {},
+    { queryClient: providedClient, withRouter = false, routerEntries = ["/"], ...options }: RenderDashboardOptions = {},
 ): RenderDashboardResult => {
     const queryClient = providedClient ?? createQueryClient();
     const user = userEvent.setup();

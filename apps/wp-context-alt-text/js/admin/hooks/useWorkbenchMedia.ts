@@ -3,6 +3,7 @@ import { useQuery } from "@tanstack/react-query";
 
 import type { WorkbenchMediaItem } from "@/admin/types";
 import { getDashboardConfig, getWorkbenchData, normalizeWorkbenchItem } from "@/admin/dashboardData";
+import { buildApiUrl } from "@/admin/utils/http";
 
 export const WORKBENCH_MEDIA_QUERY_KEY = ["workbench", "media"] as const;
 
@@ -17,8 +18,6 @@ interface UseWorkbenchMediaOptions {
     status?: string;
     search?: string | null;
 }
-
-const WORKBENCH_MEDIA_FALLBACK_PATH = "/wp-json/cat/v1/workbench/media";
 
 const mapMediaResponse = (payload: unknown): WorkbenchMediaItem[] => {
     if (!Array.isArray(payload)) {
@@ -36,79 +35,6 @@ interface WorkbenchMediaResponse {
     totalPages: number;
 }
 
-const resolveOriginCandidate = (candidate: unknown, sourceLabel: string): string | null => {
-    if (typeof candidate !== "string") {
-        return null;
-    }
-
-    const trimmed = candidate.trim();
-    if (trimmed.length === 0) {
-        return null;
-    }
-
-    const parse = (value: string, base?: string): string | null => {
-        try {
-            return new URL(value, base).origin;
-        } catch {
-            return null;
-        }
-    };
-
-    const direct = parse(trimmed);
-    if (direct) {
-        return direct;
-    }
-
-    const baseCandidate = (() => {
-        if (typeof window !== "undefined" && window.location?.href) {
-            return window.location.href;
-        }
-
-        if (typeof document !== "undefined" && typeof document.baseURI === "string") {
-            return document.baseURI;
-        }
-
-        return undefined;
-    })();
-
-    if (baseCandidate) {
-        const relative = parse(trimmed, baseCandidate);
-        if (relative) {
-            return relative;
-        }
-    }
-
-    console.warn(`Unable to parse ${sourceLabel} while resolving Workbench origin`, new TypeError("Invalid URL"));
-    return null;
-};
-
-const isViableOrigin = (candidate: string | null | undefined): candidate is string => {
-    if (typeof candidate !== "string") {
-        return false;
-    }
-
-    const trimmed = candidate.trim();
-    if (trimmed.length === 0) {
-        return false;
-    }
-
-    if (trimmed === "about:blank" || trimmed === "null") {
-        return false;
-    }
-
-    return true;
-};
-
-const takeFirstOrigin = (candidates: (string | null | undefined)[]): string | null => {
-    for (const candidate of candidates) {
-        if (isViableOrigin(candidate)) {
-            return candidate.trim();
-        }
-    }
-
-    return null;
-};
-
 const parseTotals = (
     headers: Headers,
     fallback: { total: number; totalPages: number },
@@ -118,10 +44,7 @@ const parseTotals = (
 
     return {
         total: Number.isFinite(totalHeader) && totalHeader >= 0 ? totalHeader : fallback.total,
-        totalPages:
-            Number.isFinite(totalPagesHeader) && totalPagesHeader >= 0
-                ? totalPagesHeader
-                : fallback.totalPages,
+        totalPages: Number.isFinite(totalPagesHeader) && totalPagesHeader >= 0 ? totalPagesHeader : fallback.totalPages,
     };
 };
 
@@ -142,78 +65,16 @@ export const useWorkbenchMedia = ({
 
     const config = React.useMemo(() => getDashboardConfig(), []);
 
-    const configuredEndpoint = React.useMemo(() => {
-        const endpoint = config.endpoints?.workbenchMedia;
-        if (typeof endpoint === "string" && endpoint.trim().length > 0) {
-            return endpoint.trim();
+    // Simple endpoint resolution: use config endpoint or construct fallback
+    const endpoint = React.useMemo(() => {
+        const configEndpoint = config.endpoints?.workbenchMedia;
+        if (configEndpoint && configEndpoint.trim().length > 0) {
+            return configEndpoint;
         }
 
-        return null;
+        // Fallback: Use relative path (works in all contexts)
+        return "/wp-json/cat/v1/workbench/media";
     }, [config.endpoints?.workbenchMedia]);
-
-    const fallbackEndpoint = React.useMemo(() => {
-        if (typeof window === "undefined") {
-            return null;
-        }
-
-        try {
-            const { location } = window;
-            const originCandidate = (() => {
-                if (!location) {
-                    return null;
-                }
-
-                if (location.origin && location.origin !== "null" && location.origin !== "about:blank") {
-                    return resolveOriginCandidate(location.origin, "window.location.origin");
-                }
-
-                if (location.protocol && location.host) {
-                    return resolveOriginCandidate(`${location.protocol}//${location.host}`, "window.location");
-                }
-
-                return null;
-            })();
-
-            const fallbackOrigin = takeFirstOrigin([
-                originCandidate,
-                resolveOriginCandidate(
-                    typeof document !== "undefined" ? document.baseURI : null,
-                    "document.baseURI",
-                ),
-                resolveOriginCandidate(
-                    (window as unknown as { wpApiSettings?: { root?: string } })?.wpApiSettings?.root,
-                    "wpApiSettings.root",
-                ),
-                resolveOriginCandidate(
-                    (window as unknown as { ajaxurl?: string })?.ajaxurl,
-                    "window.ajaxurl",
-                ),
-            ]);
-
-            const fallbackPath = WORKBENCH_MEDIA_FALLBACK_PATH;
-
-            if (fallbackOrigin) {
-                try {
-                    return new URL(fallbackPath, fallbackOrigin).toString();
-                } catch (error) {
-                    console.warn("Unable to construct fallback Workbench endpoint from origin", error);
-                }
-            }
-
-            if (fallbackPath.startsWith("/")) {
-                return fallbackPath;
-            }
-
-            return `/${fallbackPath}`;
-        } catch (error) {
-            console.warn("Unable to resolve fallback Workbench endpoint", error);
-            return null;
-        }
-    }, []);
-
-    const resolvedEndpoint = configuredEndpoint ?? fallbackEndpoint;
-    const hasConfiguredEndpoint = Boolean(configuredEndpoint);
-    const hasResolvedEndpoint = typeof resolvedEndpoint === "string" && resolvedEndpoint.length > 0;
 
     const normalizedSearch = typeof search === "string" && search.trim().length > 0 ? search.trim() : null;
 
@@ -232,8 +93,9 @@ export const useWorkbenchMedia = ({
                 return true;
             }
 
-            const haystacks = [item.title, item.altText ?? "", item.mimeType ?? ""]
-                .map((value) => value?.toLowerCase() ?? "");
+            const haystacks = [item.title, item.altText ?? "", item.mimeType ?? ""].map(
+                (value) => value?.toLowerCase() ?? "",
+            );
 
             return haystacks.some((value) => value.includes(normalizedQuery));
         };
@@ -272,115 +134,38 @@ export const useWorkbenchMedia = ({
         return false;
     }, [bootstrapItems.length, bootstrapMeta.total, bootstrapMeta.totalPages]);
 
+    // Simplified shouldFetchRemote: fetch if any filter is active
     const shouldFetchRemote = React.useMemo(() => {
-        if (!hasResolvedEndpoint) {
-            return false;
-        }
-
-        if (normalizedSearch !== null) {
-            return true;
-        }
-
-        if (bootstrapItems.length === 0) {
-            return true;
-        }
-
-        if (page !== bootstrapPage) {
-            return true;
-        }
-
-        if (perPage !== bootstrapPerPage) {
-            return true;
-        }
-
-        if (hasBootstrapPaginationGap) {
-            return true;
-        }
-
-        return false;
-    }, [bootstrapItems.length, bootstrapPage, bootstrapPerPage, hasBootstrapPaginationGap, hasResolvedEndpoint, normalizedSearch, page, perPage]);
-
-    const runtimeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
-    if (runtimeProcess?.env?.NODE_ENV === "test") {
-         
-        console.info("useWorkbenchMedia", {
-            hasResolvedEndpoint,
-            normalizedSearch,
-            page,
-            perPage,
-            shouldFetchRemote,
-            resolvedEndpoint,
-        });
-    }
-
-    const buildRequestUrl = React.useCallback(
-        (endpoint: string) => {
-            try {
-                return new URL(endpoint);
-            } catch {
-                const fallbackBase = (() => {
-                    if (typeof window !== "undefined" && window.location?.href) {
-                        return window.location.href;
-                    }
-
-                    if (typeof document !== "undefined" && typeof document.baseURI === "string") {
-                        return document.baseURI;
-                    }
-
-                    return null;
-                })();
-
-                if (fallbackBase) {
-                    return new URL(endpoint, fallbackBase);
-                }
-
-                throw new TypeError("Unable to resolve workbench media endpoint");
-            }
-        },
-        [],
-    );
+        // Fetch from remote if:
+        // - Search is active
+        // - Page changed from bootstrap
+        // - Per page changed from bootstrap
+        // - Bootstrap has pagination gap (indicating more data)
+        return (
+            normalizedSearch !== null ||
+            page !== bootstrapPage ||
+            perPage !== bootstrapPerPage ||
+            hasBootstrapPaginationGap
+        );
+    }, [bootstrapPerPage, bootstrapPage, hasBootstrapPaginationGap, normalizedSearch, page, perPage]);
 
     const queryKey = React.useMemo(
-        () => [
-            ...WORKBENCH_MEDIA_QUERY_KEY,
-            hasResolvedEndpoint ? resolvedEndpoint : "bootstrap",
-            page,
-            perPage,
-            status,
-            normalizedSearch,
-        ],
-        [hasResolvedEndpoint, normalizedSearch, page, perPage, resolvedEndpoint, status],
+        () => [...WORKBENCH_MEDIA_QUERY_KEY, endpoint, page, perPage, status, normalizedSearch],
+        [endpoint, normalizedSearch, page, perPage, status],
     );
-
-    const shouldEnableRemoteFetch = hasResolvedEndpoint && shouldFetchRemote;
 
     const query = useQuery<WorkbenchMediaResponse>({
         queryKey,
-        queryFn: async ({ signal }) => {
-            if (!hasResolvedEndpoint || !resolvedEndpoint) {
-                return localResults;
-            }
+        queryFn: async ({ signal }: { signal: AbortSignal }) => {
+            // Use shared buildApiUrl utility
+            const url = buildApiUrl(endpoint, {
+                page,
+                per_page: perPage,
+                status,
+                ...(normalizedSearch ? { search: normalizedSearch } : {}),
+            });
 
-            const url = buildRequestUrl(resolvedEndpoint);
-            url.searchParams.set("page", String(page));
-            url.searchParams.set("per_page", String(perPage));
-            url.searchParams.set("status", status);
-
-            if (normalizedSearch) {
-                url.searchParams.set("search", normalizedSearch);
-            }
-
-            if (runtimeProcess?.env?.NODE_ENV === "test") {
-                console.info("workbench media fetch", {
-                    endpoint: url.toString(),
-                    page,
-                    perPage,
-                    status,
-                    search: normalizedSearch,
-                });
-            }
-
-            const response = await fetch(url.toString(), {
+            const response = await fetch(url, {
                 credentials: "same-origin",
                 headers: {
                     Accept: "application/json",
@@ -403,16 +188,16 @@ export const useWorkbenchMedia = ({
                 totalPages: totals.totalPages,
             };
         },
-        enabled: shouldEnableRemoteFetch,
+        enabled: shouldFetchRemote,
         placeholderData: () => localResults,
-        initialData: shouldEnableRemoteFetch ? undefined : localResults,
-        staleTime: shouldEnableRemoteFetch ? 0 : Infinity,
+        initialData: shouldFetchRemote ? undefined : localResults,
+        staleTime: shouldFetchRemote ? 0 : Infinity,
         gcTime: 5 * 60_000,
-        refetchOnMount: shouldEnableRemoteFetch ? "always" : false,
+        refetchOnMount: shouldFetchRemote ? "always" : false,
         refetchOnWindowFocus: false,
     });
 
-    const resolvedData = shouldEnableRemoteFetch || hasConfiguredEndpoint ? query.data ?? localResults : localResults;
+    const resolvedData = shouldFetchRemote ? (query.data ?? localResults) : localResults;
     const items = resolvedData.items ?? bootstrapItems;
     const total = resolvedData.total ?? bootstrapMeta.total;
     const totalPages = resolvedData.totalPages ?? bootstrapMeta.totalPages;
@@ -426,6 +211,5 @@ export const useWorkbenchMedia = ({
         perPage,
         status,
         search: normalizedSearch,
-        hasEndpoint: hasResolvedEndpoint,
     };
 };

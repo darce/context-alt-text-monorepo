@@ -178,18 +178,12 @@ export const getDashboardData = (): DashboardData => {
                 dashboard.recognition?.unresolved_matches,
                 FALLBACK_RECOGNITION.unresolved_matches,
             ),
-            roster_pending: normalizeMetric(
-                dashboard.recognition?.roster_pending,
-                FALLBACK_RECOGNITION.roster_pending,
-            ),
+            roster_pending: normalizeMetric(dashboard.recognition?.roster_pending, FALLBACK_RECOGNITION.roster_pending),
             roster_conflicts: normalizeMetric(
                 dashboard.recognition?.roster_conflicts,
                 FALLBACK_RECOGNITION.roster_conflicts,
             ),
-            roster_total: normalizeMetric(
-                dashboard.recognition?.roster_total,
-                FALLBACK_RECOGNITION.roster_total,
-            ),
+            roster_total: normalizeMetric(dashboard.recognition?.roster_total, FALLBACK_RECOGNITION.roster_total),
             last_roster_sync_human:
                 typeof dashboard.recognition?.last_roster_sync_human === "string"
                     ? dashboard.recognition?.last_roster_sync_human
@@ -221,27 +215,24 @@ export const getDashboardConfig = (): AdminConfig => {
 
     return {
         missingAltMediaUrl:
-            typeof config.missingAltMediaUrl === "string" ? config.missingAltMediaUrl : FALLBACK_CONFIG.missingAltMediaUrl,
+            typeof config.missingAltMediaUrl === "string"
+                ? config.missingAltMediaUrl
+                : FALLBACK_CONFIG.missingAltMediaUrl,
         restNonce: typeof config.restNonce === "string" ? config.restNonce : FALLBACK_CONFIG.restNonce,
         endpoints: {
             coverage: typeof endpoints.coverage === "string" ? endpoints.coverage : undefined,
             workbenchMedia: typeof endpoints.workbenchMedia === "string" ? endpoints.workbenchMedia : undefined,
             recognitionAnalyze:
                 typeof endpoints.recognitionAnalyze === "string" ? endpoints.recognitionAnalyze : undefined,
-            recognitionJob:
-                typeof endpoints.recognitionJob === "string" ? endpoints.recognitionJob : undefined,
+            recognitionJob: typeof endpoints.recognitionJob === "string" ? endpoints.recognitionJob : undefined,
             recognitionObservations:
-                typeof endpoints.recognitionObservations === "string"
-                    ? endpoints.recognitionObservations
-                    : undefined,
+                typeof endpoints.recognitionObservations === "string" ? endpoints.recognitionObservations : undefined,
             recognitionObservationUpdate:
                 typeof endpoints.recognitionObservationUpdate === "string"
                     ? endpoints.recognitionObservationUpdate
                     : undefined,
             observationsRetry:
-                typeof endpoints.observationsRetry === "string"
-                    ? endpoints.observationsRetry
-                    : undefined,
+                typeof endpoints.observationsRetry === "string" ? endpoints.observationsRetry : undefined,
             rosterEntries: typeof endpoints.rosterEntries === "string" ? endpoints.rosterEntries : undefined,
             rosterSync: typeof endpoints.rosterSync === "string" ? endpoints.rosterSync : undefined,
             settingsRecognition:
@@ -281,10 +272,10 @@ export const getSettingsData = (): SettingsData => {
 
     return {
         recognition: {
-            baseUrl: typeof recognition.baseUrl === "string" ? recognition.baseUrl : FALLBACK_RECOGNITION_SETTINGS.baseUrl,
+            baseUrl:
+                typeof recognition.baseUrl === "string" ? recognition.baseUrl : FALLBACK_RECOGNITION_SETTINGS.baseUrl,
             apiKey: typeof recognition.apiKey === "string" ? recognition.apiKey : FALLBACK_RECOGNITION_SETTINGS.apiKey,
-            timeoutMs:
-                Number.isFinite(timeout) && timeout > 0 ? timeout : FALLBACK_RECOGNITION_SETTINGS.timeoutMs,
+            timeoutMs: Number.isFinite(timeout) && timeout > 0 ? timeout : FALLBACK_RECOGNITION_SETTINGS.timeoutMs,
             modelProfile:
                 typeof recognition.modelProfile === "string"
                     ? recognition.modelProfile
@@ -318,12 +309,9 @@ const normalizeRecognition = (candidate: unknown): WorkbenchMediaRecognition | n
         record.needsReviewCount ?? record.needs_review_count ?? record.needs_review ?? 0,
     );
 
-    const matchedCount = Number.isFinite(matchedCountRaw) && matchedCountRaw > 0
-        ? Math.trunc(matchedCountRaw)
-        : 0;
-    const needsReviewCount = Number.isFinite(needsReviewCountRaw) && needsReviewCountRaw > 0
-        ? Math.trunc(needsReviewCountRaw)
-        : 0;
+    const matchedCount = Number.isFinite(matchedCountRaw) && matchedCountRaw > 0 ? Math.trunc(matchedCountRaw) : 0;
+    const needsReviewCount =
+        Number.isFinite(needsReviewCountRaw) && needsReviewCountRaw > 0 ? Math.trunc(needsReviewCountRaw) : 0;
 
     const matchedRosterInput = record.matchedRoster ?? record.matched_roster ?? null;
     let matchedRoster: WorkbenchMediaRecognition["matchedRoster"] = null;
@@ -343,10 +331,10 @@ const normalizeRecognition = (candidate: unknown): WorkbenchMediaRecognition | n
         typeof updatedAtRaw === "number" && Number.isFinite(updatedAtRaw) ? Math.trunc(updatedAtRaw) : null;
 
     if (
-        status === "unknown"
-        && matchedCount === 0
-        && needsReviewCount === 0
-        && (!matchedRoster || (!matchedRoster.remoteId && !matchedRoster.displayName && !matchedRoster.name))
+        status === "unknown" &&
+        matchedCount === 0 &&
+        needsReviewCount === 0 &&
+        (!matchedRoster || (!matchedRoster.remoteId && !matchedRoster.displayName && !matchedRoster.name))
     ) {
         return null;
     }
@@ -366,11 +354,12 @@ const normalizeRosterMedia = (candidate: Partial<RosterEntryMedia> | undefined):
     }
 
     const attachmentRaw = candidate.attachmentId ?? (candidate as Record<string, unknown>).attachment_id;
-    const attachmentId = typeof attachmentRaw === "number"
-        ? attachmentRaw
-        : typeof attachmentRaw === "string"
-            ? Number(attachmentRaw)
-            : NaN;
+    const attachmentId =
+        typeof attachmentRaw === "number"
+            ? attachmentRaw
+            : typeof attachmentRaw === "string"
+              ? Number(attachmentRaw)
+              : NaN;
 
     if (!Number.isFinite(attachmentId) || attachmentId <= 0) {
         return null;
@@ -387,9 +376,7 @@ const normalizeRosterMedia = (candidate: Partial<RosterEntryMedia> | undefined):
     } satisfies RosterEntryMedia;
 };
 
-export const normalizeWorkbenchItem = (
-    item: Partial<WorkbenchMediaItem> | undefined,
-): WorkbenchMediaItem | null => {
+export const normalizeWorkbenchItem = (item: Partial<WorkbenchMediaItem> | undefined): WorkbenchMediaItem | null => {
     if (!item || typeof item !== "object" || !item.id || !item.title) {
         return null;
     }
@@ -408,9 +395,10 @@ export const normalizeWorkbenchItem = (
         updatedAt: item.updatedAt ?? undefined,
         altText: typeof item.altText === "string" ? item.altText : null,
         mimeType: typeof item.mimeType === "string" ? item.mimeType : null,
-        dimensions: item.dimensions && typeof item.dimensions === "object"
-            ? normalizeDimensions(item.dimensions as Record<string, unknown>)
-            : null,
+        dimensions:
+            item.dimensions && typeof item.dimensions === "object"
+                ? normalizeDimensions(item.dimensions as Record<string, unknown>)
+                : null,
         editUrl: typeof item.editUrl === "string" ? item.editUrl : null,
         recognition: recognition ?? undefined,
     };
@@ -438,9 +426,10 @@ export const getWorkbenchData = (): WorkbenchData => {
         .map((candidate) => normalizeWorkbenchItem(candidate))
         .filter((candidate): candidate is WorkbenchMediaItem => candidate !== null);
 
-    const viewMode = workbench.viewMode === "grid" || workbench.viewMode === "list"
-        ? workbench.viewMode
-        : FALLBACK_WORKBENCH.viewMode;
+    const viewMode =
+        workbench.viewMode === "grid" || workbench.viewMode === "list"
+            ? workbench.viewMode
+            : FALLBACK_WORKBENCH.viewMode;
     const pagination = normalizeWorkbenchPagination(workbench.pagination);
 
     return {
@@ -467,9 +456,7 @@ const normalizeWorkbenchPagination = (
         perPage: Number.isFinite(perPage) && perPage > 0 ? perPage : FALLBACK_WORKBENCH_PAGINATION.perPage,
         total: Number.isFinite(total) && total >= 0 ? total : FALLBACK_WORKBENCH_PAGINATION.total,
         totalPages:
-            Number.isFinite(totalPages) && totalPages >= 0
-                ? totalPages
-                : FALLBACK_WORKBENCH_PAGINATION.totalPages,
+            Number.isFinite(totalPages) && totalPages >= 0 ? totalPages : FALLBACK_WORKBENCH_PAGINATION.totalPages,
     };
 };
 
@@ -508,12 +495,11 @@ export const normalizeRosterEntry = (entry: Partial<RosterEntry> | undefined): R
     const label = typeof entry.label === "string" ? entry.label : "";
     const type = typeof entry.type === "string" ? entry.type : "";
 
-    const metadata =
-        entry.metadata && typeof entry.metadata === "object"
-            ? (entry.metadata)
-            : {};
+    const metadata = entry.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
     const referenceImages = Array.isArray(entry.referenceImages)
-        ? entry.referenceImages.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        ? entry.referenceImages.filter((item): item is Record<string, unknown> =>
+              Boolean(item && typeof item === "object"),
+          )
         : [];
 
     const media = Array.isArray(entry.media)
@@ -525,7 +511,8 @@ export const normalizeRosterEntry = (entry: Partial<RosterEntry> | undefined): R
     const referenceImageCount = Number(entry.referenceImageCount);
     const mediaCount = Number(entry.mediaCount);
     const resolveAvatarId = (candidate?: unknown): number | null => {
-        const value = typeof candidate === "number" ? candidate : typeof candidate === "string" ? Number(candidate) : NaN;
+        const value =
+            typeof candidate === "number" ? candidate : typeof candidate === "string" ? Number(candidate) : NaN;
         return Number.isFinite(value) && value > 0 ? value : null;
     };
 
@@ -535,16 +522,11 @@ export const normalizeRosterEntry = (entry: Partial<RosterEntry> | undefined): R
             return null;
         }
 
-        const keys = [
-            "avatarAttachmentId",
-            "avatar_attachment_id",
-            "avatarId",
-            "avatar_id",
-        ];
+        const keys = ["avatarAttachmentId", "avatar_attachment_id", "avatarId", "avatar_id"];
 
         for (const key of keys) {
             if (key in metadata) {
-                const resolved = resolveAvatarId((metadata)[key]);
+                const resolved = resolveAvatarId(metadata[key]);
                 if (resolved !== null) {
                     return resolved;
                 }
@@ -571,10 +553,7 @@ export const normalizeRosterEntry = (entry: Partial<RosterEntry> | undefined): R
                 : referenceImages.length,
         avatarId,
         media,
-        mediaCount:
-            Number.isFinite(mediaCount) && mediaCount >= 0
-                ? mediaCount
-                : media.length,
+        mediaCount: Number.isFinite(mediaCount) && mediaCount >= 0 ? mediaCount : media.length,
     };
 };
 
@@ -611,9 +590,7 @@ export const normalizeRosterStats = (stats: Partial<RosterStats> | undefined): R
             deleted: Number.isFinite(metricValues.deleted) && metricValues.deleted >= 0 ? metricValues.deleted : 0,
             errors: Number.isFinite(metricValues.errors) && metricValues.errors >= 0 ? metricValues.errors : 0,
             conflicts:
-                Number.isFinite(metricValues.conflicts) && metricValues.conflicts >= 0
-                    ? metricValues.conflicts
-                    : 0,
+                Number.isFinite(metricValues.conflicts) && metricValues.conflicts >= 0 ? metricValues.conflicts : 0,
         },
     };
 };

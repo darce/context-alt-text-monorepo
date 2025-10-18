@@ -77,19 +77,20 @@ const createBootstrap = (): RosterData => ({
     stats: createSampleStats(),
 });
 
-const createConfig = (): AdminConfig => ({
-    endpoints: {
-        recognitionObservations: "/wp-json/cat/v1/observations",
-        recognitionObservationUpdate: "/wp-json/cat/v1/observations/",
-        rosterEntries: "/wp-json/cat/v1/roster",
-        rosterSync: "/wp-json/cat/v1/roster/sync",
-    },
-    featureFlags: {
-        rosterEnabled: true,
-    },
-    restNonce: "test-nonce",
-    missingAltMediaUrl: "/wp-admin/upload.php?context_alt_text=missing",
-} as AdminConfig);
+const createConfig = (): AdminConfig =>
+    ({
+        endpoints: {
+            recognitionObservations: "/wp-json/cat/v1/observations",
+            recognitionObservationUpdate: "/wp-json/cat/v1/observations/",
+            rosterEntries: "/wp-json/cat/v1/roster",
+            rosterSync: "/wp-json/cat/v1/roster/sync",
+        },
+        featureFlags: {
+            rosterEnabled: true,
+        },
+        restNonce: "test-nonce",
+        missingAltMediaUrl: "/wp-admin/upload.php?context_alt_text=missing",
+    }) as AdminConfig;
 
 const createQueryData = (bootstrap: RosterData) => ({
     entries: bootstrap.entries,
@@ -196,10 +197,12 @@ const setupRosterTest = (options: SetupOptions = {}): SetupResult => {
     const observationHasEndpoint = options.observationHasEndpoint ?? true;
     const observationError = options.observationError ?? null;
 
-    const createEntryMock = options.createEntryMock ?? vi.fn().mockResolvedValue({
-        ...createSampleEntry(),
-        remoteId: "remote-new",
-    });
+    const createEntryMock =
+        options.createEntryMock ??
+        vi.fn().mockResolvedValue({
+            ...createSampleEntry(),
+            remoteId: "remote-new",
+        });
     const updateEntryMock = options.updateEntryMock ?? vi.fn().mockResolvedValue(createSampleEntry());
     const deleteEntryMock = options.deleteEntryMock ?? vi.fn().mockResolvedValue(true);
     const syncRosterMock = options.syncRosterMock ?? vi.fn().mockResolvedValue(queryData);
@@ -225,13 +228,13 @@ const setupRosterTest = (options: SetupOptions = {}): SetupResult => {
     const observationData = observationError
         ? undefined
         : {
-            items: observationItems,
-            total: observationItems.length,
-            page: 1,
-            perPage: observationItems.length > 0 ? observationItems.length : 10,
-            totalPages: observationItems.length > 0 ? 1 : 0,
-            summary: observationSummary,
-        };
+              items: observationItems,
+              total: observationItems.length,
+              page: 1,
+              perPage: observationItems.length > 0 ? observationItems.length : 10,
+              totalPages: observationItems.length > 0 ? 1 : 0,
+              summary: observationSummary,
+          };
     const refreshObservationsMock = options.refreshObservationsMock ?? vi.fn().mockResolvedValue(observationData);
     const updateObservationMock = options.updateObservationMock ?? vi.fn().mockResolvedValue(observationData);
 
@@ -264,23 +267,11 @@ const setupRosterTest = (options: SetupOptions = {}): SetupResult => {
     };
 };
 
-const renderRosterRoute = (
-    bootstrap: RosterData,
-    config: AdminConfig,
-    initialEntries: string[] = ["/roster"],
-) =>
+const renderRosterRoute = (bootstrap: RosterData, config: AdminConfig, initialEntries: string[] = ["/roster"]) =>
     render(
         <MemoryRouter initialEntries={initialEntries}>
             <Routes>
-                <Route
-                    path="/roster"
-                    element={(
-                        <RosterRoute
-                            bootstrap={bootstrap}
-                            config={config}
-                        />
-                    )}
-                />
+                <Route path="/roster" element={<RosterRoute bootstrap={bootstrap} config={config} />} />
             </Routes>
         </MemoryRouter>,
     );
@@ -434,9 +425,7 @@ describe("RosterRoute", () => {
 
         await user.click(screen.getByRole("button", { name: /Clear/i }));
 
-        await waitFor(() =>
-            expect(screen.queryByText(/Filtered by status: Conflict/i)).not.toBeInTheDocument(),
-        );
+        await waitFor(() => expect(screen.queryByText(/Filtered by status: Conflict/i)).not.toBeInTheDocument());
     });
 
     it("opens the editor when deep-linking by remoteId", async () => {
@@ -451,13 +440,9 @@ describe("RosterRoute", () => {
     it("renders an observation prompt when query parameters reference a pending observation", async () => {
         const { bootstrap, config } = setupRosterTest();
 
-        renderRosterRoute(
-            bootstrap,
-            config,
-            [
-                "/roster?mode=create&label=Face%20Candidate&observationId=obs-123&attachmentId=42&source=recognition",
-            ],
-        );
+        renderRosterRoute(bootstrap, config, [
+            "/roster?mode=create&label=Face%20Candidate&observationId=obs-123&attachmentId=42&source=recognition",
+        ]);
 
         expect(await screen.findByText(/observation requires roster review/i)).toBeInTheDocument();
         expect(screen.getByText(/obs-123/i)).toBeInTheDocument();
@@ -512,11 +497,9 @@ describe("RosterRoute", () => {
             },
         });
         expect(updateObservationMock).not.toHaveBeenCalled();
-        expect(dispatchNoticeMock).toHaveBeenCalledWith(
-            "success",
-            "Observation matched to Alice Example.",
-            { id: "cat-roster-observation-assign-success" },
-        );
+        expect(dispatchNoticeMock).toHaveBeenCalledWith("success", "Observation matched to Alice Example.", {
+            id: "cat-roster-observation-assign-success",
+        });
         expect(refreshObservationsMock).toHaveBeenCalled();
     });
 
@@ -530,13 +513,9 @@ describe("RosterRoute", () => {
         const { bootstrap, config } = setupRosterTest({ createEntryMock });
         const user = userEvent.setup();
 
-        renderRosterRoute(
-            bootstrap,
-            config,
-            [
-                "/roster?mode=create&label=Face%20Candidate&type=Person&observationId=obs-42&attachmentId=42&source=recognition",
-            ],
-        );
+        renderRosterRoute(bootstrap, config, [
+            "/roster?mode=create&label=Face%20Candidate&type=Person&observationId=obs-42&attachmentId=42&source=recognition",
+        ]);
 
         expect(await screen.findByText(/observation requires roster review/i)).toBeInTheDocument();
         // Match confidence is not shown when there are no candidates or roster matches
@@ -545,18 +524,20 @@ describe("RosterRoute", () => {
         await user.click(screen.getByRole("button", { name: /Save/i }));
 
         await waitFor(() => expect(createEntryMock).toHaveBeenCalledTimes(1));
-        expect(createEntryMock).toHaveBeenCalledWith(expect.objectContaining({
-            label: "Face Candidate",
-            type: "Person",
-            resolveObservation: {
-                attachmentId: 42,
-                observationId: "obs-42",
-                status: "matched",
+        expect(createEntryMock).toHaveBeenCalledWith(
+            expect.objectContaining({
                 label: "Face Candidate",
-                entityType: "Person",
-            },
-            // Validate referenceImages below to avoid unsafe matcher types
-        }));
+                type: "Person",
+                resolveObservation: {
+                    attachmentId: 42,
+                    observationId: "obs-42",
+                    status: "matched",
+                    label: "Face Candidate",
+                    entityType: "Person",
+                },
+                // Validate referenceImages below to avoid unsafe matcher types
+            }),
+        );
 
         // Further assert referenceImages and nested metadata without unsafe any by narrowing runtime types
         const firstCallUnknown: unknown = createEntryMock.mock.calls[0]?.[0];
@@ -584,9 +565,7 @@ describe("RosterRoute", () => {
             }
         }
 
-        await waitFor(() =>
-            expect(screen.queryByText(/observation requires roster review/i)).not.toBeInTheDocument(),
-        );
+        await waitFor(() => expect(screen.queryByText(/observation requires roster review/i)).not.toBeInTheDocument());
         expect(dispatchNoticeMock).toHaveBeenCalledWith("success", "Roster entry processed.", {
             id: "cat-roster-save-generic",
         });

@@ -13,11 +13,7 @@ export const TooltipContent = ({
     ...props
 }: TooltipPrimitive.TooltipContentProps): React.JSX.Element => {
     return (
-        <TooltipPrimitive.Content
-            side={side}
-            className={`cat-tooltip ${className ?? ""}`.trim()}
-            {...props}
-        >
+        <TooltipPrimitive.Content side={side} className={`cat-tooltip ${className ?? ""}`.trim()} {...props}>
             {children}
             <TooltipPrimitive.Arrow className="cat-tooltip__arrow" />
         </TooltipPrimitive.Content>

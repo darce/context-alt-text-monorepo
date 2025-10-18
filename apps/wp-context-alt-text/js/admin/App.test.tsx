@@ -418,9 +418,7 @@ describe("App", () => {
         await wait(0);
 
         await waitFor(() => {
-            expect(
-                observedRequests.some((url) => url.searchParams.get("search") === "mountain"),
-            ).toBe(true);
+            expect(observedRequests.some((url) => url.searchParams.get("search") === "mountain")).toBe(true);
         });
 
         expect(await screen.findByText(/Mountain trail/i)).toBeInTheDocument();
@@ -444,39 +442,39 @@ describe("App", () => {
                 const payload =
                     pageParam === "1"
                         ? [
-                            {
-                                id: "f1",
-                                title: "Fallback portrait one",
-                                status: "missing",
-                                updated_at: "2024-03-01T00:00:00.000Z",
-                                alt_text: "",
-                                mime_type: "image/jpeg",
-                                dimensions: { width: 1600, height: 900 },
-                                edit_url: "https://example.com/wp-admin/post.php?post=f1&action=edit",
-                            },
-                            {
-                                id: "f2",
-                                title: "Fallback portrait two",
-                                status: "missing",
-                                updated_at: "2024-03-02T00:00:00.000Z",
-                                alt_text: "",
-                                mime_type: "image/jpeg",
-                                dimensions: { width: 1600, height: 900 },
-                                edit_url: "https://example.com/wp-admin/post.php?post=f2&action=edit",
-                            },
-                        ]
+                              {
+                                  id: "f1",
+                                  title: "Fallback portrait one",
+                                  status: "missing",
+                                  updated_at: "2024-03-01T00:00:00.000Z",
+                                  alt_text: "",
+                                  mime_type: "image/jpeg",
+                                  dimensions: { width: 1600, height: 900 },
+                                  edit_url: "https://example.com/wp-admin/post.php?post=f1&action=edit",
+                              },
+                              {
+                                  id: "f2",
+                                  title: "Fallback portrait two",
+                                  status: "missing",
+                                  updated_at: "2024-03-02T00:00:00.000Z",
+                                  alt_text: "",
+                                  mime_type: "image/jpeg",
+                                  dimensions: { width: 1600, height: 900 },
+                                  edit_url: "https://example.com/wp-admin/post.php?post=f2&action=edit",
+                              },
+                          ]
                         : [
-                            {
-                                id: "f3",
-                                title: "Fallback portrait three",
-                                status: "missing",
-                                updated_at: "2024-03-03T00:00:00.000Z",
-                                alt_text: "",
-                                mime_type: "image/jpeg",
-                                dimensions: { width: 1600, height: 900 },
-                                edit_url: "https://example.com/wp-admin/post.php?post=f3&action=edit",
-                            },
-                        ];
+                              {
+                                  id: "f3",
+                                  title: "Fallback portrait three",
+                                  status: "missing",
+                                  updated_at: "2024-03-03T00:00:00.000Z",
+                                  alt_text: "",
+                                  mime_type: "image/jpeg",
+                                  dimensions: { width: 1600, height: 900 },
+                                  edit_url: "https://example.com/wp-admin/post.php?post=f3&action=edit",
+                              },
+                          ];
 
                 return HttpResponse.json(payload, {
                     headers: {
@@ -639,8 +637,8 @@ describe("App", () => {
 
         await waitFor(() =>
             expect(
-                observedRequests.some((url) =>
-                    url.searchParams.get("per_page") === "10" && url.searchParams.get("page") === "1",
+                observedRequests.some(
+                    (url) => url.searchParams.get("per_page") === "10" && url.searchParams.get("page") === "1",
                 ),
             ).toBe(true),
         );
@@ -773,9 +771,7 @@ describe("App", () => {
         });
 
         await waitFor(() => {
-            expect(
-                observedRequests.some((url) => url.searchParams.get("search") === "portrait"),
-            ).toBe(true);
+            expect(observedRequests.some((url) => url.searchParams.get("search") === "portrait")).toBe(true);
         });
 
         expect(await screen.findByText(/Portrait hero image/i)).toBeInTheDocument();
@@ -898,9 +894,7 @@ describe("App", () => {
         const nextButton = screen.getByRole("button", { name: /Next/i });
         fireEvent.click(nextButton);
 
-        await waitFor(() =>
-            expect(observedRequests.some((url) => url.searchParams.get("page") === "2")).toBe(true),
-        );
+        await waitFor(() => expect(observedRequests.some((url) => url.searchParams.get("page") === "2")).toBe(true));
 
         expect(await screen.findByText(/Final portrait/i)).toBeInTheDocument();
         expect(screen.getByText("Showing 3-3 of 3")).toBeInTheDocument();

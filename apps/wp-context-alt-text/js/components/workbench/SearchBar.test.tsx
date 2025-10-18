@@ -22,7 +22,6 @@ const StatefulSearchBar = ({
 };
 
 describe("SearchBar", () => {
-
     it("renders search input with placeholder", () => {
         render(<SearchBar value="" onSearch={vi.fn()} />);
 

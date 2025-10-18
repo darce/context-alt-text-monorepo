@@ -25,7 +25,12 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
     if (items.length === 0) {
         return (
             <div className="cat-workbench__empty" role="status" aria-live="polite">
-                <p>{__("No media requires attention right now. Adjust your filters once data is wired.", "context-alt-text")}</p>
+                <p>
+                    {__(
+                        "No media requires attention right now. Adjust your filters once data is wired.",
+                        "context-alt-text",
+                    )}
+                </p>
             </div>
         );
     }
@@ -114,19 +119,15 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                                         <span className={`cat-status-chip ${STATUS_CLASS[item.status]}`}>
                                             {getStatusCopy(item.status)}
                                         </span>
-                                        <h3>
-                                            {item.editUrl ? (
-                                                <a href={item.editUrl}>{item.title}</a>
-                                            ) : (
-                                                item.title
-                                            )}
-                                        </h3>
+                                        <h3>{item.editUrl ? <a href={item.editUrl}>{item.title}</a> : item.title}</h3>
                                         {recognitionMeta && (
                                             <p className="cat-workbench__fileMetaLine cat-workbench__fileMetaLine--recognition">
                                                 {recognitionMeta}
                                             </p>
                                         )}
-                                        {item.mimeType && <p className="cat-workbench__fileMetaLine">{item.mimeType}</p>}
+                                        {item.mimeType && (
+                                            <p className="cat-workbench__fileMetaLine">{item.mimeType}</p>
+                                        )}
                                     </div>
                                 </div>
                             </td>
@@ -209,24 +210,14 @@ const getRecognitionMeta = (item: WorkbenchMediaItem): string | null => {
         }
 
         return sprintf(
-            _n(
-                "Matched %d recognition",
-                "Matched %d recognitions",
-                matchedCount,
-                "context-alt-text",
-            ),
+            _n("Matched %d recognition", "Matched %d recognitions", matchedCount, "context-alt-text"),
             matchedCount,
         );
     }
 
     if (status === "needs_review" && needsReviewCount > 0) {
         return sprintf(
-            _n(
-                "%d recognition needs review",
-                "%d recognitions need review",
-                needsReviewCount,
-                "context-alt-text",
-            ),
+            _n("%d recognition needs review", "%d recognitions need review", needsReviewCount, "context-alt-text"),
             needsReviewCount,
         );
     }

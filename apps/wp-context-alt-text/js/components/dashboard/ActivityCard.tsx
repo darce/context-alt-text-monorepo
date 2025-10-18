@@ -3,12 +3,7 @@ import { __, _n, sprintf } from "@wordpress/i18n";
 
 import type { LatestActivityCard as LatestActivityCardData } from "@/admin/types";
 import { Card } from "@/components/dashboard/Card";
-import {
-    TooltipProvider,
-    TooltipRoot,
-    TooltipTrigger,
-    TooltipContent,
-} from "@/components/ui/tooltip";
+import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 
 interface LatestActivityCardProps {
     data: LatestActivityCardData;
@@ -19,9 +14,7 @@ interface ActivityRowProps {
     value: LatestActivityCardData[keyof LatestActivityCardData];
 }
 
-const formatActivity = (
-    value: LatestActivityCardData[keyof LatestActivityCardData],
-): string => {
+const formatActivity = (value: LatestActivityCardData[keyof LatestActivityCardData]): string => {
     if (value === null || value === undefined || value === "") {
         return __("No recent activity", "context-alt-text");
     }
@@ -63,9 +56,7 @@ const ActivityRow = ({ label, value }: ActivityRowProps): React.JSX.Element => {
                     <strong className="cat-activity__value">{formatted}</strong>
                 </TooltipTrigger>
                 <TooltipContent side="bottom">
-                    {String(
-                        value ?? __("No recent activity recorded", "context-alt-text"),
-                    )}
+                    {String(value ?? __("No recent activity recorded", "context-alt-text"))}
                 </TooltipContent>
             </TooltipRoot>
         </li>
@@ -82,10 +73,7 @@ export const ActivityCard = ({ data }: LatestActivityCardProps): React.JSX.Eleme
                         label={__("Alt-text generation", "context-alt-text")}
                         value={data.last_alt_text_generation}
                     />
-                    <ActivityRow
-                        label={__("Roster sync", "context-alt-text")}
-                        value={data.last_roster_sync}
-                    />
+                    <ActivityRow label={__("Roster sync", "context-alt-text")} value={data.last_roster_sync} />
                 </ul>
             </TooltipProvider>
         </Card>

@@ -23,20 +23,8 @@ const sizeClassName: Record<ButtonSize, string> = {
 };
 
 export const Button = React.forwardRef<HTMLButtonElement, ButtonProps>(
-    (
-        {
-            asChild = false,
-            type = "button",
-            className = "",
-            variant = "default",
-            size = "md",
-            ...props
-        },
-        ref,
-    ) => {
-        const classes = [variantClassName[variant], sizeClassName[size], className]
-            .filter(Boolean)
-            .join(" ");
+    ({ asChild = false, type = "button", className = "", variant = "default", size = "md", ...props }, ref) => {
+        const classes = [variantClassName[variant], sizeClassName[size], className].filter(Boolean).join(" ");
         const { children, ...restProps } = props;
 
         if (asChild) {

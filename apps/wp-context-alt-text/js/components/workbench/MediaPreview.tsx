@@ -12,14 +12,14 @@ export interface MediaPreviewProps {
 
 export const MediaPreview = ({ selectedIds, items }: MediaPreviewProps): React.JSX.Element => {
     const [firstSelection] = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
-    const item = React.useMemo(() => items.find((candidate) => candidate.id === firstSelection), [items, firstSelection]);
+    const item = React.useMemo(
+        () => items.find((candidate) => candidate.id === firstSelection),
+        [items, firstSelection],
+    );
 
     if (!item) {
         return (
-            <section
-                className="cat-workbench__panel"
-                aria-label={__("Media preview", "context-alt-text")}
-            >
+            <section className="cat-workbench__panel" aria-label={__("Media preview", "context-alt-text")}>
                 <p>
                     {__(
                         "Select an item to preview metadata, recognition insights, and draft alt text.",
@@ -36,10 +36,7 @@ export const MediaPreview = ({ selectedIds, items }: MediaPreviewProps): React.J
         : __("Unknown", "context-alt-text");
 
     return (
-        <section
-            className="cat-workbench__panel"
-            aria-label={__("Media preview", "context-alt-text")}
-        >
+        <section className="cat-workbench__panel" aria-label={__("Media preview", "context-alt-text")}>
             <header>
                 <h2>{item.title}</h2>
                 <p className="cat-status-line">{getStatusLabel(item.status)}</p>

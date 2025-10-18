@@ -200,76 +200,13 @@ class Admin
     public function get_config(): array
     {
         $featureFlags = $this->get_feature_flags_config();
-
-        $coverageEndpoint = function_exists('rest_url')
-            ? rest_url('cat/v1/dashboard/coverage')
-            : '';
-
-        $workbenchEnabled = $featureFlags['workbenchEnabled'] ?? false;
-        $workbenchEndpoint = '';
-        if ($workbenchEnabled && function_exists('rest_url')) {
-            $workbenchEndpoint = rest_url('cat/v1/workbench/media');
-        }
-
-        $recognitionEnabled = $this->featureFlags->workbenchRecognitionEnabled();
-        $rosterEnabled = $featureFlags['rosterEnabled'] ?? false;
-
-        // Debug: Log the flag values
-        if (function_exists('error_log')) {
-            error_log(sprintf(
-                '[CAT] Config: recognitionEnabled=%s, rosterEnabled=%s',
-                $recognitionEnabled ? 'true' : 'false',
-                $rosterEnabled ? 'true' : 'false'
-            ));
-        }
-
-        $recognitionAnalyzeEndpoint = '';
-        $recognitionJobEndpoint = '';
-        $recognitionObservationsEndpoint = '';
-        $recognitionObservationUpdateEndpoint = '';
-        $observationsRetryEndpoint = '';
-        $rosterEndpoint = '';
-        $rosterSyncEndpoint = '';
-
-        if ($recognitionEnabled && function_exists('rest_url')) {
-            $recognitionAnalyzeEndpoint = rest_url('cat/v1/recognition/analyze');
-            $recognitionJobEndpoint = rtrim(rest_url('cat/v1/recognition/job/'), '/') . '/';
-        }
-
-        // Observations endpoints available when recognition OR roster is enabled
-        if (($recognitionEnabled || $rosterEnabled) && function_exists('rest_url')) {
-            $recognitionObservationsEndpoint = rest_url('cat/v1/observations');
-            $recognitionObservationUpdateEndpoint = rtrim(rest_url('cat/v1/observations/'), '/') . '/';
-        }
-
-        // Retry endpoint available when recognition OR roster is enabled
-        if (($recognitionEnabled || $rosterEnabled) && function_exists('rest_url')) {
-            $observationsRetryEndpoint = rest_url('cat/v1/observations/retry');
-        }
-
-        if ($rosterEnabled && function_exists('rest_url')) {
-            $rosterEndpoint = rest_url('cat/v1/roster');
-            $rosterSyncEndpoint = rest_url('cat/v1/roster/sync');
-        }
-
+        $endpoints = $this->get_endpoint_config();
         $settingsEndpoints = $this->get_settings_endpoints();
 
         return [
             'missingAltMediaUrl' => admin_url('upload.php?context_alt_text=missing'),
             'restNonce' => function_exists('wp_create_nonce') ? wp_create_nonce('wp_rest') : '',
-            'endpoints' => [
-                'coverage' => $coverageEndpoint,
-                'workbenchMedia' => $workbenchEndpoint,
-                'recognitionAnalyze' => $recognitionAnalyzeEndpoint,
-                'recognitionJob' => $recognitionJobEndpoint,
-                'recognitionObservations' => $recognitionObservationsEndpoint,
-                'recognitionObservationUpdate' => $recognitionObservationUpdateEndpoint,
-                'observationsRetry' => $observationsRetryEndpoint,
-                'rosterEntries' => $rosterEndpoint,
-                'rosterSync' => $rosterSyncEndpoint,
-                'settingsRecognition' => $settingsEndpoints['recognition'],
-                'settingsRecognitionTest' => $settingsEndpoints['recognitionTest'],
-            ],
+            'endpoints' => $endpoints,
             'featureFlags' => $featureFlags,
             'settings' => $settingsEndpoints['meta'],
         ];
@@ -320,12 +257,82 @@ class Admin
             $flags['workbenchEnabled'] = true;
         }
 
-        if ($this->is_roster_page()) {
-            $flags['abilitiesEnabled'] = true;
-            $flags['rosterEnabled'] = true;
+        return $flags;
+    }
+
+    /**
+     * Build the endpoints configuration object.
+     *
+     * @return array<string,string> Endpoint URLs keyed by endpoint name.
+     */
+    private function get_endpoint_config(): array
+    {
+        $featureFlags = $this->get_feature_flags_config();
+        
+        $coverageEndpoint = $this->get_rest_url('cat/v1/dashboard/coverage');
+
+        $workbenchEnabled = $featureFlags['workbenchEnabled'] ?? false;
+        $workbenchEndpoint = '';
+        if ($workbenchEnabled) {
+            $workbenchEndpoint = $this->get_rest_url('cat/v1/workbench/media');
         }
 
-        return $flags;
+        $recognitionEnabled = $this->featureFlags->workbenchRecognitionEnabled();
+        $rosterEnabled = $featureFlags['rosterEnabled'] ?? false;
+
+        // Debug: Log the flag values
+        if (function_exists('error_log')) {
+            error_log(sprintf(
+                '[CAT] Config: recognitionEnabled=%s, rosterEnabled=%s',
+                $recognitionEnabled ? 'true' : 'false',
+                $rosterEnabled ? 'true' : 'false'
+            ));
+        }
+
+        $recognitionAnalyzeEndpoint = '';
+        $recognitionJobEndpoint = '';
+        $recognitionObservationsEndpoint = '';
+        $recognitionObservationUpdateEndpoint = '';
+        $observationsRetryEndpoint = '';
+        $rosterEndpoint = '';
+        $rosterSyncEndpoint = '';
+
+        if ($recognitionEnabled) {
+            $recognitionAnalyzeEndpoint = $this->get_rest_url('cat/v1/recognition/analyze');
+            $recognitionJobEndpoint = rtrim($this->get_rest_url('cat/v1/recognition/job/'), '/') . '/';
+        }
+
+        // Observations endpoints available when recognition OR roster is enabled
+        if ($recognitionEnabled || $rosterEnabled) {
+            $recognitionObservationsEndpoint = $this->get_rest_url('cat/v1/observations');
+            $recognitionObservationUpdateEndpoint = rtrim($this->get_rest_url('cat/v1/observations/'), '/') . '/';
+        }
+
+        // Retry endpoint available when recognition OR roster is enabled
+        if ($recognitionEnabled || $rosterEnabled) {
+            $observationsRetryEndpoint = $this->get_rest_url('cat/v1/observations/retry');
+        }
+
+        if ($rosterEnabled) {
+            $rosterEndpoint = $this->get_rest_url('cat/v1/roster');
+            $rosterSyncEndpoint = $this->get_rest_url('cat/v1/roster/sync');
+        }
+
+        $settingsEndpoints = $this->get_settings_endpoints();
+
+        return [
+            'coverage' => $coverageEndpoint,
+            'workbenchMedia' => $workbenchEndpoint,
+            'recognitionAnalyze' => $recognitionAnalyzeEndpoint,
+            'recognitionJob' => $recognitionJobEndpoint,
+            'recognitionObservations' => $recognitionObservationsEndpoint,
+            'recognitionObservationUpdate' => $recognitionObservationUpdateEndpoint,
+            'observationsRetry' => $observationsRetryEndpoint,
+            'rosterEntries' => $rosterEndpoint,
+            'rosterSync' => $rosterSyncEndpoint,
+            'settingsRecognition' => $settingsEndpoints['recognition'],
+            'settingsRecognitionTest' => $settingsEndpoints['recognitionTest'],
+        ];
     }
 
     /**
@@ -459,13 +466,8 @@ class Admin
 
     private function get_settings_endpoints(): array
     {
-        $recognitionEndpoint = '';
-        $recognitionTestEndpoint = '';
-
-        if (function_exists('rest_url')) {
-            $recognitionEndpoint = rest_url('cat/v1/settings/recognition');
-            $recognitionTestEndpoint = rest_url('cat/v1/settings/recognition/test');
-        }
+        $recognitionEndpoint = $this->get_rest_url('cat/v1/settings/recognition');
+        $recognitionTestEndpoint = $this->get_rest_url('cat/v1/settings/recognition/test');
 
         return [
             'recognition' => $recognitionEndpoint,
@@ -476,6 +478,17 @@ class Admin
                 ],
             ],
         ];
+    }
+
+    /**
+     * Get a REST API URL for the given path.
+     *
+     * @param string $path The REST API path (e.g., 'cat/v1/recognition/analyze').
+     * @return string The full REST URL, or empty string if rest_url() is not available.
+     */
+    private function get_rest_url(string $path): string
+    {
+        return function_exists('rest_url') ? rest_url($path) : '';
     }
 
     private function can_view_roster_data(): bool

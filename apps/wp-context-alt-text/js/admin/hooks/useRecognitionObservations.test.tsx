@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -89,10 +89,9 @@ describe("useRecognitionObservations", () => {
             }),
         );
 
-        const { result } = renderHook(
-            () => useRecognitionObservations({ config, filters }),
-            { wrapper: createWrapper() },
-        );
+        const { result } = renderHook(() => useRecognitionObservations({ config, filters }), {
+            wrapper: createWrapper(),
+        });
 
         await waitFor(() => {
             expect(result.current.query.data?.total).toBe(12);
@@ -144,10 +143,9 @@ describe("useRecognitionObservations", () => {
             ),
         );
 
-        const { result } = renderHook(
-            () => useRecognitionObservations({ config, filters: {} }),
-            { wrapper: createWrapper() },
-        );
+        const { result } = renderHook(() => useRecognitionObservations({ config, filters: {} }), {
+            wrapper: createWrapper(),
+        });
 
         await waitFor(() => {
             expect(result.current.query.data?.total).toBe(1);

@@ -1,10 +1,5 @@
 import * as React from "react";
-import {
-    useMutation,
-    useQuery,
-    useQueryClient,
-    type UseQueryResult,
-} from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient, type UseQueryResult } from "@tanstack/react-query";
 
 import type {
     AdminConfig,
@@ -14,7 +9,8 @@ import type {
     RecognitionObservationsResult,
     RecognitionObservationSummary,
 } from "@/admin/types";
-import { handleJsonResponse, ensureOk } from "@/admin/utils/http";
+import { handleJsonResponse, ensureOk, buildHeaders } from "@/admin/utils/http";
+import { toFiniteNumber, toNumberOrNull, toStringOrNull } from "@/admin/utils/normalization/primitives";
 
 export interface RecognitionObservationFilters {
     status?: "matched" | "needs_review" | null;
@@ -69,25 +65,8 @@ const defaultResult: RecognitionObservationsResult = {
     summary: defaultSummary,
 };
 
-const observationsKey = (endpoint: string, filters: RecognitionObservationFilters) => [
-    "recognition-observations",
-    endpoint,
-    filters,
-] as const;
-
-const buildHeaders = (config: AdminConfig, includeJson = false): HeadersInit => {
-    const headers: Record<string, string> = {};
-
-    if (includeJson) {
-        headers["Content-Type"] = "application/json";
-    }
-
-    if (config.restNonce) {
-        headers["X-WP-Nonce"] = config.restNonce;
-    }
-
-    return headers;
-};
+const observationsKey = (endpoint: string, filters: RecognitionObservationFilters) =>
+    ["recognition-observations", endpoint, filters] as const;
 
 const buildObservationsUrl = (endpoint: string, filters: RecognitionObservationFilters): string => {
     try {
@@ -116,49 +95,6 @@ const buildObservationsUrl = (endpoint: string, filters: RecognitionObservationF
     } catch {
         return endpoint;
     }
-};
-
-const toFiniteNumber = (candidate: unknown, fallback = 0): number => {
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-        return candidate;
-    }
-
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-        const parsed = Number(candidate);
-        if (Number.isFinite(parsed)) {
-            return parsed;
-        }
-    }
-
-    return fallback;
-};
-
-const toNumberOrNull = (candidate: unknown): number | null => {
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-        return candidate;
-    }
-
-    if (typeof candidate === "string" && candidate.trim() !== "") {
-        const parsed = Number(candidate);
-        if (Number.isFinite(parsed)) {
-            return parsed;
-        }
-    }
-
-    return null;
-};
-
-const toStringOrNull = (candidate: unknown): string | null => {
-    if (typeof candidate === "string") {
-        const trimmed = candidate.trim();
-        return trimmed !== "" ? trimmed : null;
-    }
-
-    if (typeof candidate === "number" && Number.isFinite(candidate)) {
-        return String(candidate);
-    }
-
-    return null;
 };
 
 const normalizeRoster = (candidate: unknown): RecognitionObservationRecord["roster"] => {
@@ -204,21 +140,23 @@ const normalizeCandidate = (candidate: Record<string, unknown>): RecognitionObse
 
 const normalizeObservationRecord = (candidate: Record<string, unknown>): RecognitionObservationRecord => {
     const boundingBoxRaw = Array.isArray(candidate.boundingBox) ? candidate.boundingBox : [];
-    const boundingBox = boundingBoxRaw
-        .slice(0, 4)
-        .map((value) => toFiniteNumber(value, 0));
+    const boundingBox = boundingBoxRaw.slice(0, 4).map((value) => toFiniteNumber(value, 0));
     const statusRaw = toStringOrNull(candidate.status);
     const status = statusRaw === "matched" || statusRaw === "needs_review" ? statusRaw : "needs_review";
-    const source = typeof candidate.source === "object" && candidate.source !== null
-        ? (candidate.source as Record<string, unknown>)
-        : null;
+    const source =
+        typeof candidate.source === "object" && candidate.source !== null
+            ? (candidate.source as Record<string, unknown>)
+            : null;
 
-    const matchInput = typeof candidate.match === "object" && candidate.match !== null
-        ? (candidate.match as Record<string, unknown>)
-        : {};
+    const matchInput =
+        typeof candidate.match === "object" && candidate.match !== null
+            ? (candidate.match as Record<string, unknown>)
+            : {};
 
     const candidatesInput = Array.isArray(candidate.candidates)
-        ? candidate.candidates.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+        ? candidate.candidates.filter(
+              (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+          )
         : [];
 
     const detectionConfidence = toFiniteNumber(candidate.confidence, 0);
@@ -234,11 +172,8 @@ const normalizeObservationRecord = (candidate: Record<string, unknown>): Recogni
         return candidateConfidence > current ? candidateConfidence : current;
     }, 0);
 
-    const resolvedMatchConfidence = matchConfidenceRaw > 0
-        ? matchConfidenceRaw
-        : matchSimilarity > 0
-            ? matchSimilarity
-            : bestCandidateConfidence;
+    const resolvedMatchConfidence =
+        matchConfidenceRaw > 0 ? matchConfidenceRaw : matchSimilarity > 0 ? matchSimilarity : bestCandidateConfidence;
 
     const normalizedConfidence = resolvedMatchConfidence > 0 ? resolvedMatchConfidence : detectionConfidence;
 
@@ -267,9 +202,10 @@ const normalizeObservationRecord = (candidate: Record<string, unknown>): Recogni
 };
 
 const normalizeObservationAttachment = (candidate: Record<string, unknown>): RecognitionObservationAttachment => {
-    const summaryInput = typeof candidate.summary === "object" && candidate.summary !== null
-        ? (candidate.summary as Record<string, unknown>)
-        : {};
+    const summaryInput =
+        typeof candidate.summary === "object" && candidate.summary !== null
+            ? (candidate.summary as Record<string, unknown>)
+            : {};
 
     const summary = {
         total: toFiniteNumber(summaryInput.total, 0),
@@ -278,19 +214,23 @@ const normalizeObservationAttachment = (candidate: Record<string, unknown>): Rec
     };
 
     const observationsInput = Array.isArray(candidate.observations)
-        ? candidate.observations.filter((item): item is Record<string, unknown> => typeof item === "object" && item !== null)
+        ? candidate.observations.filter(
+              (item): item is Record<string, unknown> => typeof item === "object" && item !== null,
+          )
         : [];
 
     const statusRaw = toStringOrNull(candidate.status);
-    const status = statusRaw === "matched" || statusRaw === "needs_review"
-        ? statusRaw
-        : summary.needs_review > 0
-            ? "needs_review"
-            : "matched";
+    const status =
+        statusRaw === "matched" || statusRaw === "needs_review"
+            ? statusRaw
+            : summary.needs_review > 0
+              ? "needs_review"
+              : "matched";
 
-    const contextInput = typeof candidate.context === "object" && candidate.context !== null
-        ? (candidate.context as Record<string, unknown>)
-        : {};
+    const contextInput =
+        typeof candidate.context === "object" && candidate.context !== null
+            ? (candidate.context as Record<string, unknown>)
+            : {};
 
     return {
         attachmentId: toNumberOrNull(candidate.attachmentId),
@@ -309,23 +249,26 @@ const normalizeObservationAttachment = (candidate: Record<string, unknown>): Rec
 };
 
 const buildSummary = (items: RecognitionObservationAttachment[]): RecognitionObservationSummary => {
-    return items.reduce<RecognitionObservationSummary>((accumulator, item) => {
-        return {
-            attachments: accumulator.attachments + 1,
-            observations: {
-                total: accumulator.observations.total + item.summary.total,
-                matched: accumulator.observations.matched + item.summary.matched,
-                needs_review: accumulator.observations.needs_review + item.summary.needs_review,
-            },
-        };
-    }, {
-        attachments: 0,
-        observations: {
-            total: 0,
-            matched: 0,
-            needs_review: 0,
+    return items.reduce<RecognitionObservationSummary>(
+        (accumulator, item) => {
+            return {
+                attachments: accumulator.attachments + 1,
+                observations: {
+                    total: accumulator.observations.total + item.summary.total,
+                    matched: accumulator.observations.matched + item.summary.matched,
+                    needs_review: accumulator.observations.needs_review + item.summary.needs_review,
+                },
+            };
         },
-    });
+        {
+            attachments: 0,
+            observations: {
+                total: 0,
+                matched: 0,
+                needs_review: 0,
+            },
+        },
+    );
 };
 
 const normalizeResponse = (payload: Record<string, unknown>): RecognitionObservationsResult => {
@@ -334,13 +277,15 @@ const normalizeResponse = (payload: Record<string, unknown>): RecognitionObserva
         : [];
 
     const items = itemsInput.map((item) => normalizeObservationAttachment(item));
-    const summaryInput = typeof payload.summary === "object" && payload.summary !== null
-        ? (payload.summary as Record<string, unknown>)
-        : {};
+    const summaryInput =
+        typeof payload.summary === "object" && payload.summary !== null
+            ? (payload.summary as Record<string, unknown>)
+            : {};
 
-    const observationsSummaryInput = typeof summaryInput.observations === "object" && summaryInput.observations !== null
-        ? (summaryInput.observations as Record<string, unknown>)
-        : {};
+    const observationsSummaryInput =
+        typeof summaryInput.observations === "object" && summaryInput.observations !== null
+            ? (summaryInput.observations as Record<string, unknown>)
+            : {};
 
     const summary: RecognitionObservationSummary = {
         attachments: toFiniteNumber(summaryInput.attachments, items.length),
@@ -357,8 +302,8 @@ const normalizeResponse = (payload: Record<string, unknown>): RecognitionObserva
 
     const total = toFiniteNumber(payload.total, items.length);
     const pageInput = toFiniteNumber(payload.page, 1);
-    const perPageInput = toFiniteNumber((payload.per_page ?? payload.perPage), DEFAULT_PER_PAGE);
-    const totalPagesInput = toFiniteNumber((payload.total_pages ?? payload.totalPages), 1);
+    const perPageInput = toFiniteNumber(payload.per_page ?? payload.perPage, DEFAULT_PER_PAGE);
+    const totalPagesInput = toFiniteNumber(payload.total_pages ?? payload.totalPages, 1);
 
     const normalizedPage = pageInput > 0 ? Math.trunc(pageInput) : 1;
     const normalizedPerPage = perPageInput > 0 ? Math.trunc(perPageInput) : DEFAULT_PER_PAGE;
@@ -374,7 +319,10 @@ const normalizeResponse = (payload: Record<string, unknown>): RecognitionObserva
     };
 };
 
-export const useRecognitionObservations = ({ config, filters }: UseRecognitionObservationsArgs): UseRecognitionObservationsResult => {
+export const useRecognitionObservations = ({
+    config,
+    filters,
+}: UseRecognitionObservationsArgs): UseRecognitionObservationsResult => {
     const queryClient = useQueryClient();
     const endpoint = config.endpoints?.recognitionObservations ?? "";
     const updateEndpoint = config.endpoints?.recognitionObservationUpdate ?? "";
@@ -395,7 +343,7 @@ export const useRecognitionObservations = ({ config, filters }: UseRecognitionOb
             const response = await fetch(url, {
                 method: "GET",
                 credentials: "same-origin",
-                headers: buildHeaders(config),
+                headers: buildHeaders(config.restNonce),
             });
 
             const payload = await handleJsonResponse(await ensureOk(response));
@@ -440,7 +388,7 @@ export const useRecognitionObservations = ({ config, filters }: UseRecognitionOb
             const response = await fetch(target, {
                 method: "PATCH",
                 credentials: "same-origin",
-                headers: buildHeaders(config, true),
+                headers: buildHeaders(config.restNonce, true),
                 body: JSON.stringify(payload),
             });
 
@@ -472,7 +420,7 @@ export const useRecognitionObservations = ({ config, filters }: UseRecognitionOb
             const response = await fetch(retryEndpoint, {
                 method: "POST",
                 credentials: "same-origin",
-                headers: buildHeaders(config, true),
+                headers: buildHeaders(config.restNonce, true),
             });
 
             const data = await handleJsonResponse(await ensureOk(response));

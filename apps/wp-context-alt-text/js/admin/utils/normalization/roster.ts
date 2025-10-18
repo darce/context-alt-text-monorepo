@@ -32,19 +32,19 @@ export const normalizeRosterEntry = (entry: Partial<RosterEntry> | undefined): R
     const label = typeof entry.label === "string" ? entry.label : "";
     const type = typeof entry.type === "string" ? entry.type : "";
 
-    const metadata =
-        entry.metadata && typeof entry.metadata === "object"
-            ? entry.metadata
-            : {};
+    const metadata = entry.metadata && typeof entry.metadata === "object" ? entry.metadata : {};
 
     const referenceImages = Array.isArray(entry.referenceImages)
-        ? entry.referenceImages.filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+        ? entry.referenceImages.filter((item): item is Record<string, unknown> =>
+              Boolean(item && typeof item === "object"),
+          )
         : [];
 
     const referenceImageCount = toFiniteNumber(entry.referenceImageCount, 0);
 
     const resolveAvatarId = (candidate?: unknown): number | null => {
-        const value = typeof candidate === "number" ? candidate : typeof candidate === "string" ? Number(candidate) : NaN;
+        const value =
+            typeof candidate === "number" ? candidate : typeof candidate === "string" ? Number(candidate) : NaN;
         return Number.isFinite(value) && value > 0 ? value : null;
     };
 
@@ -54,12 +54,7 @@ export const normalizeRosterEntry = (entry: Partial<RosterEntry> | undefined): R
             return null;
         }
 
-        const keys = [
-            "avatarAttachmentId",
-            "avatar_attachment_id",
-            "avatarId",
-            "avatar_id",
-        ];
+        const keys = ["avatarAttachmentId", "avatar_attachment_id", "avatarId", "avatar_id"];
 
         for (const key of keys) {
             if (key in metadata) {
@@ -120,7 +115,8 @@ export const normalizeRosterStats = (stats: Partial<RosterStats> | undefined): R
         };
     }
 
-    const metrics = stats.metrics && typeof stats.metrics === "object" ? stats.metrics as Record<string, unknown> : {};
+    const metrics =
+        stats.metrics && typeof stats.metrics === "object" ? (stats.metrics as Record<string, unknown>) : {};
 
     return {
         total: toFiniteNumber(stats.total, 0),

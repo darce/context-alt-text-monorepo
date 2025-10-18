@@ -136,9 +136,7 @@ export const toBooleanOrNull = (value: unknown): boolean | null => {
  * @returns Array of unique positive numeric IDs
  */
 export const toUniqueNumericIds = (ids: (number | string)[]): number[] => {
-    const normalized = ids
-        .map((value) => Number(value))
-        .filter((value) => Number.isFinite(value) && value > 0);
+    const normalized = ids.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0);
 
     return Array.from(new Set(normalized));
 };

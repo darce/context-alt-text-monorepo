@@ -18,7 +18,7 @@ This document illustrates ideal component architecture patterns vs anti-patterns
 ```mermaid
 graph TD
     RosterRoute["RosterRoute.tsx<br/>2,543 lines<br/>14+ useState<br/>6+ useEffect"]
-    
+
     RosterRoute -->|"Inline JSX"| Search["Search UI<br/>~80 lines"]
     RosterRoute -->|"Inline JSX"| Filters["Filter Controls<br/>~60 lines"]
     RosterRoute -->|"Inline JSX"| Table["Roster Table<br/>~400 lines"]
@@ -27,10 +27,10 @@ graph TD
     RosterRoute -->|"Inline JSX"| ObsDialog["Observation Dialog<br/>~500 lines"]
     RosterRoute -->|"Inline JSX"| ImageModal["Image Modal<br/>~200 lines"]
     RosterRoute -->|"Inline JSX"| BulkActions["Bulk Actions<br/>~150 lines"]
-    
+
     RosterRoute -.->|"Direct fetch"| API1["useRoster hook"]
     RosterRoute -.->|"Direct fetch"| API2["useRecognitionObservations"]
-    
+
     style RosterRoute fill:#ff6b6b,stroke:#c92a2a,color:#fff
     style Search fill:#ffd43b,stroke:#fab005
     style Filters fill:#ffd43b,stroke:#fab005
@@ -43,6 +43,7 @@ graph TD
 ```
 
 **Problems:**
+
 - All UI logic in one 2,543-line file
 - 14+ `useState` hooks managing disparate concerns
 - 6+ `useEffect` hooks creating complex dependencies
@@ -56,31 +57,31 @@ graph TD
 ```mermaid
 graph TD
     RosterRoute["RosterRoute.tsx<br/>~250 lines<br/>Smart Container"]
-    
+
     RosterRoute --> RosterToolbar["RosterToolbar<br/>~80 lines<br/>Presentational"]
     RosterRoute --> RosterTable["RosterTable<br/>~200 lines<br/>Presentational"]
     RosterRoute --> RosterModals["RosterModals<br/>~150 lines<br/>Modal Orchestrator"]
-    
+
     RosterToolbar --> SearchInput["SearchInput<br/>~40 lines"]
     RosterToolbar --> FilterSelect["FilterSelect<br/>~40 lines"]
-    
+
     RosterTable --> RosterRow["RosterRow<br/>~80 lines"]
     RosterTable --> Pagination["Pagination<br/>~40 lines"]
-    
+
     RosterRow --> Avatar["Avatar<br/>~30 lines"]
     RosterRow --> StatusBadge["StatusBadge<br/>~20 lines"]
     RosterRow --> ActionMenu["ActionMenu<br/>~50 lines"]
-    
+
     RosterModals --> EditEntryModal["EditEntryModal<br/>~120 lines"]
     RosterModals --> ObservationDialog["ObservationDialog<br/>~200 lines"]
     RosterModals --> ImagePreviewModal["ImagePreviewModal<br/>~80 lines"]
-    
+
     RosterRoute -.->|"Data"| useRosterData["useRosterData<br/>Custom Hook<br/>~120 lines"]
     RosterRoute -.->|"State"| useRosterState["useRosterState<br/>useReducer<br/>~80 lines"]
-    
+
     useRosterData --> useRoster["useRoster<br/>API Hook"]
     useRosterData --> useRecognitionObs["useRecognitionObservations<br/>API Hook"]
-    
+
     style RosterRoute fill:#51cf66,stroke:#2f9e44,color:#fff
     style useRosterData fill:#339af0,stroke:#1864ab,color:#fff
     style useRosterState fill:#339af0,stroke:#1864ab,color:#fff
@@ -90,6 +91,7 @@ graph TD
 ```
 
 **Benefits:**
+
 - Each component < 300 lines (most < 150)
 - Single responsibility per component
 - State managed in dedicated hook (`useRosterState`)
@@ -106,33 +108,46 @@ graph TD
 ```tsx
 // RosterRoute.tsx - Current (2,543 lines)
 export const RosterRoute = ({ bootstrap, config }) => {
-    // 14+ useState hooks managing unrelated concerns
-    const [searchInput, setSearchInput] = useState("");
-    const [search, setSearch] = useState(null);
-    const [page, setPage] = useState(1);
-    const [perPage, setPerPage] = useState(20);
-    const [editing, setEditing] = useState(null);
-    const [isSubmitting, setIsSubmitting] = useState(false);
-    const [statusFilter, setStatusFilter] = useState(null);
-    const [draftValues, setDraftValues] = useState(null);
-    const [observationPrompt, setObservationPrompt] = useState(null);
-    const [selection, setSelection] = useState({});
-    const [assigningId, setAssigningId] = useState(null);
-    // ... 3+ more useState
-    
-    // 6+ useEffect hooks creating dependency chains
-    useEffect(() => { /* debounce search */ }, [searchInput]);
-    useEffect(() => { /* reset page on filter */ }, [statusFilter]);
-    useEffect(() => { /* deep link handling */ }, [location]);
-    useEffect(() => { /* observation polling */ }, [observationPrompt]);
-    useEffect(() => { /* modal sync */ }, [editing]);
-    useEffect(() => { /* cleanup */ }, []);
-    
-    // 2,000+ lines of JSX and event handlers
+  // 14+ useState hooks managing unrelated concerns
+  const [searchInput, setSearchInput] = useState("");
+  const [search, setSearch] = useState(null);
+  const [page, setPage] = useState(1);
+  const [perPage, setPerPage] = useState(20);
+  const [editing, setEditing] = useState(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [statusFilter, setStatusFilter] = useState(null);
+  const [draftValues, setDraftValues] = useState(null);
+  const [observationPrompt, setObservationPrompt] = useState(null);
+  const [selection, setSelection] = useState({});
+  const [assigningId, setAssigningId] = useState(null);
+  // ... 3+ more useState
+
+  // 6+ useEffect hooks creating dependency chains
+  useEffect(() => {
+    /* debounce search */
+  }, [searchInput]);
+  useEffect(() => {
+    /* reset page on filter */
+  }, [statusFilter]);
+  useEffect(() => {
+    /* deep link handling */
+  }, [location]);
+  useEffect(() => {
+    /* observation polling */
+  }, [observationPrompt]);
+  useEffect(() => {
+    /* modal sync */
+  }, [editing]);
+  useEffect(() => {
+    /* cleanup */
+  }, []);
+
+  // 2,000+ lines of JSX and event handlers
 };
 ```
 
 **Problems:**
+
 - Related state scattered across 14+ hooks
 - Effects synchronize state → waterfall updates
 - Hard to reason about state transitions
@@ -145,156 +160,153 @@ export const RosterRoute = ({ bootstrap, config }) => {
 ```tsx
 // hooks/useRosterState.ts (~80 lines)
 interface RosterState {
-    // Pagination
-    page: number;
-    perPage: number;
-    
-    // Filtering
-    searchInput: string;
-    searchTerm: string | null;
-    statusFilter: "verified" | "pending" | null;
-    
-    // Modals
-    editing: RosterEntry | null;
-    observationDialog: ObservationDialogState | null;
-    imagePreview: ImagePreviewState | null;
-    
-    // UI State
-    selection: Set<string>;
-    isSubmitting: boolean;
+  // Pagination
+  page: number;
+  perPage: number;
+
+  // Filtering
+  searchInput: string;
+  searchTerm: string | null;
+  statusFilter: "verified" | "pending" | null;
+
+  // Modals
+  editing: RosterEntry | null;
+  observationDialog: ObservationDialogState | null;
+  imagePreview: ImagePreviewState | null;
+
+  // UI State
+  selection: Set<string>;
+  isSubmitting: boolean;
 }
 
 type RosterAction =
-    | { type: "SET_PAGE"; page: number }
-    | { type: "SET_SEARCH"; searchInput: string }
-    | { type: "APPLY_SEARCH"; searchTerm: string }
-    | { type: "SET_FILTER"; filter: RosterState["statusFilter"] }
-    | { type: "OPEN_EDIT_MODAL"; entry: RosterEntry }
-    | { type: "CLOSE_EDIT_MODAL" }
-    | { type: "TOGGLE_SELECTION"; entryId: string }
-    | { type: "SUBMIT_START" }
-    | { type: "SUBMIT_SUCCESS" };
+  | { type: "SET_PAGE"; page: number }
+  | { type: "SET_SEARCH"; searchInput: string }
+  | { type: "APPLY_SEARCH"; searchTerm: string }
+  | { type: "SET_FILTER"; filter: RosterState["statusFilter"] }
+  | { type: "OPEN_EDIT_MODAL"; entry: RosterEntry }
+  | { type: "CLOSE_EDIT_MODAL" }
+  | { type: "TOGGLE_SELECTION"; entryId: string }
+  | { type: "SUBMIT_START" }
+  | { type: "SUBMIT_SUCCESS" };
 
 const reducer = (state: RosterState, action: RosterAction): RosterState => {
-    switch (action.type) {
-        case "SET_SEARCH":
-            return { ...state, searchInput: action.searchInput };
-            
-        case "APPLY_SEARCH":
-            // When search is applied, reset to page 1
-            return {
-                ...state,
-                searchTerm: action.searchTerm,
-                page: 1,
-            };
-            
-        case "SET_FILTER":
-            // When filter changes, reset to page 1
-            return {
-                ...state,
-                statusFilter: action.filter,
-                page: 1,
-            };
-            
-        case "OPEN_EDIT_MODAL":
-            return {
-                ...state,
-                editing: action.entry,
-                observationDialog: null, // Close other modals
-            };
-            
-        // ... other actions
-    }
+  switch (action.type) {
+    case "SET_SEARCH":
+      return { ...state, searchInput: action.searchInput };
+
+    case "APPLY_SEARCH":
+      // When search is applied, reset to page 1
+      return {
+        ...state,
+        searchTerm: action.searchTerm,
+        page: 1,
+      };
+
+    case "SET_FILTER":
+      // When filter changes, reset to page 1
+      return {
+        ...state,
+        statusFilter: action.filter,
+        page: 1,
+      };
+
+    case "OPEN_EDIT_MODAL":
+      return {
+        ...state,
+        editing: action.entry,
+        observationDialog: null, // Close other modals
+      };
+
+    // ... other actions
+  }
 };
 
 export const useRosterState = (initialState: Partial<RosterState>) => {
-    const [state, dispatch] = useReducer(reducer, {
-        page: 1,
-        perPage: 20,
-        searchInput: "",
-        searchTerm: null,
-        statusFilter: null,
-        editing: null,
-        observationDialog: null,
-        imagePreview: null,
-        selection: new Set(),
-        isSubmitting: false,
-        ...initialState,
-    });
-    
-    // Debounced search effect (only effect needed)
-    useEffect(() => {
-        const timer = setTimeout(() => {
-            if (state.searchInput !== state.searchTerm) {
-                dispatch({
-                    type: "APPLY_SEARCH",
-                    searchTerm: state.searchInput || null,
-                });
-            }
-        }, 300);
-        
-        return () => clearTimeout(timer);
-    }, [state.searchInput, state.searchTerm]);
-    
-    return { state, dispatch };
+  const [state, dispatch] = useReducer(reducer, {
+    page: 1,
+    perPage: 20,
+    searchInput: "",
+    searchTerm: null,
+    statusFilter: null,
+    editing: null,
+    observationDialog: null,
+    imagePreview: null,
+    selection: new Set(),
+    isSubmitting: false,
+    ...initialState,
+  });
+
+  // Debounced search effect (only effect needed)
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      if (state.searchInput !== state.searchTerm) {
+        dispatch({
+          type: "APPLY_SEARCH",
+          searchTerm: state.searchInput || null,
+        });
+      }
+    }, 300);
+
+    return () => clearTimeout(timer);
+  }, [state.searchInput, state.searchTerm]);
+
+  return { state, dispatch };
 };
 ```
 
 ```tsx
 // components/roster/RosterRoute.tsx (~250 lines)
 export const RosterRoute = ({ bootstrap, config }) => {
-    // Single custom hook manages all state
-    const { state, dispatch } = useRosterState({
-        page: bootstrap.pagination?.page,
-        perPage: bootstrap.pagination?.perPage,
-    });
-    
-    // Separate hook for data fetching
-    const { entries, observations, isLoading } = useRosterData({
-        page: state.page,
-        perPage: state.perPage,
-        search: state.searchTerm,
-        statusFilter: state.statusFilter,
-    });
-    
-    // No useEffect needed - all state transitions in reducer
-    
-    return (
-        <div>
-            <RosterToolbar
-                searchInput={state.searchInput}
-                onSearchChange={(value) =>
-                    dispatch({ type: "SET_SEARCH", searchInput: value })
-                }
-                statusFilter={state.statusFilter}
-                onFilterChange={(filter) =>
-                    dispatch({ type: "SET_FILTER", filter })
-                }
-            />
-            
-            <RosterTable
-                entries={entries}
-                selection={state.selection}
-                onToggleSelection={(id) =>
-                    dispatch({ type: "TOGGLE_SELECTION", entryId: id })
-                }
-                onEdit={(entry) =>
-                    dispatch({ type: "OPEN_EDIT_MODAL", entry })
-                }
-            />
-            
-            <RosterModals
-                editing={state.editing}
-                onCloseEdit={() => dispatch({ type: "CLOSE_EDIT_MODAL" })}
-                observationDialog={state.observationDialog}
-                // ...
-            />
-        </div>
-    );
+  // Single custom hook manages all state
+  const { state, dispatch } = useRosterState({
+    page: bootstrap.pagination?.page,
+    perPage: bootstrap.pagination?.perPage,
+  });
+
+  // Separate hook for data fetching
+  const { entries, observations, isLoading } = useRosterData({
+    page: state.page,
+    perPage: state.perPage,
+    search: state.searchTerm,
+    statusFilter: state.statusFilter,
+  });
+
+  // No useEffect needed - all state transitions in reducer
+
+  return (
+    <div>
+      <RosterToolbar
+        searchInput={state.searchInput}
+        onSearchChange={(value) =>
+          dispatch({ type: "SET_SEARCH", searchInput: value })
+        }
+        statusFilter={state.statusFilter}
+        onFilterChange={(filter) => dispatch({ type: "SET_FILTER", filter })}
+      />
+
+      <RosterTable
+        entries={entries}
+        selection={state.selection}
+        onToggleSelection={(id) =>
+          dispatch({ type: "TOGGLE_SELECTION", entryId: id })
+        }
+        onEdit={(entry) => dispatch({ type: "OPEN_EDIT_MODAL", entry })}
+      />
+
+      <RosterModals
+        editing={state.editing}
+        onCloseEdit={() => dispatch({ type: "CLOSE_EDIT_MODAL" })}
+        observationDialog={state.observationDialog}
+        // ...
+      />
+    </div>
+  );
 };
 ```
 
 **Benefits:**
+
 - All state in one place (single source of truth)
 - State transitions are explicit and testable
 - No useEffect chains (only 1 for debounce)
@@ -310,44 +322,45 @@ export const RosterRoute = ({ bootstrap, config }) => {
 ```tsx
 // RosterRoute.tsx - Current
 export const RosterRoute = ({ bootstrap, config }) => {
-    const [page, setPage] = useState(1);
-    const [search, setSearch] = useState(null);
-    const [statusFilter, setStatusFilter] = useState(null);
-    
-    // Multiple API hooks called directly
-    const {
-        data: rosterData,
-        isLoading: rosterLoading,
-        error: rosterError,
-        refetch: refetchRoster,
-    } = useRoster({ page, perPage: 20, search, status: statusFilter });
-    
-    const {
-        data: observationsData,
-        isLoading: observationsLoading,
-        error: observationsError,
-        refetch: refetchObservations,
-    } = useRecognitionObservations({ page, perPage: 20 });
-    
-    // Manual coordination of loading states
-    const isLoading = rosterLoading || observationsLoading;
-    const hasError = rosterError || observationsError;
-    
-    // Manual coordination of refetch
-    const handleRefresh = () => {
-        refetchRoster();
-        refetchObservations();
-    };
-    
-    // Manual data transformation
-    const entries = rosterData?.entries ?? [];
-    const observations = observationsData?.records ?? [];
-    
-    // 2,000+ more lines...
+  const [page, setPage] = useState(1);
+  const [search, setSearch] = useState(null);
+  const [statusFilter, setStatusFilter] = useState(null);
+
+  // Multiple API hooks called directly
+  const {
+    data: rosterData,
+    isLoading: rosterLoading,
+    error: rosterError,
+    refetch: refetchRoster,
+  } = useRoster({ page, perPage: 20, search, status: statusFilter });
+
+  const {
+    data: observationsData,
+    isLoading: observationsLoading,
+    error: observationsError,
+    refetch: refetchObservations,
+  } = useRecognitionObservations({ page, perPage: 20 });
+
+  // Manual coordination of loading states
+  const isLoading = rosterLoading || observationsLoading;
+  const hasError = rosterError || observationsError;
+
+  // Manual coordination of refetch
+  const handleRefresh = () => {
+    refetchRoster();
+    refetchObservations();
+  };
+
+  // Manual data transformation
+  const entries = rosterData?.entries ?? [];
+  const observations = observationsData?.records ?? [];
+
+  // 2,000+ more lines...
 };
 ```
 
 **Problems:**
+
 - Component knows about multiple API endpoints
 - Manual loading/error state coordination
 - Manual data transformation in component
@@ -361,98 +374,99 @@ export const RosterRoute = ({ bootstrap, config }) => {
 ```tsx
 // hooks/useRosterData.ts (~120 lines)
 interface UseRosterDataOptions {
-    page: number;
-    perPage: number;
-    search: string | null;
-    statusFilter: "verified" | "pending" | null;
+  page: number;
+  perPage: number;
+  search: string | null;
+  statusFilter: "verified" | "pending" | null;
 }
 
 export const useRosterData = (options: UseRosterDataOptions) => {
-    const { page, perPage, search, statusFilter } = options;
-    
-    // Fetch roster entries
-    const rosterQuery = useRoster({
-        page,
-        perPage,
-        search,
-        status: statusFilter,
-    });
-    
-    // Fetch observations (if needed)
-    const observationsQuery = useRecognitionObservations({
-        page,
-        perPage,
-    });
-    
-    // Derived loading state
-    const isLoading = rosterQuery.isLoading || observationsQuery.isLoading;
-    const isError = rosterQuery.isError || observationsQuery.isError;
-    
-    // Combined error
-    const error = rosterQuery.error || observationsQuery.error;
-    
-    // Transformed data
-    const entries = useMemo(() => {
-        const raw = rosterQuery.data?.entries ?? [];
-        // Apply any client-side transformations
-        return raw.map(normalizeRosterEntry);
-    }, [rosterQuery.data]);
-    
-    const observations = useMemo(() => {
-        const raw = observationsQuery.data?.records ?? [];
-        // Apply any client-side transformations
-        return raw.map(normalizeObservation);
-    }, [observationsQuery.data]);
-    
-    // Coordinated refetch
-    const refetch = useCallback(() => {
-        rosterQuery.refetch();
-        observationsQuery.refetch();
-    }, [rosterQuery, observationsQuery]);
-    
-    return {
-        // Data
-        entries,
-        observations,
-        
-        // State
-        isLoading,
-        isError,
-        error,
-        
-        // Actions
-        refetch,
-    };
+  const { page, perPage, search, statusFilter } = options;
+
+  // Fetch roster entries
+  const rosterQuery = useRoster({
+    page,
+    perPage,
+    search,
+    status: statusFilter,
+  });
+
+  // Fetch observations (if needed)
+  const observationsQuery = useRecognitionObservations({
+    page,
+    perPage,
+  });
+
+  // Derived loading state
+  const isLoading = rosterQuery.isLoading || observationsQuery.isLoading;
+  const isError = rosterQuery.isError || observationsQuery.isError;
+
+  // Combined error
+  const error = rosterQuery.error || observationsQuery.error;
+
+  // Transformed data
+  const entries = useMemo(() => {
+    const raw = rosterQuery.data?.entries ?? [];
+    // Apply any client-side transformations
+    return raw.map(normalizeRosterEntry);
+  }, [rosterQuery.data]);
+
+  const observations = useMemo(() => {
+    const raw = observationsQuery.data?.records ?? [];
+    // Apply any client-side transformations
+    return raw.map(normalizeObservation);
+  }, [observationsQuery.data]);
+
+  // Coordinated refetch
+  const refetch = useCallback(() => {
+    rosterQuery.refetch();
+    observationsQuery.refetch();
+  }, [rosterQuery, observationsQuery]);
+
+  return {
+    // Data
+    entries,
+    observations,
+
+    // State
+    isLoading,
+    isError,
+    error,
+
+    // Actions
+    refetch,
+  };
 };
 ```
 
 ```tsx
 // components/roster/RosterRoute.tsx (~250 lines)
 export const RosterRoute = ({ bootstrap, config }) => {
-    const { state, dispatch } = useRosterState(/* ... */);
-    
-    // Single hook provides all data
-    const { entries, observations, isLoading, refetch } = useRosterData({
-        page: state.page,
-        perPage: state.perPage,
-        search: state.searchTerm,
-        statusFilter: state.statusFilter,
-    });
-    
-    // Component only handles UI logic
-    return (
-        <div>
-            {isLoading ? (
-                <LoadingSpinner />
-            ) : (
-                <RosterTable entries={entries} /* ... */ />
-            )}
-        </div>
-    );
+  const { state, dispatch } = useRosterState(/* ... */);
+
+  // Single hook provides all data
+  const { entries, observations, isLoading, refetch } = useRosterData({
+    page: state.page,
+    perPage: state.perPage,
+    search: state.searchTerm,
+    statusFilter: state.statusFilter,
+  });
+
+  // Component only handles UI logic
+  return (
+    <div>
+      {isLoading ? (
+        <LoadingSpinner />
+      ) : (
+        <RosterTable entries={entries} /* ... */ />
+      )}
+    </div>
+  );
 };
 ```
 
 **Benefits:**
+
 - Component doesn't know about API endpoints
 - Data transformation logic centralized
 - Loading/error states coordinated automatically
@@ -482,7 +496,7 @@ graph TB
         A11["Event Handlers<br/>onClick, onChange<br/>~400 lines"]
         A12["Data Transformations<br/>Normalizers + filters<br/>~150 lines"]
     end
-    
+
     style A1 fill:#ff6b6b,stroke:#c92a2a,color:#fff
     style A2 fill:#ff6b6b,stroke:#c92a2a,color:#fff
     style A3 fill:#ff6b6b,stroke:#c92a2a,color:#fff
@@ -504,18 +518,18 @@ graph TB
     subgraph "Container Layer"
         RC["RosterRoute.tsx<br/>Smart Container<br/>~250 lines"]
     end
-    
+
     subgraph "Custom Hooks"
         H1["useRosterState.ts<br/>useReducer<br/>~80 lines"]
         H2["useRosterData.ts<br/>API coordination<br/>~120 lines"]
     end
-    
+
     subgraph "Presentational Components"
         C1["RosterToolbar.tsx<br/>Search + filters<br/>~80 lines"]
         C2["RosterTable.tsx<br/>Table + rows<br/>~200 lines"]
         C3["RosterModals.tsx<br/>Modal orchestrator<br/>~150 lines"]
     end
-    
+
     subgraph "Sub-Components"
         S1["SearchInput.tsx<br/>~40 lines"]
         S2["FilterSelect.tsx<br/>~40 lines"]
@@ -525,29 +539,29 @@ graph TB
         S6["ObservationDialog.tsx<br/>~200 lines"]
         S7["ImagePreviewModal.tsx<br/>~80 lines"]
     end
-    
+
     subgraph "Utilities"
         U1["normalizers.ts<br/>Data transforms<br/>~80 lines"]
     end
-    
+
     RC --> H1
     RC --> H2
     RC --> C1
     RC --> C2
     RC --> C3
-    
+
     C1 --> S1
     C1 --> S2
-    
+
     C2 --> S3
     C2 --> S4
-    
+
     C3 --> S5
     C3 --> S6
     C3 --> S7
-    
+
     H2 --> U1
-    
+
     style RC fill:#51cf66,stroke:#2f9e44,color:#fff
     style H1 fill:#339af0,stroke:#1864ab,color:#fff
     style H2 fill:#339af0,stroke:#1864ab,color:#fff
@@ -569,21 +583,21 @@ graph TB
 ```mermaid
 graph LR
     Start["RosterRoute.tsx<br/>2,543 lines"] --> Step1
-    
+
     Step1["1. Extract State Hook<br/>useRosterState<br/>Reducer + 1 effect<br/>-200 lines"] --> Step2
-    
+
     Step2["2. Extract Data Hook<br/>useRosterData<br/>API coordination<br/>-150 lines"] --> Step3
-    
+
     Step3["3. Extract Toolbar<br/>Search + Filters<br/>-140 lines"] --> Step4
-    
+
     Step4["4. Extract Table<br/>RosterTable + Row<br/>-480 lines"] --> Step5
-    
+
     Step5["5. Extract Modals<br/>Edit + Observation + Image<br/>-1,000 lines"] --> Step6
-    
+
     Step6["6. Extract Normalizers<br/>Data transformation utils<br/>-150 lines"] --> Done
-    
+
     Done["RosterRoute.tsx<br/>~250 lines<br/>✅ Maintainable"]
-    
+
     style Start fill:#ff6b6b,stroke:#c92a2a,color:#fff
     style Done fill:#51cf66,stroke:#2f9e44,color:#fff
     style Step1 fill:#ffd43b,stroke:#fab005
@@ -630,17 +644,16 @@ Total: ~1,260 lines (vs 2,543 lines = 50% reduction)
 ```tsx
 // Impossible to test in isolation
 describe("RosterRoute", () => {
-    it("should handle search", () => {
-        // Need to mock:
-        // - useRoster hook
-        // - useRecognitionObservations hook
-        // - React Router (useLocation, useNavigate)
-        // - All 14+ state interactions
-        // - All modal logic
-        // - All table logic
-        
-        // Test becomes 500+ lines
-    });
+  it("should handle search", () => {
+    // Need to mock:
+    // - useRoster hook
+    // - useRecognitionObservations hook
+    // - React Router (useLocation, useNavigate)
+    // - All 14+ state interactions
+    // - All modal logic
+    // - All table logic
+    // Test becomes 500+ lines
+  });
 });
 ```
 
@@ -649,37 +662,37 @@ describe("RosterRoute", () => {
 ```tsx
 // Test reducer independently
 describe("useRosterState reducer", () => {
-    it("resets to page 1 when search changes", () => {
-        const state = { page: 5, searchTerm: "old" };
-        const action = { type: "APPLY_SEARCH", searchTerm: "new" };
-        
-        const result = reducer(state, action);
-        
-        expect(result.page).toBe(1);
-        expect(result.searchTerm).toBe("new");
-    });
+  it("resets to page 1 when search changes", () => {
+    const state = { page: 5, searchTerm: "old" };
+    const action = { type: "APPLY_SEARCH", searchTerm: "new" };
+
+    const result = reducer(state, action);
+
+    expect(result.page).toBe(1);
+    expect(result.searchTerm).toBe("new");
+  });
 });
 
 // Test data hook independently
 describe("useRosterData", () => {
-    it("combines roster and observation data", () => {
-        mockUseRoster.mockReturnValue({ data: mockRoster });
-        mockUseRecognitionObservations.mockReturnValue({ data: mockObs });
-        
-        const { result } = renderHook(() => useRosterData(options));
-        
-        expect(result.current.entries).toHaveLength(10);
-        expect(result.current.observations).toHaveLength(5);
-    });
+  it("combines roster and observation data", () => {
+    mockUseRoster.mockReturnValue({ data: mockRoster });
+    mockUseRecognitionObservations.mockReturnValue({ data: mockObs });
+
+    const { result } = renderHook(() => useRosterData(options));
+
+    expect(result.current.entries).toHaveLength(10);
+    expect(result.current.observations).toHaveLength(5);
+  });
 });
 
 // Test components in Storybook
 export const Default = () => (
-    <RosterTable
-        entries={mockEntries}
-        selection={new Set()}
-        onToggleSelection={action("toggle")}
-    />
+  <RosterTable
+    entries={mockEntries}
+    selection={new Set()}
+    onToggleSelection={action("toggle")}
+  />
 );
 ```
 
@@ -694,4 +707,3 @@ export const Default = () => (
 5. **Data Isolation**: Wrap API calls in custom hooks that coordinate and transform
 6. **Presentational/Container**: Separate "smart" data components from "dumb" UI components
 7. **Test Boundaries**: Each extracted piece is a testable unit
-

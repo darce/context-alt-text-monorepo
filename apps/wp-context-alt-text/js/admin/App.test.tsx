@@ -5,6 +5,7 @@ import { axe } from "vitest-axe";
 import { http, HttpResponse } from "msw";
 import { setAdminBootstrap } from "@/admin/globals";
 import type { DashboardData, GlobalPayload, WorkbenchData } from "@/admin/types";
+import { selectRadixOption, getRadixSelectValue } from "@/admin/testing/radixHelpers";
 
 const { dispatchNoticeMock, notifyErrorMock } = vi.hoisted(() => ({
     dispatchNoticeMock: vi.fn(),
@@ -249,7 +250,7 @@ describe("App", () => {
         const selectionSummary = screen.getByText((_, element) => element?.textContent === "0 items selected");
         expect(selectionSummary).toBeInTheDocument();
         expect(screen.getByRole("table", { name: /Media queue/i })).toBeInTheDocument();
-        expect(screen.getByRole("combobox", { name: /Items per page/i })).toHaveValue("20");
+        expect(getRadixSelectValue(/Items per page/i)).toBe("20");
     });
 
     it("passes axe accessibility checks on the workbench route", async () => {
@@ -632,8 +633,7 @@ describe("App", () => {
 
         render(<App />);
 
-        const select = await screen.findByLabelText(/Items per page/i);
-        await user.selectOptions(select, "10");
+        await selectRadixOption(user, /Items per page/i, "10");
 
         await waitFor(() =>
             expect(

@@ -3,6 +3,7 @@ import React from "react";
 import { __, sprintf } from "@wordpress/i18n";
 
 import { Button } from "@/components/ui/button";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 const runtimeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
 
@@ -57,8 +58,8 @@ export const PaginationControls = ({
         }
     };
 
-    const handlePerPageChange: React.ChangeEventHandler<HTMLSelectElement> = (event) => {
-        const nextPerPage = Number.parseInt(event.target.value, 10);
+    const handlePerPageChange = (value: string) => {
+        const nextPerPage = Number.parseInt(value, 10);
 
         if (runtimeProcess?.env?.NODE_ENV === "test") {
             console.info("PaginationControls::handlePerPageChange", {
@@ -150,19 +151,18 @@ export const PaginationControls = ({
                     <label htmlFor="cat-pagination-per-page" className="cat-pagination__label">
                         {__("Items per page", "context-alt-text")}
                     </label>
-                    <select
-                        id="cat-pagination-per-page"
-                        className="cat-pagination__select"
-                        value={perPage}
-                        onChange={handlePerPageChange}
-                        disabled={total === 0}
-                    >
-                        {availablePerPageOptions.map((option) => (
-                            <option key={option} value={option}>
-                                {option}
-                            </option>
-                        ))}
-                    </select>
+                    <Select value={String(perPage)} onValueChange={handlePerPageChange} disabled={total === 0}>
+                        <SelectTrigger id="cat-pagination-per-page" className="cat-pagination__select">
+                            <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                            {availablePerPageOptions.map((option) => (
+                                <SelectItem key={option} value={String(option)}>
+                                    {option}
+                                </SelectItem>
+                            ))}
+                        </SelectContent>
+                    </Select>
                 </div>
                 <form className="cat-pagination__jump" onSubmit={handlePageSubmit}>
                     <label htmlFor="cat-pagination-jump" className="cat-pagination__label">

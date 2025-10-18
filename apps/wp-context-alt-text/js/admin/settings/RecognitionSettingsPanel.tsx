@@ -4,6 +4,7 @@ import { __, sprintf } from "@wordpress/i18n";
 import { dispatchNotice, notifyError } from "@/admin/notices";
 import type { FeatureFlags, RecognitionSettingsPayload } from "@/admin/types";
 import { FALLBACK_RECOGNITION_SETTINGS } from "@/admin/dashboardData";
+import { Checkbox } from "@/components/ui/checkbox";
 
 const URL_PATTERN = /^(https?:)\/\//i;
 
@@ -336,11 +337,12 @@ export const RecognitionSettingsPanel = ({
                             </th>
                             <td>
                                 <label className="cat-recognition-settings__toggle">
-                                    <input
+                                    <Checkbox
                                         id="cat-recognition-enabled"
-                                        type="checkbox"
                                         checked={form.enabled}
-                                        onChange={(event) => handleFieldChange("enabled", event.target.checked)}
+                                        onCheckedChange={(checked) =>
+                                            handleFieldChange("enabled", checked === true)
+                                        }
                                         disabled={!canManage || isSaving}
                                     />
                                     <span>

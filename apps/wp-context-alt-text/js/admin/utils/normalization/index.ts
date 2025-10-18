@@ -43,8 +43,4 @@ export type {
 } from "./recognition";
 
 // Roster domain
-export {
-    normalizeRosterStatus,
-    normalizeRosterEntry,
-    normalizeRosterStats,
-} from "./roster";
+export { normalizeRosterStatus, normalizeRosterEntry, normalizeRosterStats } from "./roster";

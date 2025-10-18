@@ -1,0 +1,78 @@
+%% React Anti-Patterns vs Ideal Patterns
+%% Visual comparison of common mistakes vs best practices
+
+graph TB
+    subgraph "❌ ANTI-PATTERN: God Component"
+        AP1["GodComponent.tsx<br/>2,500+ lines<br/><br/>Problems:<br/>• 14+ useState hooks<br/>• 6+ useEffect hooks<br/>• All business logic inline<br/>• Mixing concerns<br/>• Impossible to test<br/>• Can't reuse parts"]
+        
+        AP1_UI["500 lines of UI JSX<br/>Tables, forms, modals<br/>All inline"]
+        AP1_State["200 lines of state<br/>14+ useState<br/>6+ useEffect<br/>Complex dependencies"]
+        AP1_Logic["400 lines of logic<br/>Event handlers<br/>Validation<br/>Transformations"]
+        AP1_API["100 lines of API<br/>Multiple useQuery calls<br/>Manual coordination"]
+        
+        AP1 --- AP1_UI
+        AP1 --- AP1_State
+        AP1 --- AP1_Logic
+        AP1 --- AP1_API
+    end
+    
+    subgraph "✅ IDEAL: Composed Architecture"
+        IP_Container["PageRoute.tsx<br/>250 lines<br/><br/>Responsibilities:<br/>• Orchestrate features<br/>• Connect hooks to UI<br/>• Handle page-level logic<br/>• 1-2 custom hooks<br/>• 0-1 useEffect"]
+        
+        IP_StateHook["usePageState.ts<br/>80 lines<br/><br/>useReducer pattern:<br/>• All state in one place<br/>• Explicit actions<br/>• Testable reducer<br/>• Time-travel debugging"]
+        
+        IP_DataHook["usePageData.ts<br/>120 lines<br/><br/>Data coordination:<br/>• Wrap API hooks<br/>• Transform data<br/>• Coordinate loading<br/>• Centralize refetch"]
+        
+        IP_UI1["Toolbar.tsx<br/>80 lines<br/><br/>Presentational:<br/>• Props-driven<br/>• No business logic<br/>• Storybook-ready<br/>• Reusable"]
+        
+        IP_UI2["MainContent.tsx<br/>200 lines<br/><br/>Presentational:<br/>• Props-driven<br/>• No business logic<br/>• Storybook-ready<br/>• Reusable"]
+        
+        IP_UI3["Modals.tsx<br/>150 lines<br/><br/>Presentational:<br/>• Props-driven<br/>• No business logic<br/>• Storybook-ready<br/>• Reusable"]
+        
+        IP_Container --> IP_StateHook
+        IP_Container --> IP_DataHook
+        IP_Container --> IP_UI1
+        IP_Container --> IP_UI2
+        IP_Container --> IP_UI3
+    end
+    
+    subgraph "❌ ANTI-PATTERN: useState Explosion"
+        AP2["Component with 14+ useState<br/><br/>const [a, setA] = useState(1);<br/>const [b, setB] = useState(2);<br/>const [c, setC] = useState(3);<br/>...<br/>const [n, setN] = useState(14);<br/><br/>Problems:<br/>• Hard to track state changes<br/>• No single source of truth<br/>• Difficult to debug<br/>• Can't reason about transitions"]
+    end
+    
+    subgraph "✅ IDEAL: useReducer Pattern"
+        IP2["useReducer + Custom Hook<br/><br/>const { state, dispatch } = usePageState();<br/><br/>dispatch({ type: 'UPDATE_SEARCH', value });<br/><br/>Benefits:<br/>• All state in one object<br/>• Explicit state transitions<br/>• Easy to debug (action log)<br/>• Testable reducer<br/>• Time-travel possible"]
+    end
+    
+    subgraph "❌ ANTI-PATTERN: useEffect Chains"
+        AP3["Waterfall Effects<br/><br/>useEffect(() => {<br/>  setB(a + 1);<br/>}, [a]);<br/><br/>useEffect(() => {<br/>  setC(b * 2);<br/>}, [b]);<br/><br/>useEffect(() => {<br/>  setD(c / 3);<br/>}, [c]);<br/><br/>Problems:<br/>• Multiple renders<br/>• Hard to debug<br/>• Race conditions<br/>• Performance issues"]
+    end
+    
+    subgraph "✅ IDEAL: Derived State"
+        IP3["Compute During Render<br/><br/>const b = a + 1;<br/>const c = b * 2;<br/>const d = c / 3;<br/><br/>// Or with memoization<br/>const result = useMemo(() => {<br/>  const b = a + 1;<br/>  return (b * 2) / 3;<br/>}, [a]);<br/><br/>Benefits:<br/>• Single render<br/>• Easy to reason about<br/>• No race conditions<br/>• Better performance"]
+    end
+    
+    subgraph "❌ ANTI-PATTERN: Inline Data Fetching"
+        AP4["Direct API Hooks in Component<br/><br/>const q1 = useQuery1();<br/>const q2 = useQuery2();<br/>const q3 = useQuery3();<br/><br/>const isLoading = q1.loading \|\| q2.loading \|\| q3.loading;<br/>const data = merge(q1.data, q2.data, q3.data);<br/><br/>Problems:<br/>• Component knows about APIs<br/>• Manual coordination<br/>• Hard to mock for tests<br/>• Logic duplication"]
+    end
+    
+    subgraph "✅ IDEAL: Custom Data Hook"
+        IP4["Abstracted Data Hook<br/><br/>const { data, isLoading } = usePageData();<br/><br/>// Hook handles:<br/>// - Multiple API calls<br/>// - Loading coordination<br/>// - Data transformation<br/>// - Error handling<br/><br/>Benefits:<br/>• Component doesn't know APIs<br/>• Easy to mock<br/>• Reusable<br/>• Centralized logic"]
+    end
+    
+    subgraph "❌ ANTI-PATTERN: 500-Line JSX Block"
+        AP5["Inline Everything<br/><br/>return (<br/>  &lt;div&gt;<br/>    {/* 500 lines of JSX */}<br/>    &lt;SearchSection&gt;...&lt;/SearchSection&gt;<br/>    &lt;FilterSection&gt;...&lt;/FilterSection&gt;<br/>    &lt;TableSection&gt;...&lt;/TableSection&gt;<br/>    &lt;ModalSection&gt;...&lt;/ModalSection&gt;<br/>  &lt;/div&gt;<br/>);<br/><br/>Problems:<br/>• Hard to navigate<br/>• Can't test parts<br/>• Can't reuse sections<br/>• Difficult code review"]
+    end
+    
+    subgraph "✅ IDEAL: Composed Components"
+        IP5["Extract Components<br/><br/>return (<br/>  &lt;div&gt;<br/>    &lt;Toolbar {...toolbarProps} /&gt;<br/>    &lt;Content {...contentProps} /&gt;<br/>    &lt;Modals {...modalProps} /&gt;<br/>  &lt;/div&gt;<br/>);<br/><br/>Benefits:<br/>• Easy to navigate<br/>• Test in isolation<br/>• Reusable components<br/>• Easy code review<br/>• Storybook-ready"]
+    end
+    
+    classDef antiPattern fill:#ff6b6b,stroke:#c92a2a,color:#fff,stroke-width:3px
+    classDef idealPattern fill:#51cf66,stroke:#2f9e44,color:#fff,stroke-width:3px
+    classDef subComponent fill:#ffd43b,stroke:#fab005,stroke-width:2px
+    
+    class AP1,AP2,AP3,AP4,AP5 antiPattern
+    class IP_Container,IP2,IP3,IP4,IP5 idealPattern
+    class IP_StateHook,IP_DataHook,IP_UI1,IP_UI2,IP_UI3 subComponent
+    class AP1_UI,AP1_State,AP1_Logic,AP1_API antiPattern

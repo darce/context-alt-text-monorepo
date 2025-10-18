@@ -21,8 +21,7 @@ const DEFAULT_OBSERVATION_SUMMARY: RecognitionObservationSummary = {
     observations: { total: 0, matched: 0, needs_review: 0 },
 };
 
-const isRecord = (value: unknown): value is Record<string, unknown> =>
-    value !== null && typeof value === "object";
+const isRecord = (value: unknown): value is Record<string, unknown> => value !== null && typeof value === "object";
 
 interface ObservationPromptState {
     observationId: string;
@@ -97,13 +96,14 @@ const resolveSuggestedMatchLabel = (
     const rosterLabel = record?.roster?.displayName ?? record?.roster?.name ?? null;
 
     return (
-        labelFromEntry(rosterRemote)
-        ?? rosterLabel
-        ?? labelFromEntry(top?.remoteId ?? null)
-        ?? (top?.name?.trim() ? top.name : null)
-        ?? (top?.remoteId ?? null)
-        ?? (record?.label?.trim() ? record.label : null)
-        ?? null
+        labelFromEntry(rosterRemote) ??
+        rosterLabel ??
+        labelFromEntry(top?.remoteId ?? null) ??
+        (top?.name?.trim() ? top.name : null) ??
+        top?.remoteId ??
+        null ??
+        (record?.label?.trim() ? record.label : null) ??
+        null
     );
 };
 
@@ -246,11 +246,12 @@ const buildObservationSearchParams = (
 };
 
 const getWpMedia = (): ((options: Record<string, unknown>) => MediaFrame) | undefined => {
-    const root = typeof window !== "undefined"
-        ? window
-        : typeof globalThis !== "undefined"
-            ? (globalThis as typeof globalThis & { wp?: { media?: unknown } })
-            : undefined;
+    const root =
+        typeof window !== "undefined"
+            ? window
+            : typeof globalThis !== "undefined"
+              ? (globalThis as typeof globalThis & { wp?: { media?: unknown } })
+              : undefined;
 
     const mediaFactory = root?.wp && typeof root.wp === "object" ? (root.wp as { media?: unknown }).media : undefined;
 
@@ -381,16 +382,19 @@ const RosterObservationsPanel = ({
                             <p>
                                 {pendingCount > 0
                                     ? sprintf(
-                                        _n(
-                                            "%1$d face across %2$d attachment requires a roster assignment.",
-                                            "%1$d faces across %2$d attachments require roster assignments.",
-                                            pendingCount,
-                                            "context-alt-text",
-                                        ),
-                                        pendingCount,
-                                        attachmentCount,
-                                    )
-                                    : __("Faces detected by recognition will appear here when they require review.", "context-alt-text")}
+                                          _n(
+                                              "%1$d face across %2$d attachment requires a roster assignment.",
+                                              "%1$d faces across %2$d attachments require roster assignments.",
+                                              pendingCount,
+                                              "context-alt-text",
+                                          ),
+                                          pendingCount,
+                                          attachmentCount,
+                                      )
+                                    : __(
+                                          "Faces detected by recognition will appear here when they require review.",
+                                          "context-alt-text",
+                                      )}
                             </p>
                         </div>
                         <div className="cat-roster__observations-actions">
@@ -400,7 +404,9 @@ const RosterObservationsPanel = ({
                                 onClick={() => void onRefresh()}
                                 disabled={isLoading}
                             >
-                                {isLoading ? __("Re-running…", "context-alt-text") : __("Re-run recognition", "context-alt-text")}
+                                {isLoading
+                                    ? __("Re-running…", "context-alt-text")
+                                    : __("Re-run recognition", "context-alt-text")}
                             </button>
                         </div>
                     </header>
@@ -412,7 +418,9 @@ const RosterObservationsPanel = ({
                     )}
 
                     {isLoading && pendingAttachments.length === 0 ? (
-                        <p className="cat-roster__observations-status">{__("Loading observations…", "context-alt-text")}</p>
+                        <p className="cat-roster__observations-status">
+                            {__("Loading observations…", "context-alt-text")}
+                        </p>
                     ) : null}
 
                     {!isLoading && pendingAttachments.length === 0 ? (
@@ -428,15 +436,15 @@ const RosterObservationsPanel = ({
                                 const displayName =
                                     attachment.context?.filename ??
                                     (attachmentId
-                                        ? sprintf(
-                                            __("Attachment %d", "context-alt-text"),
-                                            attachmentId,
-                                        )
+                                        ? sprintf(__("Attachment %d", "context-alt-text"), attachmentId)
                                         : __("Media item", "context-alt-text"));
                                 const unresolved = pending.length;
 
                                 return (
-                                    <li key={`${attachmentId ?? "unknown"}-${attachment.jobId ?? "job"}`} className="cat-roster__observations-item">
+                                    <li
+                                        key={`${attachmentId ?? "unknown"}-${attachment.jobId ?? "job"}`}
+                                        className="cat-roster__observations-item"
+                                    >
                                         <div className="cat-roster__observations-attachment">
                                             <div>
                                                 <strong>{displayName}</strong>
@@ -465,20 +473,43 @@ const RosterObservationsPanel = ({
                                         </div>
                                         <ul className="cat-roster__observations-faces">
                                             {pending.map((record) => {
-                                                const displayLabel = record.label || record.entityType || __("Observation", "context-alt-text");
+                                                const displayLabel =
+                                                    record.label ||
+                                                    record.entityType ||
+                                                    __("Observation", "context-alt-text");
                                                 const topCandidate = getTopCandidate(record);
-                                                const rosterMatch = resolveSuggestedMatchLabel(record, assignableEntryLookup, topCandidate);
-                                                const rosterConfidenceValue = getRosterConfidenceValue(record, topCandidate);
+                                                const rosterMatch = resolveSuggestedMatchLabel(
+                                                    record,
+                                                    assignableEntryLookup,
+                                                    topCandidate,
+                                                );
+                                                const rosterConfidenceValue = getRosterConfidenceValue(
+                                                    record,
+                                                    topCandidate,
+                                                );
                                                 const confidenceDisplay = formatPercentage(rosterConfidenceValue);
-                                                const suggestedRemoteId = resolveSuggestedRemoteId(record, assignableEntryLookup, topCandidate);
-                                                const selectedRemoteId = getSelectedRemoteId(record, selection, suggestedRemoteId);
+                                                const suggestedRemoteId = resolveSuggestedRemoteId(
+                                                    record,
+                                                    assignableEntryLookup,
+                                                    topCandidate,
+                                                );
+                                                const selectedRemoteId = getSelectedRemoteId(
+                                                    record,
+                                                    selection,
+                                                    suggestedRemoteId,
+                                                );
                                                 const isAssigning = assigningId === (record.observationId ?? null);
 
                                                 return (
-                                                    <li key={record.observationId} className="cat-roster__observations-face">
+                                                    <li
+                                                        key={record.observationId}
+                                                        className="cat-roster__observations-face"
+                                                    >
                                                         <ObservationPreview record={record} attachment={attachment} />
                                                         <div className="cat-roster__observations-face-details">
-                                                            <span className="cat-roster__observations-label">{displayLabel}</span>
+                                                            <span className="cat-roster__observations-label">
+                                                                {displayLabel}
+                                                            </span>
                                                             {rosterMatch ? (
                                                                 <span className="cat-roster__observations-meta">
                                                                     {sprintf(
@@ -497,7 +528,10 @@ const RosterObservationsPanel = ({
                                                             )}
                                                         </div>
                                                         <div className="cat-roster__observations-face-actions">
-                                                            <label className="screen-reader-text" htmlFor={`cat-roster-observation-${record.observationId}-select`}>
+                                                            <label
+                                                                className="screen-reader-text"
+                                                                htmlFor={`cat-roster-observation-${record.observationId}-select`}
+                                                            >
                                                                 {__("Select roster entry", "context-alt-text")}
                                                             </label>
                                                             <select
@@ -506,18 +540,25 @@ const RosterObservationsPanel = ({
                                                                 onChange={(event) =>
                                                                     setSelection((current) => ({
                                                                         ...current,
-                                                                        [record.observationId ?? ""]: event.target.value,
+                                                                        [record.observationId ?? ""]:
+                                                                            event.target.value,
                                                                     }))
                                                                 }
                                                                 disabled={assignableEntries.length === 0 || isAssigning}
                                                             >
                                                                 <option value="">
                                                                     {assignableEntries.length === 0
-                                                                        ? __("No synced roster entries available", "context-alt-text")
+                                                                        ? __(
+                                                                              "No synced roster entries available",
+                                                                              "context-alt-text",
+                                                                          )
                                                                         : __("Select roster entry", "context-alt-text")}
                                                                 </option>
                                                                 {assignableEntries.map((entryOption) => (
-                                                                    <option key={entryOption.remoteId ?? ""} value={entryOption.remoteId ?? ""}>
+                                                                    <option
+                                                                        key={entryOption.remoteId ?? ""}
+                                                                        value={entryOption.remoteId ?? ""}
+                                                                    >
                                                                         {entryOption.label} ({entryOption.type})
                                                                     </option>
                                                                 ))}
@@ -526,9 +567,17 @@ const RosterObservationsPanel = ({
                                                                 type="button"
                                                                 className="cat-button cat-button--primary"
                                                                 onClick={() => {
-                                                                    void handleAssign(record, attachment, suggestedRemoteId);
+                                                                    void handleAssign(
+                                                                        record,
+                                                                        attachment,
+                                                                        suggestedRemoteId,
+                                                                    );
                                                                 }}
-                                                                disabled={assignableEntries.length === 0 || !selectedRemoteId || isAssigning}
+                                                                disabled={
+                                                                    assignableEntries.length === 0 ||
+                                                                    !selectedRemoteId ||
+                                                                    isAssigning
+                                                                }
                                                             >
                                                                 {isAssigning
                                                                     ? __("Assigning…", "context-alt-text")
@@ -606,15 +655,7 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
     }, [search, page, perPage, statusFilter]);
 
     const roster = useRoster({ initialData: bootstrap, config, filters });
-    const {
-        query,
-        hasEndpoint,
-        createEntry,
-        updateEntry,
-        deleteEntry,
-        syncRoster,
-        isSyncing,
-    } = roster;
+    const { query, hasEndpoint, createEntry, updateEntry, deleteEntry, syncRoster, isSyncing } = roster;
 
     const observationFilters = React.useMemo(
         () => ({
@@ -625,15 +666,15 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
     );
     const observations = useRecognitionObservations({ config, filters: observationFilters });
     const observationResult = observations.query.data;
-    const observationItems = React.useMemo(
-        () => observationResult?.items ?? [],
-        [observationResult?.items],
-    );
+    const observationItems = React.useMemo(() => observationResult?.items ?? [], [observationResult?.items]);
     const observationSummary = observationResult?.summary ?? DEFAULT_OBSERVATION_SUMMARY;
     const observationsError = observations.query.error ?? null;
     const observationsLoading = observations.query.isFetching || observations.query.isLoading;
     const observationIndex = React.useMemo(() => {
-        const entries = new Map<string, { record: RecognitionObservationRecord; attachment: RecognitionObservationAttachment }>();
+        const entries = new Map<
+            string,
+            { record: RecognitionObservationRecord; attachment: RecognitionObservationAttachment }
+        >();
 
         for (const attachment of observationItems) {
             if (!attachment || !Array.isArray(attachment.observations)) {
@@ -666,10 +707,7 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
     };
     const entries = data.entries;
     const handleObservationSelect = React.useCallback(
-        (
-            record: RecognitionObservationRecord,
-            attachment: RecognitionObservationAttachment,
-        ) => {
+        (record: RecognitionObservationRecord, attachment: RecognitionObservationAttachment) => {
             if (!record?.observationId) {
                 return;
             }
@@ -697,7 +735,8 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
                 const match = entries.find((entry) => entry.remoteId === record.roster?.remoteId) ?? null;
                 setEditing(match);
             } else {
-                const existing = entries.find((entry) => entry.label === nextDraft.label && entry.type === nextDraft.type) ?? null;
+                const existing =
+                    entries.find((entry) => entry.label === nextDraft.label && entry.type === nextDraft.type) ?? null;
                 if (existing) {
                     setEditing(existing);
                 } else {
@@ -829,12 +868,12 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
 
         const nextObservationPrompt: ObservationPromptState | null = observationIdParam
             ? {
-                observationId: observationIdParam,
-                attachmentId: normalizedAttachmentId,
-                source: normalizedSource,
-                remoteId: normalizedRemoteId,
-                label: normalizedLabel,
-            }
+                  observationId: observationIdParam,
+                  attachmentId: normalizedAttachmentId,
+                  source: normalizedSource,
+                  remoteId: normalizedRemoteId,
+                  label: normalizedLabel,
+              }
             : null;
 
         setObservationPrompt((current) => {
@@ -1007,11 +1046,11 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
                                     "Roster entry created and %d observation auto-matched.",
                                     "Roster entry created and %d observations auto-matched.",
                                     matchCount,
-                                    "context-alt-text"
+                                    "context-alt-text",
                                 ),
-                                matchCount
+                                matchCount,
                             ),
-                            { id: "cat-roster-save" }
+                            { id: "cat-roster-save" },
                         );
                     } else {
                         dispatchNotice("success", __("Roster entry saved.", "context-alt-text"), {
@@ -1144,12 +1183,7 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
                     </p>
                 </div>
                 <div className="cat-roster__header-actions">
-                    <button
-                        type="button"
-                        className="cat-button"
-                        onClick={handleCreateNew}
-                        disabled={isSubmitting}
-                    >
+                    <button type="button" className="cat-button" onClick={handleCreateNew} disabled={isSubmitting}>
                         {__("Add Entry", "context-alt-text")}
                     </button>
                     <button
@@ -1160,9 +1194,7 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
                         }}
                         disabled={!hasEndpoint || isSyncing}
                     >
-                        {isSyncing
-                            ? __("Syncing…", "context-alt-text")
-                            : __("Sync from Remote", "context-alt-text")}
+                        {isSyncing ? __("Syncing…", "context-alt-text") : __("Sync from Remote", "context-alt-text")}
                     </button>
                 </div>
             </header>
@@ -1195,8 +1227,8 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
                                 statusFilter === "LOCAL"
                                     ? __("Local", "context-alt-text")
                                     : statusFilter === "SYNCED"
-                                        ? __("Synced", "context-alt-text")
-                                        : __("Conflict", "context-alt-text"),
+                                      ? __("Synced", "context-alt-text")
+                                      : __("Conflict", "context-alt-text"),
                             )}
                         </span>
                         <button
@@ -1254,17 +1286,14 @@ export const RosterRoute = ({ bootstrap, config }: RosterRouteProps): React.JSX.
             />
 
             <section className="cat-roster__layout">
-                <RosterTable
-                    entries={data.entries}
-                    isLoading={isLoading}
-                    onEdit={handleEdit}
-                    onDelete={handleDelete}
-                />
+                <RosterTable entries={data.entries} isLoading={isLoading} onEdit={handleEdit} onDelete={handleDelete} />
                 <RosterEditor
                     entry={editing}
                     draftValues={draftValues}
                     observationPrompt={observationPrompt}
-                    observationDetails={observationPrompt ? observationIndex.get(observationPrompt.observationId) : undefined}
+                    observationDetails={
+                        observationPrompt ? observationIndex.get(observationPrompt.observationId) : undefined
+                    }
                     onSubmit={handleSubmit}
                     submitting={isSubmitting}
                 />
@@ -1318,10 +1347,7 @@ const RosterStats = ({ stats }: RosterStatsProps): React.JSX.Element => {
             </dl>
             <p className="cat-roster__stats-sync">
                 {stats.lastSyncHuman
-                    ? sprintf(
-                        __("Last synced %s ago.", "context-alt-text"),
-                        stats.lastSyncHuman,
-                    )
+                    ? sprintf(__("Last synced %s ago.", "context-alt-text"), stats.lastSyncHuman)
                     : __("Roster has not been synced yet.", "context-alt-text")}
             </p>
         </div>
@@ -1675,7 +1701,7 @@ const RosterTable = ({ entries, isLoading, onEdit, onDelete }: RosterTableProps)
                                         src={entry.avatarUrl}
                                         alt={sprintf(
                                             __("Avatar for %s", "context-alt-text"),
-                                            entry.label?.trim() ? entry.label : entry.remoteId ?? "—",
+                                            entry.label?.trim() ? entry.label : (entry.remoteId ?? "—"),
                                         )}
                                         className="cat-roster__avatar"
                                     />
@@ -1686,7 +1712,7 @@ const RosterTable = ({ entries, isLoading, onEdit, onDelete }: RosterTableProps)
                                 )}
                             </td>
                             <td>
-                                <strong>{entry.label?.trim() ? entry.label : entry.remoteId ?? "—"}</strong>
+                                <strong>{entry.label?.trim() ? entry.label : (entry.remoteId ?? "—")}</strong>
                                 <div className="cat-roster__meta">
                                     {entry.remoteId ? (
                                         <span>{entry.remoteId}</span>
@@ -1707,7 +1733,11 @@ const RosterTable = ({ entries, isLoading, onEdit, onDelete }: RosterTableProps)
                                 )}
                             </td>
                             <td className="cat-roster__actions">
-                                <button type="button" className="cat-button cat-button--link" onClick={() => onEdit(entry)}>
+                                <button
+                                    type="button"
+                                    className="cat-button cat-button--link"
+                                    onClick={() => onEdit(entry)}
+                                >
                                     {__("Edit", "context-alt-text")}
                                 </button>
                                 {entry.remoteId && (
@@ -1759,7 +1789,8 @@ const RosterEditor = ({
 
     const initialLabel = entry?.label ?? draftValues?.label ?? observationRecord?.label ?? "";
     const initialType = entry?.type ?? draftValues?.type ?? observationRecord?.entityType ?? "";
-    const initialAvatarUrl = entry?.avatarUrl ?? draftValues?.avatarUrl ?? observationAttachment?.context?.imageUrl ?? "";
+    const initialAvatarUrl =
+        entry?.avatarUrl ?? draftValues?.avatarUrl ?? observationAttachment?.context?.imageUrl ?? "";
     const initialAvatarId = entry?.avatarId ?? draftValues?.avatarId ?? null;
 
     const [label, setLabel] = React.useState<string>(initialLabel);
@@ -1771,7 +1802,8 @@ const RosterEditor = ({
     React.useEffect(() => {
         const nextLabel = entry?.label ?? draftValues?.label ?? observationRecord?.label ?? "";
         const nextType = entry?.type ?? draftValues?.type ?? observationRecord?.entityType ?? "";
-        const nextAvatarUrl = entry?.avatarUrl ?? draftValues?.avatarUrl ?? observationAttachment?.context?.imageUrl ?? "";
+        const nextAvatarUrl =
+            entry?.avatarUrl ?? draftValues?.avatarUrl ?? observationAttachment?.context?.imageUrl ?? "";
         const nextAvatarId = entry?.avatarId ?? draftValues?.avatarId ?? null;
 
         setLabel(nextLabel);
@@ -1796,17 +1828,14 @@ const RosterEditor = ({
     const handleSubmit = (event: React.FormEvent<HTMLFormElement>) => {
         event.preventDefault();
         const trimmedAvatarUrl = avatarUrl.trim();
-        const normalizedAvatarId = trimmedAvatarUrl ? avatarId ?? null : avatarId ?? null;
+        const normalizedAvatarId = trimmedAvatarUrl ? (avatarId ?? null) : (avatarId ?? null);
         const trimmedLabel = label.trim();
         const trimmedType = type.trim();
 
         let resolveObservation: RosterFormValues["resolveObservation"] | undefined;
         let referenceImages: RosterFormValues["referenceImages"] | undefined;
 
-        if (
-            observationPrompt?.observationId &&
-            (observationPrompt.attachmentId ?? 0) > 0
-        ) {
+        if (observationPrompt?.observationId && (observationPrompt.attachmentId ?? 0) > 0) {
             resolveObservation = {
                 attachmentId: observationPrompt.attachmentId ?? 0,
                 observationId: observationPrompt.observationId,
@@ -1901,8 +1930,8 @@ const RosterEditor = ({
         label.trim() !== ""
             ? label
             : draftValues?.label && draftValues.label.trim() !== ""
-                ? draftValues.label
-                : entry?.label ?? observationRecord?.label ?? "";
+              ? draftValues.label
+              : (entry?.label ?? observationRecord?.label ?? "");
     const matchConfidenceValue = observationRecord ? getRosterConfidenceValue(observationRecord, topCandidate) : null;
     const confidenceDisplay = formatPercentage(matchConfidenceValue);
     const similarityDisplay = observationRecord?.match ? formatPercentage(observationRecord.match.similarity) : null;
@@ -1932,13 +1961,22 @@ const RosterEditor = ({
                     <div className="cat-roster__editor-context" role="status" aria-live="polite">
                         <strong>
                             {observationPrompt.remoteId
-                                ? __("Resolve the linked observation by confirming this roster entry.", "context-alt-text")
+                                ? __(
+                                      "Resolve the linked observation by confirming this roster entry.",
+                                      "context-alt-text",
+                                  )
                                 : __("Saving this entry will resolve a recognition observation.", "context-alt-text")}
                         </strong>
                         <p>
                             {observationPrompt.remoteId
-                                ? __("Review the details and save to continue embedding processing.", "context-alt-text")
-                                : __("Complete the fields below and save to begin embedding generation for the flagged observation.", "context-alt-text")}
+                                ? __(
+                                      "Review the details and save to continue embedding processing.",
+                                      "context-alt-text",
+                                  )
+                                : __(
+                                      "Complete the fields below and save to begin embedding generation for the flagged observation.",
+                                      "context-alt-text",
+                                  )}
                         </p>
                         {observationRecord && (
                             <dl className="cat-roster__observation-details">
@@ -2104,8 +2142,8 @@ const ObservationPreview = ({ record, attachment }: ObservationPreviewProps): Re
             style={
                 dimensions
                     ? {
-                        aspectRatio: `${dimensions.width} / ${dimensions.height}`,
-                    }
+                          aspectRatio: `${dimensions.width} / ${dimensions.height}`,
+                      }
                     : { aspectRatio: "1 / 1" }
             }
         >
@@ -2123,7 +2161,11 @@ const ObservationPreview = ({ record, attachment }: ObservationPreviewProps): Re
     );
 };
 
-const RosterObservationPrompt = ({ prompt, details = null, onDismiss }: RosterObservationPromptProps): React.JSX.Element => {
+const RosterObservationPrompt = ({
+    prompt,
+    details = null,
+    onDismiss,
+}: RosterObservationPromptProps): React.JSX.Element => {
     const sourceLabel = (() => {
         if (!prompt.source) {
             return __("Unknown", "context-alt-text");
@@ -2170,11 +2212,11 @@ const RosterObservationPrompt = ({ prompt, details = null, onDismiss }: RosterOb
 
     const topCandidate = details?.record ? getTopCandidate(details.record) : null;
     const suggestedMatchLabel = details?.record
-        ? details.record.roster?.displayName
-        ?? details.record.roster?.name
-        ?? topCandidate?.name
-        ?? topCandidate?.remoteId
-        ?? null
+        ? (details.record.roster?.displayName ??
+          details.record.roster?.name ??
+          topCandidate?.name ??
+          topCandidate?.remoteId ??
+          null)
         : null;
 
     if (suggestedMatchLabel) {
@@ -2183,7 +2225,9 @@ const RosterObservationPrompt = ({ prompt, details = null, onDismiss }: RosterOb
             value: suggestedMatchLabel,
         });
     }
-    const confidenceDisplay = details?.record ? formatPercentage(getRosterConfidenceValue(details.record, topCandidate)) : null;
+    const confidenceDisplay = details?.record
+        ? formatPercentage(getRosterConfidenceValue(details.record, topCandidate))
+        : null;
 
     if (confidenceDisplay) {
         detailItems.push({
@@ -2211,8 +2255,14 @@ const RosterObservationPrompt = ({ prompt, details = null, onDismiss }: RosterOb
     }
 
     const message = prompt.remoteId
-        ? __("This observation is linked to an existing roster entry. Review and save to continue embedding processing.", "context-alt-text")
-        : __("Create or update the roster entry to kick off embedding generation for this observation.", "context-alt-text");
+        ? __(
+              "This observation is linked to an existing roster entry. Review and save to continue embedding processing.",
+              "context-alt-text",
+          )
+        : __(
+              "Create or update the roster entry to kick off embedding generation for this observation.",
+              "context-alt-text",
+          );
 
     return (
         <aside className="cat-roster__observation-callout" role="status" aria-live="polite">
@@ -2247,7 +2297,13 @@ interface AvatarPickerProps {
     disabled: boolean;
 }
 
-const AvatarPicker = ({ avatarUrl, avatarId, fallbackLabel, onChange, disabled }: AvatarPickerProps): React.JSX.Element => {
+const AvatarPicker = ({
+    avatarUrl,
+    avatarId,
+    fallbackLabel,
+    onChange,
+    disabled,
+}: AvatarPickerProps): React.JSX.Element => {
     const frameRef = React.useRef<MediaFrame | null>(null);
 
     const openMediaModal = React.useCallback(() => {
@@ -2278,14 +2334,14 @@ const AvatarPicker = ({ avatarUrl, avatarId, fallbackLabel, onChange, disabled }
         }
 
         const onSelect = () => {
-            const selection = frame.state()?.get("selection") as {
-                first?: () => { toJSON?: () => Record<string, unknown> };
-            } | undefined;
+            const selection = frame.state()?.get("selection") as
+                | {
+                      first?: () => { toJSON?: () => Record<string, unknown> };
+                  }
+                | undefined;
 
             const selected = selection?.first?.();
-            const attachment = selected && typeof selected.toJSON === "function"
-                ? selected.toJSON()
-                : selected;
+            const attachment = selected && typeof selected.toJSON === "function" ? selected.toJSON() : selected;
 
             if (!isRecord(attachment)) {
                 return;
@@ -2317,22 +2373,17 @@ const AvatarPicker = ({ avatarUrl, avatarId, fallbackLabel, onChange, disabled }
             };
 
             const resolvedUrl =
-                getSizeUrl((attachment as { sizes?: unknown }).sizes)
-                ?? getString((attachment as { url?: unknown }).url)
-                ?? getString((attachment as { source_url?: unknown }).source_url);
+                getSizeUrl((attachment as { sizes?: unknown }).sizes) ??
+                getString((attachment as { url?: unknown }).url) ??
+                getString((attachment as { source_url?: unknown }).source_url);
 
             const rawId = (attachment as { id?: unknown }).id;
-            const parsedId = typeof rawId === "number"
-                ? rawId
-                : typeof rawId === "string"
-                    ? Number(rawId)
-                    : NaN;
+            const parsedId = typeof rawId === "number" ? rawId : typeof rawId === "string" ? Number(rawId) : NaN;
 
             if (!resolvedUrl) {
-                notifyError(
-                    __("Selected image is missing a URL.", "context-alt-text"),
-                    { id: "cat-roster-media-missing-url" },
-                );
+                notifyError(__("Selected image is missing a URL.", "context-alt-text"), {
+                    id: "cat-roster-media-missing-url",
+                });
                 return;
             }
 
@@ -2371,7 +2422,10 @@ const AvatarPicker = ({ avatarUrl, avatarId, fallbackLabel, onChange, disabled }
                         className="cat-roster__avatar cat-roster__avatar--preview"
                     />
                 ) : (
-                    <span className="cat-roster__avatar cat-roster__avatar--placeholder cat-roster__avatar--preview" aria-hidden>
+                    <span
+                        className="cat-roster__avatar cat-roster__avatar--placeholder cat-roster__avatar--preview"
+                        aria-hidden
+                    >
                         {fallbackInitial}
                     </span>
                 )}
@@ -2382,9 +2436,7 @@ const AvatarPicker = ({ avatarUrl, avatarId, fallbackLabel, onChange, disabled }
                         onClick={openMediaModal}
                         disabled={disabled}
                     >
-                        {avatarUrl
-                            ? __("Replace image", "context-alt-text")
-                            : __("Select image", "context-alt-text")}
+                        {avatarUrl ? __("Replace image", "context-alt-text") : __("Select image", "context-alt-text")}
                     </button>
                     {avatarUrl && (
                         <button
@@ -2416,8 +2468,8 @@ const StatusBadge = ({ status }: StatusBadgeProps): React.JSX.Element => (
         {status === "SYNCED"
             ? __("Synced", "context-alt-text")
             : status === "CONFLICT"
-                ? __("Conflict", "context-alt-text")
-                : __("Local", "context-alt-text")}
+              ? __("Conflict", "context-alt-text")
+              : __("Local", "context-alt-text")}
     </span>
 );
 
@@ -2459,11 +2511,7 @@ const RosterPagination = ({
                     {__("Previous", "context-alt-text")}
                 </button>
                 <span>
-                    {sprintf(
-                        __("Page %1$d of %2$d", "context-alt-text"),
-                        page,
-                        totalPages === 0 ? 1 : totalPages,
-                    )}
+                    {sprintf(__("Page %1$d of %2$d", "context-alt-text"), page, totalPages === 0 ? 1 : totalPages)}
                 </span>
                 <button
                     type="button"
@@ -2475,9 +2523,7 @@ const RosterPagination = ({
                 </button>
             </div>
             <div className="cat-roster__pagination-meta">
-                <label htmlFor="cat-roster-per-page">
-                    {__("Rows per page", "context-alt-text")}
-                </label>
+                <label htmlFor="cat-roster-per-page">{__("Rows per page", "context-alt-text")}</label>
                 <select
                     id="cat-roster-per-page"
                     value={perPage}
@@ -2490,12 +2536,7 @@ const RosterPagination = ({
                         </option>
                     ))}
                 </select>
-                <span>
-                    {sprintf(
-                        _n("%d entry", "%d entries", total, "context-alt-text"),
-                        total,
-                    )}
-                </span>
+                <span>{sprintf(_n("%d entry", "%d entries", total, "context-alt-text"), total)}</span>
             </div>
         </div>
     );

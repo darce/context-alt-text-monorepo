@@ -83,11 +83,7 @@ const createElement = (
     return React.createElement(type, props);
 };
 
-const jsx = (
-    type: ElementType,
-    config: Record<string, unknown> | null,
-    maybeKey?: string,
-): ReactElement => {
+const jsx = (type: ElementType, config: Record<string, unknown> | null, maybeKey?: string): ReactElement => {
     return createElement(type, config ?? undefined, maybeKey);
 };
 

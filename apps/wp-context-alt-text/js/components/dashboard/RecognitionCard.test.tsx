@@ -17,10 +17,7 @@ describe("RecognitionCard", () => {
             last_roster_sync_at: "2024-03-17T00:00:00.000Z",
         };
 
-        const { container } = renderDashboard(
-            <RecognitionCard data={data} rosterEnabled />,
-            { withRouter: true },
-        );
+        const { container } = renderDashboard(<RecognitionCard data={data} rosterEnabled />, { withRouter: true });
 
         const warnings = container.querySelectorAll(".cat-text-warning");
         expect(warnings).toHaveLength(5);
@@ -39,10 +36,9 @@ describe("RecognitionCard", () => {
             last_roster_sync_at: null,
         };
 
-        const { container, getAllByText } = renderDashboard(
-            <RecognitionCard data={data} rosterEnabled />,
-            { withRouter: true },
-        );
+        const { container, getAllByText } = renderDashboard(<RecognitionCard data={data} rosterEnabled />, {
+            withRouter: true,
+        });
 
         expect(getAllByText("0")).toHaveLength(5);
         expect(container.querySelectorAll(".cat-text-warning")).toHaveLength(0);
@@ -61,10 +57,9 @@ describe("RecognitionCard", () => {
             last_roster_sync_at: "2024-03-17T00:05:00.000Z",
         };
 
-        const { container, getByRole } = renderDashboard(
-            <RecognitionCard data={data} rosterEnabled />,
-            { withRouter: true },
-        );
+        const { container, getByRole } = renderDashboard(<RecognitionCard data={data} rosterEnabled />, {
+            withRouter: true,
+        });
 
         expect(getByRole("link", { name: /review roster/i })).toBeInTheDocument();
 

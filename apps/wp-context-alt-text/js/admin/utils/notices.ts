@@ -12,13 +12,15 @@ const getNoticeDispatch = (): NoticesDispatch | null => {
         return null;
     }
 
-    const wpGlobal = (window as typeof window & {
-        wp?: {
-            data?: {
-                dispatch?: (store: string) => unknown;
+    const wpGlobal = (
+        window as typeof window & {
+            wp?: {
+                data?: {
+                    dispatch?: (store: string) => unknown;
+                };
             };
-        };
-    }).wp;
+        }
+    ).wp;
 
     if (!wpGlobal?.data || typeof wpGlobal.data.dispatch !== "function") {
         return null;
@@ -30,7 +32,6 @@ const getNoticeDispatch = (): NoticesDispatch | null => {
             return store as NoticesDispatch;
         }
     } catch (error) {
-         
         console.warn("Failed to access WordPress notices store", error);
     }
 

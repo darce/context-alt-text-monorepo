@@ -24,10 +24,7 @@ describe("ActionFooter", () => {
         expect(secondAction).toBeDefined();
 
         expect(getByRole("link", { name: /Run scan again/i })).toHaveAttribute("href", firstAction!.url);
-        expect(getByRole("link", { name: /Open Alt-Text Workbench/i })).toHaveAttribute(
-            "href",
-            secondAction!.url,
-        );
+        expect(getByRole("link", { name: /Open Alt-Text Workbench/i })).toHaveAttribute("href", secondAction!.url);
         expect(getByText(data.statusText)).toBeInTheDocument();
     });
 

@@ -32,8 +32,20 @@ const meta: Meta<typeof App> = {
                     missing: 30,
                     coverage_percent: 75,
                     trend_series: [
-                        { timestamp: Date.now() - 3600 * 1000 * 3, coverage: 40, total: 120, with_alt: 48, missing: 72 },
-                        { timestamp: Date.now() - 3600 * 1000 * 2, coverage: 55, total: 120, with_alt: 66, missing: 54 },
+                        {
+                            timestamp: Date.now() - 3600 * 1000 * 3,
+                            coverage: 40,
+                            total: 120,
+                            with_alt: 48,
+                            missing: 72,
+                        },
+                        {
+                            timestamp: Date.now() - 3600 * 1000 * 2,
+                            coverage: 55,
+                            total: 120,
+                            with_alt: 66,
+                            missing: 54,
+                        },
                         { timestamp: Date.now() - 3600 * 1000, coverage: 65, total: 120, with_alt: 78, missing: 42 },
                         { timestamp: Date.now(), coverage: 75, total: 120, with_alt: 90, missing: 30 },
                     ],
@@ -92,15 +104,17 @@ export const CustomTheme: Story = {
     decorators: [
         (Story) => (
             <div
-                style={{
-                    '--cat-accent': '#9333ea',
-                    '--cat-accent-soft': 'rgba(147, 51, 234, 0.12)',
-                    '--cat-background': '#0f172a',
-                    '--cat-surface': '#111c32',
-                    '--cat-text': '#f8fafc',
-                    '--cat-border': 'rgba(148, 163, 184, 0.3)',
-                    '--cat-muted': '#94a3b8',
-                } as CSSProperties}
+                style={
+                    {
+                        "--cat-accent": "#9333ea",
+                        "--cat-accent-soft": "rgba(147, 51, 234, 0.12)",
+                        "--cat-background": "#0f172a",
+                        "--cat-surface": "#111c32",
+                        "--cat-text": "#f8fafc",
+                        "--cat-border": "rgba(148, 163, 184, 0.3)",
+                        "--cat-muted": "#94a3b8",
+                    } as CSSProperties
+                }
             >
                 <Story />
             </div>

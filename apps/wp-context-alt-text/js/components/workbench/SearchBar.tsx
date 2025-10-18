@@ -87,7 +87,12 @@ export const SearchBar = ({
                     aria-describedby={describedByIds.length > 0 ? describedByIds.join(" ") : undefined}
                 />
                 {isLoading && (
-                    <span className="cat-search-bar__spinner" role="status" aria-live="polite" aria-label={spinnerLabel} />
+                    <span
+                        className="cat-search-bar__spinner"
+                        role="status"
+                        aria-live="polite"
+                        aria-label={spinnerLabel}
+                    />
                 )}
                 {hasValue && !isLoading && (
                     <button

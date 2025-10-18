@@ -106,11 +106,7 @@ describe("CoverageCard", () => {
         };
 
         const { container } = renderDashboard(
-            <CoverageCard
-                data={data}
-                featureFlags={{ coverageTrend: false }}
-                queryState={successQueryState}
-            />,
+            <CoverageCard data={data} featureFlags={{ coverageTrend: false }} queryState={successQueryState} />,
         );
 
         expect(container.querySelector(".cat-sparkline")).toBeNull();
@@ -259,12 +255,7 @@ describe("CoverageCard", () => {
         };
 
         const { getByRole, user } = renderDashboard(
-            <CoverageCard
-                data={data}
-                featureFlags={baseFlags}
-                queryState={successQueryState}
-                onExport={onExport}
-            />,
+            <CoverageCard data={data} featureFlags={baseFlags} queryState={successQueryState} onExport={onExport} />,
         );
 
         const exportButton = getByRole("button", { name: /Export coverage/i });

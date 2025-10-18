@@ -1,12 +1,10 @@
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 
-import {
-    RecognitionRequestError,
-    useRecognitionJob,
-} from "@/admin/hooks/useRecognitionJob";
+import { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
+import { RecognitionRequestError } from "@/admin/hooks/useRecognitionJob.types";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 import { setAdminBootstrap } from "@/admin/globals";
 
@@ -19,7 +17,9 @@ const wait = async (ms: number) => {
     });
 };
 
-const createWrapper = () => ({ children }: { children: ReactNode }) => <>{children}</>;
+const createWrapper =
+    () =>
+    ({ children }: { children: ReactNode }) => <>{children}</>;
 
 describe("useRecognitionJob", () => {
     beforeEach(() => {
@@ -153,10 +153,13 @@ describe("useRecognitionJob", () => {
 
         await wait(TEST_POLL_INTERVAL_MS * 2);
 
-        await waitFor(() => {
-            expect(jobCallCount).toBeGreaterThan(1);
-            expect(result.current.jobDetails?.status).toBe("complete");
-        }, { timeout: 2000 });
+        await waitFor(
+            () => {
+                expect(jobCallCount).toBeGreaterThan(1);
+                expect(result.current.jobDetails?.status).toBe("complete");
+            },
+            { timeout: 2000 },
+        );
 
         expect(result.current.isPolling).toBe(false);
 

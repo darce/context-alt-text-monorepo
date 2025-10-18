@@ -478,8 +478,12 @@ describe("RosterRoute", () => {
 
         renderRosterRoute(bootstrap, config);
 
-        const select = await screen.findByLabelText(/Select roster entry/i);
-        await user.selectOptions(select, "remote-1");
+        // Open the Radix Select dropdown by clicking the trigger
+        const selectTrigger = await screen.findByLabelText(/Select roster entry/i);
+        await user.click(selectTrigger);
+
+        // Select "Alice Example" from the dropdown options
+        await user.click(await screen.findByText("Alice Example (Person)"));
 
         await user.click(screen.getByRole("button", { name: /Assign existing entry/i }));
 
@@ -521,6 +525,13 @@ describe("RosterRoute", () => {
         // Match confidence is not shown when there are no candidates or roster matches
         expect(screen.queryByText(/match confidence/i)).not.toBeInTheDocument();
 
+        // Dismiss the dialog to access the editor
+        await user.click(screen.getByRole("button", { name: /dismiss prompt/i }));
+
+        // Wait for dialog to close
+        await waitFor(() => expect(screen.queryByText(/observation requires roster review/i)).not.toBeInTheDocument());
+
+        // Now click Save in the editor
         await user.click(screen.getByRole("button", { name: /Save/i }));
 
         await waitFor(() => expect(createEntryMock).toHaveBeenCalledTimes(1));

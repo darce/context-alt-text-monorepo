@@ -1,4 +1,4 @@
-import type { ReactNode } from "react";
+import React, { type ReactNode } from "react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { act, renderHook, waitFor } from "@testing-library/react";
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
@@ -46,7 +46,7 @@ describe("useCoverageMetrics", () => {
     });
 
     it("fetches coverage metrics and merges them with the bootstrap data", async () => {
-        const endpoint = "http://localhost/wp-json/cat/v1/dashboard/coverage";
+        const endpoint = "http://example.test/wp-json/cat/v1/dashboard/coverage";
         setAdminBootstrap({
             config: {
                 endpoints: { coverage: endpoint },
@@ -92,7 +92,7 @@ describe("useCoverageMetrics", () => {
         expect(fetchSpy).toHaveBeenCalled();
         const [requestUrl, requestInit] = fetchSpy.mock.calls[0] ?? [];
         expect(requestUrl).toBe(endpoint);
-        const headers = new Headers((requestInit)?.headers);
+        const headers = new Headers(requestInit?.headers);
         expect(headers.get("accept")).toBe("application/json");
         expect(headers.get("x-wp-nonce")).toBe("nonce-value");
         expect(capturedNonce).toBe("nonce-value");
@@ -107,7 +107,7 @@ describe("useCoverageMetrics", () => {
     });
 
     it("surfaces errors while keeping the bootstrap metrics available", async () => {
-        const endpoint = "http://localhost/wp-json/cat/v1/dashboard/coverage";
+        const endpoint = "http://example.test/wp-json/cat/v1/dashboard/coverage";
         setAdminBootstrap({
             config: {
                 endpoints: { coverage: endpoint },

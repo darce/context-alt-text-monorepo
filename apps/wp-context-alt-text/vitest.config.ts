@@ -3,15 +3,15 @@ import react from "@vitejs/plugin-react";
 import path from "path";
 
 export default defineConfig({
-  plugins: [react()],
-  resolve: {
-    alias: {
-      "@": path.resolve(__dirname, "js"),
+    plugins: [react()],
+    resolve: {
+        alias: {
+            "@": path.resolve(__dirname, "js"),
+        },
     },
-  },
-  test: {
-    globals: true,
-    environment: "jsdom",
-    setupFiles: "./js/admin/test.setup.ts",
-  },
+    test: {
+        globals: true,
+        environment: "jsdom",
+        setupFiles: "./js/admin/test.setup.ts",
+    },
 });

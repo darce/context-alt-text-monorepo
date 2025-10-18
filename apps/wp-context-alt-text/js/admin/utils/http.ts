@@ -28,7 +28,9 @@ export const ensureOk = async (response: Response): Promise<Response> => {
     if (!response.ok) {
         const data = await handleJsonResponse(response);
         const message =
-            typeof data === "object" && data !== null && "message" in data &&
+            typeof data === "object" &&
+            data !== null &&
+            "message" in data &&
             typeof (data as { message: unknown }).message === "string"
                 ? String((data as { message: string }).message)
                 : `Request failed with status ${response.status}`;
@@ -71,10 +73,7 @@ export const buildApiUrl = (
  * @param includeJson - Whether to include 'Content-Type: application/json'
  * @returns Headers object
  */
-export const buildHeaders = (
-    restNonce?: string,
-    includeJson = false,
-): HeadersInit => {
+export const buildHeaders = (restNonce?: string, includeJson = false): HeadersInit => {
     const headers: HeadersInit = {};
 
     if (restNonce) {
@@ -110,16 +109,8 @@ export interface FetchApiOptions {
  * @returns Parsed JSON response
  * @throws Error with response data if request fails
  */
-export const fetchApi = async <T = unknown>(
-    endpoint: string,
-    options: FetchApiOptions = {},
-): Promise<T> => {
-    const {
-        method = "GET",
-        params,
-        body,
-        restNonce,
-    } = options;
+export const fetchApi = async <T = unknown>(endpoint: string, options: FetchApiOptions = {}): Promise<T> => {
+    const { method = "GET", params, body, restNonce } = options;
 
     const url = buildApiUrl(endpoint, params);
     const hasBody = body !== undefined && method !== "GET";
@@ -139,4 +130,3 @@ export const fetchApi = async <T = unknown>(
 
     return handleJsonResponse(response) as Promise<T>;
 };
-

@@ -6,15 +6,7 @@ import { PaginationControls } from "./PaginationControls";
 
 describe("PaginationControls", () => {
     it("disables navigation when only a single page is available", () => {
-        render(
-            <PaginationControls
-                page={1}
-                perPage={20}
-                total={12}
-                totalPages={1}
-                onPageChange={vi.fn()}
-            />,
-        );
+        render(<PaginationControls page={1} perPage={20} total={12} totalPages={1} onPageChange={vi.fn()} />);
 
         expect(screen.getByText(/Showing 1-12 of 12/i)).toBeInTheDocument();
         expect(screen.getByRole("button", { name: /Previous/i })).toBeDisabled();
@@ -60,15 +52,7 @@ describe("PaginationControls", () => {
         const onPageChange = vi.fn();
         const user = userEvent.setup();
 
-        render(
-            <PaginationControls
-                page={1}
-                perPage={25}
-                total={50}
-                totalPages={2}
-                onPageChange={onPageChange}
-            />,
-        );
+        render(<PaginationControls page={1} perPage={25} total={50} totalPages={2} onPageChange={onPageChange} />);
 
         const input = screen.getByLabelText(/Jump to page/i);
 

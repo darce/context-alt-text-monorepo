@@ -283,13 +283,17 @@ export interface GlobalPayload {
     data?: {
         summary?: Record<string, unknown>;
         dashboard?: Partial<DashboardData>;
-        workbench?: Partial<WorkbenchData & {
-            items?: Partial<WorkbenchMediaItem>[];
-            pagination?: Partial<WorkbenchPagination>;
-        }>;
-        roster?: Partial<RosterData & {
-            entries?: Partial<RosterEntry>[];
-        }>;
+        workbench?: Partial<
+            WorkbenchData & {
+                items?: Partial<WorkbenchMediaItem>[];
+                pagination?: Partial<WorkbenchPagination>;
+            }
+        >;
+        roster?: Partial<
+            RosterData & {
+                entries?: Partial<RosterEntry>[];
+            }
+        >;
         settings?: Partial<SettingsData>;
     };
     page?: AdminRouteKey;

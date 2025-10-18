@@ -51,15 +51,14 @@ export const WorkbenchApp = ({
             return;
         }
 
-        const message = recognition.error.message && recognition.error.message.trim() !== ""
-            ? recognition.error.message
-            : __("Recognition request failed. Review the log for more details.", "context-alt-text");
+        const message =
+            recognition.error.message && recognition.error.message.trim() !== ""
+                ? recognition.error.message
+                : __("Recognition request failed. Review the log for more details.", "context-alt-text");
 
-        const signature = [
-            recognition.error.status ?? "unknown",
-            message,
-            recognition.error.rejected.join(","),
-        ].join("|");
+        const signature = [recognition.error.status ?? "unknown", message, recognition.error.rejected.join(",")].join(
+            "|",
+        );
 
         if (requestErrorNoticeRef.current !== signature) {
             requestErrorNoticeRef.current = signature;
@@ -86,9 +85,10 @@ export const WorkbenchApp = ({
             return;
         }
 
-        const message = jobDetails?.error && jobDetails.error.trim() !== ""
-            ? jobDetails.error
-            : __("Recognition job failed. Review the log for more details.", "context-alt-text");
+        const message =
+            jobDetails?.error && jobDetails.error.trim() !== ""
+                ? jobDetails.error
+                : __("Recognition job failed. Review the log for more details.", "context-alt-text");
 
         const jobId = jobDetails?.id ?? recognition.lastJob?.jobId ?? null;
         const signature = [jobId ?? "unknown", message].join("|");
@@ -108,7 +108,14 @@ export const WorkbenchApp = ({
                 rejected: jobDetails?.rejected ?? [],
             });
         }
-    }, [jobDetails?.status, jobDetails?.error, jobDetails?.id, jobDetails?.attachments, jobDetails?.rejected, recognition.lastJob?.jobId]);
+    }, [
+        jobDetails?.status,
+        jobDetails?.error,
+        jobDetails?.id,
+        jobDetails?.attachments,
+        jobDetails?.rejected,
+        recognition.lastJob?.jobId,
+    ]);
 
     React.useEffect(() => {
         if (!jobDetails || jobDetails.status !== "complete") {
@@ -134,9 +141,10 @@ export const WorkbenchApp = ({
             { total: 0, matched: 0, needsReview: 0 },
         );
 
-        const durationSeconds = jobDetails.startedAt && jobDetails.completedAt
-            ? Math.max(0, jobDetails.completedAt - jobDetails.startedAt)
-            : null;
+        const durationSeconds =
+            jobDetails.startedAt && jobDetails.completedAt
+                ? Math.max(0, jobDetails.completedAt - jobDetails.startedAt)
+                : null;
 
         emitDashboardEvent("cat_workbench_recognition_completed", {
             jobId,
@@ -232,10 +240,7 @@ export const WorkbenchApp = ({
     }, [recognition]);
 
     return (
-        <div
-            className="cat-workbench"
-            aria-label={__("Alt-Text Workbench", "context-alt-text")}
-        >
+        <div className="cat-workbench" aria-label={__("Alt-Text Workbench", "context-alt-text")}>
             <SelectionToolbar
                 selectionCount={selectedIds.size}
                 onGenerate={handleGenerateAltText}

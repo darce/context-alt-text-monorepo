@@ -30,12 +30,7 @@ describe("MediaPreview", () => {
     });
 
     it("surfaces metadata for the first selected item", () => {
-        render(
-            <MediaPreview
-                selectedIds={new Set(["1"])}
-                items={[{ ...baseItem, altText: "A scenic landscape" }]}
-            />,
-        );
+        render(<MediaPreview selectedIds={new Set(["1"])} items={[{ ...baseItem, altText: "A scenic landscape" }]} />);
 
         expect(screen.getByRole("heading", { name: /Sample asset/i })).toBeInTheDocument();
         expect(screen.getByText(/Needs alt text/i)).toBeInTheDocument();
@@ -66,8 +61,6 @@ describe("MediaPreview", () => {
         expect(screen.getByRole("heading", { name: /Thumbnail absent/i })).toBeInTheDocument();
         const fallbacks = screen.getAllByText(/Unknown/i);
         expect(fallbacks).toHaveLength(2);
-        expect(
-            screen.getByText(/Not provided yet\./i),
-        ).toBeInTheDocument();
+        expect(screen.getByText(/Not provided yet\./i)).toBeInTheDocument();
     });
 });

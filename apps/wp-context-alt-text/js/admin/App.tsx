@@ -103,15 +103,12 @@ const AdminRouter = ({ initialRoute, dashboard, workbench, roster, config }: Adm
         initialRoute === "workbench" && workbenchEnabled
             ? "/workbench"
             : initialRoute === "roster" && rosterEnabled
-                ? "/roster"
-                : "/dashboard";
+              ? "/roster"
+              : "/dashboard";
 
     return (
         <MemoryRouter initialEntries={[initialPath]}>
-            <nav
-                className="cat-admin-nav"
-                aria-label={__("Context Alt Text navigation", "context-alt-text")}
-            >
+            <nav className="cat-admin-nav" aria-label={__("Context Alt Text navigation", "context-alt-text")}>
                 <Link to="/dashboard" data-nav-link>
                     {__("Dashboard", "context-alt-text")}
                 </Link>
@@ -201,15 +198,13 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
 
         if (Array.isArray(coverage.trend_series) && coverage.trend_series.length > 0) {
             rows.push([]);
-            rows.push(
-                [
-                    __("Timestamp", "context-alt-text"),
-                    __("Coverage percent", "context-alt-text"),
-                    __("Total items", "context-alt-text"),
-                    __("With alt text", "context-alt-text"),
-                    __("Missing alt text", "context-alt-text"),
-                ],
-            );
+            rows.push([
+                __("Timestamp", "context-alt-text"),
+                __("Coverage percent", "context-alt-text"),
+                __("Total items", "context-alt-text"),
+                __("With alt text", "context-alt-text"),
+                __("Missing alt text", "context-alt-text"),
+            ]);
 
             for (const point of coverage.trend_series) {
                 rows.push([
@@ -234,9 +229,7 @@ const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): React.JSX.E
             return cell;
         };
 
-        const csvContent = rows
-            .map((row) => row.map((cell) => escapeCell(cell)).join(","))
-            .join("\r\n");
+        const csvContent = rows.map((row) => row.map((cell) => escapeCell(cell)).join(",")).join("\r\n");
 
         if (typeof window.URL?.createObjectURL !== "function" || !document.body) {
             return;
@@ -305,37 +298,23 @@ const BULK_ACTION_NOTICE_MAP: Record<string, BulkNoticeBuilder> = {
     generate: {
         status: "info",
         buildMessage: (count) =>
-            sprintf(
-                __("Preparing to generate alt text for %s.", "context-alt-text"),
-                formatSelectionCount(count),
-            ),
+            sprintf(__("Preparing to generate alt text for %s.", "context-alt-text"), formatSelectionCount(count)),
     },
     regenerate: {
         status: "info",
         buildMessage: (count) =>
-            sprintf(
-                __("Regenerating alt text for %s.", "context-alt-text"),
-                formatSelectionCount(count),
-            ),
+            sprintf(__("Regenerating alt text for %s.", "context-alt-text"), formatSelectionCount(count)),
     },
     mark_reviewed: {
         status: "success",
-        buildMessage: (count) =>
-            sprintf(
-                __("Marked %s as reviewed.", "context-alt-text"),
-                formatSelectionCount(count),
-            ),
+        buildMessage: (count) => sprintf(__("Marked %s as reviewed.", "context-alt-text"), formatSelectionCount(count)),
     },
 };
 
 const DEFAULT_BULK_NOTICE: BulkNoticeBuilder = {
     status: "info",
     buildMessage: (count, action) =>
-        sprintf(
-            __("Bulk action \"%1$s\" queued for %2$s.", "context-alt-text"),
-            action,
-            formatSelectionCount(count),
-        ),
+        sprintf(__('Bulk action "%1$s" queued for %2$s.', "context-alt-text"), action, formatSelectionCount(count)),
 };
 
 const WorkbenchRoute = ({ bootstrap }: WorkbenchRouteProps): React.JSX.Element => {
@@ -415,26 +394,29 @@ const WorkbenchRoute = ({ bootstrap }: WorkbenchRouteProps): React.JSX.Element =
         });
     }, [bootstrap.pagination?.page, bootstrap.viewMode, perPage, filters]);
 
-    const handleBulkAction = React.useCallback((action: string, ids: string[]) => {
-        if (ids.length === 0) {
-            return;
-        }
+    const handleBulkAction = React.useCallback(
+        (action: string, ids: string[]) => {
+            if (ids.length === 0) {
+                return;
+            }
 
-        emitDashboardEvent("cat_workbench_bulk_action", {
-            action,
-            selection: ids,
-            count: ids.length,
-            filters,
-        });
+            emitDashboardEvent("cat_workbench_bulk_action", {
+                action,
+                selection: ids,
+                count: ids.length,
+                filters,
+            });
 
-        const config = BULK_ACTION_NOTICE_MAP[action] ?? DEFAULT_BULK_NOTICE;
-        const message = config.buildMessage(ids.length, action);
+            const config = BULK_ACTION_NOTICE_MAP[action] ?? DEFAULT_BULK_NOTICE;
+            const message = config.buildMessage(ids.length, action);
 
-        dispatchNotice(config.status, message, {
-            id: `workbench-bulk-${action}`,
-            spokenMessage: message,
-        });
-    }, [filters]);
+            dispatchNotice(config.status, message, {
+                id: `workbench-bulk-${action}`,
+                spokenMessage: message,
+            });
+        },
+        [filters],
+    );
 
     const hasShownErrorNotice = React.useRef(false);
     React.useEffect(() => {
@@ -487,10 +469,7 @@ const WorkbenchRoute = ({ bootstrap }: WorkbenchRouteProps): React.JSX.Element =
     const searchStatusMessage = React.useMemo(() => {
         if (isMediaLoading && hasWorkbenchEndpoint) {
             return activeSearch
-                ? sprintf(
-                    __("Searching for \"%s\"…", "context-alt-text"),
-                    activeSearch,
-                )
+                ? sprintf(__('Searching for "%s"…', "context-alt-text"), activeSearch)
                 : __("Updating media results…", "context-alt-text");
         }
 
@@ -500,32 +479,19 @@ const WorkbenchRoute = ({ bootstrap }: WorkbenchRouteProps): React.JSX.Element =
 
         if (totalCount === 0) {
             return activeSearch
-                ? sprintf(
-                    __("No media found for \"%s\".", "context-alt-text"),
-                    activeSearch,
-                )
+                ? sprintf(__('No media found for "%s".', "context-alt-text"), activeSearch)
                 : __("No media items match the current filters.", "context-alt-text");
         }
 
         if (activeSearch) {
             return sprintf(
-                _n(
-                    "Showing %d search result.",
-                    "Showing %d search results.",
-                    totalCount,
-                    "context-alt-text",
-                ),
+                _n("Showing %d search result.", "Showing %d search results.", totalCount, "context-alt-text"),
                 totalCount,
             );
         }
 
         return sprintf(
-            _n(
-                "Showing %d media item.",
-                "Showing %d media items.",
-                totalCount,
-                "context-alt-text",
-            ),
+            _n("Showing %d media item.", "Showing %d media items.", totalCount, "context-alt-text"),
             totalCount,
         );
     }, [activeSearch, hasWorkbenchEndpoint, isMediaLoading, mediaQuery.isError, totalCount]);

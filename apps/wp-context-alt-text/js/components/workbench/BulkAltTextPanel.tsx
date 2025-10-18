@@ -20,10 +20,7 @@ export const BulkAltTextPanel = ({
     const hasSelection = selectionCount > 0;
 
     return (
-        <section
-            className="cat-workbench__panel"
-            aria-label={__("Bulk alt text authoring", "context-alt-text")}
-        >
+        <section className="cat-workbench__panel" aria-label={__("Bulk alt text authoring", "context-alt-text")}>
             <header>
                 <h2>{__("Bulk Alt Text", "context-alt-text")}</h2>
                 <p>
@@ -51,14 +48,8 @@ export const BulkAltTextPanel = ({
                     className="cat-workbench__textarea"
                     placeholder={
                         enableGeneration
-                            ? __(
-                                "Draft alt text will appear here once hooked up to the API.",
-                                "context-alt-text",
-                            )
-                            : __(
-                                "Enable the Workbench AI feature flag to unlock draft generation.",
-                                "context-alt-text",
-                            )
+                            ? __("Draft alt text will appear here once hooked up to the API.", "context-alt-text")
+                            : __("Enable the Workbench AI feature flag to unlock draft generation.", "context-alt-text")
                     }
                     rows={6}
                     disabled

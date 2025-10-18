@@ -49,7 +49,7 @@ wp-config.php
 
 docs/literature
 .DS_Store
-.vscode/
+.vscode/settings.json
 .env
 .env.*
 node_modules/

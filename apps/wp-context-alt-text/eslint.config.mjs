@@ -34,7 +34,38 @@ export default tseslint.config(
         rules: {
             'func-style': ['error', 'expression', { allowArrowFunctions: true }],
             'react-hooks/rules-of-hooks': 'error',
-            'react-hooks/exhaustive-deps': 'warn'
+            'react-hooks/exhaustive-deps': 'warn',
+            
+            // Architecture enforcement: file size limits
+            'max-lines': [
+                'warn',
+                {
+                    max: 300,
+                    skipBlankLines: true,
+                    skipComments: true
+                }
+            ],
+            
+            // Architecture enforcement: prevent native HTML elements (use Radix UI)
+            'no-restricted-syntax': [
+                'error',
+                {
+                    selector: 'JSXElement[openingElement.name.name="select"]',
+                    message: 'Use @radix-ui/react-select instead of native <select>. See docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md'
+                },
+                {
+                    selector: 'JSXElement[openingElement.name.name="dialog"]',
+                    message: 'Use @radix-ui/react-dialog instead of native <dialog>. See docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md'
+                },
+                {
+                    selector: 'JSXElement[openingElement.name.name="input"][openingElement.attributes[0].name.name="type"][openingElement.attributes[0].value.value="checkbox"]',
+                    message: 'Use @radix-ui/react-checkbox instead of native checkbox input. See docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md'
+                },
+                {
+                    selector: 'JSXElement[openingElement.name.name="input"][openingElement.attributes[0].name.name="type"][openingElement.attributes[0].value.value="radio"]',
+                    message: 'Use @radix-ui/react-radio-group instead of native radio input. See docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md'
+                }
+            ]
         }
     },
     {

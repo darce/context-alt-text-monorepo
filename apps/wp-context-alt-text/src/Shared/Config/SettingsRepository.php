@@ -4,21 +4,15 @@ declare(strict_types=1);
 
 namespace ContextAltText\Shared\Config;
 
+use ContextAltText\Shared\Utils\ValidationHelpers;
+
 use function array_key_exists;
 use function array_replace_recursive;
-use function filter_var;
 use function get_option;
 use function is_array;
-use function is_bool;
-use function is_numeric;
 use function is_string;
-use function rtrim;
 use function trim;
 use function update_option;
-
-use const FILTER_VALIDATE_BOOLEAN;
-use const FILTER_VALIDATE_URL;
-use const FILTER_NULL_ON_FAILURE;
 
 /**
  * Central store for persisted plugin settings.
@@ -146,7 +140,7 @@ class SettingsRepository
 
         // Ensure numeric timeout and boolean flags.
         $merged['recognition']['timeoutMs'] = $this->sanitizeTimeout($merged['recognition']['timeoutMs']);
-        $merged['recognition']['enabled'] = $this->sanitizeBool($merged['recognition']['enabled']);
+        $merged['recognition']['enabled'] = ValidationHelpers::sanitizeBool($merged['recognition']['enabled']);
         $merged['featureFlags']['recognitionEnabled'] = $merged['recognition']['enabled'];
 
         foreach (['baseUrl', 'apiKey', 'modelProfile'] as $key) {
@@ -154,9 +148,8 @@ class SettingsRepository
             $merged['recognition'][$key] = is_string($value) ? trim($value) : '';
         }
 
-        if ($merged['recognition']['baseUrl'] !== '' && filter_var($merged['recognition']['baseUrl'], FILTER_VALIDATE_URL) === false) {
-            $merged['recognition']['baseUrl'] = '';
-        }
+        // Validate and sanitize base URL
+        $merged['recognition']['baseUrl'] = ValidationHelpers::sanitizeUrl($merged['recognition']['baseUrl']);
 
         return $merged;
     }
@@ -172,9 +165,7 @@ class SettingsRepository
 
         if (array_key_exists('baseUrl', $incoming)) {
             $candidate = is_string($incoming['baseUrl']) ? trim($incoming['baseUrl']) : '';
-            $next['baseUrl'] = ($candidate !== '' && filter_var($candidate, FILTER_VALIDATE_URL) !== false)
-                ? rtrim($candidate, '/')
-                : '';
+            $next['baseUrl'] = ValidationHelpers::sanitizeUrl($candidate, true);
         }
 
         if (array_key_exists('apiKey', $incoming)) {
@@ -190,7 +181,7 @@ class SettingsRepository
         }
 
         if (array_key_exists('enabled', $incoming)) {
-            $next['enabled'] = $this->sanitizeBool($incoming['enabled']);
+            $next['enabled'] = ValidationHelpers::sanitizeBool($incoming['enabled']);
         }
 
         return $next;
@@ -211,34 +202,6 @@ class SettingsRepository
             $timeout = self::DEFAULT_TIMEOUT_MS;
         }
 
-        if ($timeout < 1000) {
-            $timeout = 1000;
-        }
-
-        if ($timeout > 120000) {
-            $timeout = 120000;
-        }
-
-        return $timeout;
-    }
-
-    /**
-     * @param mixed $value
-     */
-    private function sanitizeBool($value): bool
-    {
-        if (is_bool($value)) {
-            return $value;
-        }
-
-        if (is_string($value)) {
-            $value = trim($value);
-        }
-
-        if (is_numeric($value) || is_string($value)) {
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
-        }
-
-        return false;
+        return ValidationHelpers::sanitizeTimeout($timeout, 1000, 120000);
     }
 }

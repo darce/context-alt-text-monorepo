@@ -4,6 +4,7 @@ import { __, sprintf, _n } from "@wordpress/i18n";
 
 import type { WorkbenchMediaItem, WorkbenchViewMode } from "@/components/workbench/WorkbenchApp";
 import { Button } from "@/components/ui/button";
+import { Checkbox } from "@/components/ui/checkbox";
 import { formatWorkbenchDate } from "@/components/workbench/utils";
 
 const STATUS_CLASS: Record<WorkbenchMediaItem["status"], string> = {
@@ -94,10 +95,9 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                             onKeyDown={handleRowKeyDown}
                         >
                             <td className="cat-workbench__cell cat-workbench__cell--checkbox">
-                                <input
-                                    type="checkbox"
+                                <Checkbox
                                     checked={isSelected}
-                                    onChange={() => onToggleSelect(item.id)}
+                                    onCheckedChange={() => onToggleSelect(item.id)}
                                     aria-label={sprintf(
                                         /* translators: %s: media title */
                                         __("Select %s", "context-alt-text"),

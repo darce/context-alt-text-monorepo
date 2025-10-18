@@ -5,6 +5,7 @@
 **Status:** Pre-Production Greenfield Refactoring
 
 **Context Documents:**
+
 - [PHP Audit](apps/wp-context-alt-text/PHP_AUDITS.md) - Backend code analysis
 - [Frontend Audit](apps/wp-context-alt-text/FRONTEND_AUDITS.md) - JavaScript/React code analysis
 
@@ -17,6 +18,7 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 ### Two-Track Approach
 
 **Track 1: Tactical Refactoring (Phases 1-10)** - Start here
+
 - **Focus:** Code cleanup, duplication removal, test coverage, immediate wins
 - **Time:** 46-58 hours (6-8 weeks part-time)
 - **Impact:** ~1,473 lines reduced, 35-40% technical debt eliminated, +8-10% test coverage
@@ -24,6 +26,7 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 - **Risk:** Low - incremental changes
 
 **Track 2: Strategic Architecture (Phase 11)** - Plan for later
+
 - **Focus:** Design patterns, infrastructure, long-term maintainability
 - **Time:** 8+ weeks (requires careful planning)
 - **Impact:** 80% bootstrap reduction, 67% API reduction, zero circular dependencies
@@ -33,6 +36,7 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 ### What's Included
 
 **Tactical Tasks (Phases 1-10):**
+
 1. **Greenfield cleanup** - Remove 713 unnecessary lines before production ✓
 2. **Shared utilities** - Eliminate 260+ lines of duplication ✓
 3. **Hook simplification** - Fix state management with useReducer, refactor 3 complex hooks
@@ -42,6 +46,7 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 7. **Test coverage** - Increase coverage from 74.5% → 82.5%+ with utilities, contract, and edge case tests
 
 **Strategic Tasks (Phase 11):**
+
 1. **DI Container** - Reduce bootstrap from 491→100 lines
 2. **Service Providers** - Clear domain separation
 3. **Event Bus** - Eliminate circular dependencies
@@ -50,14 +55,14 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 
 ### Quick Comparison
 
-| Aspect | Tactical (Now) | Strategic (Later) |
-|--------|---------------|-------------------|
-| Time Investment | 40-50 hours | 8+ weeks |
-| When to Start | Immediately | After tactical complete |
-| Risk Level | Low | Medium |
-| Code Changes | ~1,500 lines | ~2,000+ lines |
-| Impact | Cleanup & polish | Architectural foundation |
-| Reversibility | Easy | Moderate |
+| Aspect          | Tactical (Now)   | Strategic (Later)        |
+| --------------- | ---------------- | ------------------------ |
+| Time Investment | 40-50 hours      | 8+ weeks                 |
+| When to Start   | Immediately      | After tactical complete  |
+| Risk Level      | Low              | Medium                   |
+| Code Changes    | ~1,500 lines     | ~2,000+ lines            |
+| Impact          | Cleanup & polish | Architectural foundation |
+| Reversibility   | Easy             | Moderate                 |
 
 **Recommendation:** Complete Tactical Phases 1-3 (critical path, 11 hours) first, then evaluate if strategic architecture is needed based on project trajectory.
 
@@ -69,16 +74,18 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 
 - [x] **Phase 1:** Greenfield Cleanup (1h) - 5/5 tasks complete ✓
 - [x] **Phase 2:** Frontend Utilities (3h) - 2/2 tasks complete ✓
-- [ ] **Phase 3:** Frontend Hooks (5-7h) - 0/3 tasks complete
+- [x] **Phase 3:** Frontend Hooks (5-7h) - 6/7 tasks complete ✅ (hooks compliant with new architecture)
 - [ ] **Phase 4:** PHP Utilities (3h) - 0/4 tasks complete
-- [ ] **Phase 5:** Frontend Components (4h) - 0/2 tasks complete
+- [ ] **Phase 5:** Frontend Components (12-18h) - 0/4 tasks complete ⚠️ (updated with architecture compliance)
 - [ ] **Phase 6:** Cross-Stack Alignment (6h) - 0/3 tasks complete
 - [ ] **Phase 7:** PHP Components (4h) - 0/3 tasks complete
 - [ ] **Phase 8:** Test Coverage (6-8h) - 0/6 tasks complete
 - [ ] **Phase 9:** Documentation (2h) - 0/2 tasks complete
 - [ ] **Phase 10:** Polish (10h) - 0/4 tasks complete
 
-**Total: 7/34 tactical tasks complete (21%)**
+**Total: 13/49 tactical tasks complete (27%)**
+
+**Note**: Phase 5 expanded from 2 to 4 tasks to include architecture compliance audits and component refactoring based on new [Frontend Component Architecture Rules](docs/architecture/rules/instructions.md).
 
 **Strategic Architecture (Phase 11):**
 
@@ -93,32 +100,32 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 
 ### Tactical Refactoring (Code Cleanup)
 
-| Priority | Category | Tasks | Time | Impact |
-|----------|----------|-------|------|--------|
-| 🔴 Critical | Greenfield Cleanup | 5 | 1h | Remove 713 lines ✓ |
-| 🔴 Critical | Frontend Utilities | 2 | 3h | Remove 260 lines ✓ |
-| 🔴 Critical | Frontend Hooks | 3 | 5-7h | Fix state management + Remove 340 lines |
-| 🟡 High | PHP Utilities | 4 | 3h | Remove 80 lines |
-| 🟡 High | Frontend Components | 2 | 4h | Improve structure |
-| 🟡 High | Cross-Stack Alignment | 3 | 6h | Better symmetry |
-| 🟢 Medium | PHP Components | 3 | 4h | Improve maintainability |
-| 🟢 Medium | Test Coverage | 6 | 6-8h | Confidence & quality |
-| 🟢 Medium | Documentation | 2 | 2h | Update after refactoring |
-| 🟢 Low | Polish | 4 | 10h | Optional improvements |
+| Priority    | Category              | Tasks | Time | Impact                                  |
+| ----------- | --------------------- | ----- | ---- | --------------------------------------- |
+| 🔴 Critical | Greenfield Cleanup    | 5     | 1h   | Remove 713 lines ✓                      |
+| 🔴 Critical | Frontend Utilities    | 2     | 3h   | Remove 260 lines ✓                      |
+| 🔴 Critical | Frontend Hooks        | 7     | 6-8h | Fix state management + Remove 545 lines |
+| 🟡 High     | PHP Utilities         | 4     | 3h   | Remove 80 lines                         |
+| 🟡 High     | Frontend Components   | 2     | 4h   | Improve structure                       |
+| 🟡 High     | Cross-Stack Alignment | 3     | 6h   | Better symmetry                         |
+| 🟢 Medium   | PHP Components        | 3     | 4h   | Improve maintainability                 |
+| 🟢 Medium   | Test Coverage         | 6     | 6-8h | Confidence & quality                    |
+| 🟢 Medium   | Documentation         | 2     | 2h   | Update after refactoring                |
+| 🟢 Low      | Polish                | 4     | 10h  | Optional improvements                   |
 
-**Tactical Subtotal:** 44-58 hours, ~1,473 lines reduced, +10-15% test coverage
+**Tactical Subtotal:** 45-60 hours, ~1,678 lines reduced, +10-15% test coverage
 
 ### Strategic Architecture (Long-term Improvements)
 
-| Priority | Category | Tasks | Time | Impact |
-|----------|----------|-------|------|--------|
-| 🔴 Critical | DI Container | 3 | 2-3 days | Bootstrap: 491→100 lines (-80%) |
-| 🔴 Critical | Service Providers | 5 | 2-3 days | Clear domain separation |
-| 🟡 High | Event Bus | 10 | 3-4 days | Zero circular dependencies |
-| 🟡 High | Repository Refinement | 3 | 1-2 days | Single responsibility |
-| 🟢 Medium | CQRS | 25 | 5-6 days | Api.php: 1,509→500 lines (-67%) |
-| 🟢 Medium | Domain Events | 5 | 1-2 days | Analytics/audit foundation |
-| 🟢 Low | Test Infrastructure | 15 | 2-3 days | Better test utilities |
+| Priority    | Category              | Tasks | Time     | Impact                          |
+| ----------- | --------------------- | ----- | -------- | ------------------------------- |
+| 🔴 Critical | DI Container          | 3     | 2-3 days | Bootstrap: 491→100 lines (-80%) |
+| 🔴 Critical | Service Providers     | 5     | 2-3 days | Clear domain separation         |
+| 🟡 High     | Event Bus             | 10    | 3-4 days | Zero circular dependencies      |
+| 🟡 High     | Repository Refinement | 3     | 1-2 days | Single responsibility           |
+| 🟢 Medium   | CQRS                  | 25    | 5-6 days | Api.php: 1,509→500 lines (-67%) |
+| 🟢 Medium   | Domain Events         | 5     | 1-2 days | Analytics/audit foundation      |
+| 🟢 Low      | Test Infrastructure   | 15    | 2-3 days | Better test utilities           |
 
 **Strategic Subtotal:** 8+ weeks (part-time), Major architectural improvements
 
@@ -131,12 +138,14 @@ This document provides a **comprehensive refactoring roadmap** combining tactica
 This document now covers **both tactical and strategic improvements**:
 
 **Track 1: Tactical Refactoring (Phases 1-9)**
+
 - Focus: Code cleanup, duplication removal, immediate wins
 - Timeline: 40-50 hours (can complete in 5-7 weeks part-time)
 - Benefits: Cleaner codebase, less duplication, easier maintenance
 - **Start here** - these are quick wins with immediate benefits
 
 **Track 2: Strategic Architecture (See ARCHITECTURAL_IMPROVEMENTS.md)**
+
 - Focus: Design patterns, infrastructure, long-term maintainability
 - Timeline: 8+ weeks (requires careful planning and implementation)
 - Benefits: Better testability, extensibility, developer experience
@@ -145,11 +154,13 @@ This document now covers **both tactical and strategic improvements**:
 ### Recommended Approach
 
 1. **Complete Tactical Phases 1-3 first** (11 hours, critical path)
+
    - Greenfield cleanup
    - Frontend utilities
    - Frontend hooks
 
 2. **Then evaluate strategic architecture**
+
    - If adding 3+ new features soon → Start DI Container + Service Providers
    - If maintaining current scope → Continue tactical refactoring
    - If planning major expansion → Full strategic roadmap
@@ -166,6 +177,7 @@ This document now covers **both tactical and strategic improvements**:
 **Goal:** Remove unnecessary code before production launch
 
 **Progress Tracker:**
+
 - [x] Task 1.1: Remove Redundant WordPress Stub Files
 - [x] Task 1.2: Fix Settings Option Name (Root Cause)
 - [x] Task 1.3: Update Test Files for New Option Name
@@ -175,6 +187,7 @@ This document now covers **both tactical and strategic improvements**:
 ---
 
 ### Task 1.1: Remove Redundant WordPress Stub Files
+
 **Priority:** 🔴 Critical  
 **Time:** 15 minutes  
 **Impact:** -653 lines  
@@ -183,6 +196,7 @@ This document now covers **both tactical and strategic improvements**:
 **Context:** [PHP_AUDITS.md - Greenfield Refactoring Priorities](apps/wp-context-alt-text/PHP_AUDITS.md#-critical-remove-redundant-wordpress-stub-files)
 
 **Actions:**
+
 ```bash
 cd apps/wp-context-alt-text
 rm src/Support/WpFunctionStubs.php          # 253 lines
@@ -193,6 +207,7 @@ rmdir phpstubs
 **Why:** Project already uses `php-stubs/wordpress-stubs` composer package. Custom stubs are redundant.
 
 **Verification:**
+
 ```bash
 grep -r "WpFunctionStubs" src/
 grep -r "wordpress-functions.php" src/
@@ -202,6 +217,7 @@ grep -r "wordpress-functions.php" src/
 ---
 
 ### Task 1.2: Fix Settings Option Name (Root Cause)
+
 **Priority:** 🔴 Critical  
 **Time:** 5 minutes  
 **Impact:** Fixes architectural misalignment  
@@ -212,6 +228,7 @@ grep -r "wordpress-functions.php" src/
 **File:** `src/Admin/PluginSettingsPage.php`
 
 **Change:**
+
 ```php
 // Line 34 - OLD:
 private const OPTION_NAME = 'context_alt_text_recognition_settings';
@@ -225,6 +242,7 @@ private const OPTION_NAME = 'cat_settings';
 ---
 
 ### Task 1.3: Update Test Files for New Option Name
+
 **Priority:** 🔴 Critical  
 **Time:** 15 minutes  
 **Impact:** Aligns test suite with new architecture  
@@ -233,6 +251,7 @@ private const OPTION_NAME = 'cat_settings';
 **Context:** [PHP_AUDITS.md - Update Test Files](apps/wp-context-alt-text/PHP_AUDITS.md#phase-3-update-test-files-15-min)
 
 **Files to Update (6 files):**
+
 1. `tests/Integration/ConfigurationIntegrationTest.php` (lines 104, 221)
 2. `tests/Support/FeatureFlagsTest.php` (line 150)
 3. `tests/Recognition/RecognitionClientTest.php` (line 20)
@@ -240,6 +259,7 @@ private const OPTION_NAME = 'cat_settings';
 5. `tests/Roster/RosterClientTest.php` (line 20)
 
 **Change Pattern:**
+
 ```php
 // OLD:
 $GLOBALS['__cat_options']['context_alt_text_recognition_settings'] = [...]
@@ -253,6 +273,7 @@ update_option('cat_settings', [...])
 ---
 
 ### Task 1.4: Remove Legacy Migration Code
+
 **Priority:** 🔴 Critical  
 **Time:** 15 minutes  
 **Impact:** -60 lines  
@@ -263,6 +284,7 @@ update_option('cat_settings', [...])
 **File:** `src/Shared/Config/SettingsRepository.php`
 
 **Remove:**
+
 - Line 29: `LEGACY_RECOGNITION_OPTION` constant
 - Line 48: `mergeLegacyRecognitionSettings()` call
 - Lines 100, 117: `syncLegacyRecognitionOption()` calls
@@ -272,6 +294,7 @@ update_option('cat_settings', [...])
 **Why:** No production users, no legacy data exists. Migration code adds unnecessary complexity.
 
 **Verification:**
+
 ```bash
 composer test
 grep -r "LEGACY_RECOGNITION_OPTION" src/
@@ -281,18 +304,21 @@ grep -r "LEGACY_RECOGNITION_OPTION" src/
 ---
 
 ### Task 1.5: Update Documentation for New Option Name
+
 **Priority:** 🔴 Critical  
 **Time:** 10 minutes  
 **Impact:** Prevents developer confusion  
 **Status:** [x] Complete
 
 **Files to Update (4 files):**
+
 1. `docs/configuration.md` (5 occurrences)
 2. `docs/development.md` (1 occurrence)
 3. `docs/troubleshooting.md` (3 occurrences)
 4. `README.md` (WP-CLI examples)
 
 **Change Pattern:**
+
 ```bash
 # OLD:
 wp option update context_alt_text_recognition_settings \
@@ -312,12 +338,14 @@ wp option update cat_settings \
 **Goal:** Eliminate 260+ lines of duplication in frontend hooks
 
 **Progress Tracker:**
+
 - [x] Task 2.1: Create Shared Normalization Utilities
 - [x] Task 2.2: Create Shared HTTP Utilities
 
 ---
 
 ### Task 2.1: Create Shared Normalization Utilities
+
 **Priority:** 🔴 Critical  
 **Time:** 2 hours  
 **Impact:** -200 lines  
@@ -328,11 +356,13 @@ wp option update cat_settings \
 **Create:** `js/admin/utils/normalization.ts`
 
 **Affected Files (3 hooks):**
+
 - `js/admin/hooks/useRecognitionJob.ts` (lines 107-247)
 - `js/admin/hooks/useRecognitionObservations.ts` (lines 90-221)
 - `js/admin/hooks/useRoster.ts` (encoding logic)
 
 **Functions to Extract:**
+
 ```typescript
 // Basic type coercion
 export const toFiniteNumber = (candidate: unknown, fallback = 0): number
@@ -351,6 +381,7 @@ export const normalizeJobDetails = (data: unknown): RecognitionJobDetails
 ```
 
 **Additional Location:** `js/admin/dashboardData.ts` already has normalization functions that could be consolidated:
+
 - `normalizeMetric`
 - `normalizeRecognition`
 - `normalizeRosterMedia`
@@ -363,6 +394,7 @@ export const normalizeJobDetails = (data: unknown): RecognitionJobDetails
 **Decision Required:** Consolidate all normalization in one place or keep domain-specific normalization separate?
 
 **Recommendation:** Create hierarchy:
+
 ```
 utils/
 ├── normalization/
@@ -376,6 +408,7 @@ utils/
 ---
 
 ### Task 2.2: Create Shared HTTP Utilities
+
 **Priority:** 🔴 Critical  
 **Time:** 1 hour  
 **Impact:** -60 lines  
@@ -386,11 +419,13 @@ utils/
 **Enhance:** `js/admin/utils/http.ts` (currently 36 lines)
 
 **Affected Files (3 hooks):**
+
 - `js/admin/hooks/useRecognitionObservations.ts` (lines 68-92)
 - `js/admin/hooks/useRoster.ts` (lines 57-83)
 - `js/admin/hooks/useWorkbenchMedia.ts` (lines 199-217)
 
 **Add to `http.ts`:**
+
 ```typescript
 // URL building
 export const buildApiUrl = (
@@ -419,6 +454,7 @@ export const fetchApi = async <T = unknown>(
 ```
 
 **Benefits:**
+
 - Consistent error handling
 - Centralized nonce management
 - Automatic JSON encoding/decoding
@@ -429,6 +465,7 @@ export const fetchApi = async <T = unknown>(
 ## 🧠 State Management Decision (Phase 3 Foundation)
 
 **Problem Identified:** Multiple hooks (especially `useRecognitionJob.ts`) use 6+ separate `useState` hooks, leading to:
+
 - Race conditions (non-atomic state updates)
 - Inconsistent states (e.g., `isSubmitting=true` with `lastError` set)
 - Complex coordination logic
@@ -436,15 +473,16 @@ export const fetchApi = async <T = unknown>(
 
 **Solution Evaluated:**
 
-| Option | Pros | Cons | Verdict |
-|--------|------|------|---------|
-| **Redux/Zustand** | Global state, dev tools | ❌ Overkill, React Query handles server state | ❌ Not needed |
-| **XState** | Explicit state machines, visualizer | ❌ 18KB, learning curve | 🟡 Optional if complexity grows |
-| **useReducer** | ✅ Zero dependencies, atomic updates, type-safe | None for this use case | ✅ **SELECTED** |
+| Option            | Pros                                            | Cons                                          | Verdict                         |
+| ----------------- | ----------------------------------------------- | --------------------------------------------- | ------------------------------- |
+| **Redux/Zustand** | Global state, dev tools                         | ❌ Overkill, React Query handles server state | ❌ Not needed                   |
+| **XState**        | Explicit state machines, visualizer             | ❌ 18KB, learning curve                       | 🟡 Optional if complexity grows |
+| **useReducer**    | ✅ Zero dependencies, atomic updates, type-safe | None for this use case                        | ✅ **SELECTED**                 |
 
 **Decision: useReducer + TypeScript Discriminated Unions**
 
 **Why:**
+
 - ✅ Built into React (zero new dependencies)
 - ✅ Perfect for state machines (job flow: idle → submitting → polling → complete/error)
 - ✅ Atomic state updates (eliminates race conditions)
@@ -454,8 +492,9 @@ export const fetchApi = async <T = unknown>(
 - ✅ Works seamlessly with React Query for data fetching
 
 **Implementation Pattern:**
+
 ```typescript
-type JobState = 
+type JobState =
   | { status: "idle" }
   | { status: "submitting"; attachmentIds: number[] }
   | { status: "polling"; jobId: string }
@@ -476,27 +515,54 @@ const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
 **Goal:** Fix state management issues and simplify overly complex hooks
 
 **Progress Tracker:**
-- [~] Task 3.1: Refactor useRecognitionJob with useReducer + state machine (IN PROGRESS)
-- [ ] Task 3.2: Refactor useRoster form submission with useReducer
-- [ ] Task 3.3: Simplify useWorkbenchMedia.ts
+
+- [x] Task 3.1: Refactor useRecognitionJob with useReducer + state machine ✅ (COMPLETE - all tests passing)
+- [x] Task 3.2: Simplify useRoster encoding logic ✅ (COMPLETE - 480→450 lines, all tests passing)
+- [x] Task 3.3: Simplify useWorkbenchMedia.ts ✅ (COMPLETE - 347→224 lines, all tests passing)
+- [x] Task 3.4: Extract useRecognitionJob state machine to separate files ✅ (COMPLETE - 750→634 lines)
+- [x] Task 3.5: Simplify useRecognitionObservations ✅ (COMPLETE - 458→446 lines, -12 lines)
+- [x] Task 3.6: Extract recognition normalization utilities ✅ (COMPLETE - 634→333 lines, -301 lines)
+- [ ] Task 3.7: Extract recognition type definitions (333→290 lines, polish task, deferred to Phase 10)
+
+**Architecture Compliance:**
+
+- ✅ All hooks reviewed against new [Frontend Component Architecture Rules](docs/architecture/rules/instructions.md)
+- ✅ Complete compliance achieved: 0 useState, 0 useEffect, 0 anti-patterns
+- ✅ Detailed analysis: [HOOKS_ARCHITECTURE_REVIEW.md](apps/wp-context-alt-text/js/admin/hooks/HOOKS_ARCHITECTURE_REVIEW.md)
+- 🔲 **Next**: Apply same standards to components (see Phase 5 updated tasks)
 
 ---
 
 ### Task 3.1: Refactor useRecognitionJob with useReducer State Machine
+
 **Priority:** 🔴 Critical  
 **Time:** 2-3 hours  
 **Impact:** -150 lines, eliminates race conditions  
-**Status:** [~] In Progress - Steps 1-2 of 4 complete (foundation laid)
+**Status:** [x] Complete ✅
 
 **Progress:**
+
 - ✅ Step 1: Extract normalization utilities (-42 lines)
 - ✅ Step 2: Add state machine types and reducer
-- ⏳ Step 3: Replace 6 useState hooks with single useReducer
-- ⏳ Step 4: Update ~20 setState calls to dispatch actions and test
+- ✅ Step 3: Replace 6 useState hooks with single useReducer
+- ✅ Step 4: Update ~20 setState calls to dispatch actions and test
+
+**Results:**
+
+- All hook tests passing (3/3)
+- All integration tests passing (4/4)
+- File size: 585 → 750 lines (includes state machine infrastructure)
+- Race conditions eliminated via atomic state updates
+- State machine prevents impossible states
+
+**Deferred:**
+
+- Extract state machine types/reducer to separate files (see Task 3.4)
 
 **Context:** [FRONTEND_AUDITS.md - useRecognitionJob Critical Bloat](apps/wp-context-alt-text/FRONTEND_AUDITS.md#2-userecognitionjobts--critical-bloat-585-lines)
 
 **Current Issues:**
+
 - 585 lines (should be <200)
 - **6 separate useState hooks** creating race conditions and inconsistent states
 - Manual polling implementation (60+ lines)
@@ -504,11 +570,16 @@ const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
 - Brittle state coordination
 
 **Root Problem:**
+
 ```typescript
 // ❌ BAD: Multiple useState hooks - not atomic, race conditions
 const [lastJob, setLastJob] = useState<RecognitionJobSummary | null>(null);
-const [lastError, setLastError] = useState<RecognitionRequestError | null>(null);
-const [jobDetails, setJobDetails] = useState<RecognitionJobDetails | null>(null);
+const [lastError, setLastError] = useState<RecognitionRequestError | null>(
+  null
+);
+const [jobDetails, setJobDetails] = useState<RecognitionJobDetails | null>(
+  null
+);
 const [isSubmitting, setIsSubmitting] = useState(false);
 const [pollState, setPollState] = useState<PollState>("idle");
 const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -517,6 +588,7 @@ const [currentJobId, setCurrentJobId] = useState<string | null>(null);
 **Solution: useReducer + TypeScript Discriminated Unions**
 
 **Why useReducer:**
+
 - ✅ Zero new dependencies (built into React)
 - ✅ Atomic state updates (no race conditions)
 - ✅ Impossible states become impossible
@@ -528,8 +600,9 @@ const [currentJobId, setCurrentJobId] = useState<string | null>(null);
 **Refactoring Strategy:**
 
 1. **Define state machine with discriminated union:**
+
 ```typescript
-type JobState = 
+type JobState =
   | { status: "idle" }
   | { status: "submitting"; attachmentIds: number[] }
   | { status: "polling"; jobId: string; attempts: number }
@@ -546,28 +619,29 @@ type JobAction =
 ```
 
 2. **Create pure reducer function:**
+
 ```typescript
 function jobReducer(state: JobState, action: JobAction): JobState {
   switch (action.type) {
     case "SUBMIT_START":
       return { status: "submitting", attachmentIds: action.attachmentIds };
-    
+
     case "SUBMIT_SUCCESS":
       return { status: "polling", jobId: action.jobId, attempts: 0 };
-    
+
     case "SUBMIT_ERROR":
       return { status: "error", error: action.error, retryable: true };
-    
+
     case "POLL_UPDATE":
       if (state.status !== "polling") return state;
       return { ...state, attempts: state.attempts + 1 };
-    
+
     case "POLL_COMPLETE":
       return { status: "complete", job: action.job };
-    
+
     case "RESET":
       return { status: "idle" };
-    
+
     default:
       return state;
   }
@@ -575,15 +649,19 @@ function jobReducer(state: JobState, action: JobAction): JobState {
 ```
 
 3. **Replace manual polling with React Query:**
+
 ```typescript
 function useRecognitionJob() {
   const [state, dispatch] = useReducer(jobReducer, { status: "idle" });
-  
+
   // React Query handles polling automatically
   const { data } = useQuery({
-    queryKey: ["recognition-job", state.status === "polling" ? state.jobId : null],
+    queryKey: [
+      "recognition-job",
+      state.status === "polling" ? state.jobId : null,
+    ],
     queryFn: () => fetchJob(state.jobId),
-    refetchInterval: (data) => data?.status === "complete" ? false : 2000,
+    refetchInterval: (data) => (data?.status === "complete" ? false : 2000),
     enabled: state.status === "polling",
     onSuccess: (data) => {
       if (data.status === "complete") {
@@ -593,7 +671,7 @@ function useRecognitionJob() {
       }
     },
   });
-  
+
   const submitJob = async (attachmentIds: number[]) => {
     dispatch({ type: "SUBMIT_START", attachmentIds });
     try {
@@ -603,7 +681,7 @@ function useRecognitionJob() {
       dispatch({ type: "SUBMIT_ERROR", error });
     }
   };
-  
+
   return {
     state,
     submitJob,
@@ -617,6 +695,7 @@ function useRecognitionJob() {
 ```
 
 **Benefits:**
+
 - Eliminates 6 useState hooks → 1 useReducer
 - Impossible to be in `submitting` state with `error` set
 - Single source of truth
@@ -628,88 +707,563 @@ function useRecognitionJob() {
 
 ---
 
-### Task 3.2: Refactor useRoster Form Submission with useReducer
+### Task 3.2: Simplify useRoster Encoding Logic
+
 **Priority:** 🟡 Medium  
 **Time:** 1-2 hours  
-**Impact:** Better form state management  
-**Status:** [ ] Not Started
+**Impact:** -30 lines, improved readability  
+**Status:** [x] Complete ✅
 
-**Context:** [FRONTEND_AUDITS.md - useRoster Complex State](apps/wp-context-alt-text/FRONTEND_AUDITS.md#4-userosterjs--moderate-complexity-432-lines)
+**Results:**
 
-**Apply same useReducer pattern to roster form submission flow:**
+- File size: 480 → 450 lines (-30 lines)
+- Replaced local utilities with shared versions (buildApiUrl, buildHeaders, fetchApi)
+- Split encodeRosterBody into smaller helper functions for better readability
+- All 113 tests passing (12 RosterRoute tests + full suite)
+
+**Changes Made:**
+
+1. ✅ Replaced local `buildHeaders` with shared version from `utils/http.ts`
+2. ✅ Replaced local `buildRosterUrl` with shared `buildApiUrl`
+3. ✅ Replaced all manual fetch calls with shared `fetchApi` utility
+4. ✅ Split `encodeRosterBody` into helper functions:
+   - `buildMetadataObject()` - Extract metadata fields
+   - `buildReferenceImagesArray()` - Normalize reference images
+   - `buildResolutionObject()` - Build observation resolution config
+5. ✅ Removed unused imports and local utility functions
+
+**Context:** [FRONTEND_AUDITS.md - useRoster Complex Encoding](apps/wp-context-alt-text/FRONTEND_AUDITS.md#4-userosterjs--moderate-complexity-432-lines)
+
+**Current Issues:**
+
+- `encodeRosterBody` function is 106 lines doing too much
+- Duplicated URL building (can use shared `buildApiUrl` from Task 2.2)
+- Confusing initial data logic
+
+**Refactoring Steps:**
+
+1. **Split `encodeRosterBody` into smaller functions:**
 
 ```typescript
-type RosterFormState =
-  | { status: "idle" }
-  | { status: "creating"; values: RosterFormValues }
-  | { status: "updating"; id: number; values: RosterFormValues }
-  | { status: "deleting"; id: number }
-  | { status: "success"; entry: RosterEntry }
-  | { status: "error"; error: RosterError };
+const buildMetadata = (values: RosterFormValues) => { ... };
+const buildReferenceImages = (values: RosterFormValues) => { ... };
+const buildResolution = (values: RosterFormValues) => { ... };
+
+const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => ({
+  label: values.label,
+  type: values.type,
+  ...buildMetadata(values),
+  reference_images: buildReferenceImages(values),
+  resolve_observation: buildResolution(values),
+});
 ```
 
+2. **Replace `buildRosterUrl` with shared `buildApiUrl`** from utils/http.ts
+
+3. **Clarify bootstrap logic** with explicit comments
+
 **Benefits:**
-- Cleaner form submission logic
-- Type-safe form states
-- Easier to add loading indicators
-- Better error handling
+
+- Each function has single responsibility
+- Easier to test encoding logic
+- Better readability
+- Uses shared utilities
 
 ---
 
 ### Task 3.3: Simplify useWorkbenchMedia.ts
-**Priority:** 🟡 Medium  
+
+**Priority:** 🔴 Critical  
 **Time:** 2 hours  
-**Impact:** -197 lines (347 → ~150)  
-**Status:** [ ] Not Started
+**Impact:** -123 lines (347 → 224)  
+**Status:** [x] Complete ✅
 
 **Context:** [FRONTEND_AUDITS.md - useWorkbenchMedia Extremely Brittle](apps/wp-context-alt-text/FRONTEND_AUDITS.md#5-useworkbenchmediats--extremely-brittle-347-lines)
+
+**Results:**
+
+- ✅ Reduced from 347 to 224 lines (35% reduction)
+- ✅ All 12 App.test.tsx tests passing
+- ✅ Removed 65-line origin resolution maze
+- ✅ Simplified endpoint fallback logic
+- ✅ Removed unnecessary `hasEndpoint` variable and conditionals
+- ✅ Removed `shouldEnableRemoteFetch` wrapper (uses `shouldFetchRemote` directly)
+
+**What was removed:**
+
+1. **Origin resolution functions** (65 lines):
+
+   - `resolveOriginCandidate()`, `isViableOrigin()`, `takeFirstOrigin()`
+   - Attempted to parse 4 different origin sources (overly defensive)
+
+2. **Complex fallback logic** (13 lines):
+
+   - `window.ajaxurl` URL construction with try-catch
+   - In production, PHP always provides endpoint via `rest_url()`
+   - Simple relative path fallback works for all test scenarios
+
+3. **Redundant endpoint checks** (45 lines total):
+   - Removed `hasEndpoint` variable
+   - Removed null checks in query function
+   - Endpoint is always defined (config or fallback)
+
+**Simplified endpoint resolution:**
+
+```typescript
+const endpoint = React.useMemo(() => {
+  const configEndpoint = config.endpoints?.workbenchMedia;
+  if (configEndpoint && configEndpoint.trim().length > 0) {
+    return configEndpoint;
+  }
+  // Simple fallback: relative path (works everywhere)
+  return "/wp-json/cat/v1/workbench/media";
+}, [config.endpoints?.workbenchMedia]);
+```
+
+**Key Insight:** The complex 4-tier fallback logic was over-engineered for edge cases that don't occur in practice. Production WordPress always provides the endpoint when REST API is available.
 
 ---
 
-### Task 3.2: Simplify useWorkbenchMedia.ts
-**Priority:** 🔴 Critical  
-**Time:** 2 hours  
-**Impact:** -197 lines (347 → ~150)  
-**Status:** [ ] Not Started
+### Task 3.4: Extract useRecognitionJob State Machine to Separate Files
 
-**Context:** [FRONTEND_AUDITS.md - useWorkbenchMedia Extremely Brittle](apps/wp-context-alt-text/FRONTEND_AUDITS.md#5-useworkbenchmediats--extremely-brittle-347-lines)
+**Priority:** 🟢 Medium  
+**Time:** 1 hour  
+**Impact:** Better code organization, -116 lines from main file  
+**Status:** [x] Complete ✅
+
+**Results:**
+
+- Main hook file: 750 → 634 lines (-116 lines)
+- Created `useRecognitionJob.types.ts` (71 lines)
+- Created `useRecognitionJob.reducer.ts` (55 lines)
+- All 113 tests passing
+
+**Files Created:**
+
+1. **`useRecognitionJob.types.ts`** (71 lines):
+
+   - `RecognitionRequestError` class and error options
+   - `JobState` discriminated union (5 state variants)
+   - `JobAction` discriminated union (7 action types)
+
+2. **`useRecognitionJob.reducer.ts`** (55 lines):
+
+   - `initialJobState` constant
+   - `jobReducer` pure function with exhaustive case handling
+
+3. **Updated `useRecognitionJob.ts`** (634 lines):
+   - Imports types and reducer from new files
+   - Removed local type/reducer definitions
+   - Focused on hook implementation and normalization
+
+**Updated Test File:**
+
+- `useRecognitionJob.test.tsx` updated to import `RecognitionRequestError` from `.types` file
+
+**Benefits:**
+
+- ✅ Better code organization (types, reducer, hook separated)
+- ✅ Easier to test reducer in isolation
+- ✅ Clearer file navigation
+- ✅ Follows React best practices for complex hooks
+- ✅ Main file reduced from 750 → 634 lines
+
+**Context:** Task 3.1 completed successfully but left the file at 750 lines (from 585). The state machine types and reducer should be extracted to separate files following React best practices.
+
+**Current State:**
+
+- `useRecognitionJob.ts`: 750 lines (includes state machine types, reducer, and hook logic)
+
+**Target Structure:**
+
+```
+js/admin/hooks/
+├── useRecognitionJob.ts           # Main hook (300-350 lines)
+├── useRecognitionJob.types.ts     # State machine types (80-100 lines)
+└── useRecognitionJob.reducer.ts   # Reducer logic (100-120 lines)
+```
+
+**Files to Create:**
+
+1. **`useRecognitionJob.types.ts`** - Extract type definitions:
+
+   ```typescript
+   // State machine types
+   export type JobState =
+     | { status: "idle" }
+     | { status: "submitting"; attachmentIds: number[] }
+     | {
+         status: "polling";
+         jobId: string;
+         attempts: number;
+         lastJob: RecognitionJobSummary;
+       }
+     | { status: "complete"; details: RecognitionJobDetails }
+     | {
+         status: "error";
+         error: RecognitionRequestError;
+         retryable: boolean;
+         lastJob?: RecognitionJobSummary;
+       };
+
+   export type JobAction =
+     | { type: "SUBMIT_START"; attachmentIds: number[] }
+     | { type: "SUBMIT_SUCCESS"; jobId: string; summary: RecognitionJobSummary }
+     | { type: "SUBMIT_ERROR"; error: RecognitionRequestError }
+     | { type: "POLL_UPDATE"; details: RecognitionJobDetails }
+     | { type: "POLL_COMPLETE"; details: RecognitionJobDetails }
+     | { type: "POLL_ERROR"; error: RecognitionRequestError }
+     | { type: "RESET" };
+
+   // Hook return type
+   export interface UseRecognitionJobReturn {
+     canSubmit: boolean;
+     triggerRecognition: (attachmentIds: number[]) => Promise<void>;
+     isSubmitting: boolean;
+     isPolling: boolean;
+     lastJob: RecognitionJobSummary | null;
+     jobDetails: RecognitionJobDetails | null;
+     status: "idle" | "processing" | "complete" | "error";
+     error: RecognitionRequestError | null;
+     reset: () => void;
+     refetchJob: () => Promise<void>;
+   }
+   ```
+
+2. **`useRecognitionJob.reducer.ts`** - Extract reducer logic:
+
+   ```typescript
+   import type { JobState, JobAction } from "./useRecognitionJob.types";
+
+   export const initialJobState: JobState = { status: "idle" };
+
+   export function jobReducer(state: JobState, action: JobAction): JobState {
+     switch (action.type) {
+       case "SUBMIT_START":
+         return {
+           status: "submitting",
+           attachmentIds: action.attachmentIds,
+         };
+
+       case "SUBMIT_SUCCESS":
+         return {
+           status: "polling",
+           jobId: action.jobId,
+           attempts: 0,
+           lastJob: action.summary,
+         };
+
+       case "SUBMIT_ERROR":
+         return {
+           status: "error",
+           error: action.error,
+           retryable: true,
+         };
+
+       case "POLL_UPDATE":
+         if (state.status !== "polling") return state;
+         return {
+           ...state,
+           attempts: state.attempts + 1,
+         };
+
+       case "POLL_COMPLETE":
+         if (state.status !== "polling") return state;
+         return {
+           status: "complete",
+           details: action.details,
+         };
+
+       case "POLL_ERROR":
+         return {
+           status: "error",
+           error: action.error,
+           retryable: state.status === "polling",
+           lastJob: state.status === "polling" ? state.lastJob : undefined,
+         };
+
+       case "RESET":
+         return { status: "idle" };
+
+       default:
+         return state;
+     }
+   }
+   ```
+
+3. **Update `useRecognitionJob.ts`**:
+   - Remove type definitions (import from `.types`)
+   - Remove reducer function (import from `.reducer`)
+   - Keep hook logic and normalization helpers
+   - Target: 300-350 lines
+
+**Benefits:**
+
+- ✅ Each file under 400 lines (maintainability threshold)
+- ✅ Clear separation of concerns (types, reducer logic, hook logic)
+- ✅ Easier to test reducer in isolation
+- ✅ Better code navigation (types and reducer are explicitly named files)
+- ✅ Follows React community best practices for complex hooks
+
+**Verification:**
+
+```bash
+cd apps/wp-context-alt-text
+npm test -- useRecognitionJob.test.tsx
+npm test -- RecognitionActions.test.tsx
+```
+
+---
+
+### Task 3.5: Simplify useRecognitionObservations
+
+**Priority:** 🔴 Critical  
+**Time:** 30 minutes  
+**Impact:** -12 lines (458→446), reduced duplication  
+**Status:** [x] Complete ✅
+
+**Results:**
+
+- File size: 458 → 446 lines (-12 lines)
+- Replaced duplicate primitive normalizers with shared utilities
+- Updated to use shared `buildHeaders` function
+- All 113 tests passing
+- Improved code reuse and consistency
+
+**Analysis:**
+Unlike `useRecognitionJob`, this hook doesn't need `useReducer` because:
+
+- No complex local state management (only uses React Query)
+- No race conditions or impossible states to prevent
+- Purely a data-fetching hook with straightforward logic
+
+**Changes Made:**
+
+1. **Removed duplicate primitive normalizers:**
+
+   - `toFiniteNumber` → imported from `utils/normalization/primitives`
+   - `toNumberOrNull` → imported from `utils/normalization/primitives`
+   - `toStringOrNull` → imported from `utils/normalization/primitives`
+
+2. **Updated HTTP utilities:**
+
+   - Replaced local `buildHeaders` with shared version from `utils/http`
+   - Updated all function calls to use shared utilities
+
+3. **Kept observation-specific normalizers local:**
+   - Observation normalizers use different data structures than job normalizers
+   - These are endpoint-specific and should remain in the hook
+   - Examples: `normalizeCandidate`, `normalizeObservationDetails`, `normalizeAttachment`
+
+**Verification:**
+
+```bash
+cd apps/wp-context-alt-text
+npm test -- useRecognitionObservations.test.tsx
+npm test -- --run  # Full test suite (113 tests passing)
+```
+
+---
+
+### Task 3.6: Extract Recognition Normalization Utilities
+
+**Priority:** 🔴 Critical  
+**Time:** 1 hour  
+**Impact:** -301 lines (634→333), enables reuse in Task 3.5  
+**Status:** [x] Complete ✅
+
+**Results:**
+
+- Extracted 7 interfaces and 8 normalization functions to `utils/normalization/recognition.ts`
+- File size: 634 → 333 lines (-301 lines, 47% reduction)
+- All 113 tests passing
+- Normalization utilities now shared and reusable
+- Added re-exports for backward compatibility
+
+**Extracted to:** `js/admin/utils/normalization/recognition.ts`
+
+**Functions Extracted:**
+
+- `normalizeObservationStatus()` - Status field normalization
+- `normalizeCandidates()` - Array of face/brand candidates
+- `normalizeMatch()` - Individual match with confidence
+- `normalizeRoster()` - Roster metadata (counts, names)
+- `normalizeObservationRecord()` - Full observation with sophisticated confidence resolution
+- `normalizeAttachmentSummaries()` - Array of attachment observations
+- `normalizeJobDetails()` - Complete job response normalization
+- `maybeParseJson()` - HTTP utility with dynamic import
+
+**Types Extracted:**
+
+- `RecognitionJobSummary` - Polling summary interface
+- `RecognitionObservationMatch` - Individual match details
+- `RecognitionObservationRoster` - Roster metadata
+- `RecognitionObservationCandidate` - Face/brand candidate
+- `RecognitionObservationRecord` - Full observation record
+- `RecognitionAttachmentObservations` - Attachment with observations
+- `RecognitionJobDetails` - Complete job details
+
+**Context:** useRecognitionJob.ts previously contained ~301 lines of domain-specific normalization logic that needed to be shared utilities for reuse in `useRecognitionObservations.ts` (Task 3.5).
 
 **Current Issues:**
-- 347 lines
-- Over-engineered origin resolution (35 lines)
-- Brittle fallback logic (45 lines)
-- Test-specific code in production (10 lines)
 
-**Refactoring Steps:**
+- Normalization functions are duplicated in `useRecognitionObservations.ts`
+- Cannot be reused by other hooks/components
+- Makes `useRecognitionJob.ts` harder to read and test
+- Violates DRY principle
 
-1. **Remove brittle fallback logic:**
+**Create:** `js/admin/utils/normalization/recognition.ts`
+
+**Functions to Extract:**
+
 ```typescript
-// OLD: 45 lines of complex fallbacks
-const fallbackEndpoint = React.useMemo(() => { ... }, []);
+// Status normalization
+export const normalizeObservationStatus = (
+    value: unknown,
+): RecognitionObservationRecord["status"] => { ... }
 
-// NEW: Simple, fail-fast
-const endpoint = config?.workbenchEndpoint || null;
-if (!endpoint) {
-  throw new Error("Workbench endpoint not configured");
-}
+// Complex object normalization
+export const normalizeCandidates = (
+    candidates: unknown
+): RecognitionObservationCandidate[] => { ... }
+
+export const normalizeMatch = (
+    match: unknown
+): RecognitionObservationMatch => { ... }
+
+export const normalizeRoster = (
+    roster: unknown
+): RecognitionObservationRoster => { ... }
+
+export const normalizeObservationRecord = (
+    observation: unknown
+): RecognitionObservationRecord | null => { ... }
+
+export const normalizeAttachmentSummaries = (
+    input: unknown
+): RecognitionAttachmentObservations[] => { ... }
+
+export const normalizeJobDetails = (
+    payload: Record<string, unknown>,
+    fallbackId?: string | null
+): RecognitionJobDetails => { ... }
+
+// HTTP helpers
+export const maybeParseJson = async (
+    response: Response
+): Promise<unknown> => { ... }
 ```
 
-2. **Simplify shouldFetchRemote:**
-```typescript
-// OLD: 24 lines with 7 dependencies
-const shouldFetchRemote = React.useMemo(() => { ... }, [7 deps]);
+**Update Files:**
 
-// NEW: Simple heuristic
-const shouldFetchRemote = hasEndpoint && (
-  page > 1 || 
-  status !== "all" || 
-  search !== null
-);
+1. **`js/admin/utils/normalization/recognition.ts`** (new file, ~240 lines)
+
+   - Move all normalization functions from `useRecognitionJob.ts`
+   - Import primitive normalizers from `primitives.ts`
+   - Export all functions for reuse
+
+2. **`js/admin/hooks/useRecognitionJob.ts`** (update)
+
+   - Import normalization functions from `utils/normalization/recognition`
+   - Remove local normalization code (lines 180-415)
+   - File size: 550 → 315 lines
+
+3. **`js/admin/hooks/useRecognitionObservations.ts`** (future update in Task 3.5)
+   - Will use shared normalization utilities
+   - Eliminates duplication
+
+**Benefits:**
+
+- ✅ Normalization logic can be reused in `useRecognitionObservations` (Task 3.5)
+- ✅ Can be tested independently
+- ✅ Reduces `useRecognitionJob` from 550 → 315 lines
+- ✅ Aligns with Phase 2 normalization structure
+- ✅ Easier to maintain and update normalization rules
+
+**Dependencies:**
+
+- Requires: `js/admin/utils/normalization/primitives.ts` (already exists from Phase 2)
+- Enables: Task 3.5 (useRecognitionObservations refactor)
+
+**Verification:**
+
+```bash
+cd apps/wp-context-alt-text
+npm test -- useRecognitionJob.test.tsx
+npm test -- RecognitionActions.test.tsx
+npm test -- --run  # Full test suite
 ```
 
-3. **Remove test-specific code** (move to test utilities)
+---
 
-4. **Use shared URL builder** from Task 2.2
+### Task 3.7: Extract Recognition Type Definitions (Polish)
+
+**Priority:** 🟢 Low (Polish task)  
+**Time:** 30 minutes  
+**Impact:** -110 lines (315→205), better organization  
+**Status:** [ ] Not Started  
+**Deferred to:** Phase 10 (Polish)
+
+**Context:** After extracting state machine and normalization utilities, the remaining type definitions (lines 1-110) could be moved to a shared types file for better organization.
+
+**Current Issues:**
+
+- Type definitions mixed with hook implementation
+- Cannot be easily imported by other components
+- Makes file navigation harder
+
+**Create:** `js/admin/types/recognition.ts`
+
+**Types to Extract:**
+
+```typescript
+// Core domain types
+export interface RecognitionJobSummary { ... }
+export interface RecognitionObservationMatch { ... }
+export type RecognitionObservationRoster = { ... } | null;
+export interface RecognitionObservationCandidate { ... }
+export interface RecognitionObservationRecord { ... }
+export interface RecognitionAttachmentObservations { ... }
+export interface RecognitionJobDetails { ... }
+
+// Error class
+export class RecognitionRequestError extends Error { ... }
+```
+
+**Update Files:**
+
+1. **`js/admin/types/recognition.ts`** (new file, ~110 lines)
+
+   - Move all type definitions
+   - Export all types and classes
+
+2. **`js/admin/hooks/useRecognitionJob.ts`** (update)
+
+   - Import types from `@/admin/types/recognition`
+   - Remove local type definitions
+   - File size: 315 → 205 lines
+
+3. **Other files using recognition types** (update imports)
+   - `useRecognitionObservations.ts`
+   - `RecognitionActions.tsx`
+   - Any other components using these types
+
+**Benefits:**
+
+- ✅ Clear separation: types vs implementation
+- ✅ Types can be imported anywhere
+- ✅ Reduces `useRecognitionJob` to ~205 lines (original target)
+- ✅ Better code organization and discoverability
+- ✅ Follows React/TypeScript best practices
+
+**Note:** This is a polish task and can be deferred to Phase 10. The functional improvements are already achieved by Tasks 3.4 and 3.6.
+
+**Verification:**
+
+```bash
+cd apps/wp-context-alt-text
+npm test -- --run  # Full test suite
+```
 
 ---
 
@@ -718,6 +1272,7 @@ const shouldFetchRemote = hasEndpoint && (
 **Goal:** Reduce duplication in PHP backend
 
 **Progress Tracker:**
+
 - [ ] Task 4.1: Extract PHP URL Validation Helper
 - [ ] Task 4.2: Create AbstractSpaPage Base Class
 - [ ] Task 4.3: Extract REST URL Helper in Admin.php
@@ -726,6 +1281,7 @@ const shouldFetchRemote = hasEndpoint && (
 ---
 
 ### Task 4.1: Extract PHP URL Validation Helper
+
 **Priority:** 🟡 High  
 **Time:** 30 minutes  
 **Impact:** -15 lines  
@@ -753,7 +1309,7 @@ final class ValidationHelpers
         }
         return $stripTrailingSlash ? rtrim($url, '/') : $url;
     }
-    
+
     public static function sanitizeTimeout(int $value, int $min, int $max): int
     {
         return max($min, min($max, $value));
@@ -766,6 +1322,7 @@ final class ValidationHelpers
 ---
 
 ### Task 4.2: Create AbstractSpaPage Base Class
+
 **Priority:** 🟡 High  
 **Time:** 1 hour  
 **Impact:** -40 lines  
@@ -774,6 +1331,7 @@ final class ValidationHelpers
 **Context:** [PHP_AUDITS.md - Minimal Page Shells](apps/wp-context-alt-text/PHP_AUDITS.md#--issue-1-minimal-page-shells-3-files)
 
 **Affected Files (3):**
+
 - `src/Admin/AltTextWorkbenchPage.php` (22 lines)
 - `src/Admin/AccountCenterPage.php` (19 lines)
 - `src/Admin/AutomationQueuePage.php` (19 lines)
@@ -794,7 +1352,7 @@ abstract class AbstractSpaPage
     public function render(): void
     {
         ?>
-        <div id="<?php echo esc_attr($this->getRootId()); ?>" 
+        <div id="<?php echo esc_attr($this->getRootId()); ?>"
              class="context-alt-text-spa-root">
             <p class="loading-message">
                 <?php echo esc_html($this->getLoadingMessage()); ?>
@@ -810,6 +1368,7 @@ abstract class AbstractSpaPage
 ---
 
 ### Task 4.3: Extract REST URL Helper in Admin.php
+
 **Priority:** 🟡 High  
 **Time:** 30 minutes  
 **Impact:** -20 lines  
@@ -820,6 +1379,7 @@ abstract class AbstractSpaPage
 **File:** `src/Admin/Admin.php`
 
 **Extract method:**
+
 ```php
 private function get_rest_url(string $path): string
 {
@@ -828,6 +1388,7 @@ private function get_rest_url(string $path): string
 ```
 
 **Replace 7+ occurrences** of pattern:
+
 ```php
 // OLD:
 if ($recognitionEnabled && function_exists('rest_url')) {
@@ -843,6 +1404,7 @@ if ($recognitionEnabled) {
 ---
 
 ### Task 4.4: Split Admin::get_config() Method
+
 **Priority:** 🟡 High  
 **Time:** 1 hour  
 **Impact:** Better organization (no line reduction, but improved maintainability)  
@@ -853,6 +1415,7 @@ if ($recognitionEnabled) {
 **File:** `src/Admin/Admin.php`
 
 **Split 90-line method into:**
+
 ```php
 private function get_endpoint_config(): array { ... }
 private function get_feature_flags_config(): array { ... }  // Already exists
@@ -872,81 +1435,273 @@ public function get_config(): array
 
 ## 🟡 PHASE 5: High Priority - Frontend Component Improvements (4 hours)
 
+**Goal:** Break down large components and ensure architecture compliance
+
 **Progress Tracker:**
-- [ ] Task 5.1: Split App.tsx into Separate Route Files
-- [ ] Task 5.2: Create Settings Hook (useRecognitionSettings)
+
+- [ ] Task 5.1: Audit components against new architecture standards (RosterRoute.tsx, App.tsx, WorkbenchApp.tsx)
+- [ ] Task 5.2: Refactor RosterRoute.tsx to comply with architecture limits (2,543 → ~400 lines per file)
+- [ ] Task 5.3: Refactor App.tsx to comply with architecture limits (563 → ~300 lines)
+- [ ] Task 5.4: Extract shared UI components to component library
+
+**Architecture Standards Reference:**
+
+- [Frontend Component Architecture Rules](docs/architecture/rules/instructions.md) (lines 79-194)
+- [Component Architecture Patterns Guide](docs/architecture/frontend-uml/component-architecture-patterns.md)
+- [RosterRoute Refactoring Roadmap](docs/architecture/frontend-uml/roster-route-refactoring-roadmap.mmd)
+- [Anti-Patterns vs Ideal Patterns](docs/architecture/frontend-uml/anti-patterns-vs-ideal.mmd)
+
+**Key Limits to Enforce:**
+
+- Max 300 lines per component file (400 for route components)
+- Max 5 `useState` hooks per component
+- Max 3 `useEffect` hooks per component
+- Extract JSX blocks over 50 lines
+- No prop drilling beyond 2 levels
 
 ---
 
-### Task 5.1: Split App.tsx into Separate Route Files
+### Task 5.1: Audit Components Against New Architecture Standards
+
 **Priority:** 🟡 High  
-**Time:** 2 hours  
-**Impact:** Better code organization  
+**Time:** 1 hour  
+**Impact:** Identify violations and create refactoring plan  
 **Status:** [ ] Not Started
 
-**Context:** [FRONTEND_AUDITS.md - App.tsx Issue 3](apps/wp-context-alt-text/FRONTEND_AUDITS.md#--issue-3-large-file-size)
+**Scope:** Audit all major components against new [Frontend Component Architecture Rules](docs/architecture/rules/instructions.md)
 
-**Current:** `App.tsx` (606 lines with 4 major components)
+**Components to Audit:**
 
-**New Structure:**
-```
-js/admin/app/
-├── index.tsx                 # Main App component (100 lines)
-├── AdminRouter.tsx           # Router setup (150 lines)
-├── routes/
-│   ├── DashboardRoute.tsx    # Dashboard route (150 lines)
-│   ├── WorkbenchRoute.tsx    # Workbench route (150 lines)
-│   └── RosterRoute.tsx       # Roster route (if exists)
-└── utils/
-    ├── csvExport.ts          # CSV generation utilities
-    └── searchNormalization.ts # Search query normalization
-```
+| Component                      | Current Lines | Expected Violations                      |
+| ------------------------------ | ------------- | ---------------------------------------- |
+| `RosterRoute.tsx`              | 2,543         | 🔴 Critical (14+ useState, 6+ useEffect) |
+| `App.tsx`                      | 563           | 🟠 High (8+ useState, 5+ useEffect)      |
+| `WorkbenchApp.tsx`             | 274           | 🟡 Medium (check hook counts)            |
+| `RecognitionSettingsPanel.tsx` | ?             | 🟡 Medium (complex state)                |
+| `DashboardHeader.tsx`          | ?             | 🟢 Low (likely OK)                       |
 
-**Benefits:**
-- Easier to navigate
-- Better code splitting opportunities
-- Clearer component boundaries
+**Analysis Checklist:**
+
+For each component, check:
+
+1. **Component Size**:
+
+   - [ ] Total lines < 300 (or < 400 for routes)
+   - [ ] Embedded components extracted
+   - [ ] JSX blocks < 50 lines
+
+2. **State Management**:
+
+   - [ ] `useState` count < 5
+   - [ ] `useEffect` count < 3
+   - [ ] No props mirrored in state
+   - [ ] No derived values in state
+
+3. **Anti-Patterns**:
+
+   - [ ] No effect chains
+   - [ ] No prop drilling beyond 2 levels
+   - [ ] No manual data fetching state
+
+4. **Extraction Opportunities**:
+   - [ ] Can extract custom hooks?
+   - [ ] Can extract sub-components?
+   - [ ] Can use React Query?
+   - [ ] Can use `useReducer`?
+
+**Deliverable:** Create `COMPONENT_ARCHITECTURE_AUDIT.md` with:
+
+- Violation matrix (component × limits)
+- Priority ranking (Critical → Low)
+- Refactoring estimates (hours per component)
+- Dependency graph (which components to refactor first)
 
 ---
 
-### Task 5.2: Create Settings Hook (useRecognitionSettings)
-**Priority:** 🟡 High  
-**Time:** 2 hours  
-**Impact:** Separation of concerns  
+### Task 5.2: Refactor RosterRoute.tsx to Comply with Architecture Limits
+
+**Priority:** � Critical  
+**Time:** 6-8 hours  
+**Impact:** 2,543 → ~400 lines per file, eliminate 14+ useState, 6+ useEffect  
 **Status:** [ ] Not Started
 
-**Context:** [FRONTEND_AUDITS.md - RecognitionSettingsPanel Issue 3](apps/wp-context-alt-text/FRONTEND_AUDITS.md#--issue-3-complex-state-management)
+**Current Violations:**
 
-**Extract from:** `settings/RecognitionSettingsPanel.tsx`
+- **Line count**: 2,543 lines ❌ (exceeds 400-line route limit by 536%)
+- **useState count**: 14+ hooks ❌ (exceeds 5-hook limit by 180%)
+- **useEffect count**: 6+ hooks ❌ (exceeds 3-effect limit by 100%)
+- **Embedded components**: 4+ components ❌ (should be extracted)
 
-**Create:** `hooks/useRecognitionSettings.ts`
+**Refactoring Strategy:**
+
+Follow the [RosterRoute Refactoring Roadmap](docs/architecture/frontend-uml/roster-route-refactoring-roadmap.mmd):
+
+**Phase 1: Extract Data Hooks** (2 hours)
+
+Create separate hooks for data operations:
+
+```
+js/admin/hooks/
+├── useRosterTable.ts         # List/filter/pagination (~200 lines)
+├── useRosterForm.ts          # Create/edit form state (~150 lines)
+└── useObservationDialog.ts   # Observation management (~150 lines)
+```
+
+**Phase 2: Extract UI Components** (3 hours)
+
+Break down large JSX blocks into components:
+
+```
+js/components/roster/
+├── RosterRoute.tsx           # Main route (~400 lines) ✅
+├── RosterTable.tsx           # Table component (~250 lines)
+├── RosterForm.tsx            # Form component (~200 lines)
+├── RosterFormFields.tsx      # Form fields (~150 lines)
+├── ObservationDialog.tsx     # Observation UI (~200 lines)
+├── ImageUploadModal.tsx      # Image upload (~150 lines)
+└── shared/
+    ├── RosterEntryCard.tsx   # Card component (~100 lines)
+    ├── StatusBadge.tsx       # Status indicator (~50 lines)
+    └── AvatarUpload.tsx      # Avatar upload (~100 lines)
+```
+
+**Phase 3: Extract Utilities** (1 hour)
+
+Move business logic to utilities:
+
+```
+js/admin/utils/roster/
+├── validation.ts             # Form validation (~80 lines)
+├── normalization.ts          # Data normalization (~100 lines)
+└── calculations.ts           # Stats/metrics (~60 lines)
+```
+
+**Phase 4: Consolidate State** (2 hours)
+
+Replace multiple `useState` with `useReducer`:
 
 ```typescript
-export const useRecognitionSettings = () => {
-  const [form, setForm] = useState<RecognitionSettingsPayload>(...);
-  const [errors, setErrors] = useState<FieldErrors>({});
-  
-  const saveMutation = useMutation({
-    mutationFn: async (settings: RecognitionSettingsPayload) => { ... },
-    onSuccess: () => { ... },
-  });
-  
-  const testMutation = useMutation({
-    mutationFn: async () => { ... },
-    onSuccess: () => { ... },
-  });
-  
-  return {
-    form,
-    errors,
-    updateField: (field: string, value: any) => { ... },
-    save: saveMutation.mutate,
-    test: testMutation.mutate,
-    isSaving: saveMutation.isPending,
-    isTesting: testMutation.isPending,
-  };
-};
+// Before: 14+ useState hooks ❌
+const [selection, setSelection] = useState({});
+const [assigningId, setAssigningId] = useState(null);
+const [searchInput, setSearchInput] = useState("");
+const [search, setSearch] = useState(null);
+const [page, setPage] = useState(1);
+const [perPage, setPerPage] = useState(20);
+const [editing, setEditing] = useState(null);
+const [isSubmitting, setIsSubmitting] = useState(false);
+const [statusFilter, setStatusFilter] = useState(null);
+const [draftValues, setDraftValues] = useState(null);
+const [observationPrompt, setObservationPrompt] = useState(null);
+// ... 3+ more
+
+// After: 1-2 useReducer + React Query ✅
+const [tableState, dispatchTable] = useReducer(tableReducer, initialTableState);
+const [formState, dispatchForm] = useReducer(formReducer, initialFormState);
+const { data, isLoading } = useRosterTable(tableState.filters);
+const { mutate } = useRosterForm();
 ```
+
+**Phase 5: Eliminate Effects** (1 hour)
+
+Replace `useEffect` with derived state and event handlers:
+
+```typescript
+// Before: 6+ useEffect hooks ❌
+useEffect(() => setSearch(searchInput), [searchInput]);
+useEffect(() => refetch(), [page, perPage]);
+useEffect(() => /* sync state */, [data]);
+// ... 3+ more
+
+// After: 0 useEffect hooks ✅
+const debouncedSearch = useDebouncedValue(searchInput, 500);
+// React Query auto-refetches when dependencies change
+const { data } = useQuery({
+    queryKey: ['roster', { page, perPage, search: debouncedSearch }],
+    queryFn: fetchRoster,
+});
+```
+
+**Success Criteria:**
+
+- ✅ RosterRoute.tsx < 400 lines
+- ✅ All extracted components < 300 lines
+- ✅ useState count < 5 per component
+- ✅ useEffect count < 3 per component
+- ✅ All tests passing
+- ✅ No functionality lost
+
+**Estimated Result:**
+
+```
+Before: 1 file × 2,543 lines = 2,543 lines
+After:  8-10 files × ~200-400 lines = ~2,200 lines
+Net:    -343 lines + better organization
+```
+
+---
+
+### Task 5.3: Refactor App.tsx to Comply with Architecture Limits
+
+**Priority:** 🟠 High  
+**Time:** 3 hours  
+**Impact:** 563 → ~300 lines, eliminate 8+ useState, 5+ useEffect  
+**Status:** [ ] Not Started
+
+**Current Violations:**
+
+- **Line count**: 563 lines ❌ (exceeds 400-line route limit by 41%)
+- **useState count**: 8+ hooks ❌ (exceeds 5-hook limit by 60%)
+- **useEffect count**: 5+ hooks ❌ (exceeds 3-effect limit by 67%)
+
+**Refactoring Strategy:**
+
+**Phase 1: Extract Router** (30 minutes)
+
+```
+js/admin/app/
+├── App.tsx                   # Main app shell (~150 lines) ✅
+└── AdminRouter.tsx           # Route definitions (~200 lines) ✅
+```
+
+**Phase 2: Extract Route Components** (2 hours)
+
+```
+js/admin/app/routes/
+├── DashboardRoute.tsx        # Dashboard logic (~250 lines) ✅
+├── WorkbenchRoute.tsx        # Workbench logic (~200 lines) ✅
+└── shared/
+    ├── RouteErrorBoundary.tsx  # Error handling (~80 lines)
+    └── RouteLoader.tsx         # Loading states (~60 lines)
+```
+
+**Phase 3: Extract Utilities** (30 minutes)
+
+```
+js/admin/utils/app/
+├── csvExport.ts              # CSV generation (~100 lines)
+├── searchNormalization.ts    # Search utilities (~80 lines)
+└── paginationHelpers.ts      # Pagination logic (~60 lines)
+```
+
+**Success Criteria:**
+
+- ✅ App.tsx < 200 lines (app shell only)
+- ✅ All route components < 300 lines
+- ✅ useState count < 5 per component
+- ✅ useEffect count < 3 per component
+- ✅ All tests passing
+
+---
+
+### Task 5.4: Extract Shared UI Components to Component Library
+
+**Priority:** 🟡 Medium  
+**Time:** 3 hours  
+**Impact:** Enable reuse, reduce duplication  
+**Status:** [ ] Not Started
+
+````
 
 **Update:** `RecognitionSettingsPanel.tsx` to use hook
 
@@ -957,6 +1712,7 @@ export const useRecognitionSettings = () => {
 **Goal:** Better symmetry between frontend and backend
 
 **Progress Tracker:**
+
 - [ ] Task 6.1: Align Validation Logic (Frontend ↔ PHP)
 - [ ] Task 6.2: Align Sanitization Patterns
 - [ ] Task 6.3: Create Shared TypeScript/PHP Type Definitions
@@ -964,12 +1720,14 @@ export const useRecognitionSettings = () => {
 ---
 
 ### Task 6.1: Align Validation Logic (Frontend ↔ PHP)
-**Priority:** 🟡 High  
-**Time:** 2 hours  
-**Impact:** Consistent validation rules  
+
+**Priority:** 🟡 High
+**Time:** 2 hours
+**Impact:** Consistent validation rules
 **Status:** [ ] Not Started
 
 **Current State:**
+
 - **Frontend:** URL/timeout validation in `RecognitionSettingsPanel.tsx` (lines 9-28)
 - **PHP:** URL/timeout validation in `SettingsRepository.php` (lines 167-169, 175-176)
 
@@ -989,10 +1747,10 @@ export const VALIDATION = {
   },
   URL: {
     PATTERN: /^(https?:)\/\//i,
-    REQUIRED_SCHEMES: ['http', 'https'],
+    REQUIRED_SCHEMES: ["http", "https"],
   },
 } as const;
-```
+````
 
 ```php
 // src/Shared/Constants/ValidationConstants.php
@@ -1011,12 +1769,14 @@ final class ValidationConstants
 ---
 
 ### Task 6.2: Align Sanitization Patterns
+
 **Priority:** 🟡 High  
 **Time:** 2 hours  
 **Impact:** Consistent data handling  
 **Status:** [ ] Not Started
 
 **Current State:**
+
 - **Frontend:** Normalization functions scattered across hooks
 - **PHP:** Sanitization in multiple repositories (RecognitionObservationRepository, RosterService, Api.php)
 
@@ -1047,6 +1807,7 @@ public static function toStringOrNull($value): ?string
 ```
 
 **Benefits:**
+
 - Predictable data shape across stack
 - Easier debugging (same patterns)
 - Reduces contract test failures
@@ -1054,6 +1815,7 @@ public static function toStringOrNull($value): ?string
 ---
 
 ### Task 6.3: Create Shared TypeScript/PHP Type Definitions
+
 **Priority:** 🟡 High  
 **Time:** 2 hours  
 **Impact:** Better contract alignment  
@@ -1080,6 +1842,7 @@ shared-contracts/
 ```
 
 **Example:**
+
 ```typescript
 // recognition.types.ts
 export interface RecognitionJobSummary {
@@ -1109,6 +1872,7 @@ export interface RecognitionJobSummary {
 ## 🟢 PHASE 7: Medium Priority - PHP Component Improvements (4 hours)
 
 **Progress Tracker:**
+
 - [ ] Task 7.1: Refactor WorkbenchMediaResolver.php
 - [ ] Task 7.2: Refactor useRecognitionObservations.ts
 - [ ] Task 7.3: Refactor useRoster.ts
@@ -1116,6 +1880,7 @@ export interface RecognitionJobSummary {
 ---
 
 ### Task 7.1: Refactor WorkbenchMediaResolver.php
+
 **Priority:** 🟢 Medium  
 **Time:** 2 hours  
 **Impact:** -50 lines (245 → ~195)  
@@ -1143,6 +1908,7 @@ private function extractScalarString(array $data, string $key, ?string $fallback
 ---
 
 ### Task 7.2: Refactor useRecognitionObservations.ts
+
 **Priority:** 🟢 Medium  
 **Time:** 1.5 hours  
 **Impact:** -193 lines (443 → ~250)  
@@ -1151,6 +1917,7 @@ private function extractScalarString(array $data, string $key, ?string $fallback
 **Context:** [FRONTEND_AUDITS.md - useRecognitionObservations](apps/wp-context-alt-text/FRONTEND_AUDITS.md#3-userecognitionobservationsts--moderate-bloat-443-lines)
 
 **Actions:**
+
 1. Use shared normalization utilities (from Task 2.1)
 2. Use shared URL builder (from Task 2.2)
 3. Simplify complex normalization (extract to smaller functions)
@@ -1158,6 +1925,7 @@ private function extractScalarString(array $data, string $key, ?string $fallback
 ---
 
 ### Task 7.3: Refactor useRoster.ts
+
 **Priority:** 🟢 Medium  
 **Time:** 30 minutes  
 **Impact:** -152 lines (432 → ~280)  
@@ -1196,6 +1964,7 @@ const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => 
 **Context:** After refactoring, ensure all new utilities and simplified components have comprehensive test coverage. Current coverage is good but can be enhanced in key areas.
 
 **Progress Tracker:**
+
 - [ ] Task 8.1: Add Tests for New Shared Utilities
 - [ ] Task 8.2: Add Tests for PHP Validation Helpers
 - [ ] Task 8.3: Add Integration Tests for Refactored Hooks
@@ -1206,6 +1975,7 @@ const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => 
 ---
 
 ### Task 8.1: Add Tests for New Shared Utilities
+
 **Priority:** 🟢 Medium  
 **Time:** 2 hours  
 **Impact:** Prevents regressions in commonly-used code  
@@ -1216,25 +1986,26 @@ const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => 
 **Files to Test:**
 
 1. **`js/admin/utils/normalization/primitives.ts`** - New file from Task 2.1
+
    ```typescript
    // Test coverage needed for:
-   describe('toFiniteNumber', () => {
-     it('should convert valid numbers', () => {
-       expect(toFiniteNumber('42')).toBe(42);
+   describe("toFiniteNumber", () => {
+     it("should convert valid numbers", () => {
+       expect(toFiniteNumber("42")).toBe(42);
        expect(toFiniteNumber(42.5)).toBe(42.5);
      });
-     
-     it('should return fallback for invalid values', () => {
-       expect(toFiniteNumber('invalid', 10)).toBe(10);
+
+     it("should return fallback for invalid values", () => {
+       expect(toFiniteNumber("invalid", 10)).toBe(10);
        expect(toFiniteNumber(NaN, 5)).toBe(5);
        expect(toFiniteNumber(Infinity, 0)).toBe(0);
      });
    });
-   
-   describe('toStringOrNull', () => {
-     it('should return trimmed string or null', () => {
-       expect(toStringOrNull('  hello  ')).toBe('hello');
-       expect(toStringOrNull('')).toBeNull();
+
+   describe("toStringOrNull", () => {
+     it("should return trimmed string or null", () => {
+       expect(toStringOrNull("  hello  ")).toBe("hello");
+       expect(toStringOrNull("")).toBeNull();
        expect(toStringOrNull(null)).toBeNull();
        expect(toStringOrNull(undefined)).toBeNull();
      });
@@ -1243,70 +2014,73 @@ const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => 
    ```
 
 2. **`js/admin/utils/normalization/recognition.ts`** - New file from Task 2.1
+
    ```typescript
-   describe('normalizeObservation', () => {
-     it('should normalize valid observation data', () => {
+   describe("normalizeObservation", () => {
+     it("should normalize valid observation data", () => {
        const input = {
-         id: '123',
-         jobId: 'job-456',
-         confidence: '0.95',
+         id: "123",
+         jobId: "job-456",
+         confidence: "0.95",
          // ... other fields
        };
        const result = normalizeObservation(input);
-       expect(result.id).toBe('123');
+       expect(result.id).toBe("123");
        expect(result.confidence).toBe(0.95);
      });
-     
-     it('should handle missing optional fields', () => {
-       const minimal = { id: '123', jobId: 'job-456' };
+
+     it("should handle missing optional fields", () => {
+       const minimal = { id: "123", jobId: "job-456" };
        expect(() => normalizeObservation(minimal)).not.toThrow();
      });
    });
    ```
 
 3. **`js/admin/utils/http.ts`** - Enhanced in Task 2.2
+
    ```typescript
-   describe('buildApiUrl', () => {
-     it('should build URL with query params', () => {
-       const url = buildApiUrl('/api/roster', {
+   describe("buildApiUrl", () => {
+     it("should build URL with query params", () => {
+       const url = buildApiUrl("/api/roster", {
          page: 1,
-         search: 'test',
+         search: "test",
          enabled: true,
        });
-       expect(url).toContain('page=1');
-       expect(url).toContain('search=test');
-       expect(url).toContain('enabled=true');
+       expect(url).toContain("page=1");
+       expect(url).toContain("search=test");
+       expect(url).toContain("enabled=true");
      });
-     
-     it('should skip null/undefined params', () => {
-       const url = buildApiUrl('/api/roster', {
+
+     it("should skip null/undefined params", () => {
+       const url = buildApiUrl("/api/roster", {
          page: 1,
          search: null,
          type: undefined,
        });
-       expect(url).not.toContain('search');
-       expect(url).not.toContain('type');
+       expect(url).not.toContain("search");
+       expect(url).not.toContain("type");
      });
    });
-   
-   describe('fetchApi', () => {
-     it('should handle successful response', async () => {
+
+   describe("fetchApi", () => {
+     it("should handle successful response", async () => {
        // Use MSW or fetch mock
-       const result = await fetchApi('/api/test', {
-         method: 'GET',
+       const result = await fetchApi("/api/test", {
+         method: "GET",
        });
        expect(result).toBeDefined();
      });
-     
-     it('should handle error response', async () => {
+
+     it("should handle error response", async () => {
        await expect(
-         fetchApi('/api/error', { method: 'GET' })
+         fetchApi("/api/error", { method: "GET" })
        ).rejects.toThrow();
      });
    });
    ```
 
 **Test Coverage Goals:**
+
 - Primitive normalization: 100% (simple, pure functions)
 - Domain normalization: 90%+ (test all paths)
 - HTTP utilities: 85%+ (mock external calls)
@@ -1314,6 +2088,7 @@ const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => 
 ---
 
 ### Task 8.2: Add Tests for PHP Validation Helpers
+
 **Priority:** 🟢 Medium  
 **Time:** 1 hour  
 **Impact:** Ensures validation logic is bulletproof  
@@ -1342,7 +2117,7 @@ final class ValidationHelpersTest extends TestCase
         $result = ValidationHelpers::sanitizeUrl($input, $stripTrailing);
         $this->assertSame($expected, $result);
     }
-    
+
     public function urlProvider(): array
     {
         return [
@@ -1350,18 +2125,18 @@ final class ValidationHelpersTest extends TestCase
             ['https://example.com', false, 'https://example.com'],
             ['https://example.com/', true, 'https://example.com'],
             ['http://localhost:8080/path', false, 'http://localhost:8080/path'],
-            
+
             // Invalid URLs
             ['not-a-url', false, ''],
             ['', false, ''],
             ['   ', false, ''],
-            
+
             // Edge cases
             ['  https://example.com  ', false, 'https://example.com'],
             ['https://example.com///', true, 'https://example.com'],
         ];
     }
-    
+
     /**
      * @dataProvider timeoutProvider
      */
@@ -1370,20 +2145,20 @@ final class ValidationHelpersTest extends TestCase
         $result = ValidationHelpers::sanitizeTimeout($value, $min, $max);
         $this->assertSame($expected, $result);
     }
-    
+
     public function timeoutProvider(): array
     {
         return [
             // Within range
             [5000, 1000, 10000, 5000],
-            
+
             // Below minimum
             [500, 1000, 10000, 1000],
             [0, 1000, 10000, 1000],
-            
+
             // Above maximum
             [15000, 1000, 10000, 10000],
-            
+
             // Edge cases
             [1000, 1000, 10000, 1000],  // Min boundary
             [10000, 1000, 10000, 10000], // Max boundary
@@ -1397,6 +2172,7 @@ final class ValidationHelpersTest extends TestCase
 ---
 
 ### Task 8.3: Add Integration Tests for Refactored Hooks
+
 **Priority:** 🟢 Medium  
 **Time:** 2 hours  
 **Impact:** Ensures refactored hooks work correctly together  
@@ -1428,7 +2204,7 @@ describe('useRecognitionJob - Integration', () => {
 
   it('should submit job and poll for completion', async () => {
     const jobId = 'test-job-123';
-    
+
     // Mock job submission
     server.use(
       http.post('/wp-json/cat/v1/recognition/analyze', () => {
@@ -1439,7 +2215,7 @@ describe('useRecognitionJob - Integration', () => {
         });
       })
     );
-    
+
     // Mock polling - first pending, then complete
     let pollCount = 0;
     server.use(
@@ -1501,6 +2277,7 @@ describe('useRecognitionJob - Integration', () => {
 ```
 
 **Also Test:**
+
 - `useRecognitionSubmit` (unit test)
 - `useRecognitionPoll` (unit test with fake timers)
 - `useWorkbenchMedia` (integration test for fallback logic)
@@ -1510,6 +2287,7 @@ describe('useRecognitionJob - Integration', () => {
 ---
 
 ### Task 8.4: Add Contract Tests for Frontend/Backend Alignment
+
 **Priority:** 🟢 Medium  
 **Time:** 1.5 hours  
 **Impact:** Prevents API drift  
@@ -1520,16 +2298,16 @@ describe('useRecognitionJob - Integration', () => {
 **Create:** `packages/shared-contracts/tests/contract-alignment.test.ts`
 
 ```typescript
-import { describe, it, expect } from 'vitest';
-import type { RecognitionJobSummary, RosterEntry } from '../types';
+import { describe, it, expect } from "vitest";
+import type { RecognitionJobSummary, RosterEntry } from "../types";
 
-describe('Contract Alignment Tests', () => {
-  describe('RecognitionJobSummary', () => {
-    it('should match PHP response structure', () => {
+describe("Contract Alignment Tests", () => {
+  describe("RecognitionJobSummary", () => {
+    it("should match PHP response structure", () => {
       // Sample response from PHP backend
       const phpResponse = {
-        id: 'job-123',
-        status: 'complete',
+        id: "job-123",
+        status: "complete",
         attachmentIds: [1, 2, 3],
         createdAt: 1697500000,
         updatedAt: 1697500100,
@@ -1537,18 +2315,18 @@ describe('Contract Alignment Tests', () => {
 
       // Verify it matches TypeScript type
       const typed: RecognitionJobSummary = phpResponse;
-      
-      expect(typed.id).toBe('job-123');
-      expect(typed.status).toBe('complete');
+
+      expect(typed.id).toBe("job-123");
+      expect(typed.status).toBe("complete");
       expect(typed.attachmentIds).toEqual([1, 2, 3]);
       expect(typed.createdAt).toBe(1697500000);
       expect(typed.updatedAt).toBe(1697500100);
     });
 
-    it('should reject invalid status values', () => {
+    it("should reject invalid status values", () => {
       const invalidResponse = {
-        id: 'job-123',
-        status: 'invalid-status', // Not in allowed values
+        id: "job-123",
+        status: "invalid-status", // Not in allowed values
         attachmentIds: [1],
         createdAt: 1697500000,
         updatedAt: 1697500100,
@@ -1563,13 +2341,13 @@ describe('Contract Alignment Tests', () => {
     });
   });
 
-  describe('RosterEntry', () => {
-    it('should match PHP response structure', () => {
+  describe("RosterEntry", () => {
+    it("should match PHP response structure", () => {
       const phpResponse = {
-        remoteId: 'remote-123',
-        label: 'John Doe',
-        type: 'face',
-        status: 'SYNCED',
+        remoteId: "remote-123",
+        label: "John Doe",
+        type: "face",
+        status: "SYNCED",
         avatarId: 42,
         referenceImages: [1, 2],
         createdAt: 1697500000,
@@ -1577,23 +2355,25 @@ describe('Contract Alignment Tests', () => {
       };
 
       const typed: RosterEntry = phpResponse;
-      
-      expect(typed.remoteId).toBe('remote-123');
-      expect(typed.label).toBe('John Doe');
-      expect(typed.type).toBe('face');
+
+      expect(typed.remoteId).toBe("remote-123");
+      expect(typed.label).toBe("John Doe");
+      expect(typed.type).toBe("face");
     });
   });
 
-  describe('Validation Constants', () => {
-    it('should have matching timeout limits in TS and PHP', async () => {
+  describe("Validation Constants", () => {
+    it("should have matching timeout limits in TS and PHP", async () => {
       // Import frontend constants
-      const { VALIDATION } = await import('../../../js/admin/constants/validation');
-      
+      const { VALIDATION } = await import(
+        "../../../js/admin/constants/validation"
+      );
+
       // Verify these match PHP ValidationConstants
       expect(VALIDATION.TIMEOUT_MS.MIN).toBe(1000);
       expect(VALIDATION.TIMEOUT_MS.MAX).toBe(120000);
       expect(VALIDATION.TIMEOUT_MS.DEFAULT).toBe(15000);
-      
+
       // If these fail, frontend/backend are out of sync
     });
   });
@@ -1605,6 +2385,7 @@ describe('Contract Alignment Tests', () => {
 ---
 
 ### Task 8.5: Measure and Document Coverage Baselines
+
 **Priority:** 🟢 Medium  
 **Time:** 30 minutes  
 **Impact:** Establish metrics for future improvements  
@@ -1613,36 +2394,41 @@ describe('Contract Alignment Tests', () => {
 **Actions:**
 
 1. **Run coverage reports:**
+
    ```bash
    # PHP coverage
    cd apps/wp-context-alt-text
    composer test -- --coverage-html coverage/html
    composer test -- --coverage-text
-   
+
    # Frontend coverage
    cd apps/wp-context-alt-text
    npm run test:coverage
    ```
 
 2. **Document current baselines in README:**
+
    ```markdown
    ## Test Coverage
-   
+
    **PHP Backend:**
+
    - Overall: 78% (target: 85%)
    - Repositories: 85%
    - Services: 72%
    - Controllers (API): 65%
    - Utilities: 90%
-   
+
    **Frontend:**
+
    - Overall: 71% (target: 80%)
    - Hooks: 68%
    - Components: 73%
    - Utilities: 85%
    - Normalization: 60% (needs improvement)
-   
+
    **Coverage Goals:**
+
    - Critical paths: 90%+
    - Utilities: 85%+
    - Business logic: 80%+
@@ -1650,8 +2436,9 @@ describe('Contract Alignment Tests', () => {
    ```
 
 3. **Set up coverage thresholds:**
-   
+
    **PHP:** Update `phpunit.xml.dist`:
+
    ```xml
    <coverage>
      <report>
@@ -1666,26 +2453,22 @@ describe('Contract Alignment Tests', () => {
      </exclude>
    </coverage>
    ```
-   
+
    **Frontend:** Update `vitest.config.ts`:
+
    ```typescript
    export default defineConfig({
      test: {
        coverage: {
-         provider: 'v8',
-         reporter: ['text', 'html', 'lcov'],
+         provider: "v8",
+         reporter: ["text", "html", "lcov"],
          thresholds: {
-           lines: 70,      // Current baseline
+           lines: 70, // Current baseline
            functions: 70,
            branches: 65,
            statements: 70,
          },
-         exclude: [
-           'node_modules/',
-           'tests/',
-           '**/*.test.ts',
-           '**/*.test.tsx',
-         ],
+         exclude: ["node_modules/", "tests/", "**/*.test.ts", "**/*.test.tsx"],
        },
      },
    });
@@ -1698,6 +2481,7 @@ describe('Contract Alignment Tests', () => {
    ```
 
 **Deliverables:**
+
 - Baseline coverage metrics documented
 - Thresholds configured in test runners
 - Coverage reports generated
@@ -1705,6 +2489,7 @@ describe('Contract Alignment Tests', () => {
 ---
 
 ### Task 8.6: Add Missing Edge Case Tests
+
 **Priority:** 🟢 Medium  
 **Time:** 1.5-2 hours  
 **Impact:** Prevents production bugs  
@@ -1715,17 +2500,18 @@ describe('Contract Alignment Tests', () => {
 **High-Priority Edge Cases:**
 
 1. **Empty/Null Data Handling:**
+
    ```typescript
    // Test normalization with empty responses
-   describe('normalizeObservation - edge cases', () => {
-     it('should handle empty object', () => {
+   describe("normalizeObservation - edge cases", () => {
+     it("should handle empty object", () => {
        expect(() => normalizeObservation({})).not.toThrow();
      });
-     
-     it('should handle null values for optional fields', () => {
+
+     it("should handle null values for optional fields", () => {
        const data = {
-         id: '123',
-         jobId: 'job-456',
+         id: "123",
+         jobId: "job-456",
          confidence: null,
          rosterMatch: null,
        };
@@ -1737,13 +2523,14 @@ describe('Contract Alignment Tests', () => {
    ```
 
 2. **Boundary Values:**
+
    ```php
    public function testTimeoutBoundaries(): void
    {
        // Test exactly at boundaries
        $this->assertSame(1000, ValidationHelpers::sanitizeTimeout(1000, 1000, 10000));
        $this->assertSame(10000, ValidationHelpers::sanitizeTimeout(10000, 1000, 10000));
-       
+
        // Test one off boundaries
        $this->assertSame(1000, ValidationHelpers::sanitizeTimeout(999, 1000, 10000));
        $this->assertSame(10000, ValidationHelpers::sanitizeTimeout(10001, 1000, 10000));
@@ -1751,40 +2538,46 @@ describe('Contract Alignment Tests', () => {
    ```
 
 3. **Race Conditions in Polling:**
+
    ```typescript
-   it('should handle rapid job status changes', async () => {
+   it("should handle rapid job status changes", async () => {
      // Simulate job completing before first poll
      server.use(
-       http.post('/analyze', () => HttpResponse.json({ id: 'fast-job', status: 'pending' })),
-       http.get('/jobs/fast-job', () => HttpResponse.json({ status: 'complete' }))
+       http.post("/analyze", () =>
+         HttpResponse.json({ id: "fast-job", status: "pending" })
+       ),
+       http.get("/jobs/fast-job", () =>
+         HttpResponse.json({ status: "complete" })
+       )
      );
-     
+
      const { result } = renderHook(() => useRecognitionJob(), { wrapper });
      result.current.startJob([1]);
-     
+
      await waitFor(() => {
-       expect(result.current.jobDetails?.status).toBe('complete');
+       expect(result.current.jobDetails?.status).toBe("complete");
      });
    });
    ```
 
 4. **Error Recovery:**
+
    ```typescript
-   it('should retry failed requests', async () => {
+   it("should retry failed requests", async () => {
      let attemptCount = 0;
      server.use(
-       http.get('/api/roster', () => {
+       http.get("/api/roster", () => {
          attemptCount++;
          if (attemptCount < 3) {
            return HttpResponse.error();
          }
-         return HttpResponse.json([{ id: '1', label: 'Success' }]);
+         return HttpResponse.json([{ id: "1", label: "Success" }]);
        })
      );
-     
+
      // Test that React Query retries work
      const { result } = renderHook(() => useRoster(), { wrapper });
-     
+
      await waitFor(() => {
        expect(result.current.data).toBeDefined();
        expect(attemptCount).toBe(3);
@@ -1799,12 +2592,14 @@ describe('Contract Alignment Tests', () => {
 ### Test Coverage Success Metrics
 
 **Before Test Coverage Improvements:**
+
 - PHP Coverage: ~78%
 - Frontend Coverage: ~71%
 - Contract Tests: 0
 - Edge Case Tests: Minimal
 
 **After Test Coverage Improvements:**
+
 - PHP Coverage: 85%+ (goal)
 - Frontend Coverage: 80%+ (goal)
 - Contract Tests: 10+ key contracts verified
@@ -1812,6 +2607,7 @@ describe('Contract Alignment Tests', () => {
 - Test Reliability: 95%+ (fewer flaky tests)
 
 **Additional Benefits:**
+
 - ✅ Confidence in refactored code
 - ✅ Faster debugging (tests pinpoint issues)
 - ✅ Documentation through tests
@@ -1823,23 +2619,27 @@ describe('Contract Alignment Tests', () => {
 ## 🟢 PHASE 9: Medium Priority - Documentation Updates (2 hours)
 
 **Progress Tracker:**
+
 - [ ] Task 9.1: Update Code Architecture Documentation
 - [ ] Task 9.2: Create Refactoring Retrospective
 
 ---
 
 ### Task 9.1: Update Code Architecture Documentation
+
 **Priority:** 🟢 Medium  
 **Time:** 1 hour  
 **Impact:** Developer onboarding  
 **Status:** [ ] Not Started
 
 **Files to Update:**
+
 - `apps/wp-context-alt-text/README.md`
 - `docs/architecture/rules/coding-standards.md` (if exists)
 - `docs/architecture/rules/frontend-patterns.md` (if exists)
 
 **Add sections for:**
+
 1. Shared utility guidelines
 2. Normalization patterns
 3. Validation alignment
@@ -1849,6 +2649,7 @@ describe('Contract Alignment Tests', () => {
 ---
 
 ### Task 9.2: Create Refactoring Retrospective
+
 **Priority:** 🟢 Medium  
 **Time:** 1 hour  
 **Impact:** Knowledge capture  
@@ -1857,6 +2658,7 @@ describe('Contract Alignment Tests', () => {
 **Create:** `docs/REFACTORING_RETROSPECTIVE.md`
 
 **Content:**
+
 - What was refactored and why
 - Before/after metrics (lines, complexity, coverage)
 - Lessons learned
@@ -1868,6 +2670,7 @@ describe('Contract Alignment Tests', () => {
 ## 🟢 PHASE 10: Low Priority - Polish (10 hours)
 
 **Progress Tracker:**
+
 - [ ] Task 10.1: Remove Test-Specific Code from Production
 - [ ] Task 10.2: Consolidate Duplicate notices.ts Files
 - [ ] Task 10.3: Add PHPDoc to Private Methods
@@ -1876,22 +2679,27 @@ describe('Contract Alignment Tests', () => {
 ---
 
 ### Task 10.1: Remove Test-Specific Code from Production
+
 **Priority:** 🟢 Low  
 **Time:** 2 hours  
 **Impact:** Cleaner production code  
 **Status:** [ ] Not Started
 
 **Affected Files:**
+
 - `js/admin/App.tsx` (lines 31-32, 539-541)
 - `js/admin/hooks/useWorkbenchMedia.ts` (lines 185-194)
 - `js/admin/logger.ts` (line 24)
 
 **Pattern:**
+
 ```typescript
 // OLD:
-const runtimeProcess = (globalThis as { process?: { env?: Record<string, string | undefined> } }).process;
+const runtimeProcess = (
+  globalThis as { process?: { env?: Record<string, string | undefined> } }
+).process;
 if (runtimeProcess?.env?.NODE_ENV === "test") {
-    console.info("Debug info", data);
+  console.info("Debug info", data);
 }
 
 // NEW: Remove entirely, use test utilities in test files instead
@@ -1902,6 +2710,7 @@ if (runtimeProcess?.env?.NODE_ENV === "test") {
 ---
 
 ### Task 10.2: Consolidate Duplicate notices.ts Files
+
 **Priority:** 🟢 Low  
 **Time:** 30 minutes  
 **Impact:** -96 lines  
@@ -1910,6 +2719,7 @@ if (runtimeProcess?.env?.NODE_ENV === "test") {
 **Context:** [FRONTEND_AUDITS.md - notices.ts Duplicate](apps/wp-context-alt-text/FRONTEND_AUDITS.md#7-noticests-root--duplicate-96-lines)
 
 **Files:**
+
 - `js/admin/notices.ts` (96 lines) - **DELETE**
 - `js/admin/utils/notices.ts` (73 lines) - **KEEP**
 
@@ -1918,6 +2728,7 @@ if (runtimeProcess?.env?.NODE_ENV === "test") {
 ---
 
 ### Task 10.3: Add PHPDoc to Private Methods
+
 **Priority:** 🟢 Low  
 **Time:** 2 hours  
 **Impact:** Better IDE support  
@@ -1926,6 +2737,7 @@ if (runtimeProcess?.env?.NODE_ENV === "test") {
 **Context:** [PHP_AUDITS.md - Missing PHPDoc](apps/wp-context-alt-text/PHP_AUDITS.md#--issue-4-missing-phpdoc-for-private-methods)
 
 **Files:**
+
 - `src/Admin/Admin.php` (~10 private methods)
 - `src/Security/Security.php` (all public methods)
 - `src/Shared/Logger.php` (class-level doc)
@@ -1933,6 +2745,7 @@ if (runtimeProcess?.env?.NODE_ENV === "test") {
 ---
 
 ### Task 10.4: Create Value Objects for Dashboard Data
+
 **Priority:** 🟢 Low  
 **Time:** 5.5 hours  
 **Impact:** Type safety, better IDE support  
@@ -1941,6 +2754,7 @@ if (runtimeProcess?.env?.NODE_ENV === "test") {
 **Context:** [PHP_AUDITS.md - Missing Value Objects](apps/wp-context-alt-text/PHP_AUDITS.md#--issue-1-no-value-objects)
 
 **Create classes:**
+
 ```php
 src/Admin/ValueObjects/
 ├── HeroStatus.php
@@ -1950,6 +2764,7 @@ src/Admin/ValueObjects/
 ```
 
 **Example:**
+
 ```php
 final class HeroStatus
 {
@@ -1974,6 +2789,7 @@ final class HeroStatus
 ### Before Refactoring
 
 **Frontend:**
+
 - Total Lines: 1,860 (hooks only)
 - Average Hook Complexity: 6.0/10
 - Duplicate Code: ~260 lines
@@ -1981,12 +2797,14 @@ final class HeroStatus
 - Test Coverage: ~71%
 
 **PHP:**
+
 - Total Lines: ~3,500
 - Unnecessary Code: ~713 lines (20%)
 - Technical Debt Items: 2 major (stubs, legacy migration)
 - Test Coverage: ~78%
 
 **Combined:**
+
 - Estimated Duplicate Logic: ~400 lines
 - Code Smell Score: 5.5/10 (average)
 - Average Test Coverage: 74.5%
@@ -1994,6 +2812,7 @@ final class HeroStatus
 ### After Refactoring
 
 **Frontend:**
+
 - Total Lines: ~1,100 (40% reduction)
 - Average Hook Complexity: 3.5/10
 - Duplicate Code: 0 lines
@@ -2001,26 +2820,28 @@ final class HeroStatus
 - Test Coverage: ~80%+ (target)
 
 **PHP:**
+
 - Total Lines: ~2,787
 - Unnecessary Code: 0 lines
 - Technical Debt Items: 0
 - Test Coverage: ~85%+ (target)
 
 **Combined:**
+
 - Estimated Duplicate Logic: 0 lines
 - Code Smell Score: 2.5/10 (average)
 - Average Test Coverage: 82.5%+ (target)
 
 ### ROI Calculation
 
-| Metric | Before | After | Improvement |
-|--------|--------|-------|-------------|
-| Total Lines | ~5,360 | ~3,887 | -1,473 (-27%) |
-| Duplicate Lines | ~400 | 0 | -400 (-100%) |
-| Avg Complexity | 5.5/10 | 2.5/10 | -55% |
-| Files >400 lines | 5 | 0 | -100% |
-| Test Coverage | 74.5% | 82.5%+ | +8-10% |
-| Contract Tests | 0 | 10+ | New coverage area |
+| Metric           | Before | After  | Improvement       |
+| ---------------- | ------ | ------ | ----------------- |
+| Total Lines      | ~5,360 | ~3,887 | -1,473 (-27%)     |
+| Duplicate Lines  | ~400   | 0      | -400 (-100%)      |
+| Avg Complexity   | 5.5/10 | 2.5/10 | -55%              |
+| Files >400 lines | 5      | 0      | -100%             |
+| Test Coverage    | 74.5%  | 82.5%+ | +8-10%            |
+| Contract Tests   | 0      | 10+    | New coverage area |
 
 **Time Investment:** 46-58 hours (includes test improvements)  
 **Long-term Savings:** ~200 hours over next year (easier maintenance, faster features, fewer bugs)  
@@ -2033,11 +2854,13 @@ final class HeroStatus
 ### Recommended Path: Tactical → Strategic
 
 **Step 1: Complete Tactical Critical Path (11 hours)**
+
 1. Phase 1: Greenfield Cleanup (1h)
 2. Phase 2: Frontend Utilities (3h)
 3. Phase 3: Frontend Hooks (7h)
 
 **Decision Point:** After critical path, evaluate project needs:
+
 - **If maintaining current scope** → Continue tactical phases 4-9
 - **If planning major features** → Start strategic Phase 10 (DI Container)
 - **If team bandwidth limited** → Pause, use improved codebase
@@ -2051,12 +2874,14 @@ Execute phases 1-9 in order. Each phase builds on previous work.
 **Timeline:** 6-7 weeks (assuming 8 hours/week)
 
 **Pros:**
+
 - Lower risk
 - Easier to test incrementally
 - Can pause between phases
 - No strategic architecture needed yet
 
 **Cons:**
+
 - Slower overall progress
 - Benefits realized gradually
 
@@ -2069,6 +2894,7 @@ Execute phases 1-9 in order. Each phase builds on previous work.
 Run multiple phases concurrently with different developers/timeslots.
 
 **Streams:**
+
 1. **Greenfield Cleanup** (Phase 1) - 1 hour
 2. **Frontend Utilities** (Phase 2) - 3 hours
 3. **PHP Utilities** (Phase 4) - 3 hours
@@ -2078,11 +2904,13 @@ Run multiple phases concurrently with different developers/timeslots.
 **Timeline:** 3-4 weeks with parallel work
 
 **Pros:**
+
 - Faster completion
 - Early benefits from multiple fronts
 - Can still defer strategic architecture
 
 **Cons:**
+
 - More coordination needed
 - Higher merge conflict risk
 
@@ -2095,6 +2923,7 @@ Run multiple phases concurrently with different developers/timeslots.
 Focus on high-impact tasks first, defer polish.
 
 **Priority Order:**
+
 1. Phase 1: Greenfield Cleanup (1h) - **DO FIRST**
 2. Phase 2: Frontend Utilities (3h)
 3. Phase 3: Frontend Hooks (7h)
@@ -2108,12 +2937,14 @@ Focus on high-impact tasks first, defer polish.
 **Timeline:** 4-5 weeks for critical work, polish as time permits
 
 **Pros:**
+
 - Maximum impact early (75% benefit from 50% work)
 - Can stop at any point with value
 - Polish truly optional
 - Strategic architecture remains option later
 
 **Cons:**
+
 - Documentation lags implementation
 - Polish may never happen
 
@@ -2126,6 +2957,7 @@ Focus on high-impact tasks first, defer polish.
 Complete tactical cleanup while planning strategic architecture, then execute both.
 
 **Phase Progression:**
+
 1. **Weeks 1-2:** Tactical Phases 1-3 (critical path)
 2. **Week 3:** Evaluate + plan strategic architecture
 3. **Weeks 4-5:** Tactical Phases 4-7 (utilities + components)
@@ -2137,18 +2969,21 @@ Complete tactical cleanup while planning strategic architecture, then execute bo
 **Timeline:** 8-16 weeks depending on strategic scope
 
 **Pros:**
+
 - Complete transformation
 - Best long-term architecture
 - All technical debt addressed
 - Future-proof codebase
 
 **Cons:**
+
 - Major time investment
 - Higher risk
 - Requires commitment
 - May be overkill for small projects
 
 **Best For:** Projects with:
+
 - ✅ Long-term roadmap (1+ year)
 - ✅ Team growth planned
 - ✅ 5+ major features coming
@@ -2160,21 +2995,22 @@ Complete tactical cleanup while planning strategic architecture, then execute bo
 
 Choose your approach based on your situation:
 
-| Situation | Recommended Approach |
-|-----------|---------------------|
-| Solo developer, greenfield cleanup urgently needed | **Approach A** (Sequential) |
-| Small team, want quick tactical wins | **Approach C** (High-Impact First) |
-| 2+ developers, good coordination | **Approach B** (Parallel Streams) |
-| Planning major expansion, team growth | **Approach D** (Tactical + Strategic) |
-| Bootstrap file causing daily pain | **Approach D** (Start strategic early) |
-| Just want code cleanup, not architecture | **Approach C** (Stop after Phase 9) |
-| Uncertain about future direction | **Approach C** (Keep options open) |
+| Situation                                          | Recommended Approach                   |
+| -------------------------------------------------- | -------------------------------------- |
+| Solo developer, greenfield cleanup urgently needed | **Approach A** (Sequential)            |
+| Small team, want quick tactical wins               | **Approach C** (High-Impact First)     |
+| 2+ developers, good coordination                   | **Approach B** (Parallel Streams)      |
+| Planning major expansion, team growth              | **Approach D** (Tactical + Strategic)  |
+| Bootstrap file causing daily pain                  | **Approach D** (Start strategic early) |
+| Just want code cleanup, not architecture           | **Approach C** (Stop after Phase 9)    |
+| Uncertain about future direction                   | **Approach C** (Keep options open)     |
 
 ---
 
 ### When to Skip Strategic Architecture
 
 **Don't do Phase 10 if:**
+
 - ❌ Project scope stable, few new features planned
 - ❌ Solo developer maintaining small plugin
 - ❌ Bootstrap file manageable with tactical improvements
@@ -2189,6 +3025,7 @@ Choose your approach based on your situation:
 ## ✅ Definition of Done
 
 For each task:
+
 - [ ] Code changes implemented
 - [ ] Tests updated and passing
 - [ ] No new linting errors
@@ -2198,6 +3035,7 @@ For each task:
 - [ ] Commit message follows conventional commits format
 
 For each phase:
+
 - [ ] All phase tasks completed
 - [ ] Integration tests pass
 - [ ] Manual smoke testing completed
@@ -2205,6 +3043,7 @@ For each phase:
 - [ ] Audit documents updated
 
 For overall refactoring:
+
 - [ ] All critical phases (1-3) completed
 - [ ] Metrics targets achieved (see Success Metrics)
 - [ ] Retrospective document created
@@ -2215,6 +3054,7 @@ For overall refactoring:
 ## 🎯 Quick Start Checklist
 
 **Week 1: Greenfield Cleanup**
+
 - [ ] Task 1.1: Remove stub files (15 min)
 - [ ] Task 1.2: Fix settings option name (5 min)
 - [ ] Task 1.3: Update tests (15 min)
@@ -2224,6 +3064,7 @@ For overall refactoring:
 - [ ] Commit & push
 
 **Week 2: Frontend Utilities**
+
 - [ ] Task 2.1: Create normalization utils (2h)
 - [ ] Task 2.2: Enhance HTTP utils (1h)
 - [ ] Update hooks to use new utilities
@@ -2231,23 +3072,27 @@ For overall refactoring:
 - [ ] Commit & push
 
 **Week 3-4: Hook Refactoring**
+
 - [ ] Task 3.1: Refactor useRecognitionJob (5h)
 - [ ] Task 3.2: Simplify useWorkbenchMedia (2h)
 - [ ] Integration testing
 - [ ] Commit & push
 
 **Week 5: PHP Utilities & Alignment**
+
 - [ ] Tasks 4.1-4.4: PHP utilities (3h)
 - [ ] Tasks 6.1-6.3: Cross-stack alignment (6h)
 - [ ] Contract testing
 - [ ] Commit & push
 
 **Week 6: Components & Tests**
+
 - [ ] Tasks 5.1-5.2: Frontend components (4h)
 - [ ] Tasks 7.1-7.3: PHP components (4h)
 - [ ] Tasks 8.1-8.3: Test coverage for new utilities (3h)
 
 **Week 7: Test Coverage & Documentation**
+
 - [ ] Tasks 8.4-8.6: Contract tests and edge cases (3-4h)
 - [ ] Tasks 9.1-9.2: Documentation (2h)
 - [ ] Final review & retrospective
@@ -2265,17 +3110,20 @@ For overall refactoring:
 ### When to Start Strategic Architecture
 
 **Do DI Container + Service Providers if:**
+
 - ✅ Planning 3+ new features in next month
 - ✅ Onboarding new developers soon
 - ✅ Bootstrap file causing maintenance issues
 - ✅ Want to eliminate circular dependencies
 
 **Do Event Bus if:**
+
 - ✅ Need to decouple recognition ↔ roster
 - ✅ Want analytics/auditing infrastructure
 - ✅ Planning integration with external systems
 
 **Do CQRS if:**
+
 - ✅ Api.php becoming unmaintainable (>1,000 lines)
 - ✅ Need to reuse business logic in CLI/cron
 - ✅ Want clearer command vs query separation
@@ -2295,6 +3143,7 @@ For overall refactoring:
 6. Verify all existing functionality works
 
 **Deliverables:**
+
 - Container configuration with ~40 service definitions
 - Simplified bootstrap file (~100 lines)
 - Test base class for easy mocking
@@ -2314,6 +3163,7 @@ For overall refactoring:
 5. Update bootstrap to register/boot providers
 
 **Deliverables:**
+
 - 5 service provider classes
 - Bootstrap further reduced (~80 lines total)
 - Better separation of concerns
@@ -2348,6 +3198,7 @@ For overall refactoring:
 6. Register listeners in service providers
 
 **Deliverables:**
+
 - Event bus infrastructure
 - 10 domain events
 - 8 event listeners
@@ -2364,6 +3215,7 @@ For overall refactoring:
 5. Update tests
 
 **Deliverables:**
+
 - 3 normalizer classes
 - 1 domain service
 - Repositories focused on data access only
@@ -2395,6 +3247,7 @@ For overall refactoring:
 5. Make handlers reusable from CLI/cron/admin
 
 **Deliverables:**
+
 - 15 command classes + handlers
 - 10 query classes + handlers
 - Simplified Api.php (~500 lines)
@@ -2421,6 +3274,7 @@ For overall refactoring:
 4. Add shared test utilities
 
 **Deliverables:**
+
 - 10 factory classes
 - 5 builder classes
 - Tests easier to write and read
@@ -2434,6 +3288,7 @@ For overall refactoring:
 4. Integrate with external systems (optional)
 
 **Deliverables:**
+
 - Enhanced event system
 - Analytics tracking
 - Audit logs
@@ -2444,18 +3299,19 @@ For overall refactoring:
 
 **Metrics Impact:**
 
-| Metric | Before | After Strategic | Improvement |
-|--------|--------|-----------------|-------------|
-| Bootstrap File | 491 lines | ~100 lines | -80% |
-| Api.php Size | 1,509 lines | ~500 lines | -67% |
-| Circular Dependencies | 1 | 0 | -100% |
-| Manual Wiring | 100% | 5% | -95% |
-| Testability | 6/10 | 9/10 | +50% |
-| Maintainability | 6/10 | 9/10 | +50% |
-| Time to Add Feature | 4 hours | 2 hours | -50% |
-| Developer Onboarding | 2 weeks | 1 week | -50% |
+| Metric                | Before      | After Strategic | Improvement |
+| --------------------- | ----------- | --------------- | ----------- |
+| Bootstrap File        | 491 lines   | ~100 lines      | -80%        |
+| Api.php Size          | 1,509 lines | ~500 lines      | -67%        |
+| Circular Dependencies | 1           | 0               | -100%       |
+| Manual Wiring         | 100%        | 5%              | -95%        |
+| Testability           | 6/10        | 9/10            | +50%        |
+| Maintainability       | 6/10        | 9/10            | +50%        |
+| Time to Add Feature   | 4 hours     | 2 hours         | -50%        |
+| Developer Onboarding  | 2 weeks     | 1 week          | -50%        |
 
 **Long-term Value:**
+
 - **Better Testing:** Easy to mock dependencies, faster tests
 - **Easier Extensibility:** Add features without modifying existing code
 - **Clearer Architecture:** New developers understand quickly
@@ -2467,16 +3323,19 @@ For overall refactoring:
 **Incremental Approach (Recommended):**
 
 1. **Week 1-2:** DI Container + Service Providers
+
    - Verify all existing functionality
    - Deploy to staging
    - Monitor for issues
 
 2. **Week 3-4:** Event Bus + Repository Refinement
+
    - Eliminate circular dependencies
    - Verify recognition ↔ roster integration
    - Deploy to staging
 
 3. **Week 5-7:** CQRS Implementation
+
    - Start with 5 most-used endpoints
    - Gradually migrate remaining endpoints
    - Deploy incrementally
@@ -2486,6 +3345,7 @@ For overall refactoring:
    - No deployment required
 
 **Validation at Each Step:**
+
 - ✅ All tests passing
 - ✅ Manual smoke testing
 - ✅ Performance benchmarks maintained
@@ -2496,18 +3356,21 @@ For overall refactoring:
 While planning strategic architecture, these can be done immediately:
 
 1. **Add Type Hints** (30 min)
+
    ```php
    // Add explicit return types to all factory functions
    function context_alt_text(): ContextAltText
    ```
 
 2. **Extract Roster Snapshot Function** (15 min)
+
    ```php
    // Already exists, just document it
    function context_alt_text_fetch_roster_snapshot(): ?array
    ```
 
 3. **Add PHPDoc** (1 hour)
+
    ```php
    // Document all factory functions with purpose and usage
    ```

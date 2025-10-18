@@ -3,6 +3,7 @@ import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { PaginationControls } from "./PaginationControls";
+import { selectRadixOption } from "@/admin/testing/radixHelpers";
 
 describe("PaginationControls", () => {
     it("disables navigation when only a single page is available", () => {
@@ -36,8 +37,7 @@ describe("PaginationControls", () => {
         await user.click(screen.getByRole("button", { name: /Previous/i }));
         await waitFor(() => expect(onPageChange).toHaveBeenNthCalledWith(2, 1));
 
-        const select = screen.getByLabelText(/Items per page/i);
-        await user.selectOptions(select, "20");
+        await selectRadixOption(user, /Items per page/i, "20");
         await waitFor(() => expect(onPerPageChange).toHaveBeenCalledWith(20));
 
         const input = screen.getByLabelText(/Jump to page/i);

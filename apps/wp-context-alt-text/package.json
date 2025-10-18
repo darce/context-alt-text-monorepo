@@ -11,6 +11,8 @@
         "build": "vite build",
         "preview": "vite preview",
         "lint": "eslint .",
+        "format": "prettier --write \"**/*.{ts,tsx,js,jsx,json,css,scss,md}\"",
+        "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,json,css,scss,md}\"",
         "nuke": "rm -rf node_modules public && npm install && npm run build && npm run storybook:build"
     },
     "devDependencies": {
@@ -34,6 +36,7 @@
         "eslint-plugin-react-hooks": "^5.0.0",
         "jsdom": "^25.0.1",
         "msw": "^2.11.3",
+        "prettier": "^3.6.2",
         "prop-types": "^15.8.1",
         "sass": "^1.81.0",
         "sass-embedded": "^1.81.0",

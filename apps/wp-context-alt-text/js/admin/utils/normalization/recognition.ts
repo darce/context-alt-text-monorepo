@@ -4,7 +4,8 @@
  * Normalizes recognition-related data structures from API responses.
  */
 
-import { ensureString, toFiniteNumber, toNullableTimestamp, toStringOrNull } from "./primitives";
+import { __ } from "@wordpress/i18n";
+import { ensureString, toFiniteNumber, toNullableTimestamp, toStringOrNull, toUniqueNumericIds } from "./primitives";
 
 export interface RecognitionObservationMatch {
     isMatch: boolean;
@@ -51,6 +52,22 @@ export interface RecognitionJobSummary {
     rejected: number[];
 }
 
+export interface RecognitionAttachmentObservations {
+    jobId: string | null;
+    attachmentId: number;
+    updatedAt: number | null;
+    context: {
+        filename?: string;
+        imageUrl?: string;
+    };
+    summary: {
+        total: number;
+        matched: number;
+        needsReview: number;
+    };
+    observations: RecognitionObservationRecord[];
+}
+
 export interface RecognitionJobDetails {
     id: string;
     status: string;
@@ -59,19 +76,17 @@ export interface RecognitionJobDetails {
     error: string | null;
     attachments: {
         id: number;
-        recognizedAt: number | null;
-        observations: number;
-        matched: number;
-        needsReview: number;
+        filename?: string;
+        imageUrl?: string;
     }[];
+    rejected: number[];
+    observations: RecognitionAttachmentObservations[];
 }
 
 /**
  * Normalize observation status to valid value.
  */
-const normalizeObservationStatus = (
-    value: unknown,
-): RecognitionObservationRecord["status"] => {
+export const normalizeObservationStatus = (value: unknown): RecognitionObservationRecord["status"] => {
     const normalized = ensureString(value ?? "needs_review");
     if (normalized === "matched" || normalized === "needs_review") {
         return normalized;
@@ -159,7 +174,8 @@ export const normalizeRoster = (roster: unknown): RecognitionObservationRoster =
         result.displayName = ensureString(displayName);
     }
 
-    const type = data.type ?? (typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>).type : undefined);
+    const type =
+        data.type ?? (typeof data.metadata === "object" ? (data.metadata as Record<string, unknown>).type : undefined);
     if (type !== undefined) {
         result.type = ensureString(type);
     }
@@ -169,6 +185,7 @@ export const normalizeRoster = (roster: unknown): RecognitionObservationRoster =
 
 /**
  * Normalize a single observation record from API response.
+ * This version includes more sophisticated confidence resolution and face data handling.
  */
 export const normalizeObservationRecord = (observation: unknown): RecognitionObservationRecord | null => {
     if (!observation || typeof observation !== "object") {
@@ -176,45 +193,95 @@ export const normalizeObservationRecord = (observation: unknown): RecognitionObs
     }
 
     const data = observation as Record<string, unknown>;
+    const boundingBoxRaw = Array.isArray(data.boundingBox ?? data.bbox) ? (data.boundingBox ?? data.bbox) : [];
+    const detectionConfidence = toFiniteNumber(data.confidence ?? 0, 0);
+    const match = normalizeMatch(data.match ?? data.roster_match);
 
-    const observationIdValue = ensureString(data.observationId ?? data.observation_id ?? "").trim();
-    if (observationIdValue === "") {
-        return null;
-    }
+    // Handle face_data candidates (legacy format)
+    const faceDataCandidates = (() => {
+        const faceData = data.face_data;
+        if (!faceData || typeof faceData !== "object") {
+            return null;
+        }
 
-    const labelValue = ensureString(data.label ?? "");
-    const entityTypeValue = ensureString(data.entityType ?? data.entity_type ?? "unknown");
-    const confidenceValue = toFiniteNumber(data.confidence ?? 0, 0);
-    const detectionConfidenceValue = toFiniteNumber(data.detectionConfidence ?? data.detection_confidence ?? 0, 0);
-    const matchConfidenceValue = toFiniteNumber(data.matchConfidence ?? data.match_confidence ?? 0, 0);
-    const areaValue = toFiniteNumber(data.area ?? 0, 0);
+        const faceDataRecord = faceData as Record<string, unknown>;
+        return Array.isArray(faceDataRecord.candidates) ? faceDataRecord.candidates : null;
+    })();
 
-    let boundingBoxValue: number[] = [];
-    if (Array.isArray(data.boundingBox ?? data.bounding_box)) {
-        boundingBoxValue = (data.boundingBox ?? data.bounding_box) as number[];
-    }
+    const directCandidates = Array.isArray(data.candidates) ? data.candidates : null;
+    const candidates = normalizeCandidates(directCandidates ?? faceDataCandidates ?? []);
 
-    const statusValue = normalizeObservationStatus(data.status);
-    const sourceValue = ensureString(data.source ?? "detection");
-    const matchValue = normalizeMatch(data.match);
-    const rosterValue = normalizeRoster(data.roster);
-    const candidatesValue = normalizeCandidates(data.candidates ?? []);
+    const bestCandidateConfidence = candidates.reduce((current, candidate) => {
+        if (!candidate) {
+            return current;
+        }
+
+        const value = toFiniteNumber(candidate.confidence ?? candidate.similarity ?? 0, 0);
+        return value > current ? value : current;
+    }, 0);
+
+    const resolvedMatchConfidence =
+        match.confidence > 0 ? match.confidence : match.similarity > 0 ? match.similarity : bestCandidateConfidence;
+
+    const normalizedConfidence = resolvedMatchConfidence > 0 ? resolvedMatchConfidence : detectionConfidence;
 
     return {
-        observationId: observationIdValue,
-        label: labelValue,
-        entityType: entityTypeValue,
-        confidence: confidenceValue,
-        detectionConfidence: detectionConfidenceValue > 0 ? detectionConfidenceValue : null,
-        matchConfidence: matchConfidenceValue > 0 ? matchConfidenceValue : null,
-        area: areaValue,
-        boundingBox: boundingBoxValue,
-        status: statusValue,
-        source: sourceValue,
-        match: matchValue,
-        roster: rosterValue,
-        candidates: candidatesValue,
+        observationId: ensureString(data.observationId ?? data.id ?? ""),
+        label: ensureString(data.label ?? ""),
+        entityType: ensureString(data.entityType ?? data.entity_type ?? ""),
+        confidence: normalizedConfidence,
+        detectionConfidence: detectionConfidence > 0 ? detectionConfidence : null,
+        matchConfidence: resolvedMatchConfidence > 0 ? resolvedMatchConfidence : null,
+        area: toFiniteNumber(data.area ?? 0, 0),
+        boundingBox: (boundingBoxRaw as (number | string)[]).map((value) => toFiniteNumber(value, 0)),
+        status: normalizeObservationStatus(data.status),
+        source: ensureString(data.source ?? "recognition-service"),
+        match,
+        roster: normalizeRoster(data.roster ?? data.roster_entry),
+        candidates,
     } satisfies RecognitionObservationRecord;
+};
+
+/**
+ * Normalize attachment summaries array from job details.
+ */
+export const normalizeAttachmentSummaries = (input: unknown): RecognitionAttachmentObservations[] => {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+
+    const normalized: RecognitionAttachmentObservations[] = [];
+
+    for (const item of input) {
+        if (!item || typeof item !== "object") {
+            continue;
+        }
+
+        const data = item as Record<string, unknown>;
+        const summary = (data.summary ?? {}) as Record<string, unknown>;
+        const context = (data.context ?? {}) as Record<string, unknown>;
+        const observationsRaw = Array.isArray(data.observations) ? data.observations : [];
+
+        normalized.push({
+            jobId: data.jobId != null ? ensureString(data.jobId) : null,
+            attachmentId: toFiniteNumber(data.attachmentId ?? data.attachment_id ?? 0, 0),
+            updatedAt: toNullableTimestamp(data.updatedAt ?? data.updated_at ?? null),
+            context: {
+                filename: context.filename ? ensureString(context.filename) : undefined,
+                imageUrl: context.imageUrl ? ensureString(context.imageUrl) : undefined,
+            },
+            summary: {
+                total: toFiniteNumber(summary.total ?? 0, 0),
+                matched: toFiniteNumber(summary.matched ?? 0, 0),
+                needsReview: toFiniteNumber(summary.needsReview ?? summary.needs_review ?? 0, 0),
+            },
+            observations: (observationsRaw as unknown[])
+                .map((record) => normalizeObservationRecord(record))
+                .filter((record): record is RecognitionObservationRecord => record !== null),
+        });
+    }
+
+    return normalized;
 };
 
 /**
@@ -237,9 +304,7 @@ export const normalizeJobSummary = (data: unknown): RecognitionJobSummary | null
 
     let rejected: number[] = [];
     if (Array.isArray(record.rejected)) {
-        rejected = record.rejected
-            .map((id) => toFiniteNumber(id, 0))
-            .filter((id) => id > 0);
+        rejected = record.rejected.map((id) => toFiniteNumber(id, 0)).filter((id) => id > 0);
     }
 
     return {
@@ -252,56 +317,63 @@ export const normalizeJobSummary = (data: unknown): RecognitionJobSummary | null
 
 /**
  * Normalize job details from API response.
+ * Supports optional fallbackId for cases where job ID is not in the payload.
  */
-export const normalizeJobDetails = (data: unknown): RecognitionJobDetails | null => {
-    if (!data || typeof data !== "object") {
-        return null;
+export const normalizeJobDetails = (
+    payload: Record<string, unknown>,
+    fallbackId?: string | null,
+): RecognitionJobDetails => {
+    const attachmentsRaw = Array.isArray(payload.attachments) ? payload.attachments : [];
+    const attachments: { id: number; filename?: string; imageUrl?: string }[] = [];
+
+    for (const item of attachmentsRaw) {
+        if (!item || typeof item !== "object") {
+            continue;
+        }
+
+        const data = item as Record<string, unknown>;
+
+        attachments.push({
+            id: toFiniteNumber(data.id ?? 0, 0),
+            filename: data.filename ? ensureString(data.filename) : undefined,
+            imageUrl: data.imageUrl ? ensureString(data.imageUrl) : undefined,
+        });
     }
 
-    const record = data as Record<string, unknown>;
-
-    const id = ensureString(record.id ?? record.job_id ?? "").trim();
-    if (id === "") {
-        return null;
-    }
-
-    const status = ensureString(record.status ?? "unknown");
-    const startedAt = toNullableTimestamp(record.startedAt ?? record.started_at);
-    const completedAt = toNullableTimestamp(record.completedAt ?? record.completed_at);
-    const error = toStringOrNull(record.error);
-
-    let attachments: RecognitionJobDetails["attachments"] = [];
-    if (Array.isArray(record.attachments)) {
-        attachments = record.attachments
-            .map((attachment) => {
-                if (!attachment || typeof attachment !== "object") {
-                    return null;
-                }
-
-                const attachmentRecord = attachment as Record<string, unknown>;
-                const attachmentId = toFiniteNumber(attachmentRecord.id ?? attachmentRecord.attachment_id ?? 0, 0);
-
-                if (attachmentId <= 0) {
-                    return null;
-                }
-
-                return {
-                    id: attachmentId,
-                    recognizedAt: toNullableTimestamp(attachmentRecord.recognizedAt ?? attachmentRecord.recognized_at),
-                    observations: toFiniteNumber(attachmentRecord.observations ?? 0, 0),
-                    matched: toFiniteNumber(attachmentRecord.matched ?? 0, 0),
-                    needsReview: toFiniteNumber(attachmentRecord.needsReview ?? attachmentRecord.needs_review ?? 0, 0),
-                };
-            })
-            .filter((attachment): attachment is NonNullable<typeof attachment> => attachment !== null);
-    }
+    const rejected = Array.isArray(payload.rejected) ? payload.rejected : [];
+    const status = ensureString(payload.status ?? "processing");
+    const error = payload.error != null ? ensureString(payload.error) : null;
+    const idCandidate = ensureString(payload.id ?? payload.jobId ?? fallbackId ?? "");
 
     return {
-        id,
+        id: idCandidate,
         status,
-        startedAt,
-        completedAt,
+        startedAt: toNullableTimestamp(payload.startedAt ?? payload.started_at ?? null),
+        completedAt: toNullableTimestamp(payload.completedAt ?? payload.completed_at ?? null),
         error,
         attachments,
-    };
+        rejected: toUniqueNumericIds(rejected as (number | string)[]),
+        observations: normalizeAttachmentSummaries(payload.observations ?? []),
+    } satisfies RecognitionJobDetails;
+};
+
+/**
+ * Attempts to parse JSON from a Response, throwing a RecognitionRequestError if parsing fails.
+ * Returns null if the response is not JSON.
+ */
+export const maybeParseJson = async (response: Response): Promise<unknown> => {
+    const contentType = response.headers.get("content-type") ?? "";
+    if (contentType.toLowerCase().includes("application/json")) {
+        try {
+            return await response.json();
+        } catch (error) {
+            // Import RecognitionRequestError dynamically to avoid circular dependency
+            const { RecognitionRequestError } = await import("@/admin/hooks/useRecognitionJob.types");
+            throw new RecognitionRequestError(__("Recognition service returned malformed JSON.", "context-alt-text"), {
+                cause: error,
+            });
+        }
+    }
+
+    return null;
 };

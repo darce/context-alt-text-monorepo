@@ -4,22 +4,35 @@ declare(strict_types=1);
 
 namespace ContextAltText\Admin;
 
-class AltTextWorkbenchPage
+/**
+ * Alt-Text Workbench admin page.
+ *
+ * Renders the React-based workbench interface for bulk editing alt text.
+ *
+ * @since 1.0.0
+ */
+class AltTextWorkbenchPage extends AbstractSpaPage
 {
     public const ROOT_ID = 'context-alt-text-workbench-root';
 
-    public function render(): void
+    protected function getRootId(): string
     {
-        ?>
-        <div class="wrap context-alt-text-admin">
-            <h1><?php esc_html_e('Alt-Text Workbench', 'context-alt-text'); ?></h1>
-            <div id="<?php echo esc_attr(self::ROOT_ID); ?>" class="context-alt-text-workbench-root">
-                <p class="description">
-                    <?php esc_html_e('Alt-text workbench UI loading…', 'context-alt-text'); ?>
-                </p>
-            </div>
-        </div>
-        <?php
+        return self::ROOT_ID;
+    }
+
+    protected function getRootClass(): string
+    {
+        return 'context-alt-text-workbench-root';
+    }
+
+    protected function getPageTitle(): string
+    {
+        return __('Alt-Text Workbench', 'context-alt-text');
+    }
+
+    protected function getLoadingMessage(): string
+    {
+        return __('Alt-text workbench UI loading…', 'context-alt-text');
     }
 }
 

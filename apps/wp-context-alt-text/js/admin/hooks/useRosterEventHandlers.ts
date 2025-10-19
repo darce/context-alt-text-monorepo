@@ -5,7 +5,7 @@ import type { RosterEntry, RecognitionObservationAttachment, RecognitionObservat
 import type { RosterFormValues } from "@/admin/hooks/useRoster";
 import type { RosterStateActions } from "@/admin/hooks/useRosterState";
 import { dispatchNotice, notifyError } from "@/admin/notices";
-import { buildObservationSearchParams } from "@/utils/rosterHelpers";
+import { buildObservationSearchParams } from "@/admin/utils/rosterHelpers";
 
 /**
  * Options for useRosterEventHandlers hook.

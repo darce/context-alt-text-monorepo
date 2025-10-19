@@ -171,25 +171,28 @@ const buildAvatarReference = (values: RosterFormValues): Record<string, unknown>
     return ref;
 };
 
-const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => {
-    const payload: Record<string, unknown> = {
+const encodeBasicFields = (values: RosterFormValues): Record<string, unknown> => {
+    return {
         label: values.label,
         type: values.type,
     };
+};
 
-    // Metadata
+const encodeMetadata = (values: RosterFormValues): Record<string, unknown> | undefined => {
     const metadata: Record<string, unknown> = {};
+
     if (values.avatarUrl) {
         metadata.avatarUrl = values.avatarUrl;
     }
+
     if (typeof values.avatarId === "number" && Number.isFinite(values.avatarId) && values.avatarId > 0) {
         metadata.avatarAttachmentId = values.avatarId;
     }
-    if (Object.keys(metadata).length > 0) {
-        payload.metadata = metadata;
-    }
 
-    // Reference images
+    return Object.keys(metadata).length > 0 ? metadata : undefined;
+};
+
+const encodeReferenceImages = (values: RosterFormValues): Record<string, unknown>[] | undefined => {
     const referenceImages: Record<string, unknown>[] = [];
 
     // Avatar as first reference image
@@ -208,38 +211,57 @@ const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => 
         }
     }
 
-    if (referenceImages.length > 0) {
+    return referenceImages.length > 0 ? referenceImages : undefined;
+};
+
+const encodeResolveObservation = (values: RosterFormValues): Record<string, unknown> | undefined => {
+    const resolution = values.resolveObservation;
+    if (!resolution) {
+        return undefined;
+    }
+
+    const attachmentId = Math.trunc(resolution.attachmentId);
+    const observationId = typeof resolution.observationId === "string" ? resolution.observationId.trim() : "";
+
+    if (attachmentId <= 0 || observationId === "") {
+        return undefined;
+    }
+
+    const update: Record<string, unknown> = {
+        attachmentId,
+        observationId,
+        status: resolution.status === "matched" || resolution.status === "needs_review" ? resolution.status : "matched",
+    };
+
+    const label = typeof resolution.label === "string" ? resolution.label.trim() : "";
+    if (label) {
+        update.label = label;
+    }
+
+    const entityType = typeof resolution.entityType === "string" ? resolution.entityType.trim() : "";
+    if (entityType) {
+        update.entityType = entityType;
+    }
+
+    return update;
+};
+
+const encodeRosterBody = (values: RosterFormValues): Record<string, unknown> => {
+    const payload = encodeBasicFields(values);
+
+    const metadata = encodeMetadata(values);
+    if (metadata) {
+        payload.metadata = metadata;
+    }
+
+    const referenceImages = encodeReferenceImages(values);
+    if (referenceImages) {
         payload.referenceImages = referenceImages;
     }
 
-    // Resolve observation
-    const resolution = values.resolveObservation;
-    if (resolution) {
-        const attachmentId = Math.trunc(resolution.attachmentId);
-        const observationId = typeof resolution.observationId === "string" ? resolution.observationId.trim() : "";
-
-        if (attachmentId > 0 && observationId !== "") {
-            const update: Record<string, unknown> = {
-                attachmentId,
-                observationId,
-                status:
-                    resolution.status === "matched" || resolution.status === "needs_review"
-                        ? resolution.status
-                        : "matched",
-            };
-
-            const label = typeof resolution.label === "string" ? resolution.label.trim() : "";
-            if (label) {
-                update.label = label;
-            }
-
-            const entityType = typeof resolution.entityType === "string" ? resolution.entityType.trim() : "";
-            if (entityType) {
-                update.entityType = entityType;
-            }
-
-            payload.resolveObservation = update;
-        }
+    const resolveObservation = encodeResolveObservation(values);
+    if (resolveObservation) {
+        payload.resolveObservation = resolveObservation;
     }
 
     return payload;

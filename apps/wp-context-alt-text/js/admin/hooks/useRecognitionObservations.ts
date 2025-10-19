@@ -9,7 +9,7 @@ import type {
     RecognitionObservationsResult,
     RecognitionObservationSummary,
 } from "@/admin/types";
-import { handleJsonResponse, ensureOk, buildHeaders } from "@/admin/utils/http";
+import { handleJsonResponse, ensureOk, buildHeaders, buildApiUrl } from "@/admin/utils/http";
 import { toFiniteNumber, toNumberOrNull, toStringOrNull } from "@/admin/utils/normalization/primitives";
 
 export interface RecognitionObservationFilters {
@@ -69,32 +69,18 @@ const observationsKey = (endpoint: string, filters: RecognitionObservationFilter
     ["recognition-observations", endpoint, filters] as const;
 
 const buildObservationsUrl = (endpoint: string, filters: RecognitionObservationFilters): string => {
-    try {
-        const url = new URL(endpoint, typeof window !== "undefined" ? window.location.origin : undefined);
-        const params = url.searchParams;
-        const perPage = filters.perPage && filters.perPage > 0 ? filters.perPage : DEFAULT_PER_PAGE;
+    const perPage = filters.perPage && filters.perPage > 0 ? filters.perPage : DEFAULT_PER_PAGE;
+    const page = filters.page && filters.page > 0 ? filters.page : 1;
 
-        params.set("per_page", String(perPage));
+    const params: Record<string, string | number | undefined> = {
+        per_page: perPage,
+        page: page,
+        status: filters.status || undefined,
+        attachment_ids:
+            filters.attachmentIds && filters.attachmentIds.length > 0 ? filters.attachmentIds.join(",") : undefined,
+    };
 
-        const page = filters.page && filters.page > 0 ? filters.page : 1;
-        params.set("page", String(page));
-
-        if (filters.status) {
-            params.set("status", filters.status);
-        } else {
-            params.delete("status");
-        }
-
-        if (filters.attachmentIds && filters.attachmentIds.length > 0) {
-            params.set("attachment_ids", filters.attachmentIds.join(","));
-        } else {
-            params.delete("attachment_ids");
-        }
-
-        return url.toString();
-    } catch {
-        return endpoint;
-    }
+    return buildApiUrl(endpoint, params);
 };
 
 const normalizeRoster = (candidate: unknown): RecognitionObservationRecord["roster"] => {

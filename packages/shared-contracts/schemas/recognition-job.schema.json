@@ -1,0 +1,65 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-job.schema.json",
+  "title": "Recognition Job",
+  "description": "A recognition job that processes one or more images",
+  "type": "object",
+  "required": ["id", "status", "attachmentIds", "createdAt", "updatedAt"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "Unique job identifier (UUID)"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["pending", "processing", "complete", "error"],
+      "description": "Current job status"
+    },
+    "attachmentIds": {
+      "type": "array",
+      "description": "WordPress attachment IDs to process",
+      "items": {
+        "type": "integer",
+        "minimum": 1
+      },
+      "minItems": 1
+    },
+    "createdAt": {
+      "type": "integer",
+      "description": "Unix timestamp when job was created"
+    },
+    "updatedAt": {
+      "type": "integer",
+      "description": "Unix timestamp when job was last updated"
+    },
+    "completedAt": {
+      "type": ["integer", "null"],
+      "description": "Unix timestamp when job completed"
+    },
+    "error": {
+      "type": ["string", "null"],
+      "description": "Error message if job failed"
+    },
+    "results": {
+      "type": ["object", "null"],
+      "description": "Job results",
+      "properties": {
+        "imageCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of images processed"
+        },
+        "entitiesDetected": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total number of entities detected"
+        },
+        "observationsCreated": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of observation records created"
+        }
+      }
+    }
+  }
+}

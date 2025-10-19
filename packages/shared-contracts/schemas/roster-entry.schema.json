@@ -1,0 +1,125 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/roster-entry.schema.json",
+  "title": "Roster Entry",
+  "description": "A person or organization entry in the roster for facial/entity recognition",
+  "type": "object",
+  "required": ["remoteId", "label", "type", "status"],
+  "properties": {
+    "remoteId": {
+      "type": ["string", "null"],
+      "description": "Unique identifier from the recognition service, or null for local-only entries"
+    },
+    "label": {
+      "type": "string",
+      "minLength": 1,
+      "description": "Display name for the entry (e.g., person's name, organization name)"
+    },
+    "type": {
+      "type": "string",
+      "enum": ["person", "organization", "brand", "other"],
+      "description": "Type of entity"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["LOCAL", "SYNCED", "CONFLICT"],
+      "description": "Synchronization status with recognition service"
+    },
+    "updatedAt": {
+      "type": ["string", "null"],
+      "format": "date-time",
+      "description": "ISO 8601 timestamp of last update"
+    },
+    "metadata": {
+      "type": "object",
+      "description": "Additional metadata (confidence, local_id, etc.)"
+    },
+    "referenceImages": {
+      "type": "array",
+      "description": "Reference images used for matching",
+      "items": {
+        "type": "object",
+        "properties": {
+          "imageId": {
+            "type": "integer",
+            "description": "WordPress attachment ID"
+          },
+          "source": {
+            "type": "string",
+            "description": "Source of the image (e.g., 'media-library')"
+          },
+          "embeddingLength": {
+            "type": "integer",
+            "description": "Length of the feature embedding vector"
+          }
+        }
+      }
+    },
+    "avatarUrl": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "URL to the avatar image"
+    },
+    "avatarId": {
+      "type": ["integer", "null"],
+      "description": "WordPress attachment ID of the avatar"
+    },
+    "referenceImageCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of reference images"
+    },
+    "media": {
+      "type": "array",
+      "description": "Associated media items where this entry appears",
+      "items": {
+        "$ref": "#/definitions/rosterEntryMedia"
+      }
+    },
+    "mediaCount": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of associated media items"
+    }
+  },
+  "definitions": {
+    "rosterEntryMedia": {
+      "type": "object",
+      "required": ["attachmentId"],
+      "properties": {
+        "attachmentId": {
+          "type": "integer",
+          "description": "WordPress attachment ID"
+        },
+        "title": {
+          "type": ["string", "null"],
+          "description": "Media item title"
+        },
+        "previewUrl": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to preview the media"
+        },
+        "editUrl": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to edit the media in WordPress"
+        },
+        "thumbnailUrl": {
+          "type": ["string", "null"],
+          "format": "uri",
+          "description": "URL to thumbnail image"
+        },
+        "matchedAt": {
+          "type": ["string", "null"],
+          "format": "date-time",
+          "description": "When this media was matched to the roster entry"
+        },
+        "observationId": {
+          "type": ["string", "null"],
+          "description": "Recognition observation ID for this match"
+        }
+      }
+    }
+  }
+}

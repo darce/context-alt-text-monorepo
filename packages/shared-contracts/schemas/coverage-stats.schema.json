@@ -1,0 +1,71 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/coverage-stats.schema.json",
+  "title": "Coverage Statistics",
+  "description": "Alt text coverage statistics for the media library",
+  "type": "object",
+  "required": ["total", "with_alt", "missing", "coverage_percent"],
+  "properties": {
+    "total": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Total number of media items"
+    },
+    "with_alt": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of items with alt text"
+    },
+    "missing": {
+      "type": "integer",
+      "minimum": 0,
+      "description": "Number of items missing alt text"
+    },
+    "coverage_percent": {
+      "type": "number",
+      "minimum": 0,
+      "maximum": 100,
+      "description": "Percentage of items with alt text"
+    },
+    "trend_series": {
+      "type": "array",
+      "description": "Historical trend data points",
+      "items": {
+        "$ref": "#/definitions/trendPoint"
+      }
+    }
+  },
+  "definitions": {
+    "trendPoint": {
+      "type": "object",
+      "required": ["timestamp", "coverage", "total", "with_alt", "missing"],
+      "properties": {
+        "timestamp": {
+          "type": "integer",
+          "description": "Unix timestamp in milliseconds"
+        },
+        "coverage": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 100,
+          "description": "Coverage percentage at this point"
+        },
+        "total": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Total items at this point"
+        },
+        "with_alt": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Items with alt text at this point"
+        },
+        "missing": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Items missing alt text at this point"
+        }
+      }
+    }
+  }
+}

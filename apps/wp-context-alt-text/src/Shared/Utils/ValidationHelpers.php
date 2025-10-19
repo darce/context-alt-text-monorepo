@@ -5,20 +5,17 @@ declare(strict_types=1);
 namespace ContextAltText\Shared\Utils;
 
 use function filter_var;
-use function is_bool;
-use function is_numeric;
-use function is_string;
 use function max;
 use function min;
 use function rtrim;
 use function trim;
 
-use const FILTER_VALIDATE_BOOLEAN;
 use const FILTER_VALIDATE_URL;
-use const FILTER_NULL_ON_FAILURE;
 
 /**
- * Reusable validation and sanitization helpers.
+ * Reusable validation helpers.
+ *
+ * For type sanitization/coercion, use SanitizationHelpers instead.
  */
 final class ValidationHelpers
 {
@@ -56,23 +53,12 @@ final class ValidationHelpers
     /**
      * Convert mixed value to boolean with strict validation.
      *
+     * @deprecated Use SanitizationHelpers::sanitizeBool() or SanitizationHelpers::toBooleanOrNull() instead
      * @param mixed $value Value to convert to boolean
      * @return bool Sanitized boolean value
      */
     public static function sanitizeBool($value): bool
     {
-        if (is_bool($value)) {
-            return $value;
-        }
-
-        if (is_string($value)) {
-            $value = trim($value);
-        }
-
-        if (is_numeric($value) || is_string($value)) {
-            return filter_var($value, FILTER_VALIDATE_BOOLEAN, FILTER_NULL_ON_FAILURE) ?? false;
-        }
-
-        return false;
+        return SanitizationHelpers::sanitizeBool($value);
     }
 }

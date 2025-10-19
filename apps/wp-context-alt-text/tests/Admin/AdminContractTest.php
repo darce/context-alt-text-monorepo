@@ -94,6 +94,14 @@ final class AdminContractTest extends TestCase
             ],
         ]);
 
+        // Create taxonomy term for roster entry (for image count)
+        $termResult = wp_insert_term('Taylor Example', 'cat_roster_entity', [
+            'slug' => 'cat-recognition-remote-52',
+        ]);
+        // Tag one attachment with this roster entity
+        $attachmentId = 999;
+        wp_set_object_terms($attachmentId, [$termResult['term_id']], 'cat_roster_entity');
+
         update_option('cat_roster_sync_state', [
             'lastSyncAt' => '2024-02-01T12:00:00Z',
             'created' => 2,

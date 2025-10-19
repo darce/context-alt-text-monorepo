@@ -1,11 +1,11 @@
 sequenceDiagram
     participant UI as Roster Manager UI
     participant Hook as useRecognitionObservations
-    participant API as WP REST API
-    participant Manager as RosterObservationManager
-    participant Repo as ObservationRepository
-    participant Roster as RosterService
-    participant Backend as Recognition API
+    participant API as WP REST API (/cat/v1/observations)
+    participant Manager as RosterObservationManager (PHP)
+    participant Repo as ObservationRepository (PHP)
+    participant Roster as RosterService (PHP)
+    participant Backend as Recognition API (HF Spaces)
 
     Note over UI,Backend: Recognition Observation Workflow
 
@@ -52,3 +52,4 @@ sequenceDiagram
     Hook-->>UI: Refresh panel (pending count updated)
 
     Note over UI,Backend: Observations enable incremental roster building<br/>as recognition jobs discover new faces
+

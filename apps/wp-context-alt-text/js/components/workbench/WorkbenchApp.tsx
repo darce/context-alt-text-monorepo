@@ -8,7 +8,7 @@ import { RecognitionActions } from "@/components/workbench/RecognitionActions";
 import { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
 import { useWorkbenchActions } from "@/components/workbench/useWorkbenchActions";
 import { emitDashboardEvent } from "@/admin/analytics";
-import { pushSnackbarNotice } from "@/admin/utils/notices";
+import { dispatchNotice } from "@/admin/notices";
 import type { WorkbenchMediaItem as WorkbenchMediaItemType } from "@/admin/types";
 
 export type WorkbenchViewMode = "grid" | "list";
@@ -57,13 +57,15 @@ export const WorkbenchApp = ({
                     ? recognition.error.message
                     : __("Recognition request failed. Review the log for more details.", "context-alt-text");
 
-            const signature = [recognition.error.status ?? "unknown", message, recognition.error.rejected.join(",")].join(
-                "|",
-            );
+            const signature = [
+                recognition.error.status ?? "unknown",
+                message,
+                recognition.error.rejected.join(","),
+            ].join("|");
 
             if (requestErrorNoticeRef.current !== signature) {
                 requestErrorNoticeRef.current = signature;
-                pushSnackbarNotice("error", message);
+                dispatchNotice("error", message, { id: "cat-workbench-error" });
             }
 
             if (requestErrorEventRef.current !== signature) {
@@ -94,7 +96,7 @@ export const WorkbenchApp = ({
 
             if (jobErrorNoticeRef.current !== signature) {
                 jobErrorNoticeRef.current = signature;
-                pushSnackbarNotice("error", message);
+                dispatchNotice("error", message, { id: "cat-workbench-job-error" });
             }
 
             if (jobErrorEventRef.current !== signature) {

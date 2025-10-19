@@ -18,6 +18,8 @@ import "./select.css";
  *     <SelectItem value="option2">Option 2</SelectItem>
  *   </SelectContent>
  * </Select>
+ *
+ * @see https://www.radix-ui.com/primitives/docs/components/select
  */
 
 export const Select = SelectPrimitive.Root;

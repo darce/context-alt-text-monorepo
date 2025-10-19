@@ -8,7 +8,7 @@
 import * as React from "react";
 import { __, sprintf, _n } from "@wordpress/i18n";
 import { ObservationAttachmentGroup } from "./ObservationAttachmentGroup";
-import { getSelectedRemoteId } from "@/utils/rosterHelpers";
+import { getSelectedRemoteId } from "@/admin/utils/rosterHelpers";
 import type {
     RosterEntry,
     RecognitionObservationAttachment,

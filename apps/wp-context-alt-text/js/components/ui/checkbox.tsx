@@ -16,6 +16,7 @@ import "./checkbox.css";
  *   aria-label="Accept terms"
  * />
  * ```
+ * @see https://www.radix-ui.com/primitives/docs/components/checkbox
  */
 
 export const Checkbox = React.forwardRef<

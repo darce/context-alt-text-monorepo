@@ -17,7 +17,7 @@ import {
     getRosterConfidenceValue,
     getDetectionConfidenceValue,
     formatPercentage,
-} from "@/utils/rosterHelpers";
+} from "@/admin/utils/rosterHelpers";
 
 // ==================== Types ====================
 

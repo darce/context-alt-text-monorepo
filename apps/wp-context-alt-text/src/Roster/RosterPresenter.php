@@ -9,12 +9,14 @@ use function array_values;
 use function call_user_func;
 use function count;
 use function function_exists;
+use function get_term_by;
 use function human_time_diff;
 use function in_array;
 use function is_array;
 use function is_numeric;
 use function is_scalar;
 use function is_string;
+use function is_wp_error;
 use function sanitize_text_field;
 use function strtoupper;
 use function time;
@@ -22,6 +24,28 @@ use function strtotime;
 
 final class RosterPresenter
 {
+    /**
+     * Count attachments tagged with this roster entity.
+     *
+     * @param string|null $remoteId
+     * @return int
+     */
+    private static function getTaggedImageCount(?string $remoteId): int
+    {
+        if (!$remoteId) {
+            return 0;
+        }
+
+        $termSlug = 'cat-recognition-' . $remoteId;
+        $term = get_term_by('slug', $termSlug, RosterTaxonomy::TAXONOMY);
+
+        if (!$term || is_wp_error($term)) {
+            return 0;
+        }
+
+        return (int) $term->count;
+    }
+
     /**
      * @param array<string,mixed>|mixed $entry
      * @return array<string,mixed>
@@ -56,8 +80,10 @@ final class RosterPresenter
             ? sanitize_text_field((string) $entry['type'])
             : '';
 
+        $remoteId = isset($entry['remoteId']) ? (string) $entry['remoteId'] : null;
+
         return [
-            'remoteId' => isset($entry['remoteId']) ? (string) $entry['remoteId'] : null,
+            'remoteId' => $remoteId,
             'label' => $label,
             'type' => $type,
             'status' => $status,
@@ -66,7 +92,7 @@ final class RosterPresenter
             'referenceImages' => $referenceImages,
             'avatarUrl' => $avatarUrl,
             'avatarId' => $avatarId,
-            'referenceImageCount' => count($referenceImages),
+            'referenceImageCount' => self::getTaggedImageCount($remoteId),
         ];
     }
 

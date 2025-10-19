@@ -700,7 +700,8 @@ final class ApiTest extends TestCase
         self::assertIsArray($response);
         self::assertIsArray($response['entry'] ?? null);
         self::assertSame('Jane Doe', $response['entry']['label'] ?? null);
-        self::assertSame(1, $response['entry']['referenceImageCount'] ?? 0);
+        // referenceImageCount should be 0 since no attachments are tagged yet
+        self::assertSame(0, $response['entry']['referenceImageCount'] ?? -1);
         self::assertIsArray($response['stats'] ?? null);
         self::assertIsArray($response['autoMatched'] ?? null);
         self::assertCount(0, $response['autoMatched']);

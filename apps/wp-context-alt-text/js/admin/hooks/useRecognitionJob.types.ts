@@ -5,31 +5,14 @@
  * The state machine ensures type-safe state transitions and prevents impossible states.
  */
 
-import type { RecognitionJobSummary, RecognitionJobDetails } from "./useRecognitionJob";
+import type {
+    RecognitionJobSummary,
+    RecognitionJobDetails,
+    RecognitionRequestError,
+} from "@/admin/utils/normalization/recognition";
 
-export class RecognitionRequestError extends Error {
-    public readonly status?: number;
-    public readonly rejected: number[];
-
-    public constructor(message: string, options: RecognitionErrorOptions = {}) {
-        super(message);
-        this.name = "RecognitionRequestError";
-        this.status = options.status;
-        this.rejected = Array.isArray(options.rejected)
-            ? options.rejected.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
-            : [];
-
-        if (options.cause !== undefined) {
-            (this as unknown as { cause?: unknown }).cause = options.cause;
-        }
-    }
-}
-
-interface RecognitionErrorOptions {
-    status?: number;
-    rejected?: (number | string)[];
-    cause?: unknown;
-}
+// Re-export for convenience
+export type { RecognitionRequestError } from "@/admin/utils/normalization/recognition";
 
 /**
  * Job state machine using discriminated unions for type safety.

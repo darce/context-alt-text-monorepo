@@ -7,9 +7,9 @@ import {
     type RecognitionJobSummary,
     normalizeJobDetails,
     maybeParseJson,
+    RecognitionRequestError,
 } from "@/admin/utils/normalization/recognition";
 import { jobReducer, initialJobState } from "./useRecognitionJob.reducer";
-import { RecognitionRequestError } from "./useRecognitionJob.types";
 
 // Re-export types for backward compatibility
 export type {
@@ -20,6 +20,7 @@ export type {
     RecognitionObservationCandidate,
     RecognitionObservationRecord,
     RecognitionAttachmentObservations,
+    RecognitionRequestError,
 } from "@/admin/utils/normalization/recognition";
 
 const DEFAULT_POLL_INTERVAL_MS = 3000;

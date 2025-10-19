@@ -3,57 +3,57 @@ name: Architecture Compliance
 on:
   pull_request:
     paths:
-      - 'apps/wp-context-alt-text/js/**'
-      - 'apps/wp-context-alt-text/scripts/**'
-      - 'apps/wp-context-alt-text/package.json'
-      - 'apps/wp-context-alt-text/eslint.config.mjs'
+      - "apps/wp-context-alt-text/js/**"
+      - "apps/wp-context-alt-text/scripts/**"
+      - "apps/wp-context-alt-text/package.json"
+      - "apps/wp-context-alt-text/eslint.config.mjs"
   push:
     branches:
       - main
       - master
       - develop
     paths:
-      - 'apps/wp-context-alt-text/js/**'
+      - "apps/wp-context-alt-text/js/**"
 
 jobs:
   architecture-compliance:
     name: Check Architecture Standards
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: apps/wp-context-alt-text
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
-          cache: 'npm'
+          node-version: "22.x"
+          cache: "npm"
           cache-dependency-path: apps/wp-context-alt-text/package-lock.json
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Run ESLint
         run: npm run lint
         continue-on-error: false
-      
+
       - name: Check Architecture Compliance
         run: npm run check:architecture
         continue-on-error: false
-      
+
       - name: Run Tests
         run: npm run test
         continue-on-error: false
-      
+
       - name: Check TypeScript
         run: npx tsc --noEmit
         continue-on-error: false
-      
+
       - name: Architecture Check Summary
         if: always()
         run: |
@@ -69,25 +69,25 @@ jobs:
   lint-formatting:
     name: Check Code Formatting
     runs-on: ubuntu-latest
-    
+
     defaults:
       run:
         working-directory: apps/wp-context-alt-text
-    
+
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
-      
+
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: '22.x'
-          cache: 'npm'
+          node-version: "22.x"
+          cache: "npm"
           cache-dependency-path: apps/wp-context-alt-text/package-lock.json
-      
+
       - name: Install dependencies
         run: npm ci
-      
+
       - name: Check Prettier formatting
         run: npm run format:check
         continue-on-error: false

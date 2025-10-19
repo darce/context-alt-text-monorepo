@@ -1,0 +1,107 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/workbench-media-item.schema.json",
+  "title": "Workbench Media Item",
+  "description": "A media item in the workbench with recognition status",
+  "type": "object",
+  "required": ["id", "title", "status"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "WordPress attachment ID as string"
+    },
+    "title": {
+      "type": "string",
+      "description": "Media item title"
+    },
+    "status": {
+      "type": "string",
+      "enum": ["missing", "draft", "published"],
+      "description": "Alt text status"
+    },
+    "thumbnailUrl": {
+      "type": "string",
+      "format": "uri",
+      "description": "URL to thumbnail image"
+    },
+    "updatedAt": {
+      "type": "string",
+      "format": "date-time",
+      "description": "Last update timestamp (ISO 8601)"
+    },
+    "altText": {
+      "type": ["string", "null"],
+      "description": "Current alt text (if any)"
+    },
+    "mimeType": {
+      "type": ["string", "null"],
+      "description": "MIME type (e.g., 'image/jpeg')"
+    },
+    "dimensions": {
+      "type": ["object", "null"],
+      "description": "Image dimensions",
+      "required": ["width", "height"],
+      "properties": {
+        "width": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Image width in pixels"
+        },
+        "height": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Image height in pixels"
+        }
+      }
+    },
+    "editUrl": {
+      "type": ["string", "null"],
+      "format": "uri",
+      "description": "URL to edit in WordPress admin"
+    },
+    "recognition": {
+      "type": ["object", "null"],
+      "description": "Recognition results for this media",
+      "required": ["status", "matchedCount", "needsReviewCount"],
+      "properties": {
+        "status": {
+          "type": "string",
+          "enum": ["matched", "needs_review", "unknown"],
+          "description": "Recognition status"
+        },
+        "matchedCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of matched observations"
+        },
+        "needsReviewCount": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of observations needing review"
+        },
+        "matchedRoster": {
+          "type": ["object", "null"],
+          "description": "Matched roster entry (if single match)",
+          "properties": {
+            "remoteId": {
+              "type": ["string", "null"],
+              "description": "Roster entry remote ID"
+            },
+            "displayName": {
+              "type": ["string", "null"],
+              "description": "Display name"
+            },
+            "name": {
+              "type": ["string", "null"],
+              "description": "Entry name"
+            }
+          }
+        },
+        "updatedAt": {
+          "type": ["integer", "null"],
+          "description": "Unix timestamp of last recognition update"
+        }
+      }
+    }
+  }
+}

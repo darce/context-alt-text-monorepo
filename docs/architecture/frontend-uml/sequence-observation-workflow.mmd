@@ -22,26 +22,26 @@ sequenceDiagram
         UI->>UI: User clicks "Create new entry"
         UI->>UI: Opens roster editor with observation context
         UI->>API: POST /context-alt-text/v1/roster
-        Note over API: Creates local roster entry
+        Note over API,Manager: Creates local roster entry
         API->>Roster: createAndSync(label, type, metadata)
         Roster->>Backend: POST /api/v0/roster (upsert embedding)
         Backend-->>Roster: Remote ID assigned
         Roster-->>API: RosterEntry with remoteId
         API->>Manager: autoAssignPending(remoteId)
-        Manager->>Repo: Update matching observations
+        Manager->>Repo: Update matching observations in post_meta
         Repo->>Repo: Set observation status to "assigned"
         API-->>UI: Entry created + observations auto-assigned
     else Assign to Existing Entry
         UI->>API: PATCH /cat/v1/observations/{id}
-        Note over API: Assigns observation to roster entry
+        Note over API,Manager: Assigns observation to roster entry
         API->>Manager: assignObservation(observationId, remoteId)
-        Manager->>Repo: Update observation status
+        Manager->>Repo: Update observation status in post_meta
         Repo->>Repo: Link observation to remoteId
         API-->>UI: Observation assigned
     else Dismiss/Ignore
         UI->>API: PATCH /cat/v1/observations/{id}
-        Note over API: Marks observation as reviewed
-        API->>Repo: Update status to "dismissed"
+        Note over API,Repo: Marks observation as reviewed
+        API->>Repo: Update status to "dismissed" in post_meta
         Repo-->>API: Observation hidden from queue
         API-->>UI: Observation dismissed
     end

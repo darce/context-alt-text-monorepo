@@ -1,6 +1,11 @@
+````markdown
 # Frontend Component Architecture Documentation
 
 This directory contains architectural diagrams and patterns for the Context Alt Text frontend React application.
+
+**Last Updated:** October 18, 2025  
+**Status:** Phase 10 tactical refactoring complete (5/7 tasks), 716 tests passing  
+**Next:** Complete MVP alt-text generation pipeline, then RosterRoute refactoring
 
 ## 📋 Quick Reference
 
@@ -14,9 +19,129 @@ This directory contains architectural diagrams and patterns for the Context Alt 
 
 See [`../rules/instructions.md`](../rules/instructions.md) for complete enforcement guidelines.
 
+## 🗺️ Architecture Overview
+
+### Current State (October 2025)
+
+**✅ Completed:**
+
+- Dashboard: All 6 cards with tests, analytics, accessibility
+- Workbench: Refactored hooks (224-333 lines), extracted utilities
+- Utilities: HTTP, normalization, validation (716 tests passing)
+- Contracts: TypeScript ↔ PHP alignment documented
+
+**🚧 In Progress:**
+
+- Alt-text generation UI and LLM integration
+- REST endpoint implementation for live data
+- Storybook documentation
+
+**📍 Technical Debt:**
+
+- RosterRoute: 2,543 lines (target for Phase 2 refactoring)
+
+### Key Architectural Decisions
+
+1. **React Query for Data**: All API calls use React Query with caching
+2. **Extracted Utilities**: HTTP, normalization, validation shared across stack
+3. **Contract Alignment**: TypeScript and PHP share validation/sanitization logic
+4. **Analytics Instrumentation**: IntersectionObserver + custom events
+5. **Feature Flags**: Trend visualization, workbench, MCP (post-MVP)
+
 ## 📊 Diagram Files
 
-### 1. **Component Architecture Patterns** ([`component-architecture-patterns.md`](./component-architecture-patterns.md))
+### 🎯 High-Level Architecture
+
+#### **`architecture-roadmap.mmd`** (NEW - October 2025)
+
+**Purpose:** Strategic view of current state, MVP completion path, and post-MVP enhancements
+
+**Shows:**
+
+- ✅ Current state: Dashboard complete, Workbench refactored, 716 tests
+- 🎯 MVP blockers: Alt-text UI, REST endpoints, Storybook
+- 🚀 Post-MVP: RosterRoute refactor, MCP integration, advanced features
+- 📅 Timeline: Q4 2025 (MVP) → Q1 2026 (enhancements) → Q2 2026 (advanced)
+
+**When to use:** Planning next phase, communicating roadmap, prioritizing work
+
+---
+
+#### **`admin-spa-modules-v2.mmd`** (UPDATED - October 2025)
+
+**Purpose:** Complete module map showing all routes, components, hooks, and data flow
+
+**Shows:**
+
+- Routes: Dashboard, Workbench, Roster
+- Components: 6 dashboard cards, workbench panels, roster UI
+- Hooks: useCoverageMetrics, useRecognitionJob, useWorkbenchMedia, useRoster
+- Data layer: React Query, REST API endpoints, backend services
+- Utilities: HTTP, normalization, validation, notices, analytics
+
+**When to use:** Understanding system architecture, onboarding new developers, planning integrations
+
+**Replaces:** `admin-spa-modules.mmd` (kept for historical reference)
+
+---
+
+### 🔄 Workflow Diagrams
+
+#### **`sequence-complete-workflow.mmd`** (NEW - October 2025)
+
+**Purpose:** End-to-end sequence diagram for recognition workflow
+
+**Phases:**
+
+1. Media selection & recognition trigger (Workbench → API → Backend)
+2. Status polling (useRecognitionPoll with 2s intervals)
+3. Observation review (Roster Manager → create/assign/dismiss)
+4. Alt-text generation (future: LLM integration)
+
+**When to use:** Understanding recognition flow, debugging issues, planning alt-text integration
+
+---
+
+#### **`workbench-flow-v2.mmd`** (UPDATED - October 2025)
+
+**Purpose:** Detailed workbench architecture showing refactored hooks and data flow
+
+**Shows:**
+
+- UI Layer: WorkbenchApp, MediaList, SelectionToolbar, RecognitionActions
+- Hook Layer: useWorkbenchMedia (224 lines), useRecognitionJob (333 lines split into submit + poll)
+- Utility Layer: HTTP utils, normalization, validation
+- Backend: WordPress REST API → Recognition Service → Observations
+
+**When to use:** Working on workbench features, understanding hook composition
+
+**Replaces:** `workbench-flow.mmd` (kept for historical reference)
+
+---
+
+### 📊 Component Details
+
+#### **`dashboard-coverage-detail-v2.mmd`** (UPDATED - October 2025)
+
+**Purpose:** Deep dive into CoverageCard implementation
+
+**Shows:**
+
+- Component structure: CoverageCard → CoverageDonut + CoverageTrend
+- React Query integration: useCoverageMetrics hook with 60s stale time
+- Analytics: IntersectionObserver tracking, event emission
+- Feature flags: coverageTrend gating
+- API flow: WordPress REST → DashboardMetricsService → coverage calculation
+
+**When to use:** Understanding dashboard patterns, implementing new cards
+
+**Replaces:** `dashboard-coverage-detail.mmd` (kept for historical reference)
+
+---
+
+### � Pattern Documentation
+
+#### **`component-architecture-patterns.md`**
 
 **Purpose**: Comprehensive guide showing ideal component structures vs problematic patterns
 
@@ -188,15 +313,66 @@ grep -n "useState\|useEffect" js/components/roster/RosterRoute.tsx
 
 **Lesson**: When a component does too much, split it. Each component should have **one primary responsibility**.
 
-## 🚀 Next Steps
+---
 
-1. **Immediate**: Enforce new limits in code review
-2. **Short-term**: Refactor `RosterRoute.tsx` following the roadmap diagram
-3. **Mid-term**: Add ESLint rules to catch violations automatically
-4. **Long-term**: Establish component library with reusable primitives
+## � Test Coverage (October 2025)
+
+### Frontend (Vitest)
+
+- **Total:** 362 tests passing ✅
+- **Hooks:** useRecognitionJob (44 tests), primitives (78 tests), http (44 tests)
+- **Components:** Dashboard cards fully tested with accessibility + analytics
+- **Coverage:** ~80% (target achieved)
+
+### PHP (PHPUnit)
+
+- **Total:** 354 tests passing ✅
+- **Helpers:** SanitizationHelpers (151 tests), ValidationHelpers (40 tests)
+- **Services:** DashboardMetricsService, WorkbenchMediaResolver
+- **Coverage:** ~85% (target achieved)
+
+### Contract Alignment
+
+- **TypeScript ↔ PHP:** Documented in `docs/architecture/contracts/`
+- **JSON Schemas:** 5 schemas for cross-stack types (Draft 07)
+- **Test coverage:** 100% for shared utilities
 
 ---
 
-**Last Updated**: October 17, 2025  
+## 🚀 Next Steps
+
+### Immediate (MVP Completion - Q4 2025)
+
+1. **Alt-text generation UI**: Draft approval surface, LLM integration
+2. **REST endpoints**: Live data for dashboard cards
+3. **Storybook**: Documentation for all components
+4. **Workbench**: Bulk operations, progress tracking
+
+### Short-term (Post-MVP - Q1 2026)
+
+1. **RosterRoute refactor**: Split into 8-10 components following roadmap
+2. **MCP integration**: Enable Abilities layer for agent access
+3. **Advanced metrics**: Historical trends, analytics dashboards
+
+### Mid-term (Q2 2026)
+
+1. **Keyboard shortcuts**: System-wide shortcut map with helper overlay
+2. **Batch operations**: Queue manager for background processing
+3. **Performance**: Optimize rendering, lazy loading, code splitting
+
+### Long-term
+
+1. **Component library**: Establish reusable primitive components
+2. **ESLint rules**: Catch architecture violations automatically
+3. **Multi-tenant**: Support for multiple recognition backends
+
+---
+
+**Last Updated**: October 18, 2025  
 **Maintainer**: Architecture Team  
 **Related**: [`instructions.md`](../rules/instructions.md), [`roadmap-v3.md`](../rules/roadmap-v3.md)
+
+```
+
+```
+````

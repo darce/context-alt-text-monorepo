@@ -233,6 +233,14 @@ Quality Heuristics:
 - Show only public methods; internal helpers omitted unless clarifying domain invariants.
 - Add brief legends when using stereotypes (e.g., «provider», «entity»).
 
+**Syntax for `.mmd` files:**
+
+- `.mmd` files should contain **raw Mermaid syntax only**, not wrapped in code fences
+- Do NOT begin files with ` ```mermaid ` or ` ```mermaid.radar `
+- Code fences cause syntax errors when tools try to render the diagrams
+- Correct format: Start directly with diagram type (e.g., `graph TD`, `sequenceDiagram`, `flowchart LR`)
+- Markdown files can still use fenced code blocks: ` ```mermaid ... ``` `
+
 ## Abilities Conventions
 
 1. Naming (prefix with cat/):

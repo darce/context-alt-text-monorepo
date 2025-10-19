@@ -1,19 +1,29 @@
 sequenceDiagram
-    participant Admin as WP Admin UI (Frontend)
-    participant Plugin as Context Alt Text Plugin (WP Backend)
+    participant Admin as WordPress Admin
+    participant Workbench as Workbench UI (WorkbenchRoute)
+    participant Hook as useRecognitionJob
+    participant API as WP REST API
+    participant Service as RecognitionService (PHP)
     participant Backend as Recognition API (HF Spaces)
     participant Storage as Media Library
 
     Note over Admin,Backend: Face Recognition with Roster Management
-    Admin->>Plugin: Open media item in Workbench
-    Plugin->>Storage: Load attachment metadata & thumbnail
-    Admin->>Plugin: Click "Run Recognition" (bulk action)
-    Plugin->>Backend: POST /api/v0/analyze-scene (attachment URL)
+    Admin->>Workbench: Open media item in Workbench
+    Workbench->>Storage: Load attachment metadata & thumbnail
+    Admin->>Workbench: Click "Run Recognition" (bulk action)
+    Workbench->>Hook: runRecognition(selectedIds)
+    Hook->>API: POST /recognition/analyze (attachment IDs)
+    API->>Service: analyzeAttachments(ids)
+    Service->>Backend: POST /api/v0/analyze-scene (attachment URL)
     Note over Backend: Backend performs:<br/>1. Face detection<br/>2. Embedding extraction<br/>3. Roster matching<br/>4. Confidence scoring
-    Backend-->>Plugin: SceneAnalysisResult (faces, matched roster entries, confidence)
-    Plugin->>Storage: Store observations + roster matches locally
-    Plugin-->>Admin: Display recognition results + observations panel
+    Backend-->>Service: SceneAnalysisResult (faces, matched roster entries, confidence)
+    Service->>Storage: Store observations + roster matches in post_meta
+    Service-->>API: RecognitionJobSummary (jobId, status, stats)
+    API-->>Hook: Job created successfully
+    Hook->>Hook: Poll job status (useRecognitionPoll)
+    Hook-->>Workbench: Display recognition results + observations panel
     Note over Admin: Operator can review observations:<br/>- View matched roster entries<br/>- Assign/reassign matches<br/>- Create new roster entries<br/>- Navigate to Roster Manager
-    Admin->>Plugin: Navigate to Roster Manager
-    Plugin-->>Admin: Display full CRUD roster interface
-    Note over Admin: Roster Manager supports:<br/>- Create/Edit/Delete entries<br/>- Sync with backend roster<br/>- Upload reference images<br/>- Review pending observations
+    Admin->>Workbench: Navigate to Roster Manager
+    Workbench->>API: GET /roster (full CRUD interface)
+    API-->>Workbench: Display roster entries
+    Note over Admin: Roster Manager supports:<br/>- Create/Edit/Delete entries (useRoster hook)<br/>- Sync with backend roster<br/>- Upload reference images<br/>- Review pending observations (useRecognitionObservations)

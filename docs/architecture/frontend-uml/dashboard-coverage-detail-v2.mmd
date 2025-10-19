@@ -1,0 +1,136 @@
+%% Dashboard Coverage Card - Detailed Implementation (October 2025)
+%% Shows React Query integration, analytics, and feature flags
+
+flowchart TD
+    subgraph Route["DashboardRoute Component"]
+        routeEntry[DashboardRoute.tsx]
+        heroSection[HeroStatus]
+        coverageSection[CoverageCard]
+        activitySection[ActivityCard]
+        recognitionSection[RecognitionCard]
+        automationSection[AutomationCard]
+        footerSection[ActionFooter]
+    end
+
+    subgraph CoverageCard["CoverageCard (285 lines)"]
+        cardContainer[Card Container]
+        donut[CoverageDonut<br/>58 lines]
+        trend[CoverageTrend<br/>33 lines, feature-flagged]
+        drilldownAction[Drilldown Button<br/>Navigate to Workbench]
+        loadingState[Loading Skeleton]
+        errorState[Error + Retry]
+        srSummary[Screen Reader Summary]
+    end
+
+    subgraph Hook["useCoverageMetrics Hook"]
+        queryHook[React Query Hook]
+        fetchLogic[Fetch Logic<br/>buildApiUrl + fetchApi]
+        cacheLogic[Cache Configuration<br/>60s stale time]
+        refetchLogic[Manual Refetch]
+    end
+
+    subgraph Analytics["Analytics System"]
+        io[IntersectionObserver]
+        emitEvent[emitDashboardEvent]
+        cardSeen["Event: cat_dashboard_card_seen"]
+        trendEnabled["Event: cat_dashboard_coverage_trend_enabled"]
+    end
+
+    subgraph Config["Global Configuration"]
+        bootstrap[window.ContextAltTextAdmin]
+        flags[featureFlags.coverageTrend]
+        endpoints[endpoints.coverage]
+        nonce[restNonce]
+        initialData[bootstrap.coverage]
+    end
+
+    subgraph API["WordPress REST API"]
+        endpoint["GET /wp-json/context-alt-text/v1/dashboard/coverage"]
+        phpMetrics[DashboardMetricsService]
+        coverageCalc[Coverage calculation<br/>with_alt / total * 100]
+        trendData[Trend series generation]
+    end
+
+    subgraph QueryClient["React Query State"]
+        cache[(Query Cache)]
+        queryKey["['coverage-metrics']"]
+        queryState[status, isLoading, isFetching, isError]
+    end
+
+    %% Component Flow
+    routeEntry --> coverageSection
+    coverageSection --> cardContainer
+    cardContainer --> donut
+    cardContainer --> trend
+    cardContainer --> drilldownAction
+    cardContainer --> srSummary
+
+    %% Hook Integration
+    coverageSection --> queryHook
+    queryHook --> fetchLogic
+    queryHook --> cacheLogic
+    queryHook --> cache
+    cache --> queryKey
+
+    %% Initial Data
+    bootstrap --> initialData
+    initialData --> queryHook
+
+    %% Configuration
+    bootstrap --> flags
+    bootstrap --> endpoints
+    bootstrap --> nonce
+    flags --> trend
+    endpoints --> fetchLogic
+    nonce --> fetchLogic
+
+    %% API Calls
+    fetchLogic --> endpoint
+    endpoint --> phpMetrics
+    phpMetrics --> coverageCalc
+    phpMetrics --> trendData
+
+    %% State Management
+    cache --> queryState
+    queryState --> coverageSection
+    queryState --> loadingState
+    queryState --> errorState
+
+    %% Retry Logic
+    errorState --> refetchLogic
+    refetchLogic --> fetchLogic
+
+    %% Analytics
+    cardContainer --> io
+    io --> cardSeen
+    trend --> trendEnabled
+    cardSeen --> emitEvent
+    trendEnabled --> emitEvent
+
+    %% User Actions
+    drilldownAction --> workbench["WorkbenchRoute<br/>?status=missing"]
+
+    %% Accessibility
+    donut --> srSummary
+    trend --> srSummary
+    srSummary --> screenReader([Screen Reader])
+
+    %% Notes
+    note1["✅ Feature-flagged trend visualization"]
+    note2["✅ IntersectionObserver analytics"]
+    note3["✅ React Query with 60s stale time"]
+    note4["✅ Comprehensive test coverage (44 tests)"]
+    note5["📍 MVP: Basic coverage display complete"]
+
+    trend -.- note1
+    io -.- note2
+    queryHook -.- note3
+    coverageSection -.- note4
+    routeEntry -.- note5
+
+    %% Styling
+    classDef complete fill:#d4edda,stroke:#28a745,stroke-width:2px
+    classDef flagged fill:#fff3cd,stroke:#ffc107,stroke-width:2px
+
+    class donut,drilldownAction,srSummary complete
+    class trend,flags flagged

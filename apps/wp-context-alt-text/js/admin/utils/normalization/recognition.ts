@@ -7,6 +7,33 @@
 import { __ } from "@wordpress/i18n";
 import { ensureString, toFiniteNumber, toNullableTimestamp, toStringOrNull, toUniqueNumericIds } from "./primitives";
 
+/**
+ * Error class for recognition request failures.
+ */
+export class RecognitionRequestError extends Error {
+    public readonly status?: number;
+    public readonly rejected: number[];
+
+    public constructor(message: string, options: RecognitionErrorOptions = {}) {
+        super(message);
+        this.name = "RecognitionRequestError";
+        this.status = options.status;
+        this.rejected = Array.isArray(options.rejected)
+            ? options.rejected.map((value) => Number(value)).filter((value) => Number.isFinite(value) && value > 0)
+            : [];
+
+        if (options.cause !== undefined) {
+            (this as unknown as { cause?: unknown }).cause = options.cause;
+        }
+    }
+}
+
+interface RecognitionErrorOptions {
+    status?: number;
+    rejected?: (number | string)[];
+    cause?: unknown;
+}
+
 export interface RecognitionObservationMatch {
     isMatch: boolean;
     similarity: number;

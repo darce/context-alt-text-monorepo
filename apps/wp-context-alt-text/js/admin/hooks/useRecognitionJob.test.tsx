@@ -4,7 +4,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 
 import { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
-import { RecognitionRequestError } from "@/admin/hooks/useRecognitionJob.types";
+import { RecognitionRequestError } from "@/admin/utils/normalization/recognition";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 import { setAdminBootstrap } from "@/admin/globals";
 

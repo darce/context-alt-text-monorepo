@@ -108,7 +108,7 @@ export const ObservationFaceCard = ({
 
     const placeholderText =
         assignableEntries.length === 0
-            ? __("No synced roster entries available", "context-alt-text")
+            ? __("No synced entries (click 'Sync from Remote' above)", "context-alt-text")
             : __("Select roster entry", "context-alt-text");
 
     return (

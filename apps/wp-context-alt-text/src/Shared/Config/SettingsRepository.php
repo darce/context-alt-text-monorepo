@@ -59,7 +59,7 @@ class SettingsRepository
             'apiKey' => (string) ($recognition['apiKey'] ?? ''),
             'timeoutMs' => (int) ($recognition['timeoutMs'] ?? ValidationConstants::DEFAULT_TIMEOUT_MS),
             'modelProfile' => (string) ($recognition['modelProfile'] ?? ''),
-            'enabled' => (bool) ($recognition['enabled'] ?? false),
+            'enabled' => (bool) ($recognition['enabled'] ?? true), // Default to enabled
         ];
     }
 

@@ -403,7 +403,12 @@ describe("RecognitionActions integration", () => {
             expect(createNotice).toHaveBeenCalledWith(
                 "error",
                 "No valid attachments were provided.",
-                expect.objectContaining({ id: "cat-recognition-job-error" }),
+                expect.objectContaining({
+                    id: "cat-workbench-error",
+                    type: "error",
+                    isDismissible: true,
+                    spokenMessage: "No valid attachments were provided.",
+                }),
             );
         });
 

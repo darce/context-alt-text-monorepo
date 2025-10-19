@@ -202,6 +202,9 @@ export const useWorkbenchMedia = ({
     const total = resolvedData.total ?? bootstrapMeta.total;
     const totalPages = resolvedData.totalPages ?? bootstrapMeta.totalPages;
 
+    // Check if endpoint is available for external features
+    const hasEndpoint = Boolean(endpoint);
+
     return {
         ...query,
         data: items,
@@ -211,5 +214,6 @@ export const useWorkbenchMedia = ({
         perPage,
         status,
         search: normalizedSearch,
+        hasEndpoint,
     };
 };

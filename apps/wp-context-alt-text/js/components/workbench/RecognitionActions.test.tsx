@@ -155,7 +155,12 @@ describe("RecognitionActions integration", () => {
 
         const triggerButton = screen.getByRole("button", { name: /trigger recognition/i });
         expect(triggerButton).toBeDisabled();
-        expect(screen.getByText(/enable recognition from the plugin settings/i)).toBeInTheDocument();
+        
+        // Check for the hint text (wrapped in a small element with class cat-recognition__hint)
+        const hintElement = screen.getByText(/recognition is disabled/i);
+        expect(hintElement).toBeInTheDocument();
+        expect(hintElement).toHaveTextContent(/go to settings.*recognition service.*configure a service base url/i);
+        
         expect(createNotice).not.toHaveBeenCalled();
         expect(trackSpy).not.toHaveBeenCalled();
     });

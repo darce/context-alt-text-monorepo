@@ -11,6 +11,7 @@ import type {
 } from "@/admin/hooks/useRecognitionJob";
 import { Button } from "@/components/ui/button";
 import { Progress } from "@/components/ui/progress";
+import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
 import { getDashboardConfig } from "@/admin/dashboardData";
 
 export interface RecognitionActionsProps {
@@ -227,15 +228,42 @@ export const RecognitionActions = ({
 
     const showRetryButton = Boolean(error && onRetryRecognition && !isSubmitting);
 
+    // Determine tooltip message when button is disabled
+    const disabledTooltip = React.useMemo(() => {
+        if (!isEnabled) {
+            return __("Configure recognition service in Settings to enable this feature", "context-alt-text");
+        }
+        if (selectionCount === 0) {
+            return __("Select at least one image to run recognition", "context-alt-text");
+        }
+        if (isSubmitting) {
+            return __("Recognition job is currently running", "context-alt-text");
+        }
+        return null;
+    }, [isEnabled, selectionCount, isSubmitting]);
+
+    const triggerButton = (
+        <Button variant="default" size="md" onClick={handleTriggerClick} disabled={buttonDisabled}>
+            {isSubmitting ? __("Triggering…", "context-alt-text") : __("Trigger Recognition", "context-alt-text")}
+        </Button>
+    );
+
     return (
-        <section className="cat-workbench__panel" aria-label={__("Recognition actions", "context-alt-text")}>
-            <header>
-                <h2>{__("Recognition", "context-alt-text")}</h2>
-                <p>{__("Run face and brand detection to enrich context for selected items.", "context-alt-text")}</p>
-            </header>
-            <Button variant="default" size="md" onClick={handleTriggerClick} disabled={buttonDisabled}>
-                {isSubmitting ? __("Triggering…", "context-alt-text") : __("Trigger Recognition", "context-alt-text")}
-            </Button>
+        <TooltipProvider>
+            <section className="cat-workbench__panel" aria-label={__("Recognition actions", "context-alt-text")}>
+                <header>
+                    <h2>{__("Recognition", "context-alt-text")}</h2>
+                    <p>{__("Run face and brand detection to enrich context for selected items.", "context-alt-text")}</p>
+                </header>
+
+                {buttonDisabled && disabledTooltip ? (
+                    <TooltipRoot>
+                        <TooltipTrigger asChild>{triggerButton}</TooltipTrigger>
+                        <TooltipContent>{disabledTooltip}</TooltipContent>
+                    </TooltipRoot>
+                ) : (
+                    triggerButton
+                )}
 
             <dl className="cat-recognition__summary" aria-live="polite">
                 <div>
@@ -270,7 +298,10 @@ export const RecognitionActions = ({
 
             {!isEnabled && (
                 <small className="cat-recognition__hint">
-                    {__("Enable recognition from the plugin settings to activate this action.", "context-alt-text")}
+                    {__(
+                        "Recognition is disabled. Go to Settings → Recognition Service and configure a service base URL.",
+                        "context-alt-text",
+                    )}
                 </small>
             )}
 
@@ -317,7 +348,8 @@ export const RecognitionActions = ({
                     </ul>
                 </section>
             )}
-        </section>
+            </section>
+        </TooltipProvider>
     );
 };
 

@@ -19,6 +19,8 @@ import "./label.css";
  * // htmlFor pattern
  * <Label htmlFor="email">{__("Email", "context-alt-text")}</Label>
  * <input id="email" type="email" name="email" />
+ *
+ * @see https://www.radix-ui.com/primitives/docs/components/label
  */
 export const Label = React.forwardRef<
     React.ElementRef<typeof LabelPrimitive.Root>,

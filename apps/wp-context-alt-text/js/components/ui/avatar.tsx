@@ -3,6 +3,8 @@
  *
  * Wrapper around Radix UI Avatar primitive for displaying user avatars
  * with automatic loading state management and fallback support.
+ *
+ *  @see https://www.radix-ui.com/primitives/docs/components/avatar
  */
 
 import * as React from "react";

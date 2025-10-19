@@ -4,9 +4,8 @@ import { __, sprintf } from "@wordpress/i18n";
 import { dispatchNotice, notifyError } from "@/admin/notices";
 import type { FeatureFlags, RecognitionSettingsPayload } from "@/admin/types";
 import { FALLBACK_RECOGNITION_SETTINGS } from "@/admin/dashboardData";
+import { VALIDATION } from "@/admin/constants/validation";
 import { Checkbox } from "@/components/ui/checkbox";
-
-const URL_PATTERN = /^(https?:)\/\//i;
 
 const sanitizeUrl = (value: string): string => value.trim();
 
@@ -17,7 +16,7 @@ const isValidUrl = (value: string): boolean => {
         return true;
     }
 
-    if (!URL_PATTERN.test(trimmed)) {
+    if (!VALIDATION.URL.PATTERN.test(trimmed)) {
         return false;
     }
 
@@ -31,10 +30,10 @@ const isValidUrl = (value: string): boolean => {
 
 const clampTimeout = (value: number): number => {
     if (!Number.isFinite(value) || value <= 0) {
-        return FALLBACK_RECOGNITION_SETTINGS.timeoutMs;
+        return VALIDATION.TIMEOUT_MS.DEFAULT;
     }
 
-    return Math.min(120_000, Math.max(1_000, Math.trunc(value)));
+    return Math.min(VALIDATION.TIMEOUT_MS.MAX, Math.max(VALIDATION.TIMEOUT_MS.MIN, Math.trunc(value)));
 };
 
 interface RecognitionSettingsPanelProps {
@@ -340,9 +339,7 @@ export const RecognitionSettingsPanel = ({
                                     <Checkbox
                                         id="cat-recognition-enabled"
                                         checked={form.enabled}
-                                        onCheckedChange={(checked) =>
-                                            handleFieldChange("enabled", checked === true)
-                                        }
+                                        onCheckedChange={(checked) => handleFieldChange("enabled", checked === true)}
                                         disabled={!canManage || isSaving}
                                     />
                                     <span>

@@ -15,7 +15,7 @@ import {
     formatPercentage,
     resolveSuggestedRemoteId,
     getSelectedRemoteId,
-} from "@/utils/rosterHelpers";
+} from "@/admin/utils/rosterHelpers";
 import { Select, SelectTrigger, SelectValue, SelectContent, SelectItem } from "@/components/ui/select";
 import type { RosterEntry, RecognitionObservationAttachment, RecognitionObservationRecord } from "@/admin/types";
 

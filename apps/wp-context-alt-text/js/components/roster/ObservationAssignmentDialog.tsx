@@ -10,7 +10,7 @@ import { __ } from "@wordpress/i18n";
 import { Dialog, DialogContent, DialogTitle, DialogDescription } from "@/components/ui/dialog";
 import type { RecognitionObservationAttachment, RecognitionObservationRecord } from "@/admin/types";
 import type { ObservationPromptState } from "@/admin/hooks/useRosterState";
-import { getTopCandidate, getRosterConfidenceValue, formatPercentage } from "@/utils/rosterHelpers";
+import { getTopCandidate, getRosterConfidenceValue, formatPercentage } from "@/admin/utils/rosterHelpers";
 
 export interface ObservationAssignmentDialogProps {
     /** Whether the dialog is open */

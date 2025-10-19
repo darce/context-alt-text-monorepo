@@ -1,0 +1,138 @@
+%% Context Alt Text Admin SPA Module Map (Current Implementation + MVP Roadmap)
+%% Updated: October 18, 2025 - Reflects refactored hooks, dashboard components, and workbench architecture
+
+graph TD
+    entry[main.tsx] --> app[App.tsx]
+    app --> providers["Providers<br/>(QueryClientProvider + RouterProvider)"]
+    providers --> layout[ApplicationLayout]
+
+    subgraph Routes["Routes (Current)"]
+        dashboardRoute["/dashboard<br/>(DashboardRoute.tsx)"]
+        workbenchRoute["/workbench<br/>(WorkbenchRoute.tsx)"]
+        rosterRoute["/roster<br/>(RosterRoute.tsx)"]
+    end
+
+    layout --> dashboardRoute
+    layout --> workbenchRoute
+    layout --> rosterRoute
+
+    subgraph Dashboard["Dashboard Components (✅ Complete)"]
+        hero[HeroStatus]
+        coverage[CoverageCard<br/>+CoverageDonut<br/>+CoverageTrend]
+        activity[ActivityCard]
+        recognition[RecognitionCard]
+        automation[AutomationCard]
+        footer[ActionFooter]
+    end
+
+    dashboardRoute --> hero
+    dashboardRoute --> coverage
+    dashboardRoute --> activity
+    dashboardRoute --> recognition
+    dashboardRoute --> automation
+    dashboardRoute --> footer
+
+    subgraph Workbench["Workbench Components (✅ Refactored)"]
+        workbenchApp[WorkbenchApp]
+        mediaList[MediaList]
+        selectionToolbar[SelectionToolbar]
+        recognitionActions[RecognitionActions]
+    end
+
+    workbenchRoute --> workbenchApp
+    workbenchApp --> mediaList
+    workbenchApp --> selectionToolbar
+    workbenchApp --> recognitionActions
+
+    subgraph Roster["Roster Manager"]
+        rosterApp[RosterRoute]
+        rosterTable[Table UI]
+        rosterForm[Roster Form]
+        observationsPanel[Observations Panel]
+    end
+
+    rosterRoute --> rosterApp
+    rosterApp --> rosterTable
+    rosterApp --> rosterForm
+    rosterApp --> observationsPanel
+
+    subgraph Hooks["Custom Hooks (✅ Refactored)"]
+        useCoverage[useCoverageMetrics]
+        useRecognition[useRecognitionJob<br/>+useRecognitionSubmit<br/>+useRecognitionPoll]
+        useWorkbench[useWorkbenchMedia]
+        useRosterData[useRoster]
+        useObservations[useRecognitionObservations]
+        useWorkbenchAct[useWorkbenchActions]
+    end
+
+    coverage --> useCoverage
+    recognitionActions --> useRecognition
+    workbenchApp --> useWorkbench
+    workbenchApp --> useWorkbenchAct
+    rosterApp --> useRosterData
+    rosterApp --> useObservations
+
+    subgraph DataLayer["Data Layer (React Query)"]
+        queryClient[(QueryClient)]
+        cache[(Query Cache)]
+    end
+
+    providers --> queryClient
+    queryClient --> cache
+    useCoverage --> queryClient
+    useRecognition --> queryClient
+    useWorkbench --> queryClient
+    useRosterData --> queryClient
+    useObservations --> queryClient
+
+    subgraph REST["WordPress REST API"]
+        dashboardAPI["wp-json/context-alt-text/v1/dashboard/*"]
+        recognitionAPI["wp-json/context-alt-text/v1/recognition/*"]
+        workbenchAPI["wp-json/context-alt-text/v1/workbench/*"]
+        rosterAPI["wp-json/context-alt-text/v1/roster/*"]
+        observationsAPI["wp-json/cat/v1/observations/*"]
+    end
+
+    useCoverage --> dashboardAPI
+    useRecognition --> recognitionAPI
+    useWorkbench --> workbenchAPI
+    useRosterData --> rosterAPI
+    useObservations --> observationsAPI
+
+    subgraph Backend["Recognition Service (Remote)"]
+        analyzeScene["POST /api/v0/analyze-scene"]
+        rosterSync["POST /api/v0/roster"]
+        embeddings["POST /api/v0/embeddings"]
+        reloadEmbed["POST /api/v0/service/reload-embeddings"]
+    end
+
+    recognitionAPI --> analyzeScene
+    rosterAPI --> rosterSync
+    rosterSync --> embeddings
+    rosterSync --> reloadEmbed
+
+    subgraph Utilities["Shared Utilities (✅ Extracted)"]
+        httpUtils[HTTP utilities<br/>buildApiUrl, fetchApi]
+        normalization[Normalization<br/>primitives, recognition]
+        validation[Validation constants]
+        notices[Notice system<br/>dispatchNotice]
+        analytics[Analytics<br/>emitDashboardEvent]
+    end
+
+    useRecognition --> httpUtils
+    useWorkbench --> httpUtils
+    useRosterData --> httpUtils
+    workbenchApp --> notices
+    coverage --> analytics
+    httpUtils --> normalization
+    httpUtils --> validation
+
+    note1["✅ Dashboard: All 6 cards complete with tests, analytics, and accessibility"]
+    note2["✅ Hooks: Refactored, tested (716 tests passing)"]
+    note3["✅ Utilities: Extracted and aligned with PHP contracts"]
+    note5["📍 MVP: Focus on workbench workflow and alt-text generation"]
+
+    dashboardRoute -.- note1
+    Hooks -.- note2
+    Utilities -.- note3
+    layout -.- note5

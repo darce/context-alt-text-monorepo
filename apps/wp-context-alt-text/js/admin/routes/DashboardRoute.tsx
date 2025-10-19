@@ -11,7 +11,6 @@ import { ActionFooter } from "@/components/dashboard/ActionFooter";
 import type { DashboardData } from "@/admin/types";
 import { getDashboardConfig } from "@/admin/dashboardData";
 import { useCoverageMetrics } from "@/admin/hooks/useCoverageMetrics";
-import { exportCoverageToCSV } from "@/admin/utils/csvExport";
 
 interface DashboardRouteProps {
     bootstrap: DashboardData;
@@ -26,7 +25,6 @@ interface DashboardRouteProps {
  *
  * Features:
  * - Real-time coverage metrics with trend chart
- * - CSV export of coverage data
  * - Drilldown to workbench for missing alt text
  * - Recent activity timeline
  * - Recognition service status
@@ -51,10 +49,6 @@ export const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): Reac
         }
     }, [config.featureFlags?.workbenchEnabled, config.missingAltMediaUrl, navigate]);
 
-    const handleCoverageExport = React.useCallback(() => {
-        exportCoverageToCSV(coverage);
-    }, [coverage]);
-
     const enableWorkbench = config.featureFlags?.workbenchEnabled ?? false;
     const enableDrilldown = enableWorkbench || Boolean(config.missingAltMediaUrl);
 
@@ -76,7 +70,6 @@ export const DashboardRoute = ({ bootstrap, config }: DashboardRouteProps): Reac
                         hasEndpoint: coverageQuery.hasEndpoint,
                     }}
                     onDrilldown={enableDrilldown ? handleCoverageDrilldown : undefined}
-                    onExport={handleCoverageExport}
                 />
                 <ActivityCard data={bootstrap.latestActivity} />
                 <RecognitionCard

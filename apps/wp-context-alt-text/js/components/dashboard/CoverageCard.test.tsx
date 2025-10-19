@@ -243,35 +243,6 @@ describe("CoverageCard", () => {
         );
     });
 
-    it("invokes the export handler and emits analytics when the action is clicked", async () => {
-        const analyticsSpy = vi.spyOn(analytics, "emitDashboardEvent");
-        const onExport = vi.fn();
-        const data = {
-            ...FALLBACK_COVERAGE,
-            total: 80,
-            with_alt: 60,
-            missing: 20,
-            coverage_percent: 75,
-        };
-
-        const { getByRole, user } = renderDashboard(
-            <CoverageCard data={data} featureFlags={baseFlags} queryState={successQueryState} onExport={onExport} />,
-        );
-
-        const exportButton = getByRole("button", { name: /Export coverage/i });
-        await user.click(exportButton);
-
-        expect(onExport).toHaveBeenCalledTimes(1);
-        expect(analyticsSpy).toHaveBeenCalledWith(
-            "cat_coverage_export",
-            expect.objectContaining({
-                coverage_percent: 75,
-                missing: 20,
-                total: 80,
-            }),
-        );
-    });
-
     it("hides the action buttons while the skeleton is visible", () => {
         const { queryByRole } = renderDashboard(
             <CoverageCard
@@ -289,11 +260,9 @@ describe("CoverageCard", () => {
                     isLoading: true,
                 }}
                 onDrilldown={vi.fn()}
-                onExport={vi.fn()}
             />,
         );
 
         expect(queryByRole("button", { name: /Workbench/i })).toBeNull();
-        expect(queryByRole("button", { name: /Export coverage/i })).toBeNull();
     });
 });

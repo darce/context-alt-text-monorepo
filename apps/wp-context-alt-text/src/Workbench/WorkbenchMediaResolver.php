@@ -49,6 +49,17 @@ class WorkbenchMediaResolver
         $status = (string) ($args['status'] ?? 'missing');
         $search = $args['search'] ?? null;
 
+        $queryArgs = $this->buildQueryArgs($page, $perPage, $status, $search);
+        $wpQuery = $this->executeQuery($queryArgs);
+
+        return $this->formatQueryResults($wpQuery);
+    }
+
+    /**
+     * @return array<string,mixed>
+     */
+    private function buildQueryArgs(int $page, int $perPage, string $status, ?string $search): array
+    {
         $queryArgs = [
             'post_type' => 'attachment',
             'post_status' => 'inherit',
@@ -68,9 +79,21 @@ class WorkbenchMediaResolver
             $queryArgs['s'] = $search;
         }
 
+        return $queryArgs;
+    }
+
+    private function executeQuery(array $queryArgs): WP_Query
+    {
         $wpQuery = new WP_Query();
         $wpQuery->query($queryArgs);
+        return $wpQuery;
+    }
 
+    /**
+     * @return array{items: array<int,array{id:string,title:string,status:string,thumbnailUrl:?string,updatedAt:?string,altText:?string,mimeType:?string,dimensions:array{width:int,height:int}|null,editUrl:?string,recognition?:array<string,mixed>|null}>, total:int, totalPages:int}
+     */
+    private function formatQueryResults(WP_Query $wpQuery): array
+    {
         $total = (int) ($wpQuery->found_posts ?? 0);
         $totalPagesRaw = (int) ($wpQuery->max_num_pages ?? 0);
         $totalPages = $total > 0 ? max(1, $totalPagesRaw) : 0;
@@ -98,52 +121,63 @@ class WorkbenchMediaResolver
                 continue;
             }
 
-            $id = (int) $post->ID;
-            if ($id <= 0) {
-                continue;
+            $mapped = $this->mapPost($post);
+            if ($mapped !== null) {
+                $items[] = $mapped;
             }
-
-            $alt = (string) get_post_meta($id, '_wp_attachment_image_alt', true);
-            $status = $alt === '' ? 'missing' : 'published';
-
-            $thumbnail = $this->getPreferredThumbnail($id);
-
-            $updatedAt = function_exists('get_post_modified_time')
-                ? get_post_modified_time('c', true, $post)
-                : ($post->post_modified_gmt ?? null);
-
-            $mimeType = function_exists('get_post_mime_type') ? get_post_mime_type($id) : null;
-
-            $dimensions = null;
-            if (function_exists('wp_get_attachment_metadata')) {
-                $metadata = wp_get_attachment_metadata($id);
-                if (is_array($metadata) && isset($metadata['width'], $metadata['height'])) {
-                    $dimensions = [
-                        'width' => (int) $metadata['width'],
-                        'height' => (int) $metadata['height'],
-                    ];
-                }
-            }
-
-            $editUrl = function_exists('admin_url')
-                ? admin_url('post.php?post=' . $id . '&action=edit')
-                : null;
-
-            $items[] = [
-                'id' => (string) $id,
-                'title' => (string) $post->post_title,
-                'status' => $status,
-                'thumbnailUrl' => $thumbnail ?: null,
-                'updatedAt' => $updatedAt ?: null,
-                'altText' => $alt !== '' ? $alt : null,
-                'mimeType' => $mimeType ?: null,
-                'dimensions' => $dimensions,
-                'editUrl' => $editUrl,
-                'recognition' => $this->buildRecognitionMetadata($id),
-            ];
         }
 
         return $items;
+    }
+
+    /**
+     * @return array{id:string,title:string,status:string,thumbnailUrl:?string,updatedAt:?string,altText:?string,mimeType:?string,dimensions:array{width:int,height:int}|null,editUrl:?string,recognition?:array<string,mixed>|null}|null
+     */
+    private function mapPost(WP_Post $post): ?array
+    {
+        $id = (int) $post->ID;
+        if ($id <= 0) {
+            return null;
+        }
+
+        $alt = (string) get_post_meta($id, '_wp_attachment_image_alt', true);
+        $status = $alt === '' ? 'missing' : 'published';
+
+        $thumbnail = $this->getPreferredThumbnail($id);
+
+        $updatedAt = function_exists('get_post_modified_time')
+            ? get_post_modified_time('c', true, $post)
+            : ($post->post_modified_gmt ?? null);
+
+        $mimeType = function_exists('get_post_mime_type') ? get_post_mime_type($id) : null;
+
+        $dimensions = null;
+        if (function_exists('wp_get_attachment_metadata')) {
+            $metadata = wp_get_attachment_metadata($id);
+            if (is_array($metadata) && isset($metadata['width'], $metadata['height'])) {
+                $dimensions = [
+                    'width' => (int) $metadata['width'],
+                    'height' => (int) $metadata['height'],
+                ];
+            }
+        }
+
+        $editUrl = function_exists('admin_url')
+            ? admin_url('post.php?post=' . $id . '&action=edit')
+            : null;
+
+        return [
+            'id' => (string) $id,
+            'title' => (string) $post->post_title,
+            'status' => $status,
+            'thumbnailUrl' => $thumbnail ?: null,
+            'updatedAt' => $updatedAt ?: null,
+            'altText' => $alt !== '' ? $alt : null,
+            'mimeType' => $mimeType ?: null,
+            'dimensions' => $dimensions,
+            'editUrl' => $editUrl,
+            'recognition' => $this->buildRecognitionMetadata($id),
+        ];
     }
 
     /**
@@ -217,48 +251,12 @@ class WorkbenchMediaResolver
             return null;
         }
 
-        $matchedCount = (int) ($record['summary']['matched'] ?? 0);
-        $needsReviewCount = (int) ($record['summary']['needs_review'] ?? 0);
+        $summary = $record['summary'];
+        $matchedCount = (int) ($summary['matched'] ?? 0);
+        $needsReviewCount = (int) ($summary['needs_review'] ?? 0);
 
-        $status = 'unknown';
-
-        if ($needsReviewCount > 0) {
-            $status = 'needs_review';
-        } elseif ($matchedCount > 0) {
-            $status = 'matched';
-        }
-
-        $matchedRoster = null;
-
-        if (isset($record['observations']) && is_array($record['observations'])) {
-            foreach ($record['observations'] as $observation) {
-                if (!is_array($observation) || ($observation['status'] ?? '') !== 'matched') {
-                    continue;
-                }
-
-                if (!isset($observation['roster']) || !is_array($observation['roster'])) {
-                    continue;
-                }
-
-                $roster = $observation['roster'];
-
-                $matchedRoster = [
-                    'remoteId' => isset($roster['remoteId']) && is_scalar($roster['remoteId'])
-                        ? (string) $roster['remoteId']
-                        : null,
-                    'displayName' => isset($roster['displayName']) && is_scalar($roster['displayName'])
-                        ? (string) $roster['displayName']
-                        : (isset($roster['display_name']) && is_scalar($roster['display_name'])
-                            ? (string) $roster['display_name']
-                            : null),
-                    'name' => isset($roster['name']) && is_scalar($roster['name'])
-                        ? (string) $roster['name']
-                        : null,
-                ];
-
-                break;
-            }
-        }
+        $status = $this->determineRecognitionStatus($summary);
+        $matchedRoster = $this->extractMatchedRoster($record['observations'] ?? []);
 
         if ($status === 'unknown' && $matchedRoster === null && $matchedCount === 0 && $needsReviewCount === 0) {
             return null;
@@ -273,5 +271,67 @@ class WorkbenchMediaResolver
                 ? (int) $record['updatedAt']
                 : null,
         ];
+    }
+
+    /**
+     * @param array<string,mixed> $summary
+     */
+    private function determineRecognitionStatus(array $summary): string
+    {
+        $needsReviewCount = (int) ($summary['needs_review'] ?? 0);
+        $matchedCount = (int) ($summary['matched'] ?? 0);
+
+        if ($needsReviewCount > 0) {
+            return 'needs_review';
+        }
+
+        if ($matchedCount > 0) {
+            return 'matched';
+        }
+
+        return 'unknown';
+    }
+
+    /**
+     * @param array<mixed> $observations
+     * @return array{remoteId:string|null,displayName:string|null,name:string|null}|null
+     */
+    private function extractMatchedRoster(array $observations): ?array
+    {
+        foreach ($observations as $observation) {
+            if (!is_array($observation) || ($observation['status'] ?? '') !== 'matched') {
+                continue;
+            }
+
+            if (!isset($observation['roster']) || !is_array($observation['roster'])) {
+                continue;
+            }
+
+            $roster = $observation['roster'];
+
+            return [
+                'remoteId' => $this->extractScalarString($roster, 'remoteId'),
+                'displayName' => $this->extractScalarString($roster, 'displayName', 'display_name'),
+                'name' => $this->extractScalarString($roster, 'name'),
+            ];
+        }
+
+        return null;
+    }
+
+    /**
+     * @param array<string,mixed> $data
+     */
+    private function extractScalarString(array $data, string $key, ?string $fallbackKey = null): ?string
+    {
+        if (isset($data[$key]) && is_scalar($data[$key])) {
+            return (string) $data[$key];
+        }
+
+        if ($fallbackKey !== null && isset($data[$fallbackKey]) && is_scalar($data[$fallbackKey])) {
+            return (string) $data[$fallbackKey];
+        }
+
+        return null;
     }
 }

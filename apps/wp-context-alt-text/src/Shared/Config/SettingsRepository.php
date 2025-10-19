@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ContextAltText\Shared\Config;
 
+use ContextAltText\Shared\Constants\ValidationConstants;
 use ContextAltText\Shared\Utils\ValidationHelpers;
 
 use function array_key_exists;
@@ -20,7 +21,6 @@ use function update_option;
 class SettingsRepository
 {
     public const OPTION_KEY = 'cat_settings';
-    private const DEFAULT_TIMEOUT_MS = 15000;
 
     /**
      * Retrieve the full settings payload.
@@ -57,7 +57,7 @@ class SettingsRepository
         return [
             'baseUrl' => (string) ($recognition['baseUrl'] ?? ''),
             'apiKey' => (string) ($recognition['apiKey'] ?? ''),
-            'timeoutMs' => (int) ($recognition['timeoutMs'] ?? self::DEFAULT_TIMEOUT_MS),
+            'timeoutMs' => (int) ($recognition['timeoutMs'] ?? ValidationConstants::DEFAULT_TIMEOUT_MS),
             'modelProfile' => (string) ($recognition['modelProfile'] ?? ''),
             'enabled' => (bool) ($recognition['enabled'] ?? false),
         ];
@@ -127,7 +127,7 @@ class SettingsRepository
             'recognition' => [
                 'baseUrl' => '',
                 'apiKey' => '',
-                'timeoutMs' => self::DEFAULT_TIMEOUT_MS,
+                'timeoutMs' => ValidationConstants::DEFAULT_TIMEOUT_MS,
                 'modelProfile' => '',
                 'enabled' => false,
             ],
@@ -199,9 +199,13 @@ class SettingsRepository
         $timeout = (int) $value;
 
         if ($timeout <= 0) {
-            $timeout = self::DEFAULT_TIMEOUT_MS;
+            $timeout = ValidationConstants::DEFAULT_TIMEOUT_MS;
         }
 
-        return ValidationHelpers::sanitizeTimeout($timeout, 1000, 120000);
+        return ValidationHelpers::sanitizeTimeout(
+            $timeout,
+            ValidationConstants::MIN_TIMEOUT_MS,
+            ValidationConstants::MAX_TIMEOUT_MS
+        );
     }
 }

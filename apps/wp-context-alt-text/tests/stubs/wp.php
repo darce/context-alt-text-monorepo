@@ -484,6 +484,72 @@ if (!function_exists('term_exists')) {
     }
 }
 
+if (!function_exists('get_term_by')) {
+    /**
+     * @param string $field Either 'slug', 'name', 'id', or 'term_taxonomy_id'.
+     * @param string|int $value Search term.
+     * @param string $taxonomy Taxonomy name.
+     * @return object|false Term object on success, false if not found.
+     */
+    function get_term_by($field, $value, $taxonomy)
+    {
+        if (!isset($GLOBALS['__cat_terms'][$taxonomy])) {
+            return false;
+        }
+
+        if ($field === 'slug') {
+            $slug = (string) $value;
+            $slugMap = $GLOBALS['__cat_terms'][$taxonomy]['by_slug'] ?? [];
+
+            if (!isset($slugMap[$slug])) {
+                return false;
+            }
+
+            $termId = $slugMap[$slug];
+            $termData = $GLOBALS['__cat_terms'][$taxonomy]['by_id'][$termId] ?? null;
+
+            if (!$termData) {
+                return false;
+            }
+
+            // Count how many objects have this term assigned
+            $count = 0;
+            if (isset($GLOBALS['__cat_object_terms'][$taxonomy])) {
+                foreach ($GLOBALS['__cat_object_terms'][$taxonomy] as $objectTerms) {
+                    if (in_array($termId, $objectTerms, true)) {
+                        $count++;
+                    }
+                }
+            }
+
+            return (object) array_merge($termData, ['count' => $count]);
+        }
+
+        if ($field === 'id' || $field === 'term_id') {
+            $termId = (int) $value;
+            $termData = $GLOBALS['__cat_terms'][$taxonomy]['by_id'][$termId] ?? null;
+
+            if (!$termData) {
+                return false;
+            }
+
+            // Count how many objects have this term assigned
+            $count = 0;
+            if (isset($GLOBALS['__cat_object_terms'][$taxonomy])) {
+                foreach ($GLOBALS['__cat_object_terms'][$taxonomy] as $objectTerms) {
+                    if (in_array($termId, $objectTerms, true)) {
+                        $count++;
+                    }
+                }
+            }
+
+            return (object) array_merge($termData, ['count' => $count]);
+        }
+
+        return false;
+    }
+}
+
 if (!function_exists('wp_insert_term')) {
     function wp_insert_term($term, $taxonomy, $args = [])
     {

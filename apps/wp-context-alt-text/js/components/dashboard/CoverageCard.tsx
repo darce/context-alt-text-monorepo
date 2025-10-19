@@ -24,7 +24,6 @@ interface CoverageCardProps {
     featureFlags?: FeatureFlags;
     queryState?: CoverageCardQueryState;
     onDrilldown?: () => void;
-    onExport?: () => void;
 }
 
 const clampPercent = (value: number): number => {
@@ -47,13 +46,7 @@ const formatPercent = (value: number): string => {
     return value.toFixed(1);
 };
 
-export const CoverageCard = ({
-    data,
-    featureFlags,
-    queryState,
-    onDrilldown,
-    onExport,
-}: CoverageCardProps): React.JSX.Element => {
+export const CoverageCard = ({ data, featureFlags, queryState, onDrilldown }: CoverageCardProps): React.JSX.Element => {
     const percent = clampPercent(data.coverage_percent ?? 0);
     const hasLibrary = (data.total ?? 0) > 0;
     const missingCount = data.missing ?? 0;
@@ -69,8 +62,7 @@ export const CoverageCard = ({
     const showRefetching = Boolean(queryState?.isFetching && !showSkeleton && !showError);
     const showTrend = Boolean(featureFlags?.coverageTrend && hasLibrary && trendPoints.length > 1);
     const canDrilldown = typeof onDrilldown === "function";
-    const canExport = typeof onExport === "function";
-    const showActions = !showSkeleton && (canDrilldown || canExport);
+    const showActions = !showSkeleton && canDrilldown;
     const drilldownLabel = featureFlags?.workbenchEnabled
         ? __("Review in Workbench", "context-alt-text")
         : __("View missing media", "context-alt-text");
@@ -133,15 +125,6 @@ export const CoverageCard = ({
         emitDashboardEvent("cat_coverage_drilldown", buildAnalyticsPayload());
         onDrilldown();
     }, [buildAnalyticsPayload, onDrilldown]);
-
-    const handleExport = React.useCallback(() => {
-        if (!onExport) {
-            return;
-        }
-
-        emitDashboardEvent("cat_coverage_export", buildAnalyticsPayload());
-        onExport();
-    }, [buildAnalyticsPayload, onExport]);
 
     React.useEffect(() => {
         if (typeof window === "undefined" || typeof IntersectionObserver === "undefined") {
@@ -275,16 +258,9 @@ export const CoverageCard = ({
 
             {showActions && (
                 <div className="cat-coverage__actions">
-                    {canDrilldown && (
-                        <Button type="button" variant="primary" size="sm" onClick={handleDrilldown}>
-                            {drilldownLabel}
-                        </Button>
-                    )}
-                    {canExport && (
-                        <Button type="button" size="sm" onClick={handleExport}>
-                            {__("Export coverage CSV", "context-alt-text")}
-                        </Button>
-                    )}
+                    <Button type="button" variant="primary" size="sm" onClick={handleDrilldown}>
+                        {drilldownLabel}
+                    </Button>
                 </div>
             )}
         </Card>

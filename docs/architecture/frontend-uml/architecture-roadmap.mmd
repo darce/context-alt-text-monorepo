@@ -1,0 +1,108 @@
+%% Frontend Architecture Roadmap - MVP to Post-MVP (October 2025)
+%% Shows current state, MVP completion path, and future enhancements
+
+graph TB
+    subgraph Current["✅ CURRENT STATE (October 2025)"]
+        direction TB
+        currentDash["Dashboard: 6 cards complete<br/>Coverage, Activity, Recognition,<br/>Automation, Hero, Footer"]
+        currentWB["Workbench: Refactored<br/>224-line hooks, extracted utilities<br/>Recognition workflow functional"]
+        currentRoster["Roster: Needs refactoring<br/>2,543-line monolith<br/>Functional but technical debt"]
+        currentTests["Test Coverage: 716 tests<br/>362 frontend + 354 PHP<br/>Contracts aligned"]
+    end
+
+    subgraph MVP["🎯 MVP COMPLETION PATH (Remaining)"]
+        direction TB
+        mvpAltText["Alt-Text Generation<br/>✅ Dashboard widgets<br/>❌ LLM integration<br/>❌ Prompt composition<br/>❌ Draft approval UI"]
+        mvpREST["REST Endpoints<br/>❌ /dashboard/coverage live<br/>❌ /dashboard/activity<br/>❌ /dashboard/recognition<br/>❌ /alt-text/generate"]
+        mvpWorkbench["Workbench Completion<br/>✅ Recognition workflow<br/>❌ Bulk alt-text panel<br/>❌ Draft review surface<br/>❌ Progress tracking"]
+        mvpStorybook["Documentation<br/>❌ Storybook for all components<br/>❌ Component usage docs<br/>❌ API integration guide"]
+    end
+
+    subgraph PostMVP["🚀 POST-MVP ENHANCEMENTS"]
+        direction TB
+        postRoster["Roster Refactoring<br/>Split 2,543-line RosterRoute<br/>8-10 focused components<br/>3-4 custom hooks<br/>Follows ideal patterns"]
+        postMCP["MCP Integration<br/>Enable Abilities layer<br/>Expose tools for agents<br/>cat/generate_alt_text<br/>cat/create_roster_entry"]
+        postAdvanced["Advanced Features<br/>Batch operations queue<br/>Keyboard shortcuts system<br/>Offline processing<br/>Multi-tenant support"]
+        postMetrics["Enhanced Metrics<br/>Coverage trends with history<br/>Recognition confidence analytics<br/>Automation pipeline insights<br/>Performance dashboards"]
+    end
+
+    subgraph Utilities["🔧 SHARED UTILITIES (Stable)"]
+        direction TB
+        httpUtil["HTTP Utilities<br/>buildApiUrl, fetchApi<br/>handleJsonResponse, ensureOk<br/>44 tests passing"]
+        normUtil["Normalization<br/>primitives (7 functions)<br/>recognition (5 functions)<br/>78 tests passing"]
+        validUtil["Validation<br/>Constants aligned TS ↔ PHP<br/>Contract documented<br/>100% test coverage"]
+        noticeUtil["Notices<br/>dispatchNotice consolidated<br/>Single source of truth<br/>Used across all components"]
+    end
+
+    subgraph Contracts["📋 CONTRACTS (Aligned)"]
+        direction TB
+        tsContracts["TypeScript Types<br/>AdminConfig, DashboardData<br/>WorkbenchMediaItem, RosterEntry<br/>RecognitionJob, Observation"]
+        phpContracts["PHP DTOs<br/>SanitizationHelpers<br/>ValidationHelpers<br/>Aligned 1:1 with TS"]
+        jsonSchemas["JSON Schemas<br/>5 schema files (Draft 07)<br/>roster-entry, recognition-job<br/>workbench-media-item, coverage"]
+        contractDocs["Contract Documentation<br/>validation-logic-contract.md<br/>sanitization-patterns-contract.md<br/>contract-differences.md"]
+    end
+
+    %% Current State Connections
+    currentDash --> mvpREST
+    currentWB --> mvpWorkbench
+    currentRoster --> postRoster
+    currentTests --> mvpStorybook
+
+    %% MVP Path
+    mvpAltText --> mvpWorkbench
+    mvpREST --> mvpAltText
+    mvpWorkbench --> mvpStorybook
+
+    %% Post-MVP
+    mvpStorybook --> postRoster
+    mvpStorybook --> postMCP
+    postRoster --> postAdvanced
+    postMCP --> postAdvanced
+    postAdvanced --> postMetrics
+
+    %% Utility Support
+    httpUtil --> currentWB
+    httpUtil --> mvpREST
+    normUtil --> currentWB
+    normUtil --> mvpAltText
+    validUtil --> httpUtil
+    noticeUtil --> currentWB
+    noticeUtil --> mvpWorkbench
+
+    %% Contract Alignment
+    tsContracts --> currentDash
+    tsContracts --> currentWB
+    phpContracts --> mvpREST
+    jsonSchemas --> tsContracts
+    jsonSchemas --> phpContracts
+    contractDocs --> tsContracts
+    contractDocs --> phpContracts
+
+    %% Timeline Markers
+    timeline1["Q4 2025:<br/>MVP Launch"]
+    timeline2["Q1 2026:<br/>Post-MVP Features"]
+    timeline3["Q2 2026:<br/>Advanced Capabilities"]
+
+    mvpStorybook -.-> timeline1
+    postRoster -.-> timeline2
+    postMetrics -.-> timeline3
+
+    %% Notes
+    note1["Current: 716 tests passing<br/>All utilities refactored<br/>Dashboard complete"]
+    note2["MVP Blockers:<br/>1. Alt-text generation UI<br/>2. REST endpoints<br/>3. Storybook docs"]
+    note3["Post-MVP Priority:<br/>1. RosterRoute refactor<br/>2. MCP integration<br/>3. Advanced metrics"]
+
+    Current -.- note1
+    MVP -.- note2
+    PostMVP -.- note3
+
+    %% Styling
+    classDef current fill:#d4edda,stroke:#28a745,stroke-width:3px
+    classDef mvp fill:#fff3cd,stroke:#ffc107,stroke-width:3px
+    classDef postMvp fill:#cfe2ff,stroke:#0d6efd,stroke-width:3px
+    classDef stable fill:#e2e3e5,stroke:#6c757d,stroke-width:2px
+
+    class currentDash,currentWB,currentTests current
+    class mvpAltText,mvpREST,mvpWorkbench,mvpStorybook mvp
+    class postRoster,postMCP,postAdvanced,postMetrics postMvp
+    class httpUtil,normUtil,validUtil,noticeUtil stable

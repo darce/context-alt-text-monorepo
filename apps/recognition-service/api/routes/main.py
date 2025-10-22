@@ -8,6 +8,8 @@ from PIL import Image
 from analysis.workflow.scene_composer import SceneComposer
 from analysis.services.scene_analysis_service import SceneAnalysisService
 from .roster import router as roster_router
+from .suggest import router as suggest_router
+from .cluster_unknowns import router as cluster_router
 from api.dependencies import get_roster_service
 from api.schemas import AnalyzeSceneRequest, EmbeddingsRequest
 from shared.config import get_config
@@ -15,6 +17,8 @@ from shared.utils.device_utils import get_available_device  # for device resolut
 
 router = APIRouter()
 router.include_router(roster_router)
+router.include_router(suggest_router)
+router.include_router(cluster_router)
 
 # Dependency to get scene composer - will be set by the main app
 _scene_composer: Optional[SceneComposer] = None

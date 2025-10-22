@@ -1,5 +1,6 @@
 import yaml
 import logging
+import os
 from typing import Dict, Any
 from pathlib import Path
 
@@ -96,6 +97,7 @@ def get_config() -> Dict[str, Any]:
         'startup': base_config.get('startup', {}),
         'context_builder': base_config.get('context_builder', {}),
         'debug': base_config.get('debug', {}),
+        'clustering': base_config.get('clustering', {}),
         'runtime_optimizations': base_config.get('runtime_optimizations', {}),
         'vision_model': base_config.get('vision_model', {}),
         'attention': base_config.get('attention', {}),
@@ -103,3 +105,78 @@ def get_config() -> Dict[str, Any]:
     }
 
     return result_config
+
+
+def get_clustering_config() -> Dict[str, Any]:
+    """
+    Get clustering configuration with environment variable overrides.
+    
+    Environment variables override YAML settings:
+    - CLUSTER_ALGORITHM: dbscan or agglomerative
+    - CLUSTER_THRESHOLD: float (0.0-2.0)
+    - CLUSTER_MIN_SAMPLES: int (1-10)
+    - CLUSTER_LINKAGE: average, complete, or single
+    
+    Returns:
+        Dictionary with clustering configuration
+        
+    Raises:
+        ValueError: If configuration is invalid
+    """
+    config = get_config()
+    clustering_config = config.get('clustering', {})
+    
+    # Default values
+    defaults = {
+        'algorithm': 'dbscan',
+        'distance_threshold': 0.6,
+        'min_samples': 2,
+        'linkage': 'average',
+    }
+    
+    # Merge YAML config with defaults
+    result = {**defaults, **clustering_config}
+    
+    # Environment variable overrides
+    if env_algorithm := os.getenv('CLUSTER_ALGORITHM'):
+        if env_algorithm not in ['dbscan', 'agglomerative']:
+            raise ValueError(
+                f"Invalid CLUSTER_ALGORITHM: {env_algorithm}. "
+                "Must be 'dbscan' or 'agglomerative'"
+            )
+        result['algorithm'] = env_algorithm
+    
+    if env_threshold := os.getenv('CLUSTER_THRESHOLD'):
+        try:
+            threshold = float(env_threshold)
+            if not 0.0 <= threshold <= 2.0:
+                raise ValueError("Threshold must be between 0.0 and 2.0")
+            result['distance_threshold'] = threshold
+        except ValueError as e:
+            raise ValueError(f"Invalid CLUSTER_THRESHOLD: {env_threshold}. {e}")
+    
+    if env_min_samples := os.getenv('CLUSTER_MIN_SAMPLES'):
+        try:
+            min_samples = int(env_min_samples)
+            if not 1 <= min_samples <= 10:
+                raise ValueError("min_samples must be between 1 and 10")
+            result['min_samples'] = min_samples
+        except ValueError as e:
+            raise ValueError(f"Invalid CLUSTER_MIN_SAMPLES: {env_min_samples}. {e}")
+    
+    if env_linkage := os.getenv('CLUSTER_LINKAGE'):
+        if env_linkage not in ['average', 'complete', 'single']:
+            raise ValueError(
+                f"Invalid CLUSTER_LINKAGE: {env_linkage}. "
+                "Must be 'average', 'complete', or 'single'"
+            )
+        result['linkage'] = env_linkage
+    
+    logger.debug(
+        f"Clustering config loaded: algorithm={result['algorithm']}, "
+        f"threshold={result['distance_threshold']}, "
+        f"min_samples={result['min_samples']}, "
+        f"linkage={result['linkage']}"
+    )
+    
+    return result

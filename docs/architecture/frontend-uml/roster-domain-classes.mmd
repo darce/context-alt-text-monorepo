@@ -1,116 +1,30 @@
 classDiagram
-    %% WordPress Admin SPA roster manager interacting with backend roster service
+class RosterPerson {
++id: string
++displayName: string
++aliases: string[]
++avatarUrl: string?
++meta: json
++createdAt: datetime
+}
 
-    class RosterPage {
-        <<React Route>>
-        +render(): void
-        +registerScreen(): void
-        +handleKeyboardShortcuts(): void
-    }
+class AugmentedEmbedding {
+  +personId: string
+  +model: string
+  +vec: blob
+  +source: enum("observation","curated")
+  +createdAt: datetime
+}
 
-    class RosterDataContext {
-        <<Context Provider>>
-        +entries: RosterEntryView[]
-        +observations: ObservationView[]
-        +mutations: RosterMutations
-        +loadInitialState(payload): void
-    }
+class FaceObservation {
+  +id: bigint
+  +attachmentId: bigint
+  +clusterGroupId: string?
+  +suggestedRosterId: string?
+  +suggestedScore: decimal
+  +labelStatus: enum
+  +createdAt: datetime
+}
 
-    class useRosterEntries {
-        <<React Hook>>
-        +entries: RosterEntryView[]
-        +isLoading: bool
-        +refetch(): Promise
-        +create(entryDraft): Promise
-        +update(entryId, draft): Promise
-        +remove(entryId): Promise
-    }
-
-    class useRecognitionObservations {
-        <<React Hook>>
-        +pending: ObservationView[]
-        +autoAssign(entryId): Promise
-        +resolve(observationId, entryId): Promise
-    }
-
-    class RosterTableView {
-        <<Component>>
-        +renderGrid(entries): void
-        +openCreateDialog(): void
-        +openEditDialog(entryId): void
-    }
-
-    class RosterDialogs {
-        <<Component>>
-        +showCreate(entryDraft): void
-        +showEdit(entryId): void
-        +confirmDelete(entryId): void
-        +submit(entryDraft): void
-    }
-
-    class RosterRestClient {
-        <<WP REST Adapter>>
-        +listEntries(filters): Promise
-        +createEntry(payload): Promise
-        +updateEntry(id, payload): Promise
-        +deleteEntry(id): Promise
-        +syncRemote(): Promise
-        +listObservations(filters): Promise
-        +resolveObservation(observationId, payload): Promise
-    }
-
-    class WPRosterController {
-        <<PHP REST Controller>>
-        +handleList(request): WP_REST_Response
-        +handleCreate(request): WP_REST_Response
-        +handleUpdate(request): WP_REST_Response
-        +handleDelete(request): WP_REST_Response
-        +handleSync(request): WP_REST_Response
-        +handleResolve(request): WP_REST_Response
-    }
-
-    class RosterServiceProxy {
-        <<PHP Domain Service>>
-        +fetchEntries(filters): array
-        +saveEntry(draft): array
-        +deleteEntry(id): bool
-        +syncFromRemote(): SyncReport
-        +resolveObservation(data): array
-    }
-
-    class RecognitionApiClient {
-        <<HTTP Adapter>>
-        +listRoster(): array
-        +upsertRoster(payload): array
-        +destroyRosterEntry(id): bool
-        +generateEmbeddings(payload): array
-        +resolveObservation(payload): array
-    }
-
-    class ObservationRepository {
-        <<Persistence>>
-        +getPending(limit): array
-        +persistResolution(data): void
-        +recordSync(report): void
-    }
-
-    %% Frontend relationships
-    RosterPage --> RosterDataContext : consumes
-    RosterDataContext --> useRosterEntries : exposes
-    RosterDataContext --> useRecognitionObservations : exposes
-    RosterPage --> RosterTableView : renders
-    RosterPage --> RosterDialogs : orchestrates
-    RosterTableView --> useRosterEntries : queries
-    RosterDialogs --> useRosterEntries : mutations
-    RosterPage --> useRecognitionObservations : integrates queue
-
-    %% REST bridges to backend
-    useRosterEntries --> RosterRestClient : invokes REST
-    useRecognitionObservations --> RosterRestClient : invokes REST
-    RosterRestClient --> WPRosterController : routes requests
-    WPRosterController --> RosterServiceProxy : delegates domain logic
-    RosterServiceProxy --> RecognitionApiClient : syncs remote roster
-    RosterServiceProxy --> ObservationRepository : manipulates cache
-
-    note for WPRosterController "Routes: GET/POST /context-alt-text/v1/roster, PUT/DELETE /context-alt-text/v1/roster/{id}, POST .../sync, POST .../resolve"
-    note for RecognitionApiClient "Backend data model depicted in docs/architecture/backend-uml/roster_service.mermaid"
+RosterPerson "1" <-- "many" AugmentedEmbedding : has vectors
+RosterPerson "1" <-- "many" FaceObservation : confirmed labels

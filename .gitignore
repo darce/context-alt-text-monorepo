@@ -62,3 +62,9 @@ composer.lock
 
 # Vite build output
 apps/wp-context-alt-text/public/assets/dist/
+
+# Python virtual environments (should only exist in apps/recognition-service)
+.venv/
+venv/
+__pycache__/
+*.pyc

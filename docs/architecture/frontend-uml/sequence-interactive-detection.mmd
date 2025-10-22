@@ -1,0 +1,30 @@
+sequenceDiagram
+autonumber
+participant User as User (Editor)
+participant SPA as WP Admin SPA
+participant Det as DetectionProvider (FE)
+participant WP as WP REST (/recognition/identify)
+participant Rec as Recognition Service
+participant DB as WP DB
+
+User->>SPA: Open Workbench (People view)
+SPA->>Det: Lazy-load model + detect faces on thumbnails
+Det-->>SPA: Face boxes (bboxes per image)
+
+SPA->>WP: POST identify {attachmentId, faces[bbox...]}
+
+WP->>WP: Crop faces server-side
+WP->>Rec: /embeddings/batch (face crops)
+Rec-->>WP: embeddings[]
+WP->>Rec: /suggest (topK, threshold)
+Rec-->>WP: suggestions[][] (rosterId, score)
+WP->>Rec: /cluster-unknowns (low-confidence)
+Rec-->>WP: clusterIds[]
+WP-->>SPA: faces[{faceId, clusterId?, suggestions[]}]
+
+SPA->>User: Show chips + Drawer stacks (clustered unknowns, suggestions)
+
+User->>SPA: Label one face ("Ana") / bulk confirm a stack
+SPA->>WP: identify {faces[label: rosterId|newName]}
+WP->>DB: Persist FaceObservation(+label_status)
+WP-->>SPA: Ack + refreshed suggestions (optional)

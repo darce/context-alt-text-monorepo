@@ -1,0 +1,53 @@
+classDiagram
+class DetectedFaceFE {
++faceId: string
++bbox: Rect
++attachmentId: number
++suggestions: Suggestion[] (ui)
++clusterId: string?
++labelDraft: Label?
+}
+
+class Label {
+  +rosterId?: string
+  +newName?: string
+}
+
+class Suggestion {
+  +rosterId: string
+  +display: string
+  +score: float
+}
+
+class FaceObservation {
+  +id: bigint
+  +attachmentId: bigint
+  +bboxX: int
+  +bboxY: int
+  +bboxW: int
+  +bboxH: int
+  +clusterGroupId: string?
+  +suggestedRosterId: string?
+  +suggestedScore: decimal
+  +labelStatus: enum
+  +createdAt: datetime
+}
+
+class RosterPerson {
+  +id: string
+  +displayName: string
+  +meta: json
+  +createdAt: datetime
+}
+
+class ObservationEmbedding {
+  +observationId: bigint
+  +model: string
+  +vec: blob
+  +createdAt: datetime
+}
+
+DetectedFaceFE --> Label
+DetectedFaceFE --> Suggestion
+FaceObservation --> ObservationEmbedding
+FaceObservation --> RosterPerson : confirmed links

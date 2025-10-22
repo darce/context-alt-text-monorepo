@@ -6,6 +6,7 @@ namespace ContextAltText\Roster;
 
 use WP_Term;
 use function __;
+use function _update_generic_term_count;
 use function absint;
 use function add_action;
 use function get_objects_in_term;
@@ -68,6 +69,7 @@ class RosterTaxonomy
                 'rewrite' => false,
                 'query_var' => true,
                 'show_tagcloud' => false,
+                'update_count_callback' => '_update_generic_term_count',
                 'capabilities' => [
                     'manage_terms' => 'manage_options',
                     'edit_terms' => 'manage_options',

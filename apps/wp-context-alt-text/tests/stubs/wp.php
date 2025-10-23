@@ -42,15 +42,34 @@ if (!class_exists('WP_Error')) {
 if (!class_exists('WP_REST_Request')) {
     class WP_REST_Request implements \ArrayAccess
     {
+        /** @var string */
+        private $method;
+        /** @var string */
+        private $route;
         /** @var array<string,mixed> */
         private $params;
+        /** @var array<string,mixed> */
+        private $bodyParams;
 
         /**
-         * @param array<string,mixed> $params
+         * @param string|array<string,mixed> $method HTTP method or params array (backward compatible)
+         * @param string $route REST route
+         * @param array<string,mixed> $params Request parameters
          */
-        public function __construct(array $params = [])
+        public function __construct($method = 'GET', string $route = '', array $params = [])
         {
-            $this->params = $params;
+            // Backward compatibility: if $method is array, treat as params
+            if (is_array($method)) {
+                $this->method = 'GET';
+                $this->route = '';
+                $this->params = $method;
+                $this->bodyParams = [];
+            } else {
+                $this->method = $method;
+                $this->route = $route;
+                $this->params = $params;
+                $this->bodyParams = [];
+            }
         }
 
         public function get_param(string $key)
@@ -58,11 +77,45 @@ if (!class_exists('WP_REST_Request')) {
             return $this->params[$key] ?? null;
         }
 
+        /**
+         * @return array<string,mixed>
+         */
+        public function get_params(): array
+        {
+            return array_merge($this->params, $this->bodyParams);
+        }
+
+        /**
+         * @return array<string,mixed>
+         */
+        public function get_body_params(): array
+        {
+            return $this->bodyParams;
+        }
+
+        /**
+         * @param array<string,mixed> $params
+         */
+        public function set_body_params(array $params): void
+        {
+            $this->bodyParams = $params;
+        }
+
         public function set_param(string $key, $value): self
         {
             $this->params[$key] = $value;
 
             return $this;
+        }
+
+        public function get_method(): string
+        {
+            return $this->method;
+        }
+
+        public function get_route(): string
+        {
+            return $this->route;
         }
 
         public function offsetExists(mixed $offset): bool
@@ -693,13 +746,6 @@ if (!function_exists('wp_insert_attachment')) {
     }
 }
 
-if (!function_exists('get_attached_file')) {
-    function get_attached_file($attachmentId)
-    {
-        return $GLOBALS['__cat_attachments'][$attachmentId]['file'] ?? null;
-    }
-}
-
 if (!function_exists('get_transient')) {
     function get_transient($transient)
     {
@@ -767,6 +813,30 @@ if (!function_exists('delete_option')) {
     function delete_option($key): void
     {
         unset($GLOBALS['__cat_options'][$key]);
+    }
+}
+
+if (!function_exists('get_attached_file')) {
+    function get_attached_file($attachmentId, $unfiltered = false)
+    {
+        return $GLOBALS['__cat_attached_file'][$attachmentId] ?? false;
+    }
+}
+
+if (!function_exists('wp_get_image_editor')) {
+    /**
+     * @param string $path
+     * @return WP_Error|object
+     */
+    function wp_get_image_editor($path)
+    {
+        // Check if test has set a mock editor
+        if (isset($GLOBALS['__cat_image_editor'])) {
+            return $GLOBALS['__cat_image_editor'];
+        }
+
+        // Default: return error
+        return new WP_Error('file_not_found', 'Image file not found', ['path' => $path]);
     }
 }
 

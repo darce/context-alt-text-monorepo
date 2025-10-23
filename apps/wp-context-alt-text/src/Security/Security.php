@@ -35,4 +35,15 @@ class Security
     {
         return wp_create_nonce($action);
     }
+
+    /**
+     * Verify user has required capability
+     *
+     * @param string $capability The required capability (e.g., 'upload_files', 'manage_options')
+     * @return bool True if user has capability
+     */
+    public function verifyCapability(string $capability): bool
+    {
+        return current_user_can($capability);
+    }
 }

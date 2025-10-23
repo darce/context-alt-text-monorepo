@@ -1138,4 +1138,62 @@ class RosterService
             return gmdate(DateTimeInterface::ATOM);
         }
     }
+
+    /**
+     * Create a new roster person
+     *
+     * @param string $displayName The person's display name
+     * @return string The roster person ID
+     * @throws RosterClientException
+     */
+    public function createPerson(string $displayName): string
+    {
+        // Create via remote API
+        $response = $this->client->createPerson([
+            'display' => $displayName,
+            'type' => 'person',
+        ]);
+
+        $rosterId = $response['rosterId'] ?? null;
+        if (!is_string($rosterId) || trim($rosterId) === '') {
+            throw new RosterClientException('Failed to create roster person: invalid response');
+        }
+
+        // Sync local roster
+        $this->syncFromRemote();
+
+        return $rosterId;
+    }
+
+    /**
+     * Create an observation for a face
+     *
+     * @param int $attachmentId The WordPress attachment ID
+     * @param array<float> $embedding The face embedding
+     * @param string $rosterId The roster person ID
+     * @param array<string,float> $bbox The bounding box coordinates
+     * @return int The observation ID
+     * @throws RosterClientException
+     */
+    public function createObservation(
+        int $attachmentId,
+        array $embedding,
+        string $rosterId,
+        array $bbox
+    ): int {
+        // Create via remote API
+        $response = $this->client->createObservation([
+            'attachmentId' => $attachmentId,
+            'embedding' => $embedding,
+            'rosterId' => $rosterId,
+            'bbox' => $bbox,
+        ]);
+
+        $observationId = $response['observationId'] ?? null;
+        if (!is_int($observationId) || $observationId <= 0) {
+            throw new RosterClientException('Failed to create observation: invalid response');
+        }
+
+        return $observationId;
+    }
 }

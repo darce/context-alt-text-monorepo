@@ -40,6 +40,7 @@ use ContextAltText\Support\Env;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Support\LifecycleManager;
 use ContextAltText\Template\Template;
+use ContextAltText\Recognition\IdentifyController;
 use ContextAltText\Recognition\RecognitionCli;
 use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Recognition\RecognitionJobRepository;
@@ -166,6 +167,11 @@ function context_alt_text(): ContextAltText
         $rosterService
     );
     $recognitionJobService->setRosterObservationManager($rosterObservationManager);
+    $identifyController = new IdentifyController(
+        $recognitionClient,
+        $rosterService,
+        $security
+    );
     context_alt_text_roster_taxonomy();
     $workbenchMediaResolver = new WorkbenchMediaResolver($recognitionObservationRepository);
     $dashboardPage = new DashboardPage($dashboardMetrics);
@@ -200,7 +206,8 @@ function context_alt_text(): ContextAltText
             $security,
             $settingsRepository,
             $recognitionClient,
-            $rosterObservationManager
+            $rosterObservationManager,
+            $identifyController
         ),
         new Menu(
             $dashboardPage,

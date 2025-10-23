@@ -6,6 +6,7 @@ namespace ContextAltText\Api;
 
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Domain\Roster\RosterService;
+use ContextAltText\Recognition\IdentifyController;
 use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Recognition\RecognitionClientException;
 use ContextAltText\Recognition\RecognitionJobService;
@@ -69,6 +70,7 @@ class Api
     private SettingsRepository $settingsRepository;
     private RecognitionClient $recognitionClient;
     private RosterObservationManager $rosterObservationManager;
+    private IdentifyController $identifyController;
 
     public function __construct(
         DashboardMetricsService $dashboardMetrics,
@@ -81,7 +83,8 @@ class Api
         Security $security,
         SettingsRepository $settingsRepository,
         RecognitionClient $recognitionClient,
-        RosterObservationManager $rosterObservationManager
+        RosterObservationManager $rosterObservationManager,
+        IdentifyController $identifyController
     ) {
         $this->dashboardMetrics = $dashboardMetrics;
         $this->featureFlags = $featureFlags;
@@ -94,6 +97,7 @@ class Api
         $this->settingsRepository = $settingsRepository;
         $this->recognitionClient = $recognitionClient;
         $this->rosterObservationManager = $rosterObservationManager;
+        $this->identifyController = $identifyController;
     }
 
     public function init(): void
@@ -205,6 +209,15 @@ class Api
                     'methods' => 'GET',
                     'callback' => [$this, 'get_recognition_job'],
                     'permission_callback' => [$this, 'can_manage_recognition'],
+                ]
+            );
+
+            $this->register_endpoint_with_alias(
+                '/recognition/identify',
+                [
+                    'methods' => 'POST',
+                    'callback' => [$this->identifyController, 'identify'],
+                    'permission_callback' => '__return_true', // Controller handles auth internally
                 ]
             );
 

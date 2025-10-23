@@ -1,4 +1,7 @@
 classDiagram
+    %% v2 Recognition Service Contracts
+    %% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 4.2
+    
     class GenerateAltTextInput {
       attachmentIds: integer[]
     }
@@ -19,21 +22,51 @@ classDiagram
       metadata: Map
     }
 
-    class EmbeddingsRequest {
-      imageUrl: string
-      cropBox: BoundingBox?
+    class EmbeddingsBatchRequest {
+      images: string[]
       model: string?
     }
 
-    class EmbeddingsResponse {
+    class EmbeddingsBatchResponse {
+      embeddings: float[][]
+    }
+
+    class SuggestRequest {
+      embeddings: float[][]
+      topK: integer
+      threshold: float
+    }
+
+    class SuggestResponse {
+      suggestions: RosterMatch[][]
+    }
+
+    class ClusterUnknownsRequest {
+      embeddings: float[][]
+      threshold: float?
+      minSamples: integer?
+    }
+
+    class ClusterUnknownsResponse {
+      clusterIds: string[]
+    }
+
+    class RosterSyncRequest {
+      personId: string
       embedding: float[]
-      vectorId: string?
+      displayName: string
+    }
+
+    class RosterSyncResponse {
+      success: boolean
+      indexUpdated: boolean
     }
 
     class ServiceHealth {
       status: "ok"|"degraded"|"error"
       uptimeSeconds: number
       models: string[]
+      faissIndexSize: integer
     }
 
     class DetectedFace {
@@ -55,10 +88,29 @@ classDiagram
       height: number
     }
 
+    class RosterMatch {
+      rosterId: string
+      display: string
+      score: float
+    }
+
     GenerateAltTextInput --> GenerateAltTextOutput : produces
     AnalyzeSceneRequest --> AnalyzeSceneResponse : yields
-    EmbeddingsRequest --> EmbeddingsResponse : returns
+    EmbeddingsBatchRequest --> EmbeddingsBatchResponse : returns
+    SuggestRequest --> SuggestResponse : returns
+    ClusterUnknownsRequest --> ClusterUnknownsResponse : returns
+    RosterSyncRequest --> RosterSyncResponse : returns
+    
     AnalyzeSceneResponse --> DetectedFace
     AnalyzeSceneResponse --> DetectedObject
     DetectedFace --> BoundingBox
     DetectedObject --> BoundingBox
+    SuggestResponse --> RosterMatch
+
+    note for EmbeddingsBatchRequest "POST /api/v0/embeddings/batch\nAccepts multiple face crops\nReturns 512-dim embeddings"
+    
+    note for SuggestRequest "POST /api/v0/suggest\nFAISS similarity search\nFilters by threshold (default 0.92)"
+    
+    note for ClusterUnknownsRequest "POST /api/v0/cluster-unknowns\nDBSCAN/Agglomerative clustering\nGroups similar unknowns"
+    
+    note for RosterSyncRequest "POST /api/v0/roster/sync\nAdds person embedding to FAISS\nTriggered after labeling"

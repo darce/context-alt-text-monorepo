@@ -178,10 +178,10 @@ debug:
 
 # Clustering Configuration
 clustering:
-  algorithm: dbscan  # Options: dbscan, agglomerative
-  distance_threshold: 0.6  # Cosine distance threshold (0.0-2.0)
-  min_samples: 2  # Minimum samples in cluster (DBSCAN only)
-  linkage: average  # Linkage method for agglomerative (average, complete, single)
+  algorithm: dbscan # Options: dbscan, agglomerative
+  distance_threshold: 0.6 # Cosine distance threshold (0.0-2.0)
+  min_samples: 2 # Minimum samples in cluster (DBSCAN only)
+  linkage: average # Linkage method for agglomerative (average, complete, single)
   # Threshold guidelines:
   # - 0.4-0.5: Very strict (same person, similar pose/lighting)
   # - 0.6-0.7: Moderate (same person, different conditions) ← Recommended

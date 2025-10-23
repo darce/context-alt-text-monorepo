@@ -1,11 +1,15 @@
 classDiagram
+%% v2 Roster & Observation Domain Model
+%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 5
+
 class RosterPerson {
-+id: string
-+displayName: string
-+aliases: string[]
-+avatarUrl: string?
-+meta: json
-+createdAt: datetime
+  +id: string
+  +displayName: string
+  +aliases: string[]
+  +avatarUrl: string | null
+  +meta: json
+  +createdAt: datetime
+  +updatedAt: datetime
 }
 
 class AugmentedEmbedding {
@@ -14,17 +18,53 @@ class AugmentedEmbedding {
   +vec: blob
   +source: enum("observation","curated")
   +createdAt: datetime
+  +quality: enum("high","medium","low")
 }
 
 class FaceObservation {
   +id: bigint
   +attachmentId: bigint
-  +clusterGroupId: string?
-  +suggestedRosterId: string?
-  +suggestedScore: decimal
+  +bboxX: number
+  +bboxY: number
+  +bboxW: number
+  +bboxH: number
+  +clusterGroupId: string | null
+  +suggestedRosterId: string | null
+  +suggestedScore: decimal | null
+  +confirmedRosterId: string | null
   +labelStatus: enum
+  +createdAt: datetime
+  +updatedAt: datetime
+}
+
+class ObservationEmbedding {
+  +observationId: bigint
+  +model: string
+  +vec: blob
   +createdAt: datetime
 }
 
-RosterPerson "1" <-- "many" AugmentedEmbedding : has vectors
-RosterPerson "1" <-- "many" FaceObservation : confirmed labels
+class LabelStatusEnum {
+  <<enumeration>>
+  UNLABELED
+  SUGGESTED
+  CONFIRMED
+  REJECTED
+  CORRECTED
+}
+
+class EmbeddingSourceEnum {
+  <<enumeration>>
+  OBSERVATION
+  CURATED
+}
+
+RosterPerson "1" --> "many" AugmentedEmbedding : has vectors
+RosterPerson "1" --> "many" FaceObservation : confirmed labels
+FaceObservation "1" --> "1" ObservationEmbedding : embedding
+FaceObservation --> LabelStatusEnum
+AugmentedEmbedding --> EmbeddingSourceEnum
+
+note for FaceObservation "clusterGroupId groups unknowns\nsuggestedRosterId stores FAISS match\nlabelStatus tracks user confirmation"
+note for AugmentedEmbedding "Synced to Recognition Service FAISS\nMultiple embeddings per person for variance"
+note for LabelStatusEnum "SUGGESTED: backend recommendation\nCONFIRMED: user accepted suggestion\nCORRECTED: user changed from suggestion\nREJECTED: user marked as not a face"

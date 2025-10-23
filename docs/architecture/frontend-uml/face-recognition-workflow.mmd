@@ -1,12 +1,40 @@
 flowchart TD
-A[Face crops (server-side)] --> B[/embeddings/batch/]
-B --> C{FAISS search}
-C -->|score >= threshold| D[Suggest rosterId]
-C -->|score < threshold| E[Unknown]
-E --> F[/cluster-unknowns/]
-F --> G[clusterId → FE Drawer]
-D --> H[SPA: Suggestion chips]
-G --> H
-H --> I[User confirmations]
-I --> J[WP: persist observation + label_status]
-J --> K[Augment roster embeddings (periodic/offline)]
+%% v2 Face Recognition Workflow
+%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 4.2
+
+A[Browser: MediaPipe face detection] --> B[Frontend: POST /recognition/identify]
+B --> C[WordPress: Crop faces server-side]
+C --> D[Recognition Service: /embeddings/batch]
+D --> E{Roster exists?}
+E -->|Yes: Warm Start| F[[suggest endpoint]]
+E -->|No: Cold Start| G[[cluster-unknowns endpoint]]
+
+F --> H{FAISS similarity search}
+H -->|score >= threshold 0.92| I[Return top-k suggestions]
+H -->|score < threshold| G
+
+G --> J[DBSCAN/Agglomerative clustering]
+J --> K[Return clusterId for grouping]
+
+I --> L[Frontend: PeopleDrawer suggestion stacks]
+K --> M[Frontend: PeopleDrawer unknown clusters]
+
+L --> N{User action}
+M --> N
+
+N -->|Confirm suggestion| O[POST /identify with label.rosterId]
+N -->|Create new person| P[POST /identify with label.newName]
+N -->|Bulk confirm stack| Q[POST /identify with multiple labels]
+
+O --> R[WP: persist FaceObservation + sync to FAISS]
+P --> S[WP: create RosterPerson + persist + sync to FAISS]
+Q --> R
+
+R --> T[Recognition Service: /roster/add-embedding]
+S --> T
+T --> U[Append to FAISS index - prevent duplicate observationId]
+U --> V[Persist index atomically]
+
+V --> W[Return success + immediate user feedback]
+W --> X[Toast: Face added to person's profile]
+X --> Y[Future suggestions improve progressively]

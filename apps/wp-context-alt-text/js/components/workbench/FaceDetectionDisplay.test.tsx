@@ -7,7 +7,7 @@
 
 import React from "react";
 import { describe, it, expect, vi } from "vitest";
-import { render, screen, waitFor } from "@testing-library/react";
+import { render, screen, waitFor, fireEvent } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { FaceDetectionDisplay } from "./FaceDetectionDisplay";
 import type { FaceDetection } from "../../utils/mediaPipeLoader";
@@ -32,6 +32,28 @@ vi.mock("../../utils/mediaPipeLoader", () => ({
         height: Math.round(normalized.height * imageHeight),
     }),
 }));
+
+/**
+ * Helper to wait for image to load in tests
+ */
+const waitForImageLoad = async () => {
+    await waitFor(() => {
+        const img = document.querySelector(".cat-face-detection__image") as HTMLImageElement;
+        if (!img) throw new Error("Image not found");
+
+        // Simulate image load event
+        Object.defineProperty(img, "naturalWidth", { value: 1000, writable: true });
+        Object.defineProperty(img, "naturalHeight", { value: 800, writable: true });
+        Object.defineProperty(img, "complete", { value: true, writable: true });
+        fireEvent.load(img);
+
+        // Wait for container to become visible
+        const container = document.querySelector(".cat-face-detection__container") as HTMLElement;
+        if (!container || container.style.display === "none") {
+            throw new Error("Container not visible yet");
+        }
+    });
+};
 
 describe("FaceDetectionDisplay", () => {
     const mockImageUrl = "http://example.test/photo.jpg";
@@ -66,7 +88,7 @@ describe("FaceDetectionDisplay", () => {
         expect(screen.getByText(/Loading image/i)).toBeInTheDocument();
     });
 
-    it("renders canvas with correct dimensions", async () => {
+    it("renders image with correct dimensions", async () => {
         render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -78,10 +100,12 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        const canvas = await waitFor(() => screen.getByRole("img"));
+        await waitForImageLoad();
+        const image = screen.getByRole("img");
 
-        expect(canvas).toBeInTheDocument();
-        expect(canvas.tagName).toBe("CANVAS");
+        expect(image).toBeInTheDocument();
+        expect(image.tagName).toBe("IMG");
+        expect(image).toHaveAttribute("alt", "Test image");
     });
 
     it("displays correct alt text for no faces", () => {
@@ -89,11 +113,11 @@ describe("FaceDetectionDisplay", () => {
             <FaceDetectionDisplay imageUrl={mockImageUrl} imageAlt="Test image" detections={[]} selectedIndex={null} />,
         );
 
-        const canvas = screen.getByRole("img", { hidden: true });
-        expect(canvas).toHaveAttribute("aria-label", "Photo with no faces detected");
+        const image = screen.getByRole("img", { hidden: true });
+        expect(image).toHaveAttribute("alt", "Test image");
     });
 
-    it("displays correct alt text for one face", () => {
+    it("displays correct alt text for one face", async () => {
         render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -103,11 +127,13 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        const canvas = screen.getByRole("img", { hidden: true });
-        expect(canvas).toHaveAttribute("aria-label", "Photo with 1 detected face");
+        await waitForImageLoad();
+
+        // Face overlay should be present
+        expect(screen.getByRole("button", { name: /Face 1/i })).toBeInTheDocument();
     });
 
-    it("displays correct alt text for multiple faces", () => {
+    it("displays correct alt text for multiple faces", async () => {
         render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -117,13 +143,15 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        const canvas = screen.getByRole("img", { hidden: true });
-        expect(canvas).toHaveAttribute("aria-label", "Photo with 2 detected faces");
+        await waitForImageLoad();
+
+        // Both face overlays should be present
+        expect(screen.getByRole("button", { name: /Face 1/i })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Face 2/i })).toBeInTheDocument();
     });
 
     it("calls onFaceClick when face is clicked", async () => {
-        const user = userEvent.setup();
-        const handleClick = vi.fn();
+        const onFaceClick = vi.fn();
 
         render(
             <FaceDetectionDisplay
@@ -131,36 +159,42 @@ describe("FaceDetectionDisplay", () => {
                 imageAlt="Test image"
                 detections={mockDetections}
                 selectedIndex={null}
-                onFaceClick={handleClick}
+                onFaceClick={onFaceClick}
             />,
         );
 
-        const canvas = screen.getByRole("img", { hidden: true });
+        await waitForImageLoad();
 
-        // Click on canvas (simplified - actual click handling requires canvas coordinate math)
-        await user.click(canvas);
+        const faceBox = screen.getByRole("button", { name: /Face 1/i });
+        fireEvent.click(faceBox);
 
-        // Note: Full click detection requires DOM measurements which are not available in JSDOM
-        // This test verifies the click handler is attached
-        expect(canvas).toHaveAttribute("tabindex", "0");
+        expect(onFaceClick).toHaveBeenCalledWith(0);
     });
 
-    it("is keyboard accessible", () => {
+    it("is keyboard accessible", async () => {
+        const onFaceClick = vi.fn();
+
         render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
                 imageAlt="Test image"
                 detections={mockDetections}
                 selectedIndex={null}
-                onFaceClick={vi.fn()}
+                onFaceClick={onFaceClick}
             />,
         );
 
-        const canvas = screen.getByRole("img", { hidden: true });
-        expect(canvas).toHaveAttribute("tabindex", "0");
+        await waitForImageLoad();
+
+        const faceBox = screen.getByRole("button", { name: /Face 1/i });
+        expect(faceBox).toHaveAttribute("tabindex", "0");
+
+        // Test keyboard interaction
+        fireEvent.keyDown(faceBox, { key: "Enter" });
+        expect(onFaceClick).toHaveBeenCalledWith(0);
     });
 
-    it("provides screen reader help text when faces detected", () => {
+    it("provides screen reader help text when faces detected", async () => {
         render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -170,10 +204,11 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        // Help text is present but visually hidden
-        const helpText = screen.getByText(/Use Tab key to navigate/i);
+        await waitForImageLoad();
+
+        // Help text is present
+        const helpText = screen.getByText(/Click or press Enter on a face to select it/i);
         expect(helpText).toBeInTheDocument();
-        expect(helpText).toHaveClass("screen-reader-text");
     });
 
     it("does not show help text when no faces detected", () => {
@@ -181,10 +216,10 @@ describe("FaceDetectionDisplay", () => {
             <FaceDetectionDisplay imageUrl={mockImageUrl} imageAlt="Test image" detections={[]} selectedIndex={null} />,
         );
 
-        expect(screen.queryByText(/Use Tab key to navigate/i)).not.toBeInTheDocument();
+        expect(screen.queryByText(/Click or press Enter on a face to select it/i)).not.toBeInTheDocument();
     });
 
-    it("respects maxWidth constraint", () => {
+    it("respects maxWidth constraint", async () => {
         const { container } = render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -195,12 +230,12 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        const canvas = container.querySelector("canvas");
-        expect(canvas).toBeInTheDocument();
-        // Width will be set after image loads
+        const image = await waitFor(() => container.querySelector("img"));
+        expect(image).toBeInTheDocument();
+        expect(image).toHaveStyle({ maxWidth: "400px" });
     });
 
-    it("respects maxHeight constraint", () => {
+    it("respects maxHeight constraint", async () => {
         const { container } = render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -211,9 +246,9 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        const canvas = container.querySelector("canvas");
-        expect(canvas).toBeInTheDocument();
-        // Height will be set after image loads
+        const image = await waitFor(() => container.querySelector("img"));
+        expect(image).toBeInTheDocument();
+        expect(image).toHaveStyle({ maxHeight: "300px" });
     });
 
     it("handles image load failure gracefully", () => {
@@ -259,7 +294,7 @@ describe("FaceDetectionDisplay", () => {
         expect(screen.getByRole("status")).toBeInTheDocument();
     });
 
-    it("updates when detections change", () => {
+    it("updates when detections change", async () => {
         const { rerender } = render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -268,6 +303,12 @@ describe("FaceDetectionDisplay", () => {
                 selectedIndex={null}
             />,
         );
+
+        await waitForImageLoad();
+
+        // Both faces initially
+        expect(screen.getByRole("button", { name: /Face 1/i })).toBeInTheDocument();
+        expect(screen.getByRole("button", { name: /Face 2/i })).toBeInTheDocument();
 
         const newDetections: FaceDetection[] = [mockDetections[0]!];
 
@@ -280,11 +321,12 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        const canvas = screen.getByRole("img", { hidden: true });
-        expect(canvas).toHaveAttribute("aria-label", "Photo with 1 detected face");
+        // Only one face now
+        expect(screen.getByRole("button", { name: /Face 1/i })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: /Face 2/i })).not.toBeInTheDocument();
     });
 
-    it("highlights selected face", () => {
+    it("highlights selected face", async () => {
         const { rerender } = render(
             <FaceDetectionDisplay
                 imageUrl={mockImageUrl}
@@ -293,6 +335,11 @@ describe("FaceDetectionDisplay", () => {
                 selectedIndex={null}
             />,
         );
+
+        await waitForImageLoad();
+
+        const face1 = screen.getByRole("button", { name: /Face 1/i });
+        expect(face1).not.toHaveClass("cat-face-detection__box--selected");
 
         rerender(
             <FaceDetectionDisplay
@@ -303,9 +350,8 @@ describe("FaceDetectionDisplay", () => {
             />,
         );
 
-        // Canvas should re-render with highlighted box
-        // (Canvas drawing is tested via visual regression in E2E)
-        expect(screen.getByRole("img", { hidden: true })).toBeInTheDocument();
+        // First face box should be highlighted
+        expect(face1).toHaveClass("cat-face-detection__box--selected");
     });
 
     it("optionally shows confidence scores", () => {

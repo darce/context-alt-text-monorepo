@@ -1,11 +1,22 @@
 classDiagram
+%% v2 Consolidated Face Detection - Frontend Classes
+%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 3.4
+
 class DetectedFaceFE {
-+faceId: string
-+bbox: Rect
-+attachmentId: number
-+suggestions: Suggestion[] (ui)
-+clusterId: string?
-+labelDraft: Label?
+  +faceId: string
+  +bbox: BoundingBox
+  +attachmentId: number
+  +clusterId: string | null
+  +suggestions: Suggestion[]
+  +labelDraft: Label | null
+  +confidence: number
+}
+
+class BoundingBox {
+  +x: number
+  +y: number
+  +width: number
+  +height: number
 }
 
 class Label {
@@ -16,19 +27,62 @@ class Label {
 class Suggestion {
   +rosterId: string
   +display: string
-  +score: float
+  +score: number
+  +avatarUrl?: string
+}
+
+class PeopleOverlay {
+  +faces: DetectedFaceFE[]
+  +selectedFaceIndex: number | null
+  +onFaceClick: function
+  +onLabelSubmit: function
+  +showConfidence: boolean
+  +renderFaceChip()
+  +openPeoplePicker()
+}
+
+class PeopleDrawer {
+  +clusters: FaceCluster[]
+  +suggestions: SuggestionStack[]
+  +onBulkConfirm: function
+  +onReassign: function
+  +renderClusterStack()
+  +renderSuggestionStack()
+}
+
+class FaceCluster {
+  +clusterId: string
+  +faces: DetectedFaceFE[]
+  +representativeFace: DetectedFaceFE
+  +count: number
+}
+
+class SuggestionStack {
+  +rosterId: string
+  +display: string
+  +faces: DetectedFaceFE[]
+  +count: number
+  +avgScore: number
+}
+
+class PeoplePicker {
+  +searchQuery: string
+  +rosterResults: RosterPerson[]
+  +onSelect: function
+  +onCreateNew: function
+  +renderTypeahead()
 }
 
 class FaceObservation {
   +id: bigint
   +attachmentId: bigint
-  +bboxX: int
-  +bboxY: int
-  +bboxW: int
-  +bboxH: int
-  +clusterGroupId: string?
-  +suggestedRosterId: string?
-  +suggestedScore: decimal
+  +bboxX: number
+  +bboxY: number
+  +bboxW: number
+  +bboxH: number
+  +clusterGroupId: string | null
+  +suggestedRosterId: string | null
+  +suggestedScore: number | null
   +labelStatus: enum
   +createdAt: datetime
 }
@@ -36,7 +90,9 @@ class FaceObservation {
 class RosterPerson {
   +id: string
   +displayName: string
-  +meta: json
+  +aliases: string[]
+  +avatarUrl: string | null
+  +meta: object
   +createdAt: datetime
 }
 
@@ -47,7 +103,15 @@ class ObservationEmbedding {
   +createdAt: datetime
 }
 
+DetectedFaceFE --> BoundingBox
 DetectedFaceFE --> Label
 DetectedFaceFE --> Suggestion
+PeopleOverlay --> DetectedFaceFE
+PeopleOverlay --> PeoplePicker
+PeopleDrawer --> FaceCluster
+PeopleDrawer --> SuggestionStack
+FaceCluster --> DetectedFaceFE
+SuggestionStack --> DetectedFaceFE
+PeoplePicker --> RosterPerson
 FaceObservation --> ObservationEmbedding
-FaceObservation --> RosterPerson : confirmed links
+FaceObservation --> RosterPerson : confirmed_roster_id

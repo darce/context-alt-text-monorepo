@@ -530,6 +530,12 @@ final class ApiTest extends TestCase
             $jobs->setRosterObservationManager($rosterObservationManager);
         }
 
+        $identifyController = new \ContextAltText\Recognition\IdentifyController(
+            $recognitionClient,
+            $rosterService,
+            $security
+        );
+
         return new Api(
             $metrics,
             $flags,
@@ -541,7 +547,8 @@ final class ApiTest extends TestCase
             $security,
             $settingsRepository,
             $recognitionClient,
-            $rosterObservationManager
+            $rosterObservationManager,
+            $identifyController
         );
     }
 

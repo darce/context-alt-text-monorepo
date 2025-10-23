@@ -1,0 +1,273 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Recognition Identify Contract",
+  "description": "Contract for /wp-json/cat/v1/recognition/identify endpoint - face detection, suggestion, and labeling",
+  "definitions": {
+    "BoundingBox": {
+      "type": "object",
+      "properties": {
+        "x": {
+          "type": "number",
+          "description": "X coordinate (0-1 normalized or pixels, specified in imageCoordinateSystem)"
+        },
+        "y": {
+          "type": "number",
+          "description": "Y coordinate (0-1 normalized or pixels)"
+        },
+        "width": {
+          "type": "number",
+          "description": "Width of bounding box"
+        },
+        "height": {
+          "type": "number",
+          "description": "Height of bounding box"
+        }
+      },
+      "required": ["x", "y", "width", "height"],
+      "additionalProperties": false
+    },
+    "Label": {
+      "type": "object",
+      "description": "Label assigned by user to a detected face",
+      "properties": {
+        "rosterId": {
+          "type": "string",
+          "description": "ID of existing roster person (mutually exclusive with newName)"
+        },
+        "newName": {
+          "type": "string",
+          "description": "Display name for new roster person (mutually exclusive with rosterId)"
+        }
+      },
+      "oneOf": [{ "required": ["rosterId"] }, { "required": ["newName"] }],
+      "additionalProperties": false
+    },
+    "DetectedFaceRequest": {
+      "type": "object",
+      "description": "Face detected in browser or labeled by user",
+      "properties": {
+        "bbox": {
+          "$ref": "#/definitions/BoundingBox"
+        },
+        "faceId": {
+          "type": "string",
+          "description": "Frontend temporary ID for reconciliation (optional)"
+        },
+        "label": {
+          "$ref": "#/definitions/Label",
+          "description": "Present only when user has labeled this face"
+        }
+      },
+      "required": ["bbox"],
+      "additionalProperties": false
+    },
+    "Suggestion": {
+      "type": "object",
+      "description": "Suggested roster match from FAISS search",
+      "properties": {
+        "rosterId": {
+          "type": "string",
+          "description": "Roster person ID"
+        },
+        "display": {
+          "type": "string",
+          "description": "Display name of suggested person"
+        },
+        "score": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Similarity score (0-1, higher is better)"
+        }
+      },
+      "required": ["rosterId", "display", "score"],
+      "additionalProperties": false
+    },
+    "DetectedFaceResponse": {
+      "type": "object",
+      "description": "Face with backend-provided suggestions and cluster ID",
+      "properties": {
+        "faceId": {
+          "type": "string",
+          "description": "Reconciliation ID (echoed from request or generated)"
+        },
+        "clusterId": {
+          "type": "string",
+          "description": "Cluster group ID for grouping unknowns (optional)"
+        },
+        "suggestions": {
+          "type": "array",
+          "items": {
+            "$ref": "#/definitions/Suggestion"
+          },
+          "description": "Ordered list of roster matches (empty if below threshold)"
+        },
+        "observationId": {
+          "type": "integer",
+          "description": "Database observation ID (only present if label was provided)"
+        }
+      },
+      "required": ["faceId", "suggestions"],
+      "additionalProperties": false
+    }
+  },
+  "request": {
+    "type": "object",
+    "description": "POST /wp-json/cat/v1/recognition/identify request payload",
+    "properties": {
+      "attachmentId": {
+        "type": "integer",
+        "minimum": 1,
+        "description": "WordPress attachment post ID"
+      },
+      "faces": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/DetectedFaceRequest"
+        },
+        "minItems": 1,
+        "description": "Array of detected faces with optional labels"
+      },
+      "imageCoordinateSystem": {
+        "type": "string",
+        "enum": ["normalized", "pixels"],
+        "default": "normalized",
+        "description": "Coordinate system used for bounding boxes"
+      }
+    },
+    "required": ["attachmentId", "faces"],
+    "additionalProperties": false
+  },
+  "response": {
+    "type": "object",
+    "description": "POST /wp-json/cat/v1/recognition/identify response payload",
+    "properties": {
+      "faces": {
+        "type": "array",
+        "items": {
+          "$ref": "#/definitions/DetectedFaceResponse"
+        },
+        "description": "Array of faces with suggestions and cluster IDs"
+      },
+      "error": {
+        "type": "string",
+        "description": "Error message if request failed"
+      }
+    },
+    "required": ["faces"],
+    "additionalProperties": false
+  },
+  "examples": {
+    "coldStartRequest": {
+      "description": "First batch of faces, no labels yet (cold start)",
+      "request": {
+        "attachmentId": 123,
+        "faces": [
+          {
+            "bbox": { "x": 0.2, "y": 0.3, "width": 0.15, "height": 0.2 },
+            "faceId": "temp-face-1"
+          },
+          {
+            "bbox": { "x": 0.6, "y": 0.4, "width": 0.12, "height": 0.18 },
+            "faceId": "temp-face-2"
+          }
+        ],
+        "imageCoordinateSystem": "normalized"
+      },
+      "response": {
+        "faces": [
+          {
+            "faceId": "temp-face-1",
+            "clusterId": "cluster-abc-001",
+            "suggestions": []
+          },
+          {
+            "faceId": "temp-face-2",
+            "clusterId": "cluster-abc-002",
+            "suggestions": []
+          }
+        ]
+      }
+    },
+    "labelingRequest": {
+      "description": "User labels a face (creates new person or assigns to existing)",
+      "request": {
+        "attachmentId": 123,
+        "faces": [
+          {
+            "bbox": { "x": 0.2, "y": 0.3, "width": 0.15, "height": 0.2 },
+            "faceId": "temp-face-1",
+            "label": {
+              "newName": "Ana Rodriguez"
+            }
+          }
+        ]
+      },
+      "response": {
+        "faces": [
+          {
+            "faceId": "temp-face-1",
+            "suggestions": [],
+            "observationId": 456
+          }
+        ]
+      }
+    },
+    "warmStartRequest": {
+      "description": "Faces detected with existing roster (warm start - suggestions returned)",
+      "request": {
+        "attachmentId": 789,
+        "faces": [
+          {
+            "bbox": { "x": 0.3, "y": 0.25, "width": 0.18, "height": 0.22 },
+            "faceId": "temp-face-3"
+          }
+        ]
+      },
+      "response": {
+        "faces": [
+          {
+            "faceId": "temp-face-3",
+            "clusterId": "cluster-ana-003",
+            "suggestions": [
+              {
+                "rosterId": "person-ana-001",
+                "display": "Ana Rodriguez",
+                "score": 0.94
+              },
+              {
+                "rosterId": "person-marta-002",
+                "display": "Marta Silva",
+                "score": 0.87
+              }
+            ]
+          }
+        ]
+      }
+    },
+    "bulkConfirmRequest": {
+      "description": "User bulk confirms a suggestion across clustered faces",
+      "request": {
+        "attachmentId": 789,
+        "faces": [
+          {
+            "bbox": { "x": 0.3, "y": 0.25, "width": 0.18, "height": 0.22 },
+            "faceId": "temp-face-3",
+            "label": {
+              "rosterId": "person-ana-001"
+            }
+          }
+        ]
+      },
+      "response": {
+        "faces": [
+          {
+            "faceId": "temp-face-3",
+            "suggestions": [],
+            "observationId": 801
+          }
+        ]
+      }
+    }
+  }
+}

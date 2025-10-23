@@ -85,6 +85,27 @@ class RosterReferencePayload(BaseModel):
         return value
 
 
+class AddEmbeddingPayload(BaseModel):
+    """Payload for adding a confirmed embedding to an existing roster entry."""
+    
+    rosterId: str = Field(..., description="Unique identifier of the roster entry")
+    observationId: str = Field(..., description="Unique identifier of the observation (prevents duplicates)")
+    embedding: List[float] = Field(..., description="Normalized face embedding vector (512-dim)")
+    model: Optional[str] = Field(DEFAULT_MODEL, description="Model identifier")
+    metadata: Optional[Dict[str, object]] = Field(None, description="Optional metadata (attachmentId, bbox, etc.)")
+
+    @validator("embedding")
+    def validate_embedding_non_empty(cls, value: List[float]) -> List[float]:
+        if not value:
+            raise ValueError("embedding must contain values")
+        return value
+
+
+# In-memory tracking of synced observationIds per rosterId
+# Format: {rosterId: {observationId: timestamp}}
+_SYNCED_OBSERVATIONS: Dict[str, Dict[str, float]] = {}
+
+
 @router.post("/roster")
 async def upsert_roster_embeddings(
     payload: RosterBatchRequest,
@@ -151,6 +172,77 @@ async def upsert_roster_embeddings(
         _store_idempotent_response(idempotency_key, response_body)
 
     return response_body
+
+
+@router.post("/roster/add-embedding")
+async def add_embedding_to_roster(
+    payload: AddEmbeddingPayload,
+    roster_service: RosterService = Depends(get_roster_service),
+):
+    """Add a confirmed embedding to an existing roster entry (progressive learning).
+    
+    This endpoint is called by the WordPress plugin after a user confirms a face identity.
+    It appends the embedding to the roster entry and updates the FAISS index for improved
+    future suggestions (Apple Photos-style progressive learning).
+    
+    Args:
+        payload: Contains rosterId, observationId, embedding, and optional metadata
+        roster_service: Injected roster service dependency
+    
+    Returns:
+        Success response with rosterId and message
+    
+    Raises:
+        HTTPException 404: Roster entry not found
+        HTTPException 409: ObservationId already synced (duplicate)
+    """
+    
+    model = payload.model or DEFAULT_MODEL
+    roster_id = payload.rosterId
+    observation_id = payload.observationId
+    
+    # Check if this observationId was already synced for this rosterId
+    if roster_id in _SYNCED_OBSERVATIONS:
+        if observation_id in _SYNCED_OBSERVATIONS[roster_id]:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail=f"Observation '{observation_id}' already synced to roster entry '{roster_id}'",
+            )
+    
+    # Verify roster entry exists
+    existing_entry = roster_service.get_entry(roster_id, model)
+    if not existing_entry:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail=f"Roster entry '{roster_id}' not found",
+        )
+    
+    # Add the embedding to the roster entry (updates FAISS index)
+    success = roster_service.update_entry(
+        unique_id=roster_id,
+        model=model,
+        embedding=payload.embedding,
+        metadata=payload.metadata,
+        image_path=None,
+    )
+    
+    if not success:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Failed to add embedding to roster entry '{roster_id}'",
+        )
+    
+    # Track this observationId to prevent duplicates
+    if roster_id not in _SYNCED_OBSERVATIONS:
+        _SYNCED_OBSERVATIONS[roster_id] = {}
+    _SYNCED_OBSERVATIONS[roster_id][observation_id] = time.time()
+    
+    return {
+        "success": True,
+        "message": f"Embedding added to roster entry '{roster_id}'",
+        "rosterId": roster_id,
+        "observationId": observation_id,
+    }
 
 
 @router.post("/roster/{unique_id}/embeddings")

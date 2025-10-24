@@ -1,0 +1,345 @@
+/**
+ * People Picker Styles
+ *
+ * Modal for searching and selecting roster persons.
+ * Features typeahead search with keyboard navigation.
+ *
+ * @package ContextAltText
+ * @since 2.0.0
+ */
+
+@use "../../admin/tokens" as *;
+
+// ============================================================================
+// Overlay (Modal backdrop)
+// ============================================================================
+
+.cat-people-picker-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.5);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    animation: fadeIn 150ms ease-out;
+}
+
+@keyframes fadeIn {
+    from {
+        opacity: 0;
+    }
+    to {
+        opacity: 1;
+    }
+}
+
+// ============================================================================
+// Modal Container
+// ============================================================================
+
+.cat-people-picker {
+    width: 90%;
+    max-width: 480px;
+    max-height: 80vh;
+    background: var(--cat-surface);
+    border-radius: var(--cat-radius-lg);
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+    display: flex;
+    flex-direction: column;
+    animation: slideUp 200ms ease-out;
+}
+
+@keyframes slideUp {
+    from {
+        opacity: 0;
+        transform: translateY(20px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+// ============================================================================
+// Header
+// ============================================================================
+
+.cat-people-picker__header {
+    padding: var(--cat-spacing-md);
+    border-bottom: 1px solid var(--cat-border);
+}
+
+.cat-people-picker__title {
+    margin: 0 0 var(--cat-spacing-xs);
+    font-size: var(--cat-font-size-md);
+    font-weight: 600;
+    color: var(--cat-text);
+}
+
+.cat-people-picker__current {
+    margin: 0;
+    font-size: var(--cat-font-size-sm);
+    color: var(--cat-muted);
+
+    strong {
+        color: var(--cat-text);
+        font-weight: 500;
+    }
+}
+
+// ============================================================================
+// Search Input
+// ============================================================================
+
+.cat-people-picker__search {
+    padding: var(--cat-spacing-md);
+    border-bottom: 1px solid var(--cat-border);
+}
+
+.cat-people-picker__input {
+    width: 100%;
+    padding: var(--cat-spacing-sm) var(--cat-spacing-md);
+    font-size: var(--cat-font-size-base);
+    color: var(--cat-text);
+    background: var(--cat-background);
+    border: 1px solid var(--cat-border);
+    border-radius: var(--cat-radius-sm);
+    transition: all 150ms ease;
+
+    &::placeholder {
+        color: var(--cat-muted);
+    }
+
+    &:focus {
+        outline: none;
+        border-color: var(--cat-accent);
+        box-shadow: 0 0 0 3px var(--cat-accent-soft);
+    }
+}
+
+// ============================================================================
+// Results List
+// ============================================================================
+
+.cat-people-picker__results {
+    flex: 1;
+    overflow-y: auto;
+    min-height: 200px;
+    max-height: 400px;
+}
+
+// ============================================================================
+// Loading State
+// ============================================================================
+
+.cat-people-picker__loading {
+    padding: var(--cat-spacing-xl);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--cat-spacing-sm);
+    color: var(--cat-muted);
+}
+
+.cat-people-picker__spinner {
+    width: 24px;
+    height: 24px;
+    border: 3px solid var(--cat-border);
+    border-top-color: var(--cat-accent);
+    border-radius: 50%;
+    animation: spin 600ms linear infinite;
+}
+
+@keyframes spin {
+    to {
+        transform: rotate(360deg);
+    }
+}
+
+// ============================================================================
+// Empty State
+// ============================================================================
+
+.cat-people-picker__empty {
+    padding: var(--cat-spacing-xl);
+    text-align: center;
+    color: var(--cat-muted);
+
+    p {
+        margin: 0;
+        font-size: var(--cat-font-size-sm);
+    }
+}
+
+// ============================================================================
+// Result Items
+// ============================================================================
+
+.cat-people-picker__item {
+    display: flex;
+    align-items: center;
+    gap: var(--cat-spacing-sm);
+    padding: var(--cat-spacing-sm) var(--cat-spacing-md);
+    cursor: pointer;
+    transition: all 150ms ease;
+    border-bottom: 1px solid var(--cat-border);
+
+    &:last-child {
+        border-bottom: none;
+    }
+
+    &:hover {
+        background: var(--cat-accent-soft);
+    }
+
+    &--highlighted {
+        background: var(--cat-accent-soft);
+        border-left: 3px solid var(--cat-accent);
+    }
+
+    &--create-new {
+        background: var(--cat-background);
+        font-weight: 500;
+
+        &:hover,
+        &.cat-people-picker__item--highlighted {
+            background: var(--cat-accent-soft);
+        }
+    }
+}
+
+.cat-people-picker__item-avatar {
+    width: 40px;
+    height: 40px;
+    flex-shrink: 0;
+    border-radius: var(--cat-radius-full);
+    overflow: hidden;
+    background: var(--cat-background);
+}
+
+.cat-people-picker__item-image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cat-people-picker__item-placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cat-accent);
+    color: white;
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.cat-people-picker__item-icon {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cat-accent);
+    color: white;
+    font-size: 1.5rem;
+    font-weight: 300;
+}
+
+.cat-people-picker__item-content {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+
+.cat-people-picker__item-label {
+    font-size: 0.8rem;
+    color: var(--cat-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.cat-people-picker__item-name {
+    font-size: var(--cat-font-size-base);
+    color: var(--cat-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+// ============================================================================
+// Footer
+// ============================================================================
+
+.cat-people-picker__footer {
+    padding: var(--cat-spacing-sm) var(--cat-spacing-md);
+    border-top: 1px solid var(--cat-border);
+    background: var(--cat-background);
+}
+
+.cat-people-picker__hint {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--cat-muted);
+    text-align: center;
+}
+
+// ============================================================================
+// Responsive Design
+// ============================================================================
+
+@media (max-width: 768px) {
+    .cat-people-picker {
+        width: 95%;
+        max-width: none;
+        max-height: 90vh;
+    }
+
+    .cat-people-picker__results {
+        max-height: 60vh;
+    }
+}
+
+// ============================================================================
+// High Contrast Mode
+// ============================================================================
+
+@media (prefers-contrast: high) {
+    .cat-people-picker {
+        border: 2px solid var(--cat-border);
+    }
+
+    .cat-people-picker__input {
+        border-width: 2px;
+    }
+
+    .cat-people-picker__item--highlighted {
+        border-left-width: 4px;
+    }
+}
+
+// ============================================================================
+// Reduced Motion
+// ============================================================================
+
+@media (prefers-reduced-motion: reduce) {
+    .cat-people-picker-overlay,
+    .cat-people-picker,
+    .cat-people-picker__item,
+    .cat-people-picker__input {
+        animation: none;
+        transition: none;
+    }
+
+    .cat-people-picker__spinner {
+        animation: none;
+        border-top-color: var(--cat-accent);
+    }
+}

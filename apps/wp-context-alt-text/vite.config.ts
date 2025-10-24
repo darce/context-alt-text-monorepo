@@ -11,7 +11,10 @@ export default defineConfig(({ mode }) => ({
     build: {
         outDir: path.resolve(__dirname, "public/assets/dist"),
         emptyOutDir: true,
-        sourcemap: mode === "development",
+        // Enable source maps in development for better debugging
+        sourcemap: mode === "development" ? "inline" : false,
+        // Disable minification in development
+        minify: mode === "production" ? "esbuild" : false,
         manifest: true,
         rollupOptions: {
             input: {

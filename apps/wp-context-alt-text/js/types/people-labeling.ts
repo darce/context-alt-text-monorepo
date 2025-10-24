@@ -110,6 +110,12 @@ export interface DetectedFaceResponse {
     suggestions: Suggestion[];
     /** Database observation ID (only if label provided) */
     observationId?: number;
+    /** Roster ID (returned when label is persisted) */
+    rosterId?: string;
+    /** Sync status for FAISS embedding */
+    syncStatus?: string;
+    /** Sync error message if sync failed */
+    syncError?: string;
 }
 
 /**

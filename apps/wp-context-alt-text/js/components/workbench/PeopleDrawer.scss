@@ -1,0 +1,459 @@
+/**
+ * People Drawer Styles
+ *
+ * Right rail drawer showing face clusters and suggestions.
+ * Follows BEM naming convention and uses design tokens.
+ *
+ * @package ContextAltText
+ * @since 2.0.0
+ */
+
+@use "../../admin/tokens" as *;
+
+// ============================================================================
+// People Drawer Container
+// ============================================================================
+
+.cat-people-drawer {
+    position: fixed;
+    top: 0;
+    right: 0;
+    width: 320px;
+    height: 100vh;
+    background: var(--cat-surface);
+    border-left: 1px solid var(--cat-border);
+    display: flex;
+    flex-direction: column;
+    transition: transform 200ms ease-out;
+    z-index: 100;
+
+    &--collapsed {
+        transform: translateX(calc(100% - 48px));
+    }
+}
+
+// ============================================================================
+// Header
+// ============================================================================
+
+.cat-people-drawer__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: var(--cat-spacing-md);
+    border-bottom: 1px solid var(--cat-border);
+    background: var(--cat-background);
+}
+
+.cat-people-drawer__title {
+    margin: 0;
+    font-size: var(--cat-font-size-md);
+    font-weight: 600;
+    color: var(--cat-text);
+}
+
+.cat-people-drawer__toggle {
+    width: 36px;
+    height: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: transparent;
+    border: 1px solid var(--cat-border);
+    border-radius: var(--cat-radius-sm);
+    cursor: pointer;
+    transition: all 150ms ease;
+
+    &:hover {
+        background: var(--cat-accent-soft);
+        border-color: var(--cat-accent);
+    }
+
+    &:focus {
+        outline: 2px solid var(--cat-accent);
+        outline-offset: 2px;
+    }
+
+    &:active {
+        transform: scale(0.95);
+    }
+}
+
+.cat-people-drawer__toggle-icon {
+    font-size: 1.5rem;
+    line-height: 1;
+    color: var(--cat-text);
+}
+
+// ============================================================================
+// Content Area
+// ============================================================================
+
+.cat-people-drawer__content {
+    flex: 1;
+    overflow-y: auto;
+    padding: var(--cat-spacing-md);
+}
+
+// ============================================================================
+// Empty State
+// ============================================================================
+
+.cat-people-drawer__empty {
+    padding: var(--cat-spacing-xl) var(--cat-spacing-md);
+    text-align: center;
+    color: var(--cat-muted);
+
+    p {
+        margin: 0 0 var(--cat-spacing-sm);
+        font-size: var(--cat-font-size-sm);
+    }
+}
+
+.cat-people-drawer__empty-hint {
+    font-size: 0.8rem;
+    color: var(--cat-muted);
+}
+
+// ============================================================================
+// Sections
+// ============================================================================
+
+.cat-people-drawer__section {
+    margin-bottom: var(--cat-spacing-xl);
+
+    &:last-child {
+        margin-bottom: 0;
+    }
+}
+
+.cat-people-drawer__section-title {
+    margin: 0 0 var(--cat-spacing-xs);
+    font-size: var(--cat-font-size-sm);
+    font-weight: 600;
+    color: var(--cat-text);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+}
+
+.cat-people-drawer__section-hint {
+    margin: 0 0 var(--cat-spacing-md);
+    font-size: 0.8rem;
+    color: var(--cat-muted);
+}
+
+.cat-people-drawer__stacks {
+    display: flex;
+    flex-direction: column;
+    gap: var(--cat-spacing-sm);
+}
+
+// ============================================================================
+// Cluster Stack
+// ============================================================================
+
+.cat-cluster-stack {
+    display: flex;
+    align-items: center;
+    gap: var(--cat-spacing-sm);
+    padding: var(--cat-spacing-sm);
+    background: var(--cat-surface);
+    border: 1px solid var(--cat-border);
+    border-radius: var(--cat-radius-md);
+    cursor: pointer;
+    transition: all 150ms ease;
+
+    &:hover {
+        background: var(--cat-accent-soft);
+        border-color: var(--cat-accent);
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    &:focus {
+        outline: 2px solid var(--cat-accent);
+        outline-offset: 2px;
+    }
+
+    &--selected {
+        background: var(--cat-accent-soft);
+        border-color: var(--cat-accent);
+        box-shadow: 0 0 0 2px var(--cat-accent);
+    }
+}
+
+.cat-cluster-stack__thumbnail {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: var(--cat-radius-sm);
+    overflow: hidden;
+    background: var(--cat-background);
+}
+
+.cat-cluster-stack__image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cat-cluster-stack__badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cat-warning);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: var(--cat-radius-full);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.cat-cluster-stack__content {
+    flex: 1;
+    min-width: 0;
+}
+
+.cat-cluster-stack__title {
+    margin: 0 0 2px;
+    font-size: var(--cat-font-size-sm);
+    font-weight: 500;
+    color: var(--cat-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cat-cluster-stack__count {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--cat-muted);
+}
+
+.cat-cluster-stack__action {
+    padding: 6px 12px;
+    font-size: var(--cat-font-size-sm);
+    font-weight: 500;
+    color: var(--cat-accent);
+    background: transparent;
+    border: 1px solid var(--cat-accent);
+    border-radius: var(--cat-radius-sm);
+    cursor: pointer;
+    transition: all 150ms ease;
+
+    &:hover {
+        background: var(--cat-accent);
+        color: white;
+    }
+
+    &:focus {
+        outline: 2px solid var(--cat-accent);
+        outline-offset: 2px;
+    }
+}
+
+// ============================================================================
+// Suggestion Stack
+// ============================================================================
+
+.cat-suggestion-stack {
+    display: flex;
+    align-items: center;
+    gap: var(--cat-spacing-sm);
+    padding: var(--cat-spacing-sm);
+    background: var(--cat-surface);
+    border: 1px solid var(--cat-border);
+    border-radius: var(--cat-radius-md);
+    cursor: pointer;
+    transition: all 150ms ease;
+
+    &:hover {
+        background: var(--cat-accent-soft);
+        border-color: var(--cat-accent);
+        transform: translateY(-1px);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    &:focus {
+        outline: 2px solid var(--cat-accent);
+        outline-offset: 2px;
+    }
+
+    &--selected {
+        background: var(--cat-accent-soft);
+        border-color: var(--cat-accent);
+        box-shadow: 0 0 0 2px var(--cat-accent);
+    }
+}
+
+.cat-suggestion-stack__avatar {
+    position: relative;
+    width: 48px;
+    height: 48px;
+    flex-shrink: 0;
+    border-radius: var(--cat-radius-full);
+    overflow: hidden;
+    background: var(--cat-background);
+}
+
+.cat-suggestion-stack__image {
+    width: 100%;
+    height: 100%;
+    object-fit: cover;
+}
+
+.cat-suggestion-stack__placeholder {
+    width: 100%;
+    height: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cat-accent);
+    color: white;
+    font-size: 1.2rem;
+    font-weight: 600;
+}
+
+.cat-suggestion-stack__badge {
+    position: absolute;
+    top: -4px;
+    right: -4px;
+    min-width: 20px;
+    height: 20px;
+    padding: 0 4px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: var(--cat-accent);
+    color: white;
+    font-size: 0.7rem;
+    font-weight: 600;
+    border-radius: var(--cat-radius-full);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
+}
+
+.cat-suggestion-stack__content {
+    flex: 1;
+    min-width: 0;
+}
+
+.cat-suggestion-stack__title {
+    margin: 0 0 2px;
+    font-size: var(--cat-font-size-sm);
+    font-weight: 500;
+    color: var(--cat-text);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.cat-suggestion-stack__meta {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--cat-muted);
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.cat-suggestion-stack__confidence {
+    color: var(--cat-accent);
+    font-weight: 500;
+}
+
+.cat-suggestion-stack__separator {
+    color: var(--cat-border);
+}
+
+.cat-suggestion-stack__action {
+    padding: 6px 12px;
+    font-size: var(--cat-font-size-sm);
+    font-weight: 500;
+    color: white;
+    background: var(--cat-accent);
+    border: 1px solid var(--cat-accent);
+    border-radius: var(--cat-radius-sm);
+    cursor: pointer;
+    transition: all 150ms ease;
+
+    &:hover {
+        background: #1e40af;
+        border-color: #1e40af;
+        box-shadow: 0 2px 4px rgba(29, 78, 216, 0.3);
+    }
+
+    &:focus {
+        outline: 2px solid var(--cat-accent);
+        outline-offset: 2px;
+    }
+
+    &:active {
+        transform: scale(0.98);
+    }
+}
+
+// ============================================================================
+// Responsive Design
+// ============================================================================
+
+@media (max-width: 768px) {
+    .cat-people-drawer {
+        width: 100%;
+        top: auto;
+        bottom: 0;
+        height: 50vh;
+        border-left: none;
+        border-top: 1px solid var(--cat-border);
+
+        &--collapsed {
+            transform: translateY(calc(100% - 48px));
+        }
+    }
+
+    .cat-people-drawer__toggle-icon {
+        transform: rotate(90deg);
+    }
+}
+
+// ============================================================================
+// High Contrast Mode
+// ============================================================================
+
+@media (prefers-contrast: high) {
+    .cat-cluster-stack,
+    .cat-suggestion-stack {
+        border-width: 2px;
+    }
+
+    .cat-cluster-stack__action,
+    .cat-suggestion-stack__action {
+        border-width: 2px;
+    }
+}
+
+// ============================================================================
+// Reduced Motion
+// ============================================================================
+
+@media (prefers-reduced-motion: reduce) {
+    .cat-people-drawer,
+    .cat-cluster-stack,
+    .cat-suggestion-stack,
+    .cat-cluster-stack__action,
+    .cat-suggestion-stack__action,
+    .cat-people-drawer__toggle {
+        transition: none;
+    }
+
+    .cat-cluster-stack:hover,
+    .cat-suggestion-stack:hover {
+        transform: none;
+    }
+}

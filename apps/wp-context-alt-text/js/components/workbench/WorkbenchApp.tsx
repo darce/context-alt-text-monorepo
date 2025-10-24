@@ -5,10 +5,12 @@ import { __ } from "@wordpress/i18n";
 import { SelectionToolbar } from "@/components/workbench/SelectionToolbar";
 import { MediaList } from "@/components/workbench/MediaList";
 import { RecognitionActions } from "@/components/workbench/RecognitionActions";
+import { PeopleLabelingView } from "@/components/workbench/PeopleLabelingView";
 import { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
 import { useWorkbenchActions } from "@/components/workbench/useWorkbenchActions";
 import { emitDashboardEvent } from "@/admin/analytics";
 import { dispatchNotice } from "@/admin/notices";
+import { getDashboardConfig } from "@/admin/dashboardData";
 import type { WorkbenchMediaItem as WorkbenchMediaItemType } from "@/admin/types";
 
 export type WorkbenchViewMode = "grid" | "list";
@@ -20,6 +22,7 @@ export interface WorkbenchAppProps {
     onGenerateAltText?: (ids: string[]) => void;
     onRegenerateAltText?: (ids: string[]) => void;
     onMarkReviewed?: (ids: string[]) => void;
+    onLabelPeople?: (item: WorkbenchMediaItem) => void;
 }
 export const WorkbenchApp = ({
     items = [],
@@ -30,6 +33,7 @@ export const WorkbenchApp = ({
 }: WorkbenchAppProps): React.JSX.Element => {
     const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
     const selectedList = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
+    const [labelingItem, setLabelingItem] = React.useState<WorkbenchMediaItem | null>(null);
 
     const recognition = useRecognitionJob();
     const jobDetails = recognition.jobDetails;
@@ -179,36 +183,50 @@ export const WorkbenchApp = ({
         onMarkReviewed,
     });
 
+    const config = React.useMemo(() => getDashboardConfig(), []);
+    const restNonce = config?.restNonce;
+
     return (
         <div className="cat-workbench" aria-label={__("Alt-Text Workbench", "context-alt-text")}>
-            <SelectionToolbar
-                selectionCount={selectedIds.size}
-                onGenerate={actions.handleGenerateAltText}
-                onRegenerate={actions.handleRegenerateAltText}
-                onMarkReviewed={actions.handleMarkReviewed}
-                onClearSelection={actions.clearSelection}
-            />
+            {labelingItem ? (
+                <PeopleLabelingView
+                    item={labelingItem}
+                    restNonce={restNonce}
+                    onClose={() => setLabelingItem(null)}
+                />
+            ) : (
+                <>
+                    <SelectionToolbar
+                        selectionCount={selectedIds.size}
+                        onGenerate={actions.handleGenerateAltText}
+                        onRegenerate={actions.handleRegenerateAltText}
+                        onMarkReviewed={actions.handleMarkReviewed}
+                        onClearSelection={actions.clearSelection}
+                    />
 
-            <div className="cat-workbench__layout">
-                <RecognitionActions
-                    selectionCount={selectedIds.size}
-                    isEnabled={recognition.canSubmit}
-                    isSubmitting={recognition.isSubmitting}
-                    isPolling={recognition.isPolling}
-                    lastJob={recognition.lastJob}
-                    jobDetails={jobDetails}
-                    error={recognition.error}
-                    onTriggerRecognition={actions.handleTriggerRecognition}
-                    onRetryRecognition={actions.handleRetryRecognition}
-                    onResetRecognition={recognition.reset}
-                />
-                <MediaList
-                    items={items}
-                    selectedIds={selectedIds}
-                    onToggleSelect={actions.handleToggleSelection}
-                    viewMode={viewMode}
-                />
-            </div>
+                    <div className="cat-workbench__layout">
+                        <RecognitionActions
+                            selectionCount={selectedIds.size}
+                            isEnabled={recognition.canSubmit}
+                            isSubmitting={recognition.isSubmitting}
+                            isPolling={recognition.isPolling}
+                            lastJob={recognition.lastJob}
+                            jobDetails={jobDetails}
+                            error={recognition.error}
+                            onTriggerRecognition={actions.handleTriggerRecognition}
+                            onRetryRecognition={actions.handleRetryRecognition}
+                            onResetRecognition={recognition.reset}
+                        />
+                        <MediaList
+                            items={items}
+                            selectedIds={selectedIds}
+                            onToggleSelect={actions.handleToggleSelection}
+                            onLabelPeople={setLabelingItem}
+                            viewMode={viewMode}
+                        />
+                    </div>
+                </>
+            )}
         </div>
     );
 };

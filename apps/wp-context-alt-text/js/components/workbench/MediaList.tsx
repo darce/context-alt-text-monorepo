@@ -19,10 +19,17 @@ export interface MediaListProps {
     items: WorkbenchMediaItem[];
     selectedIds: Set<string>;
     onToggleSelect: (id: string) => void;
+    onLabelPeople?: (item: WorkbenchMediaItem) => void;
     viewMode: WorkbenchViewMode;
 }
 
-export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: MediaListProps): React.JSX.Element => {
+export const MediaList = ({
+    items,
+    selectedIds,
+    onToggleSelect,
+    onLabelPeople,
+    viewMode,
+}: MediaListProps): React.JSX.Element => {
     if (items.length === 0) {
         return (
             <div className="cat-workbench__empty" role="status" aria-live="polite">
@@ -148,11 +155,25 @@ export const MediaList = ({ items, selectedIds, onToggleSelect, viewMode }: Medi
                                 </ul>
                             </td>
                             <td className="cat-workbench__cell cat-workbench__cell--actions">
-                                {item.editUrl && (
-                                    <Button asChild variant="subtle" size="sm">
-                                        <a href={item.editUrl}>{__("Edit", "context-alt-text")}</a>
-                                    </Button>
-                                )}
+                                <div className="cat-workbench__actions">
+                                    {onLabelPeople && (
+                                        <Button
+                                            variant="subtle"
+                                            size="sm"
+                                            onClick={(e) => {
+                                                e.stopPropagation();
+                                                onLabelPeople(item);
+                                            }}
+                                        >
+                                            {__("Label People", "context-alt-text")}
+                                        </Button>
+                                    )}
+                                    {item.editUrl && (
+                                        <Button asChild variant="subtle" size="sm">
+                                            <a href={item.editUrl}>{__("Edit", "context-alt-text")}</a>
+                                        </Button>
+                                    )}
+                                </div>
                             </td>
                         </tr>
                     );

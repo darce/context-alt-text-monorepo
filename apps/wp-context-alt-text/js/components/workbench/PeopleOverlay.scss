@@ -1,0 +1,162 @@
+/**
+ * People Overlay Styles
+ *
+ * Styles for the interactive people labeling overlay.
+ * Reuses concepts from FaceDetectionDisplay but adds interactive chips.
+ *
+ * @package ContextAltText
+ * @since 2.0.0
+ */
+
+.cat-people-overlay {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 12px;
+    padding: 16px;
+    background-color: #f3f4f6;
+    border-radius: 8px;
+
+    &__loading {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        gap: 12px;
+        padding: 40px;
+        color: #6b7280;
+    }
+
+    &__container {
+        position: relative;
+        display: inline-block;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        border-radius: 4px;
+        overflow: visible; // Changed from hidden to allow chips to overflow
+    }
+
+    &__image {
+        display: block;
+        width: 100%;
+        height: auto;
+        border-radius: 4px;
+    }
+
+    &__box {
+        position: absolute;
+        border: 2px solid #3b82f6;
+        border-radius: 2px;
+        background-color: transparent;
+        pointer-events: none; // Boxes are visual only, chips handle interaction
+        transition: all 0.2s ease;
+
+        &--selected {
+            border: 3px solid #10b981;
+            border-color: #10b981;
+            box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.15);
+        }
+    }
+
+    &__help {
+        padding: 8px 12px;
+        background-color: #ffffff;
+        color: #6b7280;
+        font-size: 13px;
+        border-radius: 4px;
+        border: 1px solid #e5e7eb;
+        text-align: center;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        gap: 4px;
+
+        // Separator styling
+        & > * + * {
+            margin-left: 4px;
+        }
+    }
+}
+
+/**
+ * Loading spinner (shared with FaceDetectionDisplay)
+ */
+.cat-spinner {
+    display: inline-block;
+    width: 32px;
+    height: 32px;
+    border: 3px solid rgba(59, 130, 246, 0.2);
+    border-top-color: #3b82f6;
+    border-radius: 50%;
+    animation: cat-spin 0.8s linear infinite;
+}
+
+@keyframes cat-spin {
+    0% {
+        transform: rotate(0deg);
+    }
+    100% {
+        transform: rotate(360deg);
+    }
+}
+
+/**
+ * Screen reader only text (shared with FaceDetectionDisplay)
+ */
+.screen-reader-text {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    margin: -1px;
+    padding: 0;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    border: 0;
+    word-wrap: normal !important;
+}
+
+/**
+ * Responsive adjustments
+ */
+@media (max-width: 768px) {
+    .cat-people-overlay {
+        padding: 12px;
+
+        &__help {
+            font-size: 12px;
+            padding: 6px 10px;
+            flex-direction: column;
+            gap: 2px;
+        }
+    }
+}
+
+/**
+ * High contrast mode
+ */
+@media (prefers-contrast: high) {
+    .cat-people-overlay {
+        &__box {
+            border-width: 3px;
+
+            &--selected {
+                border-width: 4px;
+            }
+        }
+    }
+}
+
+/**
+ * Reduced motion
+ */
+@media (prefers-reduced-motion: reduce) {
+    .cat-people-overlay {
+        &__box {
+            transition: none;
+        }
+    }
+
+    .cat-spinner {
+        animation: none;
+        border-top-color: transparent;
+        opacity: 0.5;
+    }
+}

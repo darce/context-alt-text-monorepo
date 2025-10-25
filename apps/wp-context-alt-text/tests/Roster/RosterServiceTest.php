@@ -5,6 +5,7 @@ declare(strict_types=1);
 use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Roster\RosterClientException;
 use ContextAltText\Security\Security;
+use ContextAltText\Recognition\RecognitionObservationRepository;
 use ContextAltText\Tests\Roster\Support\FakeRosterClient;
 use ContextAltText\Tests\Roster\Support\RosterTestFactory;
 use PHPUnit\Framework\TestCase;
@@ -24,7 +25,8 @@ final class RosterServiceTest extends TestCase
         unset(
             $GLOBALS['__cat_options']['cat_roster_sync_state'],
             $GLOBALS['__cat_options']['cat_roster_entries'],
-            $GLOBALS['__cat_options']['cat_roster_entries_archived']
+            $GLOBALS['__cat_options']['cat_roster_entries_archived'],
+            $GLOBALS['__cat_options']['cat_roster_observation_counter']
         );
     }
 
@@ -454,5 +456,40 @@ final class RosterServiceTest extends TestCase
         self::assertSame(0, $state['created'] ?? 0);
         self::assertSame(0, $state['updated'] ?? 0);
         self::assertSame(0, $state['deleted'] ?? 0);
+    }
+
+    public function test_create_observation_stores_manual_label_and_bbox(): void
+    {
+        update_option('cat_roster_entries', [
+            'person-1' => RosterTestFactory::entry([
+                'remoteId' => 'person-1',
+                'label' => 'Ellyn',
+                'type' => 'person',
+            ]),
+        ]);
+
+        $client = new FakeRosterClient();
+        $observations = new RecognitionObservationRepository();
+        $service = new RosterService(new Security(), $client, $observations);
+
+        $bbox = ['x' => 64, 'y' => 7, 'width' => 143, 'height' => 143];
+        $embedding = [0.1, 0.2, 0.3];
+
+        $observationId = $service->createObservation(123, $embedding, 'person-1', $bbox);
+
+        self::assertIsInt($observationId);
+        self::assertSame($observationId, get_option('cat_roster_observation_counter'));
+
+        $record = $observations->get(123);
+
+        self::assertArrayHasKey('observations', $record);
+        self::assertCount(1, $record['observations']);
+
+        $stored = $record['observations'][0];
+        self::assertSame((string) $observationId, $stored['observationId']);
+        self::assertSame('Ellyn', $stored['label']);
+        self::assertSame('person', $stored['entityType']);
+        self::assertSame([64.0, 7.0, 143.0, 143.0], $stored['boundingBox']);
+        self::assertSame(20449.0, $stored['area']);
     }
 }

@@ -27,15 +27,15 @@ export const handleJsonResponse = async (response: Response): Promise<unknown> =
 export const ensureOk = async (response: Response): Promise<Response> => {
     if (!response.ok) {
         const data = await handleJsonResponse(response);
-        
+
         // DEBUG: Log full error response
-        console.error('[ensureOk] Response failed:', {
+        console.error("[ensureOk] Response failed:", {
             status: response.status,
             statusText: response.statusText,
             url: response.url,
-            data
+            data,
         });
-        
+
         const message =
             typeof data === "object" &&
             data !== null &&
@@ -135,18 +135,18 @@ export const fetchApi = async <T = unknown>(endpoint: string, options: FetchApiO
     }
 
     const response = await fetch(url, fetchOptions);
-    
+
     // DEBUG: Log response for debugging 404s
     if (!response.ok) {
         const errorBody = await response.clone().text();
-        console.error('[fetchApi] Error response:', {
+        console.error("[fetchApi] Error response:", {
             status: response.status,
             statusText: response.statusText,
             url,
-            bodyPreview: errorBody.substring(0, 500)
+            bodyPreview: errorBody.substring(0, 500),
         });
     }
-    
+
     await ensureOk(response);
 
     return handleJsonResponse(response) as Promise<T>;

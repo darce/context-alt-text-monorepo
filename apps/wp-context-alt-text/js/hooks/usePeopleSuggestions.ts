@@ -24,6 +24,7 @@ import {
     bulkConfirm as apiBulkConfirm,
 } from "@/api/recognitionApi";
 import { notifySuccess, notifyError } from "@/admin/notices";
+import { getAllRoster } from "@/api/rosterApi";
 
 /**
  * Generate unique face ID for frontend tracking
@@ -36,7 +37,7 @@ const generateFaceId = (() => {
 /**
  * Storage key for persisted face labels (localStorage)
  */
-const STORAGE_KEY_PREFIX = 'cat_face_labels_';
+const STORAGE_KEY_PREFIX = "cat_face_labels_";
 
 /**
  * Save face labels to localStorage for client-side persistence
@@ -46,27 +47,29 @@ const saveFaceLabelsToStorage = (attachmentId: number, faces: DetectedFaceFE[]):
     try {
         const key = `${STORAGE_KEY_PREFIX}${attachmentId}`;
         const labelsToStore = faces
-            .filter((f) => f.confirmedRosterId)
+            .filter((f) => f.confirmedRosterId || f.labelDraft)
             .map((f) => ({
                 bbox: f.bbox,
                 confirmedRosterId: f.confirmedRosterId,
                 labelDraft: f.labelDraft,
             }));
-        
+
         if (labelsToStore.length > 0) {
             localStorage.setItem(key, JSON.stringify(labelsToStore));
         } else {
             localStorage.removeItem(key);
         }
     } catch (err) {
-        console.warn('Failed to save face labels to localStorage:', err);
+        console.warn("Failed to save face labels to localStorage:", err);
     }
 };
 
 /**
  * Load face labels from localStorage
  */
-const loadFaceLabelsFromStorage = (attachmentId: number): Array<{
+const loadFaceLabelsFromStorage = (
+    attachmentId: number,
+): Array<{
     bbox: { x: number; y: number; width: number; height: number };
     confirmedRosterId: string | null;
     labelDraft: Label | null;
@@ -78,7 +81,7 @@ const loadFaceLabelsFromStorage = (attachmentId: number): Array<{
             return JSON.parse(stored);
         }
     } catch (err) {
-        console.warn('Failed to load face labels from localStorage:', err);
+        console.warn("Failed to load face labels from localStorage:", err);
     }
     return [];
 };
@@ -122,10 +125,15 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
      * Merge identify response into frontend face state
      */
     const mergeResponse = useCallback(
-        (attachmentId: number, requestFaces: DetectedFaceRequest[], responseFaces: DetectedFaceFE[]) => {
+        (
+            attachmentId: number,
+            requestFaces: DetectedFaceRequest[],
+            responseFaces: DetectedFaceFE[],
+            embeddings?: Float32Array[],
+        ) => {
             // Load any previously saved labels from localStorage
             const savedLabels = loadFaceLabelsFromStorage(attachmentId);
-            
+
             // Create map of faceId -> response data
             const responseMap = new Map(responseFaces.map((face) => [face.faceId, face]));
 
@@ -136,7 +144,7 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                         Math.abs(saved.bbox.x - bbox.x) < 5 &&
                         Math.abs(saved.bbox.y - bbox.y) < 5 &&
                         Math.abs(saved.bbox.width - bbox.width) < 5 &&
-                        Math.abs(saved.bbox.height - bbox.height) < 5
+                        Math.abs(saved.bbox.height - bbox.height) < 5,
                 );
             };
 
@@ -161,6 +169,7 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                     suggestions: respFace?.suggestions ?? [],
                     labelDraft: savedLabel?.labelDraft ?? reqFace.label ?? null,
                     confirmedRosterId: savedLabel?.confirmedRosterId ?? reqFace.label?.rosterId ?? null,
+                    embedding: embeddings?.[index], // Store embedding with face for later use
                 };
             });
 
@@ -173,7 +182,7 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
      * Submit faces for identification (get suggestions and clusters)
      */
     const identifyFaces = useCallback(
-        async (attachmentId: number, detections: RawDetection[]): Promise<void> => {
+        async (attachmentId: number, detections: RawDetection[], embeddings?: Float32Array[]): Promise<void> => {
             setIsLoading(true);
             setError(null);
             attachmentIdRef.current = attachmentId;
@@ -185,6 +194,31 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                     faces: requestFaces,
                     imageCoordinateSystem: "pixels", // MediaPipe returns pixel coordinates
                 };
+
+                // Include embeddings if provided (for local matching)
+                if (embeddings && embeddings.length > 0) {
+                    request.embeddings = embeddings.map((emb) => Array.from(emb));
+                    console.log("[usePeopleSuggestions] Including embeddings:", embeddings.length);
+
+                    // Strategy selection: check roster size to decide local vs. FAISS
+                    try {
+                        const rosterResponse = await getAllRoster(restNonce);
+                        const rosterSize = rosterResponse.total ?? rosterResponse.entries?.length ?? 0;
+
+                        // Phase 1 (Cold Start): roster size 0-10 → use local matching only
+                        // Phase 2-3 (Warm Cache/Large): roster size > 10 → prefer FAISS if available
+                        const useRemoteMatching = rosterSize > 10;
+                        request.useRemoteMatching = useRemoteMatching;
+
+                        console.log(
+                            `[usePeopleSuggestions] Strategy: roster size=${rosterSize}, useRemoteMatching=${useRemoteMatching}`,
+                        );
+                    } catch (err) {
+                        console.warn("[usePeopleSuggestions] Failed to get roster size, defaulting to local:", err);
+                        // Default to local matching if roster check fails
+                        request.useRemoteMatching = false;
+                    }
+                }
 
                 console.log("[DEBUG] identifyFaces - request:", JSON.stringify(request, null, 2));
                 console.log("[DEBUG] identifyFaces - attachmentId type:", typeof request.attachmentId);
@@ -199,6 +233,7 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                     attachmentId,
                     requestFaces,
                     response.faces as unknown as DetectedFaceFE[],
+                    embeddings, // Pass embeddings to store with face state
                 );
                 setFaces(mergedFaces);
             } catch (err) {
@@ -224,6 +259,8 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
      */
     const submitLabel = useCallback(
         async (faceId: string, label: Label): Promise<void> => {
+            console.log("[submitLabel] Called with faceId:", faceId, "label:", label);
+
             if (!attachmentIdRef.current) {
                 throw new Error("No attachment ID set. Call identifyFaces first.");
             }
@@ -256,6 +293,14 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                     ],
                 };
 
+                // Include embedding if available (for local roster matching)
+                if (face.embedding) {
+                    request.embeddings = [Array.from(face.embedding)];
+                    console.log("[submitLabel] Including embedding for local matching");
+                }
+
+                console.log("[submitLabel] Sending request with label:", JSON.stringify(request, null, 2));
+
                 const response = await apiSubmitLabel(request, restNonce);
 
                 if (response.error) {
@@ -265,7 +310,7 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                 // Update with server response (observation ID, sync status, rosterId)
                 const responseFace = response.faces[0];
                 const confirmedRosterId = responseFace?.rosterId ?? label.rosterId ?? null;
-                
+
                 setFaces((prev) => {
                     const updated = prev.map((f) =>
                         f.faceId === faceId
@@ -277,12 +322,12 @@ export const usePeopleSuggestions = (restNonce?: string): UsePeopleSuggestionsRe
                               }
                             : f,
                     );
-                    
+
                     // Save to localStorage for client-side persistence
                     if (attachmentIdRef.current) {
                         saveFaceLabelsToStorage(attachmentIdRef.current, updated);
                     }
-                    
+
                     return updated;
                 });
 

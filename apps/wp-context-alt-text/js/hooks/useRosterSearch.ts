@@ -40,6 +40,8 @@ export interface UseRosterSearchReturn {
     error: Error | null;
     /** Reset search state */
     reset: () => void;
+    /** Get current roster size (for strategy selection) */
+    getRosterSize: () => Promise<number>;
 }
 
 /**
@@ -84,8 +86,11 @@ export const useRosterSearch = (options: UseRosterSearchOptions = {}): UseRoster
 
         try {
             const response = await getAllRoster(restNonce);
-            setResults(response.persons);
+            console.log("[useRosterSearch] getAllRoster response:", response);
+            console.log("[useRosterSearch] entries count:", response.entries?.length ?? 0);
+            setResults(response.entries);
         } catch (err) {
+            console.error("[useRosterSearch] getAllRoster error:", err);
             setError(err instanceof Error ? err : new Error("Failed to load roster"));
             setResults([]);
         } finally {
@@ -123,7 +128,7 @@ export const useRosterSearch = (options: UseRosterSearchOptions = {}): UseRoster
 
             try {
                 const response = await searchRoster(searchQuery, restNonce);
-                setResults(response.persons);
+                setResults(response.entries);
             } catch (err) {
                 // Ignore abort errors
                 if (err instanceof Error && err.name === "AbortError") {
@@ -192,6 +197,20 @@ export const useRosterSearch = (options: UseRosterSearchOptions = {}): UseRoster
         void fetchAll();
     }, [fetchAll]);
 
+    /**
+     * Get current roster size (for strategy selection)
+     * Uses cached results if available, otherwise fetches from API
+     */
+    const getRosterSize = useCallback(async (): Promise<number> => {
+        try {
+            const response = await getAllRoster(restNonce);
+            return response.total ?? response.entries?.length ?? 0;
+        } catch (err) {
+            console.error("[useRosterSearch] Failed to get roster size:", err);
+            return 0;
+        }
+    }, [restNonce]);
+
     return {
         query,
         setQuery,
@@ -199,5 +218,6 @@ export const useRosterSearch = (options: UseRosterSearchOptions = {}): UseRoster
         isLoading,
         error,
         reset,
+        getRosterSize,
     };
 };

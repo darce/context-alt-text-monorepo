@@ -17,6 +17,8 @@ import { PeopleDrawer } from "./PeopleDrawer";
 import { PeoplePicker } from "./PeoplePicker";
 import type { WorkbenchMediaItem } from "@/admin/types";
 import type { DetectedFaceFE } from "@/types/people-labeling";
+import { loadFaceLandmarker, extractFaceEmbeddings } from "@/utils/faceEmbeddings";
+import { clusterFaces } from "@/utils/faceClustering";
 import "./PeopleLabelingView.scss";
 
 export interface PeopleLabelingViewProps {
@@ -58,7 +60,9 @@ export const PeopleLabelingView = ({ item, restNonce, onClose }: PeopleLabelingV
         async (image: HTMLImageElement): Promise<void> => {
             if (faceDetection.state === "idle" || faceDetection.state === "success") {
                 try {
+                    console.log("[DEBUG] Starting face detection for image:", item.id);
                     const detections = await faceDetection.detect(image);
+                    console.log(`[DEBUG] Detected ${detections.length} faces`);
 
                     // Convert MediaPipe detections to RawDetection format
                     const rawDetections = detections.map((detection) => ({
@@ -75,6 +79,40 @@ export const PeopleLabelingView = ({ item, restNonce, onClose }: PeopleLabelingV
                         })),
                     }));
 
+                    // Extract embeddings for clustering
+                    console.log("[DEBUG] Loading FaceLandmarker for embedding extraction...");
+                    const landmarker = await loadFaceLandmarker();
+                    console.log("[DEBUG] FaceLandmarker loaded successfully");
+
+                    console.log("[DEBUG] Extracting embeddings for", detections.length, "faces");
+                    const embeddings = await extractFaceEmbeddings(
+                        landmarker,
+                        image,
+                        detections.map((d) => ({
+                            x: d.boundingBox.originX,
+                            y: d.boundingBox.originY,
+                            width: d.boundingBox.width,
+                            height: d.boundingBox.height,
+                        })),
+                    );
+                    console.log("[DEBUG] Extracted embeddings:", embeddings.length);
+
+                    // Log first embedding details for validation
+                    if (embeddings.length > 0 && embeddings[0]) {
+                        const firstEmb = embeddings[0];
+                        const norm = Math.sqrt(Array.from(firstEmb).reduce((sum, val) => sum + val * val, 0));
+                        console.log("[DEBUG] First embedding sample:", {
+                            length: firstEmb.length,
+                            firstValues: Array.from(firstEmb.slice(0, 5)),
+                            l2Norm: norm.toFixed(4),
+                        });
+                    }
+
+                    // Cluster faces by similarity
+                    console.log("[DEBUG] Clustering faces with threshold 0.65...");
+                    const clusters = clusterFaces(embeddings, { similarityThreshold: 0.65 });
+                    console.log(`[DEBUG] Created ${clusters.length} clusters:`, clusters);
+
                     // Convert attachment ID and identify faces
                     console.log("[DEBUG] item.id:", item.id, "typeof:", typeof item.id);
                     const attachmentId = parseInt(item.id, 10);
@@ -89,7 +127,9 @@ export const PeopleLabelingView = ({ item, restNonce, onClose }: PeopleLabelingV
 
                     if (!isNaN(attachmentId)) {
                         console.log("[DEBUG] Calling identifyFaces with attachmentId:", attachmentId);
-                        await peopleSuggestions.identifyFaces(attachmentId, rawDetections);
+                        console.log("[DEBUG] Passing embeddings to identifyFaces:", embeddings.length, "embeddings");
+                        // Pass embeddings for local matching
+                        await peopleSuggestions.identifyFaces(attachmentId, rawDetections, embeddings);
                     } else {
                         console.error("[ERROR] Invalid attachmentId - item.id was:", item.id);
                     }
@@ -115,7 +155,7 @@ export const PeopleLabelingView = ({ item, restNonce, onClose }: PeopleLabelingV
      * Handle picker selection - submit label
      */
     const handlePickerSelect = useCallback(
-        async (rosterId: string): Promise<void> => {
+        async (rosterId: string, displayName: string): Promise<void> => {
             if (selectedFaceIndex === null) {
                 return;
             }
@@ -125,7 +165,7 @@ export const PeopleLabelingView = ({ item, restNonce, onClose }: PeopleLabelingV
                 return;
             }
 
-            await peopleSuggestions.submitLabel(face.faceId, { rosterId });
+            await peopleSuggestions.submitLabel(face.faceId, { rosterId, displayName });
             setShowPicker(false);
             setSelectedFaceIndex(null);
         },
@@ -184,12 +224,22 @@ export const PeopleLabelingView = ({ item, restNonce, onClose }: PeopleLabelingV
     );
 
     /**
-     * Handle review cluster - show all faces in cluster (TODO: future enhancement)
+     * Handle review cluster - select first face in cluster to open picker
      */
-    const handleReviewCluster = useCallback((clusterId: string): void => {
-        console.log("Review cluster:", clusterId);
-        // TODO: Implement cluster review UI
-    }, []);
+    const handleReviewCluster = useCallback(
+        (clusterId: string): void => {
+            console.log("Review cluster:", clusterId);
+
+            // Find the first face in this cluster
+            const faceIndex = peopleSuggestions.faces.findIndex((face) => face.clusterId === clusterId);
+
+            if (faceIndex !== -1) {
+                setSelectedFaceIndex(faceIndex);
+                setShowPicker(true);
+            }
+        },
+        [peopleSuggestions.faces],
+    );
 
     /**
      * Handle bulk confirm - submit multiple labels

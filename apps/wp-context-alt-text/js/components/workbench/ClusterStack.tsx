@@ -81,6 +81,14 @@ export const ClusterStack = ({
         onReview();
     };
 
+    // Title text depends on cluster size
+    const title = count === 1 ? __("Unknown person", "context-alt-text") : __("Likely same person", "context-alt-text");
+
+    const ariaLabel =
+        count === 1
+            ? `${__("Unknown person", "context-alt-text")}, 1 ${__("face", "context-alt-text")}`
+            : `${__("Likely same person", "context-alt-text")}, ${count} ${__("faces", "context-alt-text")}`;
+
     return (
         <div
             className={`cat-cluster-stack ${isSelected ? "cat-cluster-stack--selected" : ""}`}
@@ -88,7 +96,7 @@ export const ClusterStack = ({
             onKeyDown={handleKeyDown}
             role="button"
             tabIndex={0}
-            aria-label={`${__("Likely same person", "context-alt-text")}, ${count} ${__("faces", "context-alt-text")}`}
+            aria-label={ariaLabel}
         >
             <div className="cat-cluster-stack__thumbnail">
                 {thumbnailUrl ? (
@@ -104,7 +112,7 @@ export const ClusterStack = ({
             </div>
 
             <div className="cat-cluster-stack__content">
-                <h4 className="cat-cluster-stack__title">{__("Likely same person", "context-alt-text")}</h4>
+                <h4 className="cat-cluster-stack__title">{title}</h4>
                 <p className="cat-cluster-stack__count">
                     {count} {count === 1 ? __("face", "context-alt-text") : __("faces", "context-alt-text")}
                 </p>

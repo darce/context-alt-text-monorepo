@@ -81,18 +81,27 @@ final class RosterPresenter
             : '';
 
         $remoteId = isset($entry['remoteId']) ? (string) $entry['remoteId'] : null;
+        
+        // Generate a local ID if no remoteId exists yet
+        $uniqueId = $remoteId ?? 'local-' . sanitize_title($label);
 
         return [
+            // Recognition service-aligned fields
+            'uniqueId' => $uniqueId,
+            'name' => $label, // Canonical name (same as displayName for now)
+            'displayName' => $label,
+            'status' => $status,
+            'avatarUrl' => $avatarUrl,
+            'avatarId' => $avatarId,
+            'metadata' => $metadata,
+            'referenceImageCount' => self::getTaggedImageCount($remoteId),
+            'updatedAt' => isset($entry['updatedAt']) ? (string) $entry['updatedAt'] : null,
+            
+            // Legacy fields for backward compatibility (can be removed later)
             'remoteId' => $remoteId,
             'label' => $label,
             'type' => $type,
-            'status' => $status,
-            'updatedAt' => isset($entry['updatedAt']) ? (string) $entry['updatedAt'] : null,
-            'metadata' => $metadata,
             'referenceImages' => $referenceImages,
-            'avatarUrl' => $avatarUrl,
-            'avatarId' => $avatarId,
-            'referenceImageCount' => self::getTaggedImageCount($remoteId),
         ];
     }
 

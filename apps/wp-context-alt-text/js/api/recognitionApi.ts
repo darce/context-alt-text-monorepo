@@ -32,11 +32,14 @@ const ENDPOINTS = {
  * ```
  */
 export const identifyFaces = async (request: IdentifyRequest, restNonce?: string): Promise<IdentifyResponse> => {
-    return fetchApi<IdentifyResponse>(ENDPOINTS.identify, {
+    console.log("[recognitionApi] identifyFaces request:", JSON.stringify(request, null, 2));
+    const response = await fetchApi<IdentifyResponse>(ENDPOINTS.identify, {
         method: "POST",
         body: request,
         restNonce,
     });
+    console.log("[recognitionApi] identifyFaces response:", response);
+    return response;
 };
 
 /**

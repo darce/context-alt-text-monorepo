@@ -56,6 +56,8 @@ export interface DetectedFaceFE {
     labelDraft: Label | null;
     /** Confirmed roster ID after user labels */
     confirmedRosterId: string | null;
+    /** Extracted face embedding (512D from MediaPipe) for local matching */
+    embedding?: Float32Array;
 }
 
 /**
@@ -66,6 +68,8 @@ export interface Label {
     rosterId?: string;
     /** Display name for new person (XOR with rosterId) */
     newName?: string;
+    /** Display name (used when rosterId is provided to show correct label in UI) */
+    displayName?: string;
 }
 
 /**
@@ -128,6 +132,10 @@ export interface IdentifyRequest {
     faces: DetectedFaceRequest[];
     /** Coordinate system: "normalized" (0-1) or "pixels" */
     imageCoordinateSystem?: "normalized" | "pixels";
+    /** Optional embeddings extracted by frontend (MediaPipe) for local matching */
+    embeddings?: number[][];
+    /** Whether to use remote FAISS matching (true) or local cosine similarity (false) */
+    useRemoteMatching?: boolean;
 }
 
 /**
@@ -237,19 +245,33 @@ export interface SuggestionStack {
 /**
  * Roster person (from WordPress taxonomy)
  */
+/**
+ * Roster person entry
+ *
+ * Aligned with recognition service RosterEntry schema:
+ * - uniqueId: Primary identifier (UUID from recognition service)
+ * - name: Internal canonical name
+ * - displayName: User-facing display name
+ */
 export interface RosterPerson {
-    /** Roster ID (term slug or remote ID) */
-    id: string;
-    /** Display name */
+    /** Unique identifier (UUID from recognition service) */
+    uniqueId: string;
+    /** Internal canonical name */
+    name: string;
+    /** User-facing display name */
     displayName: string;
-    /** Alternative names/aliases */
-    aliases: string[];
+    /** Sync status with recognition service */
+    status: "LOCAL" | "SYNCED" | "CONFLICT";
     /** Avatar image URL */
     avatarUrl: string | null;
+    /** Avatar attachment ID */
+    avatarId: number | null;
     /** Metadata (JSON) */
-    meta: Record<string, unknown>;
-    /** Creation timestamp */
-    createdAt: string;
+    metadata: Record<string, unknown>;
+    /** Number of reference images */
+    referenceImageCount: number;
+    /** Last update timestamp (ISO 8601) */
+    updatedAt: string | null;
 }
 
 /**
@@ -315,7 +337,7 @@ export interface UsePeopleSuggestionsReturn {
     /** Error from last identify request */
     error: Error | null;
     /** Submit faces for identification */
-    identifyFaces: (attachmentId: number, detections: RawDetection[]) => Promise<void>;
+    identifyFaces: (attachmentId: number, detections: RawDetection[], embeddings?: Float32Array[]) => Promise<void>;
     /** Submit label for a face */
     submitLabel: (faceId: string, label: Label) => Promise<void>;
     /** Bulk confirm roster suggestion */

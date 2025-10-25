@@ -14,6 +14,7 @@ export const dashboardContractPayload: {
             recognitionJob: "https://example.com/wp-json/cat/v1/recognition/job",
             recognitionObservations: "https://example.com/wp-json/cat/v1/observations",
             recognitionObservationUpdate: "https://example.com/wp-json/cat/v1/observations/",
+            observationsRetry: "https://example.com/wp-json/cat/v1/observations/retry",
             rosterEntries: "https://example.com/wp-json/cat/v1/roster",
             rosterSync: "https://example.com/wp-json/cat/v1/roster/sync",
             settingsRecognition: "https://example.com/wp-json/cat/v1/settings/recognition",
@@ -27,6 +28,9 @@ export const dashboardContractPayload: {
             abilitiesEnabled: true,
             rosterEnabled: true,
             settingsEnabled: false,
+        },
+        matching: {
+            clusterSimilarityThreshold: 0.65,
         },
         settings: {
             recognition: {
@@ -120,6 +124,7 @@ const buildExpectedDashboardConfig = (config: AdminConfig) => ({
         recognitionJob: config.endpoints?.recognitionJob,
         recognitionObservations: config.endpoints?.recognitionObservations,
         recognitionObservationUpdate: config.endpoints?.recognitionObservationUpdate,
+        observationsRetry: config.endpoints?.observationsRetry,
         rosterEntries: config.endpoints?.rosterEntries,
         rosterSync: config.endpoints?.rosterSync,
         settingsRecognition: config.endpoints?.settingsRecognition,
@@ -134,6 +139,11 @@ const buildExpectedDashboardConfig = (config: AdminConfig) => ({
         rosterEnabled: Boolean(config.featureFlags?.rosterEnabled),
         settingsEnabled: Boolean(config.featureFlags?.settingsEnabled),
     },
+    matching: config.matching
+        ? {
+              clusterSimilarityThreshold: config.matching.clusterSimilarityThreshold,
+          }
+        : undefined,
     settings: {
         recognition: {
             canManage: Boolean(config.settings?.recognition?.canManage),

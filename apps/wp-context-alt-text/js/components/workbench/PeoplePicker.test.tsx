@@ -6,6 +6,28 @@ import { http, HttpResponse } from "msw";
 import { server } from "@/admin/testing/mswServer";
 
 import { PeoplePicker } from "./PeoplePicker";
+import type { RosterSearchResponse } from "@/api/rosterApi";
+
+/**
+ * Helper function to create a mock RosterSearchResponse
+ */
+const createMockRosterResponse = (entries: any[]): RosterSearchResponse => ({
+    entries: entries.map((entry) => ({
+        uniqueId: entry.id,
+        name: entry.displayName.toLowerCase().replace(/\s+/g, "-"),
+        displayName: entry.displayName,
+        status: "SYNCED" as const,
+        avatarUrl: entry.avatarUrl ?? null,
+        avatarId: entry.avatarId ?? null,
+        metadata: {},
+        referenceImageCount: 0,
+        updatedAt: new Date().toISOString(),
+    })),
+    total: entries.length,
+    page: 1,
+    perPage: 20,
+    totalPages: Math.ceil(entries.length / 20),
+});
 
 describe("PeoplePicker", () => {
     const mockOnClose = vi.fn();
@@ -17,6 +39,20 @@ describe("PeoplePicker", () => {
     });
 
     describe("Basic Rendering", () => {
+        beforeEach(() => {
+            // Setup default roster mock for all basic rendering tests
+            server.use(
+                http.get("/wp-json/cat/v1/roster", () => {
+                    return HttpResponse.json(
+                        createMockRosterResponse([
+                            { id: "person-1", displayName: "Ana Rodriguez" },
+                            { id: "person-2", displayName: "John Smith" },
+                        ]),
+                    );
+                }),
+            );
+        });
+
         it("renders nothing when closed", () => {
             const { container } = render(
                 <PeoplePicker
@@ -76,12 +112,12 @@ describe("PeoplePicker", () => {
         it("loads all roster persons on mount", async () => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [
+                    return HttpResponse.json(
+                        createMockRosterResponse([
                             { id: "1", displayName: "Ana Rodriguez" },
                             { id: "2", displayName: "John Smith" },
-                        ],
-                    });
+                        ]),
+                    );
                 }),
             );
 
@@ -95,10 +131,10 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
-            expect(screen.getByText("John Smith")).toBeInTheDocument();
+            expect(screen.getAllByText("John Smith")[0]).toBeInTheDocument();
         });
 
         it("shows error message when loading fails", async () => {
@@ -126,12 +162,12 @@ describe("PeoplePicker", () => {
         beforeEach(() => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [
+                    return HttpResponse.json(
+                        createMockRosterResponse([
                             { id: "1", displayName: "Ana Rodriguez" },
                             { id: "2", displayName: "John Smith" },
-                        ],
-                    });
+                        ]),
+                    );
                 }),
             );
         });
@@ -140,17 +176,24 @@ describe("PeoplePicker", () => {
             const user = userEvent.setup();
 
             server.use(
-                http.get("/wp-json/cat/v1/roster/search", ({ request }) => {
+                http.get("/wp-json/cat/v1/roster", ({ request }) => {
                     const url = new URL(request.url);
                     const search = url.searchParams.get("search");
 
+                    // If search parameter exists, filter results
                     if (search === "ana") {
-                        return HttpResponse.json({
-                            persons: [{ id: "1", displayName: "Ana Rodriguez" }],
-                        });
+                        return HttpResponse.json(createMockRosterResponse([{ id: "1", displayName: "Ana Rodriguez" }]));
+                    } else if (search) {
+                        return HttpResponse.json(createMockRosterResponse([]));
                     }
 
-                    return HttpResponse.json({ persons: [] });
+                    // No search parameter - return all
+                    return HttpResponse.json(
+                        createMockRosterResponse([
+                            { id: "1", displayName: "Ana Rodriguez" },
+                            { id: "2", displayName: "John Smith" },
+                        ]),
+                    );
                 }),
             );
 
@@ -165,7 +208,7 @@ describe("PeoplePicker", () => {
 
             // Wait for initial roster load
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Type search query
@@ -182,7 +225,7 @@ describe("PeoplePicker", () => {
             );
 
             // Ana should still be visible
-            expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+            expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
         });
 
         it("shows 'Create new person' option when typing", async () => {
@@ -194,9 +237,14 @@ describe("PeoplePicker", () => {
                     const url = new URL(request.url);
                     const search = url.searchParams.get("search");
                     if (search === "New Person") {
-                        return HttpResponse.json({ persons: [] });
+                        return HttpResponse.json(createMockRosterResponse([]));
                     }
-                    return HttpResponse.json({ persons: mockRosterPersons });
+                    return HttpResponse.json(
+                        createMockRosterResponse([
+                            { id: "1", displayName: "Ana Rodriguez" },
+                            { id: "2", displayName: "John Smith" },
+                        ]),
+                    );
                 }),
             );
 
@@ -211,7 +259,7 @@ describe("PeoplePicker", () => {
 
             // Wait for roster to load
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Type a query
@@ -240,15 +288,15 @@ describe("PeoplePicker", () => {
                     const search = url.searchParams.get("search");
 
                     if (search === "xyz123") {
-                        return HttpResponse.json({ persons: [] });
+                        return HttpResponse.json(createMockRosterResponse([]));
                     }
 
-                    return HttpResponse.json({
-                        persons: [
+                    return HttpResponse.json(
+                        createMockRosterResponse([
                             { id: "1", displayName: "Ana Rodriguez" },
                             { id: "2", displayName: "John Smith" },
-                        ],
-                    });
+                        ]),
+                    );
                 }),
             );
 
@@ -263,7 +311,7 @@ describe("PeoplePicker", () => {
 
             // Wait for roster to load
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Search for non-existent person
@@ -292,12 +340,12 @@ describe("PeoplePicker", () => {
         beforeEach(() => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [
+                    return HttpResponse.json(
+                        createMockRosterResponse([
                             { id: "person-1", displayName: "Ana Rodriguez" },
                             { id: "person-2", displayName: "John Smith" },
-                        ],
-                    });
+                        ]),
+                    );
                 }),
             );
         });
@@ -315,14 +363,15 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Click on Ana
-            const anaOption = screen.getByText("Ana Rodriguez").closest('[role="option"]');
+            const anaElements = screen.getAllByText("Ana Rodriguez");
+            const anaOption = anaElements[0]?.closest('[role="option"]');
             await user.click(anaOption!);
 
-            expect(mockOnSelect).toHaveBeenCalledWith("person-1");
+            expect(mockOnSelect).toHaveBeenCalledWith("person-1", "Ana Rodriguez");
         });
 
         it("calls onCreateNew when clicking create new person", async () => {
@@ -338,7 +387,7 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Type a new person name
@@ -373,7 +422,7 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Click backdrop
@@ -396,7 +445,7 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Press Escape
@@ -410,12 +459,12 @@ describe("PeoplePicker", () => {
         beforeEach(() => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [
+                    return HttpResponse.json(
+                        createMockRosterResponse([
                             { id: "1", displayName: "Ana Rodriguez" },
                             { id: "2", displayName: "John Smith" },
-                        ],
-                    });
+                        ]),
+                    );
                 }),
             );
         });
@@ -433,11 +482,12 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // First item should be highlighted by default
-            const anaOption = screen.getByText("Ana Rodriguez").closest('[role="option"]');
+            const anaElements = screen.getAllByText("Ana Rodriguez");
+            const anaOption = anaElements[0]?.closest('[role="option"]');
             expect(anaOption).toHaveClass("cat-people-picker__item--highlighted");
 
             // Press down arrow
@@ -445,7 +495,8 @@ describe("PeoplePicker", () => {
             await user.type(input, "{ArrowDown}");
 
             // Second item should now be highlighted
-            const johnOption = screen.getByText("John Smith").closest('[role="option"]');
+            const johnElements = screen.getAllByText("John Smith");
+            const johnOption = johnElements[0]?.closest('[role="option"]');
             expect(johnOption).toHaveClass("cat-people-picker__item--highlighted");
 
             // Press up arrow
@@ -468,14 +519,14 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Press Enter (first item is highlighted by default)
             const input = screen.getByLabelText(/search roster/i);
             await user.type(input, "{Enter}");
 
-            expect(mockOnSelect).toHaveBeenCalledWith("1");
+            expect(mockOnSelect).toHaveBeenCalledWith("1", "Ana Rodriguez");
         });
     });
 
@@ -483,12 +534,12 @@ describe("PeoplePicker", () => {
         it("shows 'Currently: X' when correcting a label", async () => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [
+                    return HttpResponse.json(
+                        createMockRosterResponse([
                             { id: "person-1", displayName: "Ana Rodriguez" },
                             { id: "person-2", displayName: "John Smith" },
-                        ],
-                    });
+                        ]),
+                    );
                 }),
             );
 
@@ -521,9 +572,7 @@ describe("PeoplePicker", () => {
         it("shows first letter placeholder when no avatarUrl", async () => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [{ id: "1", displayName: "Ana Rodriguez" }],
-                    });
+                    return HttpResponse.json(createMockRosterResponse([{ id: "1", displayName: "Ana Rodriguez" }]));
                 }),
             );
 
@@ -537,7 +586,7 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Should show "A" as placeholder
@@ -548,9 +597,11 @@ describe("PeoplePicker", () => {
         it("shows avatar image when avatarUrl provided", async () => {
             server.use(
                 http.get("/wp-json/cat/v1/roster", () => {
-                    return HttpResponse.json({
-                        persons: [{ id: "1", displayName: "Ana Rodriguez", avatarUrl: "https://example.com/ana.jpg" }],
-                    });
+                    return HttpResponse.json(
+                        createMockRosterResponse([
+                            { id: "1", displayName: "Ana Rodriguez", avatarUrl: "https://example.com/ana.jpg" },
+                        ]),
+                    );
                 }),
             );
 
@@ -564,7 +615,7 @@ describe("PeoplePicker", () => {
             );
 
             await waitFor(() => {
-                expect(screen.getByText("Ana Rodriguez")).toBeInTheDocument();
+                expect(screen.getAllByText("Ana Rodriguez")[0]).toBeInTheDocument();
             });
 
             // Should show avatar image (aria-hidden, so use class selector)

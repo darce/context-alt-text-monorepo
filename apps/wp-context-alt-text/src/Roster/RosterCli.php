@@ -367,4 +367,57 @@ class RosterCli extends WP_CLI_Command
 
         WP_CLI::success('All recognition and roster data has been deleted. You can now start fresh.');
     }
+
+    /**
+     * Output a JavaScript snippet to clear client-side localStorage keys used by the plugin.
+     *
+     * This does NOT execute in the browser. It prints the snippet which you should paste
+     * into the browser console while visiting the site to remove the frontend keys.
+     *
+     * ## OPTIONS
+     *
+     * [--file=<path>]
+     * : If provided, write the snippet to the given filesystem path.
+     *
+     * ## EXAMPLES
+     *
+     *     wp cat-roster clear-client-localstorage
+     *     wp cat-roster clear-client-localstorage --file=/tmp/clear_cat_localstorage.js
+     */
+    public function clear_client_localstorage(array $args, array $assocArgs): void
+    {
+        unset($args);
+
+        $snippet = <<<'JS'
+// Paste this into the browser console on your site origin to remove all face label keys.
+(function(){
+  try {
+    var keys = Object.keys(localStorage).filter(function(k){ return k.startsWith('cat_face_labels_'); });
+    keys.forEach(function(k){ localStorage.removeItem(k); });
+    console.log('Removed ' + keys.length + ' cat_face_labels_ keys from localStorage');
+  } catch (e) {
+    console.error('Failed to clear cat_face_labels_ keys', e);
+  }
+})();
+// Optionally run: localStorage.clear() to clear everything for this origin (be careful!)
+JS;
+
+        WP_CLI::log('JavaScript snippet to clear plugin localStorage keys:');
+        WP_CLI::log('--- BEGIN SNIPPET ---');
+        WP_CLI::log($snippet);
+        WP_CLI::log('---  END SNIPPET  ---');
+
+        if (!empty($assocArgs['file'])) {
+            $path = (string) $assocArgs['file'];
+            $written = @file_put_contents($path, $snippet);
+
+            if ($written === false) {
+                WP_CLI::warning(sprintf('Failed to write snippet to %s', $path));
+            } else {
+                WP_CLI::success(sprintf('Snippet written to %s', $path));
+            }
+        } else {
+            WP_CLI::success('Copy the snippet above and paste it into your browser console while on the site to clear the keys.');
+        }
+    }
 }

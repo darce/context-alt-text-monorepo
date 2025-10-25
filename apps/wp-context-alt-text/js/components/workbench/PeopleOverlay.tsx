@@ -134,10 +134,19 @@ export const PeopleOverlay = ({
     const getChipProps = (face: DetectedFaceFE): { label: string; variant: "unknown" | "suggested" | "confirmed" } => {
         // Confirmed label (user has labeled this face)
         if (face.confirmedRosterId || face.labelDraft) {
+            console.log("[getChipProps] Confirmed face:", {
+                confirmedRosterId: face.confirmedRosterId,
+                labelDraft: face.labelDraft,
+                suggestions: face.suggestions,
+            });
+
             const labelText =
-                face.labelDraft?.newName ||
-                face.suggestions.find((s) => s.rosterId === face.confirmedRosterId)?.display ||
+                face.labelDraft?.newName ??
+                face.labelDraft?.displayName ??
+                face.suggestions.find((s) => s.rosterId === face.confirmedRosterId)?.display ??
                 __("Labeled", "context-alt-text");
+
+            console.log("[getChipProps] Resolved labelText:", labelText);
             return { label: labelText, variant: "confirmed" };
         }
 

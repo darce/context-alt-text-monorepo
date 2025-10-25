@@ -547,4 +547,95 @@ class RecognitionClient
         $endpoint = $this->buildUrl('/api/v0/roster/entries');
         return $this->postJson($endpoint, $payload);
     }
+
+    /**
+     * Check if recognition service is healthy
+     *
+     * @return array{status: string, message?: string}
+     * @throws RecognitionClientException
+     */
+    public function checkHealth(): array
+    {
+        $endpoint = $this->buildUrl('/health');
+        
+        try {
+            $response = wp_remote_get($endpoint, [
+                'timeout' => 5,
+                'headers' => $this->buildHeaders(),
+            ]);
+
+            if (is_wp_error($response)) {
+                throw new RecognitionClientException(
+                    'Health check failed: ' . $response->get_error_message(),
+                    0
+                );
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            if ($code !== 200) {
+                return [
+                    'status' => 'unhealthy',
+                    'message' => 'Service returned non-200 status',
+                ];
+            }
+
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            
+            return is_array($data) ? $data : ['status' => 'healthy'];
+        } catch (RecognitionClientException $e) {
+            return [
+                'status' => 'unhealthy',
+                'message' => $e->getMessage(),
+            ];
+        }
+    }
+
+    /**
+     * Get roster statistics from FAISS
+     *
+     * @return array{totalEmbeddings: int, totalPeople: int, lastSyncAt?: string}
+     * @throws RecognitionClientException
+     */
+    public function getRosterStats(): array
+    {
+        $endpoint = $this->buildUrl('/api/v0/roster/stats');
+        
+        try {
+            $response = wp_remote_get($endpoint, [
+                'timeout' => 5,
+                'headers' => $this->buildHeaders(),
+            ]);
+
+            if (is_wp_error($response)) {
+                throw new RecognitionClientException(
+                    'Failed to get roster stats: ' . $response->get_error_message(),
+                    0
+                );
+            }
+
+            $code = wp_remote_retrieve_response_code($response);
+            if ($code !== 200) {
+                throw new RecognitionClientException(
+                    'Roster stats endpoint returned ' . $code,
+                    $code
+                );
+            }
+
+            $body = wp_remote_retrieve_body($response);
+            $data = json_decode($body, true);
+            
+            if (!is_array($data)) {
+                throw new RecognitionClientException('Invalid roster stats response');
+            }
+            
+            return $data;
+        } catch (RecognitionClientException $e) {
+            // Return empty stats on error
+            return [
+                'totalEmbeddings' => 0,
+                'totalPeople' => 0,
+            ];
+        }
+    }
 }

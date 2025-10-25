@@ -20,7 +20,7 @@ export interface PeoplePickerProps {
     /** Callback to close picker */
     onClose: () => void;
     /** Callback when user selects existing person */
-    onSelect: (rosterId: string) => void;
+    onSelect: (rosterId: string, displayName: string) => void;
     /** Callback when user creates new person */
     onCreateNew: (displayName: string) => void;
     /** Currently assigned roster ID (for corrections) */
@@ -73,18 +73,18 @@ export const PeoplePicker = ({
     /**
      * Get current person name (if correcting)
      */
-    const currentPerson = results?.find((p) => p.id === currentRosterId);
+    const currentPerson = results?.find((p) => p.uniqueId === currentRosterId);
 
     /**
      * Compute options list (create new + search results)
      */
-    const options: Array<RosterPerson | { id: "__create__"; displayName: string }> = React.useMemo(() => {
-        const opts: Array<RosterPerson | { id: "__create__"; displayName: string }> = [];
+    const options: (RosterPerson | { uniqueId: "__create__"; displayName: string })[] = React.useMemo(() => {
+        const opts: (RosterPerson | { uniqueId: "__create__"; displayName: string })[] = [];
 
         // "Create new" option (always first)
         if (query.trim().length > 0) {
             opts.push({
-                id: "__create__",
+                uniqueId: "__create__",
                 displayName: query.trim(),
             });
         }
@@ -164,11 +164,11 @@ export const PeoplePicker = ({
     /**
      * Handle option selection
      */
-    const handleSelect = (option: RosterPerson | { id: "__create__"; displayName: string }): void => {
-        if (option.id === "__create__") {
+    const handleSelect = (option: RosterPerson | { uniqueId: "__create__"; displayName: string }): void => {
+        if (option.uniqueId === "__create__") {
             onCreateNew(option.displayName);
         } else {
-            onSelect(option.id);
+            onSelect(option.uniqueId, option.displayName);
         }
         onClose();
     };
@@ -253,12 +253,12 @@ export const PeoplePicker = ({
 
                     {!isLoading &&
                         options.map((option, index) => {
-                            const isCreateNew = option.id === "__create__";
+                            const isCreateNew = option.uniqueId === "__create__";
                             const isHighlighted = index === highlightedIndex;
 
                             return (
                                 <div
-                                    key={option.id}
+                                    key={option.uniqueId}
                                     id={`cat-people-picker-option-${index}`}
                                     className={`cat-people-picker__item ${
                                         isHighlighted ? "cat-people-picker__item--highlighted" : ""

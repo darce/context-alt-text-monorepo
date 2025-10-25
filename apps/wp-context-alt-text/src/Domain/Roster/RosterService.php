@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ContextAltText\Domain\Roster;
 
+use ContextAltText\Recognition\RecognitionObservationRepository;
 use ContextAltText\Roster\RosterClientException;
 use ContextAltText\Roster\RosterRemote;
 use ContextAltText\Security\Security;
@@ -45,13 +46,21 @@ class RosterService
 {
     use UsesRosterOptions;
 
+    private const OBSERVATION_COUNTER_OPTION = 'cat_roster_observation_counter';
+
     private Security $security;
     private RosterRemote $client;
+    private RecognitionObservationRepository $observations;
 
-    public function __construct(Security $security, RosterRemote $client)
+    public function __construct(
+        Security $security,
+        RosterRemote $client,
+        ?RecognitionObservationRepository $observations = null
+    )
     {
         $this->security = $security;
         $this->client = $client;
+        $this->observations = $observations ?? new RecognitionObservationRepository();
     }
 
     public function exists(string $label, string $type, $excludeId = null): bool
@@ -1148,13 +1157,14 @@ class RosterService
      */
     public function createPerson(string $displayName): string
     {
-        // Create via remote API
-        $response = $this->client->createPerson([
-            'display' => $displayName,
+        // Create via remote API using createEntry
+        $response = $this->client->createEntry([
+            'label' => $displayName,
             'type' => 'person',
+            'embeddings' => [], // Will be added later when face is labeled
         ]);
 
-        $rosterId = $response['rosterId'] ?? null;
+        $rosterId = $response['rosterId'] ?? $response['unique_id'] ?? $response['remoteId'] ?? null;
         if (!is_string($rosterId) || trim($rosterId) === '') {
             throw new RosterClientException('Failed to create roster person: invalid response');
         }
@@ -1181,19 +1191,148 @@ class RosterService
         string $rosterId,
         array $bbox
     ): int {
-        // Create via remote API
-        $response = $this->client->createObservation([
-            'attachmentId' => $attachmentId,
-            'embedding' => $embedding,
-            'rosterId' => $rosterId,
-            'bbox' => $bbox,
-        ]);
-
-        $observationId = $response['observationId'] ?? null;
-        if (!is_int($observationId) || $observationId <= 0) {
-            throw new RosterClientException('Failed to create observation: invalid response');
+        if ($attachmentId <= 0) {
+            throw new RosterClientException('Invalid attachment ID supplied for observation creation.');
         }
 
+        $rosterId = trim($rosterId);
+
+        if ($rosterId === '') {
+            throw new RosterClientException('A roster identifier is required to create an observation.');
+        }
+
+        $entry = $this->getEntryById($rosterId) ?? [];
+        $label = isset($entry['label']) && is_string($entry['label'])
+            ? sanitize_text_field($entry['label'])
+            : $rosterId;
+        $entityType = isset($entry['type']) && is_string($entry['type'])
+            ? sanitize_text_field($entry['type'])
+            : 'person';
+
+        $observationId = $this->generateObservationId();
+        $boundingBox = $this->normalizeManualBoundingBox($bbox);
+        $area = $this->calculateBoundingBoxArea($boundingBox);
+
+        $existing = $this->observations->get($attachmentId);
+        $observations = [];
+
+        if (isset($existing['observations']) && is_array($existing['observations'])) {
+            $observations = array_values(
+                array_filter(
+                    $existing['observations'],
+                    static fn($item): bool => is_array($item)
+                )
+            );
+        }
+
+        $observations[] = [
+            'observationId' => (string) $observationId,
+            'label' => $label,
+            'entityType' => $entityType,
+            'confidence' => 1.0,
+            'area' => $area,
+            'boundingBox' => $boundingBox,
+            'status' => 'matched',
+            'source' => 'context-alt-text',
+            'match' => [
+                'isMatch' => true,
+                'similarity' => 1.0,
+                'confidence' => 1.0,
+                'threshold' => 0.0,
+            ],
+            'roster' => [
+                'remoteId' => $rosterId,
+                'name' => $label,
+                'displayName' => $label,
+                'type' => $entityType,
+            ],
+            'candidates' => [],
+        ];
+
+        $payload = [
+            'jobId' => $existing['jobId'] ?? null,
+            'attachmentId' => $attachmentId,
+            'updatedAt' => time(),
+            'observations' => $observations,
+            'context' => isset($existing['context']) && is_array($existing['context'])
+                ? $existing['context']
+                : [],
+            'confidenceScore' => $existing['confidenceScore'] ?? 0.0,
+            'sourceRemoteId' => $existing['sourceRemoteId'] ?? null,
+        ];
+
+        $this->observations->store($attachmentId, $payload);
+
         return $observationId;
+    }
+
+    private function generateObservationId(): int
+    {
+        $last = get_option(self::OBSERVATION_COUNTER_OPTION, 0);
+
+        if (!is_numeric($last)) {
+            $last = 0;
+        }
+
+        $next = (int) $last + 1;
+
+        if ($next <= 0) {
+            $next = 1;
+        }
+
+        update_option(self::OBSERVATION_COUNTER_OPTION, $next);
+
+        return $next;
+    }
+
+    /**
+     * Normalize an associative bounding box array into the numeric format expected by observation records.
+     *
+     * @param array<string,mixed> $bbox
+     * @return array<float>
+     */
+    private function normalizeManualBoundingBox(array $bbox): array
+    {
+        $x = isset($bbox['x']) && is_numeric($bbox['x']) ? (float) $bbox['x'] : 0.0;
+        $y = isset($bbox['y']) && is_numeric($bbox['y']) ? (float) $bbox['y'] : 0.0;
+        $width = isset($bbox['width']) && is_numeric($bbox['width']) ? (float) $bbox['width'] : 0.0;
+        $height = isset($bbox['height']) && is_numeric($bbox['height']) ? (float) $bbox['height'] : 0.0;
+
+        if ($x < 0.0) {
+            $x = 0.0;
+        }
+
+        if ($y < 0.0) {
+            $y = 0.0;
+        }
+
+        if ($width < 0.0) {
+            $width = 0.0;
+        }
+
+        if ($height < 0.0) {
+            $height = 0.0;
+        }
+
+        return [$x, $y, $width, $height];
+    }
+
+    /**
+     * @param array<float|int> $boundingBox
+     */
+    private function calculateBoundingBoxArea(array $boundingBox): float
+    {
+        $width = isset($boundingBox[2]) && is_numeric($boundingBox[2]) ? (float) $boundingBox[2] : 0.0;
+        $height = isset($boundingBox[3]) && is_numeric($boundingBox[3]) ? (float) $boundingBox[3] : 0.0;
+
+        if ($width < 0.0) {
+            $width = 0.0;
+        }
+
+        if ($height < 0.0) {
+            $height = 0.0;
+        }
+
+        return $width * $height;
     }
 }

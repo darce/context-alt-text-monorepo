@@ -3,6 +3,7 @@
  *
  * API client for roster person management.
  * Communicates with WordPress REST API endpoints.
+ * Data structures aligned with recognition service format.
  *
  * @package ContextAltText
  * @since 2.0.0
@@ -12,17 +13,23 @@ import { fetchApi } from "@/admin/utils/http";
 import type { RosterPerson } from "@/types/people-labeling";
 
 /**
- * Response from roster search endpoint
+ * Response from roster endpoints
  */
 export interface RosterSearchResponse {
-    /** Array of matching roster persons */
-    persons: RosterPerson[];
+    /** Array of roster persons (recognition service-aligned format) */
+    entries: RosterPerson[];
     /** Total count (before pagination) */
     total: number;
+    /** Current page number */
+    page: number;
+    /** Items per page */
+    perPage: number;
+    /** Total number of pages */
+    totalPages: number;
 }
 
 /**
- * Search roster persons by name or alias
+ * Search roster persons by name
  *
  * @param query - Search query string
  * @param restNonce - Optional WordPress REST nonce
@@ -31,7 +38,7 @@ export interface RosterSearchResponse {
  * @example
  * ```typescript
  * const results = await searchRoster("Ana", nonce);
- * console.log(results.persons); // [{ id: "person-123", displayName: "Ana Rodriguez", ... }]
+ * console.log(results.entries); // [{ uniqueId: "uuid-123", displayName: "Ana Rodriguez", ... }]
  * ```
  */
 export const searchRoster = async (query: string, restNonce?: string): Promise<RosterSearchResponse> => {
@@ -54,7 +61,7 @@ export const searchRoster = async (query: string, restNonce?: string): Promise<R
  * @example
  * ```typescript
  * const results = await getAllRoster(nonce);
- * console.log(results.persons); // [{ id: "person-123", ... }, ...]
+ * console.log(results.entries); // [{ uniqueId: "uuid-123", ... }, ...]
  * ```
  */
 export const getAllRoster = async (restNonce?: string): Promise<RosterSearchResponse> => {
@@ -74,13 +81,15 @@ export const getAllRoster = async (restNonce?: string): Promise<RosterSearchResp
  * @example
  * ```typescript
  * const newPerson = await createRosterPerson("Ana Rodriguez", nonce);
- * console.log(newPerson.id); // "person-456"
+ * console.log(newPerson.uniqueId); // "uuid-456"
  * ```
  */
 export const createRosterPerson = async (displayName: string, restNonce?: string): Promise<RosterPerson> => {
-    return fetchApi<RosterPerson>("/wp-json/cat/v1/roster", {
+    const response = await fetchApi<{ entry: RosterPerson }>("/wp-json/cat/v1/roster", {
         method: "POST",
         body: { displayName },
         restNonce,
     });
+
+    return response.entry;
 };

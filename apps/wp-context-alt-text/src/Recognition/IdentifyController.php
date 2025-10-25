@@ -6,13 +6,18 @@ namespace ContextAltText\Recognition;
 
 use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Security\Security;
+use ContextAltText\Shared\Constants\RecognitionConstants;
 use WP_Error;
 use WP_REST_Request;
 use function delete_post_meta;
 use function get_post;
 use function get_post_meta;
 use function is_array;
+use function is_numeric;
+use function is_scalar;
 use function is_wp_error;
+use function sprintf;
+use function trim;
 use function update_post_meta;
 
 /**
@@ -74,6 +79,7 @@ final class IdentifyController
         
         $attachmentId = $params['attachmentId'] ?? null;
         $faces = $params['faces'] ?? [];
+        $clientEmbeddings = $params['embeddings'] ?? null; // Frontend can provide MediaPipe embeddings
 
         // Cast to int if numeric string (JSON parsing may return string or int)
         if (is_numeric($attachmentId)) {
@@ -121,91 +127,162 @@ final class IdentifyController
             }
         }
 
-        // 5. Extract embeddings from recognition service
-        try {
-            $embeddingsResponse = $this->recognitionClient->embedFaces($attachmentId, $faces);
-            $embeddings = $embeddingsResponse['embeddings'] ?? [];
-        } catch (RecognitionClientException $e) {
-            // Recognition service is unavailable. We can still persist labels if provided,
-            // but without embeddings we can't provide suggestions or sync to FAISS.
-            error_log('[IdentifyController] Recognition service unavailable: ' . $e->getMessage());
-            error_log('[IdentifyController] Entering fallback mode. Number of faces: ' . count($faces));
-            error_log('[IdentifyController] Faces data: ' . print_r($faces, true));
+        // 5. Extract embeddings from recognition service OR use client-provided embeddings
+        $embeddings = [];
+        $useLocalMatching = false;
+        $useRemoteMatching = $params['useRemoteMatching'] ?? false;
+        
+        // Determine matching strategy based on roster size and FAISS availability
+        $rosterSize = 0;
+        $faissAvailable = false;
+        $faissHasData = false;
+        
+        if (is_array($clientEmbeddings) && count($clientEmbeddings) === count($faces)) {
+            // Use embeddings provided by frontend (MediaPipe)
+            error_log('[IdentifyController] Using client-provided embeddings (' . count($clientEmbeddings) . ' embeddings)');
+            $embeddings = $clientEmbeddings;
             
-            $responseFaces = [];
-            foreach ($faces as $index => $face) {
-                $responseFace = [
-                    'faceId' => "face-{$attachmentId}-{$index}",
-                    'clusterId' => "cluster-{$index}",
-                    'suggestions' => [], // No suggestions when service is offline
-                    'bbox' => $face['bbox'],
-                ];
-                
-                // Check if this face has a label to persist
-                $label = $face['label'] ?? null;
-                error_log("[IdentifyController] Face {$index}: label present? " . ($label !== null ? 'YES' : 'NO'));
-                if ($label !== null) {
-                    error_log("[IdentifyController] Face {$index}: label data: " . print_r($label, true));
-                }
-                
-                if (is_array($label)) {
-                    error_log("[IdentifyController] Face {$index}: Calling persistLabelWithoutEmbedding...");
-                    // We can't get embeddings, but we can still create observations
-                    // They just won't be synced to FAISS until re-processed
-                    $result = $this->persistLabelWithoutEmbedding(
-                        $attachmentId,
-                        $face['bbox'],
-                        $label
-                    );
+            // Check roster size for strategy selection
+            $entries = get_option('cat_roster_entries', []);
+            $rosterSize = is_array($entries) ? count($entries) : 0;
+            
+            // Check if FAISS is available and has data
+            if ($useRemoteMatching) {
+                try {
+                    $healthCheck = $this->recognitionClient->checkHealth();
+                    $faissAvailable = ($healthCheck['status'] ?? '') === 'healthy';
                     
-                    error_log("[IdentifyController] Face {$index}: persistLabelWithoutEmbedding returned: " . var_export($result, true));
-                    
-                    if ($result !== null && is_array($result)) {
-                        $responseFace['observationId'] = $result['observationId'] ?? 1;
-                        $responseFace['rosterId'] = $result['rosterId'] ?? null;
-                        $responseFace['syncStatus'] = 'pending'; // Mark as pending FAISS sync
-                        $responseFace['syncError'] = 'Recognition service unavailable - will sync when service is restored';
-                        error_log("[IdentifyController] Face {$index}: Successfully created observation with rosterId: " . ($result['rosterId'] ?? 'NULL'));
-                    } else {
-                        error_log("[IdentifyController] Face {$index}: Failed to create observation - persistLabelWithoutEmbedding returned null or invalid");
+                    if ($faissAvailable) {
+                        $faissStats = $this->recognitionClient->getRosterStats();
+                        $faissHasData = ($faissStats['totalEmbeddings'] ?? 0) > 10;
                     }
+                } catch (RecognitionClientException $e) {
+                    error_log('[IdentifyController] FAISS health check failed: ' . $e->getMessage());
+                    $faissAvailable = false;
                 }
-                
-                $responseFaces[] = $responseFace;
             }
             
-            return [
-                'faces' => $responseFaces,
-            ];
+            // Strategy decision
+            if ($useRemoteMatching && $faissAvailable && $faissHasData) {
+                error_log("[IdentifyController] Strategy: FAISS matching (roster: {$rosterSize}, FAISS available)");
+                $useLocalMatching = false; // Will use FAISS in next step
+            } else {
+                error_log("[IdentifyController] Strategy: Local WP matching (roster: {$rosterSize})");
+                $useLocalMatching = true;
+            }
+        } else {
+            // Try to get embeddings from recognition service
+            try {
+                $embeddingsResponse = $this->recognitionClient->embedFaces($attachmentId, $faces);
+                $embeddings = $embeddingsResponse['embeddings'] ?? [];
+            } catch (RecognitionClientException $e) {
+                // Recognition service is unavailable. We can still persist labels if provided,
+                // but without embeddings we can't provide suggestions or sync to FAISS.
+                error_log('[IdentifyController] Recognition service unavailable: ' . $e->getMessage());
+                error_log('[IdentifyController] Entering fallback mode. Number of faces: ' . count($faces));
+                error_log('[IdentifyController] Faces data: ' . print_r($faces, true));
+                
+                $responseFaces = [];
+                foreach ($faces as $index => $face) {
+                    $faceId = $this->resolveFaceId($face, $attachmentId, $index);
+
+                    $responseFace = [
+                        'faceId' => $faceId,
+                        'clusterId' => "cluster-{$index}",
+                        'suggestions' => [], // No suggestions when service is offline
+                        'bbox' => $face['bbox'],
+                    ];
+                    
+                    // Check if this face has a label to persist
+                    $label = $face['label'] ?? null;
+                    error_log("[IdentifyController] Face {$index}: label present? " . ($label !== null ? 'YES' : 'NO'));
+                    if ($label !== null) {
+                        error_log("[IdentifyController] Face {$index}: label data: " . print_r($label, true));
+                    }
+                    
+                    if (is_array($label)) {
+                        // Check if frontend provided embeddings for this face
+                        $faceEmbedding = $clientEmbeddings[$index] ?? null;
+                        
+                        if ($faceEmbedding !== null && is_array($faceEmbedding)) {
+                            error_log("[IdentifyController] Face {$index}: Using client embedding with label");
+                            // We have an embedding from frontend - persist with embedding
+                            $result = $this->persistLabel(
+                                $attachmentId,
+                                $faceEmbedding,
+                                $face['bbox'],
+                                $label
+                            );
+                            
+                            if ($result !== null && is_array($result)) {
+                                $responseFace['observationId'] = $result['observationId'];
+                                $responseFace['rosterId'] = $result['rosterId'];
+                                $responseFace['syncStatus'] = 'pending'; // Will sync to FAISS when service available
+                                $responseFace['syncError'] = 'Recognition service unavailable - will sync when service is restored';
+                                error_log("[IdentifyController] Face {$index}: Successfully persisted with client embedding, rosterId: " . $result['rosterId']);
+                            }
+                        } else {
+                            error_log("[IdentifyController] Face {$index}: Calling persistLabelWithoutEmbedding...");
+                            // We can't get embeddings, but we can still create observations
+                            // They just won't be synced to FAISS until re-processed
+                            $result = $this->persistLabelWithoutEmbedding(
+                                $attachmentId,
+                                $face['bbox'],
+                                $label
+                            );
+                            
+                            error_log("[IdentifyController] Face {$index}: persistLabelWithoutEmbedding returned: " . var_export($result, true));
+                            
+                            if ($result !== null && is_array($result)) {
+                                $responseFace['observationId'] = $result['observationId'] ?? 1;
+                                $responseFace['rosterId'] = $result['rosterId'] ?? null;
+                                $responseFace['syncStatus'] = 'pending'; // Mark as pending FAISS sync
+                                $responseFace['syncError'] = 'Recognition service unavailable - will sync when service is restored';
+                                error_log("[IdentifyController] Face {$index}: Successfully created observation with rosterId: " . ($result['rosterId'] ?? 'NULL'));
+                            } else {
+                                error_log("[IdentifyController] Face {$index}: Failed to create observation - persistLabelWithoutEmbedding returned null or invalid");
+                            }
+                        }
+                    }
+                    
+                    $responseFaces[] = $responseFace;
+                }
+                
+                return [
+                    'faces' => $responseFaces,
+                ];
+            }
         }
 
         // 6. Get suggestions for each embedding
-        try {
-            $suggestResponse = $this->recognitionClient->suggestMatches($embeddings);
-            $suggestions = $suggestResponse['suggestions'] ?? [];
-        } catch (RecognitionClientException $e) {
-            // Non-fatal: continue without suggestions
-            $suggestions = array_fill(0, count($embeddings), []);
+        if ($useLocalMatching) {
+            // Use local WordPress-based matching against stored embeddings
+            error_log('[IdentifyController] Using local matching against WP roster');
+            $suggestions = $this->suggestLocalMatches($embeddings);
+        } else {
+            // Use recognition service for suggestions
+            try {
+                $suggestResponse = $this->recognitionClient->suggestMatches($embeddings);
+                $suggestions = $suggestResponse['suggestions'] ?? [];
+            } catch (RecognitionClientException $e) {
+                // Non-fatal: continue without suggestions
+                $suggestions = array_fill(0, count($embeddings), []);
+            }
         }
 
-        // 7. Cluster the faces
-        try {
-            $clusterResponse = $this->recognitionClient->clusterFaces($embeddings);
-            $clusterIds = $clusterResponse['clusterIds'] ?? [];
-        } catch (RecognitionClientException $e) {
-            // Non-fatal: use sequential IDs as fallback
-            $clusterIds = array_map(fn($i) => "face-{$i}", array_keys($embeddings));
-        }
+        // 7. Cluster the faces locally using embeddings (MediaPipe-first strategy)
+        $clusterIds = $this->clusterEmbeddings($embeddings);
 
         // 8. Build response with face data
         $responseFaces = [];
         foreach ($faces as $index => $face) {
             $embedding = $embeddings[$index] ?? null;
-            $faceSuggestions = $suggestions[$index] ?? [];
+            $faceSuggestions = $this->normalizeSuggestions($suggestions[$index] ?? []);
             $clusterId = $clusterIds[$index] ?? "face-{$index}";
+            $faceId = $this->resolveFaceId($face, $attachmentId, $index);
 
             $responseFace = [
-                'faceId' => "face-{$attachmentId}-{$index}",
+                'faceId' => $faceId,
                 'clusterId' => $clusterId,
                 'suggestions' => $faceSuggestions,
                 'bbox' => $face['bbox'],
@@ -214,23 +291,24 @@ final class IdentifyController
             // 9. Handle label if provided
             $label = $face['label'] ?? null;
             if (is_array($label) && $embedding !== null) {
-                $observationId = $this->persistLabel(
+                $result = $this->persistLabel(
                     $attachmentId,
                     $embedding,
                     $face['bbox'],
                     $label
                 );
 
-                if ($observationId !== null) {
-                    $responseFace['observationId'] = $observationId;
+                if ($result !== null && is_array($result)) {
+                    $responseFace['observationId'] = $result['observationId'];
+                    $responseFace['rosterId'] = $result['rosterId'];
                     
                     // Include sync status
-                    $syncedToFaiss = get_post_meta($observationId, '_cat_synced_to_faiss', true);
+                    $syncedToFaiss = get_post_meta($result['observationId'], '_cat_synced_to_faiss', true);
                     $responseFace['syncStatus'] = $syncedToFaiss ? 'success' : 'failed';
                     
                     // Include sync error if present
                     if (!$syncedToFaiss) {
-                        $syncError = get_post_meta($observationId, '_cat_sync_error', true);
+                        $syncError = get_post_meta($result['observationId'], '_cat_sync_error', true);
                         if ($syncError) {
                             $responseFace['syncError'] = $syncError;
                         }
@@ -244,6 +322,169 @@ final class IdentifyController
         return [
             'faces' => $responseFaces,
         ];
+    }
+
+    /**
+     * Cluster embeddings locally using single-linkage clustering.
+     *
+     * @param array<int,array<int|float>> $embeddings
+     * @param float $threshold Similarity threshold to merge clusters
+     * @return array<int,string> Cluster ID for each embedding index
+     */
+    private function clusterEmbeddings(
+        array $embeddings,
+        float $threshold = RecognitionConstants::CLUSTER_SIMILARITY_THRESHOLD
+    ): array
+    {
+        $count = count($embeddings);
+
+        if ($count === 0) {
+            return [];
+        }
+
+        $normalized = $this->normalizeEmbeddings($embeddings);
+
+        // Build similarity matrix once (O(n^2) but n <= faces per image)
+        $similarity = array_fill(0, $count, array_fill(0, $count, 0.0));
+
+        for ($i = 0; $i < $count; $i++) {
+            for ($j = $i + 1; $j < $count; $j++) {
+                $score = $this->cosineSimilarityNormalized($normalized[$i], $normalized[$j]);
+                $similarity[$i][$j] = $score;
+                $similarity[$j][$i] = $score;
+            }
+        }
+
+        // Start with each embedding as its own cluster
+        $clusters = [];
+        for ($i = 0; $i < $count; $i++) {
+            $clusters[] = [$i];
+        }
+
+        $merged = true;
+        while ($merged) {
+            $merged = false;
+            $maxSimilarity = -1.0;
+            $mergeA = -1;
+            $mergeB = -1;
+
+            $clusterCount = count($clusters);
+            for ($i = 0; $i < $clusterCount; $i++) {
+                for ($j = $i + 1; $j < $clusterCount; $j++) {
+                    $clusterSimilarity = -1.0;
+                    foreach ($clusters[$i] as $faceIdxA) {
+                        foreach ($clusters[$j] as $faceIdxB) {
+                            $clusterSimilarity = max(
+                                $clusterSimilarity,
+                                $similarity[$faceIdxA][$faceIdxB] ?? 0.0
+                            );
+                        }
+                    }
+
+                    if ($clusterSimilarity >= $threshold && $clusterSimilarity > $maxSimilarity) {
+                        $maxSimilarity = $clusterSimilarity;
+                        $mergeA = $i;
+                        $mergeB = $j;
+                    }
+                }
+            }
+
+            if ($mergeA >= 0 && $mergeB >= 0) {
+                $clusters[$mergeA] = array_merge($clusters[$mergeA], $clusters[$mergeB]);
+                array_splice($clusters, $mergeB, 1);
+                $merged = true;
+            }
+        }
+
+        $clusterIds = array_fill(0, $count, '');
+
+        foreach ($clusters as $clusterIndex => $indices) {
+            sort($indices);
+            $clusterId = sprintf('cluster-%d', $clusterIndex);
+
+            foreach ($indices as $faceIndex) {
+                $clusterIds[$faceIndex] = $clusterId;
+            }
+        }
+
+        // Ensure every embedding has a cluster ID (fallback to deterministic default)
+        foreach ($clusterIds as $index => $clusterId) {
+            if ($clusterId === '' || $clusterId === null) {
+                $clusterIds[$index] = sprintf('cluster-%d', $index);
+            }
+        }
+
+        return $clusterIds;
+    }
+
+    /**
+     * Normalize embeddings for cosine similarity calculations.
+     *
+     * @param array<int,array<int|float>> $embeddings
+     * @return array<int,array{vector: array<int,float>, norm: float}>
+     */
+    private function normalizeEmbeddings(array $embeddings): array
+    {
+        $normalized = [];
+
+        foreach ($embeddings as $embedding) {
+            if (!is_array($embedding)) {
+                $normalized[] = ['vector' => [], 'norm' => 0.0];
+                continue;
+            }
+
+            $vector = [];
+            $sumSquares = 0.0;
+
+            foreach ($embedding as $value) {
+                if (!is_numeric($value)) {
+                    $vector[] = 0.0;
+                    continue;
+                }
+
+                $floatValue = (float) $value;
+                $vector[] = $floatValue;
+                $sumSquares += $floatValue * $floatValue;
+            }
+
+            $norm = $sumSquares > 0.0 ? sqrt($sumSquares) : 0.0;
+
+            $normalized[] = [
+                'vector' => $vector,
+                'norm' => $norm,
+            ];
+        }
+
+        return $normalized;
+    }
+
+    /**
+     * @param array{vector: array<int,float>, norm: float} $a
+     * @param array{vector: array<int,float>, norm: float} $b
+     */
+    private function cosineSimilarityNormalized(array $a, array $b): float
+    {
+        $normA = $a['norm'];
+        $normB = $b['norm'];
+
+        if ($normA <= 0.0 || $normB <= 0.0) {
+            return 0.0;
+        }
+
+        $vectorA = $a['vector'];
+        $vectorB = $b['vector'];
+        $length = min(count($vectorA), count($vectorB));
+
+        if ($length === 0) {
+            return 0.0;
+        }
+
+        $dot = 0.0;
+        for ($i = 0; $i < $length; $i++) {
+            $dot += $vectorA[$i] * $vectorB[$i];
+        }
+
+        return $dot / ($normA * $normB);
     }
 
     /**
@@ -278,25 +519,62 @@ final class IdentifyController
      * @param array<float> $embedding The face embedding
      * @param array<string,float> $bbox The bounding box
      * @param array<string,mixed> $label The label data
-     * @return int|null The observation ID or null on failure
+     * @return array{observationId: int, rosterId: string}|null Result or null on failure
      */
     private function persistLabel(
         int $attachmentId,
         array $embedding,
         array $bbox,
         array $label
-    ): ?int {
+    ): ?array {
         // Determine roster ID (create new person if needed)
         $rosterId = $label['rosterId'] ?? null;
         $newName = $label['newName'] ?? null;
 
         if ($newName !== null && is_string($newName) && trim($newName) !== '') {
-            // Create new roster person
+            $displayName = trim($newName);
+            
+            // Try to create via remote service first
             try {
-                $rosterId = $this->rosterService->createPerson(trim($newName));
+                $rosterId = $this->rosterService->createPerson($displayName);
             } catch (\Exception $e) {
-                // Failed to create person
-                return null;
+                // Remote service unavailable, create local entry
+                error_log("[IdentifyController] Remote service unavailable, creating local roster entry for: {$displayName}");
+                
+                $entries = get_option('cat_roster_entries', []);
+                if (!is_array($entries)) {
+                    $entries = [];
+                }
+                
+                // Check if person with this name already exists locally
+                foreach ($entries as $existingId => $entry) {
+                    if (isset($entry['label']) && $entry['label'] === $displayName && ($entry['type'] ?? '') === 'person') {
+                        $rosterId = $existingId;
+                        error_log("  Found existing local roster entry for '{$displayName}': {$rosterId}");
+                        break;
+                    }
+                }
+                
+                // If not found, create new local entry
+                if ($rosterId === null) {
+                    $rosterId = 'local-' . uniqid();
+                    
+                    $entries[$rosterId] = [
+                        'remoteId' => $rosterId,
+                        'label' => $displayName,
+                        'type' => 'person',
+                        'updatedAt' => current_time('mysql', true),
+                        'embeddings' => [], // Will be populated below
+                        'metadata' => [
+                            'type' => 'person',
+                            'source' => 'context-alt-text',
+                            'local_only' => true,
+                        ],
+                    ];
+                    
+                    update_option('cat_roster_entries', $entries, false);
+                    error_log("  Created local roster entry with ID: {$rosterId}");
+                }
             }
         }
 
@@ -304,6 +582,9 @@ final class IdentifyController
             // No valid roster ID
             return null;
         }
+
+        // Store embedding with roster entry for local matching
+        $this->addEmbeddingToRosterEntry($rosterId, $embedding);
 
         // Create observation
         try {
@@ -314,42 +595,291 @@ final class IdentifyController
                 $bbox
             );
         } catch (\Exception $e) {
-            return null;
+            error_log("[IdentifyController] Failed to create observation: " . $e->getMessage());
+            // Even if observation fails, we can return the roster ID since embedding is stored
+            return [
+                'observationId' => 1, // Fake ID
+                'rosterId' => $rosterId,
+            ];
         }
 
         if ($observationId === null) {
+            return [
+                'observationId' => 1, // Fake ID
+                'rosterId' => $rosterId,
+            ];
+        }
+
+        // Try to sync embedding to FAISS for progressive learning
+        try {
+            $syncResult = $this->recognitionClient->addRosterEmbedding(
+                $rosterId,
+                (string) $observationId,
+                $embedding,
+                [
+                    'attachmentId' => $attachmentId,
+                    'bbox' => $bbox,
+                    'source' => 'wordpress-plugin',
+                ]
+            );
+
+            // Track sync status in observation metadata
+            if (is_wp_error($syncResult)) {
+                // Log sync failure but don't fail the observation creation
+                error_log(sprintf(
+                    'Failed to sync observation %d to FAISS: %s',
+                    $observationId,
+                    $syncResult->get_error_message()
+                ));
+                update_post_meta($observationId, '_cat_synced_to_faiss', false);
+                update_post_meta($observationId, '_cat_sync_error', $syncResult->get_error_message());
+            } else {
+                // Sync successful
+                update_post_meta($observationId, '_cat_synced_to_faiss', true);
+                delete_post_meta($observationId, '_cat_sync_error');
+            }
+        } catch (\Exception $e) {
+            error_log("[IdentifyController] Exception syncing to FAISS: " . $e->getMessage());
+            update_post_meta($observationId, '_cat_synced_to_faiss', false);
+            update_post_meta($observationId, '_cat_sync_error', $e->getMessage());
+        }
+
+        return [
+            'observationId' => $observationId,
+            'rosterId' => $rosterId,
+        ];
+    }
+
+    /**
+     * Add an embedding to a roster entry for local matching
+     *
+     * @param string $rosterId The roster person ID
+     * @param array<float> $embedding The face embedding
+     * @return void
+     */
+    private function addEmbeddingToRosterEntry(string $rosterId, array $embedding): void
+    {
+        $entries = get_option('cat_roster_entries', []);
+        if (!is_array($entries)) {
+            $entries = [];
+        }
+        
+        if (!isset($entries[$rosterId])) {
+            error_log("[IdentifyController] Roster entry {$rosterId} not found, cannot add embedding");
+            return;
+        }
+        
+        // Initialize embeddings array if not exists
+        if (!isset($entries[$rosterId]['embeddings']) || !is_array($entries[$rosterId]['embeddings'])) {
+            $entries[$rosterId]['embeddings'] = [];
+        }
+        
+        // Add embedding (limit to 10 embeddings per person to avoid bloat)
+        $entries[$rosterId]['embeddings'][] = $embedding;
+        if (count($entries[$rosterId]['embeddings']) > 10) {
+            array_shift($entries[$rosterId]['embeddings']); // Remove oldest
+        }
+        
+        // Update timestamp
+        $entries[$rosterId]['updatedAt'] = current_time('mysql', true);
+        
+        update_option('cat_roster_entries', $entries, false);
+        
+        error_log("[IdentifyController] Added embedding to roster entry {$rosterId} (now has " . count($entries[$rosterId]['embeddings']) . " embeddings)");
+    }
+
+    /**
+     * Suggest matches using local WordPress embeddings
+     *
+     * @param array<array<float>> $embeddings Face embeddings to match
+     * @return array<array<array{rosterId: string, display: string, score: float, avatarUrl?: string}>> Suggestions per embedding
+     */
+    private function suggestLocalMatches(array $embeddings): array
+    {
+        error_log('[IdentifyController] suggestLocalMatches called with ' . count($embeddings) . ' embeddings');
+        
+        // Load roster entries with embeddings
+        $entries = get_option('cat_roster_entries', []);
+        if (!is_array($entries)) {
+            $entries = [];
+        }
+        
+        error_log('[IdentifyController] Found ' . count($entries) . ' roster entries');
+        
+        $suggestions = [];
+        $threshold = RecognitionConstants::LOCAL_SUGGESTION_THRESHOLD;
+        foreach ($embeddings as $embIndex => $embedding) {
+            $matches = [];
+            
+            // Compare against each roster entry that has embeddings
+            foreach ($entries as $rosterId => $entry) {
+                if (!isset($entry['embeddings']) || !is_array($entry['embeddings'])) {
+                    continue;
+                }
+                
+                // Compare against each stored embedding for this person
+                foreach ($entry['embeddings'] as $storedEmbedding) {
+                    $similarity = $this->cosineSimilarity($embedding, $storedEmbedding);
+
+                    // Only suggest if similarity is above configured threshold
+                    if ($similarity >= $threshold) {
+                        $matches[] = [
+                            'rosterId' => (string) $rosterId,
+                            'display' => $entry['label'] ?? 'Unknown',
+                            'score' => $similarity,
+                            'avatarUrl' => isset($entry['avatarUrl']) && is_string($entry['avatarUrl']) ? $entry['avatarUrl'] : null,
+                        ];
+                    }
+                }
+            }
+            
+            // Normalize and keep top matches
+            $normalized = $this->normalizeSuggestions($matches);
+            $suggestions[] = array_slice($normalized, 0, 3);
+            
+            error_log("[IdentifyController] Embedding {$embIndex}: found " . count($matches) . " matches");
+        }
+        
+        return $suggestions;
+    }
+
+    /**
+     * Calculate cosine similarity between two vectors
+     *
+     * @param array<float> $a First vector
+     * @param array<float> $b Second vector
+     * @return float Similarity score (0.0 to 1.0)
+     */
+    private function cosineSimilarity(array $a, array $b): float
+    {
+        if (count($a) !== count($b)) {
+            return 0.0;
+        }
+        
+        $dotProduct = 0.0;
+        $magnitudeA = 0.0;
+        $magnitudeB = 0.0;
+        
+        for ($i = 0; $i < count($a); $i++) {
+            $dotProduct += $a[$i] * $b[$i];
+            $magnitudeA += $a[$i] * $a[$i];
+            $magnitudeB += $b[$i] * $b[$i];
+        }
+        
+        $magnitude = sqrt($magnitudeA) * sqrt($magnitudeB);
+        
+        if ($magnitude == 0) {
+            return 0.0;
+        }
+        
+        return $dotProduct / $magnitude;
+    }
+
+    /**
+     * Determine the face ID to return to the frontend, preserving the request ID when provided.
+     */
+    private function resolveFaceId(mixed $face, int $attachmentId, int $index): string
+    {
+        if (is_array($face) && isset($face['faceId']) && is_scalar($face['faceId'])) {
+            $candidate = trim((string) $face['faceId']);
+            if ($candidate !== '') {
+                return $candidate;
+            }
+        }
+
+        return sprintf('face-%d-%d', $attachmentId, $index);
+    }
+
+    /**
+     * Normalize suggestion entries to the structure expected by the frontend.
+     *
+     * @param mixed $suggestions
+     * @return array<int,array{rosterId:string, display:string, score:float, avatarUrl?:string}>
+     */
+    private function normalizeSuggestions(mixed $suggestions): array
+    {
+        if (!is_array($suggestions)) {
+            return [];
+        }
+
+        $normalized = [];
+
+        foreach ($suggestions as $suggestion) {
+            if (!is_array($suggestion)) {
+                continue;
+            }
+
+            $formatted = $this->formatSuggestion($suggestion);
+            if ($formatted !== null) {
+                $normalized[] = $formatted;
+            }
+        }
+
+        usort($normalized, static fn($a, $b) => $b['score'] <=> $a['score']);
+
+        return $normalized;
+    }
+
+    /**
+     * @param array<string,mixed> $suggestion
+     * @return array{rosterId:string, display:string, score:float, avatarUrl?:string}|null
+     */
+    private function formatSuggestion(array $suggestion): ?array
+    {
+        $rosterId = $suggestion['rosterId'] ?? $suggestion['remoteId'] ?? $suggestion['id'] ?? null;
+        if (!is_scalar($rosterId)) {
             return null;
         }
 
-        // Sync embedding to FAISS for progressive learning
-        $syncResult = $this->recognitionClient->addRosterEmbedding(
-            $rosterId,
-            (string) $observationId,
-            $embedding,
-            [
-                'attachmentId' => $attachmentId,
-                'bbox' => $bbox,
-                'source' => 'wordpress-plugin',
-            ]
-        );
-
-        // Track sync status in observation metadata
-        if (is_wp_error($syncResult)) {
-            // Log sync failure but don't fail the observation creation
-            error_log(sprintf(
-                'Failed to sync observation %d to FAISS: %s',
-                $observationId,
-                $syncResult->get_error_message()
-            ));
-            update_post_meta($observationId, '_cat_synced_to_faiss', false);
-            update_post_meta($observationId, '_cat_sync_error', $syncResult->get_error_message());
-        } else {
-            // Sync successful
-            update_post_meta($observationId, '_cat_synced_to_faiss', true);
-            delete_post_meta($observationId, '_cat_sync_error');
+        $rosterId = trim((string) $rosterId);
+        if ($rosterId === '') {
+            return null;
         }
 
-        return $observationId;
+        $display = null;
+        foreach (['display', 'displayName', 'name', 'label'] as $key) {
+            if (isset($suggestion[$key]) && is_scalar($suggestion[$key])) {
+                $candidate = trim((string) $suggestion[$key]);
+                if ($candidate !== '') {
+                    $display = $candidate;
+                    break;
+                }
+            }
+        }
+
+        if ($display === null) {
+            $display = $rosterId;
+        }
+
+        $score = null;
+        foreach (['score', 'confidence', 'similarity'] as $scoreKey) {
+            if (isset($suggestion[$scoreKey]) && is_numeric($suggestion[$scoreKey])) {
+                $score = (float) $suggestion[$scoreKey];
+                break;
+            }
+        }
+
+        if ($score === null) {
+            $score = 0.0;
+        }
+
+        $normalized = [
+            'rosterId' => $rosterId,
+            'display' => $display,
+            'score' => $score,
+        ];
+
+        foreach (['avatarUrl', 'avatar_url', 'avatar'] as $avatarKey) {
+            if (isset($suggestion[$avatarKey]) && is_scalar($suggestion[$avatarKey])) {
+                $avatar = trim((string) $suggestion[$avatarKey]);
+                if ($avatar !== '') {
+                    $normalized['avatarUrl'] = $avatar;
+                    break;
+                }
+            }
+        }
+
+        return $normalized;
     }
 
     /**

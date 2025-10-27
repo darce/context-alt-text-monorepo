@@ -78,6 +78,9 @@ class SceneAnalysisService:
                 area=area,
                 roster_match=None,
                 face_data={
+                    "embedding_id": f"face-{idx}",
+                    "embedding": face_embedding.embedding.tolist(),
+                    "embedding_dimension": len(face_embedding.embedding),
                     "threshold": threshold,
                     "candidates": face_data,
                 },

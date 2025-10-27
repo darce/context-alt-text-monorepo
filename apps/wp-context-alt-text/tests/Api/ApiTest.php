@@ -14,7 +14,14 @@ use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Recognition\RecognitionJobRepository;
 use ContextAltText\Recognition\RecognitionJobService;
 use ContextAltText\Recognition\RecognitionObservationRepository;
+use ContextAltText\Recognition\ClusterController;
+use ContextAltText\Recognition\FaceThumbnailProvider;
+use ContextAltText\Domain\Clustering\ClusteringService;
+use ContextAltText\Infrastructure\Repositories\UnknownFaceRepository;
+use ContextAltText\Recognition\ClusterClient;
 use ContextAltText\Recognition\RecognitionSettings;
+use ContextAltText\Recognition\FaceDetectionQueue;
+use ContextAltText\Recognition\ScanController;
 use ContextAltText\Shared\Config\SettingsRepository;
 use ContextAltText\Roster\RosterSyncScheduler;
 use ContextAltText\Roster\RosterObservationManager;
@@ -536,6 +543,51 @@ final class ApiTest extends TestCase
             $security
         );
 
+        $faceDetectionQueue = new class implements FaceDetectionQueue {
+            /** @var array<int,array{ids:int[],priority:string}> */
+            public array $batches = [];
+
+            public function enqueueBatch(array $attachmentIds, string $priority = 'normal'): array
+            {
+                $this->batches[] = [
+                    'ids' => $attachmentIds,
+                    'priority' => $priority,
+                ];
+
+                return [
+                    'job_id' => 'test-job',
+                    'queued_count' => count($attachmentIds),
+                ];
+            }
+        };
+
+        $scanController = new ScanController($security, $faceDetectionQueue);
+
+        $clusterClient = new class implements ClusterClient {
+            public function requestClustering(array $payload): array
+            {
+                return [
+                    'clusters' => [],
+                    'unclustered_face_ids' => [],
+                ];
+            }
+        };
+
+        $unknownFaceRepository = new UnknownFaceRepository($GLOBALS['wpdb']);
+        $clusteringService = new ClusteringService(
+            $unknownFaceRepository,
+            $clusterClient,
+            $recognitionClient,
+            $rosterService
+        );
+        $thumbnailProvider = new class implements FaceThumbnailProvider {
+            public function generateThumbnail(array $face): ?string
+            {
+                return null;
+            }
+        };
+        $clusterController = new ClusterController($security, $clusteringService, $thumbnailProvider);
+
         return new Api(
             $metrics,
             $flags,
@@ -548,7 +600,9 @@ final class ApiTest extends TestCase
             $settingsRepository,
             $recognitionClient,
             $rosterObservationManager,
-            $identifyController
+            $identifyController,
+            $scanController,
+            $clusterController
         );
     }
 

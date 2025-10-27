@@ -74,7 +74,8 @@ if (!class_exists('WP_REST_Request')) {
 
         public function get_param(string $key)
         {
-            return $this->params[$key] ?? null;
+            // Check body params first, then URL params (matches WordPress behavior)
+            return $this->bodyParams[$key] ?? $this->params[$key] ?? null;
         }
 
         /**
@@ -327,6 +328,50 @@ if (!function_exists('esc_url')) {
     function esc_url($value)
     {
         return (string) $value;
+    }
+}
+
+if (!function_exists('wp_upload_dir')) {
+    /**
+     * @return array<string,mixed>
+     */
+    function wp_upload_dir($time = null, $create_dir = true, $refresh_cache = true)
+    {
+        $base = sys_get_temp_dir() . '/cat-test-uploads';
+
+        if (!is_dir($base)) {
+            mkdir($base, 0777, true);
+        }
+
+        return [
+            'path' => $base,
+            'url' => 'http://example.test/uploads',
+            'subdir' => '',
+            'basedir' => $base,
+            'baseurl' => 'http://example.test/uploads',
+            'error' => false,
+        ];
+    }
+}
+
+if (!function_exists('wp_mkdir_p')) {
+    function wp_mkdir_p($target)
+    {
+        if (is_dir($target)) {
+            return true;
+        }
+
+        return mkdir($target, 0777, true);
+    }
+}
+
+if (!function_exists('wp_get_attachment_metadata')) {
+    /**
+     * @return array<string,mixed>|false
+     */
+    function wp_get_attachment_metadata($attachmentId, $unfiltered = false)
+    {
+        return $GLOBALS['__cat_attachment_metadata'][$attachmentId] ?? false;
     }
 }
 
@@ -1210,4 +1255,140 @@ if (!class_exists('WP_Query')) {
             return $this->vars;
         }
     }
+}
+
+if (!defined('OBJECT')) {
+    define('OBJECT', 'OBJECT');
+}
+
+if (!defined('ARRAY_A')) {
+    define('ARRAY_A', 'ARRAY_A');
+}
+
+if (!defined('ARRAY_N')) {
+    define('ARRAY_N', 'ARRAY_N');
+}
+
+if (!isset($GLOBALS['wpdb'])) {
+    class WPDBStub
+    {
+        /** @var array<int,string> */
+        public array $queries = [];
+        public string $prefix = 'wp_';
+        public string $postmeta = 'wp_postmeta';
+        public string $term_relationships = 'wp_term_relationships';
+        /** @var array<int,array<string,mixed>> */
+        public array $mockResults = [];
+        /** @var array<string,mixed>|null */
+        public ?array $mockRow = null;
+        /** @var mixed */
+        public $mockVar = null;
+        public int $insert_id = 0;
+
+        public function query($sql)
+        {
+            $this->queries[] = (string) $sql;
+            return true;
+        }
+
+        public function get_charset_collate(): string
+        {
+            return 'DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci';
+        }
+
+        public function prepare(string $query, ...$args): string
+        {
+            if ($args === []) {
+                return $query;
+            }
+
+            $segments = preg_split('/(%s|%d|%f)/', $query, -1, PREG_SPLIT_DELIM_CAPTURE);
+            if ($segments === false) {
+                return $query;
+            }
+
+            $result = '';
+            $argIndex = 0;
+
+            foreach ($segments as $segment) {
+                if ($segment === '%s') {
+                    $value = $args[$argIndex++] ?? '';
+                    $result .= "'" . addslashes((string) $value) . "'";
+                    continue;
+                }
+
+                if ($segment === '%d') {
+                    $value = $args[$argIndex++] ?? 0;
+                    $result .= (string) (int) $value;
+                    continue;
+                }
+
+                if ($segment === '%f') {
+                    $value = $args[$argIndex++] ?? 0.0;
+                    $result .= (string) (float) $value;
+                    continue;
+                }
+
+                $result .= $segment;
+            }
+
+            return $result;
+        }
+
+        public function esc_like(string $text): string
+        {
+            return addcslashes($text, '_%');
+        }
+
+        public function get_results($query, $output = OBJECT)
+        {
+            $this->queries[] = (string) $query;
+
+            $results = $this->mockResults;
+            if ($output === ARRAY_A) {
+                $mapped = $results;
+            } elseif ($output === OBJECT) {
+                $mapped = array_map(static fn(array $row) => (object) $row, $results);
+            } else {
+                $mapped = $results;
+            }
+
+            return $mapped;
+        }
+
+        public function get_row($query, $output = OBJECT, $y = 0)
+        {
+            $this->queries[] = (string) $query;
+            if ($this->mockRow === null) {
+                return null;
+            }
+
+            if ($output === ARRAY_A) {
+                return $this->mockRow;
+            }
+
+            if ($output === OBJECT) {
+                return (object) $this->mockRow;
+            }
+
+            return $this->mockRow;
+        }
+
+        public function get_var($query, $x = 0, $y = 0)
+        {
+            $this->queries[] = (string) $query;
+            return $this->mockVar;
+        }
+
+        public function reset(): void
+        {
+            $this->queries = [];
+            $this->mockResults = [];
+            $this->mockRow = null;
+            $this->mockVar = null;
+            $this->insert_id = 0;
+        }
+    }
+
+    $GLOBALS['wpdb'] = new WPDBStub();
 }

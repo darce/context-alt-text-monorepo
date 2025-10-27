@@ -196,6 +196,90 @@ export const clusterFaces = (embeddings: FaceEmbedding[], config: Partial<Cluste
 };
 
 /**
+ * Merge clusters based on a pre-computed similarity matrix.
+ *
+ * @param clusters Initial clusters (clusterId -> faceIds)
+ * @param similarityMatrix Similarity between clusters (clusterId -> otherId -> similarity)
+ * @param threshold Minimum similarity required to merge two clusters
+ * @returns New cluster map (clusterId -> faceIds)
+ */
+export const mergeClusters = (
+    clusters: Map<string, string[]>,
+    similarityMatrix: Map<string, Map<string, number>>,
+    threshold: number,
+): Map<string, string[]> => {
+    const ids = Array.from(clusters.keys());
+    if (ids.length === 0) {
+        return new Map();
+    }
+
+    // Union-Find helpers
+    const parent = new Map<string, string>();
+    const find = (id: string): string => {
+        const current = parent.get(id);
+        if (current === undefined || current === id) {
+            parent.set(id, id);
+            return id;
+        }
+        const root = find(current);
+        parent.set(id, root);
+        return root;
+    };
+    const union = (a: string, b: string): void => {
+        const rootA = find(a);
+        const rootB = find(b);
+        if (rootA === rootB) {
+            return;
+        }
+        // Choose lexicographically smaller root for determinism
+        if (rootA < rootB) {
+            parent.set(rootB, rootA);
+        } else {
+            parent.set(rootA, rootB);
+        }
+    };
+
+    ids.forEach((id) => parent.set(id, id));
+
+    for (let i = 0; i < ids.length; i++) {
+        for (let j = i + 1; j < ids.length; j++) {
+            const idA = ids[i];
+            const idB = ids[j];
+            if (idA === undefined || idB === undefined) {
+                continue;
+            }
+            const simAB = similarityMatrix.get(idA)?.get(idB) ?? similarityMatrix.get(idB)?.get(idA) ?? -1;
+            if (simAB >= threshold) {
+                union(idA, idB);
+            }
+        }
+    }
+
+    const merged = new Map<string, string[]>();
+    ids.forEach((id) => {
+        const root = find(id);
+        const faces = clusters.get(id) ?? [];
+        const existing = merged.get(root);
+        if (existing) {
+            merged.set(root, Array.from(new Set([...existing, ...faces])));
+        } else {
+            merged.set(root, Array.from(new Set(faces)));
+        }
+    });
+
+    // Normalize ordering and assign deterministic IDs cluster_<n>
+    const result = new Map<string, string[]>();
+    const sortedRoots = Array.from(merged.keys()).sort();
+    sortedRoots.forEach((rootId, index) => {
+        const faces = merged.get(rootId) ?? [];
+        faces.sort();
+        result.set(`cluster_${index}`, faces);
+    });
+
+    return result;
+};
+
+/**
  * Find which cluster a new face belongs to
  *
  * @param newEmbedding - Embedding of new face

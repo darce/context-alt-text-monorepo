@@ -110,9 +110,13 @@ class ImageCropUtility
         $width = max(1, min($width, $imageWidth - $x));
         $height = max(1, min($height, $imageHeight - $y));
 
+        error_log(sprintf('[ImageCropUtility] Attachment %d: Image %dx%d, Crop region (%d,%d) %dx%d', 
+            $attachmentId, $imageWidth, $imageHeight, $x, $y, $width, $height));
+
         // Crop the region
         $cropResult = $editor->crop($x, $y, $width, $height);
         if (is_wp_error($cropResult) || $cropResult === false) {
+            error_log(sprintf('[ImageCropUtility] Crop operation failed for attachment %d', $attachmentId));
             return new WP_Error(
                 'crop_failed',
                 __('Failed to crop image region', 'context-alt-text'),
@@ -130,22 +134,12 @@ class ImageCropUtility
             );
         }
 
-        // Get base64-encoded image
-        $imageData = $editor->stream('image/jpeg');
-        if ($imageData === false) {
-            return new WP_Error(
-                'stream_failed',
-                __('Failed to encode image data', 'context-alt-text'),
-                ['status' => 500]
-            );
-        }
-
         // Capture output buffer for base64 encoding
         ob_start();
-        $editor->stream('image/jpeg');
+        $streamResult = $editor->stream('image/jpeg');
         $imageContent = ob_get_clean();
 
-        if ($imageContent === false || $imageContent === '') {
+        if ($streamResult === false || $imageContent === false || $imageContent === '') {
             return new WP_Error(
                 'encode_failed',
                 __('Failed to capture image data', 'context-alt-text'),

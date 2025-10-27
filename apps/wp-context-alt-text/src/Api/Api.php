@@ -6,8 +6,10 @@ namespace ContextAltText\Api;
 
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Domain\Roster\RosterService;
+use ContextAltText\Recognition\ClusterController;
 use ContextAltText\Recognition\IdentifyController;
 use ContextAltText\Recognition\RecognitionClient;
+use ContextAltText\Recognition\ScanController;
 use ContextAltText\Recognition\RecognitionClientException;
 use ContextAltText\Recognition\RecognitionJobService;
 use ContextAltText\Recognition\RecognitionObservationRepository;
@@ -71,6 +73,8 @@ class Api
     private RecognitionClient $recognitionClient;
     private RosterObservationManager $rosterObservationManager;
     private IdentifyController $identifyController;
+    private ScanController $scanController;
+    private ClusterController $clusterController;
 
     public function __construct(
         DashboardMetricsService $dashboardMetrics,
@@ -84,7 +88,9 @@ class Api
         SettingsRepository $settingsRepository,
         RecognitionClient $recognitionClient,
         RosterObservationManager $rosterObservationManager,
-        IdentifyController $identifyController
+        IdentifyController $identifyController,
+        ScanController $scanController,
+        ClusterController $clusterController
     ) {
         $this->dashboardMetrics = $dashboardMetrics;
         $this->featureFlags = $featureFlags;
@@ -98,6 +104,8 @@ class Api
         $this->recognitionClient = $recognitionClient;
         $this->rosterObservationManager = $rosterObservationManager;
         $this->identifyController = $identifyController;
+        $this->scanController = $scanController;
+        $this->clusterController = $clusterController;
     }
 
     public function init(): void
@@ -170,6 +178,15 @@ class Api
             ]
         );
 
+        $this->register_endpoint_with_alias(
+            '/recognition/scan',
+            [
+                'methods' => 'POST',
+                'callback' => [$this->scanController, 'scanBatch'],
+                'permission_callback' => [$this, 'can_trigger_face_scan'],
+            ]
+        );
+
         // Dashboard endpoints
         $this->register_endpoint_with_alias(
             '/dashboard/coverage',
@@ -218,6 +235,42 @@ class Api
                     'methods' => 'POST',
                     'callback' => [$this->identifyController, 'identify'],
                     'permission_callback' => '__return_true', // Controller handles auth internally
+                ]
+            );
+
+            $this->register_endpoint_with_alias(
+                '/clusters',
+                [
+                    'methods' => 'GET',
+                    'callback' => [$this->clusterController, 'listClusters'],
+                    'permission_callback' => '__return_true',
+                ]
+            );
+
+            $this->register_endpoint_with_alias(
+                '/clusters/(?P<id>[^/]+)',
+                [
+                    'methods' => 'GET',
+                    'callback' => [$this->clusterController, 'getClusterDetail'],
+                    'permission_callback' => '__return_true',
+                ]
+            );
+
+            $this->register_endpoint_with_alias(
+                '/clusters/(?P<id>[^/]+)/suggestions',
+                [
+                    'methods' => 'GET',
+                    'callback' => [$this->clusterController, 'getClusterSuggestions'],
+                    'permission_callback' => '__return_true',
+                ]
+            );
+
+            $this->register_endpoint_with_alias(
+                '/clusters/(?P<id>[^/]+)/confirm',
+                [
+                    'methods' => 'POST',
+                    'callback' => [$this->clusterController, 'confirmCluster'],
+                    'permission_callback' => '__return_true',
                 ]
             );
 
@@ -282,6 +335,11 @@ class Api
     public function can_manage_recognition(): bool
     {
         return current_user_can('manage_options');
+    }
+
+    public function can_trigger_face_scan(): bool
+    {
+        return current_user_can('upload_files');
     }
 
     public function get_recognition_settings()

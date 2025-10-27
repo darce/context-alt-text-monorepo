@@ -305,10 +305,14 @@ class Admin
         $observationsRetryEndpoint = '';
         $rosterEndpoint = '';
         $rosterSyncEndpoint = '';
+        $unknownClustersEndpoint = '';
+        $faceScanEndpoint = '';
 
         if ($recognitionEnabled) {
             $recognitionAnalyzeEndpoint = $this->get_rest_url('cat/v1/recognition/analyze');
             $recognitionJobEndpoint = rtrim($this->get_rest_url('cat/v1/recognition/job/'), '/') . '/';
+            $unknownClustersEndpoint = $this->get_rest_url('cat/v1/clusters');
+            $faceScanEndpoint = $this->get_rest_url('cat/v1/recognition/scan');
         }
 
         // Observations endpoints available when recognition OR roster is enabled
@@ -341,6 +345,8 @@ class Admin
             'rosterSync' => $rosterSyncEndpoint,
             'settingsRecognition' => $settingsEndpoints['recognition'],
             'settingsRecognitionTest' => $settingsEndpoints['recognitionTest'],
+            'unknownClusters' => $unknownClustersEndpoint,
+            'faceScan' => $faceScanEndpoint,
         ];
     }
 

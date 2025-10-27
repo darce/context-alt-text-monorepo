@@ -5,12 +5,16 @@ import { __ } from "@wordpress/i18n";
 import { SelectionToolbar } from "@/components/workbench/SelectionToolbar";
 import { MediaList } from "@/components/workbench/MediaList";
 import { RecognitionActions } from "@/components/workbench/RecognitionActions";
+import { FaceScanActions } from "@/components/workbench/FaceScanActions";
+import { UnknownPeoplePanel } from "@/components/workbench/UnknownPeoplePanel";
+import { ClusterDetailView } from "@/components/workbench/ClusterDetailView";
 import { PeopleLabelingView } from "@/components/workbench/PeopleLabelingView";
 import { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
 import { useWorkbenchActions } from "@/components/workbench/useWorkbenchActions";
 import { emitDashboardEvent } from "@/admin/analytics";
 import { dispatchNotice } from "@/admin/notices";
 import { getDashboardConfig } from "@/admin/dashboardData";
+import { toUniqueNumericIds } from "@/admin/utils/normalization";
 import type { WorkbenchMediaItem as WorkbenchMediaItemType } from "@/admin/types";
 
 export type WorkbenchViewMode = "grid" | "list";
@@ -34,6 +38,7 @@ export const WorkbenchApp = ({
     const [selectedIds, setSelectedIds] = React.useState<Set<string>>(new Set());
     const selectedList = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
     const [labelingItem, setLabelingItem] = React.useState<WorkbenchMediaItem | null>(null);
+    const [activeClusterId, setActiveClusterId] = React.useState<string | null>(null);
 
     const recognition = useRecognitionJob();
     const jobDetails = recognition.jobDetails;
@@ -186,14 +191,24 @@ export const WorkbenchApp = ({
     const config = React.useMemo(() => getDashboardConfig(), []);
     const restNonce = config?.restNonce;
 
+    // Convert selectedIds from Set<string> to number[] for FaceScanActions
+    const selectedIdsNumeric = React.useMemo(() => toUniqueNumericIds(Array.from(selectedIds)), [selectedIds]);
+
+    // Handle face scan completion
+    const handleScanComplete = React.useCallback((result: { jobId: string; queuedCount: number }) => {
+        dispatchNotice("success", __(`Queued ${result.queuedCount} items for face scanning`, "context-alt-text"), {
+            id: "cat-face-scan-queued",
+        });
+        emitDashboardEvent("cat_workbench_face_scan_queued", {
+            jobId: result.jobId,
+            queuedCount: result.queuedCount,
+        });
+    }, []);
+
     return (
         <div className="cat-workbench" aria-label={__("Alt-Text Workbench", "context-alt-text")}>
             {labelingItem ? (
-                <PeopleLabelingView
-                    item={labelingItem}
-                    restNonce={restNonce}
-                    onClose={() => setLabelingItem(null)}
-                />
+                <PeopleLabelingView item={labelingItem} restNonce={restNonce} onClose={() => setLabelingItem(null)} />
             ) : (
                 <>
                     <SelectionToolbar
@@ -205,18 +220,37 @@ export const WorkbenchApp = ({
                     />
 
                     <div className="cat-workbench__layout">
-                        <RecognitionActions
-                            selectionCount={selectedIds.size}
-                            isEnabled={recognition.canSubmit}
-                            isSubmitting={recognition.isSubmitting}
-                            isPolling={recognition.isPolling}
-                            lastJob={recognition.lastJob}
-                            jobDetails={jobDetails}
-                            error={recognition.error}
-                            onTriggerRecognition={actions.handleTriggerRecognition}
-                            onRetryRecognition={actions.handleRetryRecognition}
-                            onResetRecognition={recognition.reset}
-                        />
+                        <div className="cat-workbench__sidebar">
+                            <RecognitionActions
+                                selectionCount={selectedIds.size}
+                                isEnabled={recognition.canSubmit}
+                                isSubmitting={recognition.isSubmitting}
+                                isPolling={recognition.isPolling}
+                                lastJob={recognition.lastJob}
+                                jobDetails={jobDetails}
+                                error={recognition.error}
+                                onTriggerRecognition={actions.handleTriggerRecognition}
+                                onRetryRecognition={actions.handleRetryRecognition}
+                                onResetRecognition={recognition.reset}
+                            />
+                            <FaceScanActions selectedIds={selectedIdsNumeric} onScanComplete={handleScanComplete} />
+                            <UnknownPeoplePanel
+                                onSelectCluster={setActiveClusterId}
+                                selectedClusterId={activeClusterId}
+                            />
+                            {activeClusterId && (
+                                <ClusterDetailView
+                                    clusterId={activeClusterId}
+                                    onClose={() => setActiveClusterId(null)}
+                                    onRequestConfirm={() => {
+                                        // Modal is self-contained, no action needed
+                                    }}
+                                    onReviewLater={() => {
+                                        // TODO: Implement review later functionality
+                                    }}
+                                />
+                            )}
+                        </div>
                         <MediaList
                             items={items}
                             selectedIds={selectedIds}

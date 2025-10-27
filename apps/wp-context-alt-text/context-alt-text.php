@@ -33,9 +33,18 @@ use ContextAltText\Admin\RosterPage;
 use ContextAltText\Api\Api;
 use ContextAltText\ContextAltText;
 use ContextAltText\Domain\Roster\RosterService;
+use ContextAltText\Domain\Clustering\ClusteringService;
 use ContextAltText\Frontend\Frontend;
+use ContextAltText\Infrastructure\Database\UnknownFaceTableInstaller;
+use ContextAltText\Infrastructure\Repositories\UnknownFaceRepository;
 use ContextAltText\Security\Security;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
+use ContextAltText\Jobs\FaceDetectionJob;
+use ContextAltText\Recognition\RecognitionServiceFaceDetectionPipeline;
+use ContextAltText\Recognition\ScanController;
+use ContextAltText\Recognition\SynchronousFaceDetectionQueue;
+use ContextAltText\Recognition\ClusterController;
+use ContextAltText\Recognition\CachedFaceThumbnailProvider;
 use ContextAltText\Support\Env;
 use ContextAltText\Support\FeatureFlags;
 use ContextAltText\Support\LifecycleManager;
@@ -52,6 +61,7 @@ use ContextAltText\Roster\RosterCli;
 use ContextAltText\Roster\RosterObservationManager;
 use ContextAltText\Roster\RosterTaxonomy;
 use ContextAltText\Roster\RosterSyncScheduler;
+use ContextAltText\Commands\FacesCommand;
 use ContextAltText\Shared\Config\SettingsRepository;
 use ContextAltText\Shared\Logger;
 use ContextAltText\Workbench\WorkbenchMediaResolver;
@@ -155,6 +165,8 @@ function context_alt_text(): ContextAltText
     $recognitionServices = context_alt_text_recognition_services($settingsRepository);
     /** @var RecognitionClient $recognitionClient */
     $recognitionClient = $recognitionServices['client'];
+    /** @var RecognitionSettings $recognitionSettings */
+    $recognitionSettings = $recognitionServices['settings'];
     /** @var RecognitionJobRepository $recognitionJobRepository */
     $recognitionJobRepository = $recognitionServices['jobRepository'];
     /** @var RecognitionObservationRepository $recognitionObservationRepository */
@@ -182,6 +194,21 @@ function context_alt_text(): ContextAltText
     $settingsPage->init();
     $accountCenterPage = new AccountCenterPage();
     $mediaPanel = new MediaLibraryPanel($scanner);
+    $unknownFaceTableInstaller = new UnknownFaceTableInstaller();
+    $unknownFaceRepository = new UnknownFaceRepository();
+    $faceDetectionPipeline = new RecognitionServiceFaceDetectionPipeline($recognitionClient);
+    $faceDetectionJob = new FaceDetectionJob($faceDetectionPipeline, $unknownFaceRepository);
+    $clusterClient = new RosterClient($recognitionSettings);
+    $clusteringService = new ClusteringService(
+        $unknownFaceRepository,
+        $clusterClient,
+        $recognitionClient,
+        $rosterService
+    );
+    $faceDetectionQueue = new SynchronousFaceDetectionQueue($faceDetectionJob, $clusteringService);
+    $scanController = new ScanController($security, $faceDetectionQueue);
+    $thumbnailProvider = new CachedFaceThumbnailProvider();
+    $clusterController = new ClusterController($security, $clusteringService, $thumbnailProvider);
 
     $instance = new ContextAltText(
         new Admin(
@@ -207,7 +234,9 @@ function context_alt_text(): ContextAltText
             $settingsRepository,
             $recognitionClient,
             $rosterObservationManager,
-            $identifyController
+            $identifyController,
+            $scanController,
+            $clusterController
         ),
         new Menu(
             $dashboardPage,
@@ -221,7 +250,7 @@ function context_alt_text(): ContextAltText
         $rosterPage,
         new Template(),
         $featureFlags,
-        new LifecycleManager($scanner),
+        new LifecycleManager($scanner, $unknownFaceTableInstaller),
         $scanner,
         $mediaPanel
     );
@@ -538,6 +567,11 @@ if (defined('WP_CLI') && WP_CLI) {
         \WP_CLI::add_command(
             'cat-roster',
             new RosterCli($rosterService, $taxonomy)
+        );
+
+        \WP_CLI::add_command(
+            'cat-faces',
+            new FacesCommand()
         );
     });
 }

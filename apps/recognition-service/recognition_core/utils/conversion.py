@@ -83,6 +83,8 @@ def convert_to_analysis_format(
                 area=detection.area(),
                 roster_match=roster_match,
                 face_data={
+                    "embedding_id": f"face-{i}",
+                    "embedding": face_embedding.embedding.tolist(),  # ✅ ADD embedding vector
                     "embedding_dimension": len(face_embedding.embedding),
                     "similarity_score": roster_match.similarity_score if roster_match else 0.0
                 }

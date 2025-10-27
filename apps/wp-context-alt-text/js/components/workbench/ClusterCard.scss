@@ -1,0 +1,10 @@
+.cat-cluster-card--drop-target,
+.cat-cluster-card[data-drop-target] {
+    outline: 2px solid var(--cat-color-primary, #1d4ed8);
+    outline-offset: 2px;
+}
+
+.cat-cluster-card--drop-target:focus-visible,
+.cat-cluster-card[data-drop-target]:focus-visible {
+    outline-offset: 4px;
+}

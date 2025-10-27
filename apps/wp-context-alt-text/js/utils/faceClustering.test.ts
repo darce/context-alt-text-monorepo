@@ -8,7 +8,7 @@
  */
 
 import { describe, it, expect, vi } from "vitest";
-import { clusterFaces, findMatchingCluster, DEFAULT_CLUSTER_CONFIG } from "./faceClustering";
+import { clusterFaces, findMatchingCluster, mergeClusters, DEFAULT_CLUSTER_CONFIG } from "./faceClustering";
 import { DEFAULT_CLUSTER_THRESHOLD } from "@/config/matching";
 import type { FaceEmbedding } from "./faceEmbeddings";
 
@@ -32,10 +32,10 @@ describe("faceClustering", () => {
      * Helper: Create similar embeddings (high cosine similarity)
      */
     const createSimilarEmbeddings = (count: number): FaceEmbedding[] => {
-        const base = Array.from({ length: 512 }, (_, i) => (i % 2 === 0 ? 1 : 0));
+        const base = Array.from({ length: 512 }, (_, i) => (i % 3 === 0 ? 1 : 0.2));
         return Array.from({ length: count }, (_, i) => {
-            // Add small noise
-            const noisy = base.map((v) => v + (Math.random() - 0.5) * 0.1);
+            const offset = (i + 1) / (count + 1);
+            const noisy = base.map((value, idx) => value + offset * ((idx % 5) * 0.01));
             return createEmbedding(noisy);
         });
     };
@@ -45,8 +45,7 @@ describe("faceClustering", () => {
      */
     const createDissimilarEmbeddings = (count: number): FaceEmbedding[] => {
         return Array.from({ length: count }, (_, i) => {
-            // Create orthogonal-ish vectors
-            const values = Array.from({ length: 512 }, (_, j) => (j % count === i ? 1 : 0));
+            const values = Array.from({ length: 512 }, (_, j) => ((j + i) % count === 0 ? 1 : 0));
             return createEmbedding(values);
         });
     };
@@ -480,6 +479,73 @@ describe("faceClustering", () => {
             // Should have some single-face clusters
             const singleClusters = clusters.filter((c) => c.faceIndices.length === 1);
             expect(singleClusters.length).toBeGreaterThanOrEqual(1);
+        });
+
+        describe("Performance", () => {
+            it("clusters 50 faces in under 100ms", () => {
+                const embeddings = createSimilarEmbeddings(50);
+                const start = performance.now();
+                const clusters = clusterFaces(embeddings, { similarityThreshold: 0.7 });
+                const duration = performance.now() - start;
+
+                expect(clusters.length).toBeGreaterThan(0);
+                expect(duration).toBeLessThan(100);
+            });
+        });
+    });
+
+    describe("mergeClusters", () => {
+        it("merges clusters that exceed threshold", () => {
+            const clusters = new Map<string, string[]>([
+                ["A", ["face-1"]],
+                ["B", ["face-2"]],
+                ["C", ["face-3"]],
+            ]);
+
+            const matrix = new Map<string, Map<string, number>>([
+                [
+                    "A",
+                    new Map<string, number>([
+                        ["B", 0.95],
+                        ["C", 0.4],
+                    ]),
+                ],
+                [
+                    "B",
+                    new Map<string, number>([
+                        ["A", 0.95],
+                        ["C", 0.6],
+                    ]),
+                ],
+                [
+                    "C",
+                    new Map<string, number>([
+                        ["A", 0.4],
+                        ["B", 0.6],
+                    ]),
+                ],
+            ]);
+
+            const merged = mergeClusters(clusters, matrix, 0.9);
+            expect(merged.size).toBe(2);
+            const first = merged.get("cluster_0");
+            expect(first).toEqual(["face-1", "face-2"]);
+        });
+
+        it("retains clusters below threshold", () => {
+            const clusters = new Map<string, string[]>([
+                ["A", ["face-1"]],
+                ["B", ["face-2"]],
+            ]);
+            const matrix = new Map<string, Map<string, number>>([
+                ["A", new Map<string, number>([["B", 0.5]])],
+                ["B", new Map<string, number>([["A", 0.5]])],
+            ]);
+
+            const merged = mergeClusters(clusters, matrix, 0.8);
+            expect(merged.size).toBe(2);
+            expect(merged.get("cluster_0")).toEqual(["face-1"]);
+            expect(merged.get("cluster_1")).toEqual(["face-2"]);
         });
     });
 });

@@ -185,46 +185,66 @@ class PluginSettingsPage
      */
     public function sanitize_settings($input): array
     {
-        $sanitized = $this->get_settings();
+        $allSettings = $this->settingsRepository->getAll();
+        $recognition = isset($allSettings['recognition']) && is_array($allSettings['recognition'])
+            ? $allSettings['recognition']
+            : [
+                'baseUrl' => '',
+                'timeoutMs' => self::DEFAULT_TIMEOUT_MS,
+                'modelProfile' => '',
+                'apiKey' => '',
+                'enabled' => false,
+            ];
 
-        if (!is_array($input)) {
-            return $sanitized;
-        }
+        $baseUrl = isset($recognition['baseUrl']) && is_string($recognition['baseUrl'])
+            ? trim($recognition['baseUrl'])
+            : '';
 
-        if (array_key_exists('base_url', $input)) {
-            $baseUrl = trim((string) $input['base_url']);
-            if ($baseUrl === '') {
-                $sanitized['base_url'] = '';
-            } else {
-                $validated = filter_var($baseUrl, FILTER_VALIDATE_URL);
-                if ($validated !== false) {
-                    $sanitized['base_url'] = rtrim((string) $validated, '/');
+        $timeout = isset($recognition['timeoutMs']) && is_numeric($recognition['timeoutMs'])
+            ? (int) $recognition['timeoutMs']
+            : self::DEFAULT_TIMEOUT_MS;
+
+        $modelProfile = isset($recognition['modelProfile']) && is_string($recognition['modelProfile'])
+            ? $recognition['modelProfile']
+            : '';
+
+        if (is_array($input)) {
+            if (array_key_exists('base_url', $input)) {
+                $candidate = trim((string) $input['base_url']);
+                if ($candidate === '') {
+                    $baseUrl = '';
+                } else {
+                    $validated = filter_var($candidate, FILTER_VALIDATE_URL);
+                    if ($validated !== false) {
+                        $baseUrl = rtrim((string) $validated, '/');
+                    }
                 }
             }
-        }
 
-        if (array_key_exists('timeout_ms', $input)) {
-            $timeout = (int) $input['timeout_ms'];
-            if ($timeout <= 0) {
-                $timeout = self::DEFAULT_TIMEOUT_MS;
+            if (array_key_exists('timeout_ms', $input)) {
+                $timeoutCandidate = (int) $input['timeout_ms'];
+                if ($timeoutCandidate <= 0) {
+                    $timeoutCandidate = self::DEFAULT_TIMEOUT_MS;
+                }
+
+                $timeout = max(self::MIN_TIMEOUT_MS, min(self::MAX_TIMEOUT_MS, $timeoutCandidate));
             }
 
-            $timeout = max(self::MIN_TIMEOUT_MS, min(self::MAX_TIMEOUT_MS, $timeout));
-
-            $sanitized['timeout_ms'] = $timeout;
+            if (array_key_exists('model_profile', $input)) {
+                $modelProfile = sanitize_text_field((string) $input['model_profile']);
+            }
         }
 
-        if (array_key_exists('model_profile', $input)) {
-            $sanitized['model_profile'] = sanitize_text_field((string) $input['model_profile']);
-        }
+        $recognition['baseUrl'] = $baseUrl;
+        $recognition['timeoutMs'] = $timeout;
+        $recognition['modelProfile'] = $modelProfile;
 
-        $this->settingsRepository->saveRecognitionSettings([
-            'baseUrl' => $sanitized['base_url'],
-            'timeoutMs' => $sanitized['timeout_ms'],
-            'modelProfile' => $sanitized['model_profile'],
-        ]);
+        $allSettings['recognition'] = $recognition;
+        $allSettings['base_url'] = $baseUrl;
+        $allSettings['timeout_ms'] = $timeout;
+        $allSettings['model_profile'] = $modelProfile;
 
-        return $sanitized;
+        return $allSettings;
     }
 
     /**
@@ -232,26 +252,31 @@ class PluginSettingsPage
      */
     private function get_settings(): array
     {
-        $stored = get_option(self::OPTION_NAME);
-
-        if (!is_array($stored)) {
-            $stored = [];
-        }
+        $stored = $this->settingsRepository->getAll();
+        $recognition = isset($stored['recognition']) && is_array($stored['recognition'])
+            ? $stored['recognition']
+            : [];
 
         $baseUrl = '';
         if (isset($stored['base_url']) && is_string($stored['base_url'])) {
             $baseUrl = trim($stored['base_url']);
+        } elseif (isset($recognition['baseUrl']) && is_string($recognition['baseUrl'])) {
+            $baseUrl = trim($recognition['baseUrl']);
         }
 
         $timeout = self::DEFAULT_TIMEOUT_MS;
         if (isset($stored['timeout_ms']) && is_numeric($stored['timeout_ms'])) {
             $timeout = (int) $stored['timeout_ms'];
-            $timeout = max(self::MIN_TIMEOUT_MS, min(self::MAX_TIMEOUT_MS, $timeout));
+        } elseif (isset($recognition['timeoutMs']) && is_numeric($recognition['timeoutMs'])) {
+            $timeout = (int) $recognition['timeoutMs'];
         }
+        $timeout = max(self::MIN_TIMEOUT_MS, min(self::MAX_TIMEOUT_MS, $timeout));
 
         $modelProfile = '';
         if (isset($stored['model_profile']) && is_string($stored['model_profile'])) {
             $modelProfile = trim($stored['model_profile']);
+        } elseif (isset($recognition['modelProfile']) && is_string($recognition['modelProfile'])) {
+            $modelProfile = trim($recognition['modelProfile']);
         }
 
         return [

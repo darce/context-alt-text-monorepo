@@ -19,6 +19,8 @@ export const dashboardContractPayload: {
             rosterSync: "https://example.com/wp-json/cat/v1/roster/sync",
             settingsRecognition: "https://example.com/wp-json/cat/v1/settings/recognition",
             settingsRecognitionTest: "https://example.com/wp-json/cat/v1/settings/recognition/test",
+            unknownClusters: "https://example.com/wp-json/cat/v1/clusters",
+            faceScan: "https://example.com/wp-json/cat/v1/recognition/scan",
         },
         featureFlags: {
             coverageTrend: true,
@@ -129,6 +131,8 @@ const buildExpectedDashboardConfig = (config: AdminConfig) => ({
         rosterSync: config.endpoints?.rosterSync,
         settingsRecognition: config.endpoints?.settingsRecognition,
         settingsRecognitionTest: config.endpoints?.settingsRecognitionTest,
+        unknownClusters: config.endpoints?.unknownClusters,
+        faceScan: config.endpoints?.faceScan,
     },
     featureFlags: {
         coverageTrend: Boolean(config.featureFlags?.coverageTrend),

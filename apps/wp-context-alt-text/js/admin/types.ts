@@ -10,6 +10,8 @@ export interface DashboardEndpoints {
     rosterSync?: string;
     settingsRecognition?: string;
     settingsRecognitionTest?: string;
+    unknownClusters?: string;
+    faceScan?: string;
 }
 
 export interface FeatureFlags {

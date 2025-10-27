@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace ContextAltText\Roster;
 
+use ContextAltText\Recognition\ClusterClient;
 use ContextAltText\Recognition\RecognitionSettings;
 use function array_filter;
 use function array_merge;
@@ -28,7 +29,7 @@ use function wp_remote_retrieve_response_message;
 /**
  * Lightweight HTTP client for interacting with the recognition service roster APIs.
  */
-class RosterClient implements RosterRemote
+class RosterClient implements RosterRemote, ClusterClient
 {
     private const MAX_ATTEMPTS = 3;
     private const BASE_RETRY_DELAY_MS = 200;
@@ -134,6 +135,16 @@ class RosterClient implements RosterRemote
         $path = sprintf('/api/v0/roster/%s/embeddings', rawurlencode($remoteId));
 
         return $this->requestJson('POST', $path, $payload);
+    }
+
+    /**
+     * @param array<string,mixed> $payload
+     * @return array<string,mixed>
+     * @throws RosterClientException
+     */
+    public function requestClustering(array $payload): array
+    {
+        return $this->requestJson('POST', '/api/v0/cluster', $payload);
     }
 
     /**

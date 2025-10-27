@@ -248,6 +248,8 @@ export const getDashboardConfig = (): AdminConfig => {
                 typeof endpoints.settingsRecognition === "string" ? endpoints.settingsRecognition : undefined,
             settingsRecognitionTest:
                 typeof endpoints.settingsRecognitionTest === "string" ? endpoints.settingsRecognitionTest : undefined,
+            unknownClusters: typeof endpoints.unknownClusters === "string" ? endpoints.unknownClusters : undefined,
+            faceScan: typeof endpoints.faceScan === "string" ? endpoints.faceScan : undefined,
         },
         featureFlags: {
             coverageTrend: Boolean(featureFlags.coverageTrend ?? FALLBACK_FEATURE_FLAGS.coverageTrend),

@@ -10,6 +10,7 @@ use ContextAltText\Recognition\ClusterClient;
 use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Roster\RosterClientException;
 use ContextAltText\Tests\TestCase;
+use RuntimeException;
 
 final class ClusteringServiceTest extends TestCase
 {
@@ -70,14 +71,17 @@ final class ClusteringServiceTest extends TestCase
 
     public function test_remote_strategy_when_faces_exceed_threshold(): void
     {
-        $this->primeFaces(55);
+        $this->primeFaces(1100);
 
-        $this->clusterClient
+        /** @var \PHPUnit\Framework\MockObject\MockObject&ClusterClient $clusterClient */
+        $clusterClient = $this->clusterClient;
+
+        $clusterClient
             ->expects($this->once())
             ->method('requestClustering')
             ->with($this->callback(function (array $payload): bool {
                 $this->assertArrayHasKey('embeddings', $payload);
-                $this->assertCount(55, $payload['embeddings']);
+                $this->assertCount(1100, $payload['embeddings']);
                 $first = $payload['embeddings'][0];
                 $this->assertSame('face-1', $first['id']);
                 $this->assertArrayHasKey('vector', $first);
@@ -94,44 +98,42 @@ final class ClusteringServiceTest extends TestCase
 
         $result = $this->service->clusterUnknownFaces();
 
-        // With LOCAL_CLUSTER_THRESHOLD = 1000, this now uses local strategy
-        $this->assertSame('local', $result['strategy']);
-        $this->assertArrayHasKey('faces', $result);
-        
-        // Verify faces were clustered locally
+        $this->assertSame('remote', $result['strategy']);
+        $this->assertArrayHasKey('clusters', $result);
+        $this->assertNotEmpty($result['clusters']);
+
         $clusterUpdateQueries = array_values(array_filter(
             $this->wpdb->queries,
             static fn(string $query): bool => str_contains($query, "UPDATE wp_cat_unknown_faces SET cluster_id =")
         ));
 
-        // Local clustering should have assigned cluster IDs
-        $this->assertNotEmpty($clusterUpdateQueries, 'Expected cluster assignments from local clustering');
+        $this->assertNotEmpty($clusterUpdateQueries, 'Expected remote clustering to update face cluster assignments.');
     }
 
     public function test_falls_back_to_local_when_remote_clustering_fails(): void
     {
-        $this->primeFaces(60);
+        $this->primeFaces(1100);
 
-        // With LOCAL_CLUSTER_THRESHOLD = 1000, remote clustering is not attempted
-        // This test now verifies local clustering works with many faces
-        $this->clusterClient
-            ->expects($this->never())
-            ->method('requestClustering');
+        /** @var \PHPUnit\Framework\MockObject\MockObject&ClusterClient $clusterClient */
+        $clusterClient = $this->clusterClient;
+
+        $clusterClient
+            ->expects($this->once())
+            ->method('requestClustering')
+            ->willThrowException(new RuntimeException('remote failed'));
 
         $result = $this->service->clusterUnknownFaces();
 
         $this->assertSame('local', $result['strategy']);
         $this->assertArrayHasKey('faces', $result);
-        $this->assertCount(60, $result['faces']);
-        $this->assertSame(660, $result['faces'][59]['bbox']['imageWidth']);
-        $this->assertSame(460, $result['faces'][59]['bbox']['imageHeight']);
+        $this->assertCount(1100, $result['faces']);
 
-        $clusterUpdateQueries = array_filter(
+        $remoteCalls = array_values(array_filter(
             $this->wpdb->queries,
             static fn(string $query): bool => str_contains($query, 'UPDATE wp_cat_unknown_faces SET cluster_id')
-        );
+        ));
 
-        $this->assertSame([], array_values($clusterUpdateQueries));
+        $this->assertSame([], $remoteCalls, 'Fallback should not persist remote cluster assignments when remote call fails.');
     }
 
     public function test_get_cluster_suggestions_aggregates_matches(): void

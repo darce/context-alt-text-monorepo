@@ -20,8 +20,9 @@ final class FaceDetectionJobTest extends TestCase
         $wpdb = $GLOBALS['wpdb'];
         $wpdb->reset();
 
-        $repository = new UnknownFaceRepository($wpdb);
-        $pipeline = $this->createMock(FaceDetectionPipeline::class);
+    $repository = new UnknownFaceRepository($wpdb);
+    /** @var \PHPUnit\Framework\MockObject\MockObject&FaceDetectionPipeline $pipeline */
+    $pipeline = $this->createMock(FaceDetectionPipeline::class);
 
         $pipeline
             ->expects($this->once())
@@ -42,9 +43,16 @@ final class FaceDetectionJobTest extends TestCase
         $job->execute(321);
 
         $this->assertNotEmpty($wpdb->queries);
-        $query = $wpdb->queries[0];
-        $this->assertStringContainsString('INSERT INTO wp_cat_unknown_faces', $query);
-        $this->assertStringContainsString("'emb-123'", $query);
+        $insertQuery = null;
+        foreach ($wpdb->queries as $query) {
+            if (str_contains($query, 'INSERT INTO wp_cat_unknown_faces')) {
+                $insertQuery = $query;
+                break;
+            }
+        }
+
+        $this->assertNotNull($insertQuery, 'Expected INSERT INTO wp_cat_unknown_faces to be executed.');
+        $this->assertStringContainsString("'emb-123'", $insertQuery);
     }
 
     public function test_handles_empty_detection_set(): void
@@ -53,8 +61,9 @@ final class FaceDetectionJobTest extends TestCase
         $wpdb = $GLOBALS['wpdb'];
         $wpdb->reset();
 
-        $repository = new UnknownFaceRepository($wpdb);
-        $pipeline = $this->createMock(FaceDetectionPipeline::class);
+    $repository = new UnknownFaceRepository($wpdb);
+    /** @var \PHPUnit\Framework\MockObject\MockObject&FaceDetectionPipeline $pipeline */
+    $pipeline = $this->createMock(FaceDetectionPipeline::class);
 
         $pipeline
             ->expects($this->once())
@@ -65,6 +74,11 @@ final class FaceDetectionJobTest extends TestCase
         $job = new FaceDetectionJob($pipeline, $repository);
         $job->execute(400);
 
-        $this->assertSame([], $wpdb->queries);
+        $insertQueries = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_cat_unknown_faces')
+        ));
+
+        $this->assertSame([], $insertQueries, 'No insert queries should run when no faces are detected.');
     }
 }

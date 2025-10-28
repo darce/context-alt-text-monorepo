@@ -1380,6 +1380,73 @@ if (!isset($GLOBALS['wpdb'])) {
             return $this->mockVar;
         }
 
+        public function insert(string $table, array $data, $format = null)
+        {
+            $columns = array_keys($data);
+            $values = array_map(static function ($value): string {
+                if ($value === null) {
+                    return 'NULL';
+                }
+
+                if (is_numeric($value)) {
+                    return (string) $value;
+                }
+
+                return "'" . addslashes((string) $value) . "'";
+            }, array_values($data));
+
+            $sql = sprintf(
+                'INSERT INTO %s (%s) VALUES (%s)',
+                $table,
+                implode(', ', $columns),
+                implode(', ', $values)
+            );
+
+            $this->queries[] = $sql;
+
+            if ($this->insert_id === 0) {
+                $this->insert_id = 1;
+            }
+
+            return 1;
+        }
+
+        public function update(string $table, array $data, array $where, $format = null, $whereFormat = null)
+        {
+            $setParts = [];
+            foreach ($data as $column => $value) {
+                if ($value === null) {
+                    $setParts[] = sprintf("%s = NULL", $column);
+                } elseif (is_numeric($value)) {
+                    $setParts[] = sprintf("%s = %s", $column, (string) $value);
+                } else {
+                    $setParts[] = sprintf("%s = '%s'", $column, addslashes((string) $value));
+                }
+            }
+
+            $whereParts = [];
+            foreach ($where as $column => $value) {
+                if ($value === null) {
+                    $whereParts[] = sprintf("%s IS NULL", $column);
+                } elseif (is_numeric($value)) {
+                    $whereParts[] = sprintf("%s = %s", $column, (string) $value);
+                } else {
+                    $whereParts[] = sprintf("%s = '%s'", $column, addslashes((string) $value));
+                }
+            }
+
+            $sql = sprintf(
+                'UPDATE %s SET %s WHERE %s',
+                $table,
+                implode(', ', $setParts),
+                implode(' AND ', $whereParts)
+            );
+
+            $this->queries[] = $sql;
+
+            return 1;
+        }
+
         public function reset(): void
         {
             $this->queries = [];

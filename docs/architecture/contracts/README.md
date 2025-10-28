@@ -41,6 +41,7 @@ These samples help developers understand the expected data shapes without runnin
 ### Face Clustering Contracts
 
 - **`clustering-api.md`** - WordPress REST API for face clustering
+
   - POST /wp-json/cat/v1/recognition/scan - Batch face detection
   - GET /wp-json/cat/v1/clusters - List clusters with pagination
   - GET /wp-json/cat/v1/clusters/{id} - Cluster details with suggestions

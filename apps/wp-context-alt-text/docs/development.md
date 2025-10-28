@@ -368,6 +368,13 @@ wp cat-recognition analyze 123
 wp cat-roster status
 wp cat-roster sync
 
+# Face detection and clustering
+wp cat-faces scan --attachment-ids=123,456
+wp cat-faces stats
+wp cat-faces list-clusters
+wp cat-faces cluster-detail <cluster-id>
+wp cat-faces clear-unknown --yes
+
 # Configuration
 wp option get cat_settings --format=json
 ```
@@ -377,9 +384,162 @@ wp option get cat_settings --format=json
 1. Visit WordPress admin dashboard
 2. Navigate to **Context Alt Text → Workbench**
 3. Upload test image with faces
-4. Click "Trigger Recognition"
-5. Verify observations appear
-6. Test roster assignment
+4. Click **"Scan for Faces"** to trigger detection
+5. View clustered faces in **Unknown People** panel
+6. Test cluster detail view and labeling workflow
+7. Verify roster assignment
+
+---
+
+## Face Clustering Architecture
+
+### Overview
+
+The plugin implements automatic face clustering using embedding-based similarity. Faces are detected via the recognition service (InsightFace), and 512-dimensional embeddings are stored in WordPress for local clustering.
+
+### Components
+
+**Domain Layer (`src/Domain/Clustering/`):**
+- `ClusteringEngine.php` - Interface for clustering operations
+- `ClusteringService.php` - Main clustering logic with local algorithm
+- `UnknownFace.php` - Entity representing detected face with embedding
+
+**Infrastructure Layer (`src/Infrastructure/`):**
+- `UnknownFaceRepository.php` - Database CRUD operations
+- `UnknownFaceTableInstaller.php` - Schema management with `embedding_vector` column
+
+**Jobs & Recognition (`src/Jobs/`, `src/Recognition/`):**
+- `FaceDetectionJob.php` - Persists faces with IoU duplicate detection
+- `FaceDetectionPipeline.php` - Interface for detection strategies
+- `RecognitionServiceFaceDetectionPipeline.php` - Calls recognition API
+- `SynchronousFaceDetectionQueue.php` - Triggers clustering after batch
+- `ScanController.php` - REST endpoint for batch scanning
+- `ClusterController.php` - REST endpoints for cluster operations
+- `CachedFaceThumbnailProvider.php` - 112x112px thumbnail generation
+
+**Frontend (`js/`):**
+- `components/workbench/UnknownPeoplePanel.tsx` - Main clustering UI
+- `components/workbench/ClusterCard.tsx` - Individual cluster display
+- `components/workbench/ClusterDetailView.tsx` - Cluster inspection view
+- `components/workbench/ClusterConfirmationModal.tsx` - Labeling workflow
+- `hooks/useUnknownClusters.ts` - Fetch grouped faces
+- `hooks/useClusterDetail.ts` - Fetch cluster details
+- `hooks/useFaceScan.ts` - Trigger batch face detection
+
+### Clustering Algorithm
+
+**Single-Linkage Hierarchical Clustering:**
+- Uses cosine similarity on L2-normalized 512-dim embeddings
+- Threshold: 0.45 for merging clusters
+- Runs locally in PHP (no remote clustering endpoint)
+- Triggered automatically after face detection batch completes
+
+**Implementation:**
+```php
+// In ClusteringService::clusterEmbeddingsLocally()
+1. Load all unknown faces with embeddings
+2. Normalize embedding vectors (L2 normalization)
+3. Compute pairwise cosine similarities
+4. Merge clusters if similarity > 0.45
+5. Update cluster assignments in database
+```
+
+### Database Schema
+
+**Table: `wp_cat_unknown_faces`**
+- `embedding_vector` - MEDIUMTEXT, stores JSON array of floats (~5KB per face)
+- `embedding_id` - VARCHAR(255), unique identifier from recognition service
+- `cluster_id` - VARCHAR(255), NULL for unclustered faces
+- Auto-migration adds `embedding_vector` column if missing
+
+### Workflow
+
+1. **Face Detection:**
+   - User clicks "Scan for Faces" button
+   - Frontend calls `POST /wp-json/cat/v1/recognition/scan`
+   - `ScanController` enqueues batch job
+   - `FaceDetectionJob` processes each attachment
+   - Recognition service returns bounding boxes + embeddings
+   - Embeddings stored as JSON in `embedding_vector` column
+
+2. **Automatic Clustering:**
+   - `SynchronousFaceDetectionQueue` triggers clustering after batch
+   - `ClusteringService::clusterUnknownFaces()` called
+   - Local clustering algorithm groups similar faces
+   - Cluster IDs assigned to faces
+
+3. **UI Display:**
+   - Frontend fetches clusters via `GET /wp-json/cat/v1/clusters`
+   - `UnknownPeoplePanel` displays cluster cards
+   - Each card shows thumbnail and face count
+
+4. **Labeling:**
+   - User clicks cluster to view details
+   - `ClusterDetailView` shows all faces in cluster
+   - User selects roster entry from suggestions
+   - `ClusterConfirmationModal` confirms identity
+   - All faces in cluster labeled with roster ID
+
+### Testing
+
+**Unit Tests:**
+```bash
+# Clustering logic
+composer test -- tests/Domain/Clustering/ClusteringServiceTest.php
+
+# Repository operations
+composer test -- tests/Infrastructure/Repositories/UnknownFaceRepositoryTest.php
+
+# Face detection
+composer test -- tests/Jobs/FaceDetectionJobTest.php
+```
+
+**Integration Tests:**
+```bash
+# API endpoints
+composer test -- tests/Recognition/ClusterControllerTest.php
+composer test -- tests/Recognition/ScanControllerTest.php
+```
+
+**Frontend Tests:**
+```bash
+# React components
+npm run test -- js/components/workbench/UnknownPeoplePanel.test.tsx
+
+# Hooks
+npm run test -- js/hooks/useUnknownClusters.test.ts
+```
+
+### Configuration
+
+**Clustering Threshold:**
+```php
+// In ClusteringService.php
+const LOCAL_CLUSTER_THRESHOLD = 1000; // Always use local clustering
+const SIMILARITY_THRESHOLD = 0.45;    // Merge if similarity > 0.45
+```
+
+**Database Limits:**
+- Embedding vector: ~5KB per face (512 floats as JSON)
+- MEDIUMTEXT column: Max 16MB (~3,200 faces per table)
+- Consider archiving old faces if approaching limits
+
+### Troubleshooting
+
+**No embeddings persisted:**
+- Check recognition service includes `embedding` field in response
+- Verify `scene_analysis_service.py` lines 73-85 for embedding data
+- Test: `curl http://localhost:7860/api/v0/recognition/analyze -X POST ...`
+
+**Clustering not working:**
+- Check `LOCAL_CLUSTER_THRESHOLD` is set high enough
+- Verify automatic clustering trigger in `SynchronousFaceDetectionQueue`
+- Test: `wp cat-faces stats` should show "Clustered: X (Y%)"
+
+**Missing thumbnails:**
+- Check crop dimensions (minimum 28x28px for 112x112px resize)
+- Verify WordPress image functions available
+- Fallback placeholder (👤) shows for failed crops
 
 ---
 

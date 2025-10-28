@@ -12,6 +12,10 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 
 ## Core Engineering Principles
 
+> Greenfield Reset Policy
+>
+> This plugin has no production footprint yet. Treat every storage surface (database tables, options, caches) as disposable while building V3. If a better schema or implementation emerges, prefer rewriting the tables and corresponding code over introducing migrations or backwards-compatibility shims. Recreate structures in-place during activation and keep the test suite in lockstep.
+
 > Current Distribution Status
 >
 > There is **no existing public install base or previously shipped version** of this plugin. That means we have full latitude to _delete or aggressively refactor unshipped / experimental features_ instead of carrying legacy flags or migration shims. If a capability (e.g., local face tagging, discovery scans) is not needed for the presently validated roadmap slice, remove it cleanly and re‑introduce later behind tests when truly required. Prefer removal over long‑lived feature flags unless a near‑term reinstatement is already scheduled.
@@ -22,6 +26,7 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 4. Deterministic Tests: No network calls, random, or time-based flakiness without controlled seams/mocks.
 5. Update the Model: UML + roadmap status tags must reflect reality immediately after a slice merges.
 6. Mirror Contracts: when one side updates DTOs or OpenAPI specs, update shared fixtures under `docs/architecture` and notify the counterpart team via the weekly integration check-in.
+7. **User Consent for Remote Resources**: Never use remote recognition services, embeddings, or roster sync operations without explicit user confirmation. All operations that modify remote FAISS indexes, sync embeddings, or trigger background processing must be initiated by user action (button click, confirmation dialog) and provide immediate feedback on success/failure.
 
 **Accuracy & Metrics**
 
@@ -252,6 +257,8 @@ Quality Heuristics:
    - cat/finalize_session
    - cat/create_roster_entry
    - cat/propagate
+   - cat/scan_faces (face detection and clustering)
+   - cat/cluster_faces (manual clustering trigger)
    - cat/first_run_scan (optional: discovery; legacy name cat/magic_import_scan)
 
 2. Schemas:

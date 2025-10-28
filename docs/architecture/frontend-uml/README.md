@@ -3,8 +3,8 @@
 
 This directory contains architectural diagrams and patterns for the Context Alt Text frontend React application.
 
-**Last Updated:** October 18, 2025  
-**Status:** Phase 10 tactical refactoring complete (5/7 tasks), 716 tests passing  
+**Last Updated:** October 28, 2025  
+**Status:** Phase 10 complete, Face Clustering POC complete (716 tests passing)  
 **Next:** Complete MVP alt-text generation pipeline, then RosterRoute refactoring
 
 ## 📋 Quick Reference
@@ -99,6 +99,22 @@ See [`../rules/instructions.md`](../rules/instructions.md) for complete enforcem
 4. Alt-text generation (future: LLM integration)
 
 **When to use:** Understanding recognition flow, debugging issues, planning alt-text integration
+
+---
+
+#### **`face-clustering-components.mmd`** (NEW - October 2025)
+
+**Purpose:** Face clustering frontend architecture showing components, hooks, and data flow
+
+**Shows:**
+
+- Components: UnknownPeoplePanel, ClusterCard, ClusterDetailView, ClusterConfirmationModal, FaceScanActions
+- Hooks: useUnknownClusters, useClusterDetail, useClusterSuggestions, useFaceScan
+- API Client: clusterApi with REST endpoints
+- Types: ClusterSummary, ClusterDetail, UnknownFace, ClusterSuggestion, BBox
+- Data flow: React Query → REST API → ClusteringService
+
+**When to use:** Working on face clustering UI, understanding clustering workflow, debugging cluster operations
 
 ---
 

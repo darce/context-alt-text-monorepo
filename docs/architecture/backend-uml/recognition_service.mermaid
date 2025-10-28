@@ -1,5 +1,5 @@
 ---
-title: InsightFace Recognition Service (2024 pipeline)
+title: InsightFace Recognition Service (2024-2025 pipeline)
 ---
 flowchart LR
     subgraph ports["Ports"]
@@ -7,17 +7,19 @@ flowchart LR
         diagnostics_port["DiagnosticsPort\nget_service_info()\nreload_embeddings()"]
         model_port["RecognitionModelPort\nanalyze(image)\nmodel_info()"]
         embedding_port["EmbeddingRouterPort\nload_embeddings(model)\nfind_matches(vector, threshold)\nreload_if_needed()"]; 
+        scene_analysis_port["SceneAnalysisPort\nanalyze_scene(image, threshold)\nreturns: DetectedEntity[] with embeddings"]
     end
 
     subgraph domain["Domain Layer"]
         recognition_service["FaceRecognitionService\n- reloads roster cache on demand\n- orchestrates detection → embedding → matches\n- emits RecognitionResult + metrics"]
-        recognition_entities["Domain Entities\nFaceDetection\nFaceEmbedding\nMatchResult\nRecognitionResult"]
+        scene_analysis_service["SceneAnalysisService\n- high-level orchestration\n- combines object detection + face recognition\n- returns 512-dim embeddings in response\n- includes embedding_id, embedding, embedding_dimension"]
+        recognition_entities["Domain Entities\nFaceDetection\nFaceEmbedding (512-dim)\nMatchResult\nRecognitionResult\nDetectedEntity"]
         recognition_settings["Settings (Pydantic)\ninsightface, recognition, router, cache"]
         maintenance_tasks["Maintenance Tasks\n• reload_embeddings()\n• get_service_info()\n• timing + counts"]
     end
 
     subgraph adapters["Adapters & Helpers"]
-        insightface_adapter["InsightFaceAdapter\n(GPU aware)\nimplements RecognitionModelPort"]
+        insightface_adapter["InsightFaceAdapter\n(GPU aware)\nimplements RecognitionModelPort\nGenerates 512-dim embeddings"]
         embedding_router["EmbeddingRouterAdapter\n(JSON roster cache)\nimplements EmbeddingRouterPort"]
         reload_scheduler["EmbeddingReloadPolicy\n(auto reload interval)\n(get_loaded_count)"]
         metrics_helper["RecognitionMetrics\nprocessing_time_ms\nloaded_entities"]
@@ -33,6 +35,8 @@ flowchart LR
 
     recognition_port --> recognition_service
     diagnostics_port --> recognition_service
+    scene_analysis_port --> scene_analysis_service
+    scene_analysis_service --> recognition_service
     recognition_service --> recognition_entities
     recognition_service --> recognition_settings
     recognition_service --> maintenance_tasks
@@ -57,7 +61,7 @@ flowchart LR
     classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
     classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class ports,recognition_port,diagnostics_port,model_port,embedding_port portsClass
-    class domain,recognition_service,recognition_entities,recognition_settings,maintenance_tasks domainClass
+    class ports,recognition_port,diagnostics_port,model_port,embedding_port,scene_analysis_port portsClass
+    class domain,recognition_service,scene_analysis_service,recognition_entities,recognition_settings,maintenance_tasks domainClass
     class adapters,insightface_adapter,embedding_router,reload_scheduler,metrics_helper adapterClass
     class external,insightface_weights,embeddings_file,roster_index,settings_yaml,cache_dirs externalClass

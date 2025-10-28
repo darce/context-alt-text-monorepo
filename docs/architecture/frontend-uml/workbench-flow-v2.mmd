@@ -21,107 +21,141 @@ flowchart TD
 
     subgraph Utilities["Shared Utilities"]
         httpUtils[HTTP Utils<br/>buildApiUrl, fetchApi]
-        normalize[Normalization<br/>primitives, recognition]
-        validation[Validation Constants<br/>timeout, URL patterns]
-        noticeUtil[dispatchNotice<br/>consolidated system]
-    end
+        ```mermaid.radar
+        %% Workbench Face Clustering Flow (October 2025)
+        %% Remote recognition service performs detection + clustering (no local fallback)
 
-    subgraph ReactQuery["React Query Layer"]
-        queryClient[(QueryClient)]
-        queries[Media Queries]
-        mutations[Recognition Mutations]
-    end
+        flowchart TD
+            user([Admin Editor]) --> route[WorkbenchRoute]
 
-    subgraph RESTAPI["WordPress REST API"]
-        mediaEndpoint["GET /workbench/media<br/>?page=1&per_page=20&status=all"]
-        recognitionEndpoint["POST /recognition/analyze<br/>{ attachment_ids: [...] }"]
-        observationEndpoint["GET /observations<br/>?attachment_id=123"]
-        updateObservation["PATCH /observations/:id"]
-    end
+            subgraph WorkbenchUI["Workbench UI"]
+                route --> faceScan[FaceScanActions]
+                route --> unknownPanel[UnknownPeoplePanel]
+                unknownPanel --> detailView[ClusterDetailView]
+                detailView --> confirmModal[ClusterConfirmationModal]
+            end
 
-    subgraph Backend["Recognition Service (Remote)"]
-        analyzeScene["POST /api/v0/analyze-scene<br/>Face detection + embedding"]
-        rosterMatch["GET /api/v0/roster<br/>Match embeddings to roster"]
-        storeResults["Store observations in WP"]
-    end
+            subgraph HooksAndClients["React Hooks & API Client"]
+                faceScan --> hookFaceScan[useFaceScan]
+                unknownPanel --> hookUnknown[useUnknownClusters]
+                detailView --> hookDetail[useClusterDetail]
+                detailView --> hookSuggest[useClusterSuggestions]
+                confirmModal --> clusterApiNode[clusterApi.confirmCluster]
+            end
 
-    subgraph PHP["WordPress Backend"]
-        workbenchResolver[WorkbenchMediaResolver<br/>337 lines, refactored]
-        recognitionService[RecognitionService<br/>handles API calls]
-        observationManager[RosterObservationManager<br/>stores observations]
-        sanitization[SanitizationHelpers<br/>aligned with TS]
-    end
+            subgraph ReactQuery["React Query"]
+                queryClient[(QueryClient)]
+            end
 
-    %% UI Flow
-    route --> app
-    app --> mediaList
-    app --> toolbar
-    app --> recognitionPanel
-    app --> notices
+            subgraph WPAPI["WP REST API"]
+                scanEndpoint["POST /cat/v1/recognition/scan"]
+                listEndpoint["GET /cat/v1/clusters"]
+                detailEndpoint["GET /cat/v1/clusters/{id}"]
+                suggestEndpoint["GET /cat/v1/clusters/{id}/suggestions"]
+                confirmEndpoint["POST /cat/v1/clusters/{id}/confirm"]
+            end
 
-    %% Hook Integration
-    app --> useWorkbench
-    app --> useActions
-    recognitionPanel --> useRecognition
-    useRecognition --> useSubmit
-    useRecognition --> usePoll
+            subgraph PHPDomain["WordPress Domain Layer"]
+                scanController[ScanController::scanBatch]
+                faceQueue[FaceDetectionQueue::enqueueBatch]
+                detectionPipeline[FaceDetectionPipeline]
+                clusterListController[ClusterController::listClusters]
+                clusterDetailController[ClusterController::getClusterDetail]
+                clusterSuggestController[ClusterController::getClusterSuggestions]
+                clusterConfirmController[ClusterController::confirmCluster]
+                clusteringService[ClusteringService::clusterUnknownFaces]
+                detailService[ClusteringService::getClusterDetail]
+                suggestionService[ClusteringService::getClusterSuggestions]
+                confirmService[ClusteringService::confirmCluster]
+                clusterClient[ClusterClient::requestClustering]
+                recognitionClient[RecognitionClient]
+                unknownRepo[UnknownFaceRepository]
+                rosterService[RosterService]
+            end
 
-    %% React Query Integration
-    useWorkbench --> queries
-    useSubmit --> mutations
-    usePoll --> queries
-    queries --> queryClient
-    mutations --> queryClient
+            subgraph RemoteRecognition["Recognition Service (Remote)"]
+                remoteDetect[Face detection & embedding]
+                remoteCluster[Clustering endpoint]
+                remoteSuggest[Roster match suggestions]
+                remoteRoster[Roster embedding ingest]
+            end
 
-    %% Utility Usage
-    useWorkbench --> httpUtils
-    useSubmit --> httpUtils
-    usePoll --> httpUtils
-    httpUtils --> normalize
-    httpUtils --> validation
-    app --> noticeUtil
+            %% Hook ↔ React Query cache
+            hookUnknown --> queryClient
+            hookDetail --> queryClient
+            hookSuggest --> queryClient
+            clusterApiNode --> queryClient
 
-    %% API Calls
-    queries --> mediaEndpoint
-    mutations --> recognitionEndpoint
-    queries --> observationEndpoint
+            %% Hook → REST endpoints
+            hookFaceScan --> scanEndpoint
+            hookUnknown --> listEndpoint
+            hookDetail --> detailEndpoint
+            hookSuggest --> suggestEndpoint
+            clusterApiNode --> confirmEndpoint
 
-    %% Backend Processing
-    mediaEndpoint --> workbenchResolver
-    recognitionEndpoint --> recognitionService
-    recognitionService --> analyzeScene
-    analyzeScene --> rosterMatch
-    rosterMatch --> storeResults
-    storeResults --> observationManager
-    observationManager --> observationEndpoint
+            %% REST → Controllers
+            scanEndpoint --> scanController
+            listEndpoint --> clusterListController
+            detailEndpoint --> clusterDetailController
+            suggestEndpoint --> clusterSuggestController
+            confirmEndpoint --> clusterConfirmController
 
-    %% Contract Alignment
-    workbenchResolver --> sanitization
-    normalize -.contract.-> sanitization
+            %% Controllers → Services / Infrastructure
+            scanController --> faceQueue
+            faceQueue --> detectionPipeline
+            detectionPipeline --> remoteDetect
+            remoteDetect --> unknownRepo
 
-    %% User Actions
-    user([Admin User]) --> route
-    mediaList --> user
-    toolbar --> user
-    recognitionPanel --> user
-    notices --> user
+            clusterListController --> clusteringService
+            clusteringService --> clusterClient
+            clusterClient --> remoteCluster
+            remoteCluster --> clusteringService
+            unknownRepo --> clusteringService
+            clusteringService --> clusterListController
 
-    %% Notes
-    note1["✅ Hooks refactored: 333 lines with extracted logic"]
-    note2["✅ Utilities aligned: TS ↔ PHP contracts documented"]
-    note3["✅ 716 tests passing: frontend + PHP"]
-    note4["📍 MVP Focus: Recognition workflow completion"]
+            clusterDetailController --> detailService
+            detailService --> unknownRepo
+            unknownRepo --> detailService
 
-    useRecognition -.- note1
-    httpUtils -.- note2
-    queryClient -.- note3
-    Backend -.- note4
+            clusterSuggestController --> suggestionService
+            suggestionService --> unknownRepo
+            suggestionService --> recognitionClient
+            recognitionClient --> remoteSuggest
+            remoteSuggest --> recognitionClient
 
-    %% Styling
-    classDef complete fill:#d4edda,stroke:#28a745,stroke-width:2px
-    classDef refactored fill:#fff3cd,stroke:#ffc107,stroke-width:2px
-    classDef remote fill:#cfe2ff,stroke:#0d6efd,stroke-width:2px
+            clusterConfirmController --> confirmService
+            confirmService --> rosterService
+            confirmService --> recognitionClient
+            confirmService --> unknownRepo
+            recognitionClient --> remoteRoster
+            remoteRoster --> recognitionClient
+            rosterService --> remoteRoster
 
-    class mediaList,toolbar,recognitionPanel complete
-    class useWorkbench,useRecognition,useActions refactored
-    class analyzeScene,rosterMatch remote
+            %% React Query cache invalidation loop
+            clusterApiNode -- invalidate unknown-clusters & cluster-detail --> queryClient
+            queryClient -. triggers refetch .-> hookUnknown
+            queryClient -. triggers refetch .-> hookDetail
+
+            %% Notes
+            note over remoteDetect,remoteCluster: Remote service owns face detection and clustering.
+            note right of remoteSuggest: Suggestions derived from roster search API.
+            note right of clusterApiNode: Confirmation labels faces and syncs roster embeddings.
+
+            %% Styling
+            classDef ui fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
+            classDef hook fill:#fff8e1,stroke:#ffb300,stroke-width:1px
+            classDef query fill:#ede7f6,stroke:#5e35b1,stroke-width:1px
+            classDef api fill:#e3f2fd,stroke:#1e88e5,stroke-width:1px
+            classDef domain fill:#f3e5f5,stroke:#8e24aa,stroke-width:1px
+            classDef remote fill:#ffe0b2,stroke:#fb8c00,stroke-width:1px
+
+            class route,faceScan,unknownPanel,detailView,confirmModal ui
+            class hookFaceScan,hookUnknown,hookDetail,hookSuggest,clusterApiNode hook
+            class queryClient query
+            class scanEndpoint,listEndpoint,detailEndpoint,suggestEndpoint,confirmEndpoint api
+            class scanController,faceQueue,detectionPipeline,clusterListController,clusterDetailController,clusterSuggestController,
+                  clusterConfirmController,clusteringService,detailService,suggestionService,confirmService,clusterClient,
+                  recognitionClient,unknownRepo,rosterService domain
+            class remoteDetect,remoteCluster,remoteSuggest,remoteRoster remote
+
+        ```

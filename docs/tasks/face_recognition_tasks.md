@@ -1,6 +1,6 @@
 # Face Recognition Workflow — Implementation Tasks
 
-This plan unifies the Workbench recognition flow with the roster-oriented diagrams (`frontend-uml/sequence-face-tagging-remote.mmd`, `frontend-uml/sequence-reference-upload.mmd`) and Roadmap v3 (Epic C: Recognition Pipeline).
+This plan unifies the Workbench recognition flow with the roster-oriented diagrams (`frontend-uml/sequence-interactive-detection.mmd`, `frontend-uml/sequence-reference-upload.mmd`, `frontend-uml/sequence-complete-workflow.mmd`) and Roadmap v3 (Epic C: Recognition Pipeline).
 
 ## Progress Summary
 
@@ -74,4 +74,3 @@ This plan unifies the Workbench recognition flow with the roster-oriented diagra
 - [x] PHPUnit tests for recognition endpoints (capabilities, payload validation, job status flow). ✅ `ApiTest.php` includes: capability checks (`manage_options`), route registration, job queueing, job hydration, observation storage, deferred/rejected flows.
 - [ ] Contract tests ensuring PHP DTOs match backend OpenAPI schema for `/analyze-scene`. **Partial**: `RecognitionJobServiceTest` validates backend response structure using shared sample JSON.
 - [x] Vitest/RTL coverage for recognition panel state machine (idle → running → success/error) and labeling actions. ✅ `RecognitionActions.test.tsx` covers: disabled state, submission flow, polling, success state with observations, error handling with retry. `useRecognitionJob.test.tsx` covers: hook disabled state, submission→polling→complete cycle, polling errors.
-

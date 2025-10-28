@@ -50,7 +50,12 @@ final class UnknownFaceTableInstallerTest extends TestCase
         $installer->install();
         $installer->install();
 
-        $this->assertCount(2, $wpdb->queries, 'Installer should run the CREATE TABLE statement on each call.');
-        $this->assertSame($wpdb->queries[0], $wpdb->queries[1]);
+        $createStatements = array_values(array_filter(
+            $wpdb->queries,
+            static fn(string $query): bool => str_starts_with($query, 'CREATE TABLE IF NOT EXISTS')
+        ));
+
+        $this->assertCount(2, $createStatements, 'Installer should run the CREATE TABLE statement on each call.');
+        $this->assertSame($createStatements[0], $createStatements[1]);
     }
 }

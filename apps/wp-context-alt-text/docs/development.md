@@ -400,15 +400,18 @@ The plugin implements automatic face clustering using embedding-based similarity
 ### Components
 
 **Domain Layer (`src/Domain/Clustering/`):**
+
 - `ClusteringEngine.php` - Interface for clustering operations
 - `ClusteringService.php` - Main clustering logic with local algorithm
 - `UnknownFace.php` - Entity representing detected face with embedding
 
 **Infrastructure Layer (`src/Infrastructure/`):**
+
 - `UnknownFaceRepository.php` - Database CRUD operations
 - `UnknownFaceTableInstaller.php` - Schema management with `embedding_vector` column
 
 **Jobs & Recognition (`src/Jobs/`, `src/Recognition/`):**
+
 - `FaceDetectionJob.php` - Persists faces with IoU duplicate detection
 - `FaceDetectionPipeline.php` - Interface for detection strategies
 - `RecognitionServiceFaceDetectionPipeline.php` - Calls recognition API
@@ -418,6 +421,7 @@ The plugin implements automatic face clustering using embedding-based similarity
 - `CachedFaceThumbnailProvider.php` - 112x112px thumbnail generation
 
 **Frontend (`js/`):**
+
 - `components/workbench/UnknownPeoplePanel.tsx` - Main clustering UI
 - `components/workbench/ClusterCard.tsx` - Individual cluster display
 - `components/workbench/ClusterDetailView.tsx` - Cluster inspection view
@@ -429,12 +433,14 @@ The plugin implements automatic face clustering using embedding-based similarity
 ### Clustering Algorithm
 
 **Single-Linkage Hierarchical Clustering:**
+
 - Uses cosine similarity on L2-normalized 512-dim embeddings
 - Threshold: 0.45 for merging clusters
 - Runs locally in PHP (no remote clustering endpoint)
 - Triggered automatically after face detection batch completes
 
 **Implementation:**
+
 ```php
 // In ClusteringService::clusterEmbeddingsLocally()
 1. Load all unknown faces with embeddings
@@ -447,6 +453,7 @@ The plugin implements automatic face clustering using embedding-based similarity
 ### Database Schema
 
 **Table: `wp_cat_unknown_faces`**
+
 - `embedding_vector` - MEDIUMTEXT, stores JSON array of floats (~5KB per face)
 - `embedding_id` - VARCHAR(255), unique identifier from recognition service
 - `cluster_id` - VARCHAR(255), NULL for unclustered faces
@@ -455,34 +462,35 @@ The plugin implements automatic face clustering using embedding-based similarity
 ### Workflow
 
 1. **Face Detection:**
-   - User clicks "Scan for Faces" button
-   - Frontend calls `POST /wp-json/cat/v1/recognition/scan`
-   - `ScanController` enqueues batch job
-   - `FaceDetectionJob` processes each attachment
-   - Recognition service returns bounding boxes + embeddings
-   - Embeddings stored as JSON in `embedding_vector` column
+    - User clicks "Scan for Faces" button
+    - Frontend calls `POST /wp-json/cat/v1/recognition/scan`
+    - `ScanController` enqueues batch job
+    - `FaceDetectionJob` processes each attachment
+    - Recognition service returns bounding boxes + embeddings
+    - Embeddings stored as JSON in `embedding_vector` column
 
 2. **Automatic Clustering:**
-   - `SynchronousFaceDetectionQueue` triggers clustering after batch
-   - `ClusteringService::clusterUnknownFaces()` called
-   - Local clustering algorithm groups similar faces
-   - Cluster IDs assigned to faces
+    - `SynchronousFaceDetectionQueue` triggers clustering after batch
+    - `ClusteringService::clusterUnknownFaces()` called
+    - Local clustering algorithm groups similar faces
+    - Cluster IDs assigned to faces
 
 3. **UI Display:**
-   - Frontend fetches clusters via `GET /wp-json/cat/v1/clusters`
-   - `UnknownPeoplePanel` displays cluster cards
-   - Each card shows thumbnail and face count
+    - Frontend fetches clusters via `GET /wp-json/cat/v1/clusters`
+    - `UnknownPeoplePanel` displays cluster cards
+    - Each card shows thumbnail and face count
 
 4. **Labeling:**
-   - User clicks cluster to view details
-   - `ClusterDetailView` shows all faces in cluster
-   - User selects roster entry from suggestions
-   - `ClusterConfirmationModal` confirms identity
-   - All faces in cluster labeled with roster ID
+    - User clicks cluster to view details
+    - `ClusterDetailView` shows all faces in cluster
+    - User selects roster entry from suggestions
+    - `ClusterConfirmationModal` confirms identity
+    - All faces in cluster labeled with roster ID
 
 ### Testing
 
 **Unit Tests:**
+
 ```bash
 # Clustering logic
 composer test -- tests/Domain/Clustering/ClusteringServiceTest.php
@@ -495,6 +503,7 @@ composer test -- tests/Jobs/FaceDetectionJobTest.php
 ```
 
 **Integration Tests:**
+
 ```bash
 # API endpoints
 composer test -- tests/Recognition/ClusterControllerTest.php
@@ -502,6 +511,7 @@ composer test -- tests/Recognition/ScanControllerTest.php
 ```
 
 **Frontend Tests:**
+
 ```bash
 # React components
 npm run test -- js/components/workbench/UnknownPeoplePanel.test.tsx
@@ -513,6 +523,7 @@ npm run test -- js/hooks/useUnknownClusters.test.ts
 ### Configuration
 
 **Clustering Threshold:**
+
 ```php
 // In ClusteringService.php
 const LOCAL_CLUSTER_THRESHOLD = 1000; // Always use local clustering
@@ -520,6 +531,7 @@ const SIMILARITY_THRESHOLD = 0.45;    // Merge if similarity > 0.45
 ```
 
 **Database Limits:**
+
 - Embedding vector: ~5KB per face (512 floats as JSON)
 - MEDIUMTEXT column: Max 16MB (~3,200 faces per table)
 - Consider archiving old faces if approaching limits
@@ -527,16 +539,19 @@ const SIMILARITY_THRESHOLD = 0.45;    // Merge if similarity > 0.45
 ### Troubleshooting
 
 **No embeddings persisted:**
+
 - Check recognition service includes `embedding` field in response
 - Verify `scene_analysis_service.py` lines 73-85 for embedding data
 - Test: `curl http://localhost:7860/api/v0/recognition/analyze -X POST ...`
 
 **Clustering not working:**
+
 - Check `LOCAL_CLUSTER_THRESHOLD` is set high enough
 - Verify automatic clustering trigger in `SynchronousFaceDetectionQueue`
 - Test: `wp cat-faces stats` should show "Clustered: X (Y%)"
 
 **Missing thumbnails:**
+
 - Check crop dimensions (minimum 28x28px for 112x112px resize)
 - Verify WordPress image functions available
 - Fallback placeholder (👤) shows for failed crops

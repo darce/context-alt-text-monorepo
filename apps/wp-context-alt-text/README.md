@@ -193,6 +193,7 @@ The plugin checks configuration sources in this order:
 The plugin includes automatic face detection and similarity-based clustering:
 
 **Face Detection:**
+
 ```bash
 # Trigger batch face detection
 wp cat-faces scan --attachment-ids=123,456,789
@@ -205,12 +206,14 @@ wp cat-faces clear-unknown --yes
 ```
 
 **Face Clustering:**
+
 - Automatic clustering after face detection completes
 - Uses 512-dimensional embeddings from InsightFace
 - Local single-linkage clustering with cosine similarity (threshold: 0.45)
 - Groups similar faces for efficient batch labeling
 
 **Workbench UI:**
+
 1. Navigate to **Context Alt Text → Workbench**
 2. Click **"Scan for Faces"** to detect faces in uploaded images
 3. View clustered faces in **"Unknown People"** panel
@@ -218,6 +221,7 @@ wp cat-faces clear-unknown --yes
 5. Confirm identity to label all faces in cluster
 
 **CLI Commands:**
+
 ```bash
 # View clustered faces
 wp cat-faces list-clusters

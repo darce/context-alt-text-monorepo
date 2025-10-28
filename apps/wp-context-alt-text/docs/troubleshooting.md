@@ -154,31 +154,34 @@ wp eval 'echo (new \ContextAltText\Recognition\RecognitionSettings())->getBaseUr
 ### "Face scan button disabled"
 
 **Symptoms:**
+
 - "Scan for Faces" button appears grayed out
 - No face detection options available
 
 **Solutions:**
 
 1. **Check if images are selected:**
-   - At least one image must be uploaded to enable scan
+    - At least one image must be uploaded to enable scan
 
 2. **Verify recognition service is running:**
-   ```bash
-   curl http://localhost:7860/api/v0/health
-   # Should return: {"status":"ok"}
-   ```
+
+    ```bash
+    curl http://localhost:7860/api/v0/health
+    # Should return: {"status":"ok"}
+    ```
 
 3. **Check user permissions:**
-   - Ensure user has `edit_posts` capability
+    - Ensure user has `edit_posts` capability
 
 4. **Clear browser cache:**
-   - Hard refresh (Cmd+Shift+R or Ctrl+Shift+R)
+    - Hard refresh (Cmd+Shift+R or Ctrl+Shift+R)
 
 ---
 
 ### "Faces detected but not clustered"
 
 **Symptoms:**
+
 - Faces appear in database but show as individual clusters
 - No grouping of similar faces
 
@@ -193,37 +196,41 @@ wp cat-faces stats
 **Solutions:**
 
 1. **Verify embeddings are persisted:**
-   ```bash
-   # Test recognition service response
-   curl -X POST http://localhost:7860/api/v0/recognition/analyze \
-     -H "Content-Type: application/json" \
-     -d '{"imageUrl":"http://localhost:10008/wp-content/uploads/test.jpg"}'
-   
-   # Should include: "embedding_dimension": 512, "has_embedding": true
-   ```
+
+    ```bash
+    # Test recognition service response
+    curl -X POST http://localhost:7860/api/v0/recognition/analyze \
+      -H "Content-Type: application/json" \
+      -d '{"imageUrl":"http://localhost:10008/wp-content/uploads/test.jpg"}'
+
+    # Should include: "embedding_dimension": 512, "has_embedding": true
+    ```
 
 2. **Check clustering threshold:**
-   ```php
-   // In src/Domain/Clustering/ClusteringService.php
-   const LOCAL_CLUSTER_THRESHOLD = 1000; // Should be >= detected face count
-   ```
+
+    ```php
+    // In src/Domain/Clustering/ClusteringService.php
+    const LOCAL_CLUSTER_THRESHOLD = 1000; // Should be >= detected face count
+    ```
 
 3. **Trigger clustering manually:**
-   ```bash
-   wp cat-faces cluster
-   ```
+
+    ```bash
+    wp cat-faces cluster
+    ```
 
 4. **Check debug logs:**
-   ```bash
-   tail -f wp-content/uploads/cat-logs/debug-$(date +%Y-%m-%d).log | grep -i cluster
-   # Should show: "Grouped into X clusters"
-   ```
+    ```bash
+    tail -f wp-content/uploads/cat-logs/debug-$(date +%Y-%m-%d).log | grep -i cluster
+    # Should show: "Grouped into X clusters"
+    ```
 
 ---
 
 ### "Embeddings not being stored"
 
 **Symptoms:**
+
 - `wp cat-faces stats` shows "With embedding vectors: 0 (0.0%)"
 - Clustering fails with no data
 
@@ -233,34 +240,37 @@ Recognition service not including embedding data in response.
 **Solutions:**
 
 1. **Update recognition service:**
-   - Ensure `apps/recognition-service/analysis/services/scene_analysis_service.py` includes:
-   ```python
-   face_data={
-       "embedding_id": f"face-{idx}",
-       "embedding": face_embedding.embedding.tolist(),
-       "embedding_dimension": len(face_embedding.embedding),
-       "threshold": threshold,
-       "candidates": face_data,
-   }
-   ```
+    - Ensure `apps/recognition-service/analysis/services/scene_analysis_service.py` includes:
+
+    ```python
+    face_data={
+        "embedding_id": f"face-{idx}",
+        "embedding": face_embedding.embedding.tolist(),
+        "embedding_dimension": len(face_embedding.embedding),
+        "threshold": threshold,
+        "candidates": face_data,
+    }
+    ```
 
 2. **Restart recognition service:**
-   ```bash
-   cd apps/recognition-service
-   ./scripts/start_recognition_local.sh restart
-   ```
+
+    ```bash
+    cd apps/recognition-service
+    ./scripts/start_recognition_local.sh restart
+    ```
 
 3. **Clear and rescan:**
-   ```bash
-   wp cat-faces clear-unknown --yes
-   # Then trigger face scan from UI
-   ```
+    ```bash
+    wp cat-faces clear-unknown --yes
+    # Then trigger face scan from UI
+    ```
 
 ---
 
 ### "Cluster thumbnails showing placeholder"
 
 **Symptoms:**
+
 - Some faces show 👤 icon instead of thumbnail
 - Error: "Failed to resize cropped region"
 
@@ -270,28 +280,31 @@ Face crops too small for 112x112px resize (minimum ~28x28px).
 **Solutions:**
 
 1. **Check crop dimensions in logs:**
-   ```bash
-   tail -f wp-content/uploads/cat-logs/debug-$(date +%Y-%m-%d).log | grep "Failed to resize"
-   ```
+
+    ```bash
+    tail -f wp-content/uploads/cat-logs/debug-$(date +%Y-%m-%d).log | grep "Failed to resize"
+    ```
 
 2. **Accept placeholder for small faces:**
-   - This is expected behavior for very small detected faces
-   - Typically affects <5% of faces
+    - This is expected behavior for very small detected faces
+    - Typically affects <5% of faces
 
 3. **Adjust minimum face size in recognition service:**
-   - Modify face detection threshold to filter small faces
+    - Modify face detection threshold to filter small faces
 
 ---
 
 ### "Clustering takes too long"
 
 **Symptoms:**
+
 - Face scan button shows loading for minutes
 - Browser becomes unresponsive
 
 **Diagnosis:**
 
 Check number of faces being processed:
+
 ```bash
 wp cat-faces stats
 # Total unknown faces: X
@@ -300,59 +313,64 @@ wp cat-faces stats
 **Solutions:**
 
 1. **Optimize for large batches:**
-   - Local clustering handles up to 1000 faces efficiently
-   - Consider batching if you have more
+    - Local clustering handles up to 1000 faces efficiently
+    - Consider batching if you have more
 
 2. **Check algorithm performance:**
-   ```php
-   // In ClusteringService.php
-   // O(n²) complexity for n faces
-   // 100 faces: ~10,000 operations
-   // 500 faces: ~250,000 operations
-   ```
+
+    ```php
+    // In ClusteringService.php
+    // O(n²) complexity for n faces
+    // 100 faces: ~10,000 operations
+    // 500 faces: ~250,000 operations
+    ```
 
 3. **Monitor PHP memory:**
-   ```bash
-   wp eval 'echo memory_get_peak_usage(true) / 1024 / 1024 . " MB";'
-   ```
+
+    ```bash
+    wp eval 'echo memory_get_peak_usage(true) / 1024 / 1024 . " MB";'
+    ```
 
 4. **Increase PHP limits if needed:**
-   ```php
-   // In wp-config.php
-   define('WP_MEMORY_LIMIT', '256M');
-   define('WP_MAX_MEMORY_LIMIT', '512M');
-   ```
+    ```php
+    // In wp-config.php
+    define('WP_MEMORY_LIMIT', '256M');
+    define('WP_MAX_MEMORY_LIMIT', '512M');
+    ```
 
 ---
 
 ### "Cluster suggestions incorrect"
 
 **Symptoms:**
+
 - Suggested roster entries don't match faces
 - Low confidence scores (<0.5)
 
 **Solutions:**
 
 1. **Verify roster has reference images:**
-   ```bash
-   wp cat-roster list
-   # Should show roster entries with images
-   ```
+
+    ```bash
+    wp cat-roster list
+    # Should show roster entries with images
+    ```
 
 2. **Check embedding quality:**
-   - Ensure reference images are high quality
-   - Face should be clearly visible, well-lit
+    - Ensure reference images are high quality
+    - Face should be clearly visible, well-lit
 
 3. **Test recognition directly:**
-   ```bash
-   wp cat-recognition analyze <attachment-id>
-   # Should return matches with confidence scores
-   ```
+
+    ```bash
+    wp cat-recognition analyze <attachment-id>
+    # Should return matches with confidence scores
+    ```
 
 4. **Rebuild roster embeddings:**
-   ```bash
-   wp cat-roster sync
-   ```
+    ```bash
+    wp cat-roster sync
+    ```
 
 ---
 

@@ -38,6 +38,20 @@ These samples help developers understand the expected data shapes without runnin
   - Cold start, warm start, bulk confirm flows
   - Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 3.4
 
+### Face Clustering Contracts
+
+- **`clustering-api.md`** - WordPress REST API for face clustering
+  - POST /wp-json/cat/v1/recognition/scan - Batch face detection
+  - GET /wp-json/cat/v1/clusters - List clusters with pagination
+  - GET /wp-json/cat/v1/clusters/{id} - Cluster details with suggestions
+  - POST /wp-json/cat/v1/clusters/{id}/confirm - Confirm cluster identity
+  - POST /wp-json/cat/v1/clusters/{id}/split - Split cluster
+
+- **`recognition-clustering.md`** - Recognition service clustering endpoints
+  - POST /api/v0/cluster - FAISS-backed embedding clustering
+  - POST /api/v0/suggest - Roster suggestions for embeddings
+  - POST /api/v0/roster/add-embedding - Augment roster with confirmed embeddings
+
 ## vs. `/packages/shared-contracts/`
 
 | This Directory                   | packages/shared-contracts/                 |

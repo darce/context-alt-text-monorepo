@@ -135,9 +135,13 @@ composer test -- --coverage-text
 src/
   Admin/          # WordPress admin integration
   Api/            # REST API endpoints
+  Commands/       # WP-CLI commands for face and roster management
   Domain/         # Business logic
+    Clustering/   # Face clustering domain layer (entities, services)
   Frontend/       # Frontend asset management
-  Recognition/    # Recognition service integration
+  Infrastructure/ # Database, repositories, table schema
+  Jobs/           # Background jobs (face detection, etc.)
+  Recognition/    # Recognition service integration, face detection pipeline
   Roster/         # Roster management
   Services/       # Application services
   Support/        # Utilities, feature flags
@@ -183,6 +187,49 @@ The plugin checks configuration sources in this order:
 1. **Environment variables** (`.env` file) - **Highest priority**
 2. **WordPress database** (Settings page) - Fallback
 3. **Constants** (`wp-config.php`) - Legacy support
+
+### Face Detection & Clustering
+
+The plugin includes automatic face detection and similarity-based clustering:
+
+**Face Detection:**
+```bash
+# Trigger batch face detection
+wp cat-faces scan --attachment-ids=123,456,789
+
+# View face detection statistics
+wp cat-faces stats
+
+# Clear detected faces
+wp cat-faces clear-unknown --yes
+```
+
+**Face Clustering:**
+- Automatic clustering after face detection completes
+- Uses 512-dimensional embeddings from InsightFace
+- Local single-linkage clustering with cosine similarity (threshold: 0.45)
+- Groups similar faces for efficient batch labeling
+
+**Workbench UI:**
+1. Navigate to **Context Alt Text → Workbench**
+2. Click **"Scan for Faces"** to detect faces in uploaded images
+3. View clustered faces in **"Unknown People"** panel
+4. Click cluster to review faces and assign roster identity
+5. Confirm identity to label all faces in cluster
+
+**CLI Commands:**
+```bash
+# View clustered faces
+wp cat-faces list-clusters
+
+# View specific cluster details
+wp cat-faces cluster-detail <cluster-id>
+
+# Get roster suggestions for cluster
+wp cat-faces suggest <cluster-id>
+```
+
+---
 
 ### Recognition Service Setup
 
@@ -268,6 +315,10 @@ wp cat-roster status
 
 # Sync roster from remote
 wp cat-roster sync
+
+# Manage unknown faces
+wp cat-faces stats
+wp cat-faces clear-unknown --yes
 ```
 
 **📖 Testing guide:** [`docs/development.md#testing`](docs/development.md#testing)

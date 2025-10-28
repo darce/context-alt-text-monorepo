@@ -1,264 +1,288 @@
 classDiagram
-    %% Face Clustering Frontend Components
-    classDiagram
-        %% Face Clustering Frontend Components
-        %% Implementation: subfeature/face-clustering-poc
-        %% Location: js/components/workbench/ and js/hooks/
+    %% Face Clustering Frontend Components (October 2025)
+    %% Remote clustering only; local fallback removed
 
-        class UnknownPeoplePanel {
-            <<component>>
-            +onSelectCluster?(clusterId: string) void
-            +selectedClusterId?: string|null
-            +onMoveFaces?(payload) void
-            -activeDropClusterId: string|null
-            +render() JSX.Element
-        }
+    class UnknownPeoplePanel {
+        <<component>>
+        +render() JSX.Element
+        +onSelectCluster?(clusterId: string) void
+        +selectedClusterId?: string|null
+        +onMoveFaces?(payload: FaceMoveRequest) void
+        -activeDropClusterId: string|null
+    }
 
-        class ClusterCard {
-            <<component>>
-            +cluster: ClusterSummary
-            +onClick?(clusterId: string) void
-            +isSelected?: boolean
-            +onDropFaces?(clusterId: string, payload) void
-            +isDropTarget?: boolean
-            +render() JSX.Element
-        classDiagram
-            %% Face Clustering Frontend Components (October 2025)
-            %% Remote clustering only; local fallback removed
+    class ClusterCard {
+        <<component>>
+        +render() JSX.Element
+        +cluster: ClusterSummary
+        +onClick?(clusterId: string) void
+        +isSelected?: boolean
+        +onDropFaces?(clusterId: string, payload: FaceDragPayload) void
+        +onDragEnter?(clusterId: string) void
+        +onDragLeave?(clusterId: string) void
+        +isDropTarget?: boolean
+    }
 
-            class UnknownPeoplePanel {
-                <<component>>
-                +render() JSX.Element
-                +onSelectCluster?(clusterId: string) void
-                +selectedClusterId?: string|null
-                +onMoveFaces?(payload) void
-                -activeDropClusterId: string|null
-            }
+    class ClusterDetailView {
+        <<component>>
+        +render() JSX.Element
+        +clusterId: string
+        +onClose?() void
+        +onSelectionChange?(faceIds: string[]) void
+        +onRequestConfirm?(clusterId: string, faceIds: string[]) void
+        +onReviewLater?(clusterId: string, faceIds: string[]) void
+        -selectedFaceIds: string[]
+        -activeSuggestionRosterId: string|null
+        -pendingFaceIds: string[]
+        -selectionAnchorIndex: number|null
+        -faceMap: Map<string, ClusterFaceDetail>
+    }
 
-            class ClusterCard {
-                <<component>>
-                +render() JSX.Element
-                +cluster: ClusterSummary
-                +onClick?(clusterId: string) void
-                +isSelected?: boolean
-                +onDropFaces?(clusterId: string, payload) void
-                +isDropTarget?: boolean
-            }
+    class ClusterConfirmationModal {
+        <<component>>
+        +render() JSX.Element
+        +isOpen: boolean
+        +clusterId: string
+        +faces: ClusterFaceDetail[]
+        +selectedFaceIds: string[]
+        +suggestions: ClusterSuggestion[]
+        +onClose() void
+        -roster: RosterSelection|null
+        -activeSuggestionRosterId: string|null
+        -includedFaceIds: Set<string>
+        -isSubmitting: boolean
+        -isPickerOpen: boolean
+        -errorMessage: string|null
+    }
 
-            class ClusterDetailView {
-                <<component>>
-                +render() JSX.Element
-                +clusterId: string
-                +onClose?() void
-                +onSelectionChange?(faceIds: string[]) void
-                +onRequestConfirm?(clusterId: string, faceIds: string[]) void
-                +onReviewLater?(clusterId: string, faceIds: string[]) void
-                -selectedFaceIds: string[]
-                -activeSuggestionRosterId: string|null
-                -pendingFaceIds: string[]
-            }
+    class FaceScanActions {
+        <<component>>
+        +render() JSX.Element
+        +selectedIds: number[]
+        +onScanComplete?(result: FaceScanCompletePayload) void
+    }
 
-            class ClusterConfirmationModal {
-                <<component>>
-                +render() JSX.Element
-                +isOpen: boolean
-                +clusterId: string
-                +faces: ClusterFaceDetail[]
-                +selectedFaceIds: string[]
-                +suggestions: ClusterSuggestion[]
-                +onClose() void
-                -roster: RosterSelection|null
-                -includedFaceIds: Set<string>
-                -isSubmitting: boolean
-            }
+    class FaceThumbnailGrid {
+        <<component>>
+        +render() JSX.Element
+        +faces: ClusterFaceDetail[]
+        +selectedFaceIds: string[]
+        +onToggleFace(faceId: string) void
+    }
 
-            class FaceScanActions {
-                <<component>>
-                +render() JSX.Element
-                +selectedIds: number[]
-                +onScanComplete?({ jobId: string; queuedCount: number }) void
-            }
+    class SuggestionChip {
+        <<component>>
+        +render() JSX.Element
+        +displayName: string
+        +confidence?: number|null
+        +reason?: string|null
+        +onSelect?() void
+        +disabled?: boolean
+    }
 
-            class FaceThumbnailGrid {
-                <<component>>
-                +render() JSX.Element
-                +faces: ClusterFaceDetail[]
-                +selectedFaceIds: string[]
-                +onToggleFace(faceId: string) void
-            }
+    class PeoplePicker {
+        <<component>>
+        +render() JSX.Element
+        +isOpen: boolean
+        +onSelect(rosterId: string, displayName: string) void
+        +onCreateNew(displayName: string) void
+        +onClose() void
+        +currentRosterId?: string
+        +restNonce?: string
+        +position?: PickerPosition
+    }
 
-            class SuggestionChip {
-                <<component>>
-                +render() JSX.Element
-                +displayName: string
-                +confidence?: number|null
-                +reason?: string|null
-                +onSelect?() void
-                +disabled?: boolean
-            }
+    class FaceGrid {
+        <<component>>
+        +render() JSX.Element
+        +faces: ClusterFaceDetail[]
+        +selectedFaceIds: string[]
+        +selectionAnchorIndex: number|null
+        +onToggleFace(faceId: string, options?: FaceToggleOptions) void
+        +onRangeSelect?(range: FaceGridRangeSelection) void
+        +onSelectAll?() void
+        +onDragStart?(faceId: string, index: number, event: DragEvent) void
+        +onDragEnd?(event: DragEvent) void
+    }
 
-            class PeoplePicker {
-                <<component>>
-                +render() JSX.Element
-                +isOpen: boolean
-                +onSelect(rosterId: string, displayName: string) void
-                +onCreateNew(displayName: string) void
-                +onClose() void
-                +restNonce?: string|null
-            }
+    class FaceGridRangeSelection {
+        <<type>>
+        +faceIds: string[]
+        +startIndex: number
+        +endIndex: number
+    }
 
-            class FaceGrid {
-                <<component>>
-                +render() JSX.Element
-                +faces: ClusterFaceDetail[]
-                +selectedFaceIds: string[]
-                +selectionAnchorIndex: number|null
-                +onToggleFace(faceId: string, options?) void
-                +onRangeSelect?(selection) void
-                +onDragStart?(faceId: string, index: number, event) void
-            }
+    class FaceToggleOptions {
+        <<type>>
+        +index: number
+    }
 
-            class useUnknownClusters {
-                <<hook>>
-                +clusters: ClusterSummary[]
-                +total: number
-                +page: number
-                +perPage: number
-                +isLoading: boolean
-                +error: Error|null
-                +refetch() Promise<unknown>
-            }
+    class FaceMoveRequest {
+        <<type>>
+        +targetClusterId: string
+        +sourceClusterId: string
+        +faceIds: string[]
+    }
 
-            class useClusterDetail {
-                <<hook>>
-                +cluster: ClusterSummary
-                +faces: ClusterFaceDetail[]
-                +isLoading: boolean
-                +error: Error|null
-                +refetch() Promise<unknown>
-            }
+    class FaceDragPayload {
+        <<type>>
+        +clusterId: string
+        +faceIds: string[]
+    }
 
-            class useClusterSuggestions {
-                <<hook>>
-                +suggestions: ClusterSuggestion[]
-                +isLoading: boolean
-                +error: Error|null
-                +refetch() Promise<unknown>
-            }
+    class PickerPosition {
+        <<type>>
+        +top: number
+        +left: number
+    }
 
-            class useFaceScan {
-                <<hook>>
-                +scanFaces(attachmentIds: number[], options?) Promise<void>
-                +isScanning: boolean
-                +error: FaceScanError|null
-                +result: FaceScanResult|null
-                +reset() void
-            }
+    class FaceScanCompletePayload {
+        <<type>>
+        +jobId: string
+        +queuedCount: number
+    }
 
-            class clusterApi {
-                <<module>>
-                +confirmCluster(clusterId: string, request: ConfirmClusterRequest, restNonce?) Promise<ConfirmClusterResponse>
-            }
+    class useUnknownClusters {
+        <<hook>>
+        +clusters: ClusterSummary[]
+        +total: number
+        +page: number
+        +perPage: number
+        +isLoading: boolean
+        +error: Error|null
+        +refetch() Promise<unknown>
+    }
 
-            class ClusterSummary {
-                <<type>>
-                +id: string
-                +faceCount: number
-                +sampleFace: ClusterSampleFace|null
-                +suggestion: ClusterSummarySuggestion|null
-                +createdAt: string|null
-                +updatedAt: string|null
-            }
+    class useClusterDetail {
+        <<hook>>
+        +cluster: ClusterSummary
+        +faces: ClusterFaceDetail[]
+        +isLoading: boolean
+        +error: Error|null
+        +refetch() Promise<unknown>
+    }
 
-            class ClusterSampleFace {
-                <<type>>
-                +attachmentId: number
-                +thumbnailUrl: string|null
-                +bbox: ClusterBoundingBox|null
-            }
+    class useClusterSuggestions {
+        <<hook>>
+        +suggestions: ClusterSuggestion[]
+        +isLoading: boolean
+        +error: Error|null
+        +refetch() Promise<unknown>
+    }
 
-            class ClusterSummarySuggestion {
-                <<type>>
-                +rosterId: string
-                +displayName: string
-                +confidence: number|null
-                +reason: string|null
-            }
+    class useFaceScan {
+        <<hook>>
+        +scanFaces(attachmentIds: number[], options?) Promise<void>
+        +isScanning: boolean
+        +error: FaceScanError|null
+        +result: FaceScanResult|null
+        +reset() void
+    }
 
-            class ClusterFaceDetail {
-                <<type>>
-                +id: string
-                +attachmentId: number
-                +bbox: ClusterBoundingBox
-                +thumbnailUrl: string|null
-                +clusterId: string|null
-                +detectedAt: string|null
-                +resolvedAt: string|null
-                +rosterId: string|null
-                +embeddingId: string|null
-            }
+    class clusterApi {
+        <<module>>
+        +confirmCluster(clusterId: string, request: ConfirmClusterRequest, restNonce?) Promise<ConfirmClusterResponse>
+    }
 
-            class ClusterBoundingBox {
-                <<type>>
-                +x: number
-                +y: number
-                +width: number
-                +height: number
-                +imageWidth: number|null
-                +imageHeight: number|null
-            }
+    class ClusterSummary {
+        <<type>>
+        +id: string
+        +faceCount: number
+        +sampleFace: ClusterSampleFace|null
+        +suggestion: ClusterSummarySuggestion|null
+        +createdAt: string|null
+        +updatedAt: string|null
+    }
 
-            class ClusterSuggestion {
-                <<type>>
-                +clusterId: string
-                +rosterId: string
-                +displayName: string
-                +confidence: number
-                +confidenceLevel: string|null
-                +matchCount: number
-                +faceIds: string[]
-                +reason: string|null
-            }
+    class ClusterSampleFace {
+        <<type>>
+        +attachmentId: number
+        +thumbnailUrl: string|null
+        +bbox: ClusterBoundingBox|null
+    }
 
-            class FaceScanResult {
-                <<type>>
-                +jobId: string
-                +queuedCount: number
-                +priority: string
-            }
+    class ClusterSummarySuggestion {
+        <<type>>
+        +rosterId: string
+        +displayName: string
+        +confidence: number|null
+        +reason: string|null
+    }
 
-            class FaceScanError {
-                <<type>>
-                +message: string
-                +code: string|null
-                +status: number|null
-            }
+    class ClusterFaceDetail {
+        <<type>>
+        +id: string
+        +attachmentId: number
+        +bbox: ClusterBoundingBox
+        +thumbnailUrl: string|null
+        +clusterId: string|null
+        +detectedAt: string|null
+        +resolvedAt: string|null
+        +rosterId: string|null
+        +embeddingId: string|null
+    }
 
-            UnknownPeoplePanel --> ClusterCard : renders
-            UnknownPeoplePanel --> useUnknownClusters : uses
+    class ClusterBoundingBox {
+        <<type>>
+        +x: number
+        +y: number
+        +width: number
+        +height: number
+        +imageWidth: number|null
+        +imageHeight: number|null
+    }
 
-            ClusterDetailView --> useClusterDetail : uses
-            ClusterDetailView --> useClusterSuggestions : uses
-            ClusterDetailView --> FaceGrid : renders
-            ClusterDetailView --> SuggestionChip : renders
-            ClusterDetailView --> ClusterConfirmationModal : opens
+    class ClusterSuggestion {
+        <<type>>
+        +clusterId: string
+        +rosterId: string
+        +displayName: string
+        +confidence: number
+        +confidenceLevel: string|null
+        +matchCount: number
+        +faceIds: string[]
+        +reason: string|null
+    }
 
-            ClusterConfirmationModal --> FaceThumbnailGrid : renders
-            ClusterConfirmationModal --> SuggestionChip : renders
-            ClusterConfirmationModal --> PeoplePicker : opens
-            ClusterConfirmationModal --> clusterApi : calls confirmCluster
+    class FaceScanResult {
+        <<type>>
+        +jobId: string
+        +queuedCount: number
+        +priority: string
+    }
 
-            FaceThumbnailGrid --> FaceGrid : wraps
-            FaceScanActions --> useFaceScan : uses
+    class FaceScanError {
+        <<type>>
+        +message: string
+        +code: string|null
+        +status: number|null
+    }
 
-            useUnknownClusters ..> ClusterSummary : returns
-            useClusterDetail ..> ClusterSummary : returns cluster
-            useClusterDetail ..> ClusterFaceDetail : returns faces
-            useClusterSuggestions ..> ClusterSuggestion : returns
-            useFaceScan ..> FaceScanResult : exposes result
-            useFaceScan ..> FaceScanError : exposes error
+    UnknownPeoplePanel --> ClusterCard : renders
+    UnknownPeoplePanel --> useUnknownClusters : uses
 
-            ClusterSummary --> ClusterSampleFace : uses
-            ClusterSummary --> ClusterSummarySuggestion : optional suggestion
-            ClusterFaceDetail --> ClusterBoundingBox : uses
+    ClusterDetailView --> useClusterDetail : uses
+    ClusterDetailView --> useClusterSuggestions : uses
+    ClusterDetailView --> FaceGrid : renders
+    ClusterDetailView --> SuggestionChip : renders
+    ClusterDetailView --> ClusterConfirmationModal : opens
+
+    ClusterConfirmationModal --> FaceThumbnailGrid : renders
+    ClusterConfirmationModal --> SuggestionChip : renders
+    ClusterConfirmationModal --> PeoplePicker : opens
+    ClusterConfirmationModal --> clusterApi : calls confirmCluster
+
+    FaceThumbnailGrid --> FaceGrid : wraps
+    FaceScanActions --> useFaceScan : uses
+
+    useUnknownClusters ..> ClusterSummary : returns
+    useClusterDetail ..> ClusterSummary : returns cluster
+    useClusterDetail ..> ClusterFaceDetail : returns faces
+    useClusterSuggestions ..> ClusterSuggestion : returns
+    useFaceScan ..> FaceScanResult : exposes result
+    useFaceScan ..> FaceScanError : exposes error
+
+    ClusterSummary --> ClusterSampleFace : uses
+    ClusterSummary --> ClusterSummarySuggestion : optional suggestion
+    ClusterFaceDetail --> ClusterBoundingBox : uses
 

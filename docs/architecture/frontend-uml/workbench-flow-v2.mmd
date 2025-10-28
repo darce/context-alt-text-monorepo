@@ -1,161 +1,128 @@
-%% Workbench Flow - Current Implementation (October 2025)
-%% Reflects refactored hooks, extracted utilities, and actual data flow
+%% Workbench Face Clustering Flow (October 2025)
+%% Remote recognition service performs detection and clustering (no local fallback)
 
 flowchart TD
-    subgraph WorkbenchUI["Workbench UI Layer"]
-        route[WorkbenchRoute]
-        app[WorkbenchApp]
-        mediaList[MediaList]
-        toolbar[SelectionToolbar]
-        recognitionPanel[RecognitionActions]
-        notices[Notice System]
+    user([Admin Editor]) --> route[WorkbenchRoute]
+
+    subgraph WorkbenchUI["Workbench UI"]
+        route --> faceScan[FaceScanActions]
+        route --> unknownPanel[UnknownPeoplePanel]
+        unknownPanel --> detailView[ClusterDetailView]
+        detailView --> confirmModal[ClusterConfirmationModal]
     end
 
-    subgraph Hooks["Custom Hooks"]
-        useWorkbench[useWorkbenchMedia<br/>224 lines, paginated data]
-        useRecognition[useRecognitionJob<br/>333 lines, submit + poll]
-        useSubmit[useRecognitionSubmit<br/>extracted submission logic]
-        usePoll[useRecognitionPoll<br/>extracted polling logic]
-        useActions[useWorkbenchActions<br/>bulk operations]
+    subgraph HooksAndClients["React Hooks & API Client"]
+        faceScan --> hookFaceScan[useFaceScan]
+        unknownPanel --> hookUnknown[useUnknownClusters]
+        detailView --> hookDetail[useClusterDetail]
+        detailView --> hookSuggest[useClusterSuggestions]
+        confirmModal --> clusterApiNode[clusterApi.confirmCluster]
     end
 
-    subgraph Utilities["Shared Utilities"]
-        httpUtils[HTTP Utils<br/>buildApiUrl, fetchApi]
-        ```mermaid.radar
-        %% Workbench Face Clustering Flow (October 2025)
-        %% Remote recognition service performs detection + clustering (no local fallback)
+    subgraph ReactQuery["React Query"]
+        queryClient[(QueryClient)]
+    end
 
-        flowchart TD
-            user([Admin Editor]) --> route[WorkbenchRoute]
+    subgraph WPAPI["WP REST API"]
+        scanEndpoint["POST /cat/v1/recognition/scan"]
+        listEndpoint["GET /cat/v1/clusters"]
+        detailEndpoint["GET /cat/v1/clusters/{id}"]
+        suggestEndpoint["GET /cat/v1/clusters/{id}/suggestions"]
+        confirmEndpoint["POST /cat/v1/clusters/{id}/confirm"]
+    end
 
-            subgraph WorkbenchUI["Workbench UI"]
-                route --> faceScan[FaceScanActions]
-                route --> unknownPanel[UnknownPeoplePanel]
-                unknownPanel --> detailView[ClusterDetailView]
-                detailView --> confirmModal[ClusterConfirmationModal]
-            end
+    subgraph PHPDomain["WordPress Domain Layer"]
+        scanController[ScanController::scanBatch]
+        faceQueue[FaceDetectionQueue::enqueueBatch]
+        detectionPipeline[FaceDetectionPipeline]
+        clusterListController[ClusterController::listClusters]
+        clusterDetailController[ClusterController::getClusterDetail]
+        clusterSuggestController[ClusterController::getClusterSuggestions]
+        clusterConfirmController[ClusterController::confirmCluster]
+        clusteringService[ClusteringService::clusterUnknownFaces]
+        detailService[ClusteringService::getClusterDetail]
+        suggestionService[ClusteringService::getClusterSuggestions]
+        confirmService[ClusteringService::confirmCluster]
+        clusterClient[ClusterClient::requestClustering]
+        recognitionClient[RecognitionClient]
+        unknownRepo[UnknownFaceRepository]
+        rosterService[RosterService]
+    end
 
-            subgraph HooksAndClients["React Hooks & API Client"]
-                faceScan --> hookFaceScan[useFaceScan]
-                unknownPanel --> hookUnknown[useUnknownClusters]
-                detailView --> hookDetail[useClusterDetail]
-                detailView --> hookSuggest[useClusterSuggestions]
-                confirmModal --> clusterApiNode[clusterApi.confirmCluster]
-            end
+    subgraph RemoteRecognition["Recognition Service (Remote)"]
+        remoteDetect[Face detection & embedding]
+        remoteCluster[Clustering endpoint]
+        remoteSuggest[Roster match suggestions]
+        remoteRoster[Roster embedding ingest]
+    end
 
-            subgraph ReactQuery["React Query"]
-                queryClient[(QueryClient)]
-            end
+    %% Hook ↔ React Query cache
+    hookUnknown --> queryClient
+    hookDetail --> queryClient
+    hookSuggest --> queryClient
+    clusterApiNode --> queryClient
 
-            subgraph WPAPI["WP REST API"]
-                scanEndpoint["POST /cat/v1/recognition/scan"]
-                listEndpoint["GET /cat/v1/clusters"]
-                detailEndpoint["GET /cat/v1/clusters/{id}"]
-                suggestEndpoint["GET /cat/v1/clusters/{id}/suggestions"]
-                confirmEndpoint["POST /cat/v1/clusters/{id}/confirm"]
-            end
+    %% Hook → REST endpoints
+    hookFaceScan --> scanEndpoint
+    hookUnknown --> listEndpoint
+    hookDetail --> detailEndpoint
+    hookSuggest --> suggestEndpoint
+    clusterApiNode --> confirmEndpoint
 
-            subgraph PHPDomain["WordPress Domain Layer"]
-                scanController[ScanController::scanBatch]
-                faceQueue[FaceDetectionQueue::enqueueBatch]
-                detectionPipeline[FaceDetectionPipeline]
-                clusterListController[ClusterController::listClusters]
-                clusterDetailController[ClusterController::getClusterDetail]
-                clusterSuggestController[ClusterController::getClusterSuggestions]
-                clusterConfirmController[ClusterController::confirmCluster]
-                clusteringService[ClusteringService::clusterUnknownFaces]
-                detailService[ClusteringService::getClusterDetail]
-                suggestionService[ClusteringService::getClusterSuggestions]
-                confirmService[ClusteringService::confirmCluster]
-                clusterClient[ClusterClient::requestClustering]
-                recognitionClient[RecognitionClient]
-                unknownRepo[UnknownFaceRepository]
-                rosterService[RosterService]
-            end
+    %% REST → Controllers
+    scanEndpoint --> scanController
+    listEndpoint --> clusterListController
+    detailEndpoint --> clusterDetailController
+    suggestEndpoint --> clusterSuggestController
+    confirmEndpoint --> clusterConfirmController
 
-            subgraph RemoteRecognition["Recognition Service (Remote)"]
-                remoteDetect[Face detection & embedding]
-                remoteCluster[Clustering endpoint]
-                remoteSuggest[Roster match suggestions]
-                remoteRoster[Roster embedding ingest]
-            end
+    %% Controllers → Services / Infrastructure
+    scanController --> faceQueue
+    faceQueue --> detectionPipeline
+    detectionPipeline --> remoteDetect
+    remoteDetect --> unknownRepo
 
-            %% Hook ↔ React Query cache
-            hookUnknown --> queryClient
-            hookDetail --> queryClient
-            hookSuggest --> queryClient
-            clusterApiNode --> queryClient
+    clusterListController --> clusteringService
+    clusteringService --> clusterClient
+    clusterClient --> remoteCluster
+    remoteCluster --> clusteringService
+    unknownRepo --> clusteringService
+    clusteringService --> clusterListController
 
-            %% Hook → REST endpoints
-            hookFaceScan --> scanEndpoint
-            hookUnknown --> listEndpoint
-            hookDetail --> detailEndpoint
-            hookSuggest --> suggestEndpoint
-            clusterApiNode --> confirmEndpoint
+    clusterDetailController --> detailService
+    detailService --> unknownRepo
+    unknownRepo --> detailService
 
-            %% REST → Controllers
-            scanEndpoint --> scanController
-            listEndpoint --> clusterListController
-            detailEndpoint --> clusterDetailController
-            suggestEndpoint --> clusterSuggestController
-            confirmEndpoint --> clusterConfirmController
+    clusterSuggestController --> suggestionService
+    suggestionService --> unknownRepo
+    suggestionService --> recognitionClient
+    recognitionClient --> remoteSuggest
+    remoteSuggest --> recognitionClient
 
-            %% Controllers → Services / Infrastructure
-            scanController --> faceQueue
-            faceQueue --> detectionPipeline
-            detectionPipeline --> remoteDetect
-            remoteDetect --> unknownRepo
+    clusterConfirmController --> confirmService
+    confirmService --> rosterService
+    confirmService --> recognitionClient
+    confirmService --> unknownRepo
+    recognitionClient --> remoteRoster
+    remoteRoster --> recognitionClient
+    rosterService --> remoteRoster
 
-            clusterListController --> clusteringService
-            clusteringService --> clusterClient
-            clusterClient --> remoteCluster
-            remoteCluster --> clusteringService
-            unknownRepo --> clusteringService
-            clusteringService --> clusterListController
+    %% React Query cache invalidation loop
+    clusterApiNode -- invalidate unknown-clusters & cluster-detail --> queryClient
+    queryClient -. triggers refetch .-> hookUnknown
+    queryClient -. triggers refetch .-> hookDetail
 
-            clusterDetailController --> detailService
-            detailService --> unknownRepo
-            unknownRepo --> detailService
+    %% Styling
+    classDef ui fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
+    classDef hook fill:#fff8e1,stroke:#ffb300,stroke-width:1px
+    classDef query fill:#ede7f6,stroke:#5e35b1,stroke-width:1px
+    classDef api fill:#e3f2fd,stroke:#1e88e5,stroke-width:1px
+    classDef domain fill:#f3e5f5,stroke:#8e24aa,stroke-width:1px
+    classDef remote fill:#ffe0b2,stroke:#fb8c00,stroke-width:1px
 
-            clusterSuggestController --> suggestionService
-            suggestionService --> unknownRepo
-            suggestionService --> recognitionClient
-            recognitionClient --> remoteSuggest
-            remoteSuggest --> recognitionClient
-
-            clusterConfirmController --> confirmService
-            confirmService --> rosterService
-            confirmService --> recognitionClient
-            confirmService --> unknownRepo
-            recognitionClient --> remoteRoster
-            remoteRoster --> recognitionClient
-            rosterService --> remoteRoster
-
-            %% React Query cache invalidation loop
-            clusterApiNode -- invalidate unknown-clusters & cluster-detail --> queryClient
-            queryClient -. triggers refetch .-> hookUnknown
-            queryClient -. triggers refetch .-> hookDetail
-
-            %% Notes
-            note over remoteDetect,remoteCluster: Remote service owns face detection and clustering.
-            note right of remoteSuggest: Suggestions derived from roster search API.
-            note right of clusterApiNode: Confirmation labels faces and syncs roster embeddings.
-
-            %% Styling
-            classDef ui fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
-            classDef hook fill:#fff8e1,stroke:#ffb300,stroke-width:1px
-            classDef query fill:#ede7f6,stroke:#5e35b1,stroke-width:1px
-            classDef api fill:#e3f2fd,stroke:#1e88e5,stroke-width:1px
-            classDef domain fill:#f3e5f5,stroke:#8e24aa,stroke-width:1px
-            classDef remote fill:#ffe0b2,stroke:#fb8c00,stroke-width:1px
-
-            class route,faceScan,unknownPanel,detailView,confirmModal ui
-            class hookFaceScan,hookUnknown,hookDetail,hookSuggest,clusterApiNode hook
-            class queryClient query
-            class scanEndpoint,listEndpoint,detailEndpoint,suggestEndpoint,confirmEndpoint api
-            class scanController,faceQueue,detectionPipeline,clusterListController,clusterDetailController,clusterSuggestController,
-                  clusterConfirmController,clusteringService,detailService,suggestionService,confirmService,clusterClient,
-                  recognitionClient,unknownRepo,rosterService domain
-            class remoteDetect,remoteCluster,remoteSuggest,remoteRoster remote
-
-        ```
+    class route,faceScan,unknownPanel,detailView,confirmModal ui
+    class hookFaceScan,hookUnknown,hookDetail,hookSuggest,clusterApiNode hook
+    class queryClient query
+    class scanEndpoint,listEndpoint,detailEndpoint,suggestEndpoint,confirmEndpoint api
+    class scanController,faceQueue,detectionPipeline,clusterListController,clusterDetailController,clusterSuggestController,clusterConfirmController,clusteringService,detailService,suggestionService,confirmService,clusterClient,recognitionClient,unknownRepo,rosterService domain
+    class remoteDetect,remoteCluster,remoteSuggest,remoteRoster remote

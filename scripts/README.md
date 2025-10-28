@@ -9,9 +9,16 @@ This directory contains **monorepo-wide automation** that spans multiple applica
 ## Contents
 
 - **`smoke-test-local-integration.sh`** - End-to-end integration test
+
   - Tests WordPress plugin + recognition service together
   - Verifies cross-service communication
+  - Tests face detection, clustering, and roster workflows
   - Runs locally before deployment
+
+- **`diagnose-401-error.sh`** - Diagnostic for 401 authorization errors
+  - **Important:** Must be copied to WordPress root before running
+  - Checks user capabilities, REST API nonce, feature flags
+  - See detailed usage instructions below
 
 ## vs. `/apps/wp-context-alt-text/scripts/`
 
@@ -41,6 +48,8 @@ check-architecture-compliance.js
 
 ## Usage
 
+### Integration Tests
+
 ```bash
 # Run integration tests
 ./scripts/smoke-test-local-integration.sh
@@ -49,6 +58,62 @@ check-architecture-compliance.js
 cd /path/to/context-alt-text-monorepo
 ./scripts/smoke-test-local-integration.sh
 ```
+
+### Diagnostic Scripts
+
+#### diagnose-401-error.sh
+
+**⚠️ Important:** This script must be run from the WordPress root directory, not from the plugin directory.
+
+**For Local by Flywheel:**
+
+```bash
+# 1. Copy script to WordPress root
+cp scripts/diagnose-401-error.sh ~/Development/wp-context-alt-text/app/public/
+
+# 2. SSH into Local site
+# From Local app: Right-click site → Open Site Shell
+
+# 3. Run diagnostic
+bash diagnose-401-error.sh
+```
+
+**For Standard WordPress:**
+
+```bash
+# 1. Copy script to WordPress root
+cp scripts/diagnose-401-error.sh /path/to/wordpress/
+
+# 2. Navigate to WordPress root
+cd /path/to/wordpress/
+
+# 3. Run diagnostic
+bash diagnose-401-error.sh
+```
+
+**What it checks:**
+
+- User capabilities (`upload_files`)
+- REST API nonce generation
+- Plugin activation status
+- Feature flags configuration
+- Endpoint registration
+- Authentication test
+
+**Common fixes it provides:**
+
+```bash
+# Grant upload_files capability
+wp user add-cap username upload_files
+
+# Activate plugin
+wp plugin activate context-alt-text
+
+# Hard refresh page (for stale nonce)
+# Cmd+Shift+R (Mac) or Ctrl+Shift+F5 (Windows)
+```
+
+See [`docs/troubleshooting/401-identify-faces-error.md`](../apps/wp-context-alt-text/docs/troubleshooting/401-identify-faces-error.md) for more details.
 
 ## Future Scripts (Examples)
 

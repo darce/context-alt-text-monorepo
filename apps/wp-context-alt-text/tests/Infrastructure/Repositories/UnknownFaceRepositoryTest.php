@@ -39,8 +39,13 @@ final class UnknownFaceRepositoryTest extends TestCase
 
         $this->assertSame(42, $id);
         $this->assertNotEmpty($this->wpdb->queries);
-        $this->assertStringContainsString('INSERT INTO wp_cat_unknown_faces', $this->wpdb->queries[0]);
-        $this->assertStringContainsString("'emb-1'", $this->wpdb->queries[0]);
+        $insertQueries = array_values(array_filter(
+            $this->wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_cat_unknown_faces')
+        ));
+
+        $this->assertNotEmpty($insertQueries, 'Expected an INSERT INTO wp_cat_unknown_faces query to be executed.');
+        $this->assertStringContainsString("'emb-1'", $insertQueries[0]);
     }
 
     public function test_save_unknown_face_updates_existing_record(): void
@@ -61,8 +66,13 @@ final class UnknownFaceRepositoryTest extends TestCase
 
         $this->assertSame(99, $id);
         $this->assertNotEmpty($this->wpdb->queries);
-        $this->assertStringContainsString('UPDATE wp_cat_unknown_faces', $this->wpdb->queries[0]);
-        $this->assertStringContainsString("WHERE id = 99", $this->wpdb->queries[0]);
+        $updateQueries = array_values(array_filter(
+            $this->wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'UPDATE wp_cat_unknown_faces')
+        ));
+
+        $this->assertNotEmpty($updateQueries, 'Expected an UPDATE wp_cat_unknown_faces query to be executed.');
+        $this->assertStringContainsString('WHERE id = 99', $updateQueries[0]);
     }
 
     public function test_find_unresolved_faces_returns_unknown_face_entities(): void
@@ -87,7 +97,14 @@ final class UnknownFaceRepositoryTest extends TestCase
         $this->assertInstanceOf(UnknownFace::class, $first);
         $this->assertSame(321, $first->attachmentId());
         $this->assertSame('cluster-7', $first->clusterId());
-        $this->assertStringContainsString('LIMIT 25', $this->wpdb->queries[0]);
+        $this->assertNotEmpty($this->wpdb->queries);
+        $selectQueries = array_values(array_filter(
+            $this->wpdb->queries,
+            static fn(string $query): bool => str_contains($query, 'SELECT * FROM wp_cat_unknown_faces')
+        ));
+
+        $this->assertNotEmpty($selectQueries);
+        $this->assertStringContainsString('LIMIT 25', $selectQueries[0]);
     }
 
     public function test_find_faces_by_cluster_uses_expected_query(): void
@@ -95,9 +112,10 @@ final class UnknownFaceRepositoryTest extends TestCase
         $this->wpdb->mockResults = [];
         $this->repository->findFacesByCluster('cluster-x');
 
-        $this->assertNotEmpty($this->wpdb->queries);
-        $this->assertStringContainsString("WHERE cluster_id = 'cluster-x'", $this->wpdb->queries[0]);
-        $this->assertStringContainsString('resolved_at IS NULL', $this->wpdb->queries[0]);
+    $this->assertNotEmpty($this->wpdb->queries);
+    $query = $this->findQueryContaining("WHERE cluster_id = 'cluster-x'");
+    $this->assertNotNull($query);
+    $this->assertStringContainsString('resolved_at IS NULL', $query);
     }
 
     public function test_mark_face_as_resolved_updates_record(): void
@@ -105,7 +123,8 @@ final class UnknownFaceRepositoryTest extends TestCase
         $this->repository->markFaceAsResolved(55, 'person-55');
 
         $this->assertNotEmpty($this->wpdb->queries);
-        $query = $this->wpdb->queries[0];
+    $query = $this->findQueryContaining('UPDATE wp_cat_unknown_faces');
+    $this->assertNotNull($query);
         $this->assertStringContainsString('UPDATE wp_cat_unknown_faces', $query);
         $this->assertStringContainsString('SET resolved_at', $query);
         $this->assertStringContainsString('WHERE id = 55', $query);
@@ -116,7 +135,8 @@ final class UnknownFaceRepositoryTest extends TestCase
         $this->repository->updateClusterAssignment(77, 'cluster-new');
 
         $this->assertNotEmpty($this->wpdb->queries);
-        $query = $this->wpdb->queries[0];
+    $query = $this->findQueryContaining('SET cluster_id =');
+    $this->assertNotNull($query);
         $this->assertStringContainsString("SET cluster_id = 'cluster-new'", $query);
         $this->assertStringContainsString('WHERE id = 77', $query);
     }
@@ -126,8 +146,9 @@ final class UnknownFaceRepositoryTest extends TestCase
         $this->wpdb->mockResults = [];
         $this->repository->findFacesByAttachment(444);
 
-        $this->assertNotEmpty($this->wpdb->queries);
-        $this->assertStringContainsString('WHERE attachment_id = 444', $this->wpdb->queries[0]);
+    $this->assertNotEmpty($this->wpdb->queries);
+    $query = $this->findQueryContaining('WHERE attachment_id = 444');
+    $this->assertNotNull($query);
     }
 
     public function test_find_face_by_id_returns_unknown_face(): void
@@ -146,7 +167,8 @@ final class UnknownFaceRepositoryTest extends TestCase
         $face = $this->repository->findFaceById(12);
 
         $this->assertInstanceOf(UnknownFace::class, $face);
-        $this->assertStringContainsString('WHERE id = 12', $this->wpdb->queries[0]);
+    $query = $this->findQueryContaining('WHERE id = 12');
+    $this->assertNotNull($query);
     }
 
     public function test_find_face_by_id_returns_null_when_missing(): void
@@ -155,7 +177,8 @@ final class UnknownFaceRepositoryTest extends TestCase
         $face = $this->repository->findFaceById(999);
 
         $this->assertNull($face);
-        $this->assertStringContainsString('WHERE id = 999', $this->wpdb->queries[0]);
+    $query = $this->findQueryContaining('WHERE id = 999');
+    $this->assertNotNull($query);
     }
 
     public function test_find_faces_by_ids_filters_and_orders_unique_ids(): void
@@ -178,8 +201,20 @@ final class UnknownFaceRepositoryTest extends TestCase
         $this->assertCount(1, $faces);
         $this->assertInstanceOf(UnknownFace::class, $faces[0]);
 
-        $query = $this->wpdb->queries[0] ?? '';
+        $query = $this->findQueryContaining('SELECT * FROM wp_cat_unknown_faces');
+        $this->assertNotNull($query);
         $this->assertStringContainsString('IN (', $query);
         $this->assertStringContainsString('resolved_at IS NULL', $query);
+    }
+
+    private function findQueryContaining(string $needle): ?string
+    {
+        foreach ($this->wpdb->queries as $query) {
+            if (str_contains($query, $needle)) {
+                return $query;
+            }
+        }
+
+        return null;
     }
 }

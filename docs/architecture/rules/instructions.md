@@ -83,6 +83,7 @@ http://<local-domain>/wp-json/<your-namespace>/server/streamable.
 10. Use 4 spaces for indentation across frontend TypeScript/SCSS files; tabs or alternative spacing styles are not permitted.
 11. Prefer arrow functions for all frontend JavaScript/TypeScript modules (components, hooks, utilities) to keep the style consistent.
 12. Alternative front-end runtimes (Svelte, Ripple, etc.) were evaluated: React remains the default because it aligns with WordPress' Gutenberg ecosystem, existing WP packages (`@wordpress/components`, data), and team familiarity. Revisit only if performance profiling shows React/SPAs cannot meet targets.
+13. Apply declared prop interfaces to the component signature; do not leave props types unused or fall back to implicit `any`/`unknown` when rendering React components.
 
 ### Frontend Component Architecture Rules (Enforced Limits)
 

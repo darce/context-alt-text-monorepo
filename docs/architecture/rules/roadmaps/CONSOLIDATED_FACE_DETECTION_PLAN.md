@@ -1,26 +1,29 @@
-HYBRID_FACE_DETECTION_PLAN.v2.md
-
-# Context Alt Text — Hybrid Face Detection & Labeling Plan (v2)
+# Context Alt Text — Consolidated Face Recognition Plan (2025)
 
 **Status:** Draft for implementation  
-**Scope:** Frontend detection (browser), backend recognition (remote), Apple-Photos-style progressive labeling UX  
-**Replaces:** HYBRID_FACE_DETECTION_PLAN.md (v1)  
-**Related:** `sequence-interactive-detection.v2.mmd`, `sequence-complete-workflow.v2.mmd`,
-`face-recognition-workflow.v2.mmd`, `hybrid-detection-classes.v2.mmd`, `uml-class-diagram.v2.mmd`,
-`roster-domain-classes.v2.mmd`
+**Scope:** Remote face detection, clustering, and labeling UX in Workbench  
+**Replaces:** `HYBRID_FACE_DETECTION_PLAN.md` (all variants)  
+**Related:** `sequence-complete-workflow.v3.mmd`, `backend-recognition-flow.v3.mmd`,
+`cluster-lifecycle.v3.mmd`, `roster-domain-classes.v2.mmd`
 
 ---
 
 ## 0) Executive Summary
 
-v2 removes the “Interactive vs Batch” toggle and introduces a single, seamless **progressive People labeling** flow:
+The consolidated plan removes all browser-resident face models and delegates every detection,
+embedding, and clustering step to the recognition service. The WordPress plugin now treats the
+recognition pipeline as a **single source of truth** while the Workbench UI focuses on triaging and
+confirming server-provided results.
 
-- **Detect in the browser** (fast, private bounding boxes).
-- **Suggest on the backend** (embeddings + FAISS + clustering).
-- **Name once, apply many:** when the user names a face, the system proposes the same person across the current selection and future imports.
-- **People Drawer** groups unknowns into “likely same person” stacks; users bulk confirm/adjust.
+- **Detection-as-a-service:** All bounding boxes originate from recognition jobs or on-demand
+  identify requests that call the remote service.
+- **Progressive labeling:** Unknown faces surface in the People Drawer, clustered by backend ids;
+  confirming one face fans out to every matching observation.
+- **Offline resilience:** When the service is unavailable, the controller returns deterministic
+  fallback payloads and the UI persists provisional labels locally until sync resumes.
 
-Commercial/IP moat is preserved by keeping **all embeddings and recognition server-side**.
+This approach shrinks the frontend bundle, simplifies accessibility, and keeps the recognition IP
+behind controlled infrastructure.
 
 ---
 
@@ -28,274 +31,312 @@ Commercial/IP moat is preserved by keeping **all embeddings and recognition serv
 
 ### Goals
 
-- Reduce cognitive friction by eliminating mode switching.
-- Cold-start fast: a handful of labels should bootstrap high-accuracy suggestions.
-- Maintain small FE bundle and accessible controls (WCAG 2.1 AA).
+- Deliver a single Workbench labeling flow that always reflects the current server state.
+- Reduce maintenance cost by eliminating MediaPipe/ONNX packaging from the plugin.
+- Ensure consistent clustering and suggestion quality across manual labeling and automated jobs.
+- Preserve privacy by keeping embeddings and model payloads on trusted servers.
 
 ### Non-Goals
 
-- No in-browser embeddings in default flow (may exist behind a lab flag).
-- No change to external storage contracts (keep roster & embeddings server-side).
+- No in-browser detection, embeddings, or cosine matching (even behind feature flags).
+- No changes to external API contracts for third-party roster integrations.
+- No attempt to run recognition when the service is explicitly disabled in site settings.
 
 ---
 
 ## 2) Architecture Overview
 
-Browser (WP Admin SPA)
-├─ DetectionProvider (default: MediaPipe Tasks; optional: RetinaFace via ONNXRuntime-Web)
-├─ PeopleOverlay (face boxes + “Who is this?” chips)
-├─ People Drawer (Unknown clusters + suggestion stacks)
-└─ POST /wp-json/cat/v1/recognition/identify → WP
+```
+Workbench SPA (React + WP REST)
+├─ PeopleOverlay (renders boxes provided by backend)
+├─ PeopleDrawer (clusters + suggestion stacks)
+├─ useUnknownClusters / useClusterDetail (query server data)
+└─ usePeopleSuggestions (labels + optimistic UX)
 
-WordPress Plugin (REST + crops)
-└─ identify: crops faces (server-side) → Recognition Service
-← suggestions (top-k) + cluster ids → merges → Browser
+WordPress Plugin (PHP)
+├─ POST /recognition/analyze → queue recognition jobs (face detection + embeddings)
+├─ POST /recognition/identify → proxy to recognition service for ad-hoc suggestions
+├─ GET /unknown-clusters → read-only cluster summaries
+├─ GET /cluster/:id → per-cluster faces
+└─ Observation persistence + offline fallbacks
 
 Recognition Service (FastAPI)
-├─ /embeddings/batch
-├─ /suggest (FAISS search top-k + threshold)
-└─ /cluster-unknowns (groups low-confidence faces)
+├─ /v0/detect-and-embed (multi-face detection + embeddings)
+├─ /v0/suggest (FAISS search, roster aware)
+├─ /v0/cluster-unknowns (nightly + on-demand refresh)
+└─ Observation sync webhooks → WordPress
+```
+
+Key change: browsers never send bounding boxes or embeddings; they request the latest observations
+(faces, clusters, and suggestions) already produced server-side.
 
 ---
 
-## 3) Frontend: UX & Components
+## 3) Frontend UX & Data Contracts
 
-### 3.1 PeopleOverlay
+### 3.1 Workbench Surfaces
 
-- Draws bounding boxes; each box includes a chip: **“Who is this?”**
-- Chip opens **PeoplePicker** (typeahead roster + “Create new”).
-- Keyboard: focus cycles faces; `Enter` opens picker; `S` confirms suggested; `R` reassigns.
+- **Unknown People Panel:** Paginated list via `GET /unknown-clusters`; shows counts and sample crop.
+- **Cluster Detail Drawer:** `GET /clusters/{id}` returns every face in the cluster with bounding boxes
+  and suggestion metadata. PeopleDrawer and PeopleOverlay both consume this response.
+- **PeopleOverlay:** Renders `FaceObservation` data (bbox in pixel space) and delegates actions to
+  `usePeopleSuggestions`.
 
-### 3.2 People Drawer (Right Rail)
+### 3.2 People Labeling Flow
 
-- **Stacks** unknown faces by backend `clusterId`: “Likely same person (x12)” with bulk **Confirm All** / **Review**.
-- **Suggestion stacks** for known persons (e.g., “John Doe? (54)”).
-- One-click bulk confirm; misfits return to unknown or reassign flow.
+1. User opens a cluster from the Unknown People Panel.
+2. SPA fetches cluster detail; faces arrive with server-generated `faceId`, `clusterId`, suggestions,
+   and observation identifiers.
+3. Selecting a face opens the PeoplePicker; submitting a label triggers
+   `POST /recognition/identify` with **observation ids only** (no detections). The controller locks
+   the observation and forwards the request to the recognition service to persist embeddings and
+   suggestions.
+4. Optimistic UI updates; upon success, queries invalidate to refresh cluster metrics.
 
-### 3.3 DetectionProvider (pluggable)
-
-- **Default:** MediaPipe Tasks Face Detector (lazy-loaded).
-- **Experimental:** RetinaFace (ONNXRuntime-Web, WebGPU → WASM SIMD fallback). Gate behind a feature flag.
-- Target perf (desktop CPU): <400 ms/image detection; first model load <4 s.
-
-### 3.4 Data Contracts (FE ↔ WP)
+### 3.3 Identify Request (new schema)
 
 ```ts
-// POST /wp-json/cat/v1/recognition/identify
-{
-  attachmentId: number,
+type IdentifyRequest = {
+  attachmentId: number;
+  observationIds: string[]; // existing observations created by detection jobs
   faces: Array<{
-    bbox: {x:number, y:number, width:number, height:number},
-    faceId?: string,                         // FE temp id for reconciliation
-    label?: { rosterId?: string, newName?: string } // present only when user labeled
-  }>
-}
+    faceId: string; // server-issued id for reconciliation
+    label: {
+      rosterId?: string;
+      newName?: string;
+      displayName?: string;
+    };
+  }>;
+};
 
-// Response
-{
+type IdentifyResponse = {
   faces: Array<{
-    faceId: string,
-    clusterId?: string,
-    suggestions: Array<{ rosterId: string, display: string, score: number }>
-  }>
-}
+    faceId: string;
+    clusterId: string | null;
+    rosterId?: string;
+    observationId?: number;
+    suggestions: Suggestion[];
+    syncStatus: "success" | "pending" | "failed";
+    syncError?: string;
+  }>;
+  error?: string;
+};
+```
+
+Bounding boxes and embeddings are implicit because the recognition service already holds them for
+the referenced observation ids.
+
+---
+
+## 4) WordPress Plugin Responsibilities
+
+### 4.1 Recognition Jobs
+
+- `/recognition/analyze` accepts attachment lists, enqueues jobs, and mirrors job state in
+  `cat_recognition_jobs`.
+- Each worker run calls `/v0/detect-and-embed` with media crops, stores observations (bbox, embedding
+  checksum, cluster assignment) and populates `_cat_synced_to_faiss` status on posts.
+
+### 4.2 Identify Controller
 
-4) Backend: WP REST + Recognition Service
-4.1 WP REST Endpoint
+- Validates capability (`upload_files`) and ensures recognition is enabled.
+- Requires either the recognition service to be **online** (health check succeeded in last N minutes)
+  or immediately raises `service_unavailable` (HTTP 503). When offline, returns deterministic fallback
+  payload (preserves optimistic UI) and queues a retry job.
+- Calls recognition client methods:
+  - `persistObservationLabel(observationId, rosterId | newName)`
+  - `scheduleEmbeddingSync(rosterId, observationId)`
+- Normalizes suggestion payloads and sync metadata before responding.
 
-POST /wp-json/cat/v1/recognition/identify
+### 4.3 Cluster APIs
 
-Validates capability, resolves attachment, crops faces server-side (GD/Imagick).
+- `GET /unknown-clusters`: aggregated counts, sample thumbnails, last updated timestamp.
+- `GET /clusters/{id}`: returns faces with bbox, observation id, roster suggestions, exposure history.
+- `POST /clusters/{id}/confirm`: bulk applies roster id to every face in the cluster.
 
-Sends crops to Recognition Service:
+### 4.4 Offline Fallback
 
-/embeddings/batch → embeddings
+- Persist user-supplied labels to `localStorage` (already implemented in hook) and `wp_options` table
+  via `cat_offline_face_labels` option keyed by attachment id.
+- Background cron reconciles cached labels once recognition service is healthy again.
 
-/suggest → top-k matches for roster
+---
 
-/cluster-unknowns → cluster ids for low-confidence faces
+## 5) Recognition Service Responsibilities
 
-Persists labeled observations when label is present.
+- Single endpoint (`/v0/detect-and-embed`) returns detections and embeddings for provided media ids;
+  response includes deterministic `faceId` stable across re-runs.
+- `/v0/suggest` performs FAISS searches against roster embeddings with configurable thresholds.
+- `/v0/cluster-unknowns` groups unsupervised faces; results stored in service DB and echoed to WP.
+- Webhooks notify WP when cluster assignments change, enabling push-based cache invalidation.
 
-Returns unified suggestions[] and clusterId.
+Operational targets:
 
-4.2 Recognition Service Endpoints
+- Detect + embed ≤ 800 ms for 2K images on CPU (batch friendly).
+- Suggest queries ≤ 150 ms P95 with 10K roster entries.
+- Cluster refresh every 5 minutes while queue non-empty (tunable).
 
-POST /api/v0/embeddings/batch: { images[] } → { embeddings[] }
+---
 
-POST /api/v0/suggest: { embeddings[], topK, threshold } → { suggestions[][] }
+## 6) Data Model Changes
 
-FAISS (IndexFlatIP / HNSW) with normalized vectors; configurable threshold (default 0.92).
+```
+cat_observation
+├─ id BIGINT UNSIGNED PK
+├─ attachment_id BIGINT UNSIGNED NOT NULL
+├─ bbox_x DECIMAL(10,4)
+├─ bbox_y DECIMAL(10,4)
+├─ bbox_w DECIMAL(10,4)
+├─ bbox_h DECIMAL(10,4)
+├─ cluster_group_id VARCHAR(64) NULL
+├─ suggested_roster_id VARCHAR(64) NULL
+├─ suggested_score DECIMAL(5,4) NULL
+├─ label_status ENUM('unlabeled','suggested','confirmed','rejected','corrected') DEFAULT 'unlabeled'
+├─ embedding_checksum CHAR(64) NULL -- SHA256 for dedupe
+├─ recognition_job_id CHAR(36) NULL
+└─ synced_to_faiss TINYINT(1) DEFAULT 0
 
-POST /api/v0/cluster-unknowns: { embeddings[] } → { clusterIds[] }
+cat_cluster_summary (new)
+├─ id VARCHAR(64) PK
+├─ face_count INT UNSIGNED
+├─ sample_observation_id BIGINT UNSIGNED
+├─ suggestion_roster_id VARCHAR(64) NULL
+├─ suggestion_score DECIMAL(5,4) NULL
+├─ refreshed_at DATETIME
 
-DBSCAN/Agglomerative; tunables in config.
+cat_offline_face_label (new, optional)
+├─ attachment_id BIGINT UNSIGNED PK
+├─ payload JSON NOT NULL -- draft labels captured during outage
+├─ updated_at DATETIME NOT NULL
+```
 
-5) Data Model (DB)
+---
 
-Extend observations to support suggestion/cluster UX.
+## 7) Primary User Flows
 
--- cat_observation (new/extended columns)
-ALTER TABLE cat_observation
-  ADD COLUMN cluster_group_id VARCHAR(64) NULL,
-  ADD COLUMN suggested_roster_id VARCHAR(64) NULL,
-  ADD COLUMN suggested_score DECIMAL(5,4) NULL,
-  ADD COLUMN label_status ENUM('unlabeled','suggested','confirmed','rejected','corrected') NOT NULL DEFAULT 'unlabeled';
+### 7.1 Cold Start (Service Online)
 
--- cat_roster unchanged (id, display_name, metadata, avatar, etc.)
+1. Admin selects 100 photos and clicks **Scan for Faces**.
+2. `/recognition/analyze` queues job; recognition service detects faces and pushes observations.
+3. Unknown People Panel shows new clusters; user opens a cluster, confirms roster id.
+4. Confirming updates observations, re-clusters remaining faces, and pushes new suggestions.
 
--- cat_observation_embedding (unchanged if it already exists; else:)
-CREATE TABLE IF NOT EXISTS cat_observation_embedding (
-  observation_id BIGINT UNSIGNED NOT NULL,
-  model VARCHAR(64) NOT NULL,
-  vec MEDIUMBLOB NOT NULL,
-  created_at DATETIME NOT NULL,
-  PRIMARY KEY (observation_id, model)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+### 7.2 Warm Start (Existing Roster)
 
-6) Primary User Flows
-6.1 Cold Start (no roster)
+1. Recognition jobs run nightly or on upload; suggestions already computed.
+2. Workbench immediately lists suggestion stacks with high confidence.
+3. User bulk confirms or corrects; `identify` ensures roster embeddings stay in sync.
 
-User selects 50–200 images in Workbench.
+### 7.3 Service Outage
 
-FE detects faces; posts all bboxes to identify.
+1. Identify controller health check fails and returns 503 with fallback faces.
+2. UI stores provisional labels locally and shows “Pending sync” state.
+3. Background task retries once service is up; UI invalidates caches when sync completes.
 
-Backend clusters unknowns → Drawer shows “3 likely people groups”.
+---
 
-User names Group A (“Ana”) and Group B (“Marta”); bulk applies.
+## 8) Settings & Feature Flags
 
-Suggestions ramp; user Confirm All on remaining stacks.
+- **Recognition → Enable labeling:** toggles availability of Workbench people features.
+- **Auto-confirm threshold:** stored in `cat_recognition_settings`, controls FAISS acceptance.
+- **Cluster refresh cadence:** server-side, but surfaced as read-only telemetry in settings panel.
+- **Telemetry opt-in:** gating aggregated performance metrics.
 
-6.2 Warm Start (existing roster)
+No user-facing toggle for detection engines; MediaPipe/RetinaFace artifacts removed.
 
-Import 200 new photos.
+---
 
-Suggestions arrive immediately (“John Doe? (54)”).
+## 9) Accessibility Commitments
 
-Confirm All then fix a few misfits.
+- PeopleOverlay chips remain button elements with screen-reader announcements including position,
+  cluster, and pending sync status.
+- Drawer stacks support roving tabindex; bulk actions emit polite live-region updates.
+- Error and offline banners use role="alert" and persist until dismissed.
 
-7) Settings
+---
 
-Smart Labeling: ON (not surfaced as a mode).
+## 10) Telemetry & KPIs
 
-Auto-apply threshold: default 0.92 (UI slider in Advanced).
+- Time from scan completion to first confirmed label (target ≤ 90 seconds P50).
+- Suggestion acceptance rate after 20 confirmations (target ≥ 85%).
+- Retry volume due to recognition outages (monitor for spikes > 2% of requests).
+- Average cluster size variance (ensures clustering quality remains stable).
 
-Detection engine: Auto (MediaPipe) | RetinaFace (Experimental).
+---
 
-Performance budget: FE bundle delta ≤ 1.5 MB gz (lazy-loaded).
+## 11) Testing Strategy
 
-8) Accessibility
+- **PHP unit tests:** IdentifyController failure modes (capability, offline fallback, roster creation).
+- **API contract tests:** JSON schema snapshots for `/unknown-clusters`, `/clusters/{id}`,
+  `/recognition/identify`.
+- **React tests:** PeopleDrawer grouping, PeopleOverlay focus cycle, optimistic label rollback.
+- **Integration:** Emulate recognition service outage to verify local persistence + retry.
+- **Load tests:** Recognition service detection batches (1k media) and suggestion latency at scale.
 
-Face chips are buttons with ARIA: “Unknown face 2 of 7. Press Enter to name.”
+---
 
-Drawer lists use roving tabindex; Home/End jump stacks; live regions announce bulk actions.
+## 12) Rollout Plan
 
-Color not sole indicator; large hit targets (≥44px).
+1. Ship recognition service endpoints (`detect-and-embed`, `suggest`, `cluster-unknowns`).
+2. Update WP plugin data model migrations and background job workers.
+3. Remove MediaPipe artifacts from repo (hooks, utils, tests, bundle config).
+4. Deliver new Workbench UX with cluster + observation-driven flow.
+5. Enable progressive rollout via feature flag; monitor telemetry dashboards.
+6. Once stable, delete legacy detection documentation and close follow-up tickets.
 
-9) Telemetry KPIs
+---
 
-Avg clicks per labeled person: –40% vs v1
+## 13) Security & Privacy
 
-Time to first 10 named persons (cold start): –50%
+- All recognition traffic remains server-to-server; SPA only consumes sanitized observation data.
+- Capability checks enforced on every endpoint; IdentifyController re-verifies `upload_files`.
+- Observations include audit metadata (who labeled, when) stored in post meta for compliance.
+- No embeddings or crops persist in browser storage beyond temporary fallbacks.
 
-Suggestion acceptance after 20 labels: ≥85%
+---
 
-Abandonment on first run: –30%
+## 14) Changelog (vs. Hybrid Plan)
 
-10) TDD & QA
+- Removed DetectionProvider abstraction and MediaPipe/RetinaFace dependencies.
+- Identify request now references existing observations instead of raw detections.
+- Introduced cluster + observation APIs to drive Workbench UI.
+- Added offline persistence + retry strategy for recognition outages.
 
-FE unit/integration: Detection hooks, Overlay focus cycle, Drawer bulk confirm/reassign.
+---
 
-Contract tests: FE DTOs ↔ WP Controller ↔ RecSvc OpenAPI.
+## 15) File Structure (Delta)
 
-BE perf tests: FAISS top-k @ 1k/10k; clustering latency; cache reload TTL.
-
-E2E: Cold start happy path, mis-suggest correction, screen reader checks.
-
-11) Rollout Plan
-
-RecSvc: add /suggest, /cluster-unknowns; verify FAISS + thresholds.
-
-WP: implement identify, cropper, persistence of labels & suggestion hints.
-
-FE: DetectionProvider abstraction; PeopleOverlay + Drawer; background identify loop.
-
-Polish: Remove v1 toggle; add short explainer tooltip; Storybook + a11y audit.
-
-12) Security & Privacy
-
-No embeddings computed in browser by default.
-
-Crops sent over TLS to self-hosted RecSvc; roster & vectors never exposed publicly.
-
-Fine-grained capabilities on WP endpoints; audit logging for label changes.
-
-13) Changelog (v2 vs v1)
-
-Removed “Interactive vs Batch” UI.
-
-Added /suggest, /cluster-unknowns service endpoints.
-
-New DB fields for cluster/suggestion/label status.
-
-Introduced People Drawer + bulk Confirm All.
-
-Clarified default vs experimental detection providers.
-
-14) File structure (delta)
+```
 apps/wp-context-alt-text/
 ├── js/
 │   ├── components/workbench/
 │   │   ├── PeopleOverlay.tsx
 │   │   ├── PeopleDrawer.tsx
-│   │   └── PeopleSuggestionChip.tsx
-│   ├── hooks/useFaceDetection.ts
-│   ├── hooks/usePeopleSuggestions.ts
-│   └── utils/detectors/
-│       ├── mediapipe.ts (default)
-│       └── retinaface.ts (experimental)
+│   │   ├── ClusterDetailView.tsx
+│   │   └── WorkbenchApp.tsx
+│   ├── hooks/
+│   │   ├── usePeopleSuggestions.ts
+│   │   ├── useUnknownClusters.ts
+│   │   └── useFaceScan.ts
+│   └── utils/ (no detectors)
 └── src/Recognition/
-    ├── IdentifyController.php            // /recognition/identify
-    ├── ImageCropUtility.php
-    └── ObservationRepository.php         // add cluster/suggestion fields
-
-15) Optional: WP Route & DTO Stubs (drop-in)
-// includes/Routes/Api.php
-Route::prefix( '/cat/v1', function( Route $route ) {
-    $route->post( '/recognition/identify', '\ContextAltText\Controllers\Recognition\IdentifyController@handle' );
-});
-
-// src/Recognition/IdentifyController.php
-namespace ContextAltText\Controllers\Recognition;
-
-class IdentifyController {
-    public function handle( \WP_REST_Request $req ) {
-        $payload = json_decode( $req->get_body(), true );
-        // 1) validate caps, resolve attachment
-        // 2) crop faces by bbox (server-side)
-        // 3) call RecSvc: /embeddings/batch → /suggest → /cluster-unknowns
-        // 4) persist labeled observations if present
-        // 5) return per-face {faceId, clusterId?, suggestions[]}
-        return rest_ensure_response([ 'faces' => /* ... */ ]);
-    }
-}
-
-// js/types/identify.ts
-export type IdentifyRequest = {
-  attachmentId: number;
-  faces: Array<{
-    bbox: { x:number; y:number; width:number; height:number };
-    faceId?: string;
-    label?: { rosterId?: string; newName?: string };
-  }>;
-};
-
-export type IdentifyResponse = {
-  faces: Array<{
-    faceId: string;
-    clusterId?: string;
-    suggestions: Array<{ rosterId: string; display: string; score: number }>;
-  }>;
-};
-
+    ├── IdentifyController.php
+    ├── RecognitionClient.php
+    └── Observations/
+        ├── ObservationRepository.php
+        └── ClusterRepository.php
 ```
+
+Legacy files (`useFaceDetection.ts`, `faceEmbeddings.ts`, MediaPipe loader) are removed during rollout.
+
+---
+
+## 16) Open Questions
+
+1. Do we require real-time health checks, or is cached status (e.g., cron heartbeat) sufficient for
+   gating IdentifyController?
+2. Should offline labels queue per observation (granular) or per attachment (current draft)?
+3. What retention policy applies to cluster summaries once all faces in the cluster are labeled?
+
+Document owner: `@darce`  
+Last updated: 2025-10-29

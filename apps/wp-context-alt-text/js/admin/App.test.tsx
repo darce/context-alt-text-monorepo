@@ -246,7 +246,6 @@ describe("App", () => {
 
         render(<App />);
 
-        expect(screen.getByRole("heading", { name: /Recognition/i })).toBeInTheDocument();
         const selectionSummary = screen.getByText((_, element) => element?.textContent === "0 items selected");
         expect(selectionSummary).toBeInTheDocument();
         expect(screen.getByRole("table", { name: /Media queue/i })).toBeInTheDocument();

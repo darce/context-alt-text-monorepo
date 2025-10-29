@@ -1,12 +1,11 @@
 /**
- * Face Detection & Recognition Type Definitions - v2
- * Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 3.4
+ * Recognition Type Definitions
  *
- * @fileoverview TypeScript types for unified People labeling flow
+ * Shared TypeScript contracts for the remote recognition pipeline.
  */
 
 // ============================================================================
-// Core Detection Types (Frontend)
+// Core Recognition Types (Frontend)
 // ============================================================================
 
 /**
@@ -24,21 +23,6 @@ export interface BoundingBox {
     height: number;
 }
 
-/**
- * Raw detection result from MediaPipe/RetinaFace
- */
-export interface RawDetection {
-    /** Bounding box in normalized coordinates (0-1) */
-    boundingBox: BoundingBox;
-    /** Detection confidence score (0-1) */
-    confidence: number;
-    /** Optional keypoints (landmarks) for face alignment */
-    keypoints?: Array<{ x: number; y: number }>;
-}
-
-/**
- * Frontend face representation with backend suggestions
- */
 export interface DetectedFaceFE {
     /** Unique identifier (frontend-generated or backend-provided) */
     faceId: string;
@@ -46,7 +30,7 @@ export interface DetectedFaceFE {
     bbox: BoundingBox;
     /** Attachment post ID this face belongs to */
     attachmentId: number;
-    /** Detection confidence from browser detector */
+    /** Confidence score supplied by recognition service */
     confidence: number;
     /** Cluster ID from backend (groups unknowns) */
     clusterId: string | null;
@@ -56,8 +40,8 @@ export interface DetectedFaceFE {
     labelDraft: Label | null;
     /** Confirmed roster ID after user labels */
     confirmedRosterId: string | null;
-    /** Extracted face embedding (512D from MediaPipe) for local matching */
-    embedding?: Float32Array;
+    /** Observation identifier when record already exists */
+    observationId?: string | number | null;
 }
 
 /**
@@ -98,6 +82,8 @@ export interface DetectedFaceRequest {
     bbox: BoundingBox;
     /** Frontend temporary ID for reconciliation */
     faceId?: string;
+    /** Existing observation identifier (if already tracked) */
+    observationId?: string | number;
     /** Label if user has named this face */
     label?: Label;
 }
@@ -113,7 +99,7 @@ export interface DetectedFaceResponse {
     /** Ordered suggestions from FAISS */
     suggestions: Suggestion[];
     /** Database observation ID (only if label provided) */
-    observationId?: number;
+    observationId?: number | string;
     /** Roster ID (returned when label is persisted) */
     rosterId?: string;
     /** Sync status for FAISS embedding */
@@ -132,10 +118,6 @@ export interface IdentifyRequest {
     faces: DetectedFaceRequest[];
     /** Coordinate system: "normalized" (0-1) or "pixels" */
     imageCoordinateSystem?: "normalized" | "pixels";
-    /** Optional embeddings extracted by frontend (MediaPipe) for local matching */
-    embeddings?: number[][];
-    /** Whether to use remote FAISS matching (true) or local cosine similarity (false) */
-    useRemoteMatching?: boolean;
 }
 
 /**
@@ -146,64 +128,6 @@ export interface IdentifyResponse {
     faces: DetectedFaceResponse[];
     /** Error message if request failed */
     error?: string;
-}
-
-// ============================================================================
-// Component Props Types
-// ============================================================================
-
-/**
- * Props for PeopleOverlay component
- */
-export interface PeopleOverlayProps {
-    /** Detected faces to render */
-    faces: DetectedFaceFE[];
-    /** Currently selected face index */
-    selectedFaceIndex: number | null;
-    /** Callback when face chip is clicked */
-    onFaceClick: (index: number) => void;
-    /** Callback when user submits a label */
-    onLabelSubmit: (faceId: string, label: Label) => Promise<void>;
-    /** Whether to show confidence scores */
-    showConfidence?: boolean;
-    /** Image element for positioning overlays */
-    imageElement: HTMLImageElement | null;
-}
-
-/**
- * Props for PeopleDrawer component
- */
-export interface PeopleDrawerProps {
-    /** Clustered unknown faces */
-    clusters: FaceCluster[];
-    /** Suggestion stacks for known persons */
-    suggestions: SuggestionStack[];
-    /** Callback for bulk confirming a stack */
-    onBulkConfirm: (rosterId: string, faceIds: string[]) => Promise<void>;
-    /** Callback for reassigning a face */
-    onReassign: (faceId: string, label: Label) => Promise<void>;
-    /** Whether drawer is collapsed */
-    isCollapsed?: boolean;
-}
-
-/**
- * Props for PeoplePicker component
- */
-export interface PeoplePickerProps {
-    /** Current search query */
-    searchQuery: string;
-    /** Roster search results */
-    rosterResults: RosterPerson[];
-    /** Callback when user selects a person */
-    onSelect: (rosterId: string) => void;
-    /** Callback when user creates new person */
-    onCreateNew: (displayName: string) => void;
-    /** Currently selected roster ID (for corrections) */
-    currentRosterId?: string;
-    /** Whether picker is open */
-    isOpen: boolean;
-    /** Callback to close picker */
-    onClose: () => void;
 }
 
 // ============================================================================
@@ -337,63 +261,13 @@ export interface UsePeopleSuggestionsReturn {
     /** Error from last identify request */
     error: Error | null;
     /** Submit faces for identification */
-    identifyFaces: (attachmentId: number, detections: RawDetection[], embeddings?: Float32Array[]) => Promise<void>;
+    identifyFaces: (attachmentId: number, faces: DetectedFaceRequest[]) => Promise<void>;
+    /** Hydrate hook with pre-fetched faces */
+    hydrateFaces: (attachmentId: number, faces: DetectedFaceFE[]) => void;
     /** Submit label for a face */
     submitLabel: (faceId: string, label: Label) => Promise<void>;
     /** Bulk confirm roster suggestion */
     bulkConfirm: (rosterId: string, faceIds: string[]) => Promise<void>;
     /** Reset state */
     reset: () => void;
-}
-
-/**
- * Return type for useFaceDetection hook (already exists in foundation)
- */
-export interface UseFaceDetectionReturn {
-    /** Detection state */
-    state: "idle" | "loading" | "ready" | "detecting" | "error";
-    /** Detected faces */
-    detections: RawDetection[];
-    /** Error if detection failed */
-    error: Error | null;
-    /** Whether detector is ready */
-    isReady: boolean;
-    /** Load MediaPipe model */
-    loadDetector: () => Promise<void>;
-    /** Run detection on image */
-    detect: (image: HTMLImageElement) => Promise<RawDetection[]>;
-    /** Unload detector */
-    unload: () => void;
-    /** Reset state */
-    reset: () => void;
-}
-
-// ============================================================================
-// Settings/Config Types
-// ============================================================================
-
-/**
- * Detection provider configuration
- */
-export interface DetectionConfig {
-    /** Provider type */
-    provider: "mediapipe" | "retinaface";
-    /** Model confidence threshold */
-    minConfidence: number;
-    /** Maximum faces to detect per image */
-    maxFaces: number;
-}
-
-/**
- * Recognition settings
- */
-export interface RecognitionSettings {
-    /** FAISS similarity threshold for suggestions */
-    suggestionThreshold: number;
-    /** Top-K suggestions to return */
-    topK: number;
-    /** Clustering threshold for unknowns */
-    clusterThreshold: number;
-    /** Auto-apply labels above this confidence */
-    autoApplyThreshold: number | null;
 }

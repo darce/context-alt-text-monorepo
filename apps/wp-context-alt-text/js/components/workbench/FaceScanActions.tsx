@@ -1,4 +1,5 @@
 import React from "react";
+import { useQueryClient } from "@tanstack/react-query";
 import { __ } from "@wordpress/i18n";
 
 import { Button } from "@/components/ui/button";
@@ -15,6 +16,7 @@ export interface FaceScanActionsProps {
  */
 export const FaceScanActions = ({ selectedIds, onScanComplete }: FaceScanActionsProps): React.JSX.Element => {
     const { scanFaces, isScanning, error, result, reset } = useFaceScan();
+    const queryClient = useQueryClient();
 
     const handleScanClick = React.useCallback(() => {
         if (selectedIds.length === 0) {
@@ -32,6 +34,22 @@ export const FaceScanActions = ({ selectedIds, onScanComplete }: FaceScanActions
             });
         }
     }, [result, onScanComplete]);
+
+    React.useEffect(() => {
+        if (!result) {
+            return;
+        }
+
+        void (async () => {
+            await queryClient.invalidateQueries({
+                predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === "unknown-clusters",
+            });
+
+            await queryClient.invalidateQueries({
+                predicate: (query) => Array.isArray(query.queryKey) && query.queryKey[0] === "cluster-detail",
+            });
+        })();
+    }, [result, queryClient]);
 
     const isDisabled = selectedIds.length === 0 || isScanning;
 

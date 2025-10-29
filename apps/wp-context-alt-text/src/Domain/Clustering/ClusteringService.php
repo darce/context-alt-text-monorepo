@@ -584,6 +584,8 @@ final class ClusteringService implements ClusteringEngine
         $facesByIndex = [];
         $index = 0;
         
+        $assignedClusters = [];
+
         foreach ($faces as $face) {
             $vector = $this->resolveEmbeddingVector($face);
             if ($vector !== []) {
@@ -603,13 +605,14 @@ final class ClusteringService implements ClusteringEngine
                 $faceId = $face->id();
                 if ($faceId !== null) {
                     $this->repository->updateClusterAssignment($faceId, $clusterId);
+                    $assignedClusters[$faceId] = $clusterId;
                 }
             }
         }
         
         $payload = [
             'strategy' => 'local',
-            'faces' => $this->serializeFaces($faces),
+            'faces' => $this->serializeFaces($faces, $assignedClusters),
         ];
 
         if ($error !== null) {

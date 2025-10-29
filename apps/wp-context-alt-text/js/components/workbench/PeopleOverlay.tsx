@@ -32,8 +32,6 @@ export interface PeopleOverlayProps {
     selectedFaceIndex: number | null;
     /** Callback when face chip is clicked */
     onFaceClick: (index: number) => void;
-    /** Callback when image loads (passes img element) */
-    onImageLoad?: (image: HTMLImageElement) => void;
     /** Maximum display width */
     maxWidth?: number;
     /** Maximum display height */
@@ -64,25 +62,21 @@ export const PeopleOverlay = ({
     faces,
     selectedFaceIndex,
     onFaceClick,
-    onImageLoad,
     maxWidth = 1200,
     maxHeight = 800,
 }: PeopleOverlayProps): JSX.Element => {
-    const containerRef = useRef<HTMLDivElement>(null);
     const imageRef = useRef<HTMLImageElement>(null);
     const [imageLoaded, setImageLoaded] = useState(false);
     const [imageDimensions, setImageDimensions] = useState({
         width: 0,
         height: 0,
     });
-    const hasCalledOnImageLoad = useRef(false);
 
     /**
      * Handle image load
      */
     useEffect(() => {
         // Reset when image URL changes
-        hasCalledOnImageLoad.current = false;
         setImageLoaded(false);
     }, [imageUrl]);
 
@@ -110,12 +104,6 @@ export const PeopleOverlay = ({
 
             setImageDimensions({ width, height });
             setImageLoaded(true);
-
-            // Pass image element to parent (only once!)
-            if (onImageLoad !== undefined && !hasCalledOnImageLoad.current) {
-                hasCalledOnImageLoad.current = true;
-                onImageLoad(img);
-            }
         };
 
         if (img.complete) {
@@ -126,7 +114,7 @@ export const PeopleOverlay = ({
                 img.removeEventListener("load", handleLoad);
             };
         }
-    }, [imageUrl, maxWidth, maxHeight, onImageLoad]);
+    }, [imageUrl, maxWidth, maxHeight]);
 
     /**
      * Get chip label and variant for a face
@@ -134,19 +122,11 @@ export const PeopleOverlay = ({
     const getChipProps = (face: DetectedFaceFE): { label: string; variant: "unknown" | "suggested" | "confirmed" } => {
         // Confirmed label (user has labeled this face)
         if (face.confirmedRosterId || face.labelDraft) {
-            console.log("[getChipProps] Confirmed face:", {
-                confirmedRosterId: face.confirmedRosterId,
-                labelDraft: face.labelDraft,
-                suggestions: face.suggestions,
-            });
-
             const labelText =
                 face.labelDraft?.newName ??
                 face.labelDraft?.displayName ??
                 face.suggestions.find((s) => s.rosterId === face.confirmedRosterId)?.display ??
                 __("Labeled", "context-alt-text");
-
-            console.log("[getChipProps] Resolved labelText:", labelText);
             return { label: labelText, variant: "confirmed" };
         }
 
@@ -186,7 +166,7 @@ export const PeopleOverlay = ({
     };
 
     return (
-        <div className="cat-people-overlay" ref={containerRef}>
+        <div className="cat-people-overlay">
             {!imageLoaded && (
                 <div className="cat-people-overlay__loading" role="status">
                     <span className="cat-spinner" aria-hidden="true" />

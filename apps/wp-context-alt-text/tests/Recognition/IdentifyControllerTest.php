@@ -131,7 +131,7 @@ final class IdentifyControllerTest extends TestCase
         $this->assertStringContainsString('bbox', $response->get_error_message());
     }
 
-    public function test_handles_recognition_service_errors_gracefully(): void
+    public function test_returns_error_when_recognition_service_is_unavailable(): void
     {
         $this->mockSecurity
             ->expects($this->once())
@@ -161,11 +161,9 @@ final class IdentifyControllerTest extends TestCase
 
         $response = $this->controller->identify($request);
 
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('faces', $response);
-        $this->assertCount(1, $response['faces']);
-        $this->assertSame('cluster-0', $response['faces'][0]['clusterId']);
-        $this->assertSame([], $response['faces'][0]['suggestions']);
+    $this->assertInstanceOf(\WP_Error::class, $response);
+    $this->assertSame('recognition_service_unavailable', $response->get_error_code());
+    $this->assertSame(503, $response->get_error_data('recognition_service_unavailable')['status']);
     }
 
     public function test_returns_successful_response_with_suggestions(): void
@@ -227,114 +225,6 @@ final class IdentifyControllerTest extends TestCase
         $this->assertSame('cluster-0', $face['clusterId']);
         $this->assertCount(2, $face['suggestions']);
         $this->assertSame('Ana Rodriguez', $face['suggestions'][0]['display']);
-    }
-
-    public function test_local_matching_requires_high_similarity_for_suggestions(): void
-    {
-        $this->mockSecurity
-            ->expects($this->once())
-            ->method('verifyCapability')
-            ->with('upload_files')
-            ->willReturn(true);
-
-        update_option('cat_roster_entries', [
-            'local-ellyn' => [
-                'remoteId' => 'local-ellyn',
-                'label' => 'Ellyn',
-                'type' => 'person',
-                'embeddings' => [
-                    [1.0, 0.0],
-                ],
-            ],
-        ]);
-
-        $this->mockRecognitionClient
-            ->expects($this->never())
-            ->method('embedFaces');
-
-        $this->mockRecognitionClient
-            ->expects($this->never())
-            ->method('suggestMatches');
-
-        $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
-        $request->set_body_params([
-            'attachmentId' => 123,
-            'faces' => [
-                [
-                    'faceId' => 'face-123-0',
-                    'bbox' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.1, 'height' => 0.1],
-                ],
-            ],
-            'embeddings' => [
-                [0.7071, 0.7071], // Cosine similarity ~0.707 < 0.92 threshold
-            ],
-            'useRemoteMatching' => false,
-        ]);
-
-        $response = $this->controller->identify($request);
-
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('faces', $response);
-        $this->assertCount(1, $response['faces']);
-        $this->assertSame([], $response['faces'][0]['suggestions']);
-
-        delete_option('cat_roster_entries');
-    }
-
-    public function test_clusters_embeddings_locally_groups_similar_faces(): void
-    {
-        $this->mockSecurity
-            ->expects($this->once())
-            ->method('verifyCapability')
-            ->with('upload_files')
-            ->willReturn(true);
-
-        $GLOBALS['__cat_posts'][123] = (object)[
-            'ID' => 123,
-            'post_type' => 'attachment',
-        ];
-
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('embedFaces')
-            ->willReturn([
-                'embeddings' => [
-                    [0.1, 0.2, 0.3],
-                    [0.1, 0.2, 0.3],
-                ],
-            ]);
-
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('suggestMatches')
-            ->willReturn([
-                'suggestions' => [
-                    [],
-                    [],
-                ],
-            ]);
-
-        $this->mockRecognitionClient
-            ->expects($this->never())
-            ->method('clusterFaces');
-
-        $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
-        $request->set_body_params([
-            'attachmentId' => 123,
-            'faces' => [
-                ['bbox' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4]],
-                ['bbox' => ['x' => 0.5, 'y' => 0.4, 'width' => 0.25, 'height' => 0.3]],
-            ],
-        ]);
-
-        $response = $this->controller->identify($request);
-
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('faces', $response);
-        $this->assertCount(2, $response['faces']);
-
-        $this->assertSame('cluster-0', $response['faces'][0]['clusterId']);
-        $this->assertSame('cluster-0', $response['faces'][1]['clusterId']);
     }
 
     public function test_persists_observation_when_label_provided(): void

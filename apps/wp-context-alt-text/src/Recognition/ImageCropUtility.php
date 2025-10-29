@@ -126,12 +126,29 @@ class ImageCropUtility
 
         // Resize to model input size (112x112)
         $resizeResult = $editor->resize(self::MODEL_INPUT_SIZE, self::MODEL_INPUT_SIZE, false);
+
         if (is_wp_error($resizeResult) || $resizeResult === false) {
-            return new WP_Error(
-                'resize_failed',
-                __('Failed to resize cropped region', 'context-alt-text'),
-                ['status' => 500]
-            );
+            $currentSize = $editor->get_size();
+            $canUpscale = $currentSize !== false
+                && ($currentSize['width'] < self::MODEL_INPUT_SIZE || $currentSize['height'] < self::MODEL_INPUT_SIZE);
+
+            if ($canUpscale) {
+                $resizeResult = $editor->resize(self::MODEL_INPUT_SIZE, self::MODEL_INPUT_SIZE, true);
+            }
+
+            if (is_wp_error($resizeResult) || $resizeResult === false) {
+                $errorMessage = is_wp_error($resizeResult)
+                    ? $resizeResult->get_error_message()
+                    : __('Failed to resize cropped region', 'context-alt-text');
+
+                error_log(sprintf('[ImageCropUtility] Resize failed for attachment %d: %s', $attachmentId, $errorMessage));
+
+                return new WP_Error(
+                    'resize_failed',
+                    $errorMessage,
+                    ['status' => 500]
+                );
+            }
         }
 
         // Capture output buffer for base64 encoding

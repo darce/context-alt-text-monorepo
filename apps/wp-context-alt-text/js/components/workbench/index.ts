@@ -3,7 +3,6 @@ export * from "@/components/workbench/MediaList";
 export * from "@/components/workbench/SelectionToolbar";
 export * from "@/components/workbench/PaginationControls";
 export * from "@/components/workbench/SearchBar";
-export * from "@/components/workbench/RecognitionActions";
 export * from "@/components/workbench/UnknownPeoplePanel";
 export * from "@/components/workbench/ClusterCard";
 export * from "@/components/workbench/ClusterDetailView";

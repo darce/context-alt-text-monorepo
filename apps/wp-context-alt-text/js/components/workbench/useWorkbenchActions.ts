@@ -1,9 +1,4 @@
 import React from "react";
-import type { useRecognitionJob } from "@/admin/hooks/useRecognitionJob";
-import { emitDashboardEvent } from "@/admin/analytics";
-
-/** Recognition job hook return type */
-type UseRecognitionJobResult = ReturnType<typeof useRecognitionJob>;
 
 /**
  * Action handlers for workbench operations
@@ -21,10 +16,6 @@ export interface WorkbenchActions {
     handleRegenerateAltText: () => void;
     /** Mark selected items as reviewed */
     handleMarkReviewed: () => void;
-    /** Trigger recognition job for selected items */
-    handleTriggerRecognition: () => void;
-    /** Retry last failed recognition job */
-    handleRetryRecognition: () => void;
 }
 
 /**
@@ -37,16 +28,6 @@ export interface UseWorkbenchActionsProps {
     selectedList: string[];
     /** Set function for updating selected IDs */
     setSelectedIds: React.Dispatch<React.SetStateAction<Set<string>>>;
-    /** Recognition job hook result */
-    recognition: UseRecognitionJobResult;
-    /** Reference to last attempted IDs for retry functionality */
-    lastAttemptedIdsRef: React.MutableRefObject<string[]>;
-    /** Reference to request error event signature for deduplication */
-    requestErrorEventRef: React.MutableRefObject<string | null>;
-    /** Reference to job error event signature for deduplication */
-    jobErrorEventRef: React.MutableRefObject<string | null>;
-    /** Reference to completed job event signature for deduplication */
-    completedJobEventRef: React.MutableRefObject<string | null>;
     /** Optional callback when alt text generation is requested */
     onGenerateAltText?: (ids: string[]) => void;
     /** Optional callback when alt text regeneration is requested */
@@ -87,11 +68,6 @@ export interface UseWorkbenchActionsProps {
 export const useWorkbenchActions = ({
     selectedList,
     setSelectedIds,
-    recognition,
-    lastAttemptedIdsRef,
-    requestErrorEventRef,
-    jobErrorEventRef,
-    completedJobEventRef,
     onGenerateAltText,
     onRegenerateAltText,
     onMarkReviewed,
@@ -153,65 +129,11 @@ export const useWorkbenchActions = ({
         onMarkReviewed?.(selectedList);
     }, [onMarkReviewed, selectedList]);
 
-    /**
-     * Trigger recognition job for currently selected items
-     * Emits analytics event and resets error tracking refs
-     */
-    const handleTriggerRecognition = React.useCallback(() => {
-        if (selectedList.length === 0 || !recognition.canSubmit) {
-            return;
-        }
-        const selectionSnapshot = [...selectedList];
-        lastAttemptedIdsRef.current = selectionSnapshot;
-
-        // Reset error tracking to allow new error notifications
-        requestErrorEventRef.current = null;
-        jobErrorEventRef.current = null;
-        completedJobEventRef.current = null;
-
-        emitDashboardEvent("cat_workbench_recognition_triggered", {
-            selection: selectionSnapshot,
-            count: selectionSnapshot.length,
-        });
-
-        void recognition.triggerRecognition(selectionSnapshot).catch(() => {
-            // Errors are surfaced via the hook state; no additional handling needed here.
-        });
-    }, [recognition, selectedList, lastAttemptedIdsRef, requestErrorEventRef, jobErrorEventRef, completedJobEventRef]);
-
-    /**
-     * Retry last failed recognition job
-     * Uses lastAttemptedIdsRef to retry same selection that previously failed
-     */
-    const handleRetryRecognition = React.useCallback(() => {
-        const retryIds = lastAttemptedIdsRef.current;
-
-        if (retryIds.length === 0 || !recognition.canSubmit) {
-            return;
-        }
-
-        // Reset error tracking to allow new error notifications
-        requestErrorEventRef.current = null;
-        jobErrorEventRef.current = null;
-
-        emitDashboardEvent("cat_workbench_recognition_triggered", {
-            selection: retryIds,
-            count: retryIds.length,
-            retry: true,
-        });
-
-        void recognition.triggerRecognition(retryIds).catch(() => {
-            // Errors are surfaced via the hook state; no additional handling needed here.
-        });
-    }, [recognition, lastAttemptedIdsRef, requestErrorEventRef, jobErrorEventRef]);
-
     return {
         handleToggleSelection,
         clearSelection,
         handleGenerateAltText,
         handleRegenerateAltText,
         handleMarkReviewed,
-        handleTriggerRecognition,
-        handleRetryRecognition,
     };
 };

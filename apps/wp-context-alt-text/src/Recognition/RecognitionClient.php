@@ -430,109 +430,19 @@ class RecognitionClient
      * @return array<string,mixed> Response with suggestions
      * @throws RecognitionClientException
      */
-    public function suggestMatches(array $embeddings, int $topK = 5, float $threshold = 0.92): array
+    public function suggestMatches(array $embeddings, int $topK = 5, ?float $threshold = null): array
     {
         $payload = [
             'embeddings' => $embeddings,
             'topK' => $topK,
-            'threshold' => $threshold,
         ];
+
+        if ($threshold !== null) {
+            $payload['threshold'] = $threshold;
+        }
 
         $endpoint = $this->buildUrl('/api/v0/suggest');
         return $this->postJson($endpoint, $payload);
-    }
-
-    /**
-     * Cluster face embeddings
-     *
-     * @param array<int,array<float>> $embeddings Array of face embeddings
-     * @param string $algorithm Clustering algorithm ('dbscan' or 'agglomerative')
-     * @param float $distanceThreshold Distance threshold for clustering
-     * @param int $minSamples Minimum samples for DBSCAN
-     * @param string $linkage Linkage method for agglomerative
-     * @return array<string,mixed> Response with cluster IDs
-     * @throws RecognitionClientException
-     */
-    public function clusterFaces(
-        array $embeddings,
-        string $algorithm = 'dbscan',
-        float $distanceThreshold = 0.6,
-        int $minSamples = 2,
-        string $linkage = 'average'
-    ): array {
-        $payload = [
-            'embeddings' => $embeddings,
-            'algorithm' => $algorithm,
-            'distanceThreshold' => $distanceThreshold,
-            'minSamples' => $minSamples,
-            'linkage' => $linkage,
-        ];
-
-        $endpoint = $this->buildUrl('/api/v0/cluster-unknowns');
-        return $this->postJson($endpoint, $payload);
-    }
-
-    /**
-     * Add an embedding to an existing roster entry (progressive learning)
-     *
-     * Syncs a confirmed face observation to the FAISS index for improved future suggestions.
-     * This enables Apple Photos-style progressive learning where confirmed faces improve
-     * the model over time.
-     *
-     * @param string $rosterId Unique identifier for the roster entry
-     * @param string $observationId WordPress observation post ID for deduplication
-     * @param array<float> $embedding Face embedding vector (512-dimensional)
-     * @param array<string,mixed>|null $metadata Optional metadata (attachmentId, bbox, source, etc.)
-     * @return array<string,mixed>|WP_Error Response with sync status or error
-     * @throws RecognitionClientException
-     */
-    public function addRosterEmbedding(
-        string $rosterId,
-        string $observationId,
-        array $embedding,
-        ?array $metadata = null
-    ): array|WP_Error {
-        $payload = [
-            'rosterId' => $rosterId,
-            'observationId' => $observationId,
-            'embedding' => $embedding,
-            'model' => 'insightface_w600k',
-        ];
-
-        if ($metadata !== null) {
-            $payload['metadata'] = $metadata;
-        }
-
-        try {
-            $endpoint = $this->buildUrl('/api/v0/roster/add-embedding');
-            $response = $this->postJson($endpoint, $payload);
-            return $response;
-        } catch (RecognitionClientException $e) {
-            // Check for duplicate (409 Conflict)
-            if ($e->getCode() === 409) {
-                return new WP_Error(
-                    'duplicate_observation',
-                    'This observation has already been synced to the FAISS index',
-                    ['observationId' => $observationId, 'rosterId' => $rosterId]
-                );
-            }
-
-            // Check for roster not found (404)
-            if ($e->getCode() === 404) {
-                return new WP_Error(
-                    'roster_not_found',
-                    sprintf('Roster entry "%s" not found', $rosterId),
-                    ['rosterId' => $rosterId]
-                );
-            }
-
-            // General error
-            return new WP_Error(
-                'sync_failed',
-                sprintf('Failed to sync embedding: %s', $e->getMessage()),
-                ['rosterId' => $rosterId, 'observationId' => $observationId]
-            );
-        }
     }
 
     /**

@@ -30,11 +30,6 @@ export interface AdminConfig {
     restNonce?: string;
     featureFlags?: FeatureFlags;
     settings?: SettingsMeta;
-    matching?: MatchingConfig;
-}
-
-export interface MatchingConfig {
-    clusterSimilarityThreshold: number;
 }
 
 export interface AnalyticsClient {

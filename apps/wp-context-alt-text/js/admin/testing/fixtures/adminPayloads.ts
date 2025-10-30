@@ -1,3 +1,4 @@
+/* eslint-disable max-lines */
 import type { AdminConfig, DashboardData, WorkbenchData } from "@/admin/types";
 
 export const dashboardContractPayload: {
@@ -30,9 +31,6 @@ export const dashboardContractPayload: {
             abilitiesEnabled: true,
             rosterEnabled: true,
             settingsEnabled: false,
-        },
-        matching: {
-            clusterSimilarityThreshold: 0.65,
         },
         settings: {
             recognition: {
@@ -143,11 +141,6 @@ const buildExpectedDashboardConfig = (config: AdminConfig) => ({
         rosterEnabled: Boolean(config.featureFlags?.rosterEnabled),
         settingsEnabled: Boolean(config.featureFlags?.settingsEnabled),
     },
-    matching: config.matching
-        ? {
-              clusterSimilarityThreshold: config.matching.clusterSimilarityThreshold,
-          }
-        : undefined,
     settings: {
         recognition: {
             canManage: Boolean(config.settings?.recognition?.canManage),

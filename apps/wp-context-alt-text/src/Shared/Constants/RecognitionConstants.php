@@ -10,15 +10,6 @@ namespace ContextAltText\Shared\Constants;
 final class RecognitionConstants
 {
     /**
-     * Similarity threshold used when clustering face embeddings locally.
-     *
-     * When the frontend and backend rely on MediaPipe embeddings for grouping
-     * similar faces, this threshold defines the minimum cosine similarity for
-     * faces to be merged into the same cluster.
-     */
-    public const CLUSTER_SIMILARITY_THRESHOLD = 0.65;
-
-    /**
      * Similarity threshold required for local roster suggestions.
      *
      * Aligns with the recognition service default (0.92) so that local-only

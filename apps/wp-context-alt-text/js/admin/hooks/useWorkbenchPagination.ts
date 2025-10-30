@@ -42,7 +42,7 @@ interface UseWorkbenchPaginationProps {
  * });
  * ```
  */
-export function useWorkbenchPagination({
+export const useWorkbenchPagination = ({
     page,
     perPage,
     totalPagesCount,
@@ -50,7 +50,7 @@ export function useWorkbenchPagination({
     hasWorkbenchEndpoint,
     setPage,
     refetchWorkbenchMedia,
-}: UseWorkbenchPaginationProps): void {
+}: UseWorkbenchPaginationProps): void => {
     const previousPerPageRef = React.useRef(perPage);
 
     // Effect 1: Force refetch when page size changes
@@ -86,4 +86,4 @@ export function useWorkbenchPagination({
             setPage(totalPagesCount);
         }
     }, [isMediaLoading, page, totalPagesCount, setPage]);
-}
+};

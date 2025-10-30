@@ -65,4 +65,4 @@ export const {
     useState,
     useSyncExternalStore,
     useTransition,
-} = runtime as WordPressRuntime;
+} = runtime;

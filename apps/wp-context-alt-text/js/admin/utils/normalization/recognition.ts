@@ -5,7 +5,7 @@
  */
 
 import { __ } from "@wordpress/i18n";
-import { ensureString, toFiniteNumber, toNullableTimestamp, toStringOrNull, toUniqueNumericIds } from "./primitives";
+import { ensureString, toFiniteNumber, toNullableTimestamp, toUniqueNumericIds } from "./primitives";
 
 /**
  * Error class for recognition request failures.
@@ -394,8 +394,6 @@ export const maybeParseJson = async (response: Response): Promise<unknown> => {
         try {
             return await response.json();
         } catch (error) {
-            // Import RecognitionRequestError dynamically to avoid circular dependency
-            const { RecognitionRequestError } = await import("@/admin/hooks/useRecognitionJob.types");
             throw new RecognitionRequestError(__("Recognition service returned malformed JSON.", "context-alt-text"), {
                 cause: error,
             });

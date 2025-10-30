@@ -1,7 +1,5 @@
 import React from "react";
 import { useNavigate } from "react-router-dom";
-import { __ } from "@wordpress/i18n";
-
 import { HeroStatusSection } from "@/components/dashboard/HeroStatus";
 import { CoverageCard } from "@/components/dashboard/CoverageCard";
 import { ActivityCard } from "@/components/dashboard/ActivityCard";

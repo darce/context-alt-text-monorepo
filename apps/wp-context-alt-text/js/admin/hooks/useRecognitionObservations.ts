@@ -75,7 +75,7 @@ const buildObservationsUrl = (endpoint: string, filters: RecognitionObservationF
     const params: Record<string, string | number | undefined> = {
         per_page: perPage,
         page: page,
-        status: filters.status || undefined,
+        status: filters.status ?? undefined,
         attachment_ids:
             filters.attachmentIds && filters.attachmentIds.length > 0 ? filters.attachmentIds.join(",") : undefined,
     };

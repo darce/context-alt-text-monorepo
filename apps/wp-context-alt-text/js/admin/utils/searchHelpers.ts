@@ -1,4 +1,4 @@
-import { __, _n, sprintf } from "@wordpress/i18n";
+import { _n, sprintf } from "@wordpress/i18n";
 
 /**
  * Normalize a search query string

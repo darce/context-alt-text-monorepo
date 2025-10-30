@@ -11,18 +11,14 @@ use ContextAltText\Security\Security;
 use WP_Error;
 use WP_REST_Request;
 use function current_time;
-use function delete_post_meta;
 use function get_option;
 use function get_post;
-use function get_post_meta;
 use function is_array;
 use function is_numeric;
 use function is_scalar;
-use function is_wp_error;
 use function sprintf;
 use function trim;
 use function update_option;
-use function update_post_meta;
 
 final class IdentifyController
 {
@@ -153,15 +149,7 @@ final class IdentifyController
                         $responseFace['rosterId'] = $result['rosterId'];
                     }
 
-                    $syncedToFaiss = get_post_meta($result['observationId'] ?? 0, '_cat_synced_to_faiss', true);
-                    $responseFace['syncStatus'] = $syncedToFaiss ? 'success' : 'failed';
-
-                    if (!$syncedToFaiss) {
-                        $syncError = get_post_meta($result['observationId'] ?? 0, '_cat_sync_error', true);
-                        if ($syncError) {
-                            $responseFace['syncError'] = $syncError;
-                        }
-                    }
+                    $responseFace['syncStatus'] = 'delegated';
                 }
             }
 
@@ -192,39 +180,6 @@ final class IdentifyController
         return isset($response['suggestions']) && is_array($response['suggestions'])
             ? $response['suggestions']
             : [];
-    }
-
-    private function buildFallbackResponse(int $attachmentId, array $faces): array
-    {
-        $fallbackFaces = [];
-
-        foreach ($faces as $index => $face) {
-            if (!is_array($face)) {
-                continue;
-            }
-
-            $responseFace = [
-                'faceId' => $this->resolveFaceId($face, $attachmentId, $index),
-                'clusterId' => sprintf('cluster-%d', $index),
-                'suggestions' => [],
-                'bbox' => $face['bbox'],
-            ];
-
-            $label = $face['label'] ?? null;
-            if (is_array($label)) {
-                $result = $this->persistLabelWithoutEmbedding($attachmentId, $face['bbox'], $label);
-                if (is_array($result)) {
-                    $responseFace['rosterId'] = $result['rosterId'] ?? null;
-                    $responseFace['observationId'] = $result['observationId'] ?? null;
-                    $responseFace['syncStatus'] = 'pending';
-                    $responseFace['syncError'] = 'Recognition service unavailable - will sync when service is restored';
-                }
-            }
-
-            $fallbackFaces[] = $responseFace;
-        }
-
-        return ['faces' => $fallbackFaces];
     }
 
     private function isValidBbox(mixed $bbox): bool
@@ -401,30 +356,6 @@ final class IdentifyController
                 'observationId' => 1,
                 'rosterId' => $rosterId,
             ];
-        }
-
-        try {
-            $syncResult = $this->recognitionClient->addRosterEmbedding(
-                $rosterId,
-                (string) $observationId,
-                $embedding,
-                [
-                    'attachmentId' => $attachmentId,
-                    'bbox' => $bbox,
-                    'source' => 'wordpress-plugin',
-                ]
-            );
-
-            if (is_wp_error($syncResult)) {
-                update_post_meta($observationId, '_cat_synced_to_faiss', false);
-                update_post_meta($observationId, '_cat_sync_error', $syncResult->get_error_message());
-            } else {
-                update_post_meta($observationId, '_cat_synced_to_faiss', true);
-                delete_post_meta($observationId, '_cat_sync_error');
-            }
-        } catch (\Exception $exception) {
-            update_post_meta($observationId, '_cat_synced_to_faiss', false);
-            update_post_meta($observationId, '_cat_sync_error', $exception->getMessage());
         }
 
         return [

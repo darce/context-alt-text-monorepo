@@ -1,6 +1,7 @@
-title: Scene Analysis Service (Objects + Faces)
----
 flowchart TB
+
+    title Scene Analysis Service (Objects + Faces)
+
     subgraph ports["Ports"]
         object_port["ObjectDetectionPort\ndetect_objects(image)"]
         caption_port["CaptionGeneratorPort\ngenerate_caption(image, context)"]
@@ -49,7 +50,7 @@ flowchart TB
     classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
     classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
-    class ports,object_port,caption_port,recognition_port,roster_port portsClass
+    class ports,object_port,caption_port,recognition_port portsClass
     class domain,scene_service,scene_composer,scene_entities domainClass
     class adapters,yolo_adapter,caption_adapter,recognition_service_adapter adapterClass
     class external,yolo_weights,phi3_weights,recognition_stack,roster_embeddings,settings_yaml externalClass

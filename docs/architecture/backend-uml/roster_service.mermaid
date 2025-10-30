@@ -1,3 +1,185 @@
+title: Roster Service Domain (Hybrid Progressive Learning)
+classDiagram
+    class RosterImage {
+        +List~float~ embedding
+        +Dict~str,Any~ metadata
+        +Optional~str~ image_path
+        +to_dict()
+        +from_dict(data)
+    }
+
+    class AugmentedEmbedding {
+        +str embedding_id
+        +List~float~ vector
+        +str source "observation|curated|imported"
+        +str quality "high|medium|low"
+        +Optional~str~ observation_id
+        +datetime created_at
+        +normalize()
+    }
+
+    class RosterEntry {
+        +str unique_id
+        +str name
+        +Optional~str~ display_name
+        +List~RosterImage~ reference_images
+        +List~AugmentedEmbedding~ augmented_embeddings
+        +Optional~List~float~~ aggregate_embedding
+        +Dict~str,Any~ metadata
+        +datetime created_timestamp
+        +datetime updated_timestamp
+        +int image_count
+        +add_reference_image(image: RosterImage)
+        +add_augmented_embedding(embedding: AugmentedEmbedding)
+        +rebuild_aggregate_embedding()
+        +update_timestamp()
+    }
+
+    class RosterMatch {
+        +RosterEntry entry
+        +float similarity
+        +float confidence_threshold
+        +bool meets_threshold()
+    }
+
+    class RosterStoragePort {
+        <<interface>>
+        +load_roster_entries(model: str) List~RosterEntry~
+        +save_roster_entry(entry: RosterEntry, model: str) bool
+        +get_roster_entry(unique_id: str, model: str)
+        +delete_roster_entry(unique_id: str, model: str) bool
+        +clear_roster(model: str) bool
+        +get_storage_info(model: str) Dict~str,Any~
+    }
+
+    class AugmentedEmbeddingRepository {
+        <<interface>>
+        +persist(person: RosterEntry, embedding: AugmentedEmbedding, model: str) bool
+        +list(person: RosterEntry, model: str) List~AugmentedEmbedding~
+        +prune(person: RosterEntry, limit: int, strategy: str) int
+    }
+
+    class AugmentRepositoryAdapter {
+        +persist(person: RosterEntry, embedding: AugmentedEmbedding, model: str)
+        +list(person: RosterEntry, model: str)
+        +prune(person: RosterEntry, limit: int, strategy: str)
+    }
+
+    class PropagationQueuePort {
+        <<interface>>
+        +enqueueAugment(person_remote_id: str, embedding_id: str, payload: Dict~str,Any~) None
+        +markApplied(embedding_id: str) None
+        +markFailed(embedding_id: str, error: str) None
+    }
+
+    class EmbeddingStorePort {
+        <<interface>>
+        +save_embeddings(entries: List~RosterEntry~, model: str)
+        +load_embeddings(model: str)
+        +watch(callback) bool
+    }
+
+    class DataValidationPort {
+        <<interface>>
+        +validate_embedding(embedding: List~float~, model: str) List~str~
+        +validation_config: Dict~str,Any~
+    }
+
+    class FileRosterStorageAdapter {
+        -Path data_dir
+        +load_roster_entries(model: str)
+        +save_roster_entry(entry: RosterEntry, model: str)
+        +get_roster_entry(unique_id: str, model: str)
+        +delete_roster_entry(unique_id: str, model: str)
+        +clear_roster(model: str)
+        +get_storage_info(model: str)
+    }
+
+    class EmbeddingStorageAdapter {
+        -Path embeddings_path
+        +save_embeddings(entries: List~RosterEntry~, model: str)
+        +load_embeddings(model: str)
+        +watch(callback)
+    }
+
+    class DataValidationAdapter {
+        +validate_embedding(embedding: List~float~, model: str)
+        +validation_config: Dict~str,Any~
+    }
+
+    class PropagationJobAdapter {
+        +enqueueAugment(person_remote_id: str, embedding_id: str, payload: Dict~str,Any~)
+        +markApplied(embedding_id: str)
+        +markFailed(embedding_id: str, error: str)
+    }
+
+    class EmbeddingPropagationService {
+        -AugmentedEmbeddingRepository augmented_repo
+        -PropagationQueuePort propagation_queue
+        -EmbeddingStorePort embedding_store
+        -int max_embeddings_per_person
+        +recordAugment(entry: RosterEntry, embedding: AugmentedEmbedding, model: str)
+        +refreshIndex(model: str)
+        +handleFailure(embedding_id: str, error: str)
+    }
+
+    class RosterService {
+        -RosterStoragePort roster_storage
+        -EmbeddingStorePort embedding_storage
+        -DataValidationPort data_validator
+        -EmbeddingPropagationService propagation_service
+        -Dict~str,List~RosterEntry~~ _cache
+        +add_entry(name: str, embedding: List~float~, model: str, metadata, image_path) ?RosterEntry
+        +add_entries_bulk(entries: List~Dict~str,Any~~, model: str) List~str~
+        +get_entries(model: str, use_cache: bool = true) List~RosterEntry~
+        +get_entry(unique_id: str, model: str) ?RosterEntry
+        +update_entry(unique_id: str, model: str, embedding, metadata, image_path) bool
+        +record_progressive_embedding(unique_id: str, embedding: List~float~, source: str, quality: str, observation_id: str|None, model: str) bool
+        +delete_entry(unique_id: str, model: str) bool
+        +clear_roster(model: str) bool
+        +get_entry_count(model: str) int
+        +get_storage_info(model: str) Dict~str,Any~
+        +get_roster_images(model: str) List~Dict~str,Any~~
+        -_invalidate_cache(model: str)
+    }
+
+    class APIRouter {
+        +POST /api/v0/roster/{model}/upsert
+        +POST /api/v0/roster/{model}/bulk
+        +POST /api/v0/roster/augment
+        +GET /api/v0/roster/{model}
+        +GET /api/v0/roster/{model}/stats
+        +DELETE /api/v0/roster/{model}/{id}
+        +GET /api/v0/roster/health
+    }
+
+    RosterEntry "1" *-- "*" RosterImage : reference_images
+    RosterEntry "1" *-- "*" AugmentedEmbedding : progressive_vectors
+    RosterMatch *-- RosterEntry : references
+
+    RosterStoragePort <|.. FileRosterStorageAdapter
+    AugmentedEmbeddingRepository <|.. AugmentRepositoryAdapter
+    EmbeddingStorePort <|.. EmbeddingStorageAdapter
+    DataValidationPort <|.. DataValidationAdapter
+    PropagationQueuePort <|.. PropagationJobAdapter
+
+    EmbeddingPropagationService --> AugmentedEmbeddingRepository
+    EmbeddingPropagationService --> PropagationQueuePort
+    EmbeddingPropagationService --> EmbeddingStorePort
+
+    RosterService --> RosterStoragePort
+    RosterService --> EmbeddingStorePort
+    RosterService --> DataValidationPort
+    RosterService --> EmbeddingPropagationService
+    RosterService ..> RosterEntry
+    RosterService ..> RosterMatch
+    RosterService ..> AugmentedEmbedding
+
+    APIRouter --> RosterService
+    APIRouter ..> AugmentedEmbedding
+
+    note for AugmentedEmbedding "Max 10 per person (retain diverse poses)"
+    note for EmbeddingPropagationService "Writes to remote FAISS queue with retry/backoff"
 ---
 title: Roster Service Domain (Cache + API)
 ---

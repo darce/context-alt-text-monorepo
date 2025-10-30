@@ -1,7 +1,7 @@
 # Context Alt Text — Hybrid Option (#1) Actionable Task List (v3 Patch)
 
-**Scope:** Single developer. Coding-only. No scrum/meetings. Integrates `roadmap-v3.hybrid-patch.md`, `V3_ASSISTED_FACE_IDENTIFICATION_UX`, `hybrid-face-matching-strategy.md`, and `assisted-face-id-tasks-detailed.md` into one executable checklist with clear success markers.  
-**Principle:** Remote canonical roster + FAISS suggestions, with local clustering for unknowns and session/localStorage cache. Graceful offline fallback.  
+**Scope:** Single developer. Coding-only. No scrum/meetings. Integrates `roadmap-v3.hybrid.md`, `V3_ASSISTED_FACE_IDENTIFICATION_UX`, `hybrid-face-matching-strategy.md`, and `assisted-face-id-tasks-detailed.md` into one executable checklist with clear success markers.  
+**Principle:** Remote canonical roster + FAISS suggestions served exclusively by the recognition service, with local caches only reducing repeat calls (no offline matching path).  
 **Last Updated:** 2025-10-30 (gap-filled revision integrating hybrid schema and WP-Cron sync requirements)
 
 ---
@@ -11,7 +11,7 @@
 - Cold start: local clustering under **50 ms** for ≤50 faces.
 - Warm cache: FAISS batch suggest under **200 ms**, end-to-end.
 - Cache hit rate within one labeling session: **≥80%**.
-- Works offline: full local matching path with later sync queueing.
+- Remote outage handling: clear admin + API messaging when recognition service is unavailable (no local fallback).
 - UX: label once → cascades to all similar faces in-session and drafts high-confidence cascades for review.
 - Database schema version tracked via `cat_db_version` option; idempotent installer.
 - WP-Cron jobs for roster delta sync, sync-queue worker, observation purge.
@@ -273,15 +273,15 @@
 
 **Implementation:**
 
-- **Strategy selection logic:**
-  1. If `useRemoteMatching` AND `RecognitionClient::checkHealth()` succeeds AND roster size > 0 → call `/api/v0/suggest` on backend
-  2. Else if embeddings provided in request → local cosine matching vs `RosterRepository::getAllActive()`
-  3. Else if no embeddings → call `/api/v0/embeddings` on backend first, then fallback to step 1 or 2
-- Add methods to `RecognitionClient`: `checkHealth()`, `getRosterStats()`, `suggestMatches($embeddings, $threshold)`
-- Graceful fallback: if remote fails (timeout, 5xx), log error and use local matching
-- Cache suggestions in-memory for session (avoid redundant calls)
+- **Strategy gating:**
+  1. If `useRemoteMatching` is false (feature flag or settings), return a 503 response explaining that recognition is disabled until remote matching is restored.
+  2. If `RecognitionClient::checkHealth()` succeeds → call `/api/v0/suggest` on the backend with the provided embeddings.
+  3. If embeddings are missing → call `/api/v0/embeddings` on the backend first, then immediately invoke `/api/v0/suggest`.
+- Add methods to `RecognitionClient`: `checkHealth()`, `getRosterStats()`, `suggestMatches($embeddings, $threshold)`.
+- If the remote call fails (timeout, 5xx), log error context, surface a 503/`service_unavailable` payload to the frontend, and skip local matching (no fallback path).
+- Cache successful suggestion responses in-memory for the session to avoid redundant remote calls.
 
-**Done when:** Robust logging (strategy decision, fallback triggers); graceful fallback to local on remote failure; integration tests simulate FAISS up/down/timeout; PHPUnit tests stub client; response includes `strategy_used` field.
+**Done when:** Remote suggestion path succeeds when healthy; outages propagate clear error messaging (no silent fallback); integration tests simulate FAISS down/timeout and assert service_unavailable responses; PHPUnit tests stub client; response still includes `strategy_used` field (`remote_faiss` on success, `remote_unavailable` when the service is down).
 
 ### C5) **POST** `/cat/v1/confirm` (Persist label + progressive learning)
 
@@ -319,7 +319,7 @@
 - Validate observations exist and belong to current session/user
 - If `roster.remote_id` exists locally → use it; else → call `RosterRepository::create()` and queue `create_roster` action
 - Update observations: `ObservationRepository::updateStatus($id, 'confirmed')` and `assignRoster($id, $rosterId)`
-- If embeddings provided: store locally (up to 10/person) AND enqueue `SyncQueueRepository::enqueue('confirm_match', {remote_id, embeddings})`
+- If embeddings provided: append them to the JSON collection in `cat_roster.meta` AND enqueue `SyncQueueRepository::enqueue('confirm_match', {remote_id, embeddings})`
 - If `cascade` flag true: call `CascadeService::findSimilar($embeddings, $threshold)` and create draft observations with status `pending_review`
 - Return draft IDs and counts
 
@@ -352,7 +352,7 @@
 - `suggestMatches(array $embeddings, float $threshold): array` — POST `/api/v0/suggest`, batch suggestion call
 - `getRoster(string $etag = null): array` — GET `/api/v0/roster` with `If-None-Match` header for delta sync
 
-**Error handling:** Wrap all HTTP calls in try/catch; on timeout/5xx → log error and throw `RecognitionClientException`; caller handles fallback.  
+**Error handling:** Wrap all HTTP calls in try/catch; on timeout/5xx → log error and throw `RecognitionClientException`; caller surfaces outage messaging (no local fallback).  
 **Retries:** Use exponential backoff with jitter (1s, 2s, 4s) for 5xx; respect `Retry-After` header on 429.  
 **Done when:** Request/response validated against OpenAPI schema; exceptions handled; PHPUnit tests stub HTTP calls (Guzzle mock); integration tests (manual, skipped in CI) hit real backend.
 
@@ -456,11 +456,10 @@
 **Purpose:** Automatically choose local vs remote matching based on roster size.  
 **Implementation:**
 
-- Add hook `useRosterStrategy()` that fetches roster size via `GET /cat/v1/roster/stats`
-- Compute `useRemoteMatching = rosterSize > 10` (configurable threshold in settings)
-- Pass flag to `POST /cat/v1/identify` request
-- Fallback to local if roster fetch fails (log warning)
-- Log strategy decision to browser console (dev mode only)
+- Add hook `useRosterStrategy()` that fetches roster size via `GET /cat/v1/roster/stats` (used only for UI hints/telemetry).
+- `useRemoteMatching` flag controls whether `/cat/v1/identify` should call the remote service; when false, the hook raises an error (recognition disabled).
+- When roster stats fetch fails, surface an error toast and keep remote matching enabled (no automatic fallback).
+- Log strategy decision to browser console (dev mode only) when remote calls succeed.
 
 **Type changes:**
 
@@ -476,11 +475,11 @@ interface IdentifyResponse {
     observation_id: number;
     matches: Array<{ remote_id: string; label: string; score: number }>;
   }>;
-  strategy_used: "remote_faiss" | "local_cosine" | "hybrid";
+  strategy_used: "remote_faiss" | "remote_unavailable";
 }
 ```
 
-**Done when:** Unit tests cover roster size thresholds (0, 10, 100, 1000) and flag propagation; tests simulate roster fetch failure (fallback to local); strategy decision logged.
+**Done when:** Unit tests cover roster size thresholds (0, 10, 100, 1000) and flag propagation; tests cover remote outage responses (strategy_used = "remote_unavailable"); roster stats failure surfaces error UI; strategy decision logged for successful calls.
 
 ### E4) Session cache & localStorage
 
@@ -662,8 +661,8 @@ interface IdentifyResponse {
 **Scenarios to cover:**
 
 1. **FAISS-primary (150+ people):** Local roster size = 200 → `useRemoteMatching = true` → identify endpoint calls `/api/v0/suggest` → suggestions returned <200ms → cache hit on subsequent call.
-2. **Offline/FAISS down:** Backend unreachable → identify endpoint falls back to local cosine matching → suggestions returned from local roster → confirm action queues sync for later.
-3. **Cold start (≤10 people):** Local roster size = 5 → `useRemoteMatching = false` → identify endpoint uses local matching only → clustering immediate (<50ms).
+2. **FAISS outage:** Backend unreachable → identify endpoint returns `503 remote_unavailable` with remediation hints → UI surfaces outage banner and queues confirmations for later once service recovers.
+3. **Cold start (≤10 people):** Local roster size = 5 → remote suggestion still executes (`remote_faiss`) within target latency → caches warm quickly.
 4. **Cascade drafts:** Confirm 3 observations → CascadeService finds 5 similar pending observations → drafts created with status `pending_review` → drafts appear in UI "Pending Review" section.
 5. **Sync queue retry:** Confirm action enqueued → backend returns 503 → queue worker retries with backoff → succeeds on 3rd attempt → queue item removed.
 
@@ -934,7 +933,7 @@ interface IdentifyResponse {
 
 - Option 1: JSON column in `cat_roster.meta` → `{embeddings: [[...], [...]]}`
 - Option 2: Separate table `cat_roster_embeddings` (roster_id FK, embedding BLOB, created_at)
-- Recommendation: Use Option 1 (JSON) for simplicity, limit to 10 embeddings per person
+- Recommendation: Use Option 1 (JSON) for simplicity; append every confirmed embedding (no artificial cap).
 
 ### K5) Session Management
 
@@ -993,65 +992,115 @@ interface IdentifyResponse {
 
 ### Phase 2: Core API (Week 3-4)
 
-5. C1 - Scan endpoint
-6. C2 - Observations list endpoint
-7. C4 - Identify endpoint (strategy selection)
-8. C5 - Confirm endpoint (cascade logic)
+1. C1 - Scan endpoint
+2. C2 - Observations list endpoint
+3. C4 - Identify endpoint (strategy selection)
+4. C5 - Confirm endpoint (cascade logic)
 
 ### Phase 3: Background Jobs (Week 5)
 
-9. D3 - Sync queue worker
-10. D4 - Roster delta sync
-11. D5 - Observation purge
+1. D3 - Sync queue worker
+2. D4 - Roster delta sync
+3. D5 - Observation purge
 
 ### Phase 4: Frontend (Week 6-7)
 
-12. E1 - Unknown People Panel
-13. E2 - Observation Detail View
-14. E3 - Strategy selection hook
-15. E4 - Session cache
-16. E5 - Confirmation Modal
+1. E1 - Unknown People Panel
+2. E2 - Observation Detail View
+3. E3 - Strategy selection hook
+4. E4 - Session cache
+5. E5 - Confirmation Modal
 
 ### Phase 5: Polish (Week 8)
 
-17. B2 - Avatar generation
-18. F1 - Settings UI
-19. F2 - Status dashboard
-20. F3 - CLI commands
+1. B2 - Avatar generation
+2. F1 - Settings UI
+3. F2 - Status dashboard
+4. F3 - CLI commands
 
 ### Phase 6: Testing & Docs (Week 9-10)
 
-21. G1-G4 - Test suite completion
-22. H4 - Documentation
-23. J1-J3 - Feature flag & cutover
+1. G1-G4 - Test suite completion
+2. H4 - Documentation
+3. J1-J3 - Feature flag & cutover
 
 ---
 
 ## M. Success Metrics (Post-Launch)
 
-1. **Performance:**
+### Performance
 
-   - Cold start clustering: <50ms for ≤50 faces (measured via browser perf API)
-   - Warm cache suggestions: <200ms end-to-end (measured via APM)
-   - Cache hit rate: ≥80% within session (logged to telemetry)
+- Cold start clustering: <50ms for ≤50 faces (measured via browser perf API)
+- Warm cache suggestions: <200ms end-to-end (measured via APM)
+- Cache hit rate: ≥80% within session (logged to telemetry)
 
-2. **Reliability:**
+### Reliability
 
-   - Sync queue success rate: ≥95% (failed actions <5%)
-   - Offline mode functionality: 100% (all features work without backend)
-   - Dead letter rate: <1% (well-tuned backoff prevents most failures)
+- Sync queue success rate: ≥95% (failed actions <5%)
+- Outage handling: 100% of remote failures surfaced with actionable messaging (no silent degradation)
+- Dead letter rate: <1% (well-tuned backoff prevents most failures)
 
-3. **User Experience:**
+### User Experience
 
-   - Label once → cascade to N similar faces (≥3 cascaded labels per confirmation)
-   - Time to confirm 50 faces: <5 minutes (vs 15+ minutes without cascade)
-   - Admin satisfaction: ≥4.5/5 (post-launch survey)
+- Label once → cascade to N similar faces (≥3 cascaded labels per confirmation)
+- Time to confirm 50 faces: <5 minutes (vs 15+ minutes without cascade)
+- Admin satisfaction: ≥4.5/5 (post-launch survey)
 
-4. **Code Health:**
-   - Test coverage: ≥90% PHP, ≥85% TS
-   - Zero security vulnerabilities (PHPCS, ESLint security rules)
-   - Zero accessibility regressions (axe-core, manual testing)
+### Code Health
+
+- Test coverage: ≥90% PHP, ≥85% TS
+- Zero security vulnerabilities (PHPCS, ESLint security rules)
+- Zero accessibility regressions (axe-core, manual testing)
 
 ---
 
-**END OF TASK LIST**
+## N. Architecture Documentation Updates
+
+### N1) Update Backend UML ERD
+
+**Files:** `docs/architecture/backend-uml/database-entities.mmd`, `docs/architecture/contracts/`
+
+- Model remote roster storage (`roster_person`, `augmented_embedding`, `observation_embedding`) and relationships to WordPress mirrors.
+- Capture metadata fields (embedding source, quality tier, created_at) and retention strategy for augmented embeddings.
+- Document payload examples for augmented embeddings under `docs/architecture/contracts/` to keep frontend/backends aligned.
+- Validate Mermaid syntax locally (no code fences, renders in Mermaid preview).
+
+### N2) Extend Roster Service Diagram
+
+**Files:** `docs/architecture/backend-uml/roster_service.mermaid`
+
+- Introduce `AugmentedEmbedding` domain entity and persistence interfaces storing progressive-learning vectors.
+- Add propagation service/component responsible for publishing FAISS index updates (including retry/backoff path).
+- Reflect distinction between curated reference images and progressive embeddings supplied by WordPress confirmations.
+- Ensure diagram legend/note clarifies how many embeddings per person are retained and eviction rules.
+
+### N3) Amend Recognition Service Diagram
+
+**Files:** `docs/architecture/backend-uml/recognition_service.mermaid`
+
+- Illustrate flow from roster persistence → embedding storage → FAISS index reload (background worker or hot-reload watcher).
+- Document failure handling (retry intervals, dead-letter behaviour, operator alerting) for embedding refresh pipeline.
+- Show configuration knobs (auto-reload toggle, max embeddings per refresh) to mirror roadmap guardrails.
+- Cross-link to recognition jobs that consume refreshed indices for `/api/v0/suggest`.
+
+### N4) Revise Identify/Confirm Sequence
+
+**Files:** `docs/architecture/backend-uml/recognition-identify-flow.mmd`
+
+- Add progressive-learning loop: WordPress confirmation → `/api/v0/roster/augment` call → backend persistence update → FAISS refresh → acknowledgement payload.
+- Depict queue-based propagation when backend unavailable (enqueue → worker → retry) and response semantics back to WordPress.
+- Highlight caching strategy (session cache/localStorage) and how acknowledgement toggles cascade drafts on the frontend.
+- Re-render sequence diagram to verify numbering and participant labels remain consistent with revised flow.
+
+### N5) Review & Publish
+
+**Files:** Updated UML + contracts listed above
+
+- Run Mermaid lint/render checks after edits; fix any warnings before merge.
+- Share updated diagrams with backend/WordPress leads for sign-off (note discussion outcome in PR description).
+- Update `docs/architecture/backend-uml/recognition-service-audit.md` with summary of the diagram changes and version timestamp.
+- Mark Epic G (roadmap) as [DONE] only after review feedback addressed and diagrams merged.
+
+---
+
+### End of Task List

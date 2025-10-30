@@ -12,29 +12,10 @@ use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Roster\RosterClientException;
 use DateTimeInterface;
 use Throwable;
-
-use function array_column;
-use function array_filter;
-use function array_sum;
-use function array_unique;
-use function array_values;
 use function count;
-use function function_exists;
-use function ctype_digit;
-use function is_wp_error;
 use function is_array;
-use function is_numeric;
-use function is_string;
-use function max;
-use function round;
-use function sort;
-use function spl_object_id;
 use function sprintf;
-use function strpos;
-use function substr;
 use function trim;
-use function usort;
-use function wp_get_attachment_metadata;
 
 /**
  * Coordinates clustering of unresolved faces, routing to local or remote strategies.
@@ -46,7 +27,6 @@ final class ClusteringService implements ClusteringEngine
     private const REMOTE_MIN_CLUSTER_SIZE = 2;
     private const REMOTE_SIMILARITY_THRESHOLD = 0.92;
     private const SUGGESTION_TOP_K = 5;
-    private const SUGGESTION_THRESHOLD = 0.75;
     private const SUGGESTION_MIN_SCORE = 0.75;
     private const CASCADE_BASE_THRESHOLD = 0.85;
     private const CASCADE_AUTO_THRESHOLD = 0.9;
@@ -183,7 +163,7 @@ final class ClusteringService implements ClusteringEngine
             $response = $this->recognitionClient->suggestMatches(
                 $vectors,
                 self::SUGGESTION_TOP_K,
-                self::SUGGESTION_THRESHOLD
+                self::SUGGESTION_MIN_SCORE
             );
         } catch (RecognitionClientException $exception) {
             return [];
@@ -298,33 +278,6 @@ final class ClusteringService implements ClusteringEngine
                     $exception->getMessage()
                 );
                 continue;
-            }
-
-            try {
-                $syncResult = $this->recognitionClient->addRosterEmbedding(
-                    $roster,
-                    (string) $observationId,
-                    $vector,
-                    [
-                        'attachmentId' => $face->attachmentId(),
-                        'bbox' => $face->bbox(),
-                        'source' => 'assisted-face-id',
-                    ]
-                );
-
-                if (function_exists('is_wp_error') && is_wp_error($syncResult)) {
-                    $response['warnings'][] = sprintf(
-                        'Embedding sync skipped for face %d: %s',
-                        $databaseId,
-                        $syncResult->get_error_message()
-                    );
-                }
-            } catch (RecognitionClientException $exception) {
-                $response['warnings'][] = sprintf(
-                    'Failed to sync embedding for face %d: %s',
-                    $databaseId,
-                    $exception->getMessage()
-                );
             }
 
             $this->repository->markFaceAsResolved($databaseId, $roster);

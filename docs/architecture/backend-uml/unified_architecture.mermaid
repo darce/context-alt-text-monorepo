@@ -1,4 +1,3 @@
----
 title: Context Alt Text Recognition Backend (Current)
 ---
 flowchart TB
@@ -16,22 +15,26 @@ flowchart TB
         fastapi_app["FastAPI app\n(lifespan startup)"]
         analyze_scene_route["POST /api/v0/analyze-scene"]
         embeddings_route["POST /api/v0/embeddings"]
+        caption_route["POST /api/v0/caption"]
+        identify_route["POST /api/v0/identify"]
         identify_hf_route["POST /api/v0/identify-hf"]
         media_routes["/api/v0/media/*\n(upload + captions)"]
-        roster_routes["/api/v0/roster/*\nlegacy + typed"]
+        suggest_route["POST /api/v0/suggest"]
+        cluster_route["POST /api/v0/cluster-unknowns"]
+        roster_routes_legacy["/api/v0/roster\n(legacy upsert)"]
+        roster_routes_typed["/api/v0/roster/*\n(typed API router)"]
         service_info_route["GET /api/v0/service/info"]
-        reload_embeddings_route["POST /api/v0/service/reload-embeddings"]
         health_route["GET /api/v0/health"]
         readiness_route["GET /ready\nGET /warmup-status"]
     end
 
     %% Domain Services
     subgraph domain["Domain Layer"]
+        startup_manager["StartupManager\n(metrics + device setup)"]
         scene_service["SceneAnalysisService"]
         scene_composer["SceneComposer\n(detector + caption)"]
-        recognition_service["FaceRecognitionService\n(InsightFace broker)"]
+        recognition_service["FaceRecognitionService\n(InsightFace pipeline)"]
         roster_service["RosterService\n(cache + embedding sync)"]
-        startup_manager["StartupManager\n(metrics + device setup)"]
     end
 
     %% Adapters & Infra
@@ -40,11 +43,10 @@ flowchart TB
         caption_adapter["Phi3CaptionAdapter"]
         insightface_adapter["InsightFaceAdapter"]
         embedding_adapter["EmbeddingRouterAdapter"]
-        adaface_pipeline["AdaFacePipeline\n(HF wrapper)"]
         roster_storage["FileRosterStorageAdapter"]
         embedding_storage["EmbeddingStorageAdapter"]
-        gpu_manager["GPUManager +\nAttentionOptimizer"]
-        adapter_factory["AdapterFactory\n(startup wiring)"]
+        data_validation_adapter["DataValidationAdapter"]
+        gpu_manager["GPUManager"]
     end
 
     %% External Systems
@@ -62,21 +64,29 @@ flowchart TB
     clients --> fastapi_app
     fastapi_app --> analyze_scene_route
     fastapi_app --> embeddings_route
+    fastapi_app --> caption_route
+    fastapi_app --> identify_route
     fastapi_app --> identify_hf_route
     fastapi_app --> media_routes
-    fastapi_app --> roster_routes
+    fastapi_app --> suggest_route
+    fastapi_app --> cluster_route
+    fastapi_app --> roster_routes_legacy
+    fastapi_app --> roster_routes_typed
     fastapi_app --> service_info_route
-    fastapi_app --> reload_embeddings_route
     fastapi_app --> health_route
     fastapi_app --> readiness_route
 
     analyze_scene_route --> scene_service
     embeddings_route --> scene_service
+    caption_route --> scene_service
+    identify_route --> scene_service
     identify_hf_route --> recognition_service
     media_routes --> scene_service
-    roster_routes --> roster_service
+    suggest_route --> recognition_service
+    cluster_route --> scene_service
+    roster_routes_legacy --> roster_service
+    roster_routes_typed --> roster_service
     service_info_route --> recognition_service
-    reload_embeddings_route --> recognition_service
     health_route --> recognition_service
     readiness_route --> startup_manager
 
@@ -86,14 +96,11 @@ flowchart TB
     scene_composer --> caption_adapter
     recognition_service --> insightface_adapter
     recognition_service --> embedding_adapter
-    recognition_service --> adaface_pipeline
-    recognition_service --> roster_service
 
     roster_service --> roster_storage
     roster_service --> embedding_storage
-    roster_service --> adapter_factory
+    roster_service --> data_validation_adapter
 
-    startup_manager --> adapter_factory
     startup_manager --> gpu_manager
     startup_manager --> scene_composer
     startup_manager --> recognition_service
@@ -101,10 +108,6 @@ flowchart TB
 
     gpu_manager --> hardware
     gpu_manager --> cache_dirs
-    adapter_factory --> yolo_adapter
-    adapter_factory --> caption_adapter
-    adapter_factory --> insightface_adapter
-    adapter_factory --> embedding_adapter
 
     yolo_adapter --> yolo_weights
     caption_adapter --> phi3_weights

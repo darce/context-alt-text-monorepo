@@ -1,6 +1,120 @@
 classDiagram
-%% v2 Consolidated Face Detection - Frontend Classes
-%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 3.4
+%% Consolidated Face Recognition Data Structures (Oct 2025)
+%% Frontend consumes backend-owned clustering + suggestions only
+
+class ClusterSummary {
+  +id: string
+  +faceCount: number
+  +sampleFace: ClusterSampleFace | null
+  +suggestion: ClusterSummarySuggestion | null
+  +createdAt: string | null
+  +updatedAt: string | null
+}
+
+class ClusterSampleFace {
+  +attachmentId: number
+  +thumbnailUrl: string | null
+  +bbox: ClusterBoundingBox | null
+}
+
+class ClusterSummarySuggestion {
+  +rosterId: string
+  +displayName: string
+  +confidence: number | null
+  +reason: string | null
+}
+
+class ClusterFaceDetail {
+  +id: string
+  +attachmentId: number
+  +bbox: ClusterBoundingBox
+  +thumbnailUrl: string | null
+  +clusterId: string | null
+  +detectedAt: string | null
+  +resolvedAt: string | null
+  +rosterId: string | null
+  +embeddingId: string | null
+}
+
+class ClusterBoundingBox {
+  +x: number
+  +y: number
+  +width: number
+  +height: number
+  +imageWidth: number | null
+  +imageHeight: number | null
+}
+
+class ClusterSuggestion {
+  +clusterId: string
+  +rosterId: string
+  +displayName: string
+  +confidence: number
+  +confidenceLevel: "high" | "medium" | "low" | undefined
+  +matchCount: number
+  +faceIds: string[]
+  +reason: string | null
+}
+
+class FaceScanResult {
+  +jobId: string
+  +queuedCount: number
+  +priority: "normal" | "high"
+}
+
+class FaceScanError {
+  +message: string
+  +code: string | undefined
+  +status: number | undefined
+}
+
+class UseUnknownClusters {
+  <<hook>>
+  +clusters: ClusterSummary[]
+  +total: number
+  +page: number
+  +perPage: number
+  +isLoading: boolean
+  +error: Error | null
+  +refetch(): Promise<unknown>
+}
+
+class UseClusterDetail {
+  <<hook>>
+  +cluster: ClusterSummary
+  +faces: ClusterFaceDetail[]
+  +isLoading: boolean
+  +error: Error | null
+  +refetch(): Promise<unknown>
+}
+
+class UseClusterSuggestions {
+  <<hook>>
+  +suggestions: ClusterSuggestion[]
+  +isLoading: boolean
+  +error: Error | null
+  +refetch(): Promise<unknown>
+}
+
+class UseFaceScan {
+  <<hook>>
+  +scanFaces(ids: number[], options?): Promise<void>
+  +isScanning: boolean
+  +error: FaceScanError | null
+  +result: FaceScanResult | null
+  +reset(): void
+}
+
+class UsePeopleSuggestions {
+  <<hook>>
+  +faces: DetectedFaceFE[]
+  +isLoading: boolean
+  +error: Error | null
+  +identifyFaces(attachmentId: number, faces: DetectedFaceRequest[]): Promise<void>
+  +submitLabel(faceId: string, label: Label): Promise<void>
+  +bulkConfirm(rosterId: string, faceIds: string[]): Promise<void>
+  +reset(): void
+}
 
 class DetectedFaceFE {
   +faceId: string
@@ -9,7 +123,16 @@ class DetectedFaceFE {
   +clusterId: string | null
   +suggestions: Suggestion[]
   +labelDraft: Label | null
+  +confirmedRosterId: string | null
+  +observationId: string | null
   +confidence: number
+}
+
+class DetectedFaceRequest {
+  +bbox: BoundingBox
+  +faceId?: string
+  +label?: Label
+  +observationId?: string
 }
 
 class BoundingBox {
@@ -19,99 +142,27 @@ class BoundingBox {
   +height: number
 }
 
+class Suggestion {
+  +rosterId: string
+  +displayName: string
+  +score: number
+}
+
 class Label {
   +rosterId?: string
   +newName?: string
+  +displayName?: string
 }
 
-class Suggestion {
-  +rosterId: string
-  +display: string
-  +score: number
-  +avatarUrl?: string
-}
-
-class PeopleOverlay {
-  +faces: DetectedFaceFE[]
-  +selectedFaceIndex: number | null
-  +onFaceClick: function
-  +onLabelSubmit: function
-  +showConfidence: boolean
-  +renderFaceChip()
-  +openPeoplePicker()
-}
-
-class PeopleDrawer {
-  +clusters: FaceCluster[]
-  +suggestions: SuggestionStack[]
-  +onBulkConfirm: function
-  +onReassign: function
-  +renderClusterStack()
-  +renderSuggestionStack()
-}
-
-class FaceCluster {
-  +clusterId: string
-  +faces: DetectedFaceFE[]
-  +representativeFace: DetectedFaceFE
-  +count: number
-}
-
-class SuggestionStack {
-  +rosterId: string
-  +display: string
-  +faces: DetectedFaceFE[]
-  +count: number
-  +avgScore: number
-}
-
-class PeoplePicker {
-  +searchQuery: string
-  +rosterResults: RosterPerson[]
-  +onSelect: function
-  +onCreateNew: function
-  +renderTypeahead()
-}
-
-class FaceObservation {
-  +id: bigint
-  +attachmentId: bigint
-  +bboxX: number
-  +bboxY: number
-  +bboxW: number
-  +bboxH: number
-  +clusterGroupId: string | null
-  +suggestedRosterId: string | null
-  +suggestedScore: number | null
-  +labelStatus: enum
-  +createdAt: datetime
-}
-
-class RosterPerson {
-  +id: string
-  +displayName: string
-  +aliases: string[]
-  +avatarUrl: string | null
-  +meta: object
-  +createdAt: datetime
-}
-
-class ObservationEmbedding {
-  +observationId: bigint
-  +model: string
-  +vec: blob
-  +createdAt: datetime
-}
-
-DetectedFaceFE --> BoundingBox
-DetectedFaceFE --> Label
-DetectedFaceFE --> Suggestion
-PeopleOverlay --> DetectedFaceFE
-PeopleOverlay --> PeoplePicker
-PeopleDrawer --> FaceCluster
-PeopleDrawer --> SuggestionStack
-FaceCluster --> DetectedFaceFE
-SuggestionStack --> DetectedFaceFE
-PeoplePicker --> RosterPerson
-FaceObservation --> ObservationEmbedding
-FaceObservation --> RosterPerson : confirmed_roster_id
+ClusterSummary --> ClusterSampleFace
+ClusterSummary --> ClusterSummarySuggestion
+ClusterFaceDetail --> ClusterBoundingBox
+UseUnknownClusters ..> ClusterSummary
+UseClusterDetail ..> ClusterSummary
+UseClusterDetail ..> ClusterFaceDetail
+UseClusterSuggestions ..> ClusterSuggestion
+UseFaceScan ..> FaceScanResult
+UseFaceScan ..> FaceScanError
+UsePeopleSuggestions ..> DetectedFaceFE
+UsePeopleSuggestions ..> DetectedFaceRequest
+UsePeopleSuggestions ..> Label

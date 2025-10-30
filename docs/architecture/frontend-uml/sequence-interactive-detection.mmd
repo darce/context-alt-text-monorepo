@@ -1,136 +1,66 @@
 sequenceDiagram
-%% v2 Unified People Labeling Flow
-%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 6
+%% Remote Cluster Review Flow (Oct 2025)
+%% Editor triggers server-side detection, clusters faces, confirms identities
 
 autonumber
-participant User as User (Editor)
-participant SPA as WP Admin SPA
-participant Overlay as PeopleOverlay
-participant Drawer as PeopleDrawer
-participant Picker as PeoplePicker
-participant Det as DetectionProvider (MediaPipe)
-participant Hook as usePeopleSuggestions
-participant WP as WP REST (/recognition/identify)
-participant Rec as Recognition Service
-participant DB as WP DB
+participant User as Editor
+participant Workbench as WorkbenchRoute
+participant Actions as FaceScanActions
+participant Panel as UnknownPeoplePanel
+participant Detail as ClusterDetailView
+participant Modal as ClusterConfirmationModal
+participant Hooks as React Query Hooks
+participant API as WP REST (recognition)
+participant Service as Recognition Service
+participant DB as WP Storage
 
-%% Phase 1: Image Load + Detection
-User->>SPA: Open Workbench, select images
-SPA->>Det: Lazy-load MediaPipe model
-Det-->>SPA: Model ready (cached after first load)
-SPA->>Det: detect(imageElement)
-Det-->>SPA: DetectedFace[] {bbox, confidence}
+%% Phase 0: Trigger remote face scan (no MediaPipe)
+User->>Workbench: Open Workbench
+Workbench->>Actions: Mount scan controls
+User->>Actions: Click "Scan for Faces"
+Actions->>Hooks: useFaceScan.scanFaces(attachmentIds)
+Hooks->>API: POST /cat/v1/recognition/scan
+API->>Service: enqueueDetectionBatch(attachmentIds)
+Service-->>API: { jobId, queuedCount }
+API-->>Hooks: Scan accepted payload
+Hooks-->>Actions: Update result & clear errors
+Actions->>Hooks: invalidateQuery("unknown-clusters")
+Actions->>Hooks: invalidateQuery("cluster-detail")
 
-SPA->>Overlay: Render face bounding boxes + "Who is this?" chips
-Overlay-->>User: Show face overlays on image
+%% Phase 1: Load unknown clusters
+Workbench->>Panel: Render panel
+Panel->>Hooks: useUnknownClusters.fetch()
+Hooks->>API: GET /cat/v1/clusters
+API-->>Hooks: ClusterSummary[]
+Hooks-->>Panel: clusters + pagination
+Panel-->>User: Display cluster cards
 
-%% Phase 2: Backend Suggestions (Cold Start)
-SPA->>Hook: identifyFaces(attachmentId, faces[bbox])
-Hook->>WP: POST /recognition/identify {attachmentId, faces[{bbox}]}
+%% Phase 2: Inspect cluster detail & suggestions
+User->>Panel: Select cluster
+Panel->>Detail: Mount detail view
+Detail->>Hooks: useClusterDetail.fetch(clusterId)
+Hooks->>API: GET /cat/v1/clusters/{clusterId}
+API-->>Hooks: ClusterSummary + faces
+Hooks-->>Detail: faces + metrics
+Detail->>Hooks: useClusterSuggestions.fetch(clusterId)
+Hooks->>API: GET /cat/v1/clusters/{clusterId}/suggestions
+API-->>Hooks: ClusterSuggestion[]
+Hooks-->>Detail: roster suggestions
+Detail-->>User: Show faces with hints
 
-WP->>WP: Crop faces server-side (GD/Imagick)
-WP->>Rec: POST /embeddings/batch {crops[]}
-Rec-->>WP: embeddings[]
-
-WP->>Rec: POST /suggest {embeddings[], topK: 5, threshold: 0.92}
-Rec->>Rec: FAISS search roster vectors
-Rec-->>WP: suggestions[][] (empty if no roster yet)
-
-WP->>Rec: POST /cluster-unknowns {embeddings[]}
-Rec->>Rec: DBSCAN/Agglomerative clustering
-Rec-->>WP: clusterIds[]
-
-WP-->>Hook: faces[{faceId, clusterId, suggestions[]}]
-Hook-->>Drawer: Update cluster stacks
-Drawer-->>User: Show "Likely same person (x12)" groups
-
-%% Phase 3: User Labels First Face
-User->>Overlay: Click chip on face #1
-Overlay->>Picker: Open PeoplePicker
-Picker-->>User: Show typeahead (empty roster) + "Create new" option
-
-User->>Picker: Type "Ana Rodriguez" + click "Create new"
-Note over User,Picker: USER CONFIRMATION REQUIRED<br/>No remote sync without explicit action
-Picker->>Hook: submitLabel(faceId, {newName: "Ana Rodriguez"})
-Hook->>WP: POST /recognition/identify {faces[{bbox, label: {newName}}]}
-
-WP->>DB: INSERT cat_observation (bbox, label_status: 'confirmed')
-WP->>DB: INSERT/UPDATE cat_roster_entity (display_name: "Ana Rodriguez")
-
-Note over WP,Rec: Sync to FAISS only after user confirms
-WP->>Rec: POST /roster/add-embedding {rosterId, observationId, embedding}
-Rec->>Rec: Check observationId not duplicate
-Rec->>Rec: Append to FAISS index
-Rec->>Rec: Persist index atomically (temp + rename)
-Rec-->>WP: {success: true, message: "Embedding added"}
-
-WP->>DB: UPDATE post_meta (synced_to_faiss: true)
-WP-->>Hook: {observationId: 123, rosterId: "person-ana-001", syncStatus: "success"}
-
-Note over Hook,User: IMMEDIATE FEEDBACK TO USER
-Hook-->>Overlay: Update face chip (show "Ana Rodriguez")
-Hook-->>Drawer: Remove from unknown cluster
-Hook-->>User: Toast: "✓ Face added to Ana Rodriguez's profile"
-
-%% Phase 4: Warm Start - Suggestions Appear
-User->>SPA: Select next batch of images (20 more)
-SPA->>Det: detect(images)
-Det-->>SPA: DetectedFace[] (40 faces across 20 images)
-
-SPA->>Hook: identifyFaces(attachmentIds[], allFaces[])
-Hook->>WP: POST /recognition/identify (bulk request)
-WP->>Rec: /embeddings/batch + /suggest
-
-Rec->>Rec: FAISS search (1 person in roster now)
-Rec-->>WP: suggestions[] {rosterId: "person-ana-001", score: 0.94}
-
-WP-->>Hook: faces[] with 12 high-confidence "Ana?" suggestions
-Hook-->>Drawer: Create suggestion stack "Ana Rodriguez? (12)"
-Drawer-->>User: Show suggestion stack with "Confirm All" button
-
-%% Phase 5: Bulk Confirm
-User->>Drawer: Click "Confirm All" on "Ana Rodriguez? (12)" stack
-Note over User,Drawer: USER CONFIRMATION for bulk action
-Drawer->>Hook: bulkConfirm(rosterId, faceIds[])
-Hook->>WP: POST /recognition/identify {faces[{bbox, label: {rosterId}}] x12}
-
-WP->>DB: UPDATE cat_observation (label_status: 'confirmed') x12
-
-Note over WP,Rec: Sync each confirmed face to FAISS
-loop For each confirmed observation
-    WP->>Rec: POST /roster/add-embedding {rosterId, observationId, embedding}
-    Rec->>Rec: Check no duplicate observationId
-    Rec->>Rec: Append to FAISS index
-    Rec-->>WP: {success: true}
-    WP->>DB: UPDATE post_meta (synced_to_faiss: true)
-end
-
-WP-->>Hook: {observationIds: [124-135], syncStatus: "success"}
-
-Hook-->>Drawer: Remove stack (all confirmed)
-Hook-->>Overlay: Update 12 chips to show "Ana Rodriguez"
-Hook-->>User: Toast: "✓ 12 faces confirmed as Ana Rodriguez"
-
-%% Phase 6: Misfit Correction
-User->>Overlay: Click chip on misidentified face
-Overlay->>Picker: Open with current "Ana Rodriguez" shown
-Picker-->>User: Typeahead shows "Ana Rodriguez" in roster (prevent duplicates)
-
-User->>Picker: Search "Marta", select "Marta Silva" from dropdown (or create new)
-Note over User,Picker: USER CONFIRMATION REQUIRED<br/>No sync without explicit selection
-Picker->>Hook: submitLabel(faceId, {rosterId: "person-marta-002"})
-Hook->>WP: POST /recognition/identify {faces[{bbox, label: {rosterId}}]}
-
-WP->>DB: UPDATE cat_observation (label_status: 'corrected')
-
-Note over WP,Rec: Sync corrected identity to FAISS
-WP->>Rec: POST /roster/add-embedding {rosterId: "person-marta-002", observationId, embedding}
-Rec->>Rec: Check no duplicate observationId
-Rec->>Rec: Append to FAISS index
-Rec-->>WP: {success: true}
-
-WP->>DB: UPDATE post_meta (synced_to_faiss: true)
-WP-->>Hook: {observationId: 136, syncStatus: "success"}
-
-Hook-->>Overlay: Update chip to "Marta Silva"
-Hook-->>User: Toast: "✓ Face corrected to Marta Silva"
+%% Phase 3: Confirm identities & cascade updates
+User->>Detail: Click "Label Selected"
+Detail->>Modal: Open confirmation modal
+Modal-->>User: Choose roster + faces
+User->>Modal: Confirm labeling
+Modal->>Hooks: confirmCluster(clusterId, payload)
+Hooks->>API: POST /cat/v1/clusters/{clusterId}/confirm
+API->>DB: Persist roster assignment
+API->>Service: queueEmbeddingIngest(clusterId)
+Service-->>API: Ingest acknowledgement
+API-->>Hooks: { labeledCount, warnings, errors }
+Hooks-->>Modal: Success result
+Modal->>Hooks: invalidate cluster caches
+Hooks->>Panel: Refetch unknown clusters
+Hooks->>Detail: Refetch cluster detail
+Modal-->>User: Toast "Faces labeled"

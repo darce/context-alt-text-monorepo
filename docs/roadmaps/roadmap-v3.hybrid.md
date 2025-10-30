@@ -169,7 +169,6 @@ Diagram note: the legacy phase diagrams are deprecated; use the canonical `docs/
 - MCP server scaffolding gated off for MVP.
 - Scan for missing alt text on plugin activation (fresh install + upgrade path).
 
-
 - [HYBRID] Create local tables `cat_roster`, `cat_observation`, `cat_sync_queue` (see Appendix A for SQL).
 - [HYBRID] Implement DAO layer for each table with prepared statements; version schema via `cat_db_version` option; create on activation.
 - [HYBRID] Add Settings → Recognition Service (Base URL, API key, “Test Connection” action).
@@ -178,8 +177,8 @@ Diagram note: the legacy phase diagrams are deprecated; use the canonical `docs/
 - [HYBRID] Implement optimistic UI for confirmations; enqueue `confirm_match` when offline or on 429/5xx.
 - [HYBRID] Add avatar generator (128×128 WebP crops) stored under `wp-content/uploads/context-alt-text/avatars/` and persisted in `cat_roster.avatar_url`.
 - [HYBRID] Implement uninstall routine to drop CAT tables, delete avatars under plugin path, and remove options/caps.
-#### TDD (A) [PLANNED]
 
+#### TDD (A) [PLANNED]
 
 - [HYBRID][TDD] Migration tests for all tables; upgrade path preserves data; uninstall drops tables and files.
 - [HYBRID][TDD] DAO CRUD + index coverage; JSON field encoding/decoding integrity.
@@ -329,7 +328,6 @@ Implementation:
 
 TDD:
 
-
 - [HYBRID] Metrics unit tests: counters/gauges emitted for success/error paths; alarms fire on thresholds (mocked).
 - [HYBRID] Security tests: capability `manage_context_alt_text` required for roster ops; API key scope enforced server-side.
 - [HYBRID] Audit tests: log entries present for roster CRUD/confirmations; redaction of PII in logs.
@@ -340,6 +338,27 @@ DoD:
 
 - Ops run-book published.
 - Alerting configured for error thresholds.
+
+### Epic G — Backend Architecture Alignment [PLANNED]
+
+Implementation:
+
+- Update `docs/architecture/backend-uml/database-entities.mmd` to model remote roster storage, augmented embeddings (source + quality metadata), and observation embeddings alongside their relationships.
+- Extend `docs/architecture/backend-uml/roster_service.mermaid` to introduce `AugmentedEmbedding` domain entities, dedicated persistence ports/repositories, and a propagation service that refreshes the FAISS index when new vectors arrive.
+- Amend `docs/architecture/backend-uml/recognition_service.mermaid` to document the embedding-update pipeline from roster persistence through index reloads, including background workers or hot-reload watchers and retry/backoff handling.
+- Revise `docs/architecture/backend-uml/recognition-identify-flow.mmd` to include the progressive-learning loop (WordPress confirmation → backend augment endpoint → persistence → index refresh → acknowledgement).
+
+TDD:
+
+- Render all updated Mermaid diagrams locally to confirm syntax validity and visual accuracy.
+- Add contract notes under `docs/architecture/contracts/` describing the augmented embedding payloads and propagation acknowledgements consumed by WordPress.
+- Peer review the revised diagrams with backend stakeholders before marking [DONE].
+
+DoD:
+
+- Updated UML files merged and validated by diagram renderer.
+- Roadmap references to roster propagation match the documented flows.
+- Progressive-learning contract captured in architecture docs and shared with the WordPress team.
 
 ---
 
@@ -378,7 +397,8 @@ DoD:
 ---
 
 ## Appendix A: Hybrid DB Schema (SQL)
-_Last updated: 2025-10-30T19:13:22Z_
+
+Last updated: 2025-10-30T19:13:22Z
 
 **1) `{{prefix}}cat_roster` — Local mirror (remote is authority)**
 

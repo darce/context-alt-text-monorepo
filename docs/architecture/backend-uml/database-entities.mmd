@@ -1,4 +1,120 @@
 erDiagram
+  %% WordPress (local mirror)
+  WP_POSTS ||--o{ CAT_OBSERVATION : contains
+  CAT_ROSTER ||--o{ CAT_OBSERVATION : assigns
+  CAT_ROSTER ||--o{ CAT_SYNC_QUEUE : queues
+  WP_POSTS ||--o{ WP_POSTMETA : stores_meta
+
+  %% Remote recognition service (canonical)
+  RS_ROSTER_PERSON ||--o{ RS_AUGMENTED_EMBEDDING : owns
+  RS_ROSTER_PERSON ||--o{ RS_OBSERVATION_EMBEDDING : collects
+  RS_ROSTER_PERSON ||--o{ CAT_ROSTER : mirrored_locally
+  RS_AUGMENTED_EMBEDDING ||--o{ RS_PROPAGATION_EVENT : triggers
+  RS_INDEX_STATE ||--o{ RS_PROPAGATION_EVENT : refresh_history
+
+  WP_POSTS {
+    bigint ID PK "WordPress attachment ID"
+    varchar post_type "Always 'attachment'"
+    varchar post_mime_type "image/jpeg, image/webp, etc"
+    text guid "Source URL"
+    datetime post_date "Uploaded at"
+  }
+
+  WP_POSTMETA {
+    bigint meta_id PK
+    bigint post_id FK "References WP_POSTS.ID"
+    varchar meta_key "_cat_* keys (nonce, session, etc.)"
+    longtext meta_value "Serialized JSON payloads"
+  }
+
+  CAT_ROSTER {
+    bigint id PK "Auto-increment"
+    varchar remote_id "FK → RS_ROSTER_PERSON.remote_id"
+    varchar label "Display label"
+    enum type "person|brand|other"
+    longtext meta_json "JSON metadata (avatars, cache)"
+    varchar etag "Last seen remote etag"
+    datetime last_sync_at
+    datetime created_at
+    datetime updated_at
+    datetime deleted_at
+  }
+
+  CAT_OBSERVATION {
+    bigint observation_id PK
+    varchar session_id "Admin session GUID"
+    bigint attachment_id FK "References WP_POSTS.ID"
+    json bbox "{x,y,width,height}"
+    decimal confidence "0.0000-1.0000"
+    varchar embedding_hash "SHA-256 of vector"
+    bigint assigned_roster_id FK "References CAT_ROSTER.id"
+    enum status "pending|confirmed|rejected|deferred"
+    text review_notes
+    datetime created_at
+    datetime reviewed_at
+  }
+
+  CAT_SYNC_QUEUE {
+    bigint queue_id PK
+    varchar action "confirm_match|create_roster|update_roster|delete_roster"
+    longtext payload "JSON payload mirrored to remote"
+    varchar remote_id "Target remote person"
+    tinyint attempts
+    text last_error
+    datetime available_at
+    datetime created_at
+  }
+
+  RS_ROSTER_PERSON {
+    varchar remote_id PK "Stable roster identifier"
+    varchar slug "URL-friendly slug"
+    varchar label "Canonical label"
+    enum type "person|brand|other"
+    varchar primary_embedding_id "Latest high-quality embedding"
+    json meta "Guardrails, notes, avatar url"
+    datetime created_at
+    datetime updated_at
+    datetime deleted_at
+  }
+
+  RS_AUGMENTED_EMBEDDING {
+    varchar embedding_id PK "UUID"
+    varchar person_remote_id FK "References RS_ROSTER_PERSON.remote_id"
+    blob vector "L2-normalized float[512]"
+    enum source "observation|curated|imported"
+    enum quality "high|medium|low"
+    varchar observation_remote_id "Back-reference when sourced from WP"
+    datetime created_at
+  }
+
+  RS_OBSERVATION_EMBEDDING {
+    varchar observation_remote_id PK
+    varchar person_remote_id FK "Nullable suggested match"
+    blob vector "Raw embedding"
+    json bbox "Original bounding box"
+    enum intake_channel "wp-confirm|wp-draft|api-import"
+    datetime captured_at
+  }
+
+  RS_PROPAGATION_EVENT {
+    bigint event_id PK
+    varchar embedding_id FK "References RS_AUGMENTED_EMBEDDING.embedding_id"
+    enum status "queued|processing|applied|failed"
+    text failure_reason
+    datetime enqueued_at
+    datetime processed_at
+    int retry_count
+  }
+
+  RS_INDEX_STATE {
+    varchar index_id PK "FAISS index name"
+    varchar model "insightface_w600k, etc"
+    varchar etag "Monotonic version"
+    datetime last_refreshed_at
+    int total_persons
+    int total_embeddings
+  }
+erDiagram
     WP_OPTIONS ||--o{ CAT_ROSTER_ENTRY : stores
     WP_POSTMETA ||--o{ CAT_OBSERVATION : stores
     WP_POSTS ||--o{ CAT_UNKNOWN_FACES : has_faces

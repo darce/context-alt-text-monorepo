@@ -1,4 +1,63 @@
 sequenceDiagram
+%% Recognition Progressive Learning Flow (v3)
+%% Combines identify suggestions and confirm → augment propagation loop
+
+autonumber
+participant WP as WordPress Plugin (Admin SPA)
+participant Crop as ImageCropUtility
+participant Embed as /api/v0/embeddings/batch
+participant Suggest as /api/v0/suggest
+participant Cluster as /api/v0/cluster-unknowns
+participant Propagate as /api/v0/roster/augment
+participant Queue as Propagation Queue
+participant Worker as EmbeddingRefreshWorker
+participant FAISS as FAISS Index
+participant RemoteDB as RS_AUGMENTED_EMBEDDING
+participant LocalDB as CAT_* Tables
+
+Note over WP: Identify request
+WP->>WP: Validate capability + resolve attachment
+WP->>Crop: cropFaces(attachmentId, bboxes[])
+Crop->>Crop: Crop & normalize regions (112x112)
+Crop-->>WP: faceImages[]
+
+WP->>Embed: POST /embeddings/batch {images, model}
+Embed->>Embed: Run model → embeddings[]
+Embed-->>WP: {embeddings: [...]} (per bounding box)
+
+WP->>Suggest: POST /suggest {embeddings[], topK, threshold, sessionId}
+Suggest->>FAISS: Load index + perform cosine search
+FAISS-->>Suggest: matches[] with scores
+Suggest-->>WP: suggestions[] + strategy_used
+
+alt clustered fallback required
+    WP->>Cluster: POST /cluster-unknowns {embeddings[]}
+    Cluster-->>WP: clusterIds[]
+end
+
+WP->>WP: Merge suggestions + clusters
+WP-->>WP: Render results (observations persisted locally)
+
+Note over WP,LocalDB: Confirmation loop (user accepts identity)
+WP->>LocalDB: Update CAT_OBSERVATION status=confirmed
+WP->>LocalDB: Queue sync action (CAT_SYNC_QUEUE)
+WP->>Propagate: POST /roster/augment {remotePersonId, embedding, source="observation", quality="high", observationRemoteId}
+Propagate->>RemoteDB: Persist augmented embedding
+Propagate->>Queue: Publish propagation event (embedding_id)
+Propagate-->>WP: {success: true, sync_queued: true}
+
+Note over Queue: Durable retry with exponential backoff
+Queue-->>Worker: Deliver event when available
+Worker->>FAISS: Refresh index with new embedding
+Worker->>RemoteDB: Mark embedding as applied
+Worker-->>Queue: Ack event (mark applied)
+Worker-->>LocalDB: (optional webhook) notify sync success
+
+WP<- - Worker: (webhook) confirm cascade ready
+WP->>WP: Promote cascaded drafts (pending_review → suggested)
+
+Note over WP: UI cache warmed (session/localStorage) once acknowledgement received
+sequenceDiagram
 %% Recognition Service Backend Endpoints - v2
 %% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 4
 

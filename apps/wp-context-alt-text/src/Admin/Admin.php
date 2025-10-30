@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace ContextAltText\Admin;
 
 use ContextAltText\Shared\Config\SettingsRepository;
-use ContextAltText\Shared\Constants\RecognitionConstants;
 use ContextAltText\Services\Scan\MissingAltTextScanner;
 use ContextAltText\Admin\DashboardMetricsService;
 use ContextAltText\Domain\Roster\RosterService;
@@ -210,14 +209,6 @@ class Admin
             'endpoints' => $endpoints,
             'featureFlags' => $featureFlags,
             'settings' => $settingsEndpoints['meta'],
-            'matching' => $this->get_matching_config(),
-        ];
-    }
-
-    private function get_matching_config(): array
-    {
-        return [
-            'clusterSimilarityThreshold' => RecognitionConstants::CLUSTER_SIMILARITY_THRESHOLD,
         ];
     }
 

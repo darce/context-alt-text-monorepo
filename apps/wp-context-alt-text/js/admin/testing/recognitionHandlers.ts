@@ -6,13 +6,24 @@ import { http, HttpResponse } from "msw";
 export const recognitionScanHandler = http.post(
     "https://example.com/wp-json/cat/v1/recognition/scan",
     async ({ request }) => {
-        const body = await request.json();
-        const attachmentIds: number[] = Array.isArray(body?.attachment_ids) ? body.attachment_ids : [];
+        const rawBody = await request.json();
+        const body =
+            rawBody !== null && typeof rawBody === "object" && !Array.isArray(rawBody)
+                ? (rawBody as Record<string, unknown>)
+                : {};
+
+        const attachmentIds = Array.isArray(body.attachment_ids)
+            ? body.attachment_ids.filter(
+                  (value): value is number => typeof value === "number" && Number.isFinite(value),
+              )
+            : [];
+
+        const priority = typeof body.priority === "string" ? body.priority : "normal";
 
         return HttpResponse.json({
             job_id: "scan-mock-job",
             queued_count: attachmentIds.length,
-            priority: body?.priority ?? "normal",
+            priority,
         });
     },
 );

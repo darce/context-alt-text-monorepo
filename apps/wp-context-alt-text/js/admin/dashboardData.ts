@@ -21,7 +21,6 @@ import type {
     RecognitionSettingsPayload,
 } from "@/admin/types";
 import { getAdminBootstrap } from "@/admin/globals";
-import { DEFAULT_CLUSTER_THRESHOLD } from "@/config/matching";
 
 const FALLBACK_HERO: HeroStatus = {
     state: "scanning",
@@ -108,9 +107,6 @@ const FALLBACK_CONFIG: AdminConfig = {
         recognition: {
             canManage: false,
         },
-    },
-    matching: {
-        clusterSimilarityThreshold: DEFAULT_CLUSTER_THRESHOLD,
     },
 };
 
@@ -216,11 +212,6 @@ export const getDashboardConfig = (): AdminConfig => {
     const endpoints = config.endpoints ?? {};
     const featureFlags = config.featureFlags ?? {};
     const settingsMeta = config.settings ?? FALLBACK_CONFIG.settings;
-    const matchingConfig = config.matching ?? FALLBACK_CONFIG.matching;
-    const clusterThreshold =
-        typeof matchingConfig?.clusterSimilarityThreshold === "number"
-            ? matchingConfig.clusterSimilarityThreshold
-            : DEFAULT_CLUSTER_THRESHOLD;
 
     return {
         missingAltMediaUrl:
@@ -266,9 +257,6 @@ export const getDashboardConfig = (): AdminConfig => {
             recognition: {
                 canManage: Boolean(settingsMeta?.recognition?.canManage ?? false),
             },
-        },
-        matching: {
-            clusterSimilarityThreshold: clusterThreshold,
         },
     };
 };

@@ -3,7 +3,6 @@ import { __, sprintf } from "@wordpress/i18n";
 
 import { dispatchNotice, notifyError } from "@/admin/notices";
 import type { FeatureFlags, RecognitionSettingsPayload } from "@/admin/types";
-import { FALLBACK_RECOGNITION_SETTINGS } from "@/admin/dashboardData";
 import { VALIDATION } from "@/admin/constants/validation";
 import { Checkbox } from "@/components/ui/checkbox";
 

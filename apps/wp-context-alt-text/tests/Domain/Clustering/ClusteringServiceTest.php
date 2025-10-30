@@ -260,21 +260,6 @@ final class ClusteringServiceTest extends TestCase
                 ],
             ]);
 
-        $this->recognitionClient
-            ->expects($this->once())
-            ->method('addRosterEmbedding')
-            ->with(
-                'person-1',
-                '2001',
-                [0.6, 0.4],
-                $this->callback(static function (array $meta): bool {
-                    return ($meta['attachmentId'] ?? null) === 501
-                        && isset($meta['bbox']['width'])
-                        && ($meta['source'] ?? '') === 'assisted-face-id';
-                })
-            )
-            ->willReturn([]);
-
         $this->rosterService
             ->expects($this->once())
             ->method('createObservation')

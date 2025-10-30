@@ -33,8 +33,8 @@ flowchart TD
 
     subgraph PHPDomain["WordPress Domain Layer"]
         scanController[ScanController::scanBatch]
-        faceQueue[FaceDetectionQueue::enqueueBatch]
-        detectionPipeline[FaceDetectionPipeline]
+    faceEnqueue[RecognitionScanQueue::enqueue]
+    remoteDetect[RecognitionClient::detectFaces]
         clusterListController[ClusterController::listClusters]
         clusterDetailController[ClusterController::getClusterDetail]
         clusterSuggestController[ClusterController::getClusterSuggestions]
@@ -77,9 +77,8 @@ flowchart TD
     confirmEndpoint --> clusterConfirmController
 
     %% Controllers → Services / Infrastructure
-    scanController --> faceQueue
-    faceQueue --> detectionPipeline
-    detectionPipeline --> remoteDetect
+    scanController --> faceEnqueue
+    faceEnqueue --> remoteDetect
     remoteDetect --> unknownRepo
 
     clusterListController --> clusteringService

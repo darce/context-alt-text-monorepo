@@ -24,11 +24,11 @@ import {
 } from "@/api/recognitionApi";
 import { notifySuccess, notifyError } from "@/admin/notices";
 
-type StoredFaceLabel = {
+export interface StoredFaceLabel {
     bbox: { x: number; y: number; width: number; height: number };
     confirmedRosterId: string | null;
     labelDraft: Label | null;
-};
+}
 
 const STORAGE_KEY_PREFIX = "cat_face_labels_";
 
@@ -67,7 +67,7 @@ const loadFaceLabelsFromStorage = (attachmentId: number): StoredFaceLabel[] => {
             return [];
         }
 
-        const parsed = JSON.parse(stored);
+        const parsed: unknown = JSON.parse(stored);
         if (!Array.isArray(parsed)) {
             return [];
         }

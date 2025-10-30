@@ -30,7 +30,7 @@ export const FaceGrid = ({
     onDragStart,
     onDragEnd,
 }: FaceGridProps): React.JSX.Element => {
-    const buttonRefs = React.useRef<Array<HTMLButtonElement | null>>([]);
+    const buttonRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
     const defaultFocusIndex = React.useMemo(() => {
         if (faces.length === 0) {
             return -1;
@@ -229,11 +229,7 @@ export const FaceGrid = ({
                             }}
                         >
                             {face.thumbnailUrl ? (
-                                <img
-                                    src={face.thumbnailUrl}
-                                    alt={faceLabel}
-                                    className="cat-face-grid__image"
-                                />
+                                <img src={face.thumbnailUrl} alt={faceLabel} className="cat-face-grid__image" />
                             ) : (
                                 <div className="cat-face-grid__placeholder" role="presentation">
                                     <span aria-hidden="true" className="cat-face-grid__placeholder-icon">

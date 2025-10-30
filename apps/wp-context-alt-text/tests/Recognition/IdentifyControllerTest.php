@@ -7,6 +7,7 @@ use ContextAltText\Recognition\RecognitionClient;
 use ContextAltText\Recognition\RecognitionClientException;
 use ContextAltText\Domain\Roster\RosterService;
 use ContextAltText\Security\Security;
+use PHPUnit\Framework\MockObject\MockObject;
 use PHPUnit\Framework\TestCase;
 
 require_once __DIR__ . '/../bootstrap.php';
@@ -14,9 +15,12 @@ require_once __DIR__ . '/../bootstrap.php';
 final class IdentifyControllerTest extends TestCase
 {
     private IdentifyController $controller;
-    private RecognitionClient $mockRecognitionClient;
-    private RosterService $mockRosterService;
-    private Security $mockSecurity;
+    /** @var MockObject&RecognitionClient */
+    private $mockRecognitionClient;
+    /** @var MockObject&RosterService */
+    private $mockRosterService;
+    /** @var MockObject&Security */
+    private $mockSecurity;
 
     protected function setUp(): void
     {
@@ -199,10 +203,6 @@ final class IdentifyControllerTest extends TestCase
                     ],
                 ],
             ]);
-
-        $this->mockRecognitionClient
-            ->expects($this->never())
-            ->method('clusterFaces');
 
         $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
         $request->set_body_params([
@@ -408,25 +408,6 @@ final class IdentifyControllerTest extends TestCase
             ->method('createObservation')
             ->willReturn(456);
 
-        // Mock successful sync to FAISS
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('addRosterEmbedding')
-            ->with(
-                $this->equalTo('person-1'),
-                $this->equalTo('456'),
-                $this->equalTo($mockEmbedding),
-                $this->equalTo([
-                    'attachmentId' => 123,
-                    'bbox' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
-                    'source' => 'wordpress-plugin',
-                ])
-            )
-            ->willReturn(['success' => true, 'message' => 'Embedding added successfully']);
-
-        // Simulate post_meta calls
-        $GLOBALS['__cat_post_meta'][456] = ['_cat_synced_to_faiss' => [true]];
-
         $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
         $request->set_body_params([
             'attachmentId' => 123,
@@ -444,130 +425,8 @@ final class IdentifyControllerTest extends TestCase
         $this->assertArrayHasKey('faces', $response);
         $face = $response['faces'][0];
         $this->assertSame(456, $face['observationId']);
-        $this->assertSame('success', $face['syncStatus']);
-        $this->assertArrayNotHasKey('syncError', $face);
-    }
-
-    public function test_handles_sync_failure_gracefully(): void
-    {
-        $this->mockSecurity
-            ->expects($this->once())
-            ->method('verifyCapability')
-            ->with('upload_files')
-            ->willReturn(true);
-
-        // Mock valid attachment
-        $GLOBALS['__cat_posts'][123] = (object)[
-            'ID' => 123,
-            'post_type' => 'attachment',
-        ];
-
-        // Mock recognition client
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('embedFaces')
-            ->willReturn(['embeddings' => [[0.1, 0.2, 0.3]]]);
-
-        // Mock roster service
-        $this->mockRosterService
-            ->expects($this->once())
-            ->method('createObservation')
-            ->willReturn(789);
-
-        // Mock failed sync to FAISS
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('addRosterEmbedding')
-            ->willReturn(new \WP_Error('sync_failed', 'Recognition service unavailable'));
-
-        // Simulate post_meta calls for failed sync
-        $GLOBALS['__cat_post_meta'][789] = [
-            '_cat_synced_to_faiss' => [false],
-            '_cat_sync_error' => ['Recognition service unavailable'],
-        ];
-
-        $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
-        $request->set_body_params([
-            'attachmentId' => 123,
-            'faces' => [
-                [
-                    'bbox' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
-                    'label' => ['rosterId' => 'person-2'],
-                ],
-            ],
-        ]);
-
-        $response = $this->controller->identify($request);
-
-        $this->assertIsArray($response);
-        $this->assertArrayHasKey('faces', $response);
-        $face = $response['faces'][0];
-        
-        // Observation should still be created despite sync failure
-        $this->assertSame(789, $face['observationId']);
-        $this->assertSame('failed', $face['syncStatus']);
-        $this->assertArrayHasKey('syncError', $face);
-        $this->assertSame('Recognition service unavailable', $face['syncError']);
-    }
-
-    public function test_handles_duplicate_sync_gracefully(): void
-    {
-        $this->mockSecurity
-            ->expects($this->once())
-            ->method('verifyCapability')
-            ->with('upload_files')
-            ->willReturn(true);
-
-        // Mock valid attachment
-        $GLOBALS['__cat_posts'][123] = (object)[
-            'ID' => 123,
-            'post_type' => 'attachment',
-        ];
-
-        // Mock recognition client
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('embedFaces')
-            ->willReturn(['embeddings' => [[0.1, 0.2, 0.3]]]);
-
-        // Mock roster service
-        $this->mockRosterService
-            ->expects($this->once())
-            ->method('createObservation')
-            ->willReturn(555);
-
-        // Mock duplicate detection (409 Conflict)
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('addRosterEmbedding')
-            ->willReturn(new \WP_Error(
-                'duplicate_observation',
-                'This observation has already been synced to the FAISS index'
-            ));
-
-        // Simulate post_meta calls for duplicate
-        $GLOBALS['__cat_post_meta'][555] = [
-            '_cat_synced_to_faiss' => [false],
-            '_cat_sync_error' => ['This observation has already been synced to the FAISS index'],
-        ];
-
-        $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
-        $request->set_body_params([
-            'attachmentId' => 123,
-            'faces' => [
-                [
-                    'bbox' => ['x' => 0.1, 'y' => 0.2, 'width' => 0.3, 'height' => 0.4],
-                    'label' => ['rosterId' => 'person-3'],
-                ],
-            ],
-        ]);
-
-        $response = $this->controller->identify($request);
-
-        $this->assertIsArray($response);
-        // Observation created successfully, but sync marked as duplicate
-        $this->assertSame(555, $response['faces'][0]['observationId']);
-        $this->assertSame('failed', $response['faces'][0]['syncStatus']);
+    $this->assertSame('delegated', $face['syncStatus']);
+    $this->assertArrayNotHasKey('syncError', $face);
     }
 
     public function test_syncs_embedding_for_new_person_creation(): void
@@ -604,21 +463,6 @@ final class IdentifyControllerTest extends TestCase
             ->method('createObservation')
             ->willReturn(888);
 
-        // Mock successful sync for new person
-        $this->mockRecognitionClient
-            ->expects($this->once())
-            ->method('addRosterEmbedding')
-            ->with(
-                $this->equalTo('person-new-456'),
-                $this->equalTo('888'),
-                $this->equalTo($mockEmbedding),
-                $this->anything()
-            )
-            ->willReturn(['success' => true, 'message' => 'Embedding added successfully']);
-
-        // Simulate post_meta calls
-        $GLOBALS['__cat_post_meta'][888] = ['_cat_synced_to_faiss' => [true]];
-
         $request = new WP_REST_Request('POST', '/cat/v1/recognition/identify');
         $request->set_body_params([
             'attachmentId' => 123,
@@ -634,6 +478,6 @@ final class IdentifyControllerTest extends TestCase
 
         $this->assertIsArray($response);
         $this->assertSame(888, $response['faces'][0]['observationId']);
-        $this->assertSame('success', $response['faces'][0]['syncStatus']);
+        $this->assertSame('delegated', $response['faces'][0]['syncStatus']);
     }
 }

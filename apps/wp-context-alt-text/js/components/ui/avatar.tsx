@@ -13,7 +13,7 @@ import "./avatar.css";
 
 export const Avatar = AvatarPrimitive.Root;
 
-export interface AvatarImageProps extends React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image> {}
+export type AvatarImageProps = React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Image>;
 
 export const AvatarImage = React.forwardRef<React.ElementRef<typeof AvatarPrimitive.Image>, AvatarImageProps>(
     ({ className, ...props }, ref) => (
@@ -22,7 +22,7 @@ export const AvatarImage = React.forwardRef<React.ElementRef<typeof AvatarPrimit
 );
 AvatarImage.displayName = "AvatarImage";
 
-export interface AvatarFallbackProps extends React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Fallback> {}
+export type AvatarFallbackProps = React.ComponentPropsWithoutRef<typeof AvatarPrimitive.Fallback>;
 
 export const AvatarFallback = React.forwardRef<React.ElementRef<typeof AvatarPrimitive.Fallback>, AvatarFallbackProps>(
     ({ className, ...props }, ref) => (

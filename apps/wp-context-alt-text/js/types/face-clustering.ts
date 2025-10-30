@@ -10,48 +10,6 @@
 import type { BoundingBox } from "./people-labeling";
 
 /**
- * A persisted unknown face awaiting user confirmation.
- */
-export interface UnknownFace {
-    /** Database identifier for the stored face record */
-    id: string;
-    /** WordPress attachment the face was detected in */
-    attachmentId: number;
-    /** Cropped bounding box expressed in pixels */
-    bbox: BoundingBox;
-    /** Embedding identifier (stored locally or in the recognition service) */
-    embeddingId: string | null;
-    /** Cluster identifier assigned by the clustering pipeline */
-    clusterId: string | null;
-    /** Timestamp (ISO 8601) when the face was detected */
-    detectedAt: string;
-    /** Optional roster person this face was resolved to */
-    rosterId?: string | null;
-    /** Timestamp when the face was resolved (ISO 8601) */
-    resolvedAt?: string | null;
-}
-
-/**
- * Aggregated grouping of visually similar faces.
- */
-export interface FaceCluster {
-    /** Unique cluster identifier */
-    id: string;
-    /** Ordered list of face record identifiers belonging to the cluster */
-    faceIds: string[];
-    /** Representative face identifier used for thumbnails */
-    sampleFaceId: string;
-    /** Optional roster suggestion associated with the cluster */
-    suggestedRosterId?: string | null;
-    /** Confidence score for the suggestion (0-1) */
-    confidence?: number | null;
-    /** Timestamp when the cluster was created */
-    createdAt: string;
-    /** Timestamp of the most recent update */
-    updatedAt: string;
-}
-
-/**
  * Suggestion result mapping a cluster to a roster candidate.
  */
 export interface ClusterSuggestion {

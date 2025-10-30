@@ -58,10 +58,10 @@ const normalizeBoundingBox = (bbox: ApiBoundingBox): ClusterSampleFace["bbox"] =
         return null;
     }
 
-    const x = Number((bbox as Record<string, unknown>).x);
-    const y = Number((bbox as Record<string, unknown>).y);
-    const width = Number((bbox as Record<string, unknown>).width);
-    const height = Number((bbox as Record<string, unknown>).height);
+    const x = Number(bbox.x);
+    const y = Number(bbox.y);
+    const width = Number(bbox.width);
+    const height = Number(bbox.height);
 
     if ([x, y, width, height].some((value) => !Number.isFinite(value))) {
         return null;
@@ -97,7 +97,7 @@ const mapSuggestion = (input: ApiCluster["suggestion"]): ClusterSummary["suggest
     return {
         rosterId,
         displayName,
-        confidence: Number.isFinite(confidence) ? (confidence as number) : null,
+        confidence: Number.isFinite(confidence) ? confidence! : null,
         reason: typeof input.reason === "string" ? input.reason : null,
     };
 };
@@ -128,9 +128,7 @@ const transformResponse = (
     page: number;
     perPage: number;
 } => {
-    const clusters = Array.isArray(response.clusters)
-        ? response.clusters.map(mapCluster)
-        : ([] as ClusterSummary[]);
+    const clusters = Array.isArray(response.clusters) ? response.clusters.map(mapCluster) : ([] as ClusterSummary[]);
 
     const total = toNumber(response.total, clusters.length);
     const page = toNumber(response.page, defaults.page);
@@ -179,7 +177,7 @@ export const useUnknownClusters = (options: UseUnknownClustersOptions = {}): Use
         staleTime: 30_000,
     });
 
-    const data = enabled ? query.data ?? fallback : fallback;
+    const data = enabled ? (query.data ?? fallback) : fallback;
 
     return {
         clusters: data.clusters,
@@ -187,7 +185,7 @@ export const useUnknownClusters = (options: UseUnknownClustersOptions = {}): Use
         page: data.page,
         perPage: data.perPage,
         isLoading: enabled ? query.isFetching : false,
-        error: (query.error as Error | null) ?? null,
-        refetch: enabled ? query.refetch : async () => undefined,
+        error: query.error ?? null,
+        refetch: enabled ? query.refetch : () => Promise.resolve(undefined),
     };
 };

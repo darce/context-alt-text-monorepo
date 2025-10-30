@@ -2,12 +2,7 @@ import React from "react";
 import { __, sprintf, _n } from "@wordpress/i18n";
 import { useQueryClient } from "@tanstack/react-query";
 
-import {
-    Dialog,
-    DialogContent,
-    DialogDescription,
-    DialogTitle,
-} from "@/components/ui/dialog";
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from "@/components/ui/dialog";
 import { Button } from "@/components/ui/button";
 import { SuggestionChip } from "@/components/workbench/SuggestionChip";
 import { FaceThumbnailGrid } from "@/components/workbench/FaceThumbnailGrid";
@@ -52,14 +47,6 @@ export const ClusterConfirmationModal = ({
     const queryClient = useQueryClient();
     const clustersEndpoint = config?.endpoints?.unknownClusters ?? null;
 
-    const faceMap = React.useMemo(() => {
-        const map = new Map<string, ClusterFaceDetail>();
-        faces.forEach((face) => {
-            map.set(face.id, face);
-        });
-        return map;
-    }, [faces]);
-
     React.useEffect(() => {
         if (!isOpen) {
             return;
@@ -69,12 +56,18 @@ export const ClusterConfirmationModal = ({
         setIncludedFaceIds(new Set(initialFaces));
 
         if (suggestions.length > 0) {
-            const primary = suggestions[0];
-            setRoster({
-                id: primary.rosterId,
-                displayName: primary.displayName,
-            });
-            setActiveSuggestionRosterId(primary.rosterId);
+            const primary = suggestions[0] ?? null;
+
+            if (primary) {
+                setRoster({
+                    id: primary.rosterId,
+                    displayName: primary.displayName,
+                });
+                setActiveSuggestionRosterId(primary.rosterId);
+            } else {
+                setRoster(null);
+                setActiveSuggestionRosterId(null);
+            }
         } else {
             setRoster(null);
             setActiveSuggestionRosterId(null);
@@ -103,24 +96,21 @@ export const ClusterConfirmationModal = ({
         setIncludedFaceIds(new Set());
     }, []);
 
-    const handleSuggestionSelect = React.useCallback(
-        (suggestion: ClusterSuggestion) => {
-            setRoster({
-                id: suggestion.rosterId,
-                displayName: suggestion.displayName,
-            });
-            setActiveSuggestionRosterId(suggestion.rosterId);
-            dispatchNotice(
-                "info",
-                sprintf(
-                    /* translators: %s: roster display name */
-                    __("Selected %s as the cluster match.", "context-alt-text"),
-                    suggestion.displayName,
-                ),
-            );
-        },
-        [],
-    );
+    const handleSuggestionSelect = React.useCallback((suggestion: ClusterSuggestion) => {
+        setRoster({
+            id: suggestion.rosterId,
+            displayName: suggestion.displayName,
+        });
+        setActiveSuggestionRosterId(suggestion.rosterId);
+        dispatchNotice(
+            "info",
+            sprintf(
+                /* translators: %s: roster display name */
+                __("Selected %s as the cluster match.", "context-alt-text"),
+                suggestion.displayName,
+            ),
+        );
+    }, []);
 
     const handlePickerSelect = React.useCallback((rosterId: string, displayName: string) => {
         setRoster({ id: rosterId, displayName });
@@ -132,7 +122,10 @@ export const ClusterConfirmationModal = ({
             "warning",
             sprintf(
                 /* translators: %s: display name */
-                __("Creating new roster entries is not yet supported from this modal. Please select an existing person for %s.", "context-alt-text"),
+                __(
+                    "Creating new roster entries is not yet supported from this modal. Please select an existing person for %s.",
+                    "context-alt-text",
+                ),
                 displayName,
             ),
         );
@@ -184,7 +177,9 @@ export const ClusterConfirmationModal = ({
                     }),
                     queryClient.invalidateQueries({
                         predicate: ({ queryKey }) =>
-                            Array.isArray(queryKey) && queryKey[0] === "unknown-clusters" && queryKey[1] === clustersEndpoint,
+                            Array.isArray(queryKey) &&
+                            queryKey[0] === "unknown-clusters" &&
+                            queryKey[1] === clustersEndpoint,
                     }),
                 ]);
             }
@@ -271,12 +266,7 @@ export const ClusterConfirmationModal = ({
                                   )
                                 : __("No person selected yet.", "context-alt-text")}
                         </p>
-                        <Button
-                            variant="subtle"
-                            size="sm"
-                            onClick={() => setPickerOpen(true)}
-                            disabled={isSubmitting}
-                        >
+                        <Button variant="subtle" size="sm" onClick={() => setPickerOpen(true)} disabled={isSubmitting}>
                             {roster
                                 ? __("Choose a different person", "context-alt-text")
                                 : __("Select a person", "context-alt-text")}
@@ -288,10 +278,10 @@ export const ClusterConfirmationModal = ({
                     <header className="cat-cluster-confirmation__faces-header">
                         <h3>{__("Faces to label", "context-alt-text")}</h3>
                         <div className="cat-cluster-confirmation__faces-actions">
-                            <Button variant="ghost" size="sm" onClick={handleSelectAll} disabled={isSubmitting}>
+                            <Button variant="subtle" size="sm" onClick={handleSelectAll} disabled={isSubmitting}>
                                 {__("Select all", "context-alt-text")}
                             </Button>
-                            <Button variant="ghost" size="sm" onClick={handleClearSelection} disabled={isSubmitting}>
+                            <Button variant="subtle" size="sm" onClick={handleClearSelection} disabled={isSubmitting}>
                                 {__("Clear", "context-alt-text")}
                             </Button>
                         </div>
@@ -304,11 +294,7 @@ export const ClusterConfirmationModal = ({
                             faces.length,
                         )}
                     </p>
-                    <FaceThumbnailGrid
-                        faces={faces}
-                        selectedFaceIds={selectedFaces}
-                        onToggleFace={handleToggleFace}
-                    />
+                    <FaceThumbnailGrid faces={faces} selectedFaceIds={selectedFaces} onToggleFace={handleToggleFace} />
                 </section>
 
                 {errorMessage && <p className="cat-cluster-confirmation__error">{errorMessage}</p>}
@@ -317,7 +303,13 @@ export const ClusterConfirmationModal = ({
                     <Button variant="subtle" onClick={onClose} disabled={isSubmitting}>
                         {__("Cancel", "context-alt-text")}
                     </Button>
-                    <Button variant="primary" onClick={handleSubmit} disabled={confirmDisabled}>
+                    <Button
+                        variant="primary"
+                        onClick={() => {
+                            void handleSubmit();
+                        }}
+                        disabled={confirmDisabled}
+                    >
                         {isSubmitting
                             ? __("Labeling…", "context-alt-text")
                             : sprintf(

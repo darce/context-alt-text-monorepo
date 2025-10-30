@@ -8,13 +8,13 @@ export interface FaceDragPayload {
 export const setFaceDragData = (dataTransfer: DataTransfer, payload: FaceDragPayload): void => {
     try {
         dataTransfer.setData(FACE_DRAG_MIME_TYPE, JSON.stringify(payload));
-    } catch (error) {
+    } catch {
         // Fallback for environments that do not support custom MIME types
     }
 
     try {
         dataTransfer.setData("text/plain", payload.faceIds.join(","));
-    } catch (error) {
+    } catch {
         // Ignore text/plain failures as well
     }
 };
@@ -24,7 +24,7 @@ export const getFaceDragData = (dataTransfer: DataTransfer): FaceDragPayload | n
 
     try {
         raw = dataTransfer.getData(FACE_DRAG_MIME_TYPE);
-    } catch (error) {
+    } catch {
         raw = "";
     }
 
@@ -48,7 +48,7 @@ export const getFaceDragData = (dataTransfer: DataTransfer): FaceDragPayload | n
             clusterId: parsed.clusterId,
             faceIds: parsed.faceIds,
         };
-    } catch (error) {
+    } catch {
         return null;
     }
 };
@@ -59,7 +59,7 @@ export const hasFaceDragData = (dataTransfer: DataTransfer): boolean => {
         if (types.includes(FACE_DRAG_MIME_TYPE)) {
             return true;
         }
-    } catch (error) {
+    } catch {
         // Ignore
     }
 

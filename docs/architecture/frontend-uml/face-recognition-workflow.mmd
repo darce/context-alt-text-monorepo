@@ -1,40 +1,64 @@
 flowchart TD
-%% v2 Face Recognition Workflow
-%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 4.2
+%% Remote Face Recognition Workflow (Oct 2025)
+%% Frontend consumes server-side detection, clustering, and suggestions
 
-A[Browser: MediaPipe face detection] --> B[Frontend: POST /recognition/identify]
-B --> C[WordPress: Crop faces server-side]
-C --> D[Recognition Service: /embeddings/batch]
-D --> E{Roster exists?}
-E -->|Yes: Warm Start| F[[suggest endpoint]]
-E -->|No: Cold Start| G[[cluster-unknowns endpoint]]
+subgraph Frontend
+	A[FaceScanActions<br/>Editor clicks 'Scan for Faces']
+	B[UnknownPeoplePanel<br/>useUnknownClusters]
+	C[ClusterDetailView<br/>useClusterDetail]
+	D[useClusterSuggestions]
+	E[ClusterConfirmationModal]
+end
 
-F --> H{FAISS similarity search}
-H -->|score >= threshold 0.92| I[Return top-k suggestions]
-H -->|score < threshold| G
+subgraph WordPress
+	F[/POST /cat/v1/recognition/scan/]
+	G[/GET /cat/v1/clusters/]
+	H[/GET /cat/v1/clusters/&#123;id&#125;/]
+	I[/GET /cat/v1/clusters/&#123;id&#125;/suggestions/]
+	J[/POST /cat/v1/clusters/&#123;id&#125;/confirm/]
+	K[ScanController<br/>enqueueBatch]
+	L[ClusterController<br/>list/detail]
+	M[SuggestionController]
+	N[ConfirmController]
+	O[UnknownFaceRepository]
+end
 
-G --> J[DBSCAN/Agglomerative clustering]
-J --> K[Return clusterId for grouping]
+subgraph RecognitionService
+	P[Detect & Embed Faces]
+	Q[Cluster Unknown Faces]
+	R[Generate Roster Suggestions]
+	S[Ingest Confirmed Embeddings]
+end
 
-I --> L[Frontend: PeopleDrawer suggestion stacks]
-K --> M[Frontend: PeopleDrawer unknown clusters]
+A --> F
+F --> K
+K --> P
+P --> Q
+Q --> O
+O --> L
+L --> G
+B --> G
+G --> B
 
-L --> N{User action}
-M --> N
+C --> H
+H --> L
+L --> C
 
-N -->|Confirm suggestion| O[POST /identify with label.rosterId]
-N -->|Create new person| P[POST /identify with label.newName]
-N -->|Bulk confirm stack| Q[POST /identify with multiple labels]
+C --> I
+I --> M
+M --> D
+D --> C
 
-O --> R[WP: persist FaceObservation + sync to FAISS]
-P --> S[WP: create RosterPerson + persist + sync to FAISS]
-Q --> R
+E --> J
+J --> N
+N --> O
+N --> S
+S --> R
+R --> M
 
-R --> T[Recognition Service: /roster/add-embedding]
-S --> T
-T --> U[Append to FAISS index - prevent duplicate observationId]
-U --> V[Persist index atomically]
+J -->|Invalidate caches| B
+J -->|Invalidate caches| C
 
-V --> W[Return success + immediate user feedback]
-W --> X[Toast: Face added to person's profile]
-X --> Y[Future suggestions improve progressively]
+style Frontend fill:#e8f5e9,stroke:#2e7d32,stroke-width:1px
+style WordPress fill:#e3f2fd,stroke:#1e88e5,stroke-width:1px
+style RecognitionService fill:#ffe0b2,stroke:#fb8c00,stroke-width:1px

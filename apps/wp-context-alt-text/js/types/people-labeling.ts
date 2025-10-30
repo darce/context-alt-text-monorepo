@@ -135,38 +135,6 @@ export interface IdentifyResponse {
 // ============================================================================
 
 /**
- * Group of faces likely belonging to same person
- */
-export interface FaceCluster {
-    /** Cluster identifier from backend */
-    clusterId: string;
-    /** Faces in this cluster */
-    faces: DetectedFaceFE[];
-    /** Representative face (highest confidence) */
-    representativeFace: DetectedFaceFE;
-    /** Number of faces in cluster */
-    count: number;
-}
-
-/**
- * Stack of faces with same roster suggestion
- */
-export interface SuggestionStack {
-    /** Roster person ID */
-    rosterId: string;
-    /** Display name of suggested person */
-    display: string;
-    /** Avatar URL */
-    avatarUrl: string | null;
-    /** Faces with this suggestion */
-    faces: DetectedFaceFE[];
-    /** Number of faces in stack */
-    count: number;
-    /** Average similarity score across stack */
-    avgScore: number;
-}
-
-/**
  * Roster person (from WordPress taxonomy)
  */
 /**
@@ -196,54 +164,6 @@ export interface RosterPerson {
     referenceImageCount: number;
     /** Last update timestamp (ISO 8601) */
     updatedAt: string | null;
-}
-
-/**
- * Face observation record (database entity)
- */
-export interface FaceObservation {
-    /** Observation ID */
-    id: number;
-    /** Attachment post ID */
-    attachmentId: number;
-    /** Bounding box X coordinate */
-    bboxX: number;
-    /** Bounding box Y coordinate */
-    bboxY: number;
-    /** Bounding box width */
-    bboxW: number;
-    /** Bounding box height */
-    bboxH: number;
-    /** Cluster group ID (for unknowns) */
-    clusterGroupId: string | null;
-    /** Suggested roster ID from FAISS */
-    suggestedRosterId: string | null;
-    /** Suggestion confidence score */
-    suggestedScore: number | null;
-    /** Confirmed roster ID (user-labeled) */
-    confirmedRosterId: string | null;
-    /** Label status */
-    labelStatus: LabelStatus;
-    /** Created timestamp */
-    createdAt: string;
-    /** Updated timestamp */
-    updatedAt: string;
-}
-
-/**
- * Label status enum
- */
-export enum LabelStatus {
-    /** No label or suggestion yet */
-    Unlabeled = "unlabeled",
-    /** Backend provided suggestion */
-    Suggested = "suggested",
-    /** User confirmed suggestion */
-    Confirmed = "confirmed",
-    /** User rejected as not a face */
-    Rejected = "rejected",
-    /** User corrected suggestion to different person */
-    Corrected = "corrected",
 }
 
 // ============================================================================

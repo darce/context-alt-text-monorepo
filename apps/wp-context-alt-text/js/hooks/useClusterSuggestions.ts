@@ -7,7 +7,7 @@ import type { ClusterSuggestion } from "@/types/face-clustering";
 
 interface ClusterSuggestionsResponse {
     cluster_id?: string;
-    suggestions?: Array<Record<string, unknown>>;
+    suggestions?: Record<string, unknown>[];
 }
 
 interface UseClusterSuggestionsResult {
@@ -51,17 +51,18 @@ const normalizeSuggestion = (input: Record<string, unknown>, clusterId: string):
         ? faceIdsRaw.filter((value) => typeof value === "string" && value.trim() !== "")
         : [];
 
+    const confidenceLevelRaw = toStringOrNull(input.confidence_level ?? input.confidenceLevel)?.toLowerCase();
+    const confidenceLevel =
+        confidenceLevelRaw === "high" || confidenceLevelRaw === "medium" || confidenceLevelRaw === "low"
+            ? confidenceLevelRaw
+            : undefined;
+
     return {
         clusterId,
         rosterId,
         displayName,
         confidence: Number(input.confidence ?? 0),
-        confidenceLevel: toStringOrNull(input.confidence_level ?? input.confidenceLevel) as
-            | "high"
-            | "medium"
-            | "low"
-            | null
-            | undefined,
+        confidenceLevel,
         matchCount: toNumber(input.match_count ?? input.matchCount ?? faceIds.length, faceIds.length),
         faceIds,
         reason: toStringOrNull(input.reason),
@@ -94,7 +95,7 @@ export const useClusterSuggestions = (clusterId: string): UseClusterSuggestionsR
                 restNonce,
             });
 
-            const suggestionsRaw = Array.isArray(response?.suggestions) ? response!.suggestions : [];
+            const suggestionsRaw = Array.isArray(response?.suggestions) ? response.suggestions : [];
             const mapped = suggestionsRaw
                 .map((item) => normalizeSuggestion(item, trimmedClusterId))
                 .filter((item): item is ClusterSuggestion => item !== null);
@@ -103,13 +104,13 @@ export const useClusterSuggestions = (clusterId: string): UseClusterSuggestionsR
         },
     });
 
-    const data = enabled ? query.data ?? fallback : fallback;
+    const data = enabled ? (query.data ?? fallback) : fallback;
 
     return {
         suggestions: data.suggestions,
         isLoading: enabled ? query.isFetching : false,
-        error: (query.error as Error | null) ?? null,
-        refetch: enabled ? query.refetch : async () => undefined,
+        error: query.error ?? null,
+        refetch: enabled ? query.refetch : () => Promise.resolve(undefined),
     };
 };
 

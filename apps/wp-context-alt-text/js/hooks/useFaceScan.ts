@@ -29,6 +29,65 @@ export interface UseFaceScanReturn {
 
 const MAX_BATCH_SIZE = 50;
 
+interface FaceScanResponseRaw {
+    job_id?: unknown;
+    jobId?: unknown;
+    queued_count?: unknown;
+    queuedCount?: unknown;
+    priority?: unknown;
+}
+
+interface FaceScanErrorPayload {
+    message?: unknown;
+}
+
+const toFiniteNumber = (value: unknown, fallback: number): number => {
+    if (typeof value === "number" && Number.isFinite(value)) {
+        return value;
+    }
+
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+const toPriority = (value: unknown): FaceScanResult["priority"] => (value === "high" ? "high" : "normal");
+
+const extractMessage = (input: unknown): string | null => {
+    if (!input || typeof input !== "object") {
+        return null;
+    }
+
+    const record = input as FaceScanErrorPayload;
+    const { message } = record;
+
+    if (typeof message === "string" && message.trim() !== "") {
+        return message;
+    }
+
+    return null;
+};
+
+const normalizeScanResult = (input: unknown, fallbackQueuedCount: number): FaceScanResult => {
+    if (!input || typeof input !== "object") {
+        return {
+            jobId: "",
+            queuedCount: fallbackQueuedCount,
+            priority: "normal",
+        };
+    }
+
+    const data = input as FaceScanResponseRaw;
+    const jobIdRaw = data.job_id ?? data.jobId;
+    const queuedCountRaw = data.queued_count ?? data.queuedCount;
+    const priorityRaw = data.priority;
+
+    return {
+        jobId: typeof jobIdRaw === "string" ? jobIdRaw : "",
+        queuedCount: toFiniteNumber(queuedCountRaw, fallbackQueuedCount),
+        priority: toPriority(priorityRaw),
+    };
+};
+
 /**
  * Hook for triggering face detection scans on media attachments.
  * Follows the same pattern as useRecognitionJob but specifically for face scanning.
@@ -92,19 +151,17 @@ export const useFaceScan = (): UseFaceScanReturn => {
                 });
 
                 if (!response.ok) {
-                    const errorData = await response.json().catch(() => ({}));
-                    throw new Error(
-                        errorData.message ?? __("Failed to start face scan. Please try again.", "context-alt-text"),
-                    );
+                    const errorPayload: unknown = await response.json().catch(() => null);
+                    const message =
+                        extractMessage(errorPayload) ??
+                        __("Failed to start face scan. Please try again.", "context-alt-text");
+                    throw new Error(message);
                 }
 
-                const data = await response.json();
+                const payload: unknown = await response.json().catch(() => null);
+                const normalized = normalizeScanResult(payload, attachmentIds.length);
 
-                setResult({
-                    jobId: data.job_id ?? "",
-                    queuedCount: data.queued_count ?? attachmentIds.length,
-                    priority: data.priority ?? "normal",
-                });
+                setResult(normalized);
             } catch (err) {
                 const errorMessage =
                     err instanceof Error ? err.message : __("Unknown error occurred.", "context-alt-text");

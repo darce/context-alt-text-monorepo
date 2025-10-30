@@ -3,16 +3,11 @@ import { useQuery } from "@tanstack/react-query";
 
 import { fetchApi } from "@/admin/utils/http";
 import { getDashboardConfig } from "@/admin/dashboardData";
-import type {
-    ClusterSummary,
-    ClusterSampleFace,
-    ClusterFaceDetail,
-    ClusterBoundingBox,
-} from "@/types/face-clustering";
+import type { ClusterSummary, ClusterSampleFace, ClusterFaceDetail, ClusterBoundingBox } from "@/types/face-clustering";
 
 interface ClusterDetailResponse {
     cluster?: Record<string, unknown>;
-    faces?: Array<Record<string, unknown>>;
+    faces?: Record<string, unknown>[];
 }
 
 interface UseClusterDetailResult {
@@ -81,8 +76,7 @@ const normalizeBoundingBox = (input: unknown): ClusterBoundingBox => {
 };
 
 const normalizeFace = (input: Record<string, unknown>): ClusterFaceDetail => {
-    const attachmentId =
-        toNumber(input.attachmentId ?? input.attachment_id ?? null, 0) ?? 0;
+    const attachmentId = toNumber(input.attachmentId ?? input.attachment_id ?? null, 0) ?? 0;
     const bbox = normalizeBoundingBox(input.bbox ?? null);
 
     return {
@@ -144,16 +138,12 @@ const normalizeSuggestion = (input: unknown): ClusterSummary["suggestion"] => {
     return {
         rosterId: rosterId ?? "",
         displayName: displayName ?? "",
-        confidence: confidence !== null ? confidence : null,
+        confidence: confidence ?? null,
         reason: toStringOrNull(data.reason),
     };
 };
 
-const normalizeCluster = (
-    input: unknown,
-    clusterId: string,
-    faces: ClusterFaceDetail[],
-): ClusterSummary => {
+const normalizeCluster = (input: unknown, clusterId: string, faces: ClusterFaceDetail[]): ClusterSummary => {
     const fallbackFace = faces[0] ?? null;
 
     const defaults: ClusterSummary = {
@@ -195,9 +185,7 @@ const normalizeCluster = (
 
 const transformResponse = (response: ClusterDetailResponse, clusterId: string) => {
     const faces = Array.isArray(response.faces)
-        ? response.faces
-              .map((face) => normalizeFace(face))
-              .filter((face) => face.id !== "")
+        ? response.faces.map((face) => normalizeFace(face)).filter((face) => face.id !== "")
         : [];
 
     const cluster = normalizeCluster(response.cluster ?? null, clusterId, faces);
@@ -235,14 +223,14 @@ export const useClusterDetail = (clusterId: string): UseClusterDetailResult => {
         staleTime: 30_000,
     });
 
-    const data = enabled ? query.data ?? fallback : fallback;
+    const data = enabled ? (query.data ?? fallback) : fallback;
 
     return {
         cluster: data.cluster,
         faces: data.faces,
         isLoading: enabled ? query.isFetching : false,
-        error: (query.error as Error | null) ?? null,
-        refetch: enabled ? query.refetch : async () => undefined,
+        error: query.error instanceof Error ? query.error : null,
+        refetch: enabled ? query.refetch : () => Promise.resolve(undefined),
     };
 };
 

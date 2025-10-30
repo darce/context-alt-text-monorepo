@@ -40,10 +40,7 @@ export const ClusterCard = ({
     onDragLeave,
     isDropTarget = false,
 }: ClusterCardProps): React.JSX.Element => {
-    const faceCountLabel = sprintf(
-        _n("%d face", "%d faces", cluster.faceCount, "context-alt-text"),
-        cluster.faceCount,
-    );
+    const faceCountLabel = sprintf(_n("%d face", "%d faces", cluster.faceCount, "context-alt-text"), cluster.faceCount);
 
     const ariaLabel = sprintf(
         /* translators: 1: cluster id, 2: face count label */
@@ -56,6 +53,7 @@ export const ClusterCard = ({
     const confidenceLabel = getConfidenceLabel(suggestion?.confidence ?? null);
     const selected = Boolean(isSelected);
     const classes = ["cat-cluster-card"];
+    const sampleFace = cluster.sampleFace;
 
     if (selected) {
         classes.push("cat-cluster-card--selected");
@@ -74,7 +72,7 @@ export const ClusterCard = ({
             event.preventDefault();
             try {
                 event.dataTransfer.dropEffect = "move";
-            } catch (error) {
+            } catch {
                 // Ignore
             }
         },
@@ -138,9 +136,9 @@ export const ClusterCard = ({
             onDrop={handleDrop}
         >
             <div className="cat-cluster-card__media" aria-hidden="true">
-                {cluster.sampleFace.thumbnailUrl ? (
+                {sampleFace?.thumbnailUrl ? (
                     <img
-                        src={cluster.sampleFace.thumbnailUrl}
+                        src={sampleFace.thumbnailUrl}
                         alt={__("Representative face for this cluster", "context-alt-text")}
                         className="cat-cluster-card__image"
                     />

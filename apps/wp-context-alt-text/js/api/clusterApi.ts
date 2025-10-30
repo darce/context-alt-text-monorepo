@@ -106,17 +106,16 @@ const normalizeConfirmResponse = (input: unknown): ConfirmClusterResponse => {
 
     const data = input as Record<string, unknown>;
 
-    const confirmedRaw = Array.isArray(data.confirmed) ? data.confirmed : [];
+    const confirmedRaw: unknown[] = Array.isArray(data.confirmed) ? data.confirmed : [];
     const cascadeRaw = data.cascade;
+    const cascadeRecord =
+        cascadeRaw !== null && typeof cascadeRaw === "object" ? (cascadeRaw as Record<string, unknown>) : null;
 
-    const cascadeAutoRaw = cascadeRaw && typeof cascadeRaw === "object" && Array.isArray((cascadeRaw as Record<string, unknown>).auto)
-        ? (cascadeRaw as Record<string, unknown>).auto
+    const cascadeAutoRaw: unknown[] = Array.isArray(cascadeRecord?.auto) ? (cascadeRecord?.auto as unknown[]) : [];
+
+    const cascadeCandidatesRaw: unknown[] = Array.isArray(cascadeRecord?.candidates)
+        ? (cascadeRecord?.candidates as unknown[])
         : [];
-
-    const cascadeCandidatesRaw =
-        cascadeRaw && typeof cascadeRaw === "object" && Array.isArray((cascadeRaw as Record<string, unknown>).candidates)
-            ? (cascadeRaw as Record<string, unknown>).candidates
-            : [];
 
     return {
         clusterId: toStringOrNull(data.cluster_id ?? data.clusterId) ?? "",
@@ -125,8 +124,12 @@ const normalizeConfirmResponse = (input: unknown): ConfirmClusterResponse => {
             .map((face) => normalizeFace(face))
             .filter((face): face is ConfirmedClusterFace => face !== null),
         labeledCount: Number(data.labeled_count ?? data.labeledCount ?? 0),
-        warnings: Array.isArray(data.warnings) ? (data.warnings.filter((value) => typeof value === "string") as string[]) : [],
-        errors: Array.isArray(data.errors) ? (data.errors.filter((value) => typeof value === "string") as string[]) : [],
+        warnings: Array.isArray(data.warnings)
+            ? data.warnings.filter((value): value is string => typeof value === "string")
+            : [],
+        errors: Array.isArray(data.errors)
+            ? data.errors.filter((value): value is string => typeof value === "string")
+            : [],
         cascade: {
             auto: cascadeAutoRaw
                 .map((entry) => normalizeCascadeEntry(entry))

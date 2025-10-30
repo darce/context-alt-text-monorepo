@@ -11,18 +11,6 @@ import {
 } from "@/admin/utils/normalization/recognition";
 import { jobReducer, initialJobState } from "./useRecognitionJob.reducer";
 
-// Re-export types for backward compatibility
-export type {
-    RecognitionJobSummary,
-    RecognitionJobDetails,
-    RecognitionObservationMatch,
-    RecognitionObservationRoster,
-    RecognitionObservationCandidate,
-    RecognitionObservationRecord,
-    RecognitionAttachmentObservations,
-    RecognitionRequestError,
-} from "@/admin/utils/normalization/recognition";
-
 const DEFAULT_POLL_INTERVAL_MS = 3000;
 const TEST_POLL_INTERVAL_MS = 50;
 const POLL_INTERVAL_MS = import.meta.env?.MODE === "test" ? TEST_POLL_INTERVAL_MS : DEFAULT_POLL_INTERVAL_MS;

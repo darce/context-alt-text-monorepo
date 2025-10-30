@@ -31,7 +31,7 @@ interface UseWorkbenchAnalyticsProps {
  * });
  * ```
  */
-export function useWorkbenchAnalytics({ bootstrap, perPage, filters }: UseWorkbenchAnalyticsProps): void {
+export const useWorkbenchAnalytics = ({ bootstrap, perPage, filters }: UseWorkbenchAnalyticsProps): void => {
     const eventSent = React.useRef(false);
 
     React.useEffect(() => {
@@ -50,4 +50,4 @@ export function useWorkbenchAnalytics({ bootstrap, perPage, filters }: UseWorkbe
             filters,
         });
     }, [bootstrap.pagination?.page, bootstrap.viewMode, perPage, filters]);
-}
+};

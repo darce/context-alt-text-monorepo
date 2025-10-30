@@ -18,11 +18,11 @@ import type { UserEvent } from "@testing-library/user-event";
  * await selectRadixOption(user, /Items per page/i, "20");
  * ```
  */
-export async function selectRadixOption(
+export const selectRadixOption = async (
     user: UserEvent,
     triggerLabel: string | RegExp,
     optionText: string,
-): Promise<void> {
+): Promise<void> => {
     // Find the trigger button (Radix Select uses role="combobox")
     const trigger = screen.getByRole("combobox", { name: triggerLabel });
 
@@ -39,7 +39,7 @@ export async function selectRadixOption(
     await waitFor(() => {
         expect(trigger).toHaveAttribute("aria-expanded", "false");
     });
-}
+};
 
 /**
  * Helper function to check a Radix UI Checkbox component in tests.
@@ -55,10 +55,10 @@ export async function selectRadixOption(
  * await toggleRadixCheckbox(user, /Enable recognition/i);
  * ```
  */
-export async function toggleRadixCheckbox(user: UserEvent, checkboxLabel: string | RegExp): Promise<void> {
+export const toggleRadixCheckbox = async (user: UserEvent, checkboxLabel: string | RegExp): Promise<void> => {
     const checkbox = screen.getByRole("checkbox", { name: checkboxLabel });
     await user.click(checkbox);
-}
+};
 
 /**
  * Helper function to get the current value of a Radix UI Select component.
@@ -72,9 +72,9 @@ export async function toggleRadixCheckbox(user: UserEvent, checkboxLabel: string
  * expect(value).toBe("20");
  * ```
  */
-export function getRadixSelectValue(triggerLabel: string | RegExp): string {
+export const getRadixSelectValue = (triggerLabel: string | RegExp): string => {
     const trigger = screen.getByRole("combobox", { name: triggerLabel });
     // Radix Select displays the value in a span with pointer-events: none
     const valueSpan = trigger.querySelector('[style*="pointer-events"]');
     return valueSpan?.textContent?.trim() ?? "";
-}
+};

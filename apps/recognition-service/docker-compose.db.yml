@@ -1,0 +1,32 @@
+version: "3.9"
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    container_name: recognition_db
+    environment:
+      POSTGRES_USER: recognition_user
+      POSTGRES_PASSWORD: recognition_dev_password
+      POSTGRES_DB: recognition
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U recognition_user -d recognition"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    volumes:
+      - ./db/init:/docker-entrypoint-initdb.d
+      - recognition_pgdata:/var/lib/postgresql/data
+    networks:
+      - recognition_network
+
+volumes:
+  recognition_pgdata:
+    name: recognition_pgdata
+
+networks:
+  recognition_network:
+    name: recognition_network
+    driver: bridge

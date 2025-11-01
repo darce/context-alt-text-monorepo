@@ -264,7 +264,7 @@ ALTER TABLE cat_observation
 
 **Completed:**
 
-- ✅ Recognition Service: `/roster/add-embedding` endpoint with duplicate detection (7 tests passing)
+- ✅ Recognition Service: `/roster/{id}/augment` endpoint with duplicate detection (7 tests passing)
 - ✅ WordPress: `RecognitionClient::addRosterEmbedding()` method
 - ✅ WordPress: `IdentifyController` inline sync on user confirmation
 - ✅ Sync status tracked in post_meta (`_cat_synced_to_faiss`)
@@ -276,7 +276,7 @@ ALTER TABLE cat_observation
 
 **Recognition Service (Backend):**
 
-- Implement `POST /api/v0/roster/add-embedding` endpoint
+- Implement `POST /api/v0/roster/{id}/augment` endpoint
   - Accept `{rosterId: string, observationId: string, embedding: float[], metadata?: object}`
   - Append embedding to FAISS index (IndexFlatIP or HNSW)
   - Track observationId to prevent duplicates
@@ -290,9 +290,9 @@ ALTER TABLE cat_observation
 **WordPress Plugin (Frontend):**
 
 - Update IdentifyController to sync on user confirmation:
-  - After user creates new person: sync embedding to `/roster/add-embedding`
-  - After user confirms suggestion: sync embedding to `/roster/add-embedding`
-  - After user corrects misidentification: sync embedding to `/roster/add-embedding`
+  - After user creates new person: sync embedding to `/roster/{id}/augment`
+  - After user confirms suggestion: sync embedding to `/roster/{id}/augment`
+  - After user corrects misidentification: sync embedding to `/roster/{id}/augment`
   - Provide immediate feedback via response (success toast or error message)
 - Implement deduplication logic:
   - Check if observationId already synced before calling endpoint
@@ -311,7 +311,7 @@ ALTER TABLE cat_observation
 
 **Acceptance Criteria:**
 
-- [x] `/roster/add-embedding` endpoint appends to FAISS index successfully ✅
+- [x] `/roster/{id}/augment` endpoint appends to FAISS index successfully ✅
 - [x] Duplicate observationIds are rejected (409 Conflict response) ✅
 - [x] IdentifyController syncs embedding after user confirms identity (create/confirm/correct) ✅
 - [ ] Frontend shows success toast: "Face added to [Person Name]'s profile" (Deferred to Phase 3)
@@ -325,7 +325,7 @@ ALTER TABLE cat_observation
 
 ```
 # Recognition Service (Backend) - ✅ COMPLETE
-apps/recognition-service/api/routes/roster.py (UPDATED - added /roster/add-embedding endpoint)
+apps/recognition-service/api/routes/roster.py (UPDATED - added /roster/{id}/augment endpoint)
 apps/recognition-service/tests/api/test_roster_add_embedding.py (CREATED - 7 tests)
 
 # WordPress Plugin (Frontend) - ✅ COMPLETE
@@ -354,7 +354,7 @@ apps/wp-context-alt-text/tests/Recognition/IdentifyControllerTest.php (UPDATED -
    - Existing `RecognitionJobService` remains for batch alt-text generation (separate workflow)
 
 4. **Sync Timing**: Immediate sync on confirm with feedback
-   - User confirms identity → WordPress calls `/roster/add-embedding` → Shows toast
+   - User confirms identity → WordPress calls `/roster/{id}/augment` → Shows toast
    - Adds latency but provides immediate feedback loop (Apple Photos-style progressive learning)
    - User sees instant confirmation that face was added to person's profile
 

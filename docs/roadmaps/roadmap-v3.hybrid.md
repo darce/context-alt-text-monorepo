@@ -339,26 +339,72 @@ DoD:
 - Ops run-book published.
 - Alerting configured for error thresholds.
 
-### Epic G — Backend Architecture Alignment [PLANNED]
+### Epic G — Backend Architecture Alignment & Database Persistence [IN PROGRESS]
 
-Implementation:
+**Overview**: Establish PostgreSQL+pgvector as the canonical storage layer for roster entities, reference embeddings, and augmented embeddings (progressive learning). Implement database adapters for both SQLite (local dev) and PostgreSQL (production), integrate Alembic for schema migrations, and configure FAISS as an optional derived in-memory index synchronized from the database.
 
-- Update `docs/architecture/backend-uml/database-entities.mmd` to model remote roster storage, augmented embeddings (source + quality metadata), and observation embeddings alongside their relationships.
-- Extend `docs/architecture/backend-uml/roster_service.mermaid` to introduce `AugmentedEmbedding` domain entities, dedicated persistence ports/repositories, and a propagation service that refreshes the FAISS index when new vectors arrive.
-- Amend `docs/architecture/backend-uml/recognition_service.mermaid` to document the embedding-update pipeline from roster persistence through index reloads, including background workers or hot-reload watchers and retry/backoff handling.
-- Revise `docs/architecture/backend-uml/recognition-identify-flow.mmd` to include the progressive-learning loop (WordPress confirmation → backend augment endpoint → persistence → index refresh → acknowledgement).
+**Implementation**:
 
-TDD:
+**Database Architecture & Migrations:**
+
+- ✅ Document complete PostgreSQL schema with pgvector extension (tenants, roster_entities, reference_embeddings, augmented_embeddings, materialized aggregate views)
+- ✅ Document SQLite schema with JSON blob storage for embeddings (zero-dependency local dev)
+- ✅ Implement Alembic baseline migration (0001) with database-specific branching (PostgreSQL vector types vs SQLite JSON)
+- ✅ Create database adapter pattern: `StorageAdapter` interface with `PostgresStorageAdapter` and `SQLiteStorageAdapter` implementations
+- 🔄 Set up Alembic in `apps/recognition-service/db/migrations/` with environment-based URL configuration
+- ⏳ Implement `PostgresStorageAdapter` with pgvector cosine similarity search, RLS tenant isolation, batched embedding insertion
+- ⏳ Implement `SQLiteStorageAdapter` with JSON serialization, manual numpy cosine similarity, fallback search
+- ⏳ Create environment detection module to auto-select database (SQLite for local, PostgreSQL for production)
+
+**Progressive Learning Pipeline:**
+
+- ✅ Document augmented_embeddings table schema with observation_id (idempotency), quality_tier (high/medium/low), source tracking
+- ✅ Document materialized view strategy for weighted aggregate embeddings (reference + augmented by quality)
+- ⏳ Implement `/api/v0/roster/{id}/confirm` endpoint to receive WordPress confirmations
+- ⏳ Implement materialized view refresh trigger on augmented embedding insertion
+- ⏳ Add FAISS hot-reload after materialized view refresh (HybridIndexManager pattern)
+
+**Hybrid FAISS Integration:**
+
+- ✅ Document FAISS as derived index synchronized from database (not canonical storage)
+- ✅ Design HybridIndexManager with rebuild_from_database(), search(), load_from_disk(), save_to_disk()
+- ⏳ Implement HybridIndexManager in `recognition_core/hybrid_index.py`
+- ⏳ Add configuration flags: `USE_FAISS_ACCELERATION`, `FAISS_INDEX_PATH`
+- ⏳ Integrate FAISS fallback: database search when FAISS unavailable
+
+**UML & Documentation Updates:**
+
+- ⏳ Update `docs/architecture/backend-uml/database-entities.mmd` to reflect three-table schema (roster_entities, reference_embeddings, augmented_embeddings)
+- ⏳ Extend `docs/architecture/backend-uml/roster_service.mermaid` to show database adapters, AugmentedEmbedding domain entities, and persistence ports
+- ⏳ Amend `docs/architecture/backend-uml/recognition_service.mermaid` to include database-first architecture with FAISS as derived index
+- ⏳ Revise `docs/architecture/backend-uml/recognition-identify-flow.mmd` to show progressive learning loop: WP confirm → backend persist → refresh materialized view → hot-reload FAISS → ACK
+
+**TDD:**
 
 - Render all updated Mermaid diagrams locally to confirm syntax validity and visual accuracy.
-- Add contract notes under `docs/architecture/contracts/` describing the augmented embedding payloads and propagation acknowledgements consumed by WordPress.
-- Peer review the revised diagrams with backend stakeholders before marking [DONE].
+- Add contract notes under `docs/architecture/contracts/` describing augmented embedding payloads (observation_id, quality_tier, bbox, confidence) and propagation ACKs
+- Unit tests for both PostgresStorageAdapter and SQLiteStorageAdapter (search, insert, update, delete)
+- Integration tests: Alembic migrations apply cleanly on both databases; materialized view refreshes correctly; FAISS rebuilds from database
+- Peer review revised diagrams and migration scripts with backend stakeholders
 
-DoD:
+**DoD:**
 
-- Updated UML files merged and validated by diagram renderer.
-- Roadmap references to roster propagation match the documented flows.
-- Progressive-learning contract captured in architecture docs and shared with the WordPress team.
+- ✅ `backend-clustering-persitence-tasks.md` created with complete implementation guide (database schemas, adapters, migrations, API catalog, 5-week timeline)
+- ✅ `backend-recognition-persistence-plan.md` updated to align with database-first architecture (PostgreSQL primary, FAISS derived)
+- ✅ `db-install-and-production-guide.md` updated with SQLite local dev, Docker Compose PostgreSQL, Alembic workflows, production provisioning
+- ⏳ Alembic baseline migration (0001) applied successfully on both SQLite and PostgreSQL
+- ⏳ Database adapters pass unit tests (CRUD operations, tenant isolation, search accuracy)
+- ⏳ HybridIndexManager tests verify database synchronization (rebuild, hot-reload, fallback)
+- ⏳ Progressive learning end-to-end: WordPress confirmation → augmented embedding insert → materialized view refresh → FAISS update → improved search results
+- ⏳ Updated UML files merged and validated by diagram renderer
+- ⏳ Roadmap references to roster propagation match documented database flows
+- ⏳ Progressive-learning contract captured in `docs/architecture/contracts/` and shared with WordPress team
+
+**Reference Documents:**
+
+- `docs/tasks/backend-clustering-persitence-tasks.md` — Complete implementation guide with schemas, adapters, migrations, API catalog
+- `docs/tasks/backend-recognition-persistence-plan.md` — High-level architecture decisions and patterns
+- `docs/tasks/db-install-and-production-guide.md` — Operational guide for local dev and production setup
 
 ---
 
@@ -458,16 +504,68 @@ CREATE TABLE IF NOT EXISTS {{prefix}}cat_sync_queue (
 ) DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_520_ci;
 ```
 
-## Appendix B: Remote Contract (v1)
+## Appendix B: Remote Contract (v1) — Database-Backed API
 
-- POST /api/v0/recognize → returns matches: [{{remote_id, label, score}}], suggestions.
-- GET /api/v0/roster with If-None-Match → 200 (delta) or 304.
-- POST /api/v0/roster → create {remote_id, etag, revision}.
-- PUT /api/v0/roster/{{remote_id}} → update {etag, revision}.
-- DELETE /api/v0/roster/{{remote_id}} → hard delete.
-- POST /api/v0/roster/{{remote_id}}/confirm → confirm observation; returns {etag, revision}.
-- Auth: API key (scoped) or OAuth2 PAT; include X-Request-Id and idempotency keys on writes.
-- Versioning: Accept: application/vnd.cat+json;version=1.
+**Roster Management:**
+
+- `POST /api/v0/roster` → Create roster entry; returns `{id, remote_id, label, revision, etag}`
+  - Request: `{label, type, display_name?, metadata?}`
+  - Database: Insert into `roster_entities` with tenant_id from RLS context
+- `PUT /api/v0/roster/{id}` → Update roster entry; returns `{etag, revision}`
+  - Request: `{label?, display_name?, metadata?}`
+  - Database: Update `roster_entities`, increment revision
+- `DELETE /api/v0/roster/{id}` → Hard delete roster entry (cascade reference + augmented embeddings)
+  - Database: Delete from `roster_entities` (ON DELETE CASCADE)
+- `GET /api/v0/roster` → List roster entries with delta sync support
+  - Headers: `If-None-Match: W/"etag"` → 304 Not Modified or 200 with delta
+  - Query: `?since=revision` for incremental sync
+  - Database: `SELECT * FROM roster_entities WHERE tenant_id = :tenant_id AND revision > :since`
+
+**Embeddings & Reference Images:**
+
+- `POST /api/v0/roster/{id}/embeddings` → Add reference embedding(s) from curated images
+  - Request: `{embeddings: [embedding_vector], image_paths?: [string], metadata?: object}`
+  - Database: Batch insert into `reference_embeddings`
+- `POST /api/v0/roster/{id}/confirm` → Record confirmed observation (progressive learning)
+  - Request: `{observation_id: UUID, embedding: vector, attachment_id?, bbox?, confidence?, quality_tier: "high"|"medium"|"low"}`
+  - Database: Insert into `augmented_embeddings` (idempotent via observation_id UNIQUE)
+  - Side Effect: Refresh materialized view `roster_aggregate_embeddings`, trigger FAISS hot-reload
+  - Returns: `{etag, revision, aggregate_updated: true}`
+
+**Recognition & Search:**
+
+- `POST /api/v0/recognize` → Detect and identify faces/brands in image
+  - Request: `{image_url: string, crops?: [{x,y,w,h}]}`
+  - Process: Detect faces → extract embeddings → search aggregate embeddings (pgvector or FAISS)
+  - Returns: `{matches: [{roster_entry_id, label, similarity, bbox}], suggestions: [{bbox, embedding}]}`
+  - Database: Query `roster_aggregate_embeddings` with pgvector cosine similarity or FAISS search
+- `POST /api/v0/search` → Explicit embedding search (bypass detection)
+  - Request: `{embedding: vector, top_k?: int}`
+  - Database: `SELECT roster_entry_id, aggregate_embedding <=> :embedding AS distance FROM roster_aggregate_embeddings ORDER BY distance LIMIT :top_k`
+
+**Health & Monitoring:**
+
+- `GET /api/v0/health` → Service health check
+  - Returns: `{status: "healthy", database: "connected", faiss: "enabled"|"disabled"}`
+- `GET /api/v0/stats` → Corpus statistics
+  - Returns: `{total_roster_entries, total_reference_embeddings, total_augmented_embeddings, faiss_index_size?}`
+
+**Authentication & Multi-Tenancy:**
+
+- Auth: API key (scoped to tenant) or OAuth2 PAT
+- Headers: `X-API-Key: <tenant_api_key>`, `X-Request-Id: <uuid>` (tracing), `Idempotency-Key: <uuid>` (writes)
+- RLS: Every request executes `SET LOCAL app.tenant_id = :tenant_id` before queries (PostgreSQL row-level security)
+- Versioning: `Accept: application/vnd.cat+json;version=1`
+
+**Database Schema References:**
+
+- Tenants: `tenants(id, name, plan, created_at)`
+- Roster: `roster_entities(id, tenant_id, label, type, display_name, meta, revision, created_at, updated_at)`
+- Reference Embeddings: `reference_embeddings(id, tenant_id, roster_entry_id, embedding vector(512), image_path, metadata, created_at)`
+- Augmented Embeddings: `augmented_embeddings(id, tenant_id, roster_entry_id, observation_id UNIQUE, embedding vector(512), source, attachment_id, bbox, confidence, quality_tier, created_at)`
+- Aggregates: `roster_aggregate_embeddings` (materialized view with weighted average by quality tier)
+
+See `docs/tasks/backend-clustering-persitence-tasks.md` Section N2 for complete API catalog with request/response schemas.
 
 ## Appendix C: Caching & Retention
 

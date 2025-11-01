@@ -481,8 +481,15 @@ class StartupManager:
                 
                 # Create and inject scene analysis service
                 from analysis.services.scene_analysis_service import SceneAnalysisService
+                from api.dependencies import get_recognition_service, get_roster_service
                 from api.routes.main import set_scene_analysis_service
-                scene_analysis_service = SceneAnalysisService(scene_composer)
+                roster_service = get_roster_service()
+                recognition_service = get_recognition_service()
+                scene_analysis_service = SceneAnalysisService(
+                    scene_composer,
+                    roster_service=roster_service,
+                    recognition_service=recognition_service,
+                )
                 set_scene_analysis_service(scene_analysis_service)
                 injected_dependencies.append("scene_analysis_service → api.routes.main")
                 

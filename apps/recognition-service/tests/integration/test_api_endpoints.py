@@ -7,6 +7,7 @@ and health responses, and guard input validation.
 """
 
 from datetime import datetime
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Dict, List, Optional
@@ -63,11 +64,11 @@ class StubRecognitionService:
             embedding_router=SimpleNamespace(
                 auto_reload=False,
                 reload_interval=30,
-                embeddings_file="/roster/data/insightface_w600k_embeddings.json",
             ),
             performance=SimpleNamespace(batch_size=1, max_concurrent_requests=10),
             cache=SimpleNamespace(hf_home=None, hf_datasets_cache=None, torch_home=None),
         )
+        self.reload_history: List[Dict[str, Any]] = []
 
     async def recognize_faces(self, image, threshold=None):
         detection = FaceDetection(bbox=(0, 0, 10, 10), confidence=0.95)
@@ -111,9 +112,15 @@ class StubRecognitionService:
             "embedding_router": {
                 "auto_reload": self.settings.embedding_router.auto_reload,
                 "reload_interval_seconds": self.settings.embedding_router.reload_interval,
-                "embeddings_file": self.settings.embedding_router.embeddings_file,
+                "embeddings_source": "database",
                 "loaded_embeddings": 1,
                 "loaded_entities": ["Test User"],
+                "reload_stats": {
+                    "entry_count": 1,
+                    "embedding_count": 1,
+                    "duration_ms": 0.0,
+                    "reloaded_at": None,
+                },
             },
             "performance": {
                 "batch_size": self.settings.performance.batch_size,
@@ -126,8 +133,16 @@ class StubRecognitionService:
             },
         }
 
-    async def reload_embeddings(self):
-        return True
+    async def reload_embeddings(self) -> Dict[str, Any]:
+        result = {
+            "status": "reloaded",
+            "entry_count": 1,
+            "embedding_count": 1,
+            "duration_ms": 1.0,
+            "reloaded_at": time.time(),
+        }
+        self.reload_history.append(result)
+        return result
 
 
 class StubSceneComposer:
@@ -166,7 +181,8 @@ class StubRosterEntry:
         self.name = name
         self.display_name = name
         self.unique_id = name
-        self.metadata = metadata or {}
+        self.metadata = metadata.copy() if metadata else {}
+        self.metadata.setdefault("augmented_embeddings", [])
         self.reference_images = [SimpleNamespace(embedding=embedding)]
         self.aggregate_embedding = embedding
         self.created_timestamp = self.FIXED_TIMESTAMP
@@ -209,6 +225,30 @@ class StubRosterService:
         entry = self._entries.get(unique_id)
         if not entry or embedding is None:
             return False
+        entry.add_embedding(embedding, metadata)
+        return True
+
+    def add_augmented_embedding(
+        self,
+        unique_id: str,
+        model: str,
+        embedding: List[float],
+        source: str,
+        observation_id: str,
+        metadata: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        entry = self._entries.get(unique_id)
+        if not entry:
+            return False
+
+        augmented = entry.metadata.setdefault("augmented_embeddings", [])
+        if any(item.get("observation_id") == observation_id for item in augmented):
+            return False
+
+        record: Dict[str, Any] = {"embedding": embedding, "source": source, "observation_id": observation_id}
+        if metadata:
+            record.update(metadata)
+        augmented.append(record)
         entry.add_embedding(embedding, metadata)
         return True
 
@@ -282,6 +322,15 @@ def test_health_endpoint(client: TestClient) -> None:
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json() == load_example("health.response.json")
+
+
+def test_manual_reload_endpoint(client: TestClient) -> None:
+    response = client.post("/service/reload-embeddings")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "reloaded"
+    assert body["entry_count"] == 1
+    assert "duration_ms" in body
 
 
 def test_analyze_scene_requires_payload(client: TestClient) -> None:

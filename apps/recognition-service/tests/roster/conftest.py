@@ -2,6 +2,7 @@ import os
 from collections.abc import Iterator
 
 import pytest
+from dotenv import load_dotenv
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -11,30 +12,36 @@ from roster.ports.dependencies import reset_roster_service
 
 
 @pytest.fixture()
-def roster_data_dir(tmp_path) -> Iterator[str]:
-    """Provide an isolated roster data directory for each test."""
-    previous_data_dir = os.environ.get("ROSTER_DATA_DIR")
-    data_dir = tmp_path / "roster-data"
-    data_dir.mkdir()
-
-    os.environ["ROSTER_DATA_DIR"] = str(data_dir)
+def roster_database_url() -> Iterator[str]:
+    """Provide PostgreSQL database URL for roster tests."""
+    load_dotenv()
+    
+    database_url = os.getenv('DATABASE_URL')
+    if not database_url or not database_url.startswith('postgresql'):
+        pytest.skip("PostgreSQL DATABASE_URL not set or not PostgreSQL")
+    
+    previous_url = os.environ.get("DATABASE_URL")
+    
+    os.environ["DATABASE_URL"] = database_url
     reload_config()
     reset_roster_service()
 
     try:
-        yield str(data_dir)
+        yield database_url
     finally:
         reset_roster_service()
-        if previous_data_dir is not None:
-            os.environ["ROSTER_DATA_DIR"] = previous_data_dir
+        if previous_url is not None:
+            os.environ["DATABASE_URL"] = previous_url
         else:
-            os.environ.pop("ROSTER_DATA_DIR", None)
+            os.environ.pop("DATABASE_URL", None)
         reload_config()
 
 
 @pytest.fixture()
-def api_client(roster_data_dir: str) -> Iterator[TestClient]:
+def api_client(roster_database_url: str) -> Iterator[TestClient]:
     """Create a FastAPI test client wired to the roster router."""
+    from roster.ports.dependencies import get_roster_service
+    
     app = FastAPI()
     app.include_router(router)
     client = TestClient(app)
@@ -42,4 +49,15 @@ def api_client(roster_data_dir: str) -> Iterator[TestClient]:
     try:
         yield client
     finally:
+        # Clean up test data after each test
+        try:
+            service = get_roster_service()
+            # Clear all test data for common models
+            for model in ["adaface_ir101", "insightface_w600k"]:
+                try:
+                    service.clear_roster(model)
+                except:
+                    pass
+        except:
+            pass
         client.close()

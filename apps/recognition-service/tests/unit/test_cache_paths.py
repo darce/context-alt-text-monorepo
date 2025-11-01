@@ -89,12 +89,6 @@ def test_setup_environment_honours_cache_dir(monkeypatch: pytest.MonkeyPatch, tm
     config = {
         "startup": {},
         "debug": {"face_crop_dir": str(tmp_path / "debug" / "crops")},
-        "roster_storage": {
-            "config": {
-                "roster_file_path": str(tmp_path / "data" / "roster.json"),
-                "backup_directory": str(tmp_path / "data" / "backups"),
-            }
-        },
         "media_storage": {"config": {"upload_directory": str(tmp_path / "uploads")}},
         "context_builder": {},
     }

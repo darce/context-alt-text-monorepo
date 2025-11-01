@@ -304,19 +304,39 @@ alembic revision -m "description of changes"
 # Auto-generate migration from model changes
 alembic revision --autogenerate -m "auto-generated changes"
 
-# Recreate local database (drop ➜ create ➜ migrate)
+# Development reset (drop ➜ create ➜ migrate)
+# ⚠️ Nuclear option for development only. Do NOT run in production.
+
+# 1. Stop anything that is connected to the database
+# 2. Drop the database
 psql -h "${PGHOST:-localhost}" \
      -p "${PGPORT}" \
      -U "${PGUSER}" \
      -d postgres \
      -c "DROP DATABASE IF EXISTS \"${DB_NAME}\";"
 
+# 3. (Optional) blow away generated migrations
+rm -rf db/migrations/versions
+mkdir -p db/migrations/versions
+
+# 4. Recreate an empty database
 psql -h "${PGHOST:-localhost}" \
      -p "${PGPORT}" \
      -U "${PGUSER}" \
      -d postgres \
      -c "CREATE DATABASE \"${DB_NAME}\";"
 
+# 5. Enable pgvector in the freshly created database
+psql -h "${PGHOST:-localhost}" \
+     -p "${PGPORT}" \
+     -U "${PGUSER}" \
+     -d "${DB_NAME}" \
+     -c "CREATE EXTENSION IF NOT EXISTS vector;"
+
+# 6. Generate a new baseline migration (only needed if you removed versions/)
+alembic revision --autogenerate -m "baseline schema"
+
+# 7. Apply migrations to rebuild the schema
 alembic upgrade head
 ```
 

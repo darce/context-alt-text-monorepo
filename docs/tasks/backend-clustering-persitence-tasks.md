@@ -25,67 +25,32 @@
 
 ### B0) Database Layer Architecture (NEW)
 
-**Status:** In progress — Alembic scaffolding and SQLAlchemy models introduced (2025-10-30).
+**Status:** ✅ Completed — pgvector-first persistence with SQLite dev parity.
 
-**Why:** Support both local development (SQLite) and production (PostgreSQL with pgvector) for persistent roster storage, multi-tenant isolation, and vector similarity search at scale.
+**Highlights:**
 
-**Principle:** Abstract database operations behind ports; implement adapters for both SQLite (file-based, local dev) and PostgreSQL (pgvector, production). Use Alembic for versioned migrations; SQLAlchemy Core for queries.
+- Canonical schema defined in `db/models.py` with pgvector support and tenant isolation.
+- Alembic wired to `db/migrations/versions/` with a fresh baseline (`20251101_1421_7fe9d9f2b08f_baseline_schema.py`).
+- Storage abstractions implemented in `roster/domain/interfaces.py`; concrete adapters live in `roster/adapters/postgresql_storage_adapter.py` and `roster/adapters/sqlite_storage_adapter.py`.
+- File-based adapters were removed; a development reset guide (README “nuclear option”) documents how to drop/recreate the database when schemas change.
+- Startup paths (`shared/startup/adapter_factory.py`) auto-select the correct adapter from `DATABASE_URL`.
 
-**Current State:**
+**Next Steps:**
 
-- File-based JSON storage (`roster/adapters/file_storage_adapter.py`)
-- No database persistence
-- No migration framework
-- FAISS index rebuilt from JSON on every startup
-
-**Target State:**
-
-- PostgreSQL primary (production): pgvector for ANN search, row-level security for multi-tenancy
-- SQLite fallback (local dev): JSON columns for embeddings, manual cosine similarity
-- Alembic migrations for reproducible schema
-- Hybrid mode: FAISS in-memory index synchronized with database embeddings
-
-**Architecture Pattern:**
-
-```text
-┌─────────────────────────────────────────────────┐
-│          RosterService (domain)                 │
-│  ┌──────────────────────────────────────────┐  │
-│  │  RosterStoragePort (interface)           │  │
-│  └────────────┬─────────────────────────────┘  │
-└───────────────┼─────────────────────────────────┘
-                │
-        ┌───────┴────────┐
-        │                │
-  ┌─────▼─────┐   ┌─────▼──────┐
-  │ PostgreSQL│   │  SQLite    │
-  │  Adapter  │   │  Adapter   │
-  │ (pgvector)│   │ (JSON blob)│
-  └───────────┘   └────────────┘
-```
-
-**Files:**
-
-- `roster/ports/storage.py` (RosterStoragePort interface)
-- `roster/adapters/postgres_storage_adapter.py` (NEW)
-- `roster/adapters/sqlite_storage_adapter.py` (NEW)
-- `roster/adapters/file_storage_adapter.py` (DEPRECATED, keep for migration)
-- `db/` (NEW directory)
-  - `db/migrations/` (Alembic migrations)
-  - `db/alembic.ini` (Alembic config)
-  - `db/models.py` (SQLAlchemy models)
-  - `db/session.py` (Database session factory)
-- `roster/config/database.yaml` (NEW, database connection settings)
-
-**Done When:**
-
-- Alembic initialized with baseline migration (0001)
-- PostgreSQL adapter passes integration tests
-- SQLite adapter passes unit tests
-- Service auto-detects database type from `DATABASE_URL` env var
-- Migration guide documents upgrade path from JSON files
+- Keep the baseline migration in sync with future model changes via `alembic revision --autogenerate`.
+- No production migration story required until we have external consumers (see instructions.md “Greenfield Reset Policy”).
 
 ### B0.1) Database Schema (Alembic Migration 0001)
+
+**Status:** ✅ Completed — baseline recreated 2025-11-01.
+
+**Notes:**
+
+- Fresh baseline migration generated after the schema refactor (`db/migrations/versions/20251101_1421_7fe9d9f2b08f_baseline_schema.py`).
+- README documents the development-only drop/create workflow and the need to `CREATE EXTENSION vector` before running migrations.
+- PostgreSQL 17 + pgvector is the primary target; SQLite remains supported for tests via `SQLAlchemy` JSON/TEXT columns.
+
+**Reference Schema (excerpt):**
 
 **PostgreSQL Schema (Production):**
 
@@ -240,16 +205,14 @@ CREATE INDEX idx_aug_emb_observation ON augmented_embeddings(observation_id);
 
 **Files:**
 
-- `db/migrations/versions/0001_baseline_schema.py` (Alembic migration)
-- `db/models.py` (SQLAlchemy ORM models)
+- `db/migrations/versions/20251101_1421_7fe9d9f2b08f_baseline_schema.py`
+- `db/models.py`
 
-**Done When:**
+**Verification:**
 
-- `alembic upgrade head` creates all tables on fresh PostgreSQL database
-- `alembic upgrade head` creates all tables on fresh SQLite database
-- Migration reversible with `alembic downgrade base`
-- pgvector extension enabled automatically on PostgreSQL
-- Row-level security policies enforced per tenant
+- `alembic upgrade head` succeeds after enabling `CREATE EXTENSION vector;` in the target database.
+- `alembic downgrade base` removes the schema without residue.
+- `pytest tests/unit/test_postgresql_storage_adapter.py -q` exercises CRUD + stats against the new layout.
 
 ### B0.2) Database Adapter Implementation
 

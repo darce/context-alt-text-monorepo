@@ -6,9 +6,11 @@ These are pure domain objects without any external dependencies.
 """
 
 from dataclasses import dataclass, field
-from typing import List, Optional, Dict, Any, Tuple
 from datetime import datetime
+from typing import Any, Dict, List, Optional
+
 import uuid
+
 import numpy as np
 
 
@@ -63,6 +65,8 @@ class RosterEntry:
         self._ensure_unique_id()
         self._ensure_display_name()
         self._ensure_timestamps()
+        self._ensure_augmented_embeddings()
+        self._normalize_augmented_embeddings()
         self._compute_aggregate_embedding()
     
     def _ensure_unique_id(self):
@@ -87,15 +91,39 @@ class RosterEntry:
     
     def _compute_aggregate_embedding(self):
         """Compute aggregate embedding from reference images."""
-        if not self.reference_images:
+        vectors = []
+        weights: List[float] = []
+
+        for image in self.reference_images:
+            if image.embedding:
+                vectors.append(np.array(image.embedding, dtype=np.float64))
+                weights.append(1.0)
+
+        for augmented in self.metadata.get("augmented_embeddings", []):
+            embedding = augmented.get("embedding")
+            if not embedding:
+                continue
+            weight = self._quality_weight(augmented.get("quality_tier"))
+            if weight <= 0:
+                continue
+            vectors.append(np.array(embedding, dtype=np.float64))
+            weights.append(weight)
+
+        if not vectors:
+            # Preserve an explicitly provided aggregate embedding (e.g. loaded from database)
+            if self.aggregate_embedding is not None:
+                if isinstance(self.aggregate_embedding, np.ndarray):
+                    self.aggregate_embedding = self.aggregate_embedding.tolist()
+                return
             self.aggregate_embedding = None
             return
-        
-        # Simple averaging of embeddings
-        embeddings = [img.embedding for img in self.reference_images]
-        if embeddings:
-            avg_embedding = np.mean(embeddings, axis=0)
-            self.aggregate_embedding = avg_embedding.tolist()
+
+        if len(weights) == len(vectors):
+            weighted_average = np.average(vectors, axis=0, weights=weights)
+        else:
+            weighted_average = np.mean(vectors, axis=0)
+
+        self.aggregate_embedding = weighted_average.tolist()
     
     def update_timestamp(self):
         """Update the modification timestamp."""
@@ -106,6 +134,37 @@ class RosterEntry:
         self.reference_images.append(roster_image)
         self._compute_aggregate_embedding()
         self.update_timestamp()
+
+    def add_augmented_embedding(
+        self,
+        embedding: List[float],
+        source: str,
+        observation_id: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Add an augmented embedding from an external confirmation workflow.
+
+        Returns:
+            True if appended, False when duplicate observation detected.
+        """
+        self._ensure_augmented_embeddings()
+        augmented_embeddings = self.metadata["augmented_embeddings"]
+
+        if any(item.get("observation_id") == observation_id for item in augmented_embeddings):
+            return False
+
+        record = self._build_augmented_embedding_record(
+            embedding=embedding,
+            source=source,
+            observation_id=observation_id,
+            metadata=metadata or {},
+        )
+
+        augmented_embeddings.append(record)
+        self._compute_aggregate_embedding()
+        self.update_timestamp()
+        return True
     
     @property
     def image_count(self) -> int:
@@ -144,6 +203,83 @@ class RosterEntry:
             created_timestamp=data.get("created_timestamp"),
             updated_timestamp=data.get("updated_timestamp")
         )
+
+    def _ensure_augmented_embeddings(self):
+        """Ensure augmented embeddings list exists within metadata."""
+        if "augmented_embeddings" not in self.metadata or not isinstance(
+            self.metadata.get("augmented_embeddings"), list
+        ):
+            self.metadata["augmented_embeddings"] = []
+
+    def _normalize_augmented_embeddings(self):
+        """Normalize augmented embedding records to enforce schema defaults."""
+        augmented = self.metadata.get("augmented_embeddings", [])
+        normalized: List[Dict[str, Any]] = []
+        for entry in augmented:
+            if not isinstance(entry, dict):
+                continue
+            embedding = entry.get("embedding")
+            if not embedding:
+                continue
+            normalized_entry = dict(entry)
+            confidence = normalized_entry.get("confidence")
+            normalized_entry.setdefault(
+                "quality_tier", self._determine_quality_tier(confidence)
+            )
+            normalized_entry.setdefault("created_at", self._current_timestamp())
+            normalized.append(normalized_entry)
+        self.metadata["augmented_embeddings"] = normalized
+
+    @staticmethod
+    def _determine_quality_tier(confidence: Optional[float]) -> str:
+        """Map confidence values to quality tiers."""
+        if confidence is None:
+            return "medium"
+        if confidence >= 0.85:
+            return "high"
+        if confidence >= 0.65:
+            return "medium"
+        return "low"
+
+    @staticmethod
+    def _quality_weight(quality_tier: Optional[str]) -> float:
+        """Return weighting factor for a quality tier."""
+        mapping = {"high": 1.0, "medium": 0.8, "low": 0.5}
+        return mapping.get(quality_tier or "medium", 0.8)
+
+    @staticmethod
+    def _current_timestamp() -> str:
+        """Return current UTC timestamp formatted for storage."""
+        return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+    def _build_augmented_embedding_record(
+        self,
+        embedding: List[float],
+        source: str,
+        observation_id: str,
+        metadata: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """Create normalized augmented embedding record for metadata storage."""
+        confidence = metadata.get("confidence")
+        record: Dict[str, Any] = {
+            "embedding": embedding,
+            "source": source,
+            "observation_id": observation_id,
+            "attachment_id": metadata.get("attachment_id"),
+            "bbox": metadata.get("bbox"),
+            "confidence": confidence,
+            "created_at": metadata.get("created_at", self._current_timestamp()),
+            "quality_tier": metadata.get(
+                "quality_tier", self._determine_quality_tier(confidence)
+            ),
+        }
+
+        reserved_keys = {"attachment_id", "bbox", "confidence", "created_at", "quality_tier"}
+        for key, value in metadata.items():
+            if key not in reserved_keys:
+                record[key] = value
+
+        return record
 
 
 @dataclass

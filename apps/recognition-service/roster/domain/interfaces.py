@@ -114,6 +114,19 @@ class RosterStoragePort(ABC):
             Dictionary with storage metadata
         """
         pass
+    
+    def get_storage_description(self) -> str:
+        """
+        Get a human-readable description of the storage backend.
+        
+        This provides a simple interface for external components to identify
+        the storage backend without coupling to implementation details.
+        
+        Returns:
+            String describing the storage backend (e.g., database URL, file path)
+        """
+        # Default implementation - subclasses can override for better descriptions
+        return f"{self.__class__.__name__}"
 
 
 class EmbeddingStoragePort(ABC):
@@ -147,20 +160,6 @@ class EmbeddingStoragePort(ABC):
             
         Returns:
             List of embedding data dictionaries
-        """
-        pass
-    
-    @abstractmethod
-    def watch_embeddings_file(self, model: str, callback) -> bool:
-        """
-        Set up file watcher for hot-reload functionality.
-        
-        Args:
-            model: Model identifier
-            callback: Function to call when file changes
-            
-        Returns:
-            True if watcher set up successfully, False otherwise
         """
         pass
 

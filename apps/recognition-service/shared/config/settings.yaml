@@ -132,14 +132,6 @@ runtime_optimizations:
     recommended_attention: "eager"
     enable_memory_optimization: true
 
-# Roster Storage Configuration
-roster_storage:
-  type: file
-  config:
-    roster_file_path: "data/roster.json"
-    backup_enabled: true
-    backup_directory: "data/backups"
-
 # Media Storage Configuration
 media_storage:
   config:

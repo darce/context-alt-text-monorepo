@@ -51,6 +51,16 @@ def _make_embedding(seed: float) -> list[float]:
     return [seed] * 512
 
 
+def _normalize_embedding(values: list[float]) -> list[float]:
+    """Return unit-normalized version of the provided embedding list."""
+    import math
+
+    norm = math.sqrt(sum(val * val for val in values))
+    if norm == 0.0:
+        return list(values)
+    return [val / norm for val in values]
+
+
 def test_round_trip_single_entry(roster_service: RosterService) -> None:
     model = "adaface_ir101"
     person = roster_service.add_entry("alice", _make_embedding(0.1), model, {"team": "alpha"})
@@ -60,8 +70,9 @@ def test_round_trip_single_entry(roster_service: RosterService) -> None:
     assert fetched is not None
     assert fetched.name == "alice"
     assert fetched.metadata["team"] == "alpha"
-    # pgvector stores as float32, so we need approximate comparison
-    assert np.allclose(fetched.aggregate_embedding, _make_embedding(0.1), rtol=1e-5)
+    # Aggregates are stored as normalized weighted averages (unit vectors).
+    expected = _normalize_embedding(_make_embedding(0.1))
+    assert np.allclose(fetched.aggregate_embedding, expected, rtol=1e-5)
 
 
 def test_round_trip_multiple_entries(roster_service: RosterService) -> None:

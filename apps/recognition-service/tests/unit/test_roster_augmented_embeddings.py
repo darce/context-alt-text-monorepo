@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from copy import deepcopy
 from typing import Any, Dict, List, Optional
@@ -148,9 +149,14 @@ def test_add_augmented_embedding_updates_weighted_aggregate(
     assert isinstance(record["created_at"], str)
 
     expected_weight = 1.0 + 0.8
+    weighted = [
+        (1.0 * 1.0 + 0.0 * 0.8) / expected_weight,
+        (0.0 * 1.0 + 1.0 * 0.8) / expected_weight,
+    ]
+    norm = math.sqrt(weighted[0] ** 2 + weighted[1] ** 2)
     expected_vector = [
-        pytest.approx((1.0 * 1.0 + 0.0 * 0.8) / expected_weight, rel=1e-6),
-        pytest.approx((0.0 * 1.0 + 1.0 * 0.8) / expected_weight, rel=1e-6),
+        pytest.approx(weighted[0] / norm, rel=1e-6),
+        pytest.approx(weighted[1] / norm, rel=1e-6),
     ]
     assert stored.aggregate_embedding[0] == expected_vector[0]
     assert stored.aggregate_embedding[1] == expected_vector[1]
@@ -201,6 +207,15 @@ def test_duplicate_observation_does_not_append_embedding(
     assert len(augmented) == 1
     assert augmented[0]["quality_tier"] == "high"
 
-    expected = [pytest.approx(0.5, rel=1e-6), pytest.approx(0.5, rel=1e-6)]
+    expected_weight = 1.0 + 1.0
+    weighted = [
+        (1.0 * 1.0 + 0.0 * 1.0) / expected_weight,
+        (0.0 * 1.0 + 1.0 * 1.0) / expected_weight,
+    ]
+    norm = math.sqrt(weighted[0] ** 2 + weighted[1] ** 2)
+    expected = [
+        pytest.approx(weighted[0] / norm, rel=1e-6),
+        pytest.approx(weighted[1] / norm, rel=1e-6),
+    ]
     assert stored.aggregate_embedding[0] == expected[0]
     assert stored.aggregate_embedding[1] == expected[1]

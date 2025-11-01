@@ -1,7 +1,7 @@
 {
   "faces": [
     {
-      "bbox": [0, 0, 10, 10],
+      "bbox": [0.0, 0.0, 10.0, 10.0],
       "confidence": 0.95,
       "embedding": [1.0, 0.0],
       "matches": [

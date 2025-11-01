@@ -122,10 +122,15 @@ def initialize_application(app: FastAPI):
         # Run the initialization process
         scene_composer = startup_manager.initialize()
         # Initialize SceneAnalysisService with the composer and roster service
-        from api.dependencies import get_roster_service
+        from api.dependencies import get_roster_service, get_recognition_service
         roster_service = get_roster_service()
+        recognition_service = get_recognition_service()
 
-        scene_analysis_service = SceneAnalysisService(scene_composer, roster_service)
+        scene_analysis_service = SceneAnalysisService(
+            scene_composer,
+            roster_service,
+            recognition_service=recognition_service,
+        )
         set_scene_analysis_service(scene_analysis_service)
 
         # Mark initialization as complete

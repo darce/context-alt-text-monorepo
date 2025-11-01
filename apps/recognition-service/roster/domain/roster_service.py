@@ -26,16 +26,16 @@ class RosterService:
     def __init__(
         self,
         roster_storage: RosterStoragePort,
-        embedding_storage: EmbeddingStoragePort,
-        data_validator: DataValidationPort
+        data_validator: DataValidationPort,
+        embedding_storage: Optional[EmbeddingStoragePort] = None,
     ):
         """
         Initialize roster service with injected dependencies.
         
         Args:
-            roster_storage: Storage adapter for roster data
-            embedding_storage: Storage adapter for embeddings
-            data_validator: Validator for data integrity
+            roster_storage: Storage adapter for roster data (required)
+            data_validator: Validator for data integrity (required)
+            embedding_storage: Optional auxiliary storage hook (unused in pgvector path)
         """
         self.roster_storage = roster_storage
         self.embedding_storage = embedding_storage
@@ -246,6 +246,66 @@ class RosterService:
         except Exception as e:
             logger.error(f"Error updating entry: {e}")
             return False
+    
+    def add_augmented_embedding(
+        self,
+        unique_id: str,
+        model: str,
+        embedding: List[float],
+        source: str,
+        observation_id: str,
+        metadata: Optional[Dict[str, Any]] = None
+    ) -> bool:
+        """
+        Append an augmented embedding to an existing roster entry.
+
+        Args:
+            unique_id: Roster entry identifier.
+            model: Model identifier.
+            embedding: Embedding vector from confirmation workflow.
+            source: Origin of the embedding (e.g., 'wordpress_confirm').
+            observation_id: Observation identifier used for deduplication.
+            metadata: Additional metadata (confidence, bbox, attachment_id, etc.).
+
+        Returns:
+            True if the embedding was stored, False otherwise.
+        """
+        entry = self.roster_storage.get_roster_entry(unique_id, model)
+        if not entry:
+            logger.warning("Roster entry %s not found for augmented embedding", unique_id)
+            return False
+
+        embedding_errors: List[str] = []
+        if self.data_validator:
+            embedding_errors = self.data_validator.validate_embedding(embedding, model)
+        if embedding_errors:
+            logger.error("Augmented embedding validation failed: %s", embedding_errors)
+            return False
+
+        appended = entry.add_augmented_embedding(
+            embedding=embedding,
+            source=source,
+            observation_id=observation_id,
+            metadata=metadata,
+        )
+        if not appended:
+            logger.info(
+                "Duplicate augmented embedding for observation %s; skipping append",
+                observation_id,
+            )
+            return False
+
+        success = self.roster_storage.save_roster_entry(entry, model)
+        if success:
+            self._invalidate_cache(model)
+            self._sync_embeddings_store(model)
+        else:
+            logger.error(
+                "Failed to persist augmented embedding for entry %s in model %s",
+                unique_id,
+                model,
+            )
+        return success
     
     def delete_entry(self, unique_id: str, model: str) -> bool:
         """

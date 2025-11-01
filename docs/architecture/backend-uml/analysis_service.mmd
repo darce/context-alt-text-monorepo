@@ -1,6 +1,7 @@
+---
+title: Scene Analysis Service (Objects + Faces)
+---
 flowchart TB
-
-    title Scene Analysis Service (Objects + Faces)
 
     subgraph ports["Ports"]
         object_port["ObjectDetectionPort\ndetect_objects(image)"]
@@ -24,7 +25,7 @@ flowchart TB
         yolo_weights["YOLO weights"]
         phi3_weights["Phi-3 weights"]
         recognition_stack["InsightFace recognition stack"]
-        roster_embeddings["Embeddings JSON (read by Recognition)"]
+        roster_store["PostgreSQL (pgvector) roster storage"]
         settings_yaml["ConfigService / recognition_core settings"]
     end
 
@@ -43,7 +44,7 @@ flowchart TB
     yolo_adapter --> yolo_weights
     caption_adapter --> phi3_weights
     recognition_service_adapter --> recognition_stack
-    recognition_service_adapter --> roster_embeddings
+    recognition_service_adapter --> roster_store
 
     classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
     classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px
@@ -53,4 +54,4 @@ flowchart TB
     class ports,object_port,caption_port,recognition_port portsClass
     class domain,scene_service,scene_composer,scene_entities domainClass
     class adapters,yolo_adapter,caption_adapter,recognition_service_adapter adapterClass
-    class external,yolo_weights,phi3_weights,recognition_stack,roster_embeddings,settings_yaml externalClass
+    class external,yolo_weights,phi3_weights,recognition_stack,roster_store,settings_yaml externalClass

@@ -103,7 +103,7 @@ sequenceDiagram
         Clustering->>Repo: markAsResolved(faceId, rosterId)
     end
 
-    Clustering->>RecogAPI: POST /roster/add-embedding<br/>{roster_id, embedding, metadata}
+    Clustering->>RecogAPI: POST /roster/{id}/augment<br/>{embedding, observation_id, metadata}
     RecogAPI-->>Clustering: {status: 'queued', sync_id}
     
     Clustering-->>ClusterAPI: {resolved_count: 5, sync_status}

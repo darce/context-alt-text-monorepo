@@ -121,20 +121,6 @@ def setup_data_directories(config: Dict) -> None:
     Paths are resolved relative to current working directory.
     """
     try:
-        # Roster storage directories
-        roster_config = config.get('roster_storage', {}).get('config', {})
-        roster_file_path = roster_config.get('roster_file_path', 'data/roster.json')
-        backup_directory = roster_config.get('backup_directory', 'data/backups')
-        
-        # Resolve paths relative to current working directory
-        roster_file_path = os.path.abspath(roster_file_path)
-        backup_directory = os.path.abspath(backup_directory)
-        
-        # Create roster data directory
-        os.makedirs(os.path.dirname(roster_file_path), exist_ok=True)
-        os.makedirs(backup_directory, exist_ok=True)
-        logging.info(f"Created roster data directories: {os.path.dirname(roster_file_path)}, {backup_directory}")
-        
         # Media storage directories
         media_config = config.get('media_storage', {}).get('config', {})
         upload_directory = media_config.get('upload_directory', 'data/media')

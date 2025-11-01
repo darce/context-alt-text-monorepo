@@ -38,3 +38,24 @@ class RosterEntryDTO:
         """Return a dict representation of this DTO for serialization."""
         from dataclasses import asdict
         return asdict(self)
+
+
+@dataclass
+class AugmentedRosterEntryDTO:
+    """DTO describing a roster entry with progressive-learning metadata."""
+
+    unique_id: str
+    name: str
+    display_name: str
+    embedding_count: int
+    augmented_count: int
+    reference_count: int
+    aggregate_embedding: Optional[List[float]] = None
+    metadata: Optional[Dict[str, Any]] = None
+    created_at: Optional[str] = None
+    updated_at: Optional[str] = None
+
+    def model_dump(self) -> Dict[str, Any]:
+        from dataclasses import asdict
+
+        return asdict(self)

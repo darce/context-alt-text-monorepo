@@ -20,6 +20,41 @@ logger = logging.getLogger("alembic.env")
 
 target_metadata = Base.metadata
 
+# Import custom types for type comparison
+from db.models import JSONType, UUIDType, VectorType
+
+def render_uuid_type(type_, obj, autogen_context):
+    """Render UUIDType for migrations as PostgreSQL UUID."""
+    # In migrations, render as sa.dialects.postgresql.UUID instead of UUIDType
+    # This way the migration is explicit about using PostgreSQL's native UUID type
+    return "sa.dialects.postgresql.UUID(as_uuid=True)"
+
+def render_json_type(type_, obj, autogen_context):
+    """Render JSONType for migrations as PostgreSQL JSONB."""
+    # In migrations, render as sa.dialects.postgresql.JSONB
+    return "sa.dialects.postgresql.JSONB()"
+
+def render_vector_type(type_, obj, autogen_context):
+    """Render VectorType for migrations."""
+    # For VectorType, we need to use the pgvector type directly
+    # Get the dimension from the VectorType instance
+    dim = getattr(obj, 'dim', 512)
+    return f"pgvector.sqlalchemy.Vector({dim})"
+
+
+def render_item(type_, obj, autogen_context):
+    """Custom renderer for our custom types."""
+    if isinstance(obj, UUIDType):
+        return render_uuid_type(type_, obj, autogen_context)
+    elif isinstance(obj, JSONType):
+        return render_json_type(type_, obj, autogen_context)
+    elif isinstance(obj, VectorType):
+        return render_vector_type(type_, obj, autogen_context)
+    
+    # Fall back to default rendering
+    return False
+
+
 
 def _load_env_file():
     """Load environment variables from .env file if it exists."""
@@ -67,11 +102,13 @@ def _get_database_url() -> str:
 
 def run_migrations_offline() -> None:
     url = _get_database_url()
+    
     context.configure(
         url=url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
+        render_item=render_item,
     )
 
     with context.begin_transaction():
@@ -89,7 +126,11 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
-        context.configure(connection=connection, target_metadata=target_metadata)
+        context.configure(
+            connection=connection, 
+            target_metadata=target_metadata,
+            render_item=render_item,
+        )
 
         with context.begin_transaction():
             context.run_migrations()

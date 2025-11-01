@@ -29,7 +29,9 @@ class SceneAnalysisService:
         self.scene_composer = scene_composer
         self.roster_service = roster_service
         self.config_service = config_service or ConfigService()
-        self.recognition_service = recognition_service or FaceRecognitionService()
+        if recognition_service is None:
+            raise ValueError("SceneAnalysisService requires a recognition service")
+        self.recognition_service = recognition_service
         self._settings = self.recognition_service.settings
 
         logger.info("SceneAnalysisService initialized (device=%s)", self._settings.insightface.device)

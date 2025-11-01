@@ -96,22 +96,20 @@ Return roster suggestions for one or more embeddings. For best results, pass emb
 }
 ```
 
-## `POST /api/v0/roster/add-embedding`
+## `POST /api/v0/roster/{unique_id}/augment`
 
-Augment an existing roster entry with confirmed embeddings, ensuring future suggestions improve.
+Augment an existing roster entry with a confirmed embedding, ensuring subsequent FAISS suggestions improve.
 
 ### Request
 
 ```json
 {
-  "roster_id": "person-42",
-  "observation_id": "obs-123",
   "embedding": [0.01, 0.02, "..."],
-  "metadata": {
-    "attachmentId": 123,
-    "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
-    "source": "wordpress-plugin"
-  }
+  "observation_id": "obs-123",
+  "attachment_id": 123,
+  "bbox": { "x": 45, "y": 60, "w": 120, "h": 120 },
+  "confidence": 0.87,
+  "idempotency_key": "optional-uuid"
 }
 ```
 
@@ -119,9 +117,28 @@ Augment an existing roster entry with confirmed embeddings, ensuring future sugg
 
 ```json
 {
-  "status": "queued",
-  "sync_id": "sync-456",
-  "message": "Embedding scheduled for FAISS index update."
+  "success": true,
+  "roster_entry": {
+    "unique_id": "person-42",
+    "name": "Person",
+    "embedding_count": 15,
+    "augmented_count": 12,
+    "reference_count": 3,
+    "aggregate_embedding": [0.01, 0.02, "..."],
+    "metadata": {
+      "augmented_embeddings": [
+        {
+          "observation_id": "obs-123",
+          "confidence": 0.87,
+          "attachment_id": 123
+        }
+      ]
+    },
+    "created_at": "2025-10-30T12:00:00Z",
+    "updated_at": "2025-10-30T12:35:00Z"
+  },
+  "index_reloaded": true,
+  "idempotency_key": "augment:person-42:obs-123"
 }
 ```
 

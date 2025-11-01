@@ -123,7 +123,13 @@ class RosterEntry:
         else:
             weighted_average = np.mean(vectors, axis=0)
 
-        self.aggregate_embedding = weighted_average.tolist()
+        norm = float(np.linalg.norm(weighted_average))
+        if norm == 0.0:
+            self.aggregate_embedding = weighted_average.tolist()
+            return
+
+        normalized = weighted_average / norm
+        self.aggregate_embedding = normalized.tolist()
     
     def update_timestamp(self):
         """Update the modification timestamp."""

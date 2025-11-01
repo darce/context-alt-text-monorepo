@@ -1,0 +1,173 @@
+"""SQLAlchemy models representing the recognition service persistence schema."""
+
+from __future__ import annotations
+
+import json
+import uuid
+from typing import Any, Optional
+
+import sqlalchemy as sa
+from sqlalchemy.dialects.postgresql import UUID as PostgreSQLUUID
+from sqlalchemy.orm import declarative_base, relationship
+from sqlalchemy.sql import func
+
+Base = declarative_base()
+
+
+def _uuid_default():
+    """Generate UUID that works with both PostgreSQL UUID and String columns."""
+    return uuid.uuid4()
+
+
+class UUIDType(sa.types.TypeDecorator):
+    """
+    Platform-independent UUID type.
+    
+    Uses PostgreSQL's UUID type when available, otherwise uses String(36).
+    Always stores and retrieves Python uuid.UUID objects.
+    """
+    
+    impl = sa.String
+    cache_ok = True
+    
+    def load_dialect_impl(self, dialect):
+        if dialect.name == 'postgresql':
+            return dialect.type_descriptor(PostgreSQLUUID(as_uuid=True))
+        else:
+            return dialect.type_descriptor(sa.String(36))
+    
+    def process_bind_param(self, value: Optional[Any], dialect) -> Optional[Any]:  # noqa: ANN001
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value if dialect.name == 'postgresql' else str(value)
+        if isinstance(value, str):
+            # Convert string to UUID
+            return uuid.UUID(value) if dialect.name == 'postgresql' else value
+        return value
+    
+    def process_result_value(self, value: Optional[Any], dialect) -> Optional[uuid.UUID]:  # noqa: ANN001
+        if value is None:
+            return None
+        if isinstance(value, uuid.UUID):
+            return value
+        if isinstance(value, str):
+            return uuid.UUID(value)
+        return value
+
+
+class JSONType(sa.types.TypeDecorator):
+    """JSON storage that works across PostgreSQL and SQLite."""
+
+    impl = sa.Text
+    cache_ok = True
+
+    def process_bind_param(self, value: Optional[Any], dialect) -> Optional[str]:  # noqa: ANN001
+        if value is None:
+            return None
+        return json.dumps(value)
+
+    def process_result_value(self, value: Optional[str], dialect) -> Optional[Any]:  # noqa: ANN001
+        if value is None:
+            return None
+        return json.loads(value)
+
+
+class VectorType(sa.types.TypeDecorator):
+    """
+    PostgreSQL pgvector VECTOR type for embeddings.
+    
+    This project requires PostgreSQL 17+ with pgvector extension.
+    SQLite is not supported for production use.
+    """
+    
+    impl = sa.Text
+    cache_ok = True
+    
+    def load_dialect_impl(self, dialect):
+        if dialect.name != 'postgresql':
+            raise ValueError(
+                "Only PostgreSQL with pgvector is supported. "
+                "SQLite and other databases are not supported for vector operations."
+            )
+        from pgvector.sqlalchemy import Vector
+        return dialect.type_descriptor(Vector(512))
+    
+    def process_bind_param(self, value: Optional[Any], dialect) -> Optional[Any]:  # noqa: ANN001
+        if value is None:
+            return None
+        # pgvector accepts Python lists directly
+        return value if isinstance(value, list) else list(value)
+    
+    def process_result_value(self, value: Optional[Any], dialect) -> Optional[list]:  # noqa: ANN001
+        if value is None:
+            return None
+        # pgvector returns Python lists
+        return value if isinstance(value, list) else list(value)
+
+
+class Tenant(Base):
+    __tablename__ = "tenants"
+
+    id = sa.Column(UUIDType, primary_key=True, default=_uuid_default)
+    slug = sa.Column(sa.String(64), unique=True, nullable=False)
+    name = sa.Column(sa.String(255), nullable=False)
+    plan_tier = sa.Column(sa.String(32), nullable=False, default="free")
+    created_at = sa.Column(sa.DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = sa.Column(sa.DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+
+
+class RosterEntry(Base):
+    __tablename__ = "roster_entries"
+
+    id = sa.Column(UUIDType, primary_key=True, default=_uuid_default)
+    tenant_id = sa.Column(UUIDType, sa.ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False)
+    label = sa.Column(sa.String(191), nullable=False)
+    display_name = sa.Column(sa.String(255))
+    model = sa.Column(sa.String(128), nullable=False, default="insightface_w600k", server_default="insightface_w600k")
+    type = sa.Column(sa.String(32), nullable=False, default="person")
+    # Use 'metadata' column name with 'meta' attribute to avoid SQLAlchemy reserved attribute
+    meta = sa.Column("metadata", JSONType, nullable=False, default=dict)
+    aggregate_embedding = sa.Column(VectorType)
+    created_at = sa.Column(sa.DateTime(timezone=True), nullable=False, server_default=func.now())
+    updated_at = sa.Column(sa.DateTime(timezone=True), nullable=False, server_default=func.now(), onupdate=func.now())
+    
+    # Relationships
+    reference_embeddings = relationship("ReferenceEmbedding", back_populates="roster_entry", cascade="all, delete-orphan")
+    augmented_embeddings = relationship("AugmentedEmbedding", back_populates="roster_entry", cascade="all, delete-orphan")
+
+
+sa.Index("ix_roster_entries_tenant_model", RosterEntry.tenant_id, RosterEntry.model)
+
+
+class ReferenceEmbedding(Base):
+    __tablename__ = "reference_embeddings"
+
+    id = sa.Column(UUIDType, primary_key=True, default=_uuid_default)
+    roster_entry_id = sa.Column(UUIDType, sa.ForeignKey("roster_entries.id", ondelete="CASCADE"), nullable=False)
+    embedding = sa.Column(VectorType, nullable=False)
+    image_path = sa.Column(sa.String(512))
+    # Use 'metadata' column name with 'meta' attribute to avoid SQLAlchemy reserved attribute
+    meta = sa.Column("metadata", JSONType, nullable=False, default=dict)
+    created_at = sa.Column(sa.DateTime(timezone=True), nullable=False, server_default=func.now())
+    
+    # Relationship
+    roster_entry = relationship("RosterEntry", back_populates="reference_embeddings")
+
+
+class AugmentedEmbedding(Base):
+    __tablename__ = "augmented_embeddings"
+
+    id = sa.Column(UUIDType, primary_key=True, default=_uuid_default)
+    roster_entry_id = sa.Column(UUIDType, sa.ForeignKey("roster_entries.id", ondelete="CASCADE"), nullable=False)
+    observation_id = sa.Column(sa.String(64), unique=True, nullable=False)
+    embedding = sa.Column(VectorType, nullable=False)
+    source = sa.Column(sa.String(64), nullable=False, default="wordpress_confirm")
+    attachment_id = sa.Column(sa.BigInteger)
+    bbox = sa.Column(JSONType)
+    confidence = sa.Column(sa.Float)
+    quality_tier = sa.Column(sa.String(16), nullable=False, default="medium")
+    created_at = sa.Column(sa.DateTime(timezone=True), nullable=False, server_default=func.now())
+    
+    # Relationship
+    roster_entry = relationship("RosterEntry", back_populates="augmented_embeddings")

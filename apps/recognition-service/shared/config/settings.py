@@ -36,13 +36,6 @@ def get_config() -> Dict[str, Any]:
         raise ValueError("Missing 'caption' configuration section in settings.yaml")
     if 'environment' not in base_config:
         raise ValueError("Missing 'environment' configuration section in settings.yaml")
-    if 'roster_storage' not in base_config:
-        raise ValueError("Missing 'roster_storage' configuration section in settings.yaml")
-    
-    # Validate roster storage configuration
-    roster_storage_config = base_config['roster_storage'].get('config', {})
-    if 'roster_file_path' not in roster_storage_config:
-        raise ValueError("Missing 'roster_file_path' in 'roster_storage.config' in settings.yaml")
 
     # Validate media storage configuration
     if 'media_storage' not in base_config:

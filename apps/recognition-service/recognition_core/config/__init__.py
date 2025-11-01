@@ -72,7 +72,6 @@ class RecognitionSettings(BaseSettings):
 
 class EmbeddingRouterSettings(BaseSettings):
     """Embedding router configuration."""
-    embeddings_file: str = "/roster/data/insightface_w600k_embeddings.json"
     auto_reload: bool = True
     reload_interval: int = 30
 

@@ -136,32 +136,6 @@ class RosterConfig:
         dimensions = self.get_model_config().get("embedding_dimensions", {})
         return dimensions.get(model, 512)  # Default to 512
     
-    def get_embeddings_file_path(self, model: str) -> str:
-        """
-        Get embeddings file path for a specific model.
-        
-        Args:
-            model: Model identifier
-            
-        Returns:
-            Full path to embeddings file
-        """
-        data_dir = self.get_data_dir()
-        return os.path.join(data_dir, f"{model}_embeddings.json")
-    
-    def get_roster_file_path(self, model: str) -> str:
-        """
-        Get roster file path for a specific model.
-        
-        Args:
-            model: Model identifier
-            
-        Returns:
-            Full path to roster file
-        """
-        data_dir = self.get_data_dir()
-        return os.path.join(data_dir, f"{model}_roster.json")
-    
     def is_hot_reload_enabled(self) -> bool:
         """Check if hot-reload is enabled."""
         return self.get_storage_config().get("hot_reload", {}).get("enabled", True)

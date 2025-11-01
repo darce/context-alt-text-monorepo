@@ -1,7 +1,7 @@
 import io
 import logging
 import os
-from typing import Any, Optional
+from typing import Any, Dict, Optional
 
 from fastapi import APIRouter, HTTPException, UploadFile, File, Form, Depends, Request
 from PIL import Image
@@ -10,7 +10,11 @@ from analysis.services.scene_analysis_service import SceneAnalysisService
 from .roster import router as roster_router
 from .suggest import router as suggest_router
 from .cluster_unknowns import router as cluster_router
-from api.dependencies import get_roster_service
+from api.dependencies import (
+    get_recognition_service,
+    get_roster_service,
+    set_recognition_service,
+)
 from api.schemas import AnalyzeSceneRequest, EmbeddingsRequest
 from shared.config import get_config
 from shared.utils.device_utils import get_available_device  # for device resolution if needed
@@ -126,6 +130,8 @@ def get_scene_analysis_service(request: Request) -> SceneAnalysisService:
 def set_scene_analysis_service(scene_analysis_service: SceneAnalysisService):
     global _scene_analysis_service
     _scene_analysis_service = scene_analysis_service
+    if scene_analysis_service and getattr(scene_analysis_service, "recognition_service", None):
+        set_recognition_service(scene_analysis_service.recognition_service)
 
 @router.post("/caption")
 async def caption(
@@ -327,6 +333,19 @@ async def generate_embeddings(
     except Exception as exc:  # pragma: no cover - defensive
         logging.error("Error in /embeddings endpoint: %s", exc)
         raise HTTPException(status_code=500, detail=str(exc))
+
+
+@router.post("/service/reload-embeddings")
+async def reload_embeddings_route(
+    scene_analysis_service: SceneAnalysisService = Depends(get_scene_analysis_service),
+):
+    """Force a manual embedding reload for diagnostics."""
+    recognition_service = scene_analysis_service.recognition_service
+    result = await recognition_service.reload_embeddings()
+
+    if result.get("status") == "error":
+        raise HTTPException(status_code=500, detail=result)
+    return result
 
 
 @router.get("/service/info")

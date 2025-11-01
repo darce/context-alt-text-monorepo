@@ -28,14 +28,16 @@
                 {
                   "embedding": [1.0, 0.0],
                   "metadata": {
-                    "role": "tester"
+                    "role": "tester",
+                    "augmented_embeddings": []
                   },
                   "image_path": null
                 }
               ],
               "aggregate_embedding": [1.0, 0.0],
               "metadata": {
-                "role": "tester"
+                "role": "tester",
+                "augmented_embeddings": []
               },
               "created_timestamp": "2024-01-01T00:00:00",
               "updated_timestamp": "2024-01-01T00:00:00",
@@ -47,6 +49,9 @@
             "match_confidence": 92.0
           },
           "face_data": {
+            "embedding_id": "face-0",
+            "embedding": [1.0, 0.0],
+            "embedding_dimension": 2,
             "threshold": 0.5,
             "candidates": [
               {
@@ -54,7 +59,8 @@
                 "similarity": 0.92,
                 "unique_id": "roster-1",
                 "metadata": {
-                  "role": "tester"
+                  "role": "tester",
+                  "augmented_embeddings": []
                 },
                 "meets_threshold": true
               }
@@ -72,14 +78,16 @@
               {
                 "embedding": [1.0, 0.0],
                 "metadata": {
-                  "role": "tester"
+                  "role": "tester",
+                  "augmented_embeddings": []
                 },
                 "image_path": null
               }
             ],
             "aggregate_embedding": [1.0, 0.0],
             "metadata": {
-              "role": "tester"
+              "role": "tester",
+              "augmented_embeddings": []
             },
             "created_timestamp": "2024-01-01T00:00:00",
             "updated_timestamp": "2024-01-01T00:00:00",
@@ -100,14 +108,16 @@
             {
               "embedding": [1.0, 0.0],
               "metadata": {
-                "role": "tester"
+                "role": "tester",
+                "augmented_embeddings": []
               },
               "image_path": null
             }
           ],
           "aggregate_embedding": [1.0, 0.0],
           "metadata": {
-            "role": "tester"
+            "role": "tester",
+            "augmented_embeddings": []
           },
           "created_timestamp": "2024-01-01T00:00:00",
           "updated_timestamp": "2024-01-01T00:00:00",

@@ -1,3 +1,4 @@
+---
 title: Recognition API Surface (FastAPI)
 ---
 flowchart TB
@@ -31,8 +32,8 @@ flowchart TB
         caption_adapter["Phi3CaptionAdapter"]
         recognition_adapter["InsightFaceAdapter"]
         embedding_adapter["EmbeddingRouterAdapter"]
-        roster_storage["FileRosterStorageAdapter"]
-        embedding_storage["EmbeddingStorageAdapter"]
+        hybrid_index_manager["HybridIndexManager"]
+        roster_storage["PostgreSQLStorageAdapter"]
         data_validation["DataValidationAdapter"]
     end
 
@@ -41,7 +42,8 @@ flowchart TB
         insightface_weights["InsightFace weights"]
         yolo_weights["YOLO weights"]
         phi3_weights["Phi-3 weights"]
-        roster_files["Roster JSON + embeddings"]
+        postgres_db["PostgreSQL (pgvector)"]
+        faiss_index["FAISS in-memory index"]
         cache_dirs["HF/Torch cache dirs"]
     end
 
@@ -74,10 +76,10 @@ flowchart TB
     scene_analysis_service --> caption_adapter
     recognition_service --> recognition_adapter
     recognition_service --> embedding_adapter
+    recognition_service --> hybrid_index_manager
     recognition_service --> cache_dirs
 
     roster_service --> roster_storage
-    roster_service --> embedding_storage
     roster_service --> data_validation
 
     startup_manager --> scene_analysis_service
@@ -88,9 +90,10 @@ flowchart TB
     object_adapter --> yolo_weights
     caption_adapter --> phi3_weights
     recognition_adapter --> insightface_weights
-    embedding_adapter --> roster_files
-    roster_storage --> roster_files
-    embedding_storage --> roster_files
+    embedding_adapter --> hybrid_index_manager
+    hybrid_index_manager --> postgres_db
+    hybrid_index_manager --> faiss_index
+    roster_storage --> postgres_db
 
     classDef fastapiClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
     classDef dependencyClass fill:#ede7f6,stroke:#5e35b1,color:#000,stroke-width:2px
@@ -101,5 +104,5 @@ flowchart TB
     class fastapi_layer,fastapi_app,main_router,media_router,legacy_roster_router,typed_roster_router,suggest_router,cluster_router,health_route,service_info_route,readiness_routes fastapiClass
     class dependencies,roster_dependency dependencyClass
     class domain,startup_manager,scene_analysis_service,recognition_service,roster_service domainClass
-    class adapters,object_adapter,caption_adapter,recognition_adapter,embedding_adapter,roster_storage,embedding_storage,data_validation adapterClass
-    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,roster_files,cache_dirs externalClass
+    class adapters,object_adapter,caption_adapter,recognition_adapter,embedding_adapter,hybrid_index_manager,roster_storage,data_validation adapterClass
+    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,postgres_db,faiss_index,cache_dirs externalClass

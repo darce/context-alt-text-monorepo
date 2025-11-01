@@ -1,3 +1,4 @@
+---
 title: Context Alt Text Recognition Backend (Current)
 ---
 flowchart TB
@@ -43,8 +44,8 @@ flowchart TB
         caption_adapter["Phi3CaptionAdapter"]
         insightface_adapter["InsightFaceAdapter"]
         embedding_adapter["EmbeddingRouterAdapter"]
-        roster_storage["FileRosterStorageAdapter"]
-        embedding_storage["EmbeddingStorageAdapter"]
+        hybrid_index_manager["HybridIndexManager"]
+        roster_storage["PostgreSQLStorageAdapter"]
         data_validation_adapter["DataValidationAdapter"]
         gpu_manager["GPUManager"]
     end
@@ -55,7 +56,8 @@ flowchart TB
         insightface_weights["InsightFace weights"]
         yolo_weights["YOLO weights"]
         phi3_weights["Phi-3 weights"]
-        roster_files["Roster JSON +\nembeddings cache"]
+        postgres_db["PostgreSQL (pgvector)"]
+        faiss_index["FAISS in-memory index"]
         cache_dirs["HF/Torch cache dirs"]
         hardware["GPU/CPU runtime"]
         blob_storage["Media storage\n(local or remote)"]
@@ -96,9 +98,9 @@ flowchart TB
     scene_composer --> caption_adapter
     recognition_service --> insightface_adapter
     recognition_service --> embedding_adapter
+    recognition_service --> hybrid_index_manager
 
     roster_service --> roster_storage
-    roster_service --> embedding_storage
     roster_service --> data_validation_adapter
 
     startup_manager --> gpu_manager
@@ -112,9 +114,10 @@ flowchart TB
     yolo_adapter --> yolo_weights
     caption_adapter --> phi3_weights
     insightface_adapter --> insightface_weights
-    embedding_adapter --> roster_files
-    roster_storage --> roster_files
-    embedding_storage --> roster_files
+    embedding_adapter --> hybrid_index_manager
+    hybrid_index_manager --> postgres_db
+    hybrid_index_manager --> faiss_index
+    roster_storage --> postgres_db
     media_routes --> blob_storage
 
     fastapi_app --> settings_yaml
@@ -128,7 +131,7 @@ flowchart TB
     classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
 
     class clients,admin_spa,wp_php_client,wp_cli,automation_jobs,agents_flagged clientsClass
-    class api,fastapi_app,analyze_scene_route,embeddings_route,identify_hf_route,media_routes,roster_routes,service_info_route,reload_embeddings_route,health_route,readiness_route apiClass
+    class api,fastapi_app,analyze_scene_route,embeddings_route,caption_route,identify_route,identify_hf_route,media_routes,suggest_route,cluster_route,roster_routes_legacy,roster_routes_typed,service_info_route,health_route,readiness_route apiClass
     class domain,scene_service,scene_composer,recognition_service,roster_service,startup_manager domainClass
-    class adapters,yolo_adapter,caption_adapter,insightface_adapter,embedding_adapter,adaface_pipeline,roster_storage,embedding_storage,gpu_manager,adapter_factory adapterClass
-    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,roster_files,cache_dirs,hardware,blob_storage externalClass
+    class adapters,yolo_adapter,caption_adapter,insightface_adapter,embedding_adapter,hybrid_index_manager,roster_storage,data_validation_adapter,gpu_manager adapterClass
+    class external,settings_yaml,insightface_weights,yolo_weights,phi3_weights,postgres_db,faiss_index,cache_dirs,hardware,blob_storage externalClass

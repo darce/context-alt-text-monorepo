@@ -1,4 +1,6 @@
+---
 title: InsightFace Recognition Service (Progressive Learning)
+---
 flowchart LR
     subgraph ports["Ports"]
         recognition_port["RecognitionServicePort\nrecognize_faces(image, threshold)"]
@@ -18,7 +20,8 @@ flowchart LR
 
     subgraph adapters["Adapters"]
         insightface_adapter["InsightFaceAdapter\nimplements RecognitionModelPort"]
-        embedding_router_adapter["EmbeddingRouterAdapter\nimplements EmbeddingRouterPort\n(JSON + FAISS bridge)"]
+        embedding_router_adapter["EmbeddingRouterAdapter\nimplements EmbeddingRouterPort"]
+        hybrid_index_manager["HybridIndexManager\n(pgvector ↔ FAISS sync)"]
         propagation_queue_adapter["PropagationQueueAdapter\nimplements QueueConsumer\n(Kafka/SQS/Redis)"]
         index_refresher_adapter["FaissIndexAdapter\n- atomic reload\n- warm cache"]
         augment_repository_adapter["AugmentRepositoryAdapter\n- persists augmented embeddings"]
@@ -26,7 +29,7 @@ flowchart LR
 
     subgraph external["External Dependencies"]
         insightface_weights["InsightFace weights / ONNX runtime"]
-        embeddings_file["Embeddings JSON + snapshots"]
+        pgvector_store["PostgreSQL (pgvector)\nroster storage"]
         faiss_index["FAISS index on disk"]
         propagation_queue["Propagation queue (durable)"]
         recognition_config["recognition_core/config/settings.yaml"]
@@ -60,8 +63,9 @@ flowchart LR
 
     model_port --> insightface_adapter
     embedding_port --> embedding_router_adapter
-    embedding_router_adapter --> embeddings_file
-    embedding_router_adapter --> faiss_index
+    embedding_router_adapter --> hybrid_index_manager
+    hybrid_index_manager --> pgvector_store
+    hybrid_index_manager --> faiss_index
     embedding_router_adapter --> metrics_sink
 
     insightface_adapter --> insightface_weights
@@ -76,58 +80,5 @@ flowchart LR
 
     class ports,recognition_port,model_port,embedding_port,augment_port,health_port portsClass
     class domain,recognition_service,embedding_refresh_worker,propagation_monitor,recognition_entities,recognition_settings domainClass
-    class adapters,insightface_adapter,embedding_router_adapter,propagation_queue_adapter,index_refresher_adapter,augment_repository_adapter adapterClass
-    class external,insightface_weights,embeddings_file,faiss_index,propagation_queue,recognition_config,cache_dirs,metrics_sink,alerting_bus externalClass
-
-    note for embedding_refresh_worker "Backoff schedule: 5m → 15m → 1h → 4h → 12h before DLQ"
-    note for augment_repository_adapter "Persists to RS_AUGMENTED_EMBEDDING + publishes propagation events"
-title: InsightFace Recognition Service (Current)
----
-flowchart LR
-    subgraph ports["Ports"]
-        recognition_port["RecognitionServicePort\nrecognize_faces(image, threshold)"]
-        model_port["RecognitionModelPort\nanalyze(image)\nmodel_info()"]
-        embedding_port["EmbeddingRouterPort\nload_embeddings()\nfind_matches(vector, threshold)\nreload_if_needed()"]
-    end
-
-    subgraph domain["Domain Layer"]
-        recognition_service["FaceRecognitionService\n- orchestrates detection → embedding → matches\n- handles threshold overrides\n- reports processing_time_ms"]
-        recognition_entities["Domain Entities\nFaceDetection\nFaceEmbedding (512-dim)\nMatchResult\nRecognitionResult"]
-        recognition_settings["Settings (Pydantic)\ninsightface, recognition, embedding_router, cache"]
-    end
-
-    subgraph adapters["Adapters"]
-        insightface_adapter["InsightFaceAdapter\nimplements RecognitionModelPort"]
-        embedding_router_adapter["EmbeddingRouterAdapter\nimplements EmbeddingRouterPort\n(JSON roster cache)"]
-    end
-
-    subgraph external["External Dependencies"]
-        insightface_weights["InsightFace weights / ONNX runtime"]
-        embeddings_file["Embeddings JSON\n(synced by RosterService)"]
-        recognition_config["recognition_core/config/settings.yaml"]
-        cache_dirs["HF_HOME / TORCH_HOME"]
-    end
-
-    recognition_port --> recognition_service
-    recognition_service --> recognition_entities
-    recognition_service --> recognition_settings
-    recognition_service --> model_port
-    recognition_service --> embedding_port
-
-    model_port --> insightface_adapter
-    embedding_port --> embedding_router_adapter
-
-    insightface_adapter --> insightface_weights
-    embedding_router_adapter --> embeddings_file
-    recognition_settings --> recognition_config
-    recognition_settings --> cache_dirs
-
-    classDef portsClass fill:#e3f2fd,stroke:#1565c0,color:#000,stroke-width:2px
-    classDef domainClass fill:#e8f5e9,stroke:#2e7d32,color:#000,stroke-width:2px
-    classDef adapterClass fill:#fff3e0,stroke:#ef6c00,color:#000,stroke-width:2px
-    classDef externalClass fill:#fce4ec,stroke:#ad1457,color:#000,stroke-width:2px
-
-    class ports,recognition_port,model_port,embedding_port portsClass
-    class domain,recognition_service,recognition_entities,recognition_settings domainClass
-    class adapters,insightface_adapter,embedding_router_adapter adapterClass
-    class external,insightface_weights,embeddings_file,recognition_config,cache_dirs externalClass
+    class adapters,insightface_adapter,embedding_router_adapter,hybrid_index_manager,propagation_queue_adapter,index_refresher_adapter,augment_repository_adapter adapterClass
+    class external,insightface_weights,pgvector_store,faiss_index,propagation_queue,recognition_config,cache_dirs,metrics_sink,alerting_bus externalClass

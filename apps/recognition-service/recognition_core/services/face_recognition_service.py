@@ -27,7 +27,9 @@ class FaceRecognitionService(RecognitionServicePort):
     ):
         self.settings = get_settings()
         self.model = model or InsightFaceAdapter()
-        self.embedding_router = embedding_router or EmbeddingRouterAdapter()
+        if embedding_router is None:
+            raise ValueError("FaceRecognitionService requires an embedding router")
+        self.embedding_router = embedding_router
         
     async def recognize_faces(
         self, 
@@ -140,20 +142,22 @@ class FaceRecognitionService(RecognitionServicePort):
         get_count = getattr(self.embedding_router, "get_loaded_count", lambda: 0)
         get_names = getattr(self.embedding_router, "get_loaded_names", lambda: [])
         get_path = getattr(self.embedding_router, "get_embeddings_path", None)
+        get_stats = getattr(self.embedding_router, "get_reload_stats", lambda: {})
 
-        embeddings_path = settings.embedding_router.embeddings_file
+        embeddings_path = "database"
         if callable(get_path):
             try:
                 embeddings_path = get_path()
             except Exception:  # pragma: no cover - diagnostics only
-                embeddings_path = settings.embedding_router.embeddings_file
+                embeddings_path = "database"
 
         embedding_router_data = {
             "auto_reload": settings.embedding_router.auto_reload,
             "reload_interval_seconds": settings.embedding_router.reload_interval,
-            "embeddings_file": embeddings_path,
+            "embeddings_source": embeddings_path,
             "loaded_embeddings": get_count() or 0,
             "loaded_entities": get_names() or [],
+            "reload_stats": get_stats() or {},
         }
 
         performance_data = {
@@ -175,12 +179,33 @@ class FaceRecognitionService(RecognitionServicePort):
             "cache": cache_data,
         }
     
-    async def reload_embeddings(self) -> bool:
-        """Force reload embeddings from file."""
+    async def reload_embeddings(self) -> Dict[str, Any]:
+        """Force reload embeddings from the backing storage."""
+        start = time.time()
         try:
             embeddings = await self.embedding_router.load_embeddings()
-            logger.info(f"🔄 Manually reloaded {len(embeddings)} embeddings")
-            return len(embeddings) > 0
-        except Exception as e:
-            logger.error(f"❌ Failed to reload embeddings: {e}")
-            return False
+            stats_getter = getattr(self.embedding_router, "get_reload_stats", lambda: {})
+            stats = stats_getter() or {}
+            entry_count = len(embeddings)
+            duration_ms = stats.get("duration_ms", (time.time() - start) * 1000)
+
+            payload = {
+                "status": "reloaded" if entry_count else "empty",
+                "entry_count": entry_count,
+                "embedding_count": entry_count,
+                "duration_ms": duration_ms,
+            }
+            if "reloaded_at" in stats:
+                payload["reloaded_at"] = stats["reloaded_at"]
+
+            logger.info("🔄 Manually reloaded %s embeddings (%.2fms)", entry_count, duration_ms)
+            return payload
+        except Exception as exc:
+            logger.error("❌ Failed to reload embeddings: %s", exc)
+            return {
+                "status": "error",
+                "entry_count": 0,
+                "embedding_count": 0,
+                "duration_ms": (time.time() - start) * 1000,
+                "error": str(exc),
+            }

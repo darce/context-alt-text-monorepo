@@ -51,7 +51,7 @@ These samples help developers understand the expected data shapes without runnin
 - **`recognition-clustering.md`** - Recognition service clustering endpoints
   - POST /api/v0/cluster - FAISS-backed embedding clustering
   - POST /api/v0/suggest - Roster suggestions for embeddings
-  - POST /api/v0/roster/add-embedding - Augment roster with confirmed embeddings
+  - POST /api/v0/roster/{id}/augment - Augment roster with confirmed embeddings
 
 ## vs. `/packages/shared-contracts/`
 

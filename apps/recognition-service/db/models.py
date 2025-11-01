@@ -29,6 +29,7 @@ class UUIDType(sa.types.TypeDecorator):
     
     impl = sa.String
     cache_ok = True
+    __visit_name__ = "uuid_type"
     
     def load_dialect_impl(self, dialect):
         if dialect.name == 'postgresql':
@@ -61,16 +62,31 @@ class JSONType(sa.types.TypeDecorator):
 
     impl = sa.Text
     cache_ok = True
+    __visit_name__ = "json_type"
 
-    def process_bind_param(self, value: Optional[Any], dialect) -> Optional[str]:  # noqa: ANN001
+    def load_dialect_impl(self, dialect):
+        """Use native JSON types when available."""
+        if dialect.name == 'postgresql':
+            from sqlalchemy.dialects.postgresql import JSONB
+            return dialect.type_descriptor(JSONB())
+        else:
+            return dialect.type_descriptor(sa.Text())
+
+    def process_bind_param(self, value: Optional[Any], dialect) -> Optional[Any]:  # noqa: ANN001
         if value is None:
             return None
+        # PostgreSQL JSONB accepts dicts directly, SQLite needs JSON string
+        if dialect.name == 'postgresql':
+            return value
         return json.dumps(value)
 
-    def process_result_value(self, value: Optional[str], dialect) -> Optional[Any]:  # noqa: ANN001
+    def process_result_value(self, value: Optional[Any], dialect) -> Optional[Any]:  # noqa: ANN001
         if value is None:
             return None
-        return json.loads(value)
+        # PostgreSQL JSONB returns dicts directly, SQLite returns JSON string
+        if dialect.name == 'postgresql':
+            return value
+        return json.loads(value) if isinstance(value, str) else value
 
 
 class VectorType(sa.types.TypeDecorator):
@@ -83,6 +99,7 @@ class VectorType(sa.types.TypeDecorator):
     
     impl = sa.Text
     cache_ok = True
+    __visit_name__ = "vector_type"
     
     def load_dialect_impl(self, dialect):
         if dialect.name != 'postgresql':
@@ -137,7 +154,19 @@ class RosterEntry(Base):
     augmented_embeddings = relationship("AugmentedEmbedding", back_populates="roster_entry", cascade="all, delete-orphan")
 
 
+# Regular B-tree index for tenant and model queries
 sa.Index("ix_roster_entries_tenant_model", RosterEntry.tenant_id, RosterEntry.model)
+
+# HNSW index for vector similarity search
+# This uses pgvector's HNSW (Hierarchical Navigable Small World) algorithm
+# for fast approximate nearest neighbor search with cosine distance
+sa.Index(
+    "idx_roster_embedding_hnsw",
+    RosterEntry.aggregate_embedding,
+    postgresql_using="hnsw",
+    postgresql_ops={"aggregate_embedding": "vector_cosine_ops"},
+    postgresql_with={"m": 16, "ef_construction": 64}
+)
 
 
 class ReferenceEmbedding(Base):

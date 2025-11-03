@@ -171,6 +171,9 @@ def test_vector_similarity_search(adapter, test_embeddings):
         )
         adapter.save_roster_entry(entry, model)
     
+    # Refresh materialized view so entries are searchable
+    adapter.refresh_aggregate_view()
+    
     # Search using first embedding (should match test-person-1 with high similarity)
     query_embedding = test_embeddings[0]
     matches = adapter.search_similar(

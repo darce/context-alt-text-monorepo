@@ -234,6 +234,9 @@ def test_pgvector_similarity_search(adapter):
     adapter.save_roster_entry(entry2, "test_model")
     adapter.save_roster_entry(entry3, "test_model")
     
+    # Refresh materialized view so entries are searchable
+    adapter.refresh_aggregate_view()
+    
     # Search for similar to entry1
     query_embedding = [1.0, 0.0, 0.0] + [0.0] * 509
     results = adapter.search_similar(

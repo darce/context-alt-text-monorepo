@@ -55,7 +55,10 @@ def adapter(test_database_url, test_tenant_id):
 
 
 def create_roster_with_embedding(adapter, roster_id, embedding, metadata=None):
-    """Helper to create a roster entry with a reference embedding."""
+    """Helper to create a roster entry with a reference embedding.
+    
+    Note: Refreshes the materialized view so the entry is immediately searchable.
+    """
     entry = RosterEntry(
         unique_id=roster_id,
         name=f"Person-{roster_id[:8]}",
@@ -67,6 +70,10 @@ def create_roster_with_embedding(adapter, roster_id, embedding, metadata=None):
         ]
     )
     adapter.save_roster_entry(entry, "test_model")
+    
+    # Refresh MV so entry appears in search results
+    adapter.refresh_aggregate_view()
+    
     return entry
 
 

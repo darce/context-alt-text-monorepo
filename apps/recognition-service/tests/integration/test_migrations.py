@@ -35,7 +35,14 @@ def test_database_url():
 @pytest.fixture
 def alembic_config():
     """Create Alembic configuration."""
-    config = Config("alembic.ini")
+    import os
+    # Get the path to the recognition-service directory
+    service_dir = os.path.dirname(os.path.dirname(os.path.dirname(__file__)))
+    alembic_ini_path = os.path.join(service_dir, "alembic.ini")
+    
+    config = Config(alembic_ini_path)
+    # Set the database URL from environment
+    config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL"))
     return config
 
 

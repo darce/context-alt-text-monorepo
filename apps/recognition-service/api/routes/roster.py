@@ -101,19 +101,26 @@ def _calculate_embedding_counts(entry) -> Dict[str, int]:
 def _serialize_augmented_entry(entry) -> Dict[str, Any]:
     """Serialize roster entry with progressive-learning metadata."""
     counts = _calculate_embedding_counts(entry)
-    dto = AugmentedRosterEntryDTO(
-        unique_id=_entry_unique_id(entry),
-        name=_entry_name(entry),
-        display_name=str(getattr(entry, "display_name", "")),
-        embedding_count=counts["embedding_count"],
-        augmented_count=counts["augmented_count"],
-        reference_count=counts["reference_count"],
-        aggregate_embedding=entry.aggregate_embedding,
-        metadata=entry.metadata,
-        created_at=entry.created_timestamp,
-        updated_at=entry.updated_timestamp,
-    )
-    return jsonable_encoder(dto.model_dump())
+    
+    # Import numpy-safe serializer from main routes
+    from api.routes.main import _to_serializable
+    
+    # Convert all data to JSON-safe types before creating DTO
+    dto_dict = {
+        "unique_id": _entry_unique_id(entry),
+        "name": _entry_name(entry),
+        "display_name": str(getattr(entry, "display_name", "")),
+        "embedding_count": counts["embedding_count"],
+        "augmented_count": counts["augmented_count"],
+        "reference_count": counts["reference_count"],
+        "aggregate_embedding": _to_serializable(entry.aggregate_embedding) if entry.aggregate_embedding else None,
+        "metadata": _to_serializable(entry.metadata) if entry.metadata else None,
+        "created_at": entry.created_timestamp,
+        "updated_at": entry.updated_timestamp,
+    }
+    
+    dto = AugmentedRosterEntryDTO(**dto_dict)
+    return dto.model_dump()
 
 
 async def _trigger_embedding_reload() -> None:
@@ -245,6 +252,7 @@ class RosterAugmentPayload(BaseModel):
     bbox: Optional[Dict[str, float]] = Field(None, description="Bounding box coordinates for the observation")
     confidence: Optional[float] = Field(None, description="Confidence score associated with the observation")
     quality_tier: Optional[str] = Field(None, description="Override quality tier (defaults derived from confidence)")
+    model: Optional[str] = Field(DEFAULT_MODEL, description="Model identifier (defaults to insightface_w600k)")
     idempotency_key: Optional[str] = Field(
         None,
         description="Optional idempotency key to safely retry augment requests",
@@ -254,6 +262,8 @@ class RosterAugmentPayload(BaseModel):
     def validate_embedding_non_empty(cls, value: List[float]) -> List[float]:
         if not value:
             raise ValueError("embedding must contain values")
+        if len(value) != 512:
+            raise ValueError(f"embedding must be exactly 512 dimensions, got {len(value)}")
         return value
 
     class Config:
@@ -400,7 +410,7 @@ async def _process_augmentation_request(
     augment_status = "success"
     
     try:
-        model = DEFAULT_MODEL
+        model = payload.model or DEFAULT_MODEL
         idempotency_key = payload.idempotency_key or f"augment:{unique_id}:{payload.observation_id}"
 
         cached_response: Optional[Dict[str, Any]] = None
@@ -552,6 +562,10 @@ embedding used for future recognition requests.
 5. Aggregate embedding is recomputed with weighted averaging (high=1.0, medium=0.8, low=0.5)
 6. FAISS index reload is scheduled (debounced, max every 30 seconds)
 7. Future recognition requests benefit from the improved aggregate
+
+**Model Parameter:**
+- Optional `model` field specifies which model's roster to update (defaults to insightface_w600k)
+- Enables future support for multiple face recognition models
 
 **Idempotency:**
 - Use `observation_id` to prevent duplicate embeddings (409 if already exists)
@@ -738,21 +752,25 @@ async def list_roster_entries(
     end_index = start_index + page_size
     page_entries = entries[start_index:end_index]
 
+    # Import numpy-safe serializer
+    from api.routes.main import _to_serializable
+
     serialized = []
     for entry in page_entries:
-        dto = RosterEntryDTO(
-            unique_id=entry.unique_id,
-            name=entry.name,
-            display_name=entry.display_name,
-            aggregate_embedding=entry.aggregate_embedding if include_embeddings else None,
-            metadata=entry.metadata,
-            created_timestamp=entry.created_timestamp,
-            updated_timestamp=entry.updated_timestamp,
-            image_count=entry.image_count,
-            roster_image_path=None,
-            embedding_length=len(entry.aggregate_embedding or []),
-            reference_embeddings=[img.embedding for img in entry.reference_images] if include_embeddings else None,
-        )
+        dto_dict = {
+            "unique_id": entry.unique_id,
+            "name": entry.name,
+            "display_name": entry.display_name,
+            "aggregate_embedding": _to_serializable(entry.aggregate_embedding) if include_embeddings and entry.aggregate_embedding else None,
+            "metadata": _to_serializable(entry.metadata) if entry.metadata else None,
+            "created_timestamp": entry.created_timestamp,
+            "updated_timestamp": entry.updated_timestamp,
+            "image_count": entry.image_count,
+            "roster_image_path": None,
+            "embedding_length": len(entry.aggregate_embedding or []),
+            "reference_embeddings": _to_serializable([img.embedding for img in entry.reference_images]) if include_embeddings else None,
+        }
+        dto = RosterEntryDTO(**dto_dict)
         serialized.append(dto.model_dump())
 
     total_pages = math.ceil(total_entries / page_size) if total_entries else 0

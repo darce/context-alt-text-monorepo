@@ -21,6 +21,11 @@ from pydantic import BaseModel, Field, validator
 
 from roster.domain.roster_service import RosterService
 from shared.dtos.roster import RosterEntryDTO, AugmentedRosterEntryDTO
+from shared.metrics import (
+    augmented_embedding_requests_total,
+    augmented_embedding_duration_seconds,
+    track_aggregate_recomputation,
+)
 from api.dependencies import get_recognition_service, get_roster_service
 
 DEFAULT_MODEL = "insightface_w600k"
@@ -390,103 +395,249 @@ async def _process_augmentation_request(
     roster_service: RosterService,
     extra_metadata: Optional[Dict[str, Any]] = None,
 ):
-    model = DEFAULT_MODEL
-    idempotency_key = payload.idempotency_key or f"augment:{unique_id}:{payload.observation_id}"
+    start_time = time.perf_counter()
+    quality_tier = payload.quality_tier or "unknown"
+    augment_status = "success"
+    
+    try:
+        model = DEFAULT_MODEL
+        idempotency_key = payload.idempotency_key or f"augment:{unique_id}:{payload.observation_id}"
 
-    cached_response: Optional[Dict[str, Any]] = None
-    if payload.idempotency_key:
-        cached_response = _get_cached_idempotent_response(idempotency_key)
-        if cached_response is not None:
-            cached_response["idempotency_key"] = idempotency_key
-            return cached_response, False
+        cached_response: Optional[Dict[str, Any]] = None
+        if payload.idempotency_key:
+            cached_response = _get_cached_idempotent_response(idempotency_key)
+            if cached_response is not None:
+                cached_response["idempotency_key"] = idempotency_key
+                # Track as cached hit
+                augmented_embedding_requests_total.labels(
+                    status="cached",
+                    quality_tier=quality_tier
+                ).inc()
+                return cached_response, False
 
-    sync_key = str(unique_id)
-    if sync_key in _SYNCED_OBSERVATIONS:
-        if payload.observation_id in _SYNCED_OBSERVATIONS[sync_key]:
+        sync_key = str(unique_id)
+        if sync_key in _SYNCED_OBSERVATIONS:
+            if payload.observation_id in _SYNCED_OBSERVATIONS[sync_key]:
+                augment_status = "duplicate"
+                raise HTTPException(
+                    status_code=status.HTTP_409_CONFLICT,
+                    detail=f"Observation '{payload.observation_id}' already synced to roster entry '{unique_id}'",
+                )
+
+        entry = roster_service.get_entry(unique_id, model)
+        if not entry:
+            augment_status = "not_found"
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail=f"Roster entry '{unique_id}' not found",
+            )
+
+
+        # Duplicate observation guard
+        augmented_embeddings = entry.metadata.get("augmented_embeddings", []) if entry.metadata else []
+        if any(item.get("observation_id") == payload.observation_id for item in augmented_embeddings):
+            augment_status = "duplicate"
             raise HTTPException(
                 status_code=status.HTTP_409_CONFLICT,
                 detail=f"Observation '{payload.observation_id}' already synced to roster entry '{unique_id}'",
             )
 
-    entry = roster_service.get_entry(unique_id, model)
-    if not entry:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Roster entry '{unique_id}' not found",
-        )
+        metadata: Dict[str, Any] = {}
+        if payload.attachment_id is not None:
+            metadata["attachment_id"] = payload.attachment_id
+        if payload.bbox is not None:
+            metadata["bbox"] = payload.bbox
+        if payload.confidence is not None:
+            metadata["confidence"] = payload.confidence
+        if payload.quality_tier is not None:
+            metadata["quality_tier"] = payload.quality_tier
+        if extra_metadata:
+            metadata.update(extra_metadata)
 
+        # Track aggregate recomputation time
+        with track_aggregate_recomputation():
+            appended = roster_service.add_augmented_embedding(
+                unique_id=unique_id,
+                model=model,
+                embedding=payload.embedding,
+                source="wordpress_confirm",
+                observation_id=payload.observation_id,
+                metadata=metadata,
+            )
 
-    # Duplicate observation guard
-    augmented_embeddings = entry.metadata.get("augmented_embeddings", []) if entry.metadata else []
-    if any(item.get("observation_id") == payload.observation_id for item in augmented_embeddings):
-        raise HTTPException(
-            status_code=status.HTTP_409_CONFLICT,
-            detail=f"Observation '{payload.observation_id}' already synced to roster entry '{unique_id}'",
-        )
+        if not appended:
+            # Check whether append failed because of duplicate observation id (race)
+            updated_entry = roster_service.get_entry(unique_id, model)
+            if updated_entry:
+                augmented_list = updated_entry.metadata.get("augmented_embeddings", [])
+                if any(item.get("observation_id") == payload.observation_id for item in augmented_list):
+                    augment_status = "duplicate"
+                    raise HTTPException(
+                        status_code=status.HTTP_409_CONFLICT,
+                        detail=f"Observation '{payload.observation_id}' already synced to roster entry '{unique_id}'",
+                    )
+            augment_status = "error"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Failed to add embedding to roster entry '{unique_id}'",
+            )
 
-    metadata: Dict[str, Any] = {}
-    if payload.attachment_id is not None:
-        metadata["attachment_id"] = payload.attachment_id
-    if payload.bbox is not None:
-        metadata["bbox"] = payload.bbox
-    if payload.confidence is not None:
-        metadata["confidence"] = payload.confidence
-    if payload.quality_tier is not None:
-        metadata["quality_tier"] = payload.quality_tier
-    if extra_metadata:
-        metadata.update(extra_metadata)
-
-    appended = roster_service.add_augmented_embedding(
-        unique_id=unique_id,
-        model=model,
-        embedding=payload.embedding,
-        source="wordpress_confirm",
-        observation_id=payload.observation_id,
-        metadata=metadata,
-    )
-
-    if not appended:
-        # Check whether append failed because of duplicate observation id (race)
         updated_entry = roster_service.get_entry(unique_id, model)
-        if updated_entry:
-            augmented_list = updated_entry.metadata.get("augmented_embeddings", [])
-            if any(item.get("observation_id") == payload.observation_id for item in augmented_list):
-                raise HTTPException(
-                    status_code=status.HTTP_409_CONFLICT,
-                    detail=f"Observation '{payload.observation_id}' already synced to roster entry '{unique_id}'",
-                )
+        if not updated_entry:
+            augment_status = "error"
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Entry updated but could not be reloaded",
+            )
+
+        if sync_key not in _SYNCED_OBSERVATIONS:
+            _SYNCED_OBSERVATIONS[sync_key] = {}
+        _SYNCED_OBSERVATIONS[sync_key][payload.observation_id] = time.time()
+
+        scheduled = _schedule_embedding_reload(background_tasks)
+        _invalidate_etag_cache(model)
+
+        response_body = {
+            "success": True,
+            "roster_entry": _serialize_augmented_entry(updated_entry),
+            "index_reloaded": scheduled,
+            "idempotency_key": idempotency_key,
+        }
+
+        if payload.idempotency_key:
+            _store_idempotent_response(idempotency_key, response_body)
+        
+        return response_body, True
+        
+    except HTTPException:
+        # Re-raise HTTP exceptions but still track metrics
+        raise
+    except Exception as exc:
+        augment_status = "error"
+        logger.exception(f"Unexpected error in augmentation: {exc}")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Failed to add embedding to roster entry '{unique_id}'",
+            detail=f"Internal error processing augmentation: {str(exc)}"
         )
-
-    updated_entry = roster_service.get_entry(unique_id, model)
-    if not updated_entry:
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Entry updated but could not be reloaded",
-        )
-
-    if sync_key not in _SYNCED_OBSERVATIONS:
-        _SYNCED_OBSERVATIONS[sync_key] = {}
-    _SYNCED_OBSERVATIONS[sync_key][payload.observation_id] = time.time()
-
-    scheduled = _schedule_embedding_reload(background_tasks)
-    _invalidate_etag_cache(model)
-
-    response_body = {
-        "success": True,
-        "roster_entry": _serialize_augmented_entry(updated_entry),
-        "index_reloaded": scheduled,
-        "idempotency_key": idempotency_key,
-    }
-
-    if payload.idempotency_key:
-        _store_idempotent_response(idempotency_key, response_body)
-    return response_body, True
+    finally:
+        # Track metrics regardless of outcome
+        duration = time.perf_counter() - start_time
+        augmented_embedding_requests_total.labels(
+            status=augment_status,
+            quality_tier=quality_tier
+        ).inc()
+        augmented_embedding_duration_seconds.labels(
+            operation="augment_request"
+        ).observe(duration)
 
 
-@router.post("/roster/{unique_id}/augment")
+@router.post(
+    "/roster/{unique_id}/augment",
+    response_model=Dict[str, Any],
+    status_code=status.HTTP_200_OK,
+    summary="Add augmented embedding to roster entry (progressive learning)",
+    description="""
+Add a confirmed face observation embedding to a roster entry for progressive learning.
+
+This endpoint enables the recognition service to continuously improve match accuracy
+as WordPress users confirm face identities. Each confirmation appends a new augmented
+embedding to the roster entry, which is then incorporated into the weighted aggregate
+embedding used for future recognition requests.
+
+**Progressive Learning Workflow:**
+1. WordPress user confirms a face match via the plugin UI
+2. Plugin sends the face embedding + observation metadata to this endpoint
+3. Backend validates embedding dimensions and deduplicates by observation_id
+4. Augmented embedding is appended with quality tier (derived from confidence or explicit)
+5. Aggregate embedding is recomputed with weighted averaging (high=1.0, medium=0.8, low=0.5)
+6. FAISS index reload is scheduled (debounced, max every 30 seconds)
+7. Future recognition requests benefit from the improved aggregate
+
+**Idempotency:**
+- Use `observation_id` to prevent duplicate embeddings (409 if already exists)
+- Optional `idempotency_key` for safe retries (cached response returned within 10 minutes)
+
+**Quality Tiers:**
+- **high** (1.0 weight): confidence ≥ 0.85 or frontal/clear face conditions
+- **medium** (0.8 weight): 0.65 ≤ confidence < 0.85 or partial occlusion
+- **low** (0.5 weight): confidence < 0.65 or side profiles, poor lighting
+
+**Performance:**
+- Target latency: <100ms p95 (without FAISS reload)
+- FAISS reload: <5 seconds for 1,000 roster entries
+- Reload debounced to avoid thrashing on rapid confirmations
+    """,
+    responses={
+        200: {
+            "description": "Augmented embedding successfully added and aggregate updated",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "success": True,
+                        "entry": {
+                            "unique_id": "person-alice-2025",
+                            "name": "Alice Johnson",
+                            "display_name": "Alice J.",
+                            "metadata": {
+                                "augmented_embeddings": [
+                                    {
+                                        "observation_id": "obs-wp-12345",
+                                        "attachment_id": 789,
+                                        "confidence": 0.92,
+                                        "quality_tier": "high",
+                                        "source": "wordpress-confirmation",
+                                        "bbox": {"x": 120, "y": 80, "width": 150, "height": 200}
+                                    }
+                                ]
+                            },
+                            "reference_count": 3,
+                            "augmented_count": 1,
+                            "embedding_count": 4,
+                            "aggregate_embedding": [0.123, 0.456, "..."],
+                            "aggregate_updated_at": "2025-11-01T21:30:00Z"
+                        },
+                        "index_reload_scheduled": True
+                    }
+                }
+            }
+        },
+        404: {
+            "description": "Roster entry not found",
+            "content": {
+                "application/json": {
+                    "example": {"detail": "Roster entry 'unknown-id' not found"}
+                }
+            }
+        },
+        409: {
+            "description": "Duplicate observation_id (idempotent rejection)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": "Observation 'obs-wp-12345' already exists for this entry"
+                    }
+                }
+            }
+        },
+        422: {
+            "description": "Validation error (invalid embedding dimensions, missing required fields)",
+            "content": {
+                "application/json": {
+                    "example": {
+                        "detail": [
+                            {
+                                "loc": ["body", "embedding"],
+                                "msg": "embedding must be exactly 512 dimensions",
+                                "type": "value_error"
+                            }
+                        ]
+                    }
+                }
+            }
+        }
+    },
+    tags=["roster", "progressive-learning"]
+)
 async def augment_roster_entry(
     unique_id: str,
     payload: RosterAugmentPayload,

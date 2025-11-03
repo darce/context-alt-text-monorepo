@@ -1,0 +1,35 @@
+---
+title: Error & Retry Path
+---
+sequenceDiagram
+    participant API as /roster/{id}/augment
+    participant Service as RosterService
+    participant Storage as RosterStoragePort
+    participant Metrics as shared/metrics.py
+    participant Logger as Logging
+    participant Queue as HybridIndexManager (reload)
+    participant Alerts as Alert Bus (future)
+
+    API->>Service: add_augmented_embedding(...)
+    Service->>Storage: save_roster_entry()
+    alt storage error
+        Storage-->>Service: raise Exception
+        Service->>Logger: error("Failed to persist augmented embedding")
+        Service->>Metrics: augmented_embedding_requests_total(status="error")
+        Service-->>API: propagate exception
+        API-->>Client: 500 error response
+    else saved
+        Storage-->>Service: success
+        Service->>Metrics: augmented_embedding_requests_total(status="success")
+        API-->>Client: 200 OK
+        API->>Queue: enqueue reload task
+        Queue->>Queue: rebuild_index()
+        alt reload failure
+            Queue->>Logger: error("Hybrid index rebuild failed")
+            Queue->>Metrics: faiss_reload_duration_seconds.observe()
+            Queue->>Alerts: notify failure (future hook)
+            Queue-->>Queue: leave entry for retry/backoff
+        else reload success
+            Queue->>Metrics: faiss_index_last_reload_timestamp.set()
+        end
+    end

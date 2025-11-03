@@ -1,0 +1,22 @@
+---
+title: Progressive Learning (Augment Roster Entry)
+---
+sequenceDiagram
+    participant WP as WP Plugin
+    participant API as FastAPI /roster/{id}/augment
+    participant RS as RosterService
+    participant VAL as DataValidationPort
+    participant STORE as RosterStoragePort (PostgreSQL)
+    participant HYBRID as HybridIndexManager
+
+    WP->>API: POST augment payload (embedding, observationId)
+    API->>RS: add_augmented_embedding(...)
+    RS->>VAL: validate_embedding(vector, model)
+    VAL-->>RS: []
+    RS->>STORE: save_roster_entry(updated entry)
+    STORE-->>RS: success
+    RS-->>API: True (appended)
+    API->>HYBRID: background reload request (debounced)
+    HYBRID->>STORE: load_roster_entries()
+    HYBRID->>HYBRID: rebuild FAISS index (weighted aggregates)
+    API-->>WP: 200 OK + updated entry snapshot

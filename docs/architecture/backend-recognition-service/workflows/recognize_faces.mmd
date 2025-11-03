@@ -1,0 +1,25 @@
+---
+title: Face Recognition Request
+---
+sequenceDiagram
+    participant Client as Client (WordPress / internal caller)
+    participant API as FastAPI /embeddings
+    participant RecSvc as FaceRecognitionService
+    participant EmbedRouter as EmbeddingRouterAdapter
+    participant Hybrid as HybridIndexManager
+    participant Model as InsightFaceAdapter
+
+    Client->>API: POST /api/v0/embeddings {image, threshold?}
+    API->>API: validate payload + load image
+    API->>RecSvc: recognize_faces(image, threshold?)
+    RecSvc->>EmbedRouter: reload_if_needed()
+    EmbedRouter->>Hybrid: maybe_reload()
+    Hybrid-->>EmbedRouter: embeddings cached
+    RecSvc->>Model: analyze(image)
+    Model-->>RecSvc: face_embeddings[]
+    loop per face_embedding
+        RecSvc->>EmbedRouter: find_matches(embedding, threshold)
+        EmbedRouter-->>RecSvc: matches (top candidates)
+    end
+    RecSvc-->>API: RecognitionResult (detections, embeddings, matches)
+    API-->>Client: 200 OK {faces: [...], threshold, processing_time_ms}

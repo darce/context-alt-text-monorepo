@@ -78,7 +78,7 @@ def _load_env_file():
 
 
 def _get_database_url() -> str:
-    """Get database URL from environment or use SQLite default for local dev."""
+    """Get database URL from environment (PostgreSQL required)."""
     # Load .env file first
     _load_env_file()
     
@@ -91,13 +91,13 @@ def _get_database_url() -> str:
     if config_url:
         return config_url
     
-    # Default to SQLite for local development
-    default_sqlite = "sqlite:///./data/recognition.db"
-    logger.warning(
-        f"DATABASE_URL not set, using default SQLite: {default_sqlite}. "
-        "Set DATABASE_URL environment variable for production databases."
+    # PostgreSQL is required
+    raise ValueError(
+        "DATABASE_URL environment variable is required. "
+        "This project requires PostgreSQL 17+ with pgvector 0.8.1+ extension. "
+        "Example: postgresql://user:pass@localhost:5432/recognition "
+        "See docs/tasks/db-install-and-production-guide.md for setup instructions."
     )
-    return default_sqlite
 
 
 def run_migrations_offline() -> None:

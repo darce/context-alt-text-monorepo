@@ -7,40 +7,40 @@
 
 ### API Latency Targets
 
-| Operation | Target (p95) | Target (p99) | Notes |
-|-----------|--------------|--------------|-------|
-| **POST `/roster/{id}/augment`** | <100ms | <150ms | Excluding FAISS reload (background task) |
-| **GET `/roster/{id}`** | <50ms | <80ms | Cache hit should be <10ms |
-| **POST `/analyze-scene`** | <200ms | <300ms | Single face, InsightFace inference |
-| **POST `/embeddings`** | <150ms | <250ms | Batch of 5 faces |
-| **GET `/roster` (list)** | <100ms | <200ms | 100 entries, no embeddings |
-| **Vector search (FAISS)** | <50ms | <100ms | Top-10 similarity, 1k entries |
-| **Vector search (pgvector)** | <200ms | <350ms | Top-10 similarity, 1k entries, HNSW |
+| Operation                       | Target (p95) | Target (p99) | Notes                                    |
+| ------------------------------- | ------------ | ------------ | ---------------------------------------- |
+| **POST `/roster/{id}/augment`** | <100ms       | <150ms       | Excluding FAISS reload (background task) |
+| **GET `/roster/{id}`**          | <50ms        | <80ms        | Cache hit should be <10ms                |
+| **POST `/analyze-scene`**       | <200ms       | <300ms       | Single face, InsightFace inference       |
+| **POST `/embeddings`**          | <150ms       | <250ms       | Batch of 5 faces                         |
+| **GET `/roster` (list)**        | <100ms       | <200ms       | 100 entries, no embeddings               |
+| **Vector search (FAISS)**       | <50ms        | <100ms       | Top-10 similarity, 1k entries            |
+| **Vector search (pgvector)**    | <200ms       | <350ms       | Top-10 similarity, 1k entries, HNSW      |
 
 ### Background Task Targets
 
-| Task | Target Duration | Notes |
-|------|----------------|-------|
-| **FAISS index reload** | <5 seconds | 1,000 roster entries with aggregates |
-| **PostgreSQL materialized view refresh** | <2 seconds | `REFRESH MATERIALIZED VIEW roster_aggregate_embeddings` |
-| **Aggregate recomputation** | <10ms | Single roster entry with 10 augmented embeddings |
+| Task                                     | Target Duration | Notes                                                   |
+| ---------------------------------------- | --------------- | ------------------------------------------------------- |
+| **FAISS index reload**                   | <5 seconds      | 1,000 roster entries with aggregates                    |
+| **PostgreSQL materialized view refresh** | <2 seconds      | `REFRESH MATERIALIZED VIEW roster_aggregate_embeddings` |
+| **Aggregate recomputation**              | <10ms           | Single roster entry with 10 augmented embeddings        |
 
 ### Throughput Targets
 
-| Metric | Target | Measurement Window |
-|--------|--------|-------------------|
-| **Concurrent recognition requests** | 10 req/s | Single worker, CPU-only |
-| **Augment requests** | 50 req/s | With debounced FAISS reload |
-| **ETag cache hit rate** | >80% | WordPress roster polling scenario |
+| Metric                              | Target   | Measurement Window                |
+| ----------------------------------- | -------- | --------------------------------- |
+| **Concurrent recognition requests** | 10 req/s | Single worker, CPU-only           |
+| **Augment requests**                | 50 req/s | With debounced FAISS reload       |
+| **ETag cache hit rate**             | >80%     | WordPress roster polling scenario |
 
 ## Quality & Accuracy Targets
 
-| Metric | Target | Validation Method |
-|--------|--------|-------------------|
-| **Progressive learning improvement** | +10% match score | After 5 augmented embeddings |
-| **False positive rate** | <5% | At default threshold (0.45) |
-| **FAISS recall@10** | >95% | vs brute-force cosine similarity |
-| **Idempotency success rate** | 100% | Duplicate observation_id → 409 |
+| Metric                               | Target           | Validation Method                |
+| ------------------------------------ | ---------------- | -------------------------------- |
+| **Progressive learning improvement** | +10% match score | After 5 augmented embeddings     |
+| **False positive rate**              | <5%              | At default threshold (0.45)      |
+| **FAISS recall@10**                  | >95%             | vs brute-force cosine similarity |
+| **Idempotency success rate**         | 100%             | Duplicate observation_id → 409   |
 
 ## Benchmark Methodology
 
@@ -69,6 +69,7 @@ pytest tests/benchmarks/test_search_latency.py --benchmark-only --benchmark-auto
 ```
 
 **Expected output format:**
+
 ```
 test_augment_single_embedding       Mean: 45.2ms  StdDev: 8.3ms  p95: 62.1ms  p99: 85.7ms
 test_search_faiss_top10            Mean: 12.5ms  StdDev: 2.1ms  p95: 17.3ms  p99: 23.4ms
@@ -82,6 +83,7 @@ locust -f tests/load/augment_load_test.py --host=http://localhost:8000 --users=5
 ```
 
 **Metrics to capture:**
+
 - Requests per second (RPS)
 - Response time percentiles (p50, p95, p99)
 - Error rate
@@ -145,9 +147,10 @@ pytest tests/integration/test_progressive_learning_accuracy.py -v
 **Date:** 2025-11-01T21:45:00Z  
 **Environment:** Intel i7-12700K, 32GB RAM, Python 3.10.17, PostgreSQL 17 + pgvector 0.8.1  
 **Dataset:** 500 roster entries, 1,500 total embeddings, FAISS index 24MB  
-**Method:** pytest-benchmark, 100 iterations, 10 warm-up runs  
+**Method:** pytest-benchmark, 100 iterations, 10 warm-up runs
 
 **Results:**
+
 - Mean: 52.3ms
 - StdDev: 9.1ms
 - p95: 71.2ms ✅ (target: <100ms)
@@ -159,6 +162,7 @@ pytest tests/integration/test_progressive_learning_accuracy.py -v
 ### Storage Location
 
 Save benchmark results to:
+
 - `docs/performance/benchmarks/YYYY-MM-DD-operation-name.md`
 - Include raw data as CSV/JSON attachment if available
 - Link from this document under "Historical Results" section

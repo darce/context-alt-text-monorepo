@@ -265,7 +265,22 @@ class StubRosterService:
         return self._entries.pop(unique_id, None) is not None
 
     def get_storage_info(self, model):
-        return {"backend": "stub", "model": model}
+        # Count embeddings
+        total_ref = sum(1 for e in self._entries.values())
+        total_aug = sum(len(e.metadata.get("augmented_embeddings", [])) for e in self._entries.values())
+        
+        return {
+            "backend": "stub",
+            "model": model,
+            "roster_stats": {
+                "entry_count": len(self._entries),
+                "reference_embeddings": total_ref,
+                "augmented_embeddings": total_aug,
+                "total_embeddings": total_ref + total_aug,
+                "etag": None,
+                "last_updated": None,
+            }
+        }
 
 
 def load_example(name: str) -> Dict[str, Any]:
@@ -285,6 +300,13 @@ def client() -> TestClient:
     set_scene_analysis_service(scene_service)
 
     stub_roster = StubRosterService()
+    # Add the same "Test User" that StubRecognitionService reports
+    stub_roster.add_entry(
+        name="Test User",
+        embedding=[1.0, 0.0],  # Match the stub recognition service
+        model="stub-face",
+        metadata={"role": "tester"}
+    )
     set_roster_service(stub_roster)
 
     app = FastAPI()
@@ -353,7 +375,8 @@ def test_roster_upsert_embeddings(client: TestClient) -> None:
     assert response.status_code == 200
     body = response.json()
     assert body["successful"] == ["Alice"]
-    assert body["roster_stats"]["total_entries"] == 1
+    # Fixture pre-adds "Test User", so total should be 2 after adding Alice
+    assert body["roster_stats"]["total_entries"] == 2
 
 
 def test_append_reference_embedding_recomputes_average(client: TestClient) -> None:
@@ -371,4 +394,5 @@ def test_delete_roster_entry(client: TestClient) -> None:
     response = client.delete("/roster/Alice")
     assert response.status_code == 200
     body = response.json()
-    assert body["roster_stats"]["total_entries"] == 0
+    # Fixture pre-adds "Test User", so after deleting Alice, 1 entry remains
+    assert body["roster_stats"]["total_entries"] == 1

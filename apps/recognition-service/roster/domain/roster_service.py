@@ -299,6 +299,15 @@ class RosterService:
         if success:
             self._invalidate_cache(model)
             self._sync_embeddings_store(model)
+            
+            # Refresh materialized view for progressive learning
+            # This updates the weighted aggregate embedding that combines reference + augmented embeddings
+            if hasattr(self.roster_storage, 'refresh_aggregate_view'):
+                try:
+                    self.roster_storage.refresh_aggregate_view(roster_id=unique_id)
+                except Exception as exc:
+                    # Log but don't fail the request - progressive learning degrades gracefully
+                    logger.warning(f"Failed to refresh aggregate view for {unique_id}: {exc}")
         else:
             logger.error(
                 "Failed to persist augmented embedding for entry %s in model %s",

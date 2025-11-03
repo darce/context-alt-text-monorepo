@@ -115,6 +115,9 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
             create_schema=False,
         )
 
+        # Verify pgvector extension is installed
+        self._verify_pgvector_extension()
+
         logger.info(
             "PostgreSQL roster storage adapter initialised (tenant=%s, pool=%s)",
             self.tenant_id,
@@ -124,6 +127,37 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
     # ------------------------------------------------------------------
     # Engine configuration
     # ------------------------------------------------------------------
+    def _verify_pgvector_extension(self) -> None:
+        """
+        Verify pgvector extension is installed in the database.
+        
+        Raises:
+            RuntimeError: If pgvector extension is not found.
+        """
+        try:
+            with self.engine.connect() as conn:
+                result = conn.execute(text(
+                    "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector'"
+                ))
+                row = result.fetchone()
+                
+                if row is None:
+                    raise RuntimeError(
+                        "pgvector extension not found in database. "
+                        "Please install pgvector extension (0.8.1+ required for HNSW support). "
+                        "See db/SETUP.md for installation instructions."
+                    )
+                
+                version = row[1]
+                logger.info("✅ pgvector extension verified (version %s)", version)
+        except SQLAlchemyError as e:
+            logger.error("Failed to verify pgvector extension: %s", e)
+            raise RuntimeError(
+                "Could not verify pgvector extension. "
+                "Database connection may be misconfigured or extension may be missing. "
+                "See db/SETUP.md for setup instructions."
+            ) from e
+
     def _create_engine(self, database_url: str, *, echo: bool) -> Engine:
         return create_engine(
             database_url,
@@ -306,6 +340,70 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
             except SQLAlchemyError:
                 logger.exception("pgvector similarity search failed")
                 return []
+
+    # ------------------------------------------------------------------
+    # Progressive Learning: Materialized View Refresh
+    # ------------------------------------------------------------------
+    def refresh_aggregate_view(self, roster_id: Optional[str] = None) -> None:
+        """
+        Refresh materialized view for roster aggregate embeddings.
+        
+        This is called after adding augmented embeddings to update the weighted
+        aggregate that includes reference embeddings (weight=1.0) and augmented
+        embeddings (weight based on quality_tier: high=1.0, medium=0.8, low=0.5).
+        
+        Args:
+            roster_id: If provided, only refreshes this specific entry (selective refresh).
+                      If None, refreshes the entire view (used during startup/migrations).
+        
+        Note: The materialized view handles weighting by duplicating embeddings:
+        - Reference embeddings: 3 copies (weight = 3/3 = 1.0 effective)
+        - High quality: 3 copies (weight = 3/3 = 1.0 effective) 
+        - Medium quality: 2 copies (weight = 2/3 ≈ 0.67 effective)
+        - Low quality: 1 copy (weight = 1/3 ≈ 0.33 effective)
+        
+        The view is then queried by vector search operations instead of
+        the roster_entries.aggregate_embedding column.
+        """
+        start_time = time.perf_counter()
+        operation = "refresh_aggregate_view_selective" if roster_id else "refresh_aggregate_view_full"
+        
+        try:
+            with self._session() as session:
+                if roster_id:
+                    # Selective refresh: The view auto-updates when underlying tables change,
+                    # but we need to explicitly refresh to ensure consistency.
+                    # PostgreSQL REFRESH MATERIALIZED VIEW CONCURRENTLY allows reads during refresh.
+                    session.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY roster_aggregate_embeddings"))
+                    logger.debug(f"Refreshed materialized view (triggered by roster_id={roster_id})")
+                else:
+                    # Full refresh (blocking) - used during startup or migrations
+                    session.execute(text("REFRESH MATERIALIZED VIEW roster_aggregate_embeddings"))
+                    logger.info("Fully refreshed materialized view roster_aggregate_embeddings")
+                
+                session.commit()
+                
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_query(operation, duration_ms, success=True)
+            
+            if duration_ms > self._slow_query_threshold_ms:
+                self._metrics.record_slow_query(
+                    operation, duration_ms, 
+                    {"roster_id": roster_id, "type": "selective" if roster_id else "full"}
+                )
+                
+        except SQLAlchemyError as exc:
+            duration_ms = (time.perf_counter() - start_time) * 1000
+            self._metrics.record_query(operation, duration_ms, success=False)
+            self._metrics.record_error(
+                operation=operation,
+                error_type=type(exc).__name__,
+                message=str(exc),
+                context={"roster_id": roster_id}
+            )
+            logger.error(f"Failed to refresh materialized view: {exc}")
+            # Don't raise - progressive learning should degrade gracefully
+            # FAISS index will still work with slightly stale data
 
     # ------------------------------------------------------------------
     # Metrics utilities

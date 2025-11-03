@@ -18,7 +18,7 @@ from api.dependencies import (
 from api.schemas import AnalyzeSceneRequest, EmbeddingsRequest
 from shared.config import get_config
 from shared.utils.device_utils import get_available_device  # for device resolution if needed
-from shared.metrics import update_roster_metrics, update_faiss_metrics
+from shared.metrics import update_roster_metrics, update_faiss_metrics, get_metrics_handler
 
 router = APIRouter()
 router.include_router(roster_router)
@@ -360,6 +360,7 @@ async def service_info(
     This endpoint provides comprehensive service health and observability data including:
     - Model configuration (device, providers, thresholds)
     - Roster statistics (entry count, embedding counts by type)
+    - Progressive learning metrics (confirmations, quality distribution)
     - FAISS index statistics (vector count, last reload time)
     - Performance settings and cache configuration
     
@@ -394,6 +395,53 @@ async def service_info(
             "reference_embeddings": 0,
             "augmented_embeddings": 0,
             "total_embeddings": 0,
+            "error": str(exc)
+        }
+    
+        # Add progressive learning statistics
+    try:
+        # Check if storage adapter exists and has the method
+        # RosterService uses 'roster_storage' attribute
+        storage_adapter = getattr(roster_service, 'roster_storage', None) or getattr(roster_service, 'storage', None)
+        
+        if storage_adapter and hasattr(storage_adapter, 'get_progressive_learning_stats'):
+            pl_stats = storage_adapter.get_progressive_learning_stats()
+            
+            info["progressive_learning"] = {
+                "enabled": True,
+                "confirmations_last_24h": pl_stats["confirmations_24h"],
+                "avg_augmentations_per_entry": pl_stats["avg_augmentations"],
+                "quality_distribution": {
+                    "high": pl_stats["quality_high_pct"],
+                    "medium": pl_stats["quality_medium_pct"],
+                    "low": pl_stats["quality_low_pct"],
+                },
+                "aggregate_refresh_status": {
+                    "last_full_refresh": pl_stats["last_full_refresh"],
+                    "refresh_in_progress": pl_stats["refresh_in_progress"],
+                    "pending_updates": pl_stats["pending_refresh_count"],
+                }
+            }
+            
+            # Include pgvector version in database info
+            if "database" not in info:
+                info["database"] = {}
+            info["database"]["type"] = "postgresql"
+            info["database"]["pgvector_version"] = pl_stats["pgvector_version"]
+            
+            # Update roster stats with progressive learning data
+            info["roster_stats"]["total_entries"] = pl_stats["total_entries"]
+            info["roster_stats"]["entries_with_augmentations"] = pl_stats["augmented_entries"]
+            info["roster_stats"]["total_reference_embeddings"] = pl_stats["total_reference"]
+            info["roster_stats"]["total_augmented_embeddings"] = pl_stats["total_augmented"]
+            info["roster_stats"]["last_aggregate_refresh"] = pl_stats["last_mv_refresh"]
+        else:
+            info["progressive_learning"] = {"enabled": False, "message": "PostgreSQL storage adapter not available"}
+            
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.error(f"Failed to fetch progressive learning stats: {exc}")
+        info["progressive_learning"] = {
+            "enabled": False,
             "error": str(exc)
         }
     
@@ -437,6 +485,39 @@ async def health(
     # If the dependency resolved, we consider the service healthy.
     _ = scene_analysis_service
     return {"status": "ok"}
+
+
+@router.get("/metrics")
+def metrics():
+    """
+    Prometheus metrics endpoint.
+    
+    Exposes application metrics in Prometheus format for scraping and monitoring.
+    
+    **Metrics Included:**
+    - `augmented_embedding_requests_total`: Counter for augmentation requests (labeled by status, quality_tier)
+    - `augmented_embedding_duration_seconds`: Histogram of augmentation operation latencies
+    - `roster_entries_total`: Gauge of total roster entries
+    - `roster_embeddings_by_type`: Gauge of embeddings by type (reference, augmented)
+    - `faiss_index_vectors_total`: Gauge of total vectors in FAISS index
+    
+    **Usage:**
+    Configure Prometheus to scrape this endpoint:
+    ```yaml
+    scrape_configs:
+      - job_name: 'recognition-service'
+        static_configs:
+          - targets: ['recognition-service:7860']
+        metrics_path: '/api/v0/metrics'
+    ```
+    
+    **Returns:**
+    - Prometheus text exposition format
+    - Content-Type: text/plain; version=0.0.4
+    """
+    metrics_handler = get_metrics_handler()
+    return metrics_handler()
+
 
 @router.post("/identify-hf")  # Alias for ONNX AdaFace identification
 async def identify_hf(

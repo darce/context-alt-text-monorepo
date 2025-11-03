@@ -1,0 +1,19 @@
+---
+title: Hybrid Index Reload Cycle
+---
+sequenceDiagram
+    participant Scheduler as HybridIndexManager (auto reload)
+    participant Storage as RosterStoragePort
+    participant FAISS as In-memory Index
+
+    loop Every reload_interval seconds
+        Scheduler->>Scheduler: maybe_reload()
+        alt reload needed
+            Scheduler->>Storage: load_roster_entries()
+            Storage-->>Scheduler: entries with aggregate embeddings
+            Scheduler->>Scheduler: rebuild_index(entries)
+            Scheduler->>FAISS: replace vectors
+        else skip
+            Scheduler-->>Scheduler: no-op
+        end
+    end

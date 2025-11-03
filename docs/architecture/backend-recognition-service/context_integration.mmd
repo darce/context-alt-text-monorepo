@@ -1,0 +1,32 @@
+---
+title: Recognition Service Integration Touchpoints
+---
+flowchart LR
+    subgraph wordpress["WordPress Site"]
+        plugin["Context Alt Text Plugin\n(Admin SPA)"]
+    end
+
+    subgraph backend["Recognition Service (FastAPI)"]
+        api["HTTP API (/api/v0/**)"]
+        docs["Docs: backend-recognition-service/*"]
+        config["shared/config settings.yaml / .env"]
+    end
+
+    subgraph infra["Persistence & Models"]
+        postgres["PostgreSQL + pgvector"]
+        faiss["FAISS index"]
+        weights["InsightFace weights"]
+    end
+
+    subgraph team_docs["Legacy Diagrams"]
+        legacy["docs/architecture/backend-uml/**\n(historical reference)"]
+    end
+
+    plugin -->|Roster + recognition calls| api
+    api --> postgres
+    api --> faiss
+    api --> weights
+    docs --> plugin
+    docs --> api
+    docs --> config
+    legacy -.-> docs

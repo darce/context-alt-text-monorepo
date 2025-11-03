@@ -1,0 +1,18 @@
+---
+title: Recognition Service Startup
+---
+sequenceDiagram
+    participant App as FastAPI Application
+    participant Settings as Pydantic Settings
+    participant Factory as shared/startup/adapter_factory.py
+    participant Roster as RosterStorageAdapter
+    participant Hybrid as HybridIndexManager
+    participant RecSvc as FaceRecognitionService
+
+    App->>Settings: load()
+    App->>Factory: build_roster_storage(DATABASE_URL)
+    Factory-->>App: Roster adapter (PostgreSQL or SQLite)
+    App->>Hybrid: HybridIndexManager(roster_adapter)
+    App->>RecSvc: FaceRecognitionService(embedding_router(Hybrid))
+    App->>App: stash singletons in dependencies
+    App-->>App: set initialization_complete = True

@@ -1,0 +1,31 @@
+---
+title: Metrics Integration
+---
+flowchart LR
+    subgraph module["shared/metrics.py"]
+        decorator["track_augment_request\n(async decorator)"]
+        ctx_manager["track_aggregate_recomputation\n(context manager)"]
+        roster_fn["update_roster_metrics(stats, model)"]
+        faiss_fn["update_faiss_metrics(stats)"]
+        prometheus["prometheus_client Gauges/Counters/Histograms"]
+    end
+
+    subgraph usage["Call Sites"]
+        augment_api["/roster/{id}/augment\nFastAPI handler"]
+        roster_service["RosterService\naggregate recompute"]
+        service_info["/service/info\nFastAPI handler"]
+        hybrid_manager["HybridIndexManager\nreload stats"]
+    end
+
+    augment_api --> decorator
+    decorator --> prometheus
+
+    roster_service --> ctx_manager
+    ctx_manager --> prometheus
+
+    service_info --> roster_fn
+    service_info --> faiss_fn
+    hybrid_manager --> faiss_fn
+
+    roster_fn --> prometheus
+    faiss_fn --> prometheus

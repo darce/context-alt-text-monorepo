@@ -15,5 +15,6 @@ RUN_INTEGRATION=1 RECOGNITION_BASE_URL=http://localhost:8000 pytest tests/integr
 ```
 
 Notes:
+
 - Tests are guarded with `pytest.mark.skipif` and will be skipped unless `RUN_INTEGRATION` is truthy.
 - These tests are intended as smoke/integration checks, not exhaustive unit tests.

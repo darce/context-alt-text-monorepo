@@ -18,6 +18,7 @@ from api.dependencies import (
 from api.schemas import AnalyzeSceneRequest, EmbeddingsRequest
 from shared.config import get_config
 from shared.utils.device_utils import get_available_device  # for device resolution if needed
+from shared.metrics import update_roster_metrics, update_faiss_metrics
 
 router = APIRouter()
 router.include_router(roster_router)
@@ -351,9 +352,80 @@ async def reload_embeddings_route(
 @router.get("/service/info")
 async def service_info(
     scene_analysis_service: SceneAnalysisService = Depends(get_scene_analysis_service),
+    roster_service = Depends(get_roster_service),
 ):
-    """Expose model metadata for diagnostics."""
-    info = await scene_analysis_service.recognition_service.get_service_info()
+    """
+    Expose model metadata, roster stats, and FAISS index stats for diagnostics.
+    
+    This endpoint provides comprehensive service health and observability data including:
+    - Model configuration (device, providers, thresholds)
+    - Roster statistics (entry count, embedding counts by type)
+    - FAISS index statistics (vector count, last reload time)
+    - Performance settings and cache configuration
+    
+    Used by WordPress dashboard to display system health and progressive learning status.
+    """
+    recognition_service = scene_analysis_service.recognition_service
+    info = await recognition_service.get_service_info()
+    
+    # Add roster statistics from storage
+    try:
+        storage_info = roster_service.get_storage_info(model="insightface_w600k")
+        roster_stats = storage_info.get("roster_stats", {})
+        
+        # Include etag and last_updated if available from roster cache
+        roster_metadata = {}
+        if hasattr(roster_service, "_etag_cache"):
+            roster_metadata["etag"] = roster_service._etag_cache.get("etag")
+            roster_metadata["last_updated"] = roster_service._etag_cache.get("timestamp")
+        
+        info["roster_stats"] = {
+            **roster_stats,
+            **roster_metadata
+        }
+        
+        # Update Prometheus metrics
+        update_roster_metrics(roster_stats, model="insightface_w600k")
+        
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.error(f"Failed to fetch roster stats: {exc}")
+        info["roster_stats"] = {
+            "entry_count": 0,
+            "reference_embeddings": 0,
+            "augmented_embeddings": 0,
+            "total_embeddings": 0,
+            "error": str(exc)
+        }
+    
+    # Add FAISS index statistics from embedding router
+    try:
+        embedding_router_info = info.get("embedding_router", {})
+        faiss_stats = {
+            "total_vectors": embedding_router_info.get("loaded_embeddings", 0),
+            "dimension": 512,  # From recognition settings
+            "index_type": "Flat",  # Current implementation uses Flat index
+        }
+        
+        # Include reload stats if available
+        reload_stats = embedding_router_info.get("reload_stats", {})
+        if reload_stats:
+            faiss_stats["last_reload"] = reload_stats.get("reloaded_at")
+            faiss_stats["last_reload_duration_ms"] = reload_stats.get("duration_ms")
+        
+        info["faiss_index_stats"] = faiss_stats
+        
+        # Update Prometheus metrics
+        update_faiss_metrics(faiss_stats)
+        
+    except Exception as exc:  # pragma: no cover - defensive
+        logging.error(f"Failed to build FAISS stats: {exc}")
+        info["faiss_index_stats"] = {
+            "total_vectors": 0,
+            "dimension": 512,
+            "index_type": "unknown",
+            "error": str(exc)
+        }
+    
     return {"status": "ok", "data": info}
 
 

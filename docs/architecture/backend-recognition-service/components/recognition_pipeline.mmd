@@ -1,0 +1,37 @@
+---
+title: Recognition Pipeline Components
+---
+flowchart LR
+    subgraph domain["Domain Layer"]
+        frs["FaceRecognitionService\nrecognize_faces()"]
+    end
+
+    subgraph adapters["Adapters"]
+        insight["InsightFaceAdapter\n(ONNX runtime wrapper)"]
+        embed_router["EmbeddingRouterAdapter\nloads + searches embeddings"]
+        hybrid["HybridIndexManager\nmaintains FAISS + pgvector parity"]
+    end
+
+    subgraph infra["Infrastructure"]
+        pg["PostgreSQL + pgvector\n(roster_entries, embeddings)"]
+        faiss["FAISS index\n(in-memory cosine search)"]
+        settings["settings.yaml + env\n(Pydantic config)"]
+    end
+
+    frs --> insight
+    frs --> embed_router
+    embed_router --> hybrid
+    hybrid --> pg
+    hybrid --> faiss
+
+    settings --> frs
+    settings --> embed_router
+    settings --> hybrid
+
+    classDef domain fill:#e8f5e9,stroke:#2e7d32;
+    classDef adapters fill:#fff3e0,stroke:#ef6c00;
+    classDef infra fill:#ede7f6,stroke:#5e35b1;
+
+    class frs domain;
+    class insight,embed_router,hybrid adapters;
+    class pg,faiss,settings infra;

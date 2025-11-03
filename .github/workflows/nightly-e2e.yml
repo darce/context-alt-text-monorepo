@@ -1,0 +1,79 @@
+name: Nightly E2E Tests
+
+on:
+  schedule:
+    - cron: "0 2 * * *" # 2 AM UTC daily
+  workflow_dispatch: # Allow manual trigger
+
+jobs:
+  e2e-tests:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: pgvector/pgvector:pg17
+        env:
+          POSTGRES_USER: test_user
+          POSTGRES_PASSWORD: test_pass
+          POSTGRES_DB: test_recognition
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+          cache: "pip"
+
+      - name: Install dependencies
+        working-directory: apps/recognition-service
+        run: |
+          pip install -r requirements_local.txt
+          pip install pytest pytest-cov
+
+      - name: Wait for PostgreSQL
+        run: |
+          until pg_isready -h localhost -p 5432 -U test_user; do
+            echo "Waiting for PostgreSQL..."
+            sleep 2
+          done
+
+      - name: Create pgvector extension
+        env:
+          PGPASSWORD: test_pass
+        run: |
+          psql -h localhost -U test_user -d test_recognition -c "CREATE EXTENSION IF NOT EXISTS vector;"
+          psql -h localhost -U test_user -d test_recognition -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
+
+      - name: Run Alembic migrations
+        working-directory: apps/recognition-service
+        env:
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_recognition
+        run: |
+          alembic upgrade head
+
+      - name: Run E2E tests
+        working-directory: apps/recognition-service
+        env:
+          RUN_E2E: "1"
+          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_recognition
+          TENANT_ID: test-tenant-e2e
+        run: |
+          pytest tests/integration/test_progressive_learning_e2e.py -v --tb=short
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: e2e-test-results
+          path: apps/recognition-service/test-results/
+          retention-days: 7

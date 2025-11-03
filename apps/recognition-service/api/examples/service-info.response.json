@@ -41,6 +41,10 @@
       "etag": null,
       "last_updated": null
     },
+    "progressive_learning": {
+      "enabled": false,
+      "message": "PostgreSQL storage adapter not available"
+    },
     "faiss_index_stats": {
       "total_vectors": 1,
       "dimension": 512,

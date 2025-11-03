@@ -2,11 +2,11 @@ import os
 import requests
 import pytest
 
-RUN_INTEGRATION = bool(os.environ.get("RUN_INTEGRATION"))
-BASE_URL = os.environ.get("RECOGNITION_BASE_URL", "http://localhost:8000")
+RUN_E2E = bool(os.environ.get("RUN_E2E"))
+BASE_URL = os.environ.get("RECOGNITION_BASE_URL", "http://localhost:7860")
 
 
-@pytest.mark.skipif(not RUN_INTEGRATION, reason="Integration tests skipped unless RUN_INTEGRATION=1")
+@pytest.mark.skipif(not RUN_E2E, reason="E2E tests skipped unless RUN_E2E=1")
 def test_etag_caching_roundtrip():
     """Smoke test for ETag caching on /api/v0/roster
 
@@ -27,7 +27,16 @@ def test_etag_caching_roundtrip():
         assert r2.status_code in (200, 304)
 
     # create a new roster entry to invalidate ETag
-    payload = {"label": "etag-integration", "display_name": "ETag Test", "model": "test"}
+    payload = {
+        "entries": [
+            {
+                "name": "etag-integration",
+                "embedding": [0.1] * 512,
+                "metadata": {"display_name": "ETag Test"}
+            }
+        ],
+        "model": "insightface_w600k"
+    }
     r3 = requests.post(roster_url, json=payload)
     assert r3.status_code in (200, 201)
 

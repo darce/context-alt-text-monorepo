@@ -14,7 +14,6 @@ from analysis.adapters.mock_yolo_adapter import MockYoloAdapter
 from analysis.adapters.mock_caption_adapter import MockCaptionAdapter
 from analysis.adapters.phi3_caption_adapter import Phi3CaptionAdapter
 from roster.adapters.postgresql_storage_adapter import PostgreSQLStorageAdapter
-from roster.adapters.sqlite_storage_adapter import SQLiteStorageAdapter
 
 
 class AdapterFactory:
@@ -37,10 +36,9 @@ class AdapterFactory:
         "phi3": Phi3CaptionAdapter,
     }
     
-    # Registry of storage adapters
+    # Registry of storage adapters (PostgreSQL-only)
     _STORAGE_ADAPTER_REGISTRY: Dict[str, type] = {
         "postgresql": PostgreSQLStorageAdapter,
-        "sqlite": SQLiteStorageAdapter,
     }
     
     @classmethod
@@ -184,13 +182,14 @@ class AdapterFactory:
     @staticmethod
     def create_roster_storage(config: Dict[str, Any]) -> RosterStoragePort:
         """
-        Create and return a roster storage adapter from the registry.
+        Create and return a PostgreSQL roster storage adapter.
 
-        Production runs use PostgreSQL 17+ with the pgvector extension; unit
-        tests may supply an in-memory SQLite URL for lightweight isolation.
+        This project requires PostgreSQL 17+ with the pgvector extension
+        for vector similarity search and roster storage.
 
         :param config: Configuration dictionary containing roster storage settings.
-        :return: An initialized roster storage instance.
+        :return: An initialized PostgreSQL storage instance.
+        :raises ValueError: If DATABASE_URL is missing or uses non-PostgreSQL scheme.
         """
         storage_config = config.get("config", {})
 
@@ -198,19 +197,20 @@ class AdapterFactory:
         if not database_url:
             raise ValueError(
                 "DATABASE_URL is required. "
-                "This project requires PostgreSQL 17+ with pgvector extension for production. "
+                "This project requires PostgreSQL 17+ with pgvector extension. "
                 "Example: postgresql://user:pass@localhost:5432/recognition"
             )
 
-        # Normalise scheme (e.g., postgresql+psycopg -> postgresql)
+        # Validate PostgreSQL scheme
         raw_scheme = database_url.split(":", 1)[0]
         scheme = raw_scheme.split("+", 1)[0]
 
-        adapter_class = AdapterFactory._STORAGE_ADAPTER_REGISTRY.get(scheme)
-        if adapter_class is None:
+        if scheme != "postgresql":
             raise ValueError(
                 f"Unsupported DATABASE_URL scheme '{raw_scheme}'. "
-                f"Available storage adapters: {list(AdapterFactory._STORAGE_ADAPTER_REGISTRY.keys())}"
+                f"This project requires PostgreSQL 17+ with pgvector extension. "
+                f"Please use a postgresql:// URL. "
+                f"See docs/tasks/db-install-and-production-guide.md for setup instructions."
             )
 
         tenant_id = storage_config.get("tenant_id") or os.getenv("DEFAULT_TENANT_ID")
@@ -218,17 +218,13 @@ class AdapterFactory:
         adapter_kwargs: Dict[str, Any] = {
             "database_url": database_url,
             "tenant_id": tenant_id,
+            "pool_size": storage_config.get("pool_size", 5),
+            "max_overflow": storage_config.get("max_overflow", 10),
+            "pool_timeout": storage_config.get("pool_timeout", 30),
         }
 
-        if scheme == "postgresql":
-            adapter_kwargs.update(
-                pool_size=storage_config.get("pool_size", 5),
-                max_overflow=storage_config.get("max_overflow", 10),
-                pool_timeout=storage_config.get("pool_timeout", 30),
-            )
-
-        logging.info("Creating %s roster storage adapter (%s)", scheme, database_url)
-        return adapter_class(**adapter_kwargs)
+        logging.info("Creating PostgreSQL roster storage adapter (%s)", database_url)
+        return PostgreSQLStorageAdapter(**adapter_kwargs)
     
     def _resolve_device(name: str, adapter_config: Dict[str, Any]) -> str:
         """

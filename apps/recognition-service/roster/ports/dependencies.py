@@ -56,7 +56,7 @@ def _create_roster_storage():
         raise ValueError(
             f"Invalid DATABASE_URL scheme: {database_url}. "
             "Only PostgreSQL is supported (postgresql:// or postgresql+psycopg2://). "
-            "SQLite and other databases are not supported."
+            "This project requires PostgreSQL 17+ with pgvector extension."
         )
 
     tenant_id = os.getenv("DEFAULT_TENANT_ID", str(DB_DEFAULT_TENANT))

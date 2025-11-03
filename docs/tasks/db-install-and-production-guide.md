@@ -1,73 +1,28 @@
 # Context Alt Text — Database Install & Production Guide
 
-_Last updated: 2025-01-21_
+_Last updated: 2025-11-02_
 
-This guide shows how to stand up the database for the Recognition Service in **local development** (SQLite or PostgreSQL) and how to provision and operate it in **production** (PostgreSQL + pgvector).
+This guide shows how to stand up the database for the Recognition Service in **local development** and **production**. The service requires **PostgreSQL 17+ with pgvector 0.8.1+** for vector similarity search.
 
 **Architecture Decision:**
 
-- **Local Development:** SQLite (zero dependencies) or PostgreSQL (Docker Compose)
-- **Production:** PostgreSQL 15/16 with pgvector extension (canonical store for tenants, users, roster entities, reference embeddings, augmented embeddings, progressive learning)
+- **Required:** PostgreSQL 17+ with pgvector extension (canonical store for tenants, roster entities, reference embeddings, augmented embeddings, progressive learning)
 - **FAISS:** Optional derived in-memory index synchronized from database (hot-reload on updates)
 
 **Stack**
 
-- **SQLite** (local dev): Single-file database, JSON blob storage for embeddings, no extensions required
-- **PostgreSQL 15/16** (production): Canonical store with native vector similarity search via pgvector
-- **pgvector** extension (vector column + HNSW/IVFFLAT ANN indexes)
-- **Alembic** (Python migrations): Version-controlled schema evolution for both databases
-- Optional: **pgBouncer** (connection pooling), **FAISS** (derived index for GPU/IVF-PQ acceleration)
+- **PostgreSQL 17+**: Canonical store with native vector similarity search via pgvector
+- **pgvector 0.8.1+**: Vector column + HNSW ANN indexes for fast similarity search
+- **Alembic** (Python migrations): Version-controlled schema evolution
+- Optional: **pgBouncer** (connection pooling), **FAISS** (derived index for GPU acceleration)
+
+**Important:** SQLite is not supported. The `VectorType` column requires PostgreSQL's native vector extension for proper functionality.
 
 ---
 
 ## 1) Local Development
 
-### Option A — SQLite (Zero Dependencies, Recommended for Quick Start)
-
-**Why SQLite for local dev:**
-
-- No external dependencies (single file: `recognition.db`)
-- Identical schema to PostgreSQL (except vector columns → JSON blobs)
-- Fast for small corpora (<1K embeddings)
-- Perfect for unit tests and CI pipelines
-
-**Setup:**
-
-```bash
-# No installation needed! SQLite ships with Python stdlib
-python -c "import sqlite3; print(sqlite3.sqlite_version)"  # Should show 3.35+
-
-# Create database and apply migrations
-cd apps/recognition-service
-alembic -c db/alembic.ini upgrade head  # Creates recognition.db and applies schema
-
-# Verify
-sqlite3 data/recognition.db ".tables"
-# Expected: tenants, roster_entities, reference_embeddings, augmented_embeddings, ...
-```
-
-**Connection String:**
-
-```
-sqlite:///./data/recognition.db
-```
-
-**SQLite Schema Notes:**
-
-- Embeddings stored as JSON text: `embedding_json TEXT NOT NULL`
-- Manual cosine similarity: `1 - spatial.distance.cosine(a, b)`
-- No native vector indexes (full scan for search; acceptable for <1K embeddings)
-- Compatible Alembic migrations with PostgreSQL (database-specific branches)
-
-**Limitations:**
-
-- No row-level security (single-tenant dev environment)
-- Manual similarity computation (slower for >1K embeddings)
-- No HNSW/IVFFLAT indexes (use PostgreSQL for realistic performance testing)
-
----
-
-### Option B — Docker Compose (PostgreSQL, Recommended for Multi-Tenant Testing)
+### Docker Compose Setup (Recommended)
 
 Create `docker-compose.db.yml` at the repo root:
 
@@ -161,13 +116,12 @@ If `CREATE EXTENSION vector;` fails, install pgvector (e.g., `brew install pgvec
 ```bash
 cd apps/recognition-service
 pip install alembic psycopg[binary]  # PostgreSQL driver
-pip install aiosqlite  # SQLite async driver (optional)
 
 # Migrations are pre-configured under db/
 # (New projects do NOT need to run `alembic init`)
 ```
 
-**Configure Alembic for database-agnostic migrations:**
+**Configure Alembic:**
 
 `db/alembic.ini`:
 
@@ -178,8 +132,7 @@ sqlalchemy.url = ${DATABASE_URL}  # Read from environment
 
 [alembic:env]
 # Set this in environment or .env file
-# DATABASE_URL=sqlite:///./data/recognition.db  # Local
-# DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/cat_recognition  # Docker
+# DATABASE_URL=postgresql+psycopg://user:pass@localhost:5432/cat_recognition
 ```
 
 `db/migrations/env.py`:
@@ -241,26 +194,21 @@ branch_labels = None
 depends_on = None
 
 def upgrade() -> None:
-    # Detect database type
-    bind = op.get_bind()
-    dialect = bind.dialect.name
+    # Enable PostgreSQL extensions
+    op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    op.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
 
-    if dialect == "postgresql":
-        # Enable extensions
-        op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-        op.execute("CREATE EXTENSION IF NOT EXISTS \"uuid-ossp\"")
+    # Tenants table
+    op.create_table(
+        "tenants",
+        sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
+        sa.Column("name", sa.Text(), nullable=False),
+        sa.Column("plan", sa.Text(), nullable=False, server_default="free"),
+        sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
+        sa.PrimaryKeyConstraint("id")
+    )
 
-        # Tenants table
-        op.create_table(
-            "tenants",
-            sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
-            sa.Column("name", sa.Text(), nullable=False),
-            sa.Column("plan", sa.Text(), nullable=False, server_default="free"),
-            sa.Column("created_at", sa.DateTime(timezone=True), server_default=sa.text("now()"), nullable=False),
-            sa.PrimaryKeyConstraint("id")
-        )
-
-        # Roster entities
+    # Roster entities
         op.create_table(
             "roster_entities",
             sa.Column("id", sa.UUID(), server_default=sa.text("gen_random_uuid()"), nullable=False),
@@ -322,71 +270,6 @@ def upgrade() -> None:
         op.create_index("aug_emb_roster_idx", "augmented_embeddings", ["roster_entry_id"])
         op.create_index("aug_emb_quality_idx", "augmented_embeddings", ["quality_tier"])
 
-    elif dialect == "sqlite":
-        # SQLite: JSON blob storage for embeddings
-        op.create_table(
-            "tenants",
-            sa.Column("id", sa.Text(), nullable=False),  # UUID as text
-            sa.Column("name", sa.Text(), nullable=False),
-            sa.Column("plan", sa.Text(), nullable=False, server_default="free"),
-            sa.Column("created_at", sa.Text(), nullable=False),  # ISO8601 text
-            sa.PrimaryKeyConstraint("id")
-        )
-
-        op.create_table(
-            "roster_entities",
-            sa.Column("id", sa.Text(), nullable=False),
-            sa.Column("tenant_id", sa.Text(), nullable=False),
-            sa.Column("label", sa.Text(), nullable=False),
-            sa.Column("type", sa.Text(), nullable=False, server_default="person"),
-            sa.Column("display_name", sa.Text(), nullable=True),
-            sa.Column("meta", sa.Text(), nullable=False, server_default="{}"),  # JSON as text
-            sa.Column("revision", sa.Integer(), nullable=False, server_default="1"),
-            sa.Column("created_at", sa.Text(), nullable=False),
-            sa.Column("updated_at", sa.Text(), nullable=False),
-            sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
-            sa.PrimaryKeyConstraint("id")
-        )
-        op.create_index("roster_entities_tenant_label_idx", "roster_entities", ["tenant_id", "label"])
-
-        op.create_table(
-            "reference_embeddings",
-            sa.Column("id", sa.Integer(), nullable=False, autoincrement=True),
-            sa.Column("tenant_id", sa.Text(), nullable=False),
-            sa.Column("roster_entry_id", sa.Text(), nullable=False),
-            sa.Column("embedding_json", sa.Text(), nullable=False),  # JSON array as text
-            sa.Column("image_path", sa.Text(), nullable=True),
-            sa.Column("metadata", sa.Text(), nullable=False, server_default="{}"),
-            sa.Column("created_at", sa.Text(), nullable=False),
-            sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
-            sa.ForeignKeyConstraint(["roster_entry_id"], ["roster_entities.id"], ondelete="CASCADE"),
-            sa.PrimaryKeyConstraint("id")
-        )
-        op.create_index("ref_emb_tenant_idx", "reference_embeddings", ["tenant_id"])
-        op.create_index("ref_emb_roster_idx", "reference_embeddings", ["roster_entry_id"])
-
-        op.create_table(
-            "augmented_embeddings",
-            sa.Column("id", sa.Integer(), nullable=False, autoincrement=True),
-            sa.Column("tenant_id", sa.Text(), nullable=False),
-            sa.Column("roster_entry_id", sa.Text(), nullable=False),
-            sa.Column("observation_id", sa.Text(), nullable=False),
-            sa.Column("embedding_json", sa.Text(), nullable=False),
-            sa.Column("source", sa.Text(), nullable=False, server_default="wordpress_confirm"),
-            sa.Column("attachment_id", sa.Integer(), nullable=True),
-            sa.Column("bbox", sa.Text(), nullable=True),  # JSON as text
-            sa.Column("confidence", sa.Float(), nullable=True),
-            sa.Column("quality_tier", sa.Text(), nullable=False),
-            sa.Column("created_at", sa.Text(), nullable=False),
-            sa.ForeignKeyConstraint(["tenant_id"], ["tenants.id"], ondelete="CASCADE"),
-            sa.ForeignKeyConstraint(["roster_entry_id"], ["roster_entities.id"], ondelete="CASCADE"),
-            sa.PrimaryKeyConstraint("id"),
-            sa.UniqueConstraint("observation_id")
-        )
-        op.create_index("aug_emb_tenant_idx", "augmented_embeddings", ["tenant_id"])
-        op.create_index("aug_emb_roster_idx", "augmented_embeddings", ["roster_entry_id"])
-        op.create_index("aug_emb_quality_idx", "augmented_embeddings", ["quality_tier"])
-
 def downgrade() -> None:
     op.drop_table("augmented_embeddings")
     op.drop_table("reference_embeddings")
@@ -397,11 +280,6 @@ def downgrade() -> None:
 **Apply migrations:**
 
 ```bash
-# SQLite (local)
-export DATABASE_URL="sqlite:///./data/recognition.db"
-alembic upgrade head
-
-# PostgreSQL (Docker Compose)
 export DATABASE_URL="postgresql+psycopg://cat_dev:cat_dev_pass@127.0.0.1:5432/cat_recognition"
 alembic upgrade head
 ```
@@ -409,14 +287,9 @@ alembic upgrade head
 **Verify:**
 
 ```bash
-# SQLite
-sqlite3 data/recognition.db ".tables"
-sqlite3 data/recognition.db ".schema tenants"
-
-# PostgreSQL
-psql "$DATABASE_URL" -c "\dt"
-psql "$DATABASE_URL" -c "\d roster_entities"
-psql "$DATABASE_URL" -c "\dx"  # Should show vector extension
+psql "$DATABASE_URL" -c "\dt"  # List tables
+psql "$DATABASE_URL" -c "\d roster_entities"  # Show schema
+psql "$DATABASE_URL" -c "\dx"  # Show extensions (should include vector)
 ```
 
 ---
@@ -430,10 +303,10 @@ INSERT INTO tenants (id, name, plan) VALUES (gen_random_uuid(), 'Dev Tenant', 'p
 -- Save the printed UUID and use it to seed test users / API keys.
 ```
 
-For SQLite, create `data/seed.sql` and run:
+Apply seed data:
 
 ```bash
-sqlite3 data/recognition.db < data/seed.sql
+psql "$DATABASE_URL" < db/init/010-seed.sql
 ```
 
 In the app, set request-scoped tenant (PostgreSQL with RLS):
@@ -449,11 +322,10 @@ SET LOCAL app.tenant_id = '<dev-tenant-uuid>';
 Create `.env.local` (never commit secrets):
 
 ```bash
-# Database
-DATABASE_URL=sqlite:///./data/recognition.db  # Local SQLite
-# DATABASE_URL=postgresql+psycopg://cat_dev:cat_dev_pass@127.0.0.1:5432/cat_recognition  # Docker
+# Database (PostgreSQL required)
+DATABASE_URL=postgresql+psycopg://cat_dev:cat_dev_pass@127.0.0.1:5432/cat_recognition
 
-# Database pooling (PostgreSQL only)
+# Database pooling
 DB_POOL_MIN=2
 DB_POOL_MAX=10
 

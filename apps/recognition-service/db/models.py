@@ -1,4 +1,19 @@
-"""SQLAlchemy models representing the recognition service persistence schema."""
+"""
+SQLAlchemy models for recognition service persistence schema.
+
+**Database Requirements:**
+- PostgreSQL 17+ with pgvector extension 0.8.1+
+- Extensions: vector, uuid-ossp
+- HNSW indexing for fast vector similarity search
+
+This module defines the canonical schema for:
+- Tenants (multi-tenancy with row-level security)
+- Roster entries (people, pets, entities)
+- Reference embeddings (canonical face representations)
+- Augmented embeddings (progressive learning from confirmations)
+
+SQLite and other databases are not supported due to pgvector dependency.
+"""
 
 from __future__ import annotations
 
@@ -91,10 +106,39 @@ class JSONType(sa.types.TypeDecorator):
 
 class VectorType(sa.types.TypeDecorator):
     """
-    PostgreSQL pgvector VECTOR type for embeddings.
+    PostgreSQL pgvector VECTOR type for 512-dimensional embeddings.
     
-    This project requires PostgreSQL 17+ with pgvector extension.
-    SQLite is not supported for production use.
+    **Requirements:**
+    - PostgreSQL 17+ with pgvector extension 0.8.1+
+    - Extension must be installed: CREATE EXTENSION IF NOT EXISTS vector;
+    - Supports HNSW and IVFFlat indexing for fast similarity search
+    
+    **Storage:**
+    - Dimension: 512 (fixed, matches InsightFace W600K output)
+    - Distance metric: Cosine similarity (vector_cosine_ops)
+    - Index type: HNSW (m=16, ef_construction=64)
+    
+    **Usage:**
+    ```python
+    embedding = sa.Column(VectorType, nullable=False)
+    
+    # Create HNSW index for fast similarity search
+    sa.Index(
+        "idx_embedding_hnsw",
+        MyModel.embedding,
+        postgresql_using="hnsw",
+        postgresql_ops={"embedding": "vector_cosine_ops"},
+        postgresql_with={"m": 16, "ef_construction": 64}
+    )
+    ```
+    
+    **Performance:**
+    - HNSW provides sub-50ms p95 latency for 1K entries
+    - Cosine distance: SELECT ... ORDER BY embedding <=> query_vector LIMIT k
+    - Refer to apps/recognition-service/docs/performance/targets.md for benchmarks
+    
+    This project requires PostgreSQL only. SQLite and other databases
+    are not supported due to native vector type and indexing requirements.
     """
     
     impl = sa.Text
@@ -104,8 +148,9 @@ class VectorType(sa.types.TypeDecorator):
     def load_dialect_impl(self, dialect):
         if dialect.name != 'postgresql':
             raise ValueError(
-                "Only PostgreSQL with pgvector is supported. "
-                "SQLite and other databases are not supported for vector operations."
+                "Only PostgreSQL 17+ with pgvector 0.8.1+ is supported. "
+                "This project requires native vector types and HNSW indexing. "
+                "See docs/tasks/db-install-and-production-guide.md for setup instructions."
             )
         from pgvector.sqlalchemy import Vector
         return dialect.type_descriptor(Vector(512))

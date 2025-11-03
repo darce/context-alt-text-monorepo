@@ -8,10 +8,13 @@ These are pure domain objects without any external dependencies.
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+import logging
 
 import uuid
 
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass
@@ -158,6 +161,16 @@ class RosterEntry:
         augmented_embeddings = self.metadata["augmented_embeddings"]
 
         if any(item.get("observation_id") == observation_id for item in augmented_embeddings):
+            logger.info(
+                "🔁 [AUGMENT] Duplicate observation_id detected - skipping",
+                extra={
+                    "roster_id": self.unique_id,
+                    "roster_name": self.name,
+                    "observation_id": observation_id,
+                    "source": source,
+                    "action": "duplicate_skipped"
+                }
+            )
             return False
 
         record = self._build_augmented_embedding_record(
@@ -166,10 +179,28 @@ class RosterEntry:
             observation_id=observation_id,
             metadata=metadata or {},
         )
+        
+        # Extract quality tier from record
+        quality_tier = record.get("quality_tier", "unknown")
 
         augmented_embeddings.append(record)
         self._compute_aggregate_embedding()
         self.update_timestamp()
+        
+        # Log successful augmentation with structured fields
+        logger.info(
+            "✅ [AUGMENT] Added augmented embedding",
+            extra={
+                "roster_id": self.unique_id,
+                "roster_name": self.name,
+                "observation_id": observation_id,
+                "source": source,
+                "quality_tier": quality_tier,
+                "total_augmented": len(augmented_embeddings),
+                "action": "embedding_added"
+            }
+        )
+        
         return True
     
     @property

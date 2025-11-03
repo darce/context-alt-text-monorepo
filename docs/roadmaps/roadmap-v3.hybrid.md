@@ -347,11 +347,11 @@ DoD:
 
 **Database Architecture & Migrations:**
 
-- ✅ Document complete PostgreSQL schema with pgvector extension (tenants, roster_entities, reference_embeddings, augmented_embeddings, materialized aggregate views)
-- ✅ Document SQLite schema with JSON blob storage for embeddings (zero-dependency local dev)
-- ✅ Implement Alembic baseline migration (0001) with database-specific branching (PostgreSQL vector types vs SQLite JSON)
-- ✅ Create database adapter pattern: `StorageAdapter` interface with `PostgresStorageAdapter` and `SQLiteStorageAdapter` implementations
-- 🔄 Set up Alembic in `apps/recognition-service/db/migrations/` with environment-based URL configuration
+- ⏳ Document complete PostgreSQL schema with pgvector extension (tenants, roster_entities, reference_embeddings, augmented_embeddings, materialized aggregate views)
+- ⏳ Document SQLite schema with JSON blob storage for embeddings (zero-dependency local dev)
+- ⏳ Implement Alembic baseline migration (0001) with database-specific branching (PostgreSQL vector types vs SQLite JSON)
+- ⏳ Create database adapter pattern: `StorageAdapter` interface with `PostgresStorageAdapter` and `SQLiteStorageAdapter` implementations
+- ✅ Set up Alembic in `apps/recognition-service/db/migrations/` with environment-based URL configuration
 - ⏳ Implement `PostgresStorageAdapter` with pgvector cosine similarity search, RLS tenant isolation, batched embedding insertion
 - ⏳ Implement `SQLiteStorageAdapter` with JSON serialization, manual numpy cosine similarity, fallback search
 - ⏳ Create environment detection module to auto-select database (SQLite for local, PostgreSQL for production)
@@ -367,25 +367,25 @@ DoD:
 **Hybrid FAISS Integration:**
 
 - ✅ Document FAISS as derived index synchronized from database (not canonical storage)
-- ✅ Design HybridIndexManager with rebuild_from_database(), search(), load_from_disk(), save_to_disk()
+- ⏳ Design HybridIndexManager with rebuild_from_database(), search(), load_from_disk(), save_to_disk()
 - ⏳ Implement HybridIndexManager in `recognition_core/hybrid_index.py`
 - ⏳ Add configuration flags: `USE_FAISS_ACCELERATION`, `FAISS_INDEX_PATH`
 - ⏳ Integrate FAISS fallback: database search when FAISS unavailable
 
 **UML & Documentation Updates:**
 
-- ⏳ Update `docs/architecture/backend-uml/database-entities.mmd` to reflect three-table schema (roster_entities, reference_embeddings, augmented_embeddings)
-- ⏳ Extend `docs/architecture/backend-uml/roster_service.mermaid` to show database adapters, AugmentedEmbedding domain entities, and persistence ports
-- ⏳ Amend `docs/architecture/backend-uml/recognition_service.mermaid` to include database-first architecture with FAISS as derived index
-- ⏳ Revise `docs/architecture/backend-uml/recognition-identify-flow.mmd` to show progressive learning loop: WP confirm → backend persist → refresh materialized view → hot-reload FAISS → ACK
+- ⏳ Update `docs/architecture/backend-recognition-service/persistence.mmd` to include materialized view + ancillary tables
+- ⏳ Extend `docs/architecture/backend-recognition-service/domain/roster_domain.mmd` to show database adapters, AugmentedEmbedding domain entities, and persistence ports
+- ⏳ Amend `docs/architecture/backend-recognition-service/workflows/startup_sequence.mmd` to include database-first architecture with FAISS as derived index
+- ⏳ Revise recognition flow diagrams to show progressive learning loop: WP confirm → backend persist → refresh materialized view → hot-reload FAISS → ACK
 
 **TDD:**
 
-- Render all updated Mermaid diagrams locally to confirm syntax validity and visual accuracy.
-- Add contract notes under `docs/architecture/contracts/` describing augmented embedding payloads (observation_id, quality_tier, bbox, confidence) and propagation ACKs
-- Unit tests for both PostgresStorageAdapter and SQLiteStorageAdapter (search, insert, update, delete)
-- Integration tests: Alembic migrations apply cleanly on both databases; materialized view refreshes correctly; FAISS rebuilds from database
-- Peer review revised diagrams and migration scripts with backend stakeholders
+- ⏳ Render updated Mermaid diagrams locally to confirm syntax validity and visual accuracy
+- ⏳ Add contract notes under `docs/architecture/contracts/` describing augmented embedding payloads (observation_id, quality_tier, bbox, confidence) and propagation ACKs
+- ⏳ Unit tests for both PostgresStorageAdapter and SQLiteStorageAdapter (search, insert, update, delete)
+- ⏳ Integration tests: Alembic migrations apply cleanly on both databases; materialized view refreshes correctly; FAISS rebuilds from database
+- ⏳ Peer review revised diagrams and migration scripts with backend stakeholders
 
 **DoD:**
 

@@ -538,13 +538,50 @@ Monitoring systems ingesting JSON (Prometheus pushgateway sidecars, lightweight 
 ### Running Tests
 
 ```bash
-# ensure pyenv env is active
+# Ensure pyenv env is active
 pyenv shell recognition-service-env
 
-# run core integration + unit tests
-pytest tests/integration/test_api_endpoints.py -v
-pytest tests/unit/test_scene_analysis_service.py -v
+# Run unit tests (fast, no external dependencies)
+pytest tests/unit/ -v -m unit
+
+# Run integration tests (require database)
+pytest tests/integration/ -v -m integration
+
+# Run E2E tests (require running service + PostgreSQL with pgvector)
+# Method 1: Set RUN_E2E in .env file (persistent)
+echo "RUN_E2E=1" >> .env
+pytest tests/integration/test_progressive_learning_e2e.py tests/integration/test_wordpress_contract.py -v
+
+# Method 2: Set inline (one-time)
+RUN_E2E=1 pytest tests/integration/test_progressive_learning_e2e.py tests/integration/test_wordpress_contract.py -v
+
+# Run specific E2E test
+RUN_E2E=1 pytest tests/integration/test_progressive_learning_e2e.py::TestProgressiveLearningE2E::test_confirm_observation_end_to_end -v
+
+# Run all tests (unit + integration + E2E if RUN_E2E=1)
+pytest -v
+
+# Run with coverage
+pytest --cov=. --cov-report=term-missing --cov-report=html
 ```
+
+**Test Categories:**
+
+- **Unit tests** (`-m unit`): Fast, isolated tests with no external dependencies
+- **Integration tests** (`-m integration`): Require database, test adapter integrations
+- **E2E tests**: Full end-to-end workflows, require running service on port 7860
+  - Set `RUN_E2E=1` in `.env` to enable permanently
+  - Or use inline: `RUN_E2E=1 pytest ...`
+  - `test_wordpress_contract.py` - WordPress integration validation (ACTIVE)
+  - `test_progressive_learning_e2e.py` - Advanced progressive learning scenarios (SKIPPED - requires API updates)
+
+**Note:**
+
+- E2E tests are skipped by default unless `RUN_E2E=1` is set
+- `test_progressive_learning_e2e.py` documents intended progressive learning behavior but tests are currently skipped pending API alignment
+- Active progressive learning tests are in `test_wordpress_contract.py` and database integration tests
+
+###
 
 ### Hexagonal Layout
 
@@ -574,12 +611,13 @@ To experiment locally, enable Flash Attention in settings and install the wheel 
 
 ## 8. Troubleshooting
 
-| Issue                                | Fix                                                                                                                      |
-| ------------------------------------ | ------------------------------------------------------------------------------------------------------------------------ |
-| `python` points to wrong interpreter | Run `pyenv shell recognition-service-env` before pip/pytest.                                                             |
-| InsightFace download fails           | Check network access; run a one-off `python -c "import insightface; app=insightface.app.FaceAnalysis(); app.prepare()"`. |
-| No roster matches                    | Confirm PostgreSQL is reachable, migrations are up to date (`alembic upgrade head`), and the roster contains embeddings. |
-| CUDA errors                          | Force CPU via `insightface.device: "cpu"` in settings.                                                                   |
+| Issue                                | Fix                                                                                                                                                                   |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `python` points to wrong interpreter | Run `pyenv shell recognition-service-env` before pip/pytest.                                                                                                          |
+| InsightFace download fails           | Check network access; run a one-off `python -c "import insightface; app=insightface.app.FaceAnalysis(); app.prepare()"`.                                              |
+| No roster matches                    | Confirm PostgreSQL is reachable, migrations are up to date (`alembic upgrade head`), and the roster contains embeddings.                                              |
+| CUDA errors                          | Force CPU via `insightface.device: "cpu"` in settings.                                                                                                                |
+| VectorType errors                    | Ensure pgvector 0.8.1+ is installed: `psql -d <database> -c 'CREATE EXTENSION IF NOT EXISTS vector; SELECT extversion FROM pg_extension WHERE extname = ''vector'';'` |
 
 ## 9. Roadmap Hooks
 

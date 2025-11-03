@@ -3,19 +3,20 @@
 This test verifies that the /service/info endpoint returns roster_stats
 that reflect actual database state after augment operations.
 
-Run with: RUN_INTEGRATION=1 pytest tests/integration/test_service_info_roster_stats.py -v
+Run with: RUN_E2E=1 pytest tests/integration/test_service_info_roster_stats.py -v
 """
 
 import os
+import time
 import uuid
 import requests
 import pytest
 
-RUN_INTEGRATION = bool(os.environ.get("RUN_INTEGRATION"))
-BASE_URL = os.environ.get("RECOGNITION_BASE_URL", "http://localhost:8000")
+RUN_E2E = bool(os.environ.get("RUN_E2E"))
+BASE_URL = os.environ.get("RECOGNITION_BASE_URL", "http://localhost:7860")
 
 
-@pytest.mark.skipif(not RUN_INTEGRATION, reason="Integration tests skipped unless RUN_INTEGRATION=1")
+@pytest.mark.skipif(not RUN_E2E, reason="E2E tests skipped unless RUN_E2E=1")
 def test_service_info_roster_stats_reflect_augmented_embeddings():
     """
     Integration test: verify /service/info roster_stats update after augment operations.
@@ -54,20 +55,45 @@ def test_service_info_roster_stats_reflect_augmented_embeddings():
     
     print(f"Initial FAISS stats: {faiss_stats}")
     
-    # Step 2: Create roster entry
+    # Step 2: Create roster entry with current API format (entries array)
+    name = f"integration-test-{uuid.uuid4().hex[:8]}"
     roster_payload = {
-        "label": f"integration-test-{uuid.uuid4().hex[:8]}",
-        "display_name": "Integration Test Person",
-        "model": "insightface_w600k",
-        "metadata": {"source": "integration-test"}
+        "entries": [
+            {
+                "name": name,
+                "embedding": [0.1] * 512,
+                "metadata": {
+                    "entity_type": "person",
+                    "display_name": "Integration Test Person",
+                    "source": "integration-test"
+                }
+            }
+        ],
+        "model": "insightface_w600k"
     }
     
     r = requests.post(roster_url, json=roster_payload)
     assert r.status_code in (200, 201), f"Failed to create roster entry: {r.status_code} {r.text}"
     
-    entry = r.json()
-    roster_id = entry.get("id") or entry.get("data", {}).get("id")
-    assert roster_id, "roster_id missing from create response"
+    data = r.json()
+    successful = data.get("successful", [])
+    assert len(successful) > 0, "No successful entries created"
+    
+    # Get unique_id by fetching from list
+    created_name = successful[0]
+    time.sleep(0.2)  # Allow entry to be committed
+    
+    list_response = requests.get(f"{BASE_URL}/api/v0/roster?model=insightface_w600k")
+    assert list_response.status_code == 200
+    
+    entries = list_response.json().get("entries", [])
+    roster_id = None
+    for entry in entries:
+        if entry.get("name") == created_name:
+            roster_id = entry.get("unique_id")
+            break
+    
+    assert roster_id, f"Could not find created entry '{created_name}'"
     
     print(f"Created roster entry: {roster_id}")
     
@@ -79,8 +105,12 @@ def test_service_info_roster_stats_reflect_augmented_embeddings():
         augment_payload = {
             "observation_id": str(uuid.uuid4()),
             "embedding": [0.01 * (i + 1)] * 512,
-            "source": "integration-test",
-            "quality_tier": "medium"
+            "model": "insightface_w600k",  # Include model parameter
+            "metadata": {
+                "source": "integration-test",
+                "quality_tier": "medium",
+                "confidence": 0.75
+            }
         }
         
         r = requests.post(augment_url, json=augment_payload)
@@ -122,7 +152,7 @@ def test_service_info_roster_stats_reflect_augmented_embeddings():
     print("✅ Integration test passed: roster_stats correctly reflect augmented embeddings")
 
 
-@pytest.mark.skipif(not RUN_INTEGRATION, reason="Integration tests skipped unless RUN_INTEGRATION=1")
+@pytest.mark.skipif(not RUN_E2E, reason="E2E tests skipped unless RUN_E2E=1")
 def test_service_info_faiss_stats_structure():
     """
     Verify that faiss_index_stats includes all expected fields.

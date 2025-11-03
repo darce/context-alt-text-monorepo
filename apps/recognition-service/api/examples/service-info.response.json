@@ -32,6 +32,21 @@
       "hf_home": null,
       "hf_datasets_cache": null,
       "torch_home": null
+    },
+    "roster_stats": {
+      "entry_count": 1,
+      "reference_embeddings": 1,
+      "augmented_embeddings": 0,
+      "total_embeddings": 1,
+      "etag": null,
+      "last_updated": null
+    },
+    "faiss_index_stats": {
+      "total_vectors": 1,
+      "dimension": 512,
+      "index_type": "Flat",
+      "last_reload": null,
+      "last_reload_duration_ms": 0.0
     }
   }
 }

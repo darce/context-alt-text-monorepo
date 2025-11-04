@@ -470,7 +470,7 @@ async def _process_augmentation_request(
                 unique_id=unique_id,
                 model=model,
                 embedding=payload.embedding,
-                source="wordpress_confirm",
+                source="external_confirm",
                 observation_id=payload.observation_id,
                 metadata=metadata,
             )

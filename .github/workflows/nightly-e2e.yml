@@ -4,31 +4,36 @@ on:
   schedule:
     - cron: "0 2 * * *" # 2 AM UTC daily
   workflow_dispatch: # Allow manual trigger
+  pull_request:
+    paths:
+      - "apps/recognition-service/**"
+      - ".github/workflows/nightly-e2e.yml"
 
 jobs:
   e2e-tests:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
 
     services:
       postgres:
         image: pgvector/pgvector:pg17
         env:
-          POSTGRES_USER: test_user
-          POSTGRES_PASSWORD: test_pass
-          POSTGRES_DB: test_recognition
+          POSTGRES_USER: testuser
+          POSTGRES_PASSWORD: testpass
+          POSTGRES_DB: recognition_test
         ports:
           - 5432:5432
         options: >-
-          --health-cmd pg_isready
+          --health-cmd "pg_isready -U testuser"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 5
 
     steps:
-      - name: Checkout code
+      - name: Checkout repository
         uses: actions/checkout@v4
 
-      - name: Set up Python
+      - name: Set up Python 3.10
         uses: actions/setup-python@v5
         with:
           python-version: "3.10"
@@ -37,43 +42,91 @@ jobs:
       - name: Install dependencies
         working-directory: apps/recognition-service
         run: |
-          pip install -r requirements_local.txt
-          pip install pytest pytest-cov
+          pip install --upgrade pip
+          pip install -r requirements_main.txt
+          pip install -r requirements_local_dev.txt
 
-      - name: Wait for PostgreSQL
-        run: |
-          until pg_isready -h localhost -p 5432 -U test_user; do
-            echo "Waiting for PostgreSQL..."
-            sleep 2
-          done
-
-      - name: Create pgvector extension
-        env:
-          PGPASSWORD: test_pass
-        run: |
-          psql -h localhost -U test_user -d test_recognition -c "CREATE EXTENSION IF NOT EXISTS vector;"
-          psql -h localhost -U test_user -d test_recognition -c "SELECT extversion FROM pg_extension WHERE extname = 'vector';"
-
-      - name: Run Alembic migrations
+      - name: Run database migrations
         working-directory: apps/recognition-service
         env:
-          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_recognition
+          DATABASE_URL: postgresql+psycopg://testuser:testpass@localhost:5432/recognition_test
         run: |
           alembic upgrade head
+
+      - name: Start recognition service in background
+        working-directory: apps/recognition-service
+        env:
+          DATABASE_URL: postgresql+psycopg://testuser:testpass@localhost:5432/recognition_test
+          PORT: 7860
+          LOG_LEVEL: INFO
+          USE_FAISS_ACCELERATION: "false"
+        run: |
+          # Start service in background
+          python app.py > service.log 2>&1 &
+          SERVICE_PID=$!
+          echo "SERVICE_PID=$SERVICE_PID" >> $GITHUB_ENV
+          echo "Started service with PID: $SERVICE_PID"
+
+          # Wait for service to be ready (max 60 seconds)
+          for i in {1..60}; do
+            if curl -f http://localhost:7860/api/v0/health > /dev/null 2>&1; then
+              echo "✅ Service ready after $i seconds"
+              curl http://localhost:7860/api/v0/health
+              break
+            fi
+            if [ $i -eq 60 ]; then
+              echo "❌ Service failed to start within 60 seconds"
+              echo "=== Service logs ==="
+              cat service.log
+              exit 1
+            fi
+            sleep 1
+          done
 
       - name: Run E2E tests
         working-directory: apps/recognition-service
         env:
           RUN_E2E: "1"
-          DATABASE_URL: postgresql://test_user:test_pass@localhost:5432/test_recognition
-          TENANT_ID: test-tenant-e2e
+          RECOGNITION_BASE_URL: http://localhost:7860
+          PYTHONUNBUFFERED: "1"
         run: |
-          pytest tests/integration/test_progressive_learning_e2e.py -v --tb=short
+          pytest tests/integration/test_progressive_learning_e2e.py \
+                 tests/integration/test_wordpress_contract.py \
+                 tests/integration/test_etag_caching.py \
+                 -v --tb=short --log-cli-level=INFO \
+                 --junitxml=pytest-e2e-report.xml
+
+      - name: Print service logs on failure
+        if: failure()
+        working-directory: apps/recognition-service
+        run: |
+          echo "=== Service logs ==="
+          cat service.log || echo "No service logs found"
+
+      - name: Cleanup service
+        if: always()
+        run: |
+          if [ ! -z "$SERVICE_PID" ]; then
+            echo "Stopping service (PID: $SERVICE_PID)"
+            kill $SERVICE_PID || true
+            # Wait for graceful shutdown
+            sleep 2
+            # Force kill if still running
+            kill -9 $SERVICE_PID 2>/dev/null || true
+          fi
 
       - name: Upload test results
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: e2e-test-results
-          path: apps/recognition-service/test-results/
+          path: apps/recognition-service/pytest-e2e-report.xml
+          retention-days: 7
+
+      - name: Upload service logs
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-logs
+          path: apps/recognition-service/service.log
           retention-days: 7

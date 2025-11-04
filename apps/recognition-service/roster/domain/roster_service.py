@@ -6,9 +6,20 @@ This is the heart of the domain layer - pure business logic with no external dep
 """
 
 import logging
-from typing import List, Optional, Dict, Any
-from .entities import RosterEntry, RosterImage, RosterMatch
-from .interfaces import RosterStoragePort, EmbeddingStoragePort, DataValidationPort
+from typing import Any, Dict, List, Optional
+
+from .cache import RosterCache
+from .embedding_sync import sync_embeddings_store
+from .entities import RosterEntry, RosterMatch
+from .interfaces import DataValidationPort, EmbeddingStoragePort, RosterStoragePort
+from .operations import (
+    add_augmented_embedding,
+    add_entries_bulk,
+    add_entry,
+    clear_roster,
+    delete_entry,
+    update_entry,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +52,7 @@ class RosterService:
         self.embedding_storage = embedding_storage
         self.data_validator = data_validator
         self.default_model = "insightface_w600k"
-        self._cache: Dict[str, List[RosterEntry]] = {}
+        self._cache = RosterCache()
         
     def add_entry(
         self,
@@ -65,55 +76,25 @@ class RosterService:
             Created RosterEntry if successful, None otherwise
         """
         try:
-            # Validate embedding
-            embedding_errors = []
-            if self.data_validator:
-                embedding_errors = self.data_validator.validate_embedding(embedding, model)
-            if embedding_errors:
-                logger.error(f"Embedding validation failed: {embedding_errors}")
-                return None
-            
-            # Create roster image
-            roster_image = RosterImage(
-                embedding=embedding,
-                metadata=metadata or {},
-                image_path=image_path
+            result = add_entry(
+                name,
+                embedding,
+                model,
+                self.roster_storage,
+                self.data_validator,
+                metadata=metadata,
+                image_path=image_path,
+                logger=logger,
             )
-            
-            # Check if entry with this name already exists
-            existing_entries = self.roster_storage.load_roster_entries(model)
-            existing_entry = next((e for e in existing_entries if e.name == name), None)
-            
-            if existing_entry:
-                # Add reference image to existing entry
-                existing_entry.add_reference_image(roster_image)
-                success = self.roster_storage.save_roster_entry(existing_entry, model)
-                if success:
-                    self._invalidate_cache(model)
-                    self._sync_embeddings_store(model)
-                    logger.info(f"Added reference image to existing entry: {name}")
-                    return existing_entry
-            else:
-                # Create new entry
-                roster_entry = RosterEntry(
-                    name=name,
-                    reference_images=[roster_image],
-                    metadata=metadata or {}
-                )
-                
-                # Save the entry (embedding already validated above)
-                success = self.roster_storage.save_roster_entry(roster_entry, model)
-                if success:
-                    self._invalidate_cache(model)
-                    self._sync_embeddings_store(model)
-                    logger.info(f"Created new roster entry: {name}")
-                    return roster_entry
-            
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Error adding roster entry %s: %s", name, exc)
             return None
-            
-        except Exception as e:
-            logger.error(f"Error adding roster entry: {e}")
-            return None
+
+        if result.success and result.entry:
+            self._after_mutation(model)
+            return result.entry
+
+        return None
     
     def add_entries_bulk(
         self,
@@ -130,38 +111,23 @@ class RosterService:
         Returns:
             List of successfully added entry names
         """
-        successful_names = []
-        
-        # Basic validation - check bulk size limit
-        max_bulk_size = 1000
-        if self.data_validator:
-            max_bulk_size = self.data_validator.validation_config.get("max_bulk_import_size", 1000)
-        if len(entries_data) > max_bulk_size:
-            logger.error(f"Bulk import too large: {len(entries_data)} entries (max {max_bulk_size})")
-            return successful_names
+        try:
+            successful_names, failures = add_entries_bulk(
+                entries_data,
+                model,
+                self.roster_storage,
+                self.data_validator,
+                logger=logger,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Bulk add failed for model %s: %s", model, exc)
+            return []
 
-        for entry_data in entries_data:
-            try:
-                name = entry_data.get("name")
-                embedding = entry_data.get("embedding")
-                metadata = entry_data.get("metadata", {})
-                image_path = entry_data.get("image_path")
-                
-                if not name or not embedding:
-                    logger.warning(f"Skipping invalid entry: {entry_data}")
-                    continue
-                
-                result = self.add_entry(name, embedding, model, metadata, image_path)
-                if result:
-                    successful_names.append(name)
-                    
-            except Exception as e:
-                logger.error(f"Error processing bulk entry: {e}")
-                continue
-        
-        logger.info(f"Bulk add completed: {len(successful_names)}/{len(entries_data)} successful")
+        if failures:
+            logger.debug("Bulk add encountered failures: %s", failures)
+
         if successful_names:
-            self._sync_embeddings_store(model)
+            self._after_mutation(model)
         return successful_names
     
     def get_entries(self, model: str, use_cache: bool = True) -> List[RosterEntry]:
@@ -175,12 +141,12 @@ class RosterService:
         Returns:
             List of roster entries
         """
-        if use_cache and model in self._cache:
-            return self._cache[model]
-        
-        entries = self.roster_storage.load_roster_entries(model)
-        self._cache[model] = entries
-        return entries
+        if use_cache:
+            cached = self._cache.peek(model)
+            if cached is not None:
+                return cached
+
+        return self._cache.get_or_load(model, lambda: self.roster_storage.load_roster_entries(model))
     
     def get_entry(self, unique_id: str, model: str) -> Optional[RosterEntry]:
         """
@@ -216,36 +182,24 @@ class RosterService:
         Returns:
             True if updated successfully, False otherwise
         """
-        entry = self.roster_storage.get_roster_entry(unique_id, model)
-        if not entry:
-            return False
-        
         try:
-            if embedding:
-                # Add new reference image
-                roster_image = RosterImage(
-                    embedding=embedding,
-                    metadata=metadata or {},
-                    image_path=image_path
-                )
-                entry.add_reference_image(roster_image)
-            
-            if metadata:
-                entry.metadata.update(metadata)
-                entry.update_timestamp()
-            
-            success = self.roster_storage.save_roster_entry(entry, model)
-            if success:
-                self._invalidate_cache(model)
-            
-            if success:
-                self._invalidate_cache(model)
-                self._sync_embeddings_store(model)
-            return success
-            
-        except Exception as e:
-            logger.error(f"Error updating entry: {e}")
+            result = update_entry(
+                unique_id,
+                model,
+                self.roster_storage,
+                embedding=embedding,
+                metadata=metadata,
+                image_path=image_path,
+                validator=self.data_validator,
+                logger=logger,
+            )
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Error updating roster entry %s: %s", unique_id, exc)
             return False
+
+        if result.success:
+            self._after_mutation(model)
+        return result.success
     
     def add_augmented_embedding(
         self,
@@ -263,58 +217,39 @@ class RosterService:
             unique_id: Roster entry identifier.
             model: Model identifier.
             embedding: Embedding vector from confirmation workflow.
-            source: Origin of the embedding (e.g., 'wordpress_confirm').
+            source: Origin of the embedding (e.g., 'external_confirm').
             observation_id: Observation identifier used for deduplication.
             metadata: Additional metadata (confidence, bbox, attachment_id, etc.).
 
         Returns:
             True if the embedding was stored, False otherwise.
         """
-        entry = self.roster_storage.get_roster_entry(unique_id, model)
-        if not entry:
-            logger.warning("Roster entry %s not found for augmented embedding", unique_id)
-            return False
-
-        embedding_errors: List[str] = []
-        if self.data_validator:
-            embedding_errors = self.data_validator.validate_embedding(embedding, model)
-        if embedding_errors:
-            logger.error("Augmented embedding validation failed: %s", embedding_errors)
-            return False
-
-        appended = entry.add_augmented_embedding(
-            embedding=embedding,
-            source=source,
-            observation_id=observation_id,
-            metadata=metadata,
-        )
-        if not appended:
-            logger.info(
-                "Duplicate augmented embedding for observation %s; skipping append",
-                observation_id,
-            )
-            return False
-
-        success = self.roster_storage.save_roster_entry(entry, model)
-        if success:
-            self._invalidate_cache(model)
-            self._sync_embeddings_store(model)
-            
-            # Refresh materialized view for progressive learning
-            # This updates the weighted aggregate embedding that combines reference + augmented embeddings
-            if hasattr(self.roster_storage, 'refresh_aggregate_view'):
-                try:
-                    self.roster_storage.refresh_aggregate_view(roster_id=unique_id)
-                except Exception as exc:
-                    # Log but don't fail the request - progressive learning degrades gracefully
-                    logger.warning(f"Failed to refresh aggregate view for {unique_id}: {exc}")
-        else:
-            logger.error(
-                "Failed to persist augmented embedding for entry %s in model %s",
+        try:
+            result = add_augmented_embedding(
                 unique_id,
                 model,
+                embedding,
+                source,
+                observation_id,
+                self.roster_storage,
+                self.data_validator,
+                metadata=metadata,
+                logger=logger,
             )
-        return success
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error(
+                "Error augmenting roster entry %s with observation %s: %s",
+                unique_id,
+                observation_id,
+                exc,
+            )
+            return False
+
+        if result.success:
+            self._after_mutation(model)
+            return True
+
+        return False
     
     def delete_entry(self, unique_id: str, model: str) -> bool:
         """
@@ -327,11 +262,14 @@ class RosterService:
         Returns:
             True if deleted successfully, False otherwise
         """
-        success = self.roster_storage.delete_roster_entry(unique_id, model)
-        if success:
-            self._invalidate_cache(model)
-            self._sync_embeddings_store(model)
-        return success
+        try:
+            result = delete_entry(unique_id, model, self.roster_storage)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Error deleting roster entry %s: %s", unique_id, exc)
+            return False
+        if result.success:
+            self._after_mutation(model)
+        return result.success
     
     def get_entry_count(self, model: str) -> int:
         """
@@ -356,11 +294,14 @@ class RosterService:
         Returns:
             True if cleared successfully, False otherwise
         """
-        success = self.roster_storage.clear_roster(model)
-        if success:
-            self._invalidate_cache(model)
-            self._sync_embeddings_store(model)
-        return success
+        try:
+            result = clear_roster(model, self.roster_storage)
+        except Exception as exc:  # pragma: no cover - defensive
+            logger.error("Error clearing roster for model %s: %s", model, exc)
+            return False
+        if result.success:
+            self._after_mutation(model)
+        return result.success
     
     def get_storage_info(self, model: str) -> Dict[str, Any]:
         """
@@ -409,16 +350,14 @@ class RosterService:
     
     def _invalidate_cache(self, model: str):
         """Invalidate cache for a specific model."""
-        if model in self._cache:
-            del self._cache[model]
+        self._cache.invalidate(model)
         logger.debug(f"Cache invalidated for model: {model}")
 
     def _sync_embeddings_store(self, model: str):
         """Persist merged embeddings for recognition service consumption."""
-        if not self.embedding_storage:
-            return
-        try:
-            entries = self.roster_storage.load_roster_entries(model)
-            self.embedding_storage.save_embeddings(entries, model)
-        except Exception as exc:
-            logger.warning(f"Failed to sync embeddings for {model}: {exc}")
+        sync_embeddings_store(self.embedding_storage, self.roster_storage, model, logger)
+
+    def _after_mutation(self, model: str) -> None:
+        """Common post-mutation hooks."""
+        self._invalidate_cache(model)
+        self._sync_embeddings_store(model)

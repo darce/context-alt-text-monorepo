@@ -11,10 +11,23 @@ from datetime import datetime
 from typing import List
 
 import pytest
+from sqlalchemy import text
 
 from roster.adapters.postgresql_storage_adapter import PostgreSQLStorageAdapter
 from roster.domain.entities import RosterEntry, RosterImage
 
+def _coerce_vector(raw):
+    if raw is None:
+        return None
+    if isinstance(raw, (list, tuple)):
+        return [float(value) for value in raw]
+    if isinstance(raw, str):
+        stripped = raw.strip().strip("[]")
+        if not stripped:
+            return []
+        return [float(value) for value in stripped.split(",")]
+    # fall back: try to coerce iterables
+    return [float(value) for value in raw]
 
 pytestmark = pytest.mark.skipif(
     not os.getenv("DATABASE_URL") or not os.getenv("DATABASE_URL", "").startswith("postgresql"),
@@ -258,6 +271,109 @@ def test_pgvector_similarity_search(adapter):
         second_match, second_score = results[1]
         assert second_match.unique_id == "search-test-002"
         assert second_score < best_score
+
+
+def test_refresh_aggregate_incremental(adapter, sample_entry):
+    """Test incremental aggregate refresh updates MV row directly."""
+    import time
+    
+    # Save roster entry with reference embedding
+    adapter.save_roster_entry(sample_entry, "test_model")
+    roster_id = sample_entry.unique_id
+    
+    # Resolve database UUID for direct SQL operations
+    with adapter.engine.begin() as connection:
+        roster_db_id = connection.execute(
+            text("SELECT id FROM roster_entries WHERE label = :label"),
+            {"label": roster_id},
+        ).scalar_one()
+
+    # Ensure MV has a baseline row so incremental path can skip full refresh
+    adapter.refresh_aggregate_view()
+    
+    # Verify entry exists
+    entry_before = adapter.get_roster_entry(roster_id, "test_model")
+    assert entry_before is not None
+    
+    # Add augmented embedding through the entity (proper workflow)
+    entry_before.add_augmented_embedding(
+        embedding=[0.5] * 512,  # Different from reference
+        source="incremental_test",
+        observation_id="test-obs-incremental-1",
+        metadata={"quality_tier": "high"}
+    )
+    
+    # Save the updated entry back to database
+    adapter.save_roster_entry(entry_before, "test_model")
+    
+    # Manually stomp persisted aggregate to emulate stale state prior to incremental refresh.
+    zero_vector = "[" + ",".join(["0"] * 512) + "]"
+    with adapter.engine.begin() as connection:
+        stale_updated_at = connection.execute(
+            text(
+                """
+                UPDATE roster_entries
+                SET aggregate_embedding = CAST(:zero_vec AS vector(512)),
+                    updated_at = NOW()
+                WHERE id = :entry_id
+                RETURNING updated_at
+                """
+            ),
+            {"zero_vec": zero_vector, "entry_id": roster_db_id},
+        ).scalar_one()
+    
+    # Confirm aggregate is now stale/zero
+    with adapter.engine.begin() as connection:
+        aggregate_stale = connection.execute(
+            text(
+                """
+                SELECT aggregate_embedding
+                FROM roster_entries
+                WHERE id = :entry_id
+                """
+            ),
+            {"entry_id": roster_db_id},
+        ).scalar_one()
+    aggregate_stale_vec = _coerce_vector(aggregate_stale)
+    assert aggregate_stale_vec is not None
+    assert all(abs(value) < 1e-9 for value in aggregate_stale_vec[:10]), "Aggregate was not zeroed out as expected"
+    
+    # Trigger incremental refresh
+    start = time.perf_counter()
+    adapter.refresh_aggregate_view_incremental(roster_id)
+    duration_ms = (time.perf_counter() - start) * 1000
+    
+    # Verify performance: <50ms for single entry (should be ~5-10ms)
+    assert duration_ms < 50, f"Incremental refresh too slow: {duration_ms:.2f}ms (expected <50ms)"
+    
+    # Verify aggregate recomputed from database state (no longer zero) and updated_at advanced
+    with adapter.engine.begin() as connection:
+        row = connection.execute(
+            text(
+                """
+                SELECT aggregate_embedding, updated_at
+                FROM roster_entries
+                WHERE id = :entry_id
+                """
+            ),
+            {"entry_id": roster_db_id},
+        ).one()
+    
+    aggregate_after_db, updated_at_after = row
+    aggregate_after_vec = _coerce_vector(aggregate_after_db)
+    assert aggregate_after_vec is not None, "Aggregate should not be NULL after incremental refresh"
+    assert updated_at_after >= stale_updated_at, "updated_at was not advanced by incremental refresh"
+    
+    # Search should surface this entry using refreshed aggregate (even if MV lags)
+    query_embedding = [0.5] * 512
+    matches = adapter.search_similar(query_embedding, model="test_model", top_k=1)
+    assert matches, "Expected at least one search match"
+    match_entry, similarity = matches[0]
+    assert match_entry.unique_id == roster_id
+    assert similarity == similarity and similarity > 0.0, "Similarity should reflect refreshed aggregate"
+    
+    # Cleanup
+    adapter.delete_roster_entry(roster_id, "test_model")
 
 
 def test_multi_tenant_isolation(test_database_url):

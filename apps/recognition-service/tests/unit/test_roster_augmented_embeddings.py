@@ -124,7 +124,7 @@ def test_add_augmented_embedding_updates_weighted_aggregate(
         unique_id=entry.unique_id,
         model=model,
         embedding=_vector(0.0, 1.0),
-        source="wordpress_confirm",
+        source="external_confirm",
         observation_id="obs-1",
         metadata={
             "attachment_id": 42,
@@ -142,7 +142,7 @@ def test_add_augmented_embedding_updates_weighted_aggregate(
     record = augmented[0]
     assert record["observation_id"] == "obs-1"
     assert record["quality_tier"] == "medium"
-    assert record["source"] == "wordpress_confirm"
+    assert record["source"] == "external_confirm"
     assert record["attachment_id"] == 42
     assert record["bbox"] == {"x": 10, "y": 20, "w": 30, "h": 40}
     assert record["confidence"] == pytest.approx(0.70, rel=1e-6)
@@ -181,7 +181,7 @@ def test_duplicate_observation_does_not_append_embedding(
         unique_id=entry.unique_id,
         model=model,
         embedding=_vector(0.0, 1.0),
-        source="wordpress_confirm",
+        source="external_confirm",
         observation_id="dup-1",
         metadata={"confidence": 0.92},
     )
@@ -192,7 +192,7 @@ def test_duplicate_observation_does_not_append_embedding(
         unique_id=entry.unique_id,
         model=model,
         embedding=_vector(0.3, 0.7),
-        source="wordpress_confirm",
+        source="external_confirm",
         observation_id="dup-1",
         metadata={"confidence": 0.55},
     )

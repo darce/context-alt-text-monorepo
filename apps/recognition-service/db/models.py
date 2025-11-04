@@ -236,7 +236,7 @@ class AugmentedEmbedding(Base):
     roster_entry_id = sa.Column(UUIDType, sa.ForeignKey("roster_entries.id", ondelete="CASCADE"), nullable=False)
     observation_id = sa.Column(sa.String(64), unique=True, nullable=False)
     embedding = sa.Column(VectorType, nullable=False)
-    source = sa.Column(sa.String(64), nullable=False, default="wordpress_confirm")
+    source = sa.Column(sa.String(64), nullable=False, default="external_confirm")
     attachment_id = sa.Column(sa.BigInteger)
     bbox = sa.Column(JSONType)
     confidence = sa.Column(sa.Float)
@@ -245,3 +245,20 @@ class AugmentedEmbedding(Base):
     
     # Relationship
     roster_entry = relationship("RosterEntry", back_populates="augmented_embeddings")
+
+
+class RosterAggregateEmbedding(Base):
+    """
+    Read-only model for roster_aggregate_embeddings materialized view.
+    
+    This MV provides weighted aggregate embeddings combining reference and augmented data.
+    Updated incrementally via refresh_aggregate_view_incremental() for ~7ms performance.
+    """
+    __tablename__ = "roster_aggregate_embeddings"
+    __table_args__ = {"info": {"is_view": True}}  # Mark as view to prevent modifications
+    
+    roster_entry_id = sa.Column(UUIDType, primary_key=True)
+    aggregate_embedding = sa.Column(VectorType, nullable=False)
+    reference_count = sa.Column(sa.Integer, nullable=False)
+    augmented_count = sa.Column(sa.Integer, nullable=False)
+    last_updated = sa.Column(sa.DateTime(timezone=True), nullable=False)

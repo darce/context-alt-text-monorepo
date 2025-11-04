@@ -4,110 +4,29 @@ from __future__ import annotations
 
 import logging
 import os
-import time
-from contextlib import contextmanager
-from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple
 
-from sqlalchemy import create_engine, select, text
+from sqlalchemy import select, text
 from sqlalchemy.engine import Engine
 from sqlalchemy.exc import SQLAlchemyError
-from sqlalchemy.orm import Session
-from sqlalchemy.pool import QueuePool
 
 from db.models import RosterEntry as RosterEntryModel
 from roster.domain.entities import RosterEntry
 
 from .database_storage_base import DEFAULT_TENANT_ID, DatabaseRosterStorageAdapter
+from .mv_refresh import (
+    refresh_aggregate_view_incremental as run_incremental_mv_refresh,
+    refresh_materialized_view as run_mv_refresh,
+)
+from .postgres_metrics import DatabaseMetrics, timed_operation
+from .progressive_learning_stats import fetch_progressive_learning_stats
+from .search_queries import (
+    hydrate_entry_with_mv_stats as hydrate_entry_with_mv_stats_helper,
+    similarity_search,
+)
+from .session_utils import create_engine_with_pool, verify_pgvector_extension
 
 logger = logging.getLogger(__name__)
-
-
-class DatabaseMetrics:
-    """Lightweight metrics collector for database operations."""
-
-    def __init__(self) -> None:
-        self.reset()
-
-    def reset(self) -> None:
-        self.query_count = 0
-        self.error_count = 0
-        self.slow_query_count = 0
-        self.total_duration_ms = 0.0
-        self.operation_counts: Dict[str, int] = {}
-        self._slow_queries: List[Dict[str, Any]] = []
-        self._errors: List[Dict[str, Any]] = []
-
-    def record_query(self, operation: str, duration_ms: float, *, success: bool) -> None:
-        self.query_count += 1
-        self.total_duration_ms += duration_ms
-        self.operation_counts[operation] = self.operation_counts.get(operation, 0) + 1
-        if not success:
-            self.error_count += 1
-
-    def record_slow_query(self, operation: str, duration_ms: float, context: Dict[str, Any]) -> None:
-        self.slow_query_count += 1
-        entry = {
-            "operation": operation,
-            "duration_ms": round(duration_ms, 2),
-            "timestamp": datetime.utcnow().isoformat(),
-            **context,
-        }
-        self._slow_queries.append(entry)
-        if len(self._slow_queries) > 100:
-            self._slow_queries = self._slow_queries[-100:]
-
-    def record_error(
-        self, 
-        operation: str, 
-        error: Optional[BaseException] = None,
-        error_type: Optional[str] = None,
-        message: Optional[str] = None,
-        context: Optional[Dict[str, Any]] = None
-    ) -> None:
-        """Record error with operation name and optional context.
-        
-        Args:
-            operation: Name of the operation that failed
-            error: Exception object (if available)
-            error_type: Type name of the error (alternative to error)
-            message: Error message (alternative to error)
-            context: Additional context dict
-        """
-        # Support both old style (error as BaseException) and new style (error_type + message)
-        if error is not None:
-            error_info = {
-                "error_type": type(error).__name__,
-                "message": str(error)
-            }
-        else:
-            error_info = {
-                "error_type": error_type or "UnknownError",
-                "message": message or "No error message provided"
-            }
-            
-        entry = {
-            "operation": operation,
-            "timestamp": datetime.utcnow().isoformat(),
-            **error_info,
-            **(context or {}),
-        }
-        self._errors.append(entry)
-        if len(self._errors) > 50:
-            self._errors = self._errors[-50:]
-
-    def snapshot(self) -> Dict[str, Any]:
-        avg = self.total_duration_ms / self.query_count if self.query_count else 0.0
-        return {
-            "query_count": self.query_count,
-            "error_count": self.error_count,
-            "slow_query_count": self.slow_query_count,
-            "avg_duration_ms": round(avg, 2),
-            "total_duration_ms": round(self.total_duration_ms, 2),
-            "operation_counts": dict(self.operation_counts),
-            "recent_slow_queries": list(self._slow_queries),
-            "recent_errors": self._errors[-10:],
-        }
 
 
 class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
@@ -162,85 +81,25 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
         Raises:
             RuntimeError: If pgvector extension is not found.
         """
-        try:
-            with self.engine.connect() as conn:
-                result = conn.execute(text(
-                    "SELECT extname, extversion FROM pg_extension WHERE extname = 'vector'"
-                ))
-                row = result.fetchone()
-                
-                if row is None:
-                    raise RuntimeError(
-                        "pgvector extension not found in database. "
-                        "Please install pgvector extension (0.8.1+ required for HNSW support). "
-                        "See db/SETUP.md for installation instructions."
-                    )
-                
-                version = row[1]
-                logger.info("✅ pgvector extension verified (version %s)", version)
-        except SQLAlchemyError as e:
-            logger.error("Failed to verify pgvector extension: %s", e)
-            raise RuntimeError(
-                "Could not verify pgvector extension. "
-                "Database connection may be misconfigured or extension may be missing. "
-                "See db/SETUP.md for setup instructions."
-            ) from e
+        verify_pgvector_extension(self.engine, logger, minimum_version="0.8.1")
 
     def _create_engine(self, database_url: str, *, echo: bool) -> Engine:
-        return create_engine(
+        return create_engine_with_pool(
             database_url,
-            echo=echo,
-            future=True,
-            poolclass=QueuePool,
             pool_size=self._pool_size,
             max_overflow=self._max_overflow,
             pool_timeout=self._pool_timeout,
-            pool_pre_ping=True,
+            echo=echo,
         )
 
-    @contextmanager
     def _timed_operation(self, operation: str, **context: Any):
-        start = time.time()
-        success = True
-        error: Optional[BaseException] = None
-
-        try:
-            yield
-        except BaseException as exc:  # noqa: BLE001 - propagate original exception
-            success = False
-            error = exc
-            raise
-        finally:
-            duration_ms = (time.time() - start) * 1000
-            context_payload = {key: value for key, value in context.items() if value is not None}
-
-            self._metrics.record_query(operation, duration_ms, success=success)
-
-            if success and duration_ms >= self._slow_query_threshold_ms:
-                self._metrics.record_slow_query(operation, duration_ms, context_payload)
-                logger.warning(
-                    "Slow query detected: %s took %.2fms (context=%s)",
-                    operation,
-                    duration_ms,
-                    context_payload,
-                )
-            if not success and error is not None:
-                self._metrics.record_error(operation, error, context_payload)
-                logger.error(
-                    "Database operation %s failed after %.2fms (context=%s, error=%s)",
-                    operation,
-                    duration_ms,
-                    context_payload,
-                    error,
-                )
-
-            logger.debug(
-                "database operation %s finished in %.2fms (success=%s, context=%s)",
-                operation,
-                duration_ms,
-                success,
-                context_payload,
-            )
+        return timed_operation(
+            self._metrics,
+            logger,
+            self._slow_query_threshold_ms,
+            operation,
+            **context,
+        )
 
     # ------------------------------------------------------------------
     # Port overrides (metrics wrappers)
@@ -255,12 +114,161 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
             return super().save_roster_entry(entry, model)
 
     def load_roster_entries(self, model: str) -> List[RosterEntry]:
+        """
+        Load all roster entries for model with MV aggregates.
+        
+        Joins roster_aggregate_embeddings MV to get weighted aggregates for all entries.
+        """
+        from db.models import RosterEntry as RosterEntryModel, RosterAggregateEmbedding
+        from sqlalchemy import func as sa_func
+        
         with self._timed_operation("load_roster_entries", model=model):
-            return super().load_roster_entries(model)
+            try:
+                with self._session() as session:
+                    self._ensure_tenant(session)
+                    
+                    # Build query with LEFT JOIN to MV
+                    stmt = (
+                        select(
+                            RosterEntryModel,
+                            # Use COALESCE to prefer MV aggregate, fallback to column
+                            sa_func.coalesce(
+                                RosterAggregateEmbedding.aggregate_embedding,
+                                RosterEntryModel.aggregate_embedding
+                            ).label("aggregate_embedding"),
+                            RosterAggregateEmbedding.reference_count,
+                            RosterAggregateEmbedding.augmented_count,
+                            RosterAggregateEmbedding.last_updated.label("mv_last_updated"),
+                        )
+                        .outerjoin(
+                            RosterAggregateEmbedding,
+                            RosterAggregateEmbedding.roster_entry_id == RosterEntryModel.id
+                        )
+                        .where(
+                            RosterEntryModel.model == model,
+                            RosterEntryModel.tenant_id == self._tenant_uuid,
+                        )
+                        .order_by(RosterEntryModel.created_at.desc())
+                    )
+                    
+                    results = session.execute(stmt).all()
+                    
+                    if not results:
+                        return []
+                    
+                    # Batch load sub-entities for all entries
+                    entry_ids = [row[0].id for row in results]  # row[0] is RosterEntryModel
+                    reference_map = self._load_reference_embeddings(session, entry_ids)
+                    augmented_map = self._load_augmented_embeddings(session, entry_ids)
+                    
+                    # Hydrate all entries with MV stats tracking
+                    entries = []
+                    for row in results:
+                        roster_updated_at = getattr(row[0], "updated_at", None)
+                        mv_last_updated = row.mv_last_updated
+                        embedding_source = (
+                            "materialized_view"
+                            if (
+                                mv_last_updated is not None
+                                and roster_updated_at is not None
+                                and mv_last_updated >= roster_updated_at
+                            )
+                            else "roster_entries"
+                        )
+                        entry = self._hydrate_entry_with_mv_stats(
+                            row[0],  # RosterEntryModel
+                            reference_map.get(row[0].id, []),
+                            augmented_map.get(row[0].id, []),
+                            mv_aggregate_embedding=row.aggregate_embedding,  # COALESCE result
+                            mv_reference_count=row.reference_count,
+                            mv_augmented_count=row.augmented_count,
+                            mv_last_updated=mv_last_updated,
+                            embedding_source=embedding_source,
+                        )
+                        entries.append(entry)
+                    
+                    return entries
+                    
+            except SQLAlchemyError:
+                logger.exception("Failed to load roster entries for model '%s' with MV", model)
+                return []
 
     def get_roster_entry(self, unique_id: str, model: str) -> Optional[RosterEntry]:
+        """
+        Fetch roster entry with aggregate from materialized view.
+        
+        Joins roster_aggregate_embeddings MV to get weighted aggregate (canonical source).
+        Falls back to roster_entries.aggregate_embedding if MV not available.
+        """
+        from db.models import RosterEntry as RosterEntryModel, RosterAggregateEmbedding
+        from sqlalchemy import func as sa_func
+        
         with self._timed_operation("get_roster_entry", unique_id=unique_id, model=model):
-            return super().get_roster_entry(unique_id, model)
+            try:
+                with self._session() as session:
+                    self._ensure_tenant(session)
+                    
+                    # Build query with LEFT JOIN to MV
+                    stmt = (
+                        select(
+                            RosterEntryModel,
+                            # Use COALESCE to prefer MV aggregate, fallback to column
+                            sa_func.coalesce(
+                                RosterAggregateEmbedding.aggregate_embedding,
+                                RosterEntryModel.aggregate_embedding
+                            ).label("aggregate_embedding"),
+                            RosterAggregateEmbedding.reference_count,
+                            RosterAggregateEmbedding.augmented_count,
+                            RosterAggregateEmbedding.last_updated.label("mv_last_updated"),
+                        )
+                        .outerjoin(
+                            RosterAggregateEmbedding,
+                            RosterAggregateEmbedding.roster_entry_id == RosterEntryModel.id
+                        )
+                        .where(
+                            RosterEntryModel.label == unique_id,
+                            RosterEntryModel.tenant_id == self._tenant_uuid,
+                        )
+                    )
+                    
+                    if model not in ("all", None):
+                        stmt = stmt.where(RosterEntryModel.model == model)
+                    
+                    result = session.execute(stmt).first()
+                    
+                    if not result:
+                        return None
+                    
+                    # Load sub-entities
+                    reference_map = self._load_reference_embeddings(session, [result[0].id])
+                    augmented_map = self._load_augmented_embeddings(session, [result[0].id])
+                    
+                    # Hydrate with MV stats tracking
+                    roster_updated_at = getattr(result[0], "updated_at", None)
+                    mv_last_updated = result.mv_last_updated
+                    embedding_source = (
+                        "materialized_view"
+                        if (
+                            mv_last_updated is not None
+                            and roster_updated_at is not None
+                            and mv_last_updated >= roster_updated_at
+                        )
+                        else "roster_entries"
+                    )
+                    return self._hydrate_entry_with_mv_stats(
+                        result[0],  # RosterEntryModel
+                        reference_map.get(result[0].id, []),
+                        augmented_map.get(result[0].id, []),
+                        mv_aggregate_embedding=result.aggregate_embedding,  # COALESCE result
+                        mv_reference_count=result.reference_count,
+                        mv_augmented_count=result.augmented_count,
+                        mv_last_updated=mv_last_updated,
+                        embedding_source=embedding_source,
+                    )
+                    
+            except SQLAlchemyError:
+                logger.exception("Failed to fetch roster entry '%s' with MV", unique_id)
+                return None
 
     def delete_roster_entry(self, unique_id: str, model: str) -> bool:
         with self._timed_operation("delete_roster_entry", unique_id=unique_id, model=model):
@@ -304,80 +312,14 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
             threshold=threshold,
             embedding_dim=len(query_embedding),
         ):
-            try:
-                with self._session() as session:
-                    self._ensure_tenant(session)
-
-                    query_vec = "[" + ",".join(map(str, query_embedding)) + "]"
-                    
-                    # Query MV instead of roster_entries for canonical aggregates
-                    # MV has HNSW index, so performance is identical (< 50ms p95)
-                    rows = session.execute(
-                        text(
-                            """
-                            SELECT 
-                                re.id, 
-                                (mv.aggregate_embedding <=> CAST(:query_vec AS vector)) AS distance,
-                                mv.reference_count,
-                                mv.augmented_count,
-                                mv.last_updated
-                            FROM roster_aggregate_embeddings mv
-                            JOIN roster_entries re ON re.id = mv.roster_entry_id
-                            WHERE mv.tenant_id = :tenant_id 
-                              AND mv.aggregate_embedding IS NOT NULL
-                            ORDER BY mv.aggregate_embedding <=> CAST(:query_vec AS vector)
-                            LIMIT :top_k
-                            """
-                        ),
-                        {
-                            "query_vec": query_vec,
-                            "tenant_id": self._tenant_uuid,
-                            "top_k": top_k,
-                        },
-                    ).all()
-
-                    if not rows:
-                        return []
-
-                    entry_ids = [row.id for row in rows]
-                    db_entries = (
-                        session.execute(
-                            select(RosterEntryModel).where(RosterEntryModel.id.in_(entry_ids))
-                        )
-                        .scalars()
-                        .all()
-                    )
-                    entry_map = {entry.id: entry for entry in db_entries}
-
-                    reference_map = self._load_reference_embeddings(session, entry_ids)
-                    augmented_map = self._load_augmented_embeddings(session, entry_ids)
-
-                    matches: List[Tuple[RosterEntry, float]] = []
-                    for row in rows:
-                        similarity = 1.0 - float(row.distance)
-                        if similarity < threshold:
-                            continue
-
-                        db_row = entry_map.get(row.id)
-                        if db_row is None:
-                            continue
-
-                        if model not in ("all", None) and getattr(db_row, "model", None) != model:
-                            continue
-
-                        entry = self._hydrate_entry(
-                            db_row,
-                            reference_map.get(db_row.id, []),
-                            augmented_map.get(db_row.id, []),
-                        )
-
-                        matches.append((entry, similarity))
-
-                    return matches
-
-            except SQLAlchemyError:
-                logger.exception("pgvector similarity search failed")
-                return []
+            return similarity_search(
+                self,
+                RosterEntryModel,
+                query_embedding,
+                model,
+                top_k,
+                threshold,
+            )
 
     # ------------------------------------------------------------------
     # Progressive Learning: Materialized View Refresh
@@ -403,138 +345,29 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
         The view is then queried by vector search operations instead of
         the roster_entries.aggregate_embedding column.
         """
-        start_time = time.perf_counter()
-        operation = "refresh_aggregate_view_selective" if roster_id else "refresh_aggregate_view_full"
-        
-        try:
-            with self._session() as session:
-                if roster_id:
-                    # Selective refresh: The view auto-updates when underlying tables change,
-                    # but we need to explicitly refresh to ensure consistency.
-                    # PostgreSQL REFRESH MATERIALIZED VIEW CONCURRENTLY allows reads during refresh.
-                    session.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY roster_aggregate_embeddings"))
-                    logger.debug(f"Refreshed materialized view (triggered by roster_id={roster_id})")
-                else:
-                    # Full refresh (blocking) - used during startup or migrations
-                    session.execute(text("REFRESH MATERIALIZED VIEW roster_aggregate_embeddings"))
-                    logger.info("Fully refreshed materialized view roster_aggregate_embeddings")
-                
-                session.commit()
-                
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.record_query(operation, duration_ms, success=True)
-            
-            if duration_ms > self._slow_query_threshold_ms:
-                self._metrics.record_slow_query(
-                    operation, duration_ms, 
-                    {"roster_id": roster_id, "type": "selective" if roster_id else "full"}
-                )
-                
-        except SQLAlchemyError as exc:
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.record_query(operation, duration_ms, success=False)
-            self._metrics.record_error(
-                operation=operation,
-                error_type=type(exc).__name__,
-                message=str(exc),
-                context={"roster_id": roster_id}
-            )
-            logger.error(f"Failed to refresh materialized view: {exc}")
-            # Don't raise - progressive learning should degrade gracefully
-            # FAISS index will still work with slightly stale data
+        run_mv_refresh(self, logger, roster_id)
 
     def refresh_aggregate_view_incremental(self, roster_id: str) -> None:
         """
         Incrementally update aggregate embedding for a single roster entry.
         
-        This is much faster than full MV refresh (~5-10ms vs 500ms-2s) because it:
-        1. Computes the new aggregate in a SQL subquery
-        2. UPDATEs the MV row directly (instead of rebuilding entire view)
-        3. Doesn't block other queries
+        This path recomputes the weighted aggregate directly into the base
+        `roster_entries` table. If the materialized view row does not yet exist,
+        we trigger a one-off full refresh so future queries can still leverage
+        the HNSW index. Otherwise the eventual nightly refresh keeps the MV in sync.
         
         Strategy:
         - Use this for single-entry updates (e.g., after confirming observations)
         - Run full refresh_aggregate_view() nightly or after N incremental updates
         
-        Trade-off: MV can become slightly stale for other entries, but the entry
-        being updated is always fresh. The HNSW index stays consistent.
+        Trade-off: MV can become slightly stale until the next full refresh, but
+        read paths fall back to the fresh aggregate stored on roster_entries to
+        maintain correctness.
         
         Args:
             roster_id: The roster entry ID to refresh
         """
-        start_time = time.perf_counter()
-        operation = "refresh_aggregate_view_incremental"
-        
-        try:
-            with self._session() as session:
-                # Use the same weighted average logic as the MV definition
-                # (scalar multiplication with quality-tier weights)
-                session.execute(text("""
-                    -- Update the materialized view row directly
-                    UPDATE roster_aggregate_embeddings
-                    SET 
-                        aggregate_embedding = (
-                            SELECT CAST((SUM(embedding * weight) / SUM(weight)) AS vector(512))
-                            FROM (
-                                -- Reference embeddings: weight = 3.0
-                                SELECT embedding, 3.0 AS weight
-                                FROM reference_embeddings
-                                WHERE roster_entry_id = :roster_id
-                                
-                                UNION ALL
-                                
-                                -- Augmented embeddings: quality-based weights
-                                SELECT 
-                                    embedding,
-                                    CASE quality_tier
-                                        WHEN 'high' THEN 3.0
-                                        WHEN 'medium' THEN 2.0
-                                        WHEN 'low' THEN 1.0
-                                        ELSE 2.0
-                                    END AS weight
-                                FROM augmented_embeddings
-                                WHERE roster_entry_id = :roster_id
-                            ) weighted_embeddings
-                        ),
-                        reference_count = (
-                            SELECT COUNT(*) 
-                            FROM reference_embeddings 
-                            WHERE roster_entry_id = :roster_id
-                        ),
-                        augmented_count = (
-                            SELECT COUNT(*) 
-                            FROM augmented_embeddings 
-                            WHERE roster_entry_id = :roster_id
-                        ),
-                        last_updated = GREATEST(
-                            (SELECT MAX(created_at) FROM reference_embeddings WHERE roster_entry_id = :roster_id),
-                            (SELECT MAX(created_at) FROM augmented_embeddings WHERE roster_entry_id = :roster_id)
-                        )
-                    WHERE roster_entry_id = :roster_id
-                """), {"roster_id": roster_id})
-                session.commit()
-                
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.record_query(operation, duration_ms, success=True)
-            logger.debug(f"Incrementally refreshed aggregate for roster_id={roster_id} in {duration_ms:.2f}ms")
-            
-            if duration_ms > self._slow_query_threshold_ms:
-                self._metrics.record_slow_query(
-                    operation, duration_ms,
-                    {"roster_id": roster_id}
-                )
-                
-        except SQLAlchemyError as exc:
-            duration_ms = (time.perf_counter() - start_time) * 1000
-            self._metrics.record_query(operation, duration_ms, success=False)
-            self._metrics.record_error(
-                operation=operation,
-                error_type=type(exc).__name__,
-                message=str(exc),
-                context={"roster_id": roster_id}
-            )
-            logger.error(f"Failed to incrementally refresh aggregate for {roster_id}: {exc}")
-            # Don't raise - fall back to stale aggregate if needed
+        run_incremental_mv_refresh(self, logger, roster_id)
 
     def get_progressive_learning_stats(self) -> Dict[str, Any]:
         """
@@ -542,115 +375,32 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
         
         Returns comprehensive stats for WordPress dashboard and /service/info endpoint.
         """
-        try:
-            with self._session() as session:
-                # Get pgvector version
-                pgvector_version = session.execute(text("""
-                    SELECT extversion FROM pg_extension WHERE extname = 'vector'
-                """)).scalar()
-                
-                # Get roster entry counts
-                entry_stats = session.execute(text("""
-                    SELECT 
-                        COUNT(*) as total_entries,
-                        COUNT(DISTINCT CASE WHEN aug.roster_entry_id IS NOT NULL THEN re.id END) as entries_with_augmentations
-                    FROM roster_entries re
-                    LEFT JOIN augmented_embeddings aug ON aug.roster_entry_id = re.id
-                    WHERE re.tenant_id = :tenant_id
-                """), {"tenant_id": self._tenant_uuid}).fetchone()
-                
-                # Get embedding counts
-                embedding_counts = session.execute(text("""
-                    SELECT
-                        (SELECT COUNT(*) FROM reference_embeddings ref 
-                         JOIN roster_entries re ON ref.roster_entry_id = re.id 
-                         WHERE re.tenant_id = :tenant_id) as total_reference,
-                        (SELECT COUNT(*) FROM augmented_embeddings aug 
-                         JOIN roster_entries re ON aug.roster_entry_id = re.id 
-                         WHERE re.tenant_id = :tenant_id) as total_augmented
-                """), {"tenant_id": self._tenant_uuid}).fetchone()
-                
-                # Get quality distribution
-                quality_dist = session.execute(text("""
-                    SELECT 
-                        quality_tier,
-                        COUNT(*) as count
-                    FROM augmented_embeddings aug
-                    JOIN roster_entries re ON aug.roster_entry_id = re.id
-                    WHERE re.tenant_id = :tenant_id
-                    GROUP BY quality_tier
-                """), {"tenant_id": self._tenant_uuid}).fetchall()
-                
-                total_augmented = embedding_counts[1] if embedding_counts else 0
-                quality_breakdown = {row[0]: row[1] for row in quality_dist}
-                
-                # Calculate percentages
-                quality_high_pct = round((quality_breakdown.get('high', 0) / total_augmented * 100), 2) if total_augmented else 0
-                quality_medium_pct = round((quality_breakdown.get('medium', 0) / total_augmented * 100), 2) if total_augmented else 0
-                quality_low_pct = round((quality_breakdown.get('low', 0) / total_augmented * 100), 2) if total_augmented else 0
-                
-                # Get confirmations in last 24 hours
-                confirmations_24h = session.execute(text("""
-                    SELECT COUNT(*) 
-                    FROM augmented_embeddings aug
-                    JOIN roster_entries re ON aug.roster_entry_id = re.id
-                    WHERE re.tenant_id = :tenant_id
-                      AND aug.created_at >= NOW() - INTERVAL '24 hours'
-                """), {"tenant_id": self._tenant_uuid}).scalar() or 0
-                
-                # Get MV last refresh time
-                mv_last_updated = session.execute(text("""
-                    SELECT MAX(last_updated) FROM roster_aggregate_embeddings
-                    WHERE tenant_id = :tenant_id
-                """), {"tenant_id": self._tenant_uuid}).scalar()
-                
-                # Calculate average augmentations per entry
-                total_entries = entry_stats[0] if entry_stats else 0
-                avg_augmentations = round((total_augmented / total_entries), 2) if total_entries else 0
-                
-                return {
-                    "pgvector_version": pgvector_version or "unknown",
-                    "total_entries": total_entries,
-                    "augmented_entries": entry_stats[1] if entry_stats else 0,
-                    "total_reference": embedding_counts[0] if embedding_counts else 0,
-                    "total_augmented": total_augmented,
-                    "confirmations_24h": confirmations_24h,
-                    "avg_augmentations": avg_augmentations,
-                    "quality_high_pct": quality_high_pct,
-                    "quality_medium_pct": quality_medium_pct,
-                    "quality_low_pct": quality_low_pct,
-                    "last_mv_refresh": mv_last_updated.isoformat() if mv_last_updated else None,
-                    # Placeholder values for future implementation
-                    "last_full_refresh": None,
-                    "refresh_in_progress": False,
-                    "pending_refresh_count": 0,
-                    "faiss_index_size": 0,
-                    "faiss_last_reload": None,
-                    "faiss_reload_pending": False,
-                }
-                
-        except SQLAlchemyError as exc:
-            logger.error(f"Failed to get progressive learning stats: {exc}")
-            # Return minimal stats on error
-            return {
-                "pgvector_version": "unknown",
-                "total_entries": 0,
-                "augmented_entries": 0,
-                "total_reference": 0,
-                "total_augmented": 0,
-                "confirmations_24h": 0,
-                "avg_augmentations": 0.0,
-                "quality_high_pct": 0.0,
-                "quality_medium_pct": 0.0,
-                "quality_low_pct": 0.0,
-                "last_mv_refresh": None,
-                "last_full_refresh": None,
-                "refresh_in_progress": False,
-                "pending_refresh_count": 0,
-                "faiss_index_size": 0,
-                "faiss_last_reload": None,
-                "faiss_reload_pending": False,
-            }
+        return fetch_progressive_learning_stats(self, logger)
+
+    # ------------------------------------------------------------------
+    # Helper methods for MV-aware hydration
+    # ------------------------------------------------------------------
+    def _hydrate_entry_with_mv_stats(
+        self,
+        row: Any,  # RosterEntryModel ORM object
+        reference_images: List[Dict[str, Any]],
+        augmented_embeddings: List[Dict[str, Any]],
+        mv_aggregate_embedding: Optional[list] = None,
+        mv_reference_count: Optional[int] = None,
+        mv_augmented_count: Optional[int] = None,
+        mv_last_updated: Optional[Any] = None,
+        embedding_source: Optional[str] = None,
+    ) -> RosterEntry:
+        return hydrate_entry_with_mv_stats_helper(
+            row,
+            reference_images,
+            augmented_embeddings,
+            mv_aggregate_embedding=mv_aggregate_embedding,
+            mv_reference_count=mv_reference_count,
+            mv_augmented_count=mv_augmented_count,
+            mv_last_updated=mv_last_updated,
+            embedding_source=embedding_source,
+        )
 
     # ------------------------------------------------------------------
     # Metrics utilities

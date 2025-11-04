@@ -102,7 +102,8 @@ class TestPostgreSQLMetrics:
         monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
         
         # Mock SQLAlchemy engine and session
-        with patch('roster.adapters.postgresql_storage_adapter.create_engine') as mock_engine:
+        with patch('roster.adapters.postgresql_storage_adapter.create_engine_with_pool') as mock_engine, \
+             patch('roster.adapters.postgresql_storage_adapter.verify_pgvector_extension'):
             mock_pool = MagicMock()
             mock_pool.size.return_value = 5
             mock_pool.checkedin.return_value = 3
@@ -159,7 +160,8 @@ class TestTimedOperations:
         """Create adapter with mocked database for timing tests."""
         monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
         
-        with patch('roster.adapters.postgresql_storage_adapter.create_engine'):
+        with patch('roster.adapters.postgresql_storage_adapter.create_engine_with_pool'), \
+             patch('roster.adapters.postgresql_storage_adapter.verify_pgvector_extension'):
             adapter = PostgreSQLStorageAdapter(
                 tenant_id="test-tenant",
                 slow_query_threshold_ms=50.0
@@ -219,7 +221,8 @@ class TestStructuredLogging:
         """Create adapter with logging configured."""
         monkeypatch.setenv("DATABASE_URL", "postgresql://test:test@localhost:5432/test")
         
-        with patch('roster.adapters.postgresql_storage_adapter.create_engine'):
+        with patch('roster.adapters.postgresql_storage_adapter.create_engine_with_pool'), \
+             patch('roster.adapters.postgresql_storage_adapter.verify_pgvector_extension'):
             adapter = PostgreSQLStorageAdapter(
                 tenant_id="logging-test-tenant",
                 slow_query_threshold_ms=100.0

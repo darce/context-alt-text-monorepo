@@ -43,6 +43,9 @@ def alembic_config():
     config = Config(alembic_ini_path)
     # Set the database URL from environment
     config.set_main_option("sqlalchemy.url", os.getenv("DATABASE_URL"))
+    # Ensure script_location is absolute path
+    migrations_dir = os.path.join(service_dir, "db", "migrations")
+    config.set_main_option("script_location", migrations_dir)
     return config
 
 

@@ -876,6 +876,7 @@ final class ClusteringService implements ClusteringEngine
                 'attachmentId' => $face->attachmentId(),
                 'bbox' => $bbox,
                 'embeddingId' => $face->embeddingId(),
+                'thumbnail' => $face->thumbnail(),
                 'clusterId' => $clusterId,
                 'detectedAt' => $this->formatDate($face->detectedAt()),
                 'resolvedAt' => $face->resolvedAt() ? $this->formatDate($face->resolvedAt()) : null,

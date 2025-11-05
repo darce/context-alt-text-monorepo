@@ -140,12 +140,29 @@ final class RecognitionServiceFaceDetectionPipeline implements FaceDetectionPipe
                     $embeddingVector = array_map('floatval', $entity['face_data']['embedding']);
                 }
 
+                // Extract thumbnail from recognition service
+                $thumbnail = null;
+                if (isset($entity['face_data']['thumbnail']) && is_string($entity['face_data']['thumbnail']) && trim($entity['face_data']['thumbnail']) !== '') {
+                    $thumbnail = trim($entity['face_data']['thumbnail']);
+                    Logger::debug('Extracted thumbnail from recognition service', [
+                        'thumbnailLength' => strlen($thumbnail),
+                        'first50Chars' => substr($thumbnail, 0, 50),
+                    ]);
+                } else {
+                    Logger::debug('No thumbnail in face_data', [
+                        'hasFaceData' => isset($entity['face_data']),
+                        'hasThumbnailKey' => isset($entity['face_data']['thumbnail']),
+                        'faceDataKeys' => isset($entity['face_data']) ? array_keys($entity['face_data']) : [],
+                    ]);
+                }
+
                 $results[] = [
                     'bbox' => $bbox,
                     'embeddingId' => $embeddingId,
                     'embeddingVector' => $embeddingVector,
                     'clusterId' => null,
                     'detectedAt' => $this->resolveDetectedAt($entity),
+                    'thumbnail' => $thumbnail,
                 ];
             }
         }

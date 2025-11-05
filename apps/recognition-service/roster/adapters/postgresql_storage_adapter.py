@@ -352,9 +352,10 @@ class PostgreSQLStorageAdapter(DatabaseRosterStorageAdapter):
         Incrementally update aggregate embedding for a single roster entry.
         
         This path recomputes the weighted aggregate directly into the base
-        `roster_entries` table. If the materialized view row does not yet exist,
-        we trigger a one-off full refresh so future queries can still leverage
-        the HNSW index. Otherwise the eventual nightly refresh keeps the MV in sync.
+        `roster_entries` table using scalar-weighted sums so it completes in a few
+        milliseconds. Nightly jobs should still run `refresh_aggregate_view()` to
+        hydrate the materialized view for pgvector search, but the hot path no
+        longer issues a blocking REFRESH operation.
         
         Strategy:
         - Use this for single-entry updates (e.g., after confirming observations)

@@ -20,7 +20,6 @@ Architecture:
 """
 
 from .config import get_settings, load_settings, reload_settings
-from .services import FaceRecognitionService
 
 __version__ = "2.0.0"
 
@@ -28,5 +27,4 @@ __all__ = [
     "get_settings",
     "load_settings",
     "reload_settings",
-    "FaceRecognitionService",
 ]

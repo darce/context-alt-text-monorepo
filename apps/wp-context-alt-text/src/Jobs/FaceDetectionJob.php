@@ -63,6 +63,7 @@ final class FaceDetectionJob
      *     bbox: array{x:float,y:float,width:float,height:float},
      *     embeddingId: string|null,
      *     embeddingVector: float[]|null,
+     *     thumbnail: string|null,
      *     clusterId: string|null,
      *     detectedAt: DateTimeInterface|null
      * } $detection
@@ -80,6 +81,7 @@ final class FaceDetectionJob
             $detection['bbox'],
             $detection['embeddingId'] ?? null,
             $detection['embeddingVector'] ?? null,
+            $detection['thumbnail'] ?? null,
             $detection['clusterId'] ?? null,
             $detectedAt,
             null,

@@ -38,6 +38,7 @@ class UnknownFaceTableInstaller
             bbox_json LONGTEXT NOT NULL,
             embedding_id VARCHAR(255) NULL,
             embedding_vector MEDIUMTEXT NULL COMMENT '512-dim embedding as JSON array',
+            thumbnail MEDIUMTEXT NULL COMMENT 'Base64-encoded face thumbnail from recognition service',
             cluster_id VARCHAR(255) NULL,
             detected_at DATETIME NOT NULL,
             resolved_at DATETIME NULL,
@@ -52,6 +53,9 @@ class UnknownFaceTableInstaller
         
         // Add embedding_vector column if it doesn't exist (migration for existing tables)
         $this->addEmbeddingVectorColumn($table);
+        
+        // Add thumbnail column if it doesn't exist (migration for existing tables)
+        $this->addThumbnailColumn($table);
     }
 
     /**
@@ -70,6 +74,26 @@ class UnknownFaceTableInstaller
         // Add column if it doesn't exist
         if (empty($column)) {
             $sql = "ALTER TABLE {$table} ADD COLUMN embedding_vector MEDIUMTEXT NULL COMMENT '512-dim embedding as JSON array' AFTER embedding_id";
+            $this->wpdb->query($sql);
+        }
+    }
+
+    /**
+     * Add thumbnail column to existing tables that don't have it.
+     */
+    private function addThumbnailColumn(string $table): void
+    {
+        // Check if column exists
+        $column = $this->wpdb->get_results(
+            $this->wpdb->prepare(
+                "SHOW COLUMNS FROM {$table} LIKE %s",
+                'thumbnail'
+            )
+        );
+
+        // Add column if it doesn't exist
+        if (empty($column)) {
+            $sql = "ALTER TABLE {$table} ADD COLUMN thumbnail MEDIUMTEXT NULL COMMENT 'Base64-encoded face thumbnail from recognition service' AFTER embedding_vector";
             $this->wpdb->query($sql);
         }
     }

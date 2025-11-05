@@ -1,12 +1,15 @@
 # Backend Recognition Service Task List — Progressive Learning & Roster Sync
 
+> ⚠️ **DEPRECATION NOTICE (2025-11-02):** SQLite adapter removed. PostgreSQL 17+ with pgvector 0.8.1+ is now required.
+> All SQLite references in this document are **OBSOLETE** and retained for historical context only.
+
 **Scope:** Backend recognition service changes (`apps/recognition-service`) to support progressive learning, augmented embeddings, and WordPress roster synchronization.
 
 **Principle:** Recognition service is the canonical source of truth for roster data and FAISS matching. WordPress confirms identities and sends embeddings; backend aggregates them, updates the FAISS index, and serves suggestions.
 
 **Source Documents:** `hybrid-roster-tasks.md`, `roadmap-v3.hybrid.md`
 
-**Last Updated:** 2025-10-30
+**Last Updated:** 2025-11-03
 
 ---
 

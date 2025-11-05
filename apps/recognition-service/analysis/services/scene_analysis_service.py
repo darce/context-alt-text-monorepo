@@ -1,4 +1,6 @@
 import logging
+import base64
+from io import BytesIO
 from typing import Any, Dict, List, Optional
 
 import numpy as np
@@ -36,6 +38,42 @@ class SceneAnalysisService:
 
         logger.info("SceneAnalysisService initialized (device=%s)", self._settings.insightface.device)
 
+    def _generate_face_thumbnail(
+        self, image: Image.Image, bbox: tuple[int, int, int, int], max_size: int = 150
+    ) -> str:
+        """
+        Crop face from image using bbox and return base64-encoded thumbnail.
+        
+        Args:
+            image: Original PIL Image
+            bbox: Bounding box as (x1, y1, x2, y2)
+            max_size: Maximum dimension for thumbnail (default 150px)
+            
+        Returns:
+            Base64-encoded JPEG image data
+        """
+        try:
+            logger.debug(f"🖼️  Generating thumbnail for bbox={bbox}, image_size={image.size}")
+            
+            # Crop the face region
+            face_crop = image.crop(bbox)
+            
+            # Resize to thumbnail if needed (maintain aspect ratio)
+            face_crop.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
+            
+            # Encode as JPEG to base64
+            buffer = BytesIO()
+            face_crop.save(buffer, format="JPEG", quality=85)
+            img_bytes = buffer.getvalue()
+            
+            # Return base64 string
+            thumbnail_b64 = base64.b64encode(img_bytes).decode("utf-8")
+            logger.info(f"✅ Generated thumbnail: {len(thumbnail_b64)} chars, crop_size={face_crop.size}")
+            return thumbnail_b64
+        except Exception as e:
+            logger.error(f"❌ Failed to generate face thumbnail: {e}", exc_info=True)
+            return ""
+
     async def analyze_scene(
         self,
         image: Image.Image,
@@ -72,6 +110,9 @@ class SceneAnalysisService:
                 for match in match_candidates
             ]
 
+            # Generate face thumbnail
+            thumbnail_base64 = self._generate_face_thumbnail(image, bbox)
+
             entity = DetectedEntity(
                 label="face",
                 bbox=bbox,
@@ -85,6 +126,7 @@ class SceneAnalysisService:
                     "embedding_dimension": len(face_embedding.embedding),
                     "threshold": threshold,
                     "candidates": face_data,
+                    "thumbnail": thumbnail_base64,  # Add base64-encoded face crop
                 },
             )
 

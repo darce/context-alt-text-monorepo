@@ -7,6 +7,7 @@ This folder breaks the recognition service diagrams into focused slices so devel
 - `container.mmd` — key runtime components inside `apps/recognition-service`.
 - `persistence.mmd` — database entities and the pgvector/HNSW index.
 - `components/recognition_pipeline.mmd` — how `FaceRecognitionService` talks to adapters and infrastructure.
+- `components/postgres_roster_adapter.mmd` — module split inside the PostgreSQL roster storage adapter.
 - `domain/roster_domain.mmd` — core roster entities, ports, and adapters.
 - `observability/metrics.mmd` — how `shared/metrics.py` hooks FastAPI handlers and services into Prometheus gauges/counters.
 - `workflows/` — sequence diagrams for high-signal flows (progressive learning, roster ETag caching, hybrid index cycle, error/retry handling, startup wiring, recognition requests, service info stats). Add more detailed diagrams here when a roadmap slice introduces new behaviour, naming each file after the scenario it covers.

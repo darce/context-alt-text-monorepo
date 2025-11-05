@@ -124,12 +124,15 @@ class InsightFaceAdapter(RecognitionModelPort, FaceDetectorPort, FaceEmbedderPor
                     else:
                         logger.info(f"⚠️ Model {model_name} provider info not available")
             
-            # Prepare the model with a dummy context
-            self._app.prepare(ctx_id=0, det_size=(640, 640))
+            # Prepare the model with configured detection settings
+            det_size = self.settings.insightface.det_size
+            det_thresh = self.settings.insightface.det_thresh
+            self._app.prepare(ctx_id=0, det_size=det_size, det_thresh=det_thresh)
             
             self._model_loaded = True
             logger.info(f"✅ InsightFace model loaded: {self.settings.insightface.model_name}")
             logger.info(f"📁 Models stored in: {insightface_cache}")
+            logger.info(f"🎯 Detection settings: threshold={det_thresh}, size={det_size}")
             
         except Exception as e:
             logger.error(f"❌ Failed to load InsightFace model: {e}")
@@ -287,12 +290,28 @@ class InsightFaceAdapter(RecognitionModelPort, FaceDetectorPort, FaceEmbedderPor
             try:
                 start_time = time.time()
                 cv2_image = self._pil_to_cv2(pil_image)
+                
+                # Log image details for debugging
+                logger.debug(
+                    f"🔍 Analyzing image: shape={cv2_image.shape}, dtype={cv2_image.dtype}, "
+                    f"min={cv2_image.min()}, max={cv2_image.max()}"
+                )
+                
+                # Detection threshold was set during prepare(), just call get()
                 faces = self._app.get(cv2_image)
+                
+                det_thresh = self.settings.insightface.det_thresh
+                logger.debug(f"🔍 InsightFace returned {len(faces)} faces (threshold={det_thresh})")
 
                 embeddings: List[FaceEmbedding] = []
                 for face in faces:
                     bbox = face.bbox.astype(int)
                     x_min, y_min, x_max, y_max = bbox
+                    
+                    logger.debug(
+                        f"  Face detected: bbox=({x_min},{y_min},{x_max},{y_max}), "
+                        f"score={face.det_score:.3f}"
+                    )
 
                     detection = FaceDetection(
                         bbox=(x_min, y_min, x_max, y_max),
@@ -315,7 +334,7 @@ class InsightFaceAdapter(RecognitionModelPort, FaceDetectorPort, FaceEmbedderPor
                 )
                 return embeddings
             except Exception as exc:  # pragma: no cover - defensive fallback
-                logger.error("❌ Image analysis failed: %s", exc)
+                logger.error("❌ Image analysis failed: %s", exc, exc_info=True)
                 return []
 
         return await anyio.to_thread.run_sync(_analyze_sync, image)

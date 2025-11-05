@@ -59,21 +59,57 @@ classDiagram
         +get_storage_info(model) Dict
     }
 
-    class PostgreSQLStorageAdapter {
+    class DatabaseRosterStorageAdapter {
+        <<abstract>>
         +save_roster_entry(...)
         +load_roster_entries(...)
+        +get_roster_entry(...)
+        +delete_roster_entry(...)
         +get_storage_info(...)
-        +search_similar(query_embedding, model, top_k, threshold) List~Tuple~
+        #_session() : Session
+        #_ensure_tenant(session)
+        #_hydrate_entry(...)
     }
 
-    class SQLiteStorageAdapter {
-        +save_roster_entry(...)
-        +load_roster_entries(...)
-        +clear_roster(...)
+    class PostgreSQLStorageAdapter {
+        +search_similar(query_embedding, model, top_k, threshold) List~Tuple~
+        +get_progressive_learning_stats() Dict
+        -_metrics : DatabaseMetrics
+        -_slow_query_threshold_ms : float
+    }
+
+    class DatabaseMetrics {
+        +timed_operation(operation, **context)
+        +record_success(operation, duration_ms)
+        +record_error(operation, error, context)
+    }
+
+    class MVRefresh {
+        +refresh_materialized_view(engine)
+        +refresh_aggregate_view_incremental(engine, roster_entry_id)
+    }
+
+    class SearchQueries {
+        +similarity_search(engine, embedding, top_k, threshold)
+        +hydrate_entry_with_mv_stats(...)
+    }
+
+    class ProgressiveLearningStats {
+        +fetch_progressive_learning_stats(engine, tenant_id)
+    }
+
+    class SessionUtils {
+        +create_engine_with_pool(url, pool_size, max_overflow, pool_timeout, echo)
+        +verify_pgvector_extension(engine, logger, minimum_version)
     }
 
     RosterEntry "1" *-- "*" RosterImage
     RosterService --> RosterStoragePort
     RosterService --> DataValidationPort
-    RosterStoragePort <|.. PostgreSQLStorageAdapter
-    RosterStoragePort <|.. SQLiteStorageAdapter
+    RosterStoragePort <|.. DatabaseRosterStorageAdapter
+    DatabaseRosterStorageAdapter <|-- PostgreSQLStorageAdapter
+    PostgreSQLStorageAdapter --> DatabaseMetrics
+    PostgreSQLStorageAdapter --> MVRefresh
+    PostgreSQLStorageAdapter --> SearchQueries
+    PostgreSQLStorageAdapter --> ProgressiveLearningStats
+    PostgreSQLStorageAdapter --> SessionUtils

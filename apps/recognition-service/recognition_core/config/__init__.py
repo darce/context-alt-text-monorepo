@@ -60,14 +60,16 @@ class InsightFaceSettings(BaseSettings):
     device: str = "auto"
     cache_dir: str = Field(default_factory=_default_insightface_cache_dir)
     providers: List[str] = []  # Empty list enables auto-detection based on device
+    det_thresh: float = 0.5 # Face detection threshold (0.0-1.0, lower = more sensitive)
+    det_size: tuple = (640, 640)  # Detection input size (width, height)
 
 
 class RecognitionSettings(BaseSettings):
     """Recognition pipeline settings."""
     default_threshold: float = 0.45
-    max_faces_per_image: int = 10
+    max_faces_per_image: int = 999
     embedding_dimension: int = 512
-    max_candidates: int = 5
+    max_candidates: int = 999
 
 
 class EmbeddingRouterSettings(BaseSettings):
@@ -110,6 +112,7 @@ class Settings(BaseSettings):
         """Pydantic configuration."""
         env_prefix = "RECOG_"
         case_sensitive = False
+        env_nested_delimiter = "__"
 
 
 def load_settings() -> Settings:
@@ -134,16 +137,16 @@ def load_settings() -> Settings:
             config_data = yaml.safe_load(f) or {}
     
     # Create nested settings objects
-    settings_data = {
-        "insightface": InsightFaceSettings(**_strip_none_values(config_data.get("insightface", {}))),
-        "recognition": RecognitionSettings(**_strip_none_values(config_data.get("recognition", {}))),
-        "embedding_router": EmbeddingRouterSettings(**_strip_none_values(config_data.get("embedding_router", {}))),
-        "cache": CacheSettings(**_strip_none_values(config_data.get("cache", {}))),
-        "performance": PerformanceSettings(**_strip_none_values(config_data.get("performance", {}))),
-        "logging": LoggingSettings(**_strip_none_values(config_data.get("logging", {}))),
+    overrides = {
+        "insightface": _strip_none_values(config_data.get("insightface", {})),
+        "recognition": _strip_none_values(config_data.get("recognition", {})),
+        "embedding_router": _strip_none_values(config_data.get("embedding_router", {})),
+        "cache": _strip_none_values(config_data.get("cache", {})),
+        "performance": _strip_none_values(config_data.get("performance", {})),
+        "logging": _strip_none_values(config_data.get("logging", {})),
     }
-    
-    return Settings(**settings_data)
+
+    return Settings(**overrides)
 
 
 # Global settings instance

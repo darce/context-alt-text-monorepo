@@ -1,0 +1,36 @@
+---
+title: PostgreSQL Roster Adapter Modules
+---
+flowchart TD
+    subgraph adapter_layer["Adapter Implementation"]
+        adapter["PostgreSQLStorageAdapter\nimplements RosterStoragePort"]
+        base["DatabaseRosterStorageAdapter\nshared ORM + tenant logic"]
+    end
+
+    subgraph support["Supporting Modules"]
+        metrics["postgres_metrics.DatabaseMetrics\nlatency + error telemetry"]
+        mv["mv_refresh\nmaterialized view refresh strategies"]
+        queries["search_queries\nsimilarity search + MV hydration"]
+        stats["progressive_learning_stats\nprogressive learning rollups"]
+        session["session_utils\nengine + pgvector verification"]
+        persistence["roster_persistence\nhydrate/replace embeddings"]
+        base_utils["database_base_utils\nID + tenant helpers"]
+        session_factory["sqlalchemy_session\nsession scope helpers"]
+    end
+
+    adapter --> metrics
+    adapter --> mv
+    adapter --> queries
+    adapter --> stats
+    adapter --> session
+
+    adapter --> base
+    base --> persistence
+    base --> base_utils
+    base --> session_factory
+
+    classDef adapter_layer fill:#fff3e0,stroke:#ef6c00;
+    classDef support fill:#ede7f6,stroke:#5e35b1;
+
+    class adapter,base adapter_layer;
+    class metrics,mv,queries,stats,session,persistence,base_utils,session_factory support;

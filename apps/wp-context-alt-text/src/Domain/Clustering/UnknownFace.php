@@ -18,6 +18,7 @@ final class UnknownFace
     private ?string $embeddingId;
     /** @var float[]|null */
     private ?array $embeddingVector;
+    private ?string $thumbnail;
     private ?string $clusterId;
     private DateTimeInterface $detectedAt;
     private ?DateTimeInterface $resolvedAt;
@@ -33,6 +34,7 @@ final class UnknownFace
         array $bbox,
         ?string $embeddingId,
         ?array $embeddingVector,
+        ?string $thumbnail,
         ?string $clusterId,
         DateTimeInterface $detectedAt,
         ?DateTimeInterface $resolvedAt = null,
@@ -43,6 +45,7 @@ final class UnknownFace
         $this->bbox = $bbox;
         $this->embeddingId = $embeddingId;
         $this->embeddingVector = $embeddingVector;
+        $this->thumbnail = $thumbnail;
         $this->clusterId = $clusterId;
         $this->detectedAt = $detectedAt;
         $this->resolvedAt = $resolvedAt;
@@ -78,6 +81,11 @@ final class UnknownFace
     public function embeddingVector(): ?array
     {
         return $this->embeddingVector;
+    }
+
+    public function thumbnail(): ?string
+    {
+        return $this->thumbnail;
     }
 
     public function clusterId(): ?string

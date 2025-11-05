@@ -47,13 +47,14 @@ final class UnknownFaceRepository
                 'bbox_json' => $bboxJson,
                 'embedding_id' => $face->embeddingId(),
                 'embedding_vector' => $this->encodeEmbeddingVector($face->embeddingVector()),
+                'thumbnail' => $face->thumbnail(),
                 'cluster_id' => $face->clusterId(),
                 'detected_at' => $detectedAt,
                 'resolved_at' => $resolvedAt,
                 'roster_id' => $face->rosterId(),
             ];
 
-            $format = ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s'];
+            $format = ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'];
 
             $this->wpdb->insert($table, $data, $format);
             $insertId = (int) ($this->wpdb->insert_id ?? 0);
@@ -70,6 +71,7 @@ final class UnknownFaceRepository
             'bbox_json' => $bboxJson,
             'embedding_id' => $face->embeddingId(),
             'embedding_vector' => $this->encodeEmbeddingVector($face->embeddingVector()),
+            'thumbnail' => $face->thumbnail(),
             'cluster_id' => $face->clusterId(),
             'detected_at' => $detectedAt,
             'resolved_at' => $resolvedAt,
@@ -77,7 +79,7 @@ final class UnknownFaceRepository
         ];
 
         $where = ['id' => $face->id()];
-        $format = ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s'];
+        $format = ['%d', '%s', '%s', '%s', '%s', '%s', '%s', '%s', '%s'];
         $whereFormat = ['%d'];
 
         $this->wpdb->update($table, $data, $where, $format, $whereFormat);
@@ -297,6 +299,7 @@ final class UnknownFaceRepository
     {
         $bbox = $this->decodeBbox($row['bbox_json']);
         $embeddingVector = $this->decodeEmbeddingVector($row['embedding_vector'] ?? null);
+        $thumbnail = isset($row['thumbnail']) && is_string($row['thumbnail']) ? $row['thumbnail'] : null;
 
         return new UnknownFace(
             isset($row['id']) ? (int) $row['id'] : null,
@@ -304,6 +307,7 @@ final class UnknownFaceRepository
             $bbox,
             $row['embedding_id'] !== null ? (string) $row['embedding_id'] : null,
             $embeddingVector,
+            $thumbnail,
             $row['cluster_id'] !== null ? (string) $row['cluster_id'] : null,
             new DateTimeImmutable((string) $row['detected_at']),
             isset($row['resolved_at']) && $row['resolved_at'] !== null ? new DateTimeImmutable((string) $row['resolved_at']) : null,

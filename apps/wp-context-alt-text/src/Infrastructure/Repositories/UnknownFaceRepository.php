@@ -11,7 +11,7 @@ use DateTimeInterface;
 use JsonException;
 use RuntimeException;
 
-final class UnknownFaceRepository
+final class UnknownFaceRepository implements UnknownFaceRepositoryInterface
 {
     /** @var \wpdb */
     private $wpdb;
@@ -90,13 +90,17 @@ final class UnknownFaceRepository
     /**
      * @return UnknownFace[]
      */
-    public function findUnresolvedFaces(int $limit = 100): array
+    public function findUnresolvedFaces(int $limit = 10000): array
     {
         $this->ensureTableExists();
 
         $table = $this->tableName();
         $sql = $this->wpdb->prepare(
-            "SELECT * FROM {$table} WHERE resolved_at IS NULL ORDER BY detected_at ASC LIMIT %d",
+            "SELECT * FROM {$table} 
+             WHERE resolved_at IS NULL 
+             AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))
+             ORDER BY detected_at ASC 
+             LIMIT %d",
             $limit
         );
 
@@ -120,13 +124,20 @@ final class UnknownFaceRepository
         if (preg_match('/^face-(\d+)$/', $clusterId, $matches)) {
             $faceId = (int) $matches[1];
             $sql = $this->wpdb->prepare(
-                "SELECT * FROM {$table} WHERE id = %d AND resolved_at IS NULL",
+                "SELECT * FROM {$table} 
+                 WHERE id = %d 
+                 AND resolved_at IS NULL
+                 AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))",
                 $faceId
             );
         } else {
             // Look up by actual cluster_id column
             $sql = $this->wpdb->prepare(
-                "SELECT * FROM {$table} WHERE cluster_id = %s AND resolved_at IS NULL ORDER BY detected_at ASC",
+                "SELECT * FROM {$table} 
+                 WHERE cluster_id = %s 
+                 AND resolved_at IS NULL 
+                 AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))
+                 ORDER BY detected_at ASC",
                 $clusterId
             );
         }
@@ -180,7 +191,11 @@ final class UnknownFaceRepository
         $values = array_values($normalized);
 
         $sql = $this->wpdb->prepare(
-            "SELECT * FROM {$table} WHERE id IN ({$placeholders}) AND resolved_at IS NULL ORDER BY detected_at ASC",
+            "SELECT * FROM {$table} 
+             WHERE id IN ({$placeholders}) 
+             AND resolved_at IS NULL 
+             AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))
+             ORDER BY detected_at ASC",
             ...$values
         );
 
@@ -230,6 +245,247 @@ final class UnknownFaceRepository
         );
 
         return (bool) $this->wpdb->query($sql);
+    }
+
+    /**
+     * Update cluster_id for multiple faces atomically.
+     *
+     * @param int[] $faceIds Array of face database IDs
+     * @param string $targetClusterId The target cluster ID to move faces to
+     * @param int $userId WordPress user ID performing the action
+     * @return int Number of rows updated
+     */
+    public function updateClusterMembership(
+        array $faceIds,
+        string $targetClusterId,
+        int $userId
+    ): int {
+        if ($faceIds === []) {
+            return 0;
+        }
+
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        // Build IN clause
+        $placeholders = implode(',', array_fill(0, count($faceIds), '%d'));
+        $sql = $this->wpdb->prepare(
+            "UPDATE {$table}
+             SET cluster_id = %s,
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id IN ({$placeholders})
+             AND resolved_at IS NULL",
+            $targetClusterId,
+            ...$faceIds
+        );
+
+        $this->wpdb->query($sql);
+        $updated_count = $this->wpdb->rows_affected;
+
+        // Log the action
+        error_log(sprintf(
+            '[UnknownFaceRepository] User %d moved %d faces to cluster %s',
+            $userId,
+            $updated_count,
+            $targetClusterId
+        ));
+
+        return $updated_count;
+    }
+
+    /**
+     * Soft delete a face by marking it as resolved with special roster_id.
+     *
+     * @param int $faceId Database ID of the face to delete
+     * @param int $userId WordPress user ID performing the action
+     * @return bool True if the face was deleted, false otherwise
+     */
+    public function softDeleteFace(int $faceId, int $userId): bool
+    {
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        $sql = $this->wpdb->prepare(
+            "UPDATE {$table}
+             SET resolved_at = CURRENT_TIMESTAMP,
+                 roster_id = '__deleted__',
+                 updated_at = CURRENT_TIMESTAMP
+             WHERE id = %d
+             AND resolved_at IS NULL",
+            $faceId
+        );
+
+        $this->wpdb->query($sql);
+        $success = $this->wpdb->rows_affected > 0;
+
+        if ($success) {
+            error_log(sprintf(
+                '[UnknownFaceRepository] User %d deleted face %d',
+                $userId,
+                $faceId
+            ));
+        }
+
+        return $success;
+    }
+
+    /**
+     * Bulk clear all unresolved faces (mark as reviewed but not identified).
+     *
+     * @param int $userId WordPress user ID performing the action
+     * @return int Number of faces cleared
+     */
+    public function clearAllUnresolvedFaces(int $userId): int
+    {
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        $sql = "UPDATE {$table}
+                SET resolved_at = CURRENT_TIMESTAMP,
+                    roster_id = '__cleared__',
+                    updated_at = CURRENT_TIMESTAMP
+                WHERE resolved_at IS NULL";
+
+        $this->wpdb->query($sql);
+        $cleared_count = $this->wpdb->rows_affected;
+
+        error_log(sprintf(
+            '[UnknownFaceRepository] User %d cleared %d unresolved faces',
+            $userId,
+            $cleared_count
+        ));
+
+        return $cleared_count;
+    }
+
+    /**
+     * Count unresolved faces for "Clear All" button badge.
+     *
+     * @return int Total unresolved faces
+     */
+    public function countUnresolvedFaces(): int
+    {
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        $sql = "SELECT COUNT(*) FROM {$table} 
+                WHERE resolved_at IS NULL 
+                AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))";
+
+        return (int) $this->wpdb->get_var($sql);
+    }
+
+    /**
+     * Retrieve cluster summaries with aggregated metadata and limited preview face IDs.
+     *
+     * @param int $limit Maximum clusters to return
+     * @param int $offset Pagination offset
+     * @return array<int,array{cluster_id:string,face_count:int,created_at:string,updated_at:string,preview_face_ids:array<int>}>
+     */
+    public function findClusterSummaries(int $limit, int $offset): array
+    {
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        // Use GROUP_CONCAT to get all face IDs, limit to 4 in application layer
+        $sql = $this->wpdb->prepare(
+            "SELECT
+                cluster_id,
+                COUNT(*) as face_count,
+                MIN(detected_at) as created_at,
+                MAX(detected_at) as updated_at,
+                GROUP_CONCAT(id ORDER BY detected_at ASC) as all_face_ids
+             FROM {$table}
+             WHERE cluster_id IS NOT NULL
+               AND resolved_at IS NULL
+               AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))
+             GROUP BY cluster_id
+             ORDER BY MAX(detected_at) DESC
+             LIMIT %d OFFSET %d",
+            $limit,
+            $offset
+        );
+
+        $rows = $this->wpdb->get_results($sql, \ARRAY_A);
+
+        return array_map(function (array $row): array {
+            $allIds = array_map('intval', explode(',', $row['all_face_ids']));
+            $previewIds = array_slice($allIds, 0, 4); // Limit to 4 preview faces
+
+            return [
+                'cluster_id' => $row['cluster_id'],
+                'face_count' => (int) $row['face_count'],
+                'created_at' => $row['created_at'],
+                'updated_at' => $row['updated_at'],
+                'preview_face_ids' => $previewIds,
+            ];
+        }, $rows);
+    }
+
+    /**
+     * Retrieve a paginated subset of faces within a specific cluster.
+     *
+     * @param string $clusterId Cluster identifier
+     * @param int $page Page number (1-indexed)
+     * @param int $perPage Faces per page
+     * @return array{total:int,page:int,per_page:int,faces:UnknownFace[]}
+     */
+    public function findFacesPage(string $clusterId, int $page, int $perPage): array
+    {
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        // Get total count
+        $countSql = $this->wpdb->prepare(
+            "SELECT COUNT(*) FROM {$table}
+             WHERE cluster_id = %s
+               AND resolved_at IS NULL
+               AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))",
+            $clusterId
+        );
+        $total = (int) $this->wpdb->get_var($countSql);
+
+        // Get paginated faces
+        $offset = ($page - 1) * $perPage;
+        $facesSql = $this->wpdb->prepare(
+            "SELECT * FROM {$table}
+             WHERE cluster_id = %s
+               AND resolved_at IS NULL
+               AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))
+             ORDER BY detected_at ASC
+             LIMIT %d OFFSET %d",
+            $clusterId,
+            $perPage,
+            $offset
+        );
+
+        $rows = $this->wpdb->get_results($facesSql, \ARRAY_A);
+        $faces = array_map(fn(array $row) => $this->hydrate($row), $rows);
+
+        return [
+            'total' => $total,
+            'page' => $page,
+            'per_page' => $perPage,
+            'faces' => $faces,
+        ];
+    }
+
+    /**
+     * Count total number of unresolved clusters.
+     *
+     * @return int
+     */
+    public function countUnresolvedClusters(): int
+    {
+        $this->ensureTableExists();
+        $table = $this->tableName();
+
+        $sql = "SELECT COUNT(DISTINCT cluster_id) FROM {$table}
+                WHERE cluster_id IS NOT NULL
+                  AND resolved_at IS NULL
+                  AND (roster_id IS NULL OR roster_id NOT IN ('__deleted__', '__cleared__'))";
+
+        return (int) $this->wpdb->get_var($sql);
     }
 
     private function tableName(): string

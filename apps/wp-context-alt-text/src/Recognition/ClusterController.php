@@ -5,9 +5,12 @@ declare(strict_types=1);
 namespace ContextAltText\Recognition;
 
 use ContextAltText\Domain\Clustering\ClusteringEngine;
+use ContextAltText\Infrastructure\Repositories\UnknownFaceRepository;
+use ContextAltText\Infrastructure\Repositories\UnknownFaceRepositoryInterface;
 use ContextAltText\Security\Security;
 use WP_Error;
 use WP_REST_Request;
+use WP_REST_Response;
 use function __;
 use function array_slice;
 use function array_values;
@@ -29,19 +32,23 @@ final class ClusterController
     private Security $security;
     private ClusteringEngine $clusteringService;
     private FaceThumbnailProvider $thumbnailProvider;
+    private UnknownFaceRepositoryInterface $repository;
 
     public function __construct(
         Security $security,
         ClusteringEngine $clusteringService,
-        FaceThumbnailProvider $thumbnailProvider
+        FaceThumbnailProvider $thumbnailProvider,
+        UnknownFaceRepositoryInterface $repository
     ) {
         $this->security = $security;
         $this->clusteringService = $clusteringService;
         $this->thumbnailProvider = $thumbnailProvider;
+        $this->repository = $repository;
     }
 
     /**
      * Handle GET /cat/v1/clusters.
+     * Returns lightweight cluster summaries with up to 4 preview faces each.
      *
      * @return array<string,mixed>|WP_Error
      */
@@ -56,25 +63,53 @@ final class ClusterController
         }
 
         $page = max(1, (int) ($request->get_param('page') ?? 1));
-        $perPage = max(1, min(50, (int) ($request->get_param('per_page') ?? 20)));
-
-        $payload = $this->clusteringService->clusterUnknownFaces();
-
-        error_log(sprintf('[ClusterController] Payload contains %d faces', count($payload['faces'] ?? [])));
-        
-        $clusters = $this->buildClusters($payload);
-        
-        error_log(sprintf('[ClusterController] Built %d clusters from payload', count($clusters)));
-        
-        $total = count($clusters);
+        $perPage = max(1, (int) ($request->get_param('per_page') ?? 50));
 
         $offset = ($page - 1) * $perPage;
-        $paged = array_slice($clusters, $offset, $perPage);
-        
-        error_log(sprintf('[ClusterController] Returning %d clusters (page %d, perPage %d, total %d)', count($paged), $page, $perPage, $total));
+
+        // Fetch lightweight cluster summaries from repository
+        $summaries = $this->repository->findClusterSummaries($perPage, $offset);
+        $total = $this->repository->countUnresolvedClusters();
+
+        $clusters = [];
+
+        foreach ($summaries as $summary) {
+            $clusterId = $summary['cluster_id'];
+            $previewFaceIds = $summary['preview_face_ids'];
+
+            // Load preview faces (up to 4)
+            $previewFaces = $this->repository->findFacesByIds($previewFaceIds);
+
+            $serializedPreviewFaces = [];
+            foreach ($previewFaces as $face) {
+                $thumbnailUrl = $this->thumbnailProvider->generateThumbnail([
+                    'id' => (string) $face->id(),
+                    'attachmentId' => $face->attachmentId(),
+                    'bbox' => $face->bbox(),
+                    'thumbnail' => $face->thumbnail(),
+                ]);
+
+                // Exclude embedding_id from preview faces to reduce payload size
+                $serializedPreviewFaces[] = [
+                    'id' => $face->id(),
+                    'attachment_id' => $face->attachmentId(),
+                    'thumbnail_url' => $thumbnailUrl,
+                    'bbox' => $face->bbox(),
+                    'detected_at' => $face->detectedAt(),
+                ];
+            }
+
+            $clusters[] = [
+                'id' => $clusterId,
+                'face_count' => $summary['face_count'],
+                'preview_faces' => $serializedPreviewFaces,
+                'created_at' => $summary['created_at'],
+                'updated_at' => $summary['updated_at'],
+            ];
+        }
 
         return [
-            'clusters' => array_values($paged),
+            'clusters' => $clusters,
             'total' => $total,
             'page' => $page,
             'per_page' => $perPage,
@@ -82,9 +117,12 @@ final class ClusterController
     }
 
     /**
+     * Handle GET /cat/v1/clusters/{id} - returns paginated faces for a cluster.
+     * Includes full face data including embedding_id for detail view.
+     *
      * @return array<string,mixed>|WP_Error
      */
-    public function getClusterDetail(WP_REST_Request $request)
+    public function getClusterDetailPage(WP_REST_Request $request)
     {
         if (!$this->security->verifyCapability('upload_files')) {
             return new WP_Error(
@@ -94,9 +132,11 @@ final class ClusterController
             );
         }
 
-        $clusterId = (string) $request->get_param('id');
+        $clusterId = trim((string) $request->get_param('id'));
+        $page = max(1, (int) ($request->get_param('page') ?? 1));
+        $perPage = max(1, (int) ($request->get_param('per_page') ?? 20));
 
-        if (trim($clusterId) === '') {
+        if ($clusterId === '') {
             return new WP_Error(
                 'invalid_request',
                 __('Cluster identifier is required.', 'context-alt-text'),
@@ -104,50 +144,44 @@ final class ClusterController
             );
         }
 
-        $detail = $this->clusteringService->getClusterDetail($clusterId);
+        // Fetch paginated faces for this cluster
+        $result = $this->repository->findFacesPage($clusterId, $page, $perPage);
 
-        $facesRaw = isset($detail['faces']) && is_array($detail['faces']) ? $detail['faces'] : [];
-        $faces = [];
+        $serializedFaces = [];
+        foreach ($result['faces'] as $face) {
+            $thumbnailUrl = $this->thumbnailProvider->generateThumbnail([
+                'id' => (string) $face->id(),
+                'attachmentId' => $face->attachmentId(),
+                'bbox' => $face->bbox(),
+                'thumbnail' => $face->thumbnail(),
+            ]);
 
-        foreach ($facesRaw as $face) {
-            if (!is_array($face)) {
-                continue;
-            }
-
-            $thumbnail = $this->thumbnailProvider->generateThumbnail($face);
-            $face['thumbnail_url'] = $thumbnail;
-            $faces[] = $face;
+            // Include embedding_id for detail view (may be needed for operations)
+            $serializedFaces[] = [
+                'id' => $face->id(),
+                'attachment_id' => $face->attachmentId(),
+                'embedding_id' => $face->embeddingId(),
+                'thumbnail_url' => $thumbnailUrl,
+                'bbox' => $face->bbox(),
+                'detected_at' => $face->detectedAt(),
+                'cluster_id' => $face->clusterId(),
+            ];
         }
 
-        $cluster = isset($detail['cluster']) && is_array($detail['cluster'])
-            ? $detail['cluster']
-            : ['id' => $clusterId];
+        $totalPages = (int) ceil($result['total'] / $result['per_page']);
+        $hasMore = $result['page'] < $totalPages;
 
-        $cluster['id'] = isset($cluster['id']) && is_string($cluster['id']) && trim($cluster['id']) !== ''
-            ? $cluster['id']
-            : $clusterId;
-
-        $cluster['face_count'] = isset($cluster['face_count'])
-            ? (int) $cluster['face_count']
-            : count($faces);
-
-        if (!isset($cluster['sample_face']) || !is_array($cluster['sample_face'])) {
-            $sample = $faces[0] ?? null;
-            $cluster['sample_face'] = $sample
-                ? [
-                    'attachment_id' => (int) ($sample['attachmentId'] ?? 0),
-                    'thumbnail_url' => $sample['thumbnail_url'] ?? null,
-                    'bbox' => $sample['bbox'] ?? null,
-                ]
-                : null;
-        } elseif (!isset($cluster['sample_face']['thumbnail_url']) && isset($faces[0]['thumbnail_url'])) {
-            $cluster['sample_face']['thumbnail_url'] = $faces[0]['thumbnail_url'];
-        }
-
-        $detail['cluster'] = $cluster;
-        $detail['faces'] = $faces;
-
-        return $detail;
+        return [
+            'cluster_id' => $clusterId,
+            'faces' => $serializedFaces,
+            'pagination' => [
+                'current_page' => $result['page'],
+                'per_page' => $result['per_page'],
+                'total_pages' => $totalPages,
+                'total_faces' => $result['total'],
+                'has_more' => $hasMore,
+            ],
+        ];
     }
 
     /**
@@ -396,5 +430,229 @@ final class ClusterController
         }
 
         return null;
+    }
+
+    /**
+     * Handle POST /cat/v1/unknown-clusters/move
+     * Move faces from one cluster to another (before confirmation).
+     *
+     * @return array<string,mixed>|WP_Error
+     */
+    public function moveFaces(WP_REST_Request $request)
+    {
+        if (!$this->security->verifyCapability('manage_options')) {
+            return new WP_Error(
+                'rest_forbidden',
+                __('You are not allowed to move faces between clusters.', 'context-alt-text'),
+                ['status' => 403]
+            );
+        }
+
+        // Get parameters from JSON body
+        $payload = $request->get_json_params();
+        
+        if (!is_array($payload)) {
+            return new WP_Error(
+                'invalid_request',
+                __('Request body must be JSON.', 'context-alt-text'),
+                ['status' => 400]
+            );
+        }
+
+        $faceIds = isset($payload['face_ids']) && is_array($payload['face_ids']) ? $payload['face_ids'] : [];
+        $sourceClusterId = isset($payload['source_cluster_id']) ? (string) $payload['source_cluster_id'] : '';
+        $targetClusterId = isset($payload['target_cluster_id']) ? (string) $payload['target_cluster_id'] : '';
+
+        // Validate input
+        if ($faceIds === [] || $sourceClusterId === '' || $targetClusterId === '') {
+            return new WP_Error(
+                'invalid_request',
+                __('face_ids, source_cluster_id, and target_cluster_id are required.', 'context-alt-text'),
+                ['status' => 400]
+            );
+        }
+
+        // Convert face IDs to integers
+        $faceIds = array_map('intval', $faceIds);
+        $faceIds = array_filter($faceIds, fn($id) => $id > 0);
+
+        if ($faceIds === []) {
+            return new WP_Error(
+                'invalid_request',
+                __('Valid face_ids are required.', 'context-alt-text'),
+                ['status' => 400]
+            );
+        }
+
+        // Load faces from database
+        $faces = $this->repository->findFacesByIds($faceIds);
+
+        if ($faces === []) {
+            return new WP_Error(
+                'not_found',
+                __('No faces found with provided IDs.', 'context-alt-text'),
+                ['status' => 404]
+            );
+        }
+
+        // Verify all faces belong to source cluster and are unresolved
+        foreach ($faces as $face) {
+            if ($face->clusterId() !== $sourceClusterId) {
+                return new WP_Error(
+                    'invalid_request',
+                    sprintf(
+                        __('Face %d does not belong to cluster %s.', 'context-alt-text'),
+                        $face->id(),
+                        $sourceClusterId
+                    ),
+                    ['status' => 400]
+                );
+            }
+
+            if ($face->resolvedAt() !== null) {
+                return new WP_Error(
+                    'invalid_request',
+                    sprintf(
+                        __('Face %d is already resolved.', 'context-alt-text'),
+                        $face->id()
+                    ),
+                    ['status' => 400]
+                );
+            }
+        }
+
+        // Update cluster_id for each face
+        $updatedCount = $this->repository->updateClusterMembership(
+            $faceIds,
+            $targetClusterId,
+            (int) get_current_user_id()
+        );
+
+        // Return success
+        return new WP_REST_Response([
+            'success' => true,
+            'moved_count' => $updatedCount,
+            'source_cluster_id' => $sourceClusterId,
+            'target_cluster_id' => $targetClusterId,
+        ], 200);
+    }
+
+    /**
+     * Handle DELETE /cat/v1/unknown-faces/:id
+     * Soft delete a face (dismiss as irrelevant).
+     *
+     * @return array<string,mixed>|WP_Error
+     */
+    public function deleteFace(WP_REST_Request $request)
+    {
+        if (!$this->security->verifyCapability('manage_options')) {
+            return new WP_Error(
+                'rest_forbidden',
+                __('You are not allowed to delete faces.', 'context-alt-text'),
+                ['status' => 403]
+            );
+        }
+
+        $faceId = (int) $request->get_param('id');
+
+        if ($faceId <= 0) {
+            return new WP_Error(
+                'invalid_request',
+                __('Valid face ID is required.', 'context-alt-text'),
+                ['status' => 400]
+            );
+        }
+
+        // Load face to verify it exists and is unresolved
+        $face = $this->repository->findFaceById($faceId);
+
+        if ($face === null) {
+            return new WP_Error(
+                'not_found',
+                __('Face not found.', 'context-alt-text'),
+                ['status' => 404]
+            );
+        }
+
+        if ($face->resolvedAt() !== null) {
+            return new WP_Error(
+                'invalid_request',
+                __('Cannot delete resolved face.', 'context-alt-text'),
+                ['status' => 400]
+            );
+        }
+
+        // Soft delete: mark as resolved with special roster_id
+        $deleted = $this->repository->softDeleteFace(
+            $faceId,
+            (int) get_current_user_id()
+        );
+
+        if (!$deleted) {
+            return new WP_Error(
+                'deletion_failed',
+                __('Failed to delete face.', 'context-alt-text'),
+                ['status' => 500]
+            );
+        }
+
+        // Log deletion
+        error_log(sprintf(
+            '[ClusterController] User %d deleted face %d (attachment %d, cluster %s)',
+            get_current_user_id(),
+            $faceId,
+            $face->attachmentId(),
+            $face->clusterId()
+        ));
+
+        return new WP_REST_Response([
+            'success' => true,
+            'face_id' => $faceId,
+            'cluster_id' => $face->clusterId(),
+        ], 200);
+    }
+
+    /**
+     * Handle POST /cat/v1/unknown-clusters/clear-all
+     * Bulk clear all remaining unresolved faces.
+     *
+     * @return array<string,mixed>|WP_Error
+     */
+    public function clearAllFaces(WP_REST_Request $request)
+    {
+        if (!$this->security->verifyCapability('manage_options')) {
+            return new WP_Error(
+                'rest_forbidden',
+                __('You are not allowed to clear faces.', 'context-alt-text'),
+                ['status' => 403]
+            );
+        }
+
+        // Get count of faces to clear
+        $count = $this->repository->countUnresolvedFaces();
+
+        if ($count === 0) {
+            return new WP_REST_Response([
+                'message' => __('No unknown faces to clear.', 'context-alt-text'),
+                'cleared_count' => 0,
+            ], 200);
+        }
+
+        // Bulk update: mark all as cleared
+        $clearedCount = $this->repository->clearAllUnresolvedFaces(
+            (int) get_current_user_id()
+        );
+
+        // Log the action
+        error_log(sprintf(
+            '[ClusterController] User %d cleared all %d unknown faces',
+            get_current_user_id(),
+            $clearedCount
+        ));
+
+        return new WP_REST_Response([
+            'success' => true,
+            'cleared_count' => $clearedCount,
+        ], 200);
     }
 }

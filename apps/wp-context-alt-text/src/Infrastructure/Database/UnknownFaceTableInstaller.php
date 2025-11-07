@@ -56,6 +56,9 @@ class UnknownFaceTableInstaller
         
         // Add thumbnail column if it doesn't exist (migration for existing tables)
         $this->addThumbnailColumn($table);
+        
+        // Add composite index for optimized cluster pagination queries
+        $this->addClusterPaginationIndex($table);
     }
 
     /**
@@ -94,6 +97,32 @@ class UnknownFaceTableInstaller
         // Add column if it doesn't exist
         if (empty($column)) {
             $sql = "ALTER TABLE {$table} ADD COLUMN thumbnail MEDIUMTEXT NULL COMMENT 'Base64-encoded face thumbnail from recognition service' AFTER embedding_vector";
+            $this->wpdb->query($sql);
+        }
+    }
+
+    /**
+     * Add composite index for optimized cluster pagination queries.
+     * 
+     * This index supports efficient queries that:
+     * - Filter by cluster_id
+     * - Filter out resolved/deleted faces (resolved_at IS NULL)
+     * - Filter by roster_id patterns (soft deletes)
+     * - Order by detected_at for consistent pagination
+     */
+    private function addClusterPaginationIndex(string $table): void
+    {
+        // Check if index exists
+        $index = $this->wpdb->get_results(
+            $this->wpdb->prepare(
+                "SHOW INDEX FROM {$table} WHERE Key_name = %s",
+                'idx_cluster_pagination'
+            )
+        );
+
+        // Add index if it doesn't exist
+        if (empty($index)) {
+            $sql = "ALTER TABLE {$table} ADD INDEX idx_cluster_pagination (cluster_id, resolved_at, roster_id, detected_at)";
             $this->wpdb->query($sql);
         }
     }

@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { ClusterDetailView, type ClusterDetailViewProps } from "./ClusterDetailView";
 import { useDashboardHandlers, server } from "@/admin/testing/mswServer";
 import { setAdminBootstrap } from "@/admin/globals";
+import { ToastProvider } from "@/contexts/ToastContext";
 
 const endpoint = "http://example.test/wp-json/cat/v1/clusters";
 
@@ -21,7 +22,9 @@ const createWrapper = () => {
     });
 
     return ({ children }: { children: ReactNode }) => (
-        <QueryClientProvider client={client}>{children}</QueryClientProvider>
+        <QueryClientProvider client={client}>
+            <ToastProvider>{children}</ToastProvider>
+        </QueryClientProvider>
     );
 };
 
@@ -74,8 +77,13 @@ describe("ClusterDetailView", () => {
             http.get(`${endpoint}/cluster-alpha`, () =>
                 HttpResponse.json(
                     {
-                        cluster: null,
                         faces: [],
+                        pagination: {
+                            current_page: 1,
+                            per_page: 20,
+                            total_pages: 0,
+                            has_more: false,
+                        },
                     },
                     { status: 200, delay: 150 },
                 ),
@@ -91,12 +99,6 @@ describe("ClusterDetailView", () => {
         useDashboardHandlers(
             http.get(`${endpoint}/cluster-alpha`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 2,
-                        created_at: "2025-10-24T12:00:00Z",
-                        updated_at: "2025-10-24T13:00:00Z",
-                    },
                     faces: [
                         {
                             id: "face-1",
@@ -113,6 +115,13 @@ describe("ClusterDetailView", () => {
                             detectedAt: "2025-10-24T12:05:00Z",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 2,
+                        has_more: false,
+                    },
                 }),
             ),
         );
@@ -128,9 +137,7 @@ describe("ClusterDetailView", () => {
 
     it("shows error message and retries on request failure", async () => {
         useDashboardHandlers(
-            http.get(`${endpoint}/cluster-alpha`, () =>
-                HttpResponse.json({ message: "error" }, { status: 500 }),
-            ),
+            http.get(`${endpoint}/cluster-alpha`, () => HttpResponse.json({ message: "error" }, { status: 500 })),
         );
 
         const fetchSpy = vi.spyOn(globalThis, "fetch");
@@ -141,19 +148,14 @@ describe("ClusterDetailView", () => {
         });
 
         const initialClusterCalls = fetchSpy.mock.calls.filter(
-            ([request]) => typeof request === "string" && request.includes("/cluster-alpha") && !request.includes("suggestions"),
+            ([request]) =>
+                typeof request === "string" && request.includes("/cluster-alpha") && !request.includes("suggestions"),
         );
         expect(initialClusterCalls).toHaveLength(1);
 
         server.use(
             http.get(`${endpoint}/cluster-alpha`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 1,
-                        created_at: "2025-10-24T12:00:00Z",
-                        updated_at: "2025-10-24T12:30:00Z",
-                    },
                     faces: [
                         {
                             id: "face-1",
@@ -163,6 +165,13 @@ describe("ClusterDetailView", () => {
                             detectedAt: "2025-10-24T12:00:00Z",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 1,
+                        has_more: false,
+                    },
                 }),
             ),
         );
@@ -171,7 +180,10 @@ describe("ClusterDetailView", () => {
 
         await waitFor(() => {
             const clusterCalls = fetchSpy.mock.calls.filter(
-                ([request]) => typeof request === "string" && request.includes("/cluster-alpha") && !request.includes("suggestions"),
+                ([request]) =>
+                    typeof request === "string" &&
+                    request.includes("/cluster-alpha") &&
+                    !request.includes("suggestions"),
             );
             expect(clusterCalls).toHaveLength(2);
             expect(screen.getByText(/1 face ready for review/i)).toBeInTheDocument();
@@ -179,18 +191,24 @@ describe("ClusterDetailView", () => {
     });
 
     it("renders suggestion chip when backend provides suggestion", async () => {
-        useDashboardHandlers(
-            http.get(`${endpoint}/cluster-alpha`, () =>
+        server.use(
+            http.get(`${endpoint}/cluster-alpha/suggestions`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 1,
-                        suggestion: {
+                    cluster_id: "cluster-alpha",
+                    suggestions: [
+                        {
                             display_name: "Daniel Rivera",
                             roster_id: "roster-123",
                             confidence: 0.87,
                         },
-                    },
+                    ],
+                }),
+            ),
+        );
+
+        useDashboardHandlers(
+            http.get(`${endpoint}/cluster-alpha`, () =>
+                HttpResponse.json({
                     faces: [
                         {
                             id: "face-1",
@@ -200,6 +218,13 @@ describe("ClusterDetailView", () => {
                             detectedAt: "2025-10-24T12:00:00Z",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 1,
+                        has_more: false,
+                    },
                 }),
             ),
         );
@@ -210,23 +235,15 @@ describe("ClusterDetailView", () => {
             expect(screen.getByText(/cluster detail/i)).toBeInTheDocument();
         });
 
-        expect(screen.getByRole("note", { name: /suggested match/i })).toHaveTextContent("Daniel Rivera");
-        expect(screen.getByText(/87% confidence/i)).toBeInTheDocument();
+        const suggestionChip = screen.getByRole("note", { name: /suggested match/i });
+        expect(suggestionChip).toHaveTextContent("Daniel Rivera");
+        expect(suggestionChip).toHaveTextContent(/87% confidence/i);
     });
 
     it("prioritizes suggestions endpoint over cluster summary suggestion", async () => {
         server.use(
             http.get(`${endpoint}/cluster-beta`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-beta",
-                        face_count: 1,
-                        suggestion: {
-                            display_name: "Fallback Name",
-                            roster_id: "fallback-1",
-                            confidence: 0.5,
-                        },
-                    },
                     faces: [
                         {
                             id: "face-9",
@@ -235,6 +252,13 @@ describe("ClusterDetailView", () => {
                             thumbnail_url: "http://example.test/crops/face-9.jpg",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 1,
+                        has_more: false,
+                    },
                 }),
             ),
         );
@@ -273,10 +297,6 @@ describe("ClusterDetailView", () => {
         server.use(
             http.get(`${endpoint}/cluster-beta`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-beta",
-                        face_count: 2,
-                    },
                     faces: [
                         {
                             id: "face-9",
@@ -291,6 +311,13 @@ describe("ClusterDetailView", () => {
                             thumbnail_url: "http://example.test/crops/face-10.jpg",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 2,
+                        has_more: false,
+                    },
                 }),
             ),
         );
@@ -336,10 +363,6 @@ describe("ClusterDetailView", () => {
         useDashboardHandlers(
             http.get(`${endpoint}/cluster-alpha`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 2,
-                    },
                     faces: [
                         {
                             id: "face-1",
@@ -356,6 +379,13 @@ describe("ClusterDetailView", () => {
                             detectedAt: "2025-10-24T12:05:00Z",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 2,
+                        has_more: false,
+                    },
                 }),
             ),
         );
@@ -384,10 +414,6 @@ describe("ClusterDetailView", () => {
         useDashboardHandlers(
             http.get(`${endpoint}/cluster-alpha`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 1,
-                    },
                     faces: [
                         {
                             id: "face-1",
@@ -397,6 +423,13 @@ describe("ClusterDetailView", () => {
                             detectedAt: "2025-10-24T12:00:00Z",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 1,
+                        has_more: false,
+                    },
                 }),
             ),
         );

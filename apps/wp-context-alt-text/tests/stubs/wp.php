@@ -1284,6 +1284,7 @@ if (!isset($GLOBALS['wpdb'])) {
         /** @var mixed */
         public $mockVar = null;
         public int $insert_id = 0;
+        public int $rows_affected = 0;
 
         public function query($sql)
         {
@@ -1454,6 +1455,7 @@ if (!isset($GLOBALS['wpdb'])) {
             $this->mockRow = null;
             $this->mockVar = null;
             $this->insert_id = 0;
+            $this->rows_affected = 0;
         }
     }
 

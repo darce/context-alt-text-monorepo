@@ -251,8 +251,20 @@ class Api
                 '/clusters/(?P<id>[^/]+)',
                 [
                     'methods' => 'GET',
-                    'callback' => [$this->clusterController, 'getClusterDetail'],
+                    'callback' => [$this->clusterController, 'getClusterDetailPage'],
                     'permission_callback' => '__return_true',
+                    'args' => [
+                        'page' => [
+                            'description' => 'Page number for paginated cluster faces.',
+                            'type' => 'integer',
+                            'default' => 1,
+                        ],
+                        'per_page' => [
+                            'description' => 'Number of faces per page.',
+                            'type' => 'integer',
+                            'default' => 20,
+                        ],
+                    ],
                 ]
             );
 
@@ -270,6 +282,36 @@ class Api
                 [
                     'methods' => 'POST',
                     'callback' => [$this->clusterController, 'confirmCluster'],
+                    'permission_callback' => '__return_true',
+                ]
+            );
+
+            // Move faces between clusters
+            $this->register_endpoint_with_alias(
+                '/unknown-clusters/move',
+                [
+                    'methods' => 'POST',
+                    'callback' => [$this->clusterController, 'moveFaces'],
+                    'permission_callback' => '__return_true',
+                ]
+            );
+
+            // Delete individual face
+            $this->register_endpoint_with_alias(
+                '/unknown-faces/(?P<id>\d+)',
+                [
+                    'methods' => 'DELETE',
+                    'callback' => [$this->clusterController, 'deleteFace'],
+                    'permission_callback' => '__return_true',
+                ]
+            );
+
+            // Clear all unresolved faces
+            $this->register_endpoint_with_alias(
+                '/unknown-clusters/clear-all',
+                [
+                    'methods' => 'POST',
+                    'callback' => [$this->clusterController, 'clearAllFaces'],
                     'permission_callback' => '__return_true',
                 ]
             );

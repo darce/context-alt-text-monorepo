@@ -8,6 +8,7 @@ import userEvent from "@testing-library/user-event";
 import { ClusterDetailView } from "./ClusterDetailView";
 import { setAdminBootstrap } from "@/admin/globals";
 import { useDashboardHandlers, server } from "@/admin/testing/mswServer";
+import { ToastProvider } from "@/contexts/ToastContext";
 
 const endpoint = "http://example.test/wp-json/cat/v1/clusters";
 
@@ -21,7 +22,9 @@ const createWrapper = () => {
     });
 
     return ({ children }: { children: ReactNode }) => (
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={queryClient}>
+            <ToastProvider>{children}</ToastProvider>
+        </QueryClientProvider>
     );
 };
 
@@ -46,12 +49,6 @@ describe("ClusterDetailView interactions", () => {
         useDashboardHandlers(
             http.get(`${endpoint}/cluster-alpha`, () =>
                 HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 2,
-                        created_at: "2025-10-24T12:00:00Z",
-                        updated_at: "2025-10-24T12:30:00Z",
-                    },
                     faces: [
                         {
                             id: "face-1",
@@ -68,6 +65,13 @@ describe("ClusterDetailView interactions", () => {
                             detectedAt: "2025-10-24T12:05:00Z",
                         },
                     ],
+                    pagination: {
+                        current_page: 1,
+                        per_page: 20,
+                        total_pages: 1,
+                        total_faces: 2,
+                        has_more: false,
+                    },
                 }),
             ),
         );

@@ -23,7 +23,7 @@ use function trim;
 final class ClusteringService implements ClusteringEngine
 {
     private const LOCAL_CLUSTER_THRESHOLD = 1000;  // Temporarily increased to use local clustering until remote endpoint is implemented
-    private const FETCH_LIMIT = 200;
+    private const FETCH_LIMIT = 10000; // High limit to avoid artificial caps on face detection
     private const REMOTE_MIN_CLUSTER_SIZE = 2;
     private const REMOTE_SIMILARITY_THRESHOLD = 0.92;
     private const SUGGESTION_TOP_K = 5;

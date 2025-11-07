@@ -586,7 +586,7 @@ final class ApiTest extends TestCase
                 return null;
             }
         };
-        $clusterController = new ClusterController($security, $clusteringService, $thumbnailProvider);
+        $clusterController = new ClusterController($security, $clusteringService, $thumbnailProvider, $unknownFaceRepository);
 
         return new Api(
             $metrics,

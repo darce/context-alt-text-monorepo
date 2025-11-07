@@ -12,6 +12,30 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 
 ## Core Engineering Principles
 
+> **PLUGIN BOUNDARY RULE (UNBREAKABLE)**
+>
+> **You are ONLY permitted to modify files within the monorepo:**
+>
+> - `/Users/daniel/Development/context-alt-text-monorepo/` and its subdirectories ONLY
+> - Specifically: `apps/wp-context-alt-text/`, `apps/recognition-service/`, `packages/`, `docs/`, `scripts/`
+>
+> **You are ABSOLUTELY FORBIDDEN from modifying:**
+>
+> - WordPress installation files (wp-config.php, wp-cli.yml, .htaccess, etc.)
+> - LocalWP configuration files
+> - Files in ~/Local Sites/ or any WordPress installation directory
+> - System configuration files
+> - ANY files outside `/Users/daniel/Development/context-alt-text-monorepo/`
+>
+> **If a task requires modifying files outside the monorepo, you MUST:**
+>
+> 1. STOP immediately - do NOT proceed
+> 2. Explain why the external change seems necessary
+> 3. Propose an alternative solution within the plugin boundaries
+> 4. Wait for explicit user approval before suggesting any external file modifications
+>
+> **This rule has NO EXCEPTIONS. Violations are critical errors.**
+
 > Greenfield Reset Policy
 >
 > This plugin has no production footprint yet. Treat every storage surface (database tables, options, caches) as disposable while building V3. If a better schema or implementation emerges, prefer rewriting the tables and corresponding code over introducing migrations or backwards-compatibility shims. Recreate structures in-place during activation and keep the test suite in lockstep.

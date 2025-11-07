@@ -208,7 +208,7 @@ function context_alt_text(): ContextAltText
     $faceDetectionQueue = new SynchronousFaceDetectionQueue($faceDetectionJob, $clusteringService);
     $scanController = new ScanController($security, $faceDetectionQueue);
     $thumbnailProvider = new CachedFaceThumbnailProvider();
-    $clusterController = new ClusterController($security, $clusteringService, $thumbnailProvider);
+    $clusterController = new ClusterController($security, $clusteringService, $thumbnailProvider, $unknownFaceRepository);
 
     $instance = new ContextAltText(
         new Admin(

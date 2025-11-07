@@ -8,6 +8,7 @@ import { UnknownPeoplePanel, type UnknownPeoplePanelProps } from "./UnknownPeopl
 import { setFaceDragData } from "@/components/workbench/dragTypes";
 import { useDashboardHandlers } from "@/admin/testing/mswServer";
 import { setAdminBootstrap } from "@/admin/globals";
+import { ToastProvider } from "@/contexts/ToastContext";
 
 const createWrapper = () => {
     const queryClient = new QueryClient({
@@ -19,7 +20,9 @@ const createWrapper = () => {
     });
 
     return ({ children }: { children: ReactNode }) => (
-        <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+        <QueryClientProvider client={queryClient}>
+            <ToastProvider>{children}</ToastProvider>
+        </QueryClientProvider>
     );
 };
 

@@ -30,28 +30,97 @@ describe("useClusterDetail", () => {
         vi.restoreAllMocks();
     });
 
-    it("returns fallback detail when endpoint is missing", async () => {
+    it("fetches initial page and automatically prefetches page 2", async () => {
+        const nonce = "cluster-nonce";
+
+        setAdminBootstrap({
+            config: {
+                endpoints: {
+                    unknownClusters: endpoint,
+                },
+                restNonce: nonce,
+            },
+        });
+
         const fetchSpy = vi.spyOn(globalThis, "fetch");
 
-        const { result } = renderHook(() => useClusterDetail("cluster-alpha"), {
+        useDashboardHandlers(
+            http.get(`${endpoint}/cluster-001`, ({ request }) => {
+                const url = new URL(request.url);
+                const page = url.searchParams.get("page") ?? "1";
+
+                if (page === "1") {
+                    return HttpResponse.json({
+                        faces: [
+                            {
+                                id: "face-1",
+                                attachment_id: 101,
+                                cluster_id: "cluster-001",
+                                bbox: { x: 10, y: 20, width: 80, height: 90 },
+                                thumbnail_url: "http://example.test/crops/face-1.jpg",
+                                detected_at: "2025-10-24T12:00:00Z",
+                            },
+                        ],
+                        pagination: {
+                            current_page: 1,
+                            per_page: 20,
+                            total_pages: 3,
+                            total_faces: 55,
+                            has_more: true,
+                        },
+                    });
+                }
+
+                if (page === "2") {
+                    return HttpResponse.json({
+                        faces: [
+                            {
+                                id: "face-2",
+                                attachment_id: 102,
+                                cluster_id: "cluster-001",
+                                bbox: { x: 15, y: 25, width: 85, height: 95 },
+                                thumbnail_url: "http://example.test/crops/face-2.jpg",
+                                detected_at: "2025-10-24T12:05:00Z",
+                            },
+                        ],
+                        pagination: {
+                            current_page: 2,
+                            per_page: 20,
+                            total_pages: 3,
+                            total_faces: 55,
+                            has_more: true,
+                        },
+                    });
+                }
+
+                return HttpResponse.json({ faces: [], pagination: { has_more: false } });
+            }),
+        );
+
+        const { result } = renderHook(() => useClusterDetail("cluster-001"), {
             wrapper: createWrapper(),
         });
 
-        expect(result.current.cluster).toEqual({
-            id: "cluster-alpha",
-            faceCount: 0,
-            createdAt: null,
-            updatedAt: null,
-            sampleFace: null,
-            suggestion: null,
+        // Wait for initial page to load
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false);
         });
-        expect(result.current.faces).toEqual([]);
-        expect(result.current.isLoading).toBe(false);
-        expect(result.current.error).toBeNull();
-        expect(fetchSpy).not.toHaveBeenCalled();
+
+        expect(result.current.faces.length).toBe(1);
+        expect(result.current.faces[0].id).toBe("face-1");
+        expect(result.current.hasNextPage).toBe(true);
+
+        // Wait a bit for automatic prefetch of page 2
+        await waitFor(
+            () => {
+                const page2Calls = fetchSpy.mock.calls.filter((call) => call[0]?.toString().includes("page=2"));
+                expect(page2Calls.length).toBeGreaterThan(0);
+            },
+            { timeout: 3000 },
+        );
     });
 
-    it("fetches cluster detail and maps response", async () => {
+    it("loads next page on fetchNextPage call", async () => {
         const nonce = "cluster-nonce";
 
         setAdminBootstrap({
@@ -64,107 +133,81 @@ describe("useClusterDetail", () => {
         });
 
         useDashboardHandlers(
-            http.get(`${endpoint}/cluster-alpha`, ({ request }) => {
-                expect(request.headers.get("X-WP-Nonce")).toBe(nonce);
+            http.get(`${endpoint}/cluster-002`, ({ request }) => {
+                const url = new URL(request.url);
+                const page = url.searchParams.get("page") ?? "1";
 
-                return HttpResponse.json({
-                    cluster: {
-                        id: "cluster-alpha",
-                        face_count: 2,
-                        created_at: "2025-10-24T12:00:00Z",
-                        updated_at: "2025-10-24T13:00:00Z",
-                        sample_face: {
-                            attachment_id: 101,
-                            thumbnail_url: "http://example.test/crops/face-1.jpg",
-                            bbox: { x: 10, y: 20, width: 80, height: 90 },
-                        },
-                    },
-                    faces: [
-                        {
-                            id: "face-1",
-                            databaseId: 1,
-                            attachmentId: 101,
-                            clusterId: "cluster-alpha",
-                            bbox: {
-                                x: 10,
-                                y: 20,
-                                width: 80,
-                                height: 90,
-                                imageWidth: 600,
-                                imageHeight: 400,
-                            },
-                            detectedAt: "2025-10-24T12:00:00Z",
-                            resolvedAt: null,
-                            rosterId: null,
-                            thumbnail_url: "http://example.test/crops/face-1.jpg",
-                        },
-                        {
-                            id: "face-2",
-                            databaseId: 2,
-                            attachmentId: 102,
-                            clusterId: "cluster-alpha",
-                            bbox: {
-                                x: 15,
-                                y: 25,
-                                width: 85,
-                                height: 95,
-                                imageWidth: 620,
-                                imageHeight: 420,
-                            },
-                            detectedAt: "2025-10-24T12:05:00Z",
-                            resolvedAt: null,
-                            rosterId: null,
-                            thumbnail_url: "http://example.test/crops/face-2.jpg",
-                        },
-                    ],
-                });
+                if (page === "1") {
+                    return HttpResponse.json({
+                        faces: [{ id: "face-1", attachment_id: 101, cluster_id: "cluster-002" }],
+                        pagination: { current_page: 1, per_page: 20, total_pages: 2, has_more: true },
+                    });
+                }
+
+                if (page === "2") {
+                    return HttpResponse.json({
+                        faces: [{ id: "face-2", attachment_id: 102, cluster_id: "cluster-002" }],
+                        pagination: { current_page: 2, per_page: 20, total_pages: 2, has_more: false },
+                    });
+                }
+
+                return HttpResponse.json({ faces: [], pagination: { has_more: false } });
             }),
         );
 
-        const fetchSpy = vi.spyOn(globalThis, "fetch");
-
-        const { result } = renderHook(() => useClusterDetail("cluster-alpha"), {
+        const { result } = renderHook(() => useClusterDetail("cluster-002"), {
             wrapper: createWrapper(),
         });
 
         await waitFor(() => {
             expect(result.current.isLoading).toBe(false);
+        });
+
+        expect(result.current.faces.length).toBe(1);
+        expect(result.current.hasNextPage).toBe(true);
+
+        // Manually fetch next page
+        await result.current.fetchNextPage();
+
+        await waitFor(() => {
             expect(result.current.faces.length).toBe(2);
         });
 
-        expect(fetchSpy).toHaveBeenCalledWith(
-            `${endpoint}/cluster-alpha`,
-            expect.objectContaining({
-                headers: expect.objectContaining({
-                    "X-WP-Nonce": nonce,
-                }),
+        expect(result.current.faces[1].id).toBe("face-2");
+        expect(result.current.hasNextPage).toBe(false);
+    });
+
+    it("handles empty cluster gracefully", async () => {
+        const nonce = "cluster-nonce";
+
+        setAdminBootstrap({
+            config: {
+                endpoints: {
+                    unknownClusters: endpoint,
+                },
+                restNonce: nonce,
+            },
+        });
+
+        useDashboardHandlers(
+            http.get(`${endpoint}/cluster-empty`, () => {
+                return HttpResponse.json({
+                    faces: [],
+                    pagination: { current_page: 1, per_page: 20, total_pages: 0, has_more: false },
+                });
             }),
         );
 
-        expect(result.current.cluster).toEqual(
-            expect.objectContaining({
-                id: "cluster-alpha",
-                faceCount: 2,
-                createdAt: "2025-10-24T12:00:00Z",
-                updatedAt: "2025-10-24T13:00:00Z",
-            }),
-        );
-        expect(result.current.cluster.sampleFace).toEqual(
-            expect.objectContaining({
-                attachmentId: 101,
-                thumbnailUrl: "http://example.test/crops/face-1.jpg",
-            }),
-        );
-        expect(result.current.faces[0]).toEqual(
-            expect.objectContaining({
-                id: "face-1",
-                attachmentId: 101,
-                thumbnailUrl: "http://example.test/crops/face-1.jpg",
-                bbox: expect.objectContaining({
-                    imageWidth: 600,
-                    imageHeight: 400,
-                }),
-            }),
-        );
+        const { result } = renderHook(() => useClusterDetail("cluster-empty"), {
+            wrapper: createWrapper(),
+        });
+
+        await waitFor(() => {
+            expect(result.current.isLoading).toBe(false);
+        });
+
+        expect(result.current.faces).toEqual([]);
+        expect(result.current.hasNextPage).toBe(false);
+        expect(result.current.error).toBeNull();
     });
 });

@@ -54,6 +54,8 @@ export const ClusterCard = ({
     const selected = Boolean(isSelected);
     const classes = ["cat-cluster-card"];
     const sampleFace = cluster.sampleFace;
+    const previewFaces = cluster.previewFaces ?? (sampleFace ? [sampleFace] : []);
+    const displayFaces = previewFaces.slice(0, 4); // Show up to 4 faces
 
     if (selected) {
         classes.push("cat-cluster-card--selected");
@@ -136,12 +138,19 @@ export const ClusterCard = ({
             onDrop={handleDrop}
         >
             <div className="cat-cluster-card__media" aria-hidden="true">
-                {sampleFace?.thumbnailUrl ? (
-                    <img
-                        src={sampleFace.thumbnailUrl}
-                        alt={__("Representative face for this cluster", "context-alt-text")}
-                        className="cat-cluster-card__image"
-                    />
+                {displayFaces.length > 0 ? (
+                    <div
+                        className={`cat-cluster-card__thumbnails cat-cluster-card__thumbnails--count-${displayFaces.length}`}
+                    >
+                        {displayFaces.map((face, index) => (
+                            <img
+                                key={`${cluster.id}-face-${index}`}
+                                src={face.thumbnailUrl ?? ""}
+                                alt=""
+                                className="cat-cluster-card__thumbnail"
+                            />
+                        ))}
+                    </div>
                 ) : (
                     <div className="cat-cluster-card__placeholder" role="presentation">
                         <span aria-hidden="true">👤</span>

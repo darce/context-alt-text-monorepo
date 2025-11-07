@@ -8,8 +8,10 @@ import { FaceScanActions } from "@/components/workbench/FaceScanActions";
 import { UnknownPeoplePanel } from "@/components/workbench/UnknownPeoplePanel";
 import { ClusterDetailView } from "@/components/workbench/ClusterDetailView";
 import type { WorkbenchMediaItem as WorkbenchMediaItemType } from "@/admin/types";
-import { notifySuccess } from "@/admin/notices";
+import { notifySuccess, notifyError } from "@/admin/notices";
 import { useWorkbenchActions } from "./useWorkbenchActions";
+import { useMoveFaces } from "@/hooks/useMoveFaces";
+import { ToastProvider } from "@/contexts/ToastContext";
 
 export type WorkbenchViewMode = "grid" | "list";
 export type WorkbenchMediaItem = WorkbenchMediaItemType;
@@ -27,7 +29,7 @@ interface FaceScanSummary {
     queuedCount: number;
 }
 
-export const WorkbenchApp = ({
+export const WorkbenchAppContent = ({
     items,
     viewMode = "list",
     onGenerateAltText,
@@ -37,6 +39,8 @@ export const WorkbenchApp = ({
     const mediaItems = React.useMemo<WorkbenchMediaItem[]>(() => items ?? [], [items]);
     const [selectedIds, setSelectedIds] = React.useState<Set<string>>(() => new Set());
     const [activeClusterId, setActiveClusterId] = React.useState<string | null>(null);
+
+    const moveFacesMutation = useMoveFaces();
 
     const selectedList = React.useMemo(() => Array.from(selectedIds), [selectedIds]);
     const selectedIdsNumeric = React.useMemo(
@@ -86,6 +90,58 @@ export const WorkbenchApp = ({
         notifySuccess(message, { isDismissible: true });
     }, []);
 
+    const handleMoveFaces = React.useCallback(
+        ({
+            targetClusterId,
+            sourceClusterId,
+            faceIds,
+        }: {
+            targetClusterId: string;
+            sourceClusterId: string;
+            faceIds: string[];
+        }) => {
+            // Convert string IDs to numbers for the API
+            const numericFaceIds = faceIds.map((id) => Number.parseInt(id, 10)).filter((id) => !Number.isNaN(id));
+
+            if (numericFaceIds.length === 0) {
+                notifyError(__("No valid face IDs to move", "context-alt-text"));
+                return;
+            }
+
+            moveFacesMutation.mutate(
+                {
+                    faceIds: numericFaceIds,
+                    sourceClusterId,
+                    targetClusterId,
+                },
+                {
+                    onSuccess: (data) => {
+                        const message = sprintf(
+                            _n(
+                                "Moved %d face to cluster %s",
+                                "Moved %d faces to cluster %s",
+                                data.moved_count,
+                                "context-alt-text",
+                            ),
+                            data.moved_count,
+                            targetClusterId,
+                        );
+                        notifySuccess(message, { isDismissible: true });
+                    },
+                    onError: (error) => {
+                        notifyError(
+                            sprintf(
+                                __("Failed to move faces: %s", "context-alt-text"),
+                                error instanceof Error ? error.message : String(error),
+                            ),
+                        );
+                    },
+                },
+            );
+        },
+        [moveFacesMutation],
+    );
+
     return (
         <div className="cat-workbench" aria-label={__("Alt-Text Workbench", "context-alt-text")}>
             <SelectionToolbar
@@ -99,7 +155,11 @@ export const WorkbenchApp = ({
             <div className="cat-workbench__layout">
                 <div className="cat-workbench__sidebar">
                     <FaceScanActions selectedIds={selectedIdsNumeric} onScanComplete={handleScanComplete} />
-                    <UnknownPeoplePanel onSelectCluster={setActiveClusterId} selectedClusterId={activeClusterId} />
+                    <UnknownPeoplePanel
+                        onSelectCluster={setActiveClusterId}
+                        selectedClusterId={activeClusterId}
+                        onMoveFaces={handleMoveFaces}
+                    />
                     {activeClusterId && (
                         <ClusterDetailView
                             clusterId={activeClusterId}
@@ -121,5 +181,21 @@ export const WorkbenchApp = ({
                 />
             </div>
         </div>
+    );
+};
+
+interface WorkbenchAppProvidersProps {
+    children: React.ReactNode;
+}
+
+export const WorkbenchAppProviders = ({ children }: WorkbenchAppProvidersProps): React.JSX.Element => {
+    return <ToastProvider>{children}</ToastProvider>;
+};
+
+export const WorkbenchApp = (props: WorkbenchAppProps): React.JSX.Element => {
+    return (
+        <WorkbenchAppProviders>
+            <WorkbenchAppContent {...props} />
+        </WorkbenchAppProviders>
     );
 };

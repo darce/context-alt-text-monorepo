@@ -1,31 +1,30 @@
-import { useMemo } from "react";
-import { useQuery } from "@tanstack/react-query";
+import { useEffect, useMemo, useRef } from "react";
+import { useInfiniteQuery, useQueryClient } from "@tanstack/react-query";
 
 import { fetchApi } from "@/admin/utils/http";
 import { getDashboardConfig } from "@/admin/dashboardData";
-import type { ClusterSummary, ClusterSampleFace, ClusterFaceDetail, ClusterBoundingBox } from "@/types/face-clustering";
+import type { ClusterFaceDetail, ClusterBoundingBox } from "@/types/face-clustering";
 
-interface ClusterDetailResponse {
-    cluster?: Record<string, unknown>;
-    faces?: Record<string, unknown>[];
+interface ClusterDetailPageResponse {
+    faces: Record<string, unknown>[];
+    pagination: {
+        current_page: number;
+        per_page: number;
+        total_pages: number;
+        total_faces?: number;
+        has_more: boolean;
+    };
 }
 
 interface UseClusterDetailResult {
-    cluster: ClusterSummary;
     faces: ClusterFaceDetail[];
+    fetchNextPage: () => Promise<unknown>;
+    hasNextPage: boolean;
     isLoading: boolean;
+    isFetchingNextPage: boolean;
     error: Error | null;
     refetch: () => Promise<unknown>;
 }
-
-const createFallbackCluster = (clusterId: string): ClusterSummary => ({
-    id: clusterId,
-    faceCount: 0,
-    createdAt: null,
-    updatedAt: null,
-    sampleFace: null,
-    suggestion: null,
-});
 
 const toNumber = (value: unknown, fallback: number | null = 0): number | null => {
     const numeric = Number(value);
@@ -93,144 +92,85 @@ const normalizeFace = (input: Record<string, unknown>): ClusterFaceDetail => {
     };
 };
 
-const normalizeSampleFace = (
-    input: unknown,
-    fallbackAttachmentId: number,
-    fallbackThumbnail: string | null,
-    fallbackBbox: ClusterBoundingBox | null,
-): ClusterSampleFace | null => {
-    if (!input || typeof input !== "object") {
-        if (fallbackAttachmentId === 0 && !fallbackThumbnail && !fallbackBbox) {
-            return null;
-        }
-
-        return {
-            attachmentId: fallbackAttachmentId,
-            thumbnailUrl: fallbackThumbnail,
-            bbox: fallbackBbox,
-        };
-    }
-
-    const data = input as Record<string, unknown>;
-    return {
-        attachmentId:
-            toNumber(data.attachment_id ?? data.attachmentId ?? fallbackAttachmentId, fallbackAttachmentId) ?? 0,
-        thumbnailUrl: toStringOrNull(data.thumbnail_url ?? data.thumbnailUrl) ?? fallbackThumbnail,
-        bbox: normalizeBoundingBox(data.bbox ?? fallbackBbox ?? null),
-    };
-};
-
-const normalizeSuggestion = (input: unknown): ClusterSummary["suggestion"] => {
-    if (!input || typeof input !== "object") {
-        return null;
-    }
-
-    const data = input as Record<string, unknown>;
-    const rosterId = toStringOrNull(data.roster_id ?? data.rosterId);
-    const displayName = toStringOrNull(data.display_name ?? data.displayName);
-
-    if (!rosterId && !displayName) {
-        return null;
-    }
-
-    const confidence = toNumber(data.confidence ?? null, null);
-
-    return {
-        rosterId: rosterId ?? "",
-        displayName: displayName ?? "",
-        confidence: confidence ?? null,
-        reason: toStringOrNull(data.reason),
-    };
-};
-
-const normalizeCluster = (input: unknown, clusterId: string, faces: ClusterFaceDetail[]): ClusterSummary => {
-    const fallbackFace = faces[0] ?? null;
-
-    const defaults: ClusterSummary = {
-        id: clusterId,
-        faceCount: faces.length,
-        createdAt: fallbackFace?.detectedAt ?? null,
-        updatedAt: fallbackFace?.detectedAt ?? null,
-        sampleFace: fallbackFace
-            ? {
-                  attachmentId: fallbackFace.attachmentId,
-                  thumbnailUrl: fallbackFace.thumbnailUrl ?? null,
-                  bbox: fallbackFace.bbox,
-              }
-            : null,
-        suggestion: null,
-    };
-
-    if (!input || typeof input !== "object") {
-        return defaults;
-    }
-
-    const data = input as Record<string, unknown>;
-    const sample = normalizeSampleFace(
-        data.sample_face ?? data.sampleFace ?? null,
-        fallbackFace?.attachmentId ?? 0,
-        fallbackFace?.thumbnailUrl ?? null,
-        fallbackFace?.bbox ?? null,
-    );
-
-    return {
-        id: toStringOrNull(data.id) ?? clusterId,
-        faceCount: toNumber(data.face_count ?? data.faceCount ?? faces.length, faces.length) ?? faces.length,
-        createdAt: toStringOrNull(data.created_at ?? data.createdAt) ?? defaults.createdAt,
-        updatedAt: toStringOrNull(data.updated_at ?? data.updatedAt) ?? defaults.updatedAt,
-        sampleFace: sample,
-        suggestion: normalizeSuggestion(data.suggestion ?? null),
-    };
-};
-
-const transformResponse = (response: ClusterDetailResponse, clusterId: string) => {
-    const faces = Array.isArray(response.faces)
-        ? response.faces.map((face) => normalizeFace(face)).filter((face) => face.id !== "")
-        : [];
-
-    const cluster = normalizeCluster(response.cluster ?? null, clusterId, faces);
-
-    return { cluster, faces };
-};
-
 export const useClusterDetail = (clusterId: string): UseClusterDetailResult => {
     const trimmedClusterId = clusterId.trim();
     const config = getDashboardConfig();
     const endpoint = config.endpoints?.unknownClusters ?? null;
     const restNonce = config.restNonce;
     const enabled = Boolean(endpoint) && trimmedClusterId !== "";
-    const fallback = useMemo(
-        () => ({
-            cluster: createFallbackCluster(trimmedClusterId),
-            faces: [] as ClusterFaceDetail[],
-        }),
-        [trimmedClusterId],
-    );
+    const queryClient = useQueryClient();
+    const hasPrefetchedRef = useRef(false);
 
-    const query = useQuery({
+    const query = useInfiniteQuery({
         queryKey: ["cluster-detail", endpoint, trimmedClusterId],
         enabled,
-        queryFn: async () => {
+        queryFn: async ({ pageParam = 1 }) => {
             const base = endpoint!.endsWith("/") ? endpoint!.slice(0, -1) : endpoint!;
-            const url = `${base}/${encodeURIComponent(trimmedClusterId)}`;
+            const url = `${base}/${encodeURIComponent(trimmedClusterId)}?page=${pageParam}`;
 
-            const response = await fetchApi<ClusterDetailResponse>(url, {
+            const response = await fetchApi<ClusterDetailPageResponse>(url, {
                 restNonce,
             });
 
-            return transformResponse(response ?? {}, trimmedClusterId);
+            if (!response) {
+                return { faces: [], pagination: { has_more: false, current_page: pageParam } };
+            }
+
+            const faces = Array.isArray(response.faces)
+                ? response.faces.map((face) => normalizeFace(face)).filter((face) => face.id !== "")
+                : [];
+
+            return {
+                faces,
+                pagination: response.pagination,
+            };
         },
+        getNextPageParam: (lastPage) => {
+            if (!lastPage.pagination.has_more) {
+                return undefined;
+            }
+            return (lastPage.pagination.current_page ?? 0) + 1;
+        },
+        initialPageParam: 1,
         staleTime: 30_000,
     });
 
-    const data = enabled ? (query.data ?? fallback) : fallback;
+    // Automatic prefetch of page 2 when page 1 loads
+    useEffect(() => {
+        if (enabled && query.data?.pages?.[0]?.pagination?.has_more && !query.isFetching && !hasPrefetchedRef.current) {
+            hasPrefetchedRef.current = true;
+            const base = endpoint!.endsWith("/") ? endpoint!.slice(0, -1) : endpoint!;
+            const url = `${base}/${encodeURIComponent(trimmedClusterId)}?page=2`;
+
+            // Prefetch page 2 in the background without modifying current query data
+            void queryClient.prefetchQuery({
+                queryKey: ["cluster-detail-page-2", endpoint, trimmedClusterId],
+                queryFn: async () => {
+                    const response = await fetchApi<ClusterDetailPageResponse>(url, {
+                        restNonce,
+                    });
+                    return response;
+                },
+                staleTime: 30_000,
+            });
+        }
+    }, [enabled, query.data, query.isFetching, endpoint, trimmedClusterId, restNonce, queryClient]);
+
+    const allFaces = useMemo(() => {
+        if (!query.data?.pages) {
+            return [];
+        }
+        return query.data.pages.flatMap((page) => page.faces);
+    }, [query.data]);
 
     return {
-        cluster: data.cluster,
-        faces: data.faces,
-        isLoading: enabled ? query.isFetching : false,
+        faces: allFaces,
+        fetchNextPage: () => query.fetchNextPage(),
+        hasNextPage: query.hasNextPage ?? false,
+        isLoading: enabled ? query.isFetching && !query.isFetchingNextPage : false,
+        isFetchingNextPage: query.isFetchingNextPage,
         error: query.error instanceof Error ? query.error : null,
-        refetch: enabled ? query.refetch : () => Promise.resolve(undefined),
+        refetch: () => query.refetch(),
     };
 };
 

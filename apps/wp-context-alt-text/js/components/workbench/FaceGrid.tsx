@@ -2,6 +2,7 @@ import React from "react";
 import { __, sprintf } from "@wordpress/i18n";
 
 import type { ClusterFaceDetail } from "@/types/face-clustering";
+import "./FaceGrid.scss";
 
 export interface FaceGridRangeSelection {
     faceIds: string[];
@@ -18,6 +19,8 @@ export interface FaceGridProps {
     selectionAnchorIndex?: number | null;
     onDragStart?: (faceId: string, index: number, event: React.DragEvent<HTMLButtonElement>) => void;
     onDragEnd?: (event: React.DragEvent<HTMLButtonElement>) => void;
+    onDeleteFace?: (faceId: string) => void;
+    onViewOriginal?: (attachmentId: number) => void;
 }
 
 export const FaceGrid = ({
@@ -29,6 +32,8 @@ export const FaceGrid = ({
     selectionAnchorIndex = null,
     onDragStart,
     onDragEnd,
+    onDeleteFace,
+    onViewOriginal,
 }: FaceGridProps): React.JSX.Element => {
     const buttonRefs = React.useRef<(HTMLButtonElement | null)[]>([]);
     const defaultFocusIndex = React.useMemo(() => {
@@ -185,6 +190,31 @@ export const FaceGrid = ({
         [createRangeSelection, faces.length, moveFocus, onRangeSelect, onSelectAll, onToggleFace],
     );
 
+    const handleViewOriginal = React.useCallback(
+        (event: React.MouseEvent, attachmentId: number) => {
+            event.stopPropagation();
+            event.preventDefault();
+            onViewOriginal?.(attachmentId);
+        },
+        [onViewOriginal],
+    );
+
+    const handleDelete = React.useCallback(
+        (event: React.MouseEvent, faceId: string) => {
+            event.stopPropagation();
+            event.preventDefault();
+            onDeleteFace?.(faceId);
+        },
+        [onDeleteFace],
+    );
+
+    const handleDoubleClick = React.useCallback(
+        (attachmentId: number) => {
+            onViewOriginal?.(attachmentId);
+        },
+        [onViewOriginal],
+    );
+
     return (
         <ul className="cat-face-grid">
             {faces.map((face, index) => {
@@ -227,6 +257,12 @@ export const FaceGrid = ({
 
                                 onToggleFace(face.id, { index });
                             }}
+                            onDoubleClick={() => onViewOriginal && handleDoubleClick(face.attachmentId)}
+                            title={
+                                onViewOriginal
+                                    ? __("Double-click to view original image", "context-alt-text")
+                                    : undefined
+                            }
                         >
                             {face.thumbnailUrl ? (
                                 <img src={face.thumbnailUrl} alt={faceLabel} className="cat-face-grid__image" />
@@ -238,6 +274,60 @@ export const FaceGrid = ({
                                     <span className="screen-reader-text">
                                         {__("No thumbnail available for this face", "context-alt-text")}
                                     </span>
+                                </div>
+                            )}
+                            {(onDeleteFace || onViewOriginal) && (
+                                <div className="cat-face-grid__actions">
+                                    {onViewOriginal && (
+                                        <button
+                                            type="button"
+                                            className="cat-face-grid__action"
+                                            onClick={(e) => handleViewOriginal(e, face.attachmentId)}
+                                            aria-label={__("View original image", "context-alt-text")}
+                                            title={__("View original image", "context-alt-text")}
+                                        >
+                                            <svg
+                                                width="16"
+                                                height="16"
+                                                viewBox="0 0 16 16"
+                                                fill="none"
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                aria-hidden="true"
+                                            >
+                                                <path
+                                                    d="M14 9v5H2V9H0v5a2 2 0 002 2h12a2 2 0 002-2V9h-2z"
+                                                    fill="currentColor"
+                                                />
+                                                <path
+                                                    d="M8 11L3.5 6.5 5 5l2 2V0h2v7l2-2 1.5 1.5L8 11z"
+                                                    fill="currentColor"
+                                                />
+                                            </svg>
+                                        </button>
+                                    )}
+                                    {onDeleteFace && (
+                                        <button
+                                            type="button"
+                                            className="cat-face-grid__action cat-face-grid__action--delete"
+                                            onClick={(e) => handleDelete(e, face.id)}
+                                            aria-label={__("Delete this face", "context-alt-text")}
+                                            title={__("Delete this face", "context-alt-text")}
+                                        >
+                                            <svg
+                                                width="16"
+                                                height="16"
+                                                viewBox="0 0 16 16"
+                                                fill="none"
+                                                xmlns="http://www.w3.org/2000/svg"
+                                                aria-hidden="true"
+                                            >
+                                                <path
+                                                    d="M14 3h-3.27L9.31 1.13A2.5 2.5 0 007.38 0H5.62a2.5 2.5 0 00-1.93 1.13L2.27 3H2a1 1 0 000 2h.09L3 14.5A1.5 1.5 0 004.5 16h7a1.5 1.5 0 001.5-1.5L13.91 5H14a1 1 0 000-2zM5.62 2h1.76c.24 0 .47.11.62.3l.77 1.7H4.23l.77-1.7a.75.75 0 01.62-.3zM11.5 14h-7l-.84-9h8.68l-.84 9z"
+                                                    fill="currentColor"
+                                                />
+                                            </svg>
+                                        </button>
+                                    )}
                                 </div>
                             )}
                         </button>

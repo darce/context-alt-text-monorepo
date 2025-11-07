@@ -3,6 +3,7 @@ import { __, sprintf, _n } from "@wordpress/i18n";
 
 import { useClusterDetail } from "@/hooks/useClusterDetail";
 import { useClusterSuggestions } from "@/hooks/useClusterSuggestions";
+import { useDeleteFace } from "@/hooks/useDeleteFace";
 import { FaceGrid } from "@/components/workbench/FaceGrid";
 import type { FaceGridRangeSelection } from "@/components/workbench/FaceGrid";
 import { Button } from "@/components/ui/button";
@@ -26,7 +27,7 @@ export const ClusterDetailView = ({
     onRequestConfirm,
     onReviewLater,
 }: ClusterDetailViewProps): React.JSX.Element => {
-    const { cluster, faces, isLoading, error, refetch } = useClusterDetail(clusterId);
+    const { faces, isLoading, error, fetchNextPage, hasNextPage, refetch } = useClusterDetail(clusterId);
     const [selectedFaceIds, setSelectedFaceIds] = React.useState<string[]>([]);
     const faceIds = React.useMemo(() => faces.map((face) => face.id), [faces]);
     const { suggestions } = useClusterSuggestions(clusterId);
@@ -45,16 +46,12 @@ export const ClusterDetailView = ({
     }, [faces]);
 
     const headerSuggestion = React.useMemo(() => {
-        if (suggestions.length === 0 && cluster.suggestion) {
-            return {
-                displayName: cluster.suggestion.displayName,
-                confidence: cluster.suggestion.confidence ?? undefined,
-                reason: cluster.suggestion.reason ?? undefined,
-            };
+        // Show the first/top suggestion in the header
+        if (suggestions.length === 0) {
+            return null;
         }
-
-        return null;
-    }, [cluster.suggestion, suggestions]);
+        return suggestions[0];
+    }, [suggestions]);
 
     React.useEffect(() => {
         if (suggestions.length === 0) {
@@ -87,10 +84,7 @@ export const ClusterDetailView = ({
             const nextSelection = faceIds.filter((id) => prev.includes(id));
             const finalSelection = nextSelection.length > 0 ? nextSelection : [...faceIds];
 
-            if (
-                finalSelection.length === prev.length &&
-                finalSelection.every((id, index) => prev[index] === id)
-            ) {
+            if (finalSelection.length === prev.length && finalSelection.every((id, index) => prev[index] === id)) {
                 return prev;
             }
 
@@ -118,10 +112,10 @@ export const ClusterDetailView = ({
                 const next = [...prev, faceId];
                 const ordered = faceIds.filter((id) => next.includes(id));
                 const targetIndex =
-                    typeof options?.index === "number" && options.index >= 0
-                        ? options.index
-                        : faceIds.indexOf(faceId);
-                setSelectionAnchorIndex(targetIndex >= 0 ? targetIndex : ordered.length > 0 ? faceIds.indexOf(ordered[0]) : null);
+                    typeof options?.index === "number" && options.index >= 0 ? options.index : faceIds.indexOf(faceId);
+                setSelectionAnchorIndex(
+                    targetIndex >= 0 ? targetIndex : ordered.length > 0 ? faceIds.indexOf(ordered[0]) : null,
+                );
                 return ordered;
             });
         },
@@ -140,15 +134,12 @@ export const ClusterDetailView = ({
         setSelectionAnchorIndex(null);
     }, []);
 
-    const handleRangeSelect = React.useCallback(
-        ({ faceIds: rangeFaceIds, startIndex }: FaceGridRangeSelection) => {
-            setActiveSuggestionRosterId(null);
-            setSelectedFaceIds(rangeFaceIds);
-            setSelectionAnchorIndex(startIndex);
-            setPendingFaceIds(rangeFaceIds);
-        },
-        [],
-    );
+    const handleRangeSelect = React.useCallback(({ faceIds: rangeFaceIds, startIndex }: FaceGridRangeSelection) => {
+        setActiveSuggestionRosterId(null);
+        setSelectedFaceIds(rangeFaceIds);
+        setSelectionAnchorIndex(startIndex);
+        setPendingFaceIds(rangeFaceIds);
+    }, []);
 
     const handleFaceDragStart = React.useCallback(
         (faceId: string, index: number, event: React.DragEvent<HTMLButtonElement>) => {
@@ -164,7 +155,7 @@ export const ClusterDetailView = ({
                 }
 
                 setFaceDragData(event.dataTransfer, {
-                    clusterId: cluster.id,
+                    clusterId: clusterId,
                     faceIds: nextSelection,
                 });
 
@@ -174,7 +165,7 @@ export const ClusterDetailView = ({
                 return isAlreadySelected ? previous : nextSelection;
             });
         },
-        [cluster.id, selectionAnchorIndex],
+        [clusterId, selectionAnchorIndex],
     );
 
     const handleModalClose = React.useCallback(() => {
@@ -188,8 +179,8 @@ export const ClusterDetailView = ({
         }
         setPendingFaceIds(selectedFaceIds);
         setConfirmationOpen(true);
-        onRequestConfirm?.(cluster.id, selectedFaceIds);
-    }, [cluster.id, onRequestConfirm, selectedFaceIds]);
+        onRequestConfirm?.(clusterId, selectedFaceIds);
+    }, [clusterId, onRequestConfirm, selectedFaceIds]);
 
     const handleSuggestionSelect = React.useCallback(
         (suggestionId: string, faceIdsFromSuggestion: readonly string[] | undefined) => {
@@ -201,18 +192,68 @@ export const ClusterDetailView = ({
             setActiveSuggestionRosterId(suggestionId);
             setSelectedFaceIds(orderedSelection);
             setPendingFaceIds(orderedSelection);
-            setSelectionAnchorIndex(
-                orderedSelection.length > 0 ? faceIds.indexOf(orderedSelection[0]) : null,
-            );
+            setSelectionAnchorIndex(orderedSelection.length > 0 ? faceIds.indexOf(orderedSelection[0]) : null);
             setConfirmationOpen(true);
-            onRequestConfirm?.(cluster.id, orderedSelection);
+            onRequestConfirm?.(clusterId, orderedSelection);
         },
-        [cluster.id, faceIds, faceMap, onRequestConfirm],
+        [clusterId, faceIds, faceMap, onRequestConfirm],
     );
 
     const handleReviewLater = React.useCallback(() => {
-        onReviewLater?.(cluster.id, selectedFaceIds);
-    }, [cluster.id, onReviewLater, selectedFaceIds]);
+        onReviewLater?.(clusterId, selectedFaceIds);
+    }, [clusterId, onReviewLater, selectedFaceIds]);
+
+    const deleteFaceMutation = useDeleteFace();
+    const [deletingFaceId, setDeletingFaceId] = React.useState<string | null>(null);
+
+    const handleDeleteFace = React.useCallback(
+        (faceId: string) => {
+            // Show confirmation dialog
+            const face = faceMap.get(faceId);
+            if (!face) {
+                return;
+            }
+
+            const confirmed = window.confirm(
+                __("Remove this face? The original image will not be affected.", "context-alt-text"),
+            );
+
+            if (!confirmed) {
+                return;
+            }
+
+            setDeletingFaceId(faceId);
+
+            // Convert string face ID to number for API
+            const numericFaceId = parseInt(faceId, 10);
+            if (isNaN(numericFaceId)) {
+                console.error("[ClusterDetailView] Invalid face ID:", faceId);
+                return;
+            }
+
+            deleteFaceMutation.mutate(
+                { faceId: numericFaceId, clusterId },
+                {
+                    onSuccess: () => {
+                        console.log("[ClusterDetailView] Face deleted successfully:", faceId);
+                        setDeletingFaceId(null);
+                        // The query will automatically refetch due to cache invalidation
+                    },
+                    onError: (error) => {
+                        console.error("[ClusterDetailView] Error deleting face:", error);
+                        setDeletingFaceId(null);
+                        alert(__("Failed to delete face. Please try again.", "context-alt-text"));
+                    },
+                },
+            );
+        },
+        [faceMap, deleteFaceMutation, clusterId],
+    );
+
+    const handleViewOriginal = React.useCallback((attachmentId: number) => {
+        const url = `/wp-admin/upload.php?item=${attachmentId}`;
+        window.open(url, "_blank", "noopener,noreferrer");
+    }, []);
 
     if (isLoading) {
         return (
@@ -238,8 +279,8 @@ export const ClusterDetailView = ({
     }
 
     const faceCountLabel = sprintf(
-        _n("%d face ready for review", "%d faces ready for review", cluster.faceCount, "context-alt-text"),
-        cluster.faceCount,
+        _n("%d face ready for review", "%d faces ready for review", faces.length, "context-alt-text"),
+        faces.length,
     );
 
     const selectedCountLabel = sprintf(
@@ -251,142 +292,144 @@ export const ClusterDetailView = ({
         <>
             <section
                 className="cat-cluster-detail"
-                aria-labelledby={`cat-cluster-detail-heading-${cluster.id}`}
-                data-cluster-id={cluster.id}
+                aria-labelledby={`cat-cluster-detail-heading-${clusterId}`}
+                data-cluster-id={clusterId}
             >
-            <header className="cat-cluster-detail__header">
-                <div className="cat-cluster-detail__heading">
-                    <h2 id={`cat-cluster-detail-heading-${cluster.id}`}>
-                        {__("Cluster Detail", "context-alt-text")}
-                    </h2>
-                    <p>{faceCountLabel}</p>
-                </div>
-                {headerSuggestion && (
-                    <SuggestionChip
-                        displayName={headerSuggestion.displayName}
-                        confidence={headerSuggestion.confidence ?? undefined}
-                        reason={headerSuggestion.reason ?? undefined}
-                    />
-                )}
-                {onClose && (
-                    <button
-                        type="button"
-                        className="cat-cluster-detail__close"
-                        onClick={onClose}
-                        aria-label={__("Close cluster detail", "context-alt-text")}
-                    >
-                        {__("Close", "context-alt-text")}
-                    </button>
-                )}
-            </header>
-
-            {faces.length === 0 ? (
-                <p className="cat-cluster-detail__empty">
-                    {__("All faces in this cluster have been resolved.", "context-alt-text")}
-                </p>
-            ) : (
-                <>
-                    {suggestions.length > 0 && (
-                        <div className="cat-cluster-detail__suggestions" aria-live="polite">
-                            {suggestions.map((suggestion) => {
-                                const suggestionReason =
-                                    suggestion.reason ??
-                                    (typeof suggestion.matchCount === "number"
-                                        ? sprintf(
-                                              /* translators: %d: face count */
-                                              _n(
-                                                  "%d face matched this person.",
-                                                  "%d faces matched this person.",
-                                                  suggestion.matchCount,
-                                                  "context-alt-text",
-                                              ),
-                                              suggestion.matchCount,
-                                          )
-                                        : undefined);
-
-                                const isActive = activeSuggestionRosterId === suggestion.rosterId;
-
-                                return (
-                                    <div
-                                        key={suggestion.rosterId}
-                                        className={`cat-cluster-detail__suggestion${
-                                            isActive ? " cat-cluster-detail__suggestion--active" : ""
-                                        }`}
-                                    >
-                                        <SuggestionChip
-                                            displayName={suggestion.displayName}
-                                            confidence={suggestion.confidence}
-                                            reason={suggestionReason}
-                                            disabled={faces.length === 0}
-                                            onSelect={() =>
-                                                handleSuggestionSelect(
-                                                    suggestion.rosterId,
-                                                    suggestion.faceIds ?? undefined,
-                                                )
-                                            }
-                                        />
-                                    </div>
-                                );
-                            })}
-                        </div>
-                    )}
-                    <div className="cat-cluster-detail__toolbar" aria-live="polite">
-                        <div className="cat-cluster-detail__toolbar-selection">
-                            <strong>{selectedCountLabel}</strong>
-                            <span aria-hidden="true">•</span>
-                            <button
-                                type="button"
-                                className="cat-cluster-detail__toolbar-link"
-                                onClick={handleSelectAll}
-                                disabled={selectedFaceIds.length === faceIds.length}
-                            >
-                                {__("Select all", "context-alt-text")}
-                            </button>
-                            <span aria-hidden="true">/</span>
-                            <button
-                                type="button"
-                                className="cat-cluster-detail__toolbar-link"
-                                onClick={handleClearSelection}
-                                disabled={selectedFaceIds.length === 0}
-                            >
-                                {__("Clear", "context-alt-text")}
-                            </button>
-                        </div>
-                        <div className="cat-cluster-detail__toolbar-actions">
-                            <Button
-                                variant="subtle"
-                                size="sm"
-                                onClick={handleReviewLater}
-                                disabled={!onReviewLater}
-                            >
-                                {__("Review Later", "context-alt-text")}
-                            </Button>
-                            <Button
-                                variant="primary"
-                                size="sm"
-                                onClick={handleRequestConfirm}
-                                disabled={selectedFaceIds.length === 0 || !onRequestConfirm}
-                            >
-                                {__("Label Selected", "context-alt-text")}
-                            </Button>
-                        </div>
+                <header className="cat-cluster-detail__header">
+                    <div className="cat-cluster-detail__heading">
+                        <h2 id={`cat-cluster-detail-heading-${clusterId}`}>
+                            {__("Cluster Detail", "context-alt-text")}
+                        </h2>
+                        <p>{faceCountLabel}</p>
                     </div>
-                    <FaceGrid
-                        faces={faces}
-                        selectedFaceIds={selectedFaceIds}
-                        selectionAnchorIndex={selectionAnchorIndex}
-                        onToggleFace={handleToggleFace}
-                        onRangeSelect={handleRangeSelect}
-                        onSelectAll={handleSelectAll}
-                        onDragStart={handleFaceDragStart}
-                    />
-                </>
-            )}
+                    {headerSuggestion && (
+                        <SuggestionChip
+                            displayName={headerSuggestion.displayName}
+                            confidence={headerSuggestion.confidence ?? undefined}
+                            reason={headerSuggestion.reason ?? undefined}
+                        />
+                    )}
+                    {onClose && (
+                        <button
+                            type="button"
+                            className="cat-cluster-detail__close"
+                            onClick={onClose}
+                            aria-label={__("Close cluster detail", "context-alt-text")}
+                        >
+                            {__("Close", "context-alt-text")}
+                        </button>
+                    )}
+                </header>
+
+                {faces.length === 0 ? (
+                    <p className="cat-cluster-detail__empty">
+                        {__("All faces in this cluster have been resolved.", "context-alt-text")}
+                    </p>
+                ) : (
+                    <>
+                        {suggestions.length > 0 && (
+                            <div className="cat-cluster-detail__suggestions" aria-live="polite">
+                                {suggestions.map((suggestion) => {
+                                    const suggestionReason =
+                                        suggestion.reason ??
+                                        (typeof suggestion.matchCount === "number"
+                                            ? sprintf(
+                                                  /* translators: %d: face count */
+                                                  _n(
+                                                      "%d face matched this person.",
+                                                      "%d faces matched this person.",
+                                                      suggestion.matchCount,
+                                                      "context-alt-text",
+                                                  ),
+                                                  suggestion.matchCount,
+                                              )
+                                            : undefined);
+
+                                    const isActive = activeSuggestionRosterId === suggestion.rosterId;
+
+                                    return (
+                                        <div
+                                            key={suggestion.rosterId}
+                                            className={`cat-cluster-detail__suggestion${
+                                                isActive ? " cat-cluster-detail__suggestion--active" : ""
+                                            }`}
+                                        >
+                                            <SuggestionChip
+                                                displayName={suggestion.displayName}
+                                                confidence={suggestion.confidence}
+                                                reason={suggestionReason}
+                                                disabled={faces.length === 0}
+                                                onSelect={() =>
+                                                    handleSuggestionSelect(
+                                                        suggestion.rosterId,
+                                                        suggestion.faceIds ?? undefined,
+                                                    )
+                                                }
+                                            />
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        )}
+                        <div className="cat-cluster-detail__toolbar" aria-live="polite">
+                            <div className="cat-cluster-detail__toolbar-selection">
+                                <strong>{selectedCountLabel}</strong>
+                                <span aria-hidden="true">•</span>
+                                <button
+                                    type="button"
+                                    className="cat-cluster-detail__toolbar-link"
+                                    onClick={handleSelectAll}
+                                    disabled={selectedFaceIds.length === faceIds.length}
+                                >
+                                    {__("Select all", "context-alt-text")}
+                                </button>
+                                <span aria-hidden="true">/</span>
+                                <button
+                                    type="button"
+                                    className="cat-cluster-detail__toolbar-link"
+                                    onClick={handleClearSelection}
+                                    disabled={selectedFaceIds.length === 0}
+                                >
+                                    {__("Clear", "context-alt-text")}
+                                </button>
+                            </div>
+                            <div className="cat-cluster-detail__toolbar-actions">
+                                <Button
+                                    variant="subtle"
+                                    size="sm"
+                                    onClick={handleReviewLater}
+                                    disabled={!onReviewLater}
+                                >
+                                    {__("Review Later", "context-alt-text")}
+                                </Button>
+                                <Button
+                                    variant="primary"
+                                    size="sm"
+                                    onClick={handleRequestConfirm}
+                                    disabled={selectedFaceIds.length === 0 || !onRequestConfirm}
+                                >
+                                    {__("Label Selected", "context-alt-text")}
+                                </Button>
+                            </div>
+                        </div>
+                        <FaceGrid
+                            faces={faces}
+                            selectedFaceIds={selectedFaceIds}
+                            selectionAnchorIndex={selectionAnchorIndex}
+                            onToggleFace={handleToggleFace}
+                            onRangeSelect={handleRangeSelect}
+                            onSelectAll={handleSelectAll}
+                            onDragStart={handleFaceDragStart}
+                            onDeleteFace={handleDeleteFace}
+                            onViewOriginal={handleViewOriginal}
+                        />
+                    </>
+                )}
             </section>
 
             <ClusterConfirmationModal
                 isOpen={isConfirmationOpen}
-                clusterId={cluster.id}
+                clusterId={clusterId}
                 faces={faces}
                 selectedFaceIds={pendingFaceIds.length > 0 ? pendingFaceIds : selectedFaceIds}
                 suggestions={suggestions}

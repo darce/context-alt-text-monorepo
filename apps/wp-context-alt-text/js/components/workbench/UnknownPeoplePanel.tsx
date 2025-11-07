@@ -3,6 +3,7 @@ import { __ } from "@wordpress/i18n";
 
 import { ClusterCard } from "./ClusterCard";
 import { useUnknownClusters } from "@/hooks/useUnknownClusters";
+import { useClearAllFaces } from "@/hooks/useClearAllFaces";
 import type { FaceDragPayload } from "@/components/workbench/dragTypes";
 
 export interface UnknownPeoplePanelProps {
@@ -16,8 +17,12 @@ export const UnknownPeoplePanel = ({
     selectedClusterId = null,
     onMoveFaces,
 }: UnknownPeoplePanelProps): React.JSX.Element => {
-    const { clusters, isLoading, error, total } = useUnknownClusters({ perPage: 50 });
+    // Request all clusters without pagination limits
+    const { clusters, isLoading, error, total } = useUnknownClusters({ perPage: 10000 });
     const [activeDropClusterId, setActiveDropClusterId] = React.useState<string | null>(null);
+    const [showClearConfirm, setShowClearConfirm] = React.useState(false);
+
+    const clearAllMutation = useClearAllFaces();
 
     const handleDropFaces = React.useCallback(
         (clusterId: string, payload: FaceDragPayload) => {
@@ -45,6 +50,22 @@ export const UnknownPeoplePanel = ({
         setActiveDropClusterId((current) => (current === clusterId ? null : current));
     }, []);
 
+    const handleClearAll = React.useCallback(() => {
+        setShowClearConfirm(true);
+    }, []);
+
+    const handleConfirmClear = React.useCallback(() => {
+        clearAllMutation.mutate(undefined, {
+            onSuccess: () => {
+                setShowClearConfirm(false);
+            },
+        });
+    }, [clearAllMutation]);
+
+    const handleCancelClear = React.useCallback(() => {
+        setShowClearConfirm(false);
+    }, []);
+
     return (
         <section className="cat-unknown-people-panel" aria-labelledby="cat-unknown-people-heading">
             <header className="cat-unknown-people-panel__header">
@@ -60,7 +81,47 @@ export const UnknownPeoplePanel = ({
                               "context-alt-text",
                           )}
                 </p>
+                {total > 0 && (
+                    <button
+                        type="button"
+                        className="cat-unknown-people-panel__clear-all"
+                        onClick={handleClearAll}
+                        disabled={clearAllMutation.isPending}
+                    >
+                        {__("Clear All", "context-alt-text")}
+                    </button>
+                )}
             </header>
+
+            {showClearConfirm && (
+                <div className="cat-unknown-people-panel__confirm" role="dialog" aria-labelledby="clear-all-title">
+                    <h3 id="clear-all-title">{__("Clear All Unknown Faces?", "context-alt-text")}</h3>
+                    <p>
+                        {__(
+                            "This will mark all unknown faces as resolved without assigning them to anyone. This action cannot be undone.",
+                            "context-alt-text",
+                        )}
+                    </p>
+                    <div className="cat-unknown-people-panel__confirm-actions">
+                        <button
+                            type="button"
+                            className="cat-unknown-people-panel__confirm-cancel"
+                            onClick={handleCancelClear}
+                            disabled={clearAllMutation.isPending}
+                        >
+                            {__("Cancel", "context-alt-text")}
+                        </button>
+                        <button
+                            type="button"
+                            className="cat-unknown-people-panel__confirm-clear"
+                            onClick={handleConfirmClear}
+                            disabled={clearAllMutation.isPending}
+                        >
+                            {clearAllMutation.isPending ? __("Clearing…", "context-alt-text") : __("Clear All", "context-alt-text")}
+                        </button>
+                    </div>
+                </div>
+            )}
 
             {isLoading && (
                 <p className="cat-unknown-people-panel__status" role="status" aria-live="polite">

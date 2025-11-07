@@ -36,6 +36,13 @@ interface ApiCluster {
         thumbnail_url?: string | null;
         bbox?: ApiBoundingBox | null;
     } | null;
+    /** New paginated API format - array of preview faces */
+    preview_faces?: {
+        id?: string;
+        attachment_id?: number;
+        thumbnail_url?: string | null;
+        bbox?: ApiBoundingBox | null;
+    }[];
     suggestion?: {
         roster_id?: string;
         display_name?: string;
@@ -110,14 +117,34 @@ const mapSampleFace = (input: ApiCluster["sample_face"]): ClusterSampleFace => {
     };
 };
 
-const mapCluster = (cluster: ApiCluster): ClusterSummary => ({
-    id: typeof cluster.id === "string" && cluster.id.trim() !== "" ? cluster.id : "unknown",
-    faceCount: toNumber(cluster.face_count, 0),
-    sampleFace: mapSampleFace(cluster.sample_face),
-    suggestion: mapSuggestion(cluster.suggestion),
-    createdAt: typeof cluster.created_at === "string" ? cluster.created_at : null,
-    updatedAt: typeof cluster.updated_at === "string" ? cluster.updated_at : null,
-});
+const mapPreviewFaces = (input: ApiCluster["preview_faces"]): ClusterSampleFace[] => {
+    if (!Array.isArray(input)) {
+        return [];
+    }
+
+    return input.map((face) => ({
+        attachmentId: toNumber(face?.attachment_id, 0),
+        thumbnailUrl: typeof face?.thumbnail_url === "string" ? face.thumbnail_url : null,
+        bbox: normalizeBoundingBox(face?.bbox),
+    }));
+};
+
+const mapCluster = (cluster: ApiCluster): ClusterSummary => {
+    const previewFaces = mapPreviewFaces(cluster.preview_faces);
+
+    // Use preview_faces if available (new API), otherwise fall back to sample_face (old API)
+    const sampleFace = previewFaces.length > 0 ? previewFaces[0] : mapSampleFace(cluster.sample_face);
+
+    return {
+        id: typeof cluster.id === "string" && cluster.id.trim() !== "" ? cluster.id : "unknown",
+        faceCount: toNumber(cluster.face_count, 0),
+        sampleFace: sampleFace ?? null,
+        previewFaces: previewFaces.length > 0 ? previewFaces : undefined,
+        suggestion: mapSuggestion(cluster.suggestion),
+        createdAt: typeof cluster.created_at === "string" ? cluster.created_at : null,
+        updatedAt: typeof cluster.updated_at === "string" ? cluster.updated_at : null,
+    };
+};
 
 const transformResponse = (
     response: ClusterListResponse,

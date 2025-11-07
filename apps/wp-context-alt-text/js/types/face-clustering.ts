@@ -47,6 +47,8 @@ export interface ClusterSummary {
     id: string;
     faceCount: number;
     sampleFace: ClusterSampleFace | null;
+    /** Preview faces array (new paginated API format) - max 4 faces for cluster preview */
+    previewFaces?: ClusterSampleFace[];
     suggestion?: {
         rosterId: string;
         displayName: string;

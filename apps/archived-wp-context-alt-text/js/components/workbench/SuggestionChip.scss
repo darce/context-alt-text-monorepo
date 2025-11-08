@@ -1,0 +1,39 @@
+.cat-suggestion-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    padding: 0.35rem 0.75rem;
+    border-radius: 9999px;
+    background-color: var(--cat-color-surface-muted, #eef2f6);
+    color: var(--cat-color-text, #1f2933);
+    font-size: 0.875rem;
+    line-height: 1.2;
+}
+
+.cat-suggestion-chip__label {
+    font-weight: 500;
+}
+
+.cat-suggestion-chip__confidence {
+    opacity: 0.75;
+}
+
+.cat-suggestion-chip__reason {
+    opacity: 0.75;
+}
+
+.cat-suggestion-chip--interactive {
+    border: 0;
+    cursor: pointer;
+    transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+.cat-suggestion-chip--interactive:enabled:hover {
+    transform: translateY(-1px);
+    box-shadow: 0 2px 6px rgba(15, 23, 42, 0.12);
+}
+
+.cat-suggestion-chip--interactive:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}

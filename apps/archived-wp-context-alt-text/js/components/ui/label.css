@@ -1,0 +1,19 @@
+/* Radix UI Label Component Styles */
+.cat-label {
+    display: inline-block;
+    font-weight: 500;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #1e1e1e;
+    cursor: pointer;
+    user-select: none;
+}
+
+.cat-label[data-disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.cat-label[data-invalid] {
+    color: #d32f2f;
+}

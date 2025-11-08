@@ -1,0 +1,16 @@
+#!/usr/bin/env sh
+. "$(dirname -- "$0")/_/husky.sh"
+
+# Run architecture compliance checks before commit
+echo "🔍 Running architecture compliance checks..."
+
+# Check file sizes and component limits
+npm run check:architecture
+
+# If checks fail, prevent commit
+if [ $? -ne 0 ]; then
+  echo "❌ Architecture compliance checks failed. Please fix violations before committing."
+  exit 1
+fi
+
+echo "✅ Architecture compliance checks passed!"

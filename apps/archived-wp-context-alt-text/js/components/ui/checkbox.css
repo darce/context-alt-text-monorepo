@@ -1,0 +1,66 @@
+/* Checkbox Component Styles */
+
+.cat-checkbox {
+    all: unset;
+    box-sizing: border-box;
+    width: 18px;
+    height: 18px;
+    border: 2px solid var(--wp-admin-theme-color, #2271b1);
+    border-radius: 3px;
+    background-color: var(--wp-admin-bg-white, #fff);
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    flex-shrink: 0;
+    transition: all 0.15s ease;
+}
+
+.cat-checkbox:hover {
+    border-color: var(--wp-admin-theme-color-darker-10, #135e96);
+    background-color: var(--wp-admin-bg-gray-50, #f6f7f7);
+}
+
+.cat-checkbox:focus-visible {
+    outline: 2px solid var(--wp-admin-theme-color, #2271b1);
+    outline-offset: 2px;
+}
+
+.cat-checkbox[data-state="checked"] {
+    background-color: var(--wp-admin-theme-color, #2271b1);
+    border-color: var(--wp-admin-theme-color, #2271b1);
+}
+
+.cat-checkbox[data-state="checked"]:hover {
+    background-color: var(--wp-admin-theme-color-darker-10, #135e96);
+    border-color: var(--wp-admin-theme-color-darker-10, #135e96);
+}
+
+.cat-checkbox[data-disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+}
+
+.cat-checkbox[data-disabled]:hover {
+    border-color: var(--wp-admin-theme-color, #2271b1);
+    background-color: var(--wp-admin-bg-white, #fff);
+}
+
+.cat-checkbox[data-state="checked"][data-disabled]:hover {
+    background-color: var(--wp-admin-theme-color, #2271b1);
+}
+
+.cat-checkbox-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 100%;
+    height: 100%;
+}
+
+.cat-checkbox-icon {
+    color: var(--wp-admin-bg-white, #fff);
+    font-size: 14px;
+    font-weight: bold;
+    line-height: 1;
+}

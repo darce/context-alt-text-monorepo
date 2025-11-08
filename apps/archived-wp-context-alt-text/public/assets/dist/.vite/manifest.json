@@ -1,0 +1,11 @@
+{
+  "js/admin/main.tsx": {
+    "file": "js/admin.js",
+    "name": "admin",
+    "src": "js/admin/main.tsx",
+    "isEntry": true,
+    "css": [
+      "css/admin-DJGv6T1u.css"
+    ]
+  }
+}

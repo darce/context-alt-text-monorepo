@@ -1,0 +1,182 @@
+/* Radix UI Select Component Styles */
+
+/* Trigger */
+.cat-select-trigger {
+    display: inline-flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    padding: 6px 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #1e1e1e;
+    background-color: #ffffff;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    cursor: pointer;
+    transition: all 0.15s ease-in-out;
+    min-width: 120px;
+}
+
+.cat-select-trigger:hover {
+    border-color: #2271b1;
+}
+
+.cat-select-trigger:focus {
+    outline: 2px solid #2271b1;
+    outline-offset: 2px;
+    border-color: #2271b1;
+}
+
+.cat-select-trigger[data-disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+.cat-select-trigger[data-placeholder] {
+    color: #757575;
+}
+
+.cat-select-icon {
+    display: inline-flex;
+    align-items: center;
+    font-size: 10px;
+    opacity: 0.7;
+    transition: transform 0.2s ease;
+}
+
+.cat-select-trigger[data-state="open"] .cat-select-icon {
+    transform: rotate(180deg);
+}
+
+/* Content (Dropdown) */
+.cat-select-content {
+    position: relative;
+    z-index: 50;
+    min-width: 120px;
+    max-height: 384px;
+    overflow: hidden;
+    background-color: #ffffff;
+    border: 1px solid #8c8f94;
+    border-radius: 4px;
+    box-shadow:
+        0 4px 6px rgba(0, 0, 0, 0.1),
+        0 2px 4px rgba(0, 0, 0, 0.06);
+}
+
+.cat-select-content[data-state="open"] {
+    animation: cat-select-fade-in 0.15s ease-out;
+}
+
+.cat-select-content[data-state="closed"] {
+    animation: cat-select-fade-out 0.1s ease-in;
+}
+
+@keyframes cat-select-fade-in {
+    from {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+@keyframes cat-select-fade-out {
+    from {
+        opacity: 1;
+        transform: translateY(0);
+    }
+    to {
+        opacity: 0;
+        transform: translateY(-4px);
+    }
+}
+
+/* Viewport */
+.cat-select-viewport {
+    padding: 4px;
+}
+
+.cat-select-viewport--popper {
+    width: var(--radix-select-trigger-width);
+    max-height: var(--radix-select-content-available-height);
+}
+
+/* Scroll Buttons */
+.cat-select-scroll-button {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 25px;
+    cursor: pointer;
+    background-color: #ffffff;
+    border: none;
+    font-size: 10px;
+}
+
+.cat-select-scroll-button:hover {
+    background-color: #f6f7f7;
+}
+
+/* Item */
+.cat-select-item {
+    position: relative;
+    display: flex;
+    align-items: center;
+    padding: 8px 32px 8px 12px;
+    font-size: 14px;
+    line-height: 1.5;
+    color: #1e1e1e;
+    cursor: pointer;
+    user-select: none;
+    outline: none;
+    border-radius: 2px;
+    transition: background-color 0.1s ease;
+}
+
+.cat-select-item:hover,
+.cat-select-item[data-highlighted] {
+    background-color: #f6f7f7;
+}
+
+.cat-select-item[data-state="checked"] {
+    background-color: #e5f2ff;
+    font-weight: 500;
+}
+
+.cat-select-item[data-disabled] {
+    opacity: 0.5;
+    cursor: not-allowed;
+    pointer-events: none;
+}
+
+/* Item Indicator (Checkmark) */
+.cat-select-item-indicator {
+    position: absolute;
+    right: 8px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    color: #2271b1;
+    font-size: 12px;
+}
+
+/* Label (Group Label) */
+.cat-select-label {
+    padding: 8px 12px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    color: #757575;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+/* Separator */
+.cat-select-separator {
+    height: 1px;
+    margin: 4px 0;
+    background-color: #dcdcde;
+}

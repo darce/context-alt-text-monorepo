@@ -1,0 +1,24 @@
+# Dependencies
+node_modules
+vendor
+
+# Build outputs
+public
+dist
+build
+storybook-static
+
+# WordPress
+wp-admin
+wp-includes
+
+# Cache
+.cache
+*.log
+
+# Test coverage
+coverage
+
+# Generated files
+*.min.js
+*.min.css

@@ -1,0 +1,6 @@
+# Optional overrides for recognition settings.
+# All defaults now live in recognition_core.config.__init__.py.
+# Provide only the values you need to change, for example:
+#
+# insightface:
+#   det_thresh: 0.35

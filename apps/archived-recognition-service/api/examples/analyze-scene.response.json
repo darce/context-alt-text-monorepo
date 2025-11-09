@@ -1,0 +1,139 @@
+{
+  "results": [
+    {
+      "scene_description": "stub caption",
+      "processing_time": null,
+      "detected_objects": [
+        {
+          "class_id": 0,
+          "class_name": "person",
+          "bbox": [0, 0, 10, 10],
+          "confidence": 0.9,
+          "area": 0.0
+        }
+      ],
+      "detected_entities": [
+        {
+          "label": "face",
+          "bbox": [0, 0, 10, 10],
+          "confidence": 0.95,
+          "entity_type": "person",
+          "area": 100.0,
+          "roster_match": {
+            "roster_entry": {
+              "name": "Test User",
+              "display_name": "Test User",
+              "unique_id": "roster-1",
+              "reference_images": [
+                {
+                  "embedding": [1.0, 0.0],
+                  "metadata": {
+                    "role": "tester",
+                    "augmented_embeddings": []
+                  },
+                  "image_path": null
+                }
+              ],
+              "aggregate_embedding": [1.0, 0.0],
+              "metadata": {
+                "role": "tester",
+                "augmented_embeddings": []
+              },
+              "created_timestamp": "2024-01-01T00:00:00",
+              "updated_timestamp": "2024-01-01T00:00:00",
+              "image_count": 1
+            },
+            "similarity_score": 0.92,
+            "confidence_threshold": 0.5,
+            "is_match": true,
+            "match_confidence": 92.0
+          },
+          "face_data": {
+            "embedding_id": "face-0",
+            "embedding": [1.0, 0.0],
+            "embedding_dimension": 2,
+            "threshold": 0.5,
+            "candidates": [
+              {
+                "name": "Test User",
+                "similarity": 0.92,
+                "unique_id": "roster-1",
+                "metadata": {
+                  "role": "tester",
+                  "augmented_embeddings": []
+                },
+                "meets_threshold": true
+              }
+            ]
+          }
+        }
+      ],
+      "roster_matches": [
+        {
+          "roster_entry": {
+            "name": "Test User",
+            "display_name": "Test User",
+            "unique_id": "roster-1",
+            "reference_images": [
+              {
+                "embedding": [1.0, 0.0],
+                "metadata": {
+                  "role": "tester",
+                  "augmented_embeddings": []
+                },
+                "image_path": null
+              }
+            ],
+            "aggregate_embedding": [1.0, 0.0],
+            "metadata": {
+              "role": "tester",
+              "augmented_embeddings": []
+            },
+            "created_timestamp": "2024-01-01T00:00:00",
+            "updated_timestamp": "2024-01-01T00:00:00",
+            "image_count": 1
+          },
+          "similarity_score": 0.92,
+          "confidence_threshold": 0.5,
+          "is_match": true,
+          "match_confidence": 92.0
+        }
+      ],
+      "identified_roster_entities": [
+        {
+          "name": "Test User",
+          "display_name": "Test User",
+          "unique_id": "roster-1",
+          "reference_images": [
+            {
+              "embedding": [1.0, 0.0],
+              "metadata": {
+                "role": "tester",
+                "augmented_embeddings": []
+              },
+              "image_path": null
+            }
+          ],
+          "aggregate_embedding": [1.0, 0.0],
+          "metadata": {
+            "role": "tester",
+            "augmented_embeddings": []
+          },
+          "created_timestamp": "2024-01-01T00:00:00",
+          "updated_timestamp": "2024-01-01T00:00:00",
+          "image_count": 1
+        }
+      ],
+      "processing_metadata": {
+        "faces_detected": 1,
+        "processing_time_ms": 12.3,
+        "threshold": 0.5
+      }
+    }
+  ],
+  "total_images_processed": 1,
+  "roster_identification_enabled": true,
+  "configuration_used": {
+    "threshold": 0.5
+  }
+}

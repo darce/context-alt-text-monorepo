@@ -1,0 +1,7 @@
+# Optional overrides for shared configuration.
+# Defaults live in shared.config.models.SharedSettings.
+# Add only the keys you wish to override, e.g.:
+#
+# media_storage:
+#   config:
+#     upload_directory: "/mnt/data/media"

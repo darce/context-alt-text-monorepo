@@ -1,0 +1,21 @@
+# Development and Testing Dependencies
+# These are ONLY the additional packages needed for development/testing
+# Production packages are already in requirements_main.txt
+
+# Testing framework and async support
+pytest>=7.0.0
+pytest-asyncio>=0.21.0
+
+# Development tools
+pytest-cov>=4.0.0  # Test coverage
+pytest-xdist>=3.0.0  # Parallel test execution
+black>=23.0.0  # Code formatting
+isort>=5.0.0  # Import sorting
+mypy>=1.0.0  # Type checking
+
+# Development utilities
+jupyter>=1.0.0  # Notebook support for analysis
+pre-commit>=3.0.0  # Git hooks
+bandit>=1.7.0  # Security linting
+memory-profiler>=0.60.0  # Memory usage profiling
+

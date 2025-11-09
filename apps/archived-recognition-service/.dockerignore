@@ -1,0 +1,69 @@
+# Docker build context optimization
+# Exclude files that don't need to be in the Docker image
+
+# Version control
+.git
+.gitignore
+.github
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Virtual environments
+env/
+venv/
+.env
+.venv
+entity-id-env/
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# Local development files
+*.local
+*.dev
+*.test
+test_*
+mock_*
+visualize_*
+
+# Temporary files
+*.tmp
+*.temp
+/tmp/
+gpu_env.env
+
+# Build artifacts (don't include in image)
+build-logs/
+
+# UML and design files
+*.mermaid
+*.puml
+
+# Requirements files we don't use in production
+requirements_local.txt
+requirements_remote_flash_attn.txt
+
+# Scripts that are for local development only
+scripts/*

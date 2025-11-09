@@ -1,0 +1,21 @@
+[project]
+name = "prototype-description-service"
+version = "0.1.0"
+description = "Prototype rewrite of the description service with hexagonal architecture scaffolding."
+requires-python = ">=3.11"
+dependencies = [
+    "fastapi>=0.115.0,<0.116.0",
+    "uvicorn>=0.30.0,<0.31.0",
+    "pydantic>=2.9.0,<3.0.0",
+    "typing-extensions>=4.12.0,<5.0.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "ruff>=0.7.0,<1.0.0",
+    "pytest>=8.3.0,<9.0.0",
+]
+
+[build-system]
+requires = ["setuptools>=68.0.0"]
+build-backend = "setuptools.build_meta"

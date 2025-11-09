@@ -1,7 +1,0 @@
--r requirements_main.txt
-
-# GPU inference runtime for Hugging Face (CUDA-enabled onnxruntime)
-onnxruntime-gpu>=1.16.0 ; platform_system == "Linux"
-
-# PostgreSQL driver for production database
-psycopg[binary]>=3.1.0

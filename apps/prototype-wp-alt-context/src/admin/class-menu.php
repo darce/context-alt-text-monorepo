@@ -6,31 +6,71 @@ namespace AltContext\Admin;
 class Menu {
 
 	private DashboardPage $dashboardPage;
-	// private WorkbenchPage $workbenchPage;
+	private WorkbenchPage $workbenchPage;
+	private RosterPage $rosterPage;
 
 	public function __construct(
 		DashboardPage $dashboardPage,
-		// WorkbenchPage $workbenchPage
+		WorkbenchPage $workbenchPage,
+		RosterPage $rosterPage
 	) {
-		$this->dashboardPage = $dashboardPage;
-		// $this->workbenchPage = $workbenchPage;
-	}
-	public function init(): void {
-		add_action( 'admin_menu', array( $this, 'menu' ) );
+		$this->dashboardPage  = $dashboardPage;
+		$this->workbenchPage  = $workbenchPage;
+		$this->rosterPage = $rosterPage;
 	}
 
-	public function menu(): void {
+	public function init(): void {
+		add_action( 'admin_menu', array( $this, 'register_menu' ) );
+	}
+
+	public function register_menu(): void {
 		add_menu_page(
 			__( 'Alt Context', 'alt-context' ),
 			__( 'Alt Context', 'alt-context' ),
 			'manage_options',
 			'alt-context-dashboard',
-			array( $this, 'admin_page' ),
+			array( $this, 'render_dashboard_page' ),
 			'dashicons-universal-access-alt',
 			60
 		);
+
+		add_submenu_page(
+			'alt-context-dashboard',
+			__( 'Dashboard Overview', 'alt-context' ),
+			__( 'Dashboard Overview', 'alt-context' ),
+			'manage_options',
+			'alt-context-dashboard',
+			array( $this, 'render_dashboard_page' )
+		);
+
+		add_submenu_page(
+			'alt-context-dashboard',
+			__( 'Alt Context Workbench', 'alt-context' ),
+			__( 'Workbench', 'alt-context' ),
+			'manage_options',
+			'alt-context-workbench',
+			array( $this, 'render_workbench_page' )
+		);
+
+		add_submenu_page(
+			'alt-context-dashboard',
+			__( 'Alt Context Roster', 'alt-context' ),
+			__( 'Roster', 'alt-context' ),
+			'manage_options',
+			'alt-context-roster',
+			array( $this, 'render_roster_page' )
+		);
 	}
-	public function admin_page(): void {
+
+	public function render_dashboard_page(): void {
 		$this->dashboardPage->render();
+	}
+
+	public function render_workbench_page(): void {
+		$this->workbenchPage->render();
+	}
+
+	public function render_roster_page(): void {
+		$this->rosterPage->render();
 	}
 }

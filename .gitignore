@@ -61,7 +61,9 @@ composer.lock
 .phpunit.result.cache
 
 # Vite build output
-apps/wp-context-alt-text/public/assets/dist/
+/public/assets/dist/
+/dist/
+/build/
 
 # Python virtual environments (should only exist in apps/recognition-service)
 .venv/

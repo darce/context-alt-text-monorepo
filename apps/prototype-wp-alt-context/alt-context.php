@@ -21,18 +21,27 @@
 declare(strict_types=1);
 
 use AltContext\Admin\Admin;
-use AltContext\Admin\DashboardPage;
 use AltContext\Admin\Menu;
 use AltContext\Api\Api;
 use AltContext\AltContext;
 use AltContext\Frontend\Frontend;
 use AltContext\Support\LifecycleManager;
-
+use AltContext\Admin\DashboardPage;
+use AltContext\Admin\WorkbenchPage;
+use AltContext\Admin\RosterPage;
 use Dotenv\Dotenv;
 
 if (!defined('ABSPATH')) {
     exit;
 }
+
+/**
+ * ------------------------------------------------------------------------
+ * Plugin metadata & constants
+ * ------------------------------------------------------------------------
+ */
+$pluginMeta = get_file_data(__FILE__, ['Version' => 'Version']);
+$pluginVersion = trim((string) ($pluginMeta['Version'] ?? ''));
 
 if (!defined('ALT_CONTEXT_PLUGIN_FILE')) {
     define('ALT_CONTEXT_PLUGIN_FILE', __FILE__);
@@ -46,17 +55,20 @@ if (!defined('ALT_CONTEXT_PLUGIN_URL')) {
     define('ALT_CONTEXT_PLUGIN_URL', plugin_dir_url(__FILE__));
 }
 
-$pluginMeta = get_file_data(__FILE__, ['Version' => 'Version']);
-$pluginVersion = trim((string) ($pluginMeta['Version'] ?? ''));
-$altContextAutoload = ALT_CONTEXT_PLUGIN_DIR . 'vendor/autoload.php';
+if (!defined('ALT_CONTEXT_PLUGIN_BASENAME')) {
+    define('ALT_CONTEXT_PLUGIN_BASENAME', plugin_basename(__FILE__));
+}
 
 if (!defined('ALT_CONTEXT_VERSION')) {
     define('ALT_CONTEXT_VERSION', $pluginVersion);
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_BASENAME')) {
-    define('ALT_CONTEXT_PLUGIN_BASENAME', plugin_basename(__FILE__));
-}
+/**
+ * ------------------------------------------------------------------------
+ * Autoloader & environment bootstrap
+ * ------------------------------------------------------------------------
+ */
+$altContextAutoload = ALT_CONTEXT_PLUGIN_DIR . 'vendor/autoload.php';
 
 if (!is_readable($altContextAutoload)) {
     wp_die(
@@ -77,6 +89,11 @@ if ($viteServer && !defined('ALT_CONTEXT_VITE_DEV_SERVER')) {
     define('ALT_CONTEXT_VITE_DEV_SERVER', rtrim((string) $viteServer, '/'));
 }
 
+/**
+ * ------------------------------------------------------------------------
+ * Plugin lifecycle helpers
+ * ------------------------------------------------------------------------
+ */
 function alt_context(): AltContext
 {
     static $instance = null;
@@ -90,17 +107,15 @@ function alt_context(): AltContext
         new Frontend(),
         new Api(),
         new Menu(
-            new DashboardPage()
+            new DashboardPage(),
+            new WorkbenchPage(),
+            new RosterPage()
         ),
         new LifecycleManager()
     );
 
     return $instance;
 }
-
-add_action('plugins_loaded', static function (): void {
-    alt_context()->init();
-});
 
 function alt_context_activate(): void
 {
@@ -114,9 +129,17 @@ function alt_context_deactivate(): void
 
 function alt_context_uninstall(): void
 {
-    $plugin = alt_context();
-    $plugin->lifecycle()->uninstall();
+    alt_context()->lifecycle()->uninstall();
 }
+
+/**
+ * ------------------------------------------------------------------------
+ * WordPress hooks
+ * ------------------------------------------------------------------------
+ */
+add_action('plugins_loaded', static function (): void {
+    alt_context()->init();
+});
 
 register_activation_hook(__FILE__, 'alt_context_activate');
 register_deactivation_hook(__FILE__, 'alt_context_deactivate');

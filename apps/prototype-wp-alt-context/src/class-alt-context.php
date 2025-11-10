@@ -35,6 +35,7 @@ class AltContext {
 	public function init(): void {
 		$this->admin->init();
 		$this->menu->init();
+		$this->api->init();
 	}
 
 	public function lifecycle(): LifecycleManager {

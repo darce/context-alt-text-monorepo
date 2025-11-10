@@ -4,9 +4,160 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use WP_Query;
+use WP_REST_Request;
+use WP_REST_Response;
+use function absint;
+use function add_action;
+use function current_user_can;
+use function get_edit_post_link;
+use function get_post_meta;
+use function get_post_mime_type;
+use function get_post_modified_time;
+use function get_the_title;
+use function is_array;
+use function is_wp_error;
+use function register_rest_route;
+use function rest_ensure_response;
+use function sanitize_text_field;
+use function wp_get_attachment_image_url;
+use function wp_get_attachment_metadata;
+use function wp_get_object_terms;
+
 class Api {
 
-	public function __construct() {
-		// Initialize API components here
+	public function init(): void {
+		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
+	}
+
+	public function register_routes(): void {
+		register_rest_route(
+			'cat/v1',
+			'/workbench/media',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_workbench_media' ),
+				'permission_callback' => array( $this, 'can_view_media_queue' ),
+				'args'                => $this->get_workbench_media_args(),
+			)
+		);
+	}
+
+	public function can_view_media_queue(): bool {
+		return current_user_can( 'upload_files' );
+	}
+
+	/**
+	 * Handle GET /workbench/media requests.
+	 */
+	public function get_workbench_media( WP_REST_Request $request ): WP_REST_Response {
+		$page     = max( 1, (int) $request->get_param( 'page' ) );
+		$per_page = min( 50, max( 1, (int) $request->get_param( 'per_page' ) ) );
+		$search   = (string) $request->get_param( 'search' );
+		$status   = (string) $request->get_param( 'status' );
+
+		$args = array(
+			'post_type'      => 'attachment',
+			'post_status'    => 'inherit',
+			'post_mime_type' => 'image',
+			'posts_per_page' => $per_page,
+			'paged'          => $page,
+			'orderby'        => 'date',
+			'order'          => 'DESC',
+			'fields'         => 'ids',
+		);
+
+		if ( ! empty( $search ) ) {
+			$args['s'] = $search;
+		}
+
+		if ( 'missing' === $status ) {
+			$args['meta_query'] = array(
+				'relation' => 'OR',
+				array(
+					'key'     => '_wp_attachment_image_alt',
+					'compare' => 'NOT EXISTS',
+				),
+				array(
+					'key'     => '_wp_attachment_image_alt',
+					'value'   => '',
+					'compare' => '=',
+				),
+			);
+		}
+
+		$query       = new WP_Query( $args );
+		$attachments = $query->posts;
+
+		$items = array_map(
+			function ( int $attachment_id ): array {
+				$alt_text = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
+				$thumb    = wp_get_attachment_image_url( $attachment_id, 'thumbnail' );
+				$meta     = wp_get_attachment_metadata( $attachment_id );
+				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
+
+				return array(
+					'id'           => $attachment_id,
+					'title'        => get_the_title( $attachment_id ),
+					'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
+					'thumbnailUrl' => $thumb ?: null,
+					'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
+					'mimeType'     => get_post_mime_type( $attachment_id ),
+					'editUrl'      => get_edit_post_link( $attachment_id, '' ),
+					'updatedAt'    => get_post_modified_time( 'c', true, $attachment_id ),
+					'dimensions'   => array(
+						'width'  => isset( $meta['width'] ) ? (int) $meta['width'] : null,
+						'height' => isset( $meta['height'] ) ? (int) $meta['height'] : null,
+					),
+					'tags'         => is_wp_error( $terms ) || ! is_array( $terms ) ? array() : array_values( $terms ),
+				);
+			},
+			$attachments
+		);
+
+		$response = array(
+			'items'      => $items,
+			'total'      => (int) $query->found_posts,
+			'totalPages' => max( 1, (int) $query->max_num_pages ),
+		);
+
+		return rest_ensure_response( $response );
+	}
+
+	/**
+	 * Allowed query parameters for workbench media listing.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	private function get_workbench_media_args(): array {
+		return array(
+			'page'     => array(
+				'description'       => 'Page number (1-indexed).',
+				'type'              => 'integer',
+				'default'           => 1,
+				'sanitize_callback' => 'absint',
+				'minimum'           => 1,
+			),
+			'per_page' => array(
+				'description'       => 'Items per page.',
+				'type'              => 'integer',
+				'default'           => 20,
+				'sanitize_callback' => 'absint',
+				'minimum'           => 1,
+				'maximum'           => 50,
+			),
+			'search'   => array(
+				'description'       => 'Optional search term applied to attachment title and meta.',
+				'type'              => 'string',
+				'required'          => false,
+				'sanitize_callback' => 'sanitize_text_field',
+			),
+			'status'   => array(
+				'description' => 'Filter by media status.',
+				'type'        => 'string',
+				'default'     => 'missing',
+				'enum'        => array( 'missing', 'all' ),
+			),
+		);
 	}
 }

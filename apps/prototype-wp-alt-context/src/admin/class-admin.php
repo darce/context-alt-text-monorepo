@@ -12,18 +12,24 @@ use function is_array;
 use function is_readable;
 use function json_decode;
 use function trailingslashit;
+use function rest_url;
 use function wp_enqueue_script;
 use function wp_enqueue_style;
+use function wp_create_nonce;
 use function wp_get_environment_type;
+use function wp_localize_script;
 use function wp_script_add_data;
 
+/**
+ * Coordinates admin-only concerns such as enqueueing the SPA bundle.
+ */
 class Admin {
-	public const DASHBOARD_HOOK = 'toplevel_page_alt-context-dashboard';
+	private const DASHBOARD_HOOK = 'toplevel_page_alt-context-dashboard';
 	private const SCRIPT_HANDLE = 'alt-context-admin';
 	private const ENTRY_POINT = 'js/admin/main.tsx';
 
 	/**
-	 * Admin page slugs that should load the single-page app bundle.
+	 * Admin page slugs that should load the SPA bundle.
 	 *
 	 * @var string[]
 	 */
@@ -34,31 +40,34 @@ class Admin {
 		'alt-context-settings',
 	);
 
-	private string $dev_server;
+	private string $devServer;
 
 	public function __construct() {
-		$this->dev_server = defined('ALT_CONTEXT_VITE_DEV_SERVER') ? (string) ALT_CONTEXT_VITE_DEV_SERVER : '';
+		$this->devServer = defined('ALT_CONTEXT_VITE_DEV_SERVER') ? (string) ALT_CONTEXT_VITE_DEV_SERVER : '';
 	}
 
 	public function init(): void {
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
 	}
 
-	public function enqueue_scripts( string $hook_suffix ): void {
-		if ( ! $this->should_enqueue_assets( $hook_suffix ) ) {
+	public function enqueue_scripts( string $hookSuffix ): void {
+		if ( ! $this->should_enqueue_assets( $hookSuffix ) ) {
 			return;
 		}
+
+		$handle = self::SCRIPT_HANDLE;
 
 		if ( $this->should_use_dev_server() ) {
-			$this->enqueue_dev_assets();
-			return;
+			$handle = $this->enqueue_dev_assets();
+		} else {
+			$this->enqueue_build_assets();
 		}
 
-		$this->enqueue_build_assets();
+		$this->localize_spa_config( $handle );
 	}
 
-	private function should_enqueue_assets( string $hook_suffix ): bool {
-		if ( $hook_suffix === self::DASHBOARD_HOOK ) {
+	private function should_enqueue_assets( string $hookSuffix ): bool {
+		if ( $hookSuffix === self::DASHBOARD_HOOK ) {
 			return true;
 		}
 
@@ -76,25 +85,27 @@ class Admin {
 	}
 
 	private function should_use_dev_server(): bool {
-		return wp_get_environment_type() === 'development' && '' !== $this->dev_server;
+		return wp_get_environment_type() === 'development' && '' !== $this->devServer;
 	}
 
-	private function enqueue_dev_assets(): void {
-		$base = trailingslashit( $this->dev_server );
-		$dev_handle = self::SCRIPT_HANDLE . '-dev';
-		$entry_handle = self::SCRIPT_HANDLE . '-entry';
+	private function enqueue_dev_assets(): string {
+		$base = trailingslashit( $this->devServer );
+		$devHandle = self::SCRIPT_HANDLE . '-dev';
+		$entryHandle = self::SCRIPT_HANDLE . '-entry';
 
-		wp_enqueue_script( $dev_handle, esc_url_raw( $base . '@vite/client' ), array(), null, true );
-		wp_script_add_data( $dev_handle, 'type', 'module' );
+		wp_enqueue_script( $devHandle, esc_url_raw( $base . '@vite/client' ), array(), null, true );
+		wp_script_add_data( $devHandle, 'type', 'module' );
 
 		wp_enqueue_script(
-			$entry_handle,
+			$entryHandle,
 			esc_url_raw( $base . self::ENTRY_POINT ),
-			array( $dev_handle ),
+			array( $devHandle ),
 			null,
 			true
 		);
-		wp_script_add_data( $entry_handle, 'type', 'module' );
+		wp_script_add_data( $entryHandle, 'type', 'module' );
+
+		return $entryHandle;
 	}
 
 	private function enqueue_build_assets(): void {
@@ -117,10 +128,10 @@ class Admin {
 			return;
 		}
 
-		foreach ( $entry['css'] as $index => $css_file ) {
+		foreach ( $entry['css'] as $index => $cssFile ) {
 			wp_enqueue_style(
 				self::SCRIPT_HANDLE . '-' . $index,
-				$this->build_asset_url( (string) $css_file ),
+				$this->build_asset_url( (string) $cssFile ),
 				array(),
 				ALT_CONTEXT_VERSION
 			);
@@ -128,13 +139,13 @@ class Admin {
 	}
 
 	private function get_manifest_entry(): ?array {
-		$manifest_path = ALT_CONTEXT_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
+		$manifestPath = ALT_CONTEXT_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
 
-		if ( ! is_readable( $manifest_path ) ) {
+		if ( ! is_readable( $manifestPath ) ) {
 			return null;
 		}
 
-		$contents = file_get_contents( $manifest_path );
+		$contents = file_get_contents( $manifestPath );
 
 		if ( false === $contents ) {
 			return null;
@@ -154,5 +165,18 @@ class Admin {
 		$base = trailingslashit( ALT_CONTEXT_PLUGIN_URL . 'public/assets/dist' );
 
 		return esc_url_raw( $base . ltrim( $relative, '/' ) );
+	}
+
+	private function localize_spa_config( string $handle ): void {
+		wp_localize_script(
+			$handle,
+			'AltContextAdmin',
+			array(
+				'nonce'     => wp_create_nonce( 'wp_rest' ),
+				'endpoints' => array(
+					'workbenchMedia' => rest_url( 'cat/v1/workbench/media' ),
+				),
+			)
+		);
 	}
 }

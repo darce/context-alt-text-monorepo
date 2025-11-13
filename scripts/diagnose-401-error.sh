@@ -133,11 +133,11 @@ echo ""
 # Check endpoint registration
 echo "📋 REST Endpoint Registration"
 echo "─────────────────────────────"
-IDENTIFY_ROUTE=$(wp rest-api list 2>/dev/null | grep "cat/v1/recognition/identify" || echo "")
+IDENTIFY_ROUTE=$(wp rest-api list 2>/dev/null | grep "acx/v1/recognition/identify" || echo "")
 if [ -n "$IDENTIFY_ROUTE" ]; then
-    echo "✅ /cat/v1/recognition/identify: REGISTERED"
+    echo "✅ /acx/v1/recognition/identify: REGISTERED"
 else
-    echo "❌ /cat/v1/recognition/identify: NOT REGISTERED"
+    echo "❌ /acx/v1/recognition/identify: NOT REGISTERED"
     echo "   This indicates the plugin may not be loading correctly."
 fi
 echo ""
@@ -154,7 +154,7 @@ WP_URL=$(wp option get siteurl 2>/dev/null)
 HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" \
     -H "Content-Type: application/json" \
     -u "$CURRENT_USER:password" \
-    "$WP_URL/wp-json/cat/v1/recognition/identify" \
+    "$WP_URL/wp-json/acx/v1/recognition/identify" \
     -X POST \
     -d '{"attachmentId":1,"faces":[]}' 2>/dev/null || echo "000")
 

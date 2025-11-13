@@ -1,0 +1,19 @@
+.acx-admin {
+  padding-bottom: var(--acx-space-32);
+}
+
+.acx-dashboard,
+.acx-workbench {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-24);
+}
+
+.acx-dashboard__hero,
+.acx-workbench__hero {
+  background-color: var(--acx-color-surface-alt);
+  border: 1px solid var(--acx-color-border);
+  border-radius: 0.75rem;
+  padding: var(--acx-space-24);
+  //box-shadow: 0 10px 25px rgb(15 23 42 / 0.05);
+}

@@ -1,0 +1,22 @@
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  //font-family: var(--acx-font-sans);
+  //font-size: var(--acx-font-size-base);
+  //line-height: var(--acx-line-height-base);
+  //background-color: var(--acx-color-surface);
+  color: var(--acx-color-text);
+}
+
+button {
+  font: inherit;
+  border: none;
+  background: none;
+  padding: 0;
+  cursor: pointer;
+}

@@ -4,13 +4,18 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use AltContext\Api\RecognitionController;
+use AltContext\Api\RecognitionProxyController;
+use WP_Error;
 use WP_Query;
 use WP_REST_Request;
 use WP_REST_Response;
 use function absint;
 use function add_action;
+use function current_time;
 use function current_user_can;
 use function get_edit_post_link;
+use function get_option;
 use function get_post_meta;
 use function get_post_mime_type;
 use function get_post_modified_time;
@@ -20,11 +25,17 @@ use function is_wp_error;
 use function register_rest_route;
 use function rest_ensure_response;
 use function sanitize_text_field;
+use function update_option;
 use function wp_get_attachment_image_url;
 use function wp_get_attachment_metadata;
 use function wp_get_object_terms;
 
 class Api {
+	private RecognitionController $recognitionController;
+
+	public function __construct() {
+		$this->recognitionController = new RecognitionController();
+	}
 
 	public function init(): void {
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
@@ -32,7 +43,7 @@ class Api {
 
 	public function register_routes(): void {
 		register_rest_route(
-			'cat/v1',
+			'acx/v1',
 			'/workbench/media',
 			array(
 				'methods'             => 'GET',
@@ -41,10 +52,39 @@ class Api {
 				'args'                => $this->get_workbench_media_args(),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/roster/entries',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_roster_entries' ),
+				'permission_callback' => array( $this, 'can_manage_roster' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/roster/clusters/(?P<cluster_id>[a-f0-9-]+)/commit',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'commit_roster_cluster' ),
+				'permission_callback' => array( $this, 'can_manage_roster' ),
+			)
+		);
+
+		$recognitionProxy = new RecognitionProxyController();
+		$recognitionProxy->register_routes();
+
+		$this->recognitionController->register_routes();
 	}
 
 	public function can_view_media_queue(): bool {
 		return current_user_can( 'upload_files' );
+	}
+
+	public function can_manage_roster(): bool {
+		return current_user_can( 'manage_options' );
 	}
 
 	/**
@@ -158,6 +198,46 @@ class Api {
 				'default'     => 'missing',
 				'enum'        => array( 'missing', 'all' ),
 			),
+		);
+	}
+
+	public function get_roster_entries(): WP_REST_Response {
+		$entries = get_option( 'acx_roster_entries', array() );
+		if ( ! is_array( $entries ) ) {
+			$entries = array();
+		}
+
+		return rest_ensure_response( $entries );
+	}
+
+	public function commit_roster_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		$assignments = get_option( 'acx_roster_assignments', array() );
+		if ( ! is_array( $assignments ) ) {
+			$assignments = array();
+		}
+
+		$entry_id      = $request->get_param( 'roster_entry_id' );
+		$new_entry     = $request->get_param( 'new_entry_name' );
+		$assignments[ $cluster_id ] = array(
+			'roster_entry_id' => null !== $entry_id ? absint( $entry_id ) : null,
+			'new_entry_name'  => $new_entry ? sanitize_text_field( (string) $new_entry ) : null,
+			'updated_at'      => current_time( 'mysql' ),
+		);
+
+		update_option( 'acx_roster_assignments', $assignments );
+
+		return rest_ensure_response(
+			array(
+				'cluster_id'      => $cluster_id,
+				'roster_entry_id' => $assignments[ $cluster_id ]['roster_entry_id'],
+				'new_entry_name'  => $assignments[ $cluster_id ]['new_entry_name'],
+				'updated_at'      => $assignments[ $cluster_id ]['updated_at'],
+			)
 		);
 	}
 }

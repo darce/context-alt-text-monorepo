@@ -174,7 +174,20 @@ class Admin {
 			array(
 				'nonce'     => wp_create_nonce( 'wp_rest' ),
 				'endpoints' => array(
-					'workbenchMedia' => rest_url( 'cat/v1/workbench/media' ),
+					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
+					'workbenchRecognitionAnalyze'    => rest_url( 'acx/v1/workbench/recognition/analyze' ),
+					'workbenchRecognitionJobs'       => rest_url( 'acx/v1/workbench/recognition/jobs' ),
+					'workbenchRecognitionCluster'    => rest_url( 'acx/v1/workbench/recognition/cluster' ),
+					'workbenchRecognitionClusters'   => rest_url( 'acx/v1/workbench/recognition/clusters' ),
+					// Legacy keys kept for backward compatibility with older bundles.
+					'workbenchFaceScan'              => rest_url( 'acx/v1/workbench/recognition/analyze' ),
+					'workbenchFaceClusters'          => rest_url( 'acx/v1/workbench/recognition/clusters' ),
+					'recognitionAnalyze'  => rest_url( 'acx/v1/recognition/analyze' ),
+					'recognitionJobs'     => rest_url( 'acx/v1/recognition/jobs' ),
+					'recognitionCluster'  => rest_url( 'acx/v1/recognition/cluster' ),
+					'recognitionClusters' => rest_url( 'acx/v1/recognition/clusters' ),
+					'rosterEntries'       => rest_url( 'acx/v1/roster/entries' ),
+					'rosterClusters'      => rest_url( 'acx/v1/roster/clusters' ),
 				),
 			)
 		);

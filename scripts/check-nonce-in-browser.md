@@ -14,7 +14,7 @@ console.log("REST Nonce:", window.catAltText?.restNonce);
 console.log("Full Config:", window.catAltText);
 
 // Test if nonce is being sent
-fetch("/wp-json/cat/v1/recognition/identify", {
+fetch("/wp-json/acx/v1/recognition/identify", {
   method: "POST",
   headers: {
     "Content-Type": "application/json",
@@ -62,7 +62,7 @@ Response: { code: "rest_forbidden", message: "You do not have permission..." }
 1. Open **DevTools** → **Network** tab
 2. Filter by **Fetch/XHR**
 3. Try to label a face
-4. Click on the failed request to `/wp-json/cat/v1/recognition/identify`
+4. Click on the failed request to `/wp-json/acx/v1/recognition/identify`
 5. Look at **Request Headers**
 
 ### Should See:

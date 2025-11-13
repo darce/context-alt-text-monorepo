@@ -1,0 +1,18 @@
+insightface:
+  model_name: "buffalo_l"
+  device: "auto"
+  cache_dir: "~/.insightface/models"
+  providers: []
+  det_thresh: 0.5
+  det_size: [640, 640]
+
+recognition:
+  default_threshold: 0.45
+  max_faces_per_image: 999
+  embedding_dimension: 1024
+  max_candidates: 10
+
+clustering:
+  similarity_threshold: 0.6
+  min_cluster_size: 2
+  max_cluster_size: 1000

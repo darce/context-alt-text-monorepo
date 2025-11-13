@@ -2,7 +2,7 @@ from fastapi import FastAPI
 
 from api.schemas.health import HealthResponse
 from recognition.application.health import check_health as recognition_health
-from recognition.interface_adapters.http.health_router import router as recognition_router
+from recognition.interface_adapters.http import router as recognition_router
 from roster.application.health import check_health as roster_health
 from roster.interface_adapters.http.health_router import router as roster_router
 from scene.application.health import check_health as scene_health

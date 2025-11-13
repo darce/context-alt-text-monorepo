@@ -1,0 +1,250 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Api;
+
+use WP_Error;
+use WP_REST_Request;
+use WP_REST_Response;
+
+use function absint;
+use function add_query_arg;
+use function current_user_can;
+use function esc_url_raw;
+use function get_current_user_id;
+use function get_option;
+use function get_site_url;
+use function is_array;
+use function is_wp_error;
+use function md5;
+use function sanitize_text_field;
+use function untrailingslashit;
+use function wp_get_attachment_url;
+use function wp_json_encode;
+use function wp_remote_request;
+use function wp_remote_retrieve_body;
+use function wp_remote_retrieve_response_code;
+
+/**
+ * REST controller that proxies recognition jobs through the prototype description service.
+ *
+ * The UI interacts with these endpoints, which in turn forward requests to /recognition/* on the FastAPI backend.
+ */
+class RecognitionProxyController {
+	private string $recognition_base_url;
+	private string $api_key;
+
+	public function __construct() {
+		$this->recognition_base_url = (string) get_option( 'alt_context_recognition_url', 'http://localhost:8000' );
+		$this->api_key              = (string) get_option( 'alt_context_recognition_api_key', '' );
+	}
+
+	public function register_routes(): void {
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/analyze',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'analyze_media' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'media_ids' => array(
+						'type'              => 'array',
+						'required'          => true,
+						'items'             => array( 'type' => 'integer' ),
+						'description'       => 'Array of attachment IDs to analyze (max 100).',
+						'validate_callback' => static function ( $value ): bool {
+							return is_array( $value ) && count( $value ) > 0 && count( $value ) <= 100;
+						},
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/jobs/(?P<job_id>[a-f0-9-]+)',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_job_status' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/cluster',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'cluster_media' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'list_clusters' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters/reassign',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'reassign_cluster_face' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+	}
+
+	public function can_manage_recognition(): bool {
+		return current_user_can( 'manage_options' );
+	}
+
+	public function analyze_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$media_ids = $request->get_param( 'media_ids' );
+
+		if ( ! is_array( $media_ids ) || empty( $media_ids ) ) {
+			return new WP_Error( 'no_media_ids', 'Please provide one or more media IDs to analyze.', array( 'status' => 400 ) );
+		}
+
+		$media_items = $this->build_media_items( $media_ids );
+		if ( empty( $media_items ) ) {
+			return new WP_Error( 'no_valid_media', 'No valid media items found for recognition.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id'   => $this->get_tenant_id(),
+			'site_url'    => get_site_url(),
+			'media_items' => $media_items,
+			'user_id'     => get_current_user_id(),
+		);
+
+		return $this->proxy_request( 'POST', '/recognition/analyze', $payload );
+	}
+
+	public function get_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$job_id = (string) $request->get_param( 'job_id' );
+
+		if ( '' === $job_id ) {
+			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_request( 'GET', sprintf( '/recognition/jobs/%s', $job_id ) );
+	}
+
+	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$payload = array(
+			'tenant_id'            => $this->get_tenant_id(),
+			'similarity_threshold' => (float) ( $request->get_param( 'similarity_threshold' ) ?? 0.6 ),
+		);
+
+		return $this->proxy_request( 'POST', '/recognition/cluster', $payload );
+	}
+
+	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'limit'     => absint( $request->get_param( 'limit' ) ?? 50 ),
+			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
+		);
+
+		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
+	}
+
+	public function reassign_cluster_face( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$face_id = sanitize_text_field( (string) $request->get_param( 'face_id' ) );
+		if ( '' === $face_id ) {
+			return new WP_Error( 'missing_face_id', 'Face ID is required.', array( 'status' => 400 ) );
+		}
+
+		$target = $request->get_param( 'target_cluster_id' );
+		$payload = array(
+			'tenant_id'         => $this->get_tenant_id(),
+			'face_id'           => $face_id,
+			'target_cluster_id' => $target ? sanitize_text_field( (string) $target ) : null,
+			'user_id'           => get_current_user_id(),
+		);
+
+		return $this->proxy_request( 'POST', '/recognition/clusters/reassign', $payload );
+	}
+
+	private function build_media_items( array $media_ids ): array {
+		$items = array();
+
+		foreach ( $media_ids as $media_id ) {
+			$id = absint( $media_id );
+			if ( $id <= 0 ) {
+				continue;
+			}
+
+			$url = wp_get_attachment_url( $id );
+			if ( ! $url ) {
+				continue;
+			}
+
+			$items[] = array(
+				'media_id'  => $id,
+				'media_url' => esc_url_raw( $url ),
+			);
+		}
+
+		return $items;
+	}
+
+	private function proxy_request( string $method, string $path, array $body = array(), array $query = array() ): WP_REST_Response|WP_Error {
+		if ( '' === $this->recognition_base_url ) {
+			return new WP_Error(
+				'recognition_not_configured',
+				'Recognition service URL is missing.',
+				array( 'status' => 500 )
+			);
+		}
+
+		$base_url = untrailingslashit( $this->recognition_base_url );
+		$url      = esc_url_raw( $base_url . $path );
+
+		if ( ! empty( $query ) ) {
+			$url = esc_url_raw( add_query_arg( $query, $url ) );
+		}
+
+		$headers = array(
+			'Content-Type' => 'application/json',
+		);
+
+		if ( '' !== $this->api_key ) {
+			$headers['X-API-Key'] = $this->api_key;
+		}
+
+		$args = array(
+			'method'  => $method,
+			'timeout' => in_array( $method, array( 'POST', 'PUT', 'PATCH' ), true ) ? 60 : 30,
+			'headers' => $headers,
+		);
+
+		if ( ! empty( $body ) && 'GET' !== $method ) {
+			$args['body'] = wp_json_encode( $body );
+		}
+
+		$response = wp_remote_request( $url, $args );
+
+		if ( is_wp_error( $response ) ) {
+			return $response;
+		}
+
+		$status = wp_remote_retrieve_response_code( $response );
+		$data   = json_decode( (string) wp_remote_retrieve_body( $response ), true );
+
+		return new WP_REST_Response( $data, $status );
+	}
+
+	private function get_tenant_id(): string {
+		return md5( (string) get_site_url() );
+	}
+}

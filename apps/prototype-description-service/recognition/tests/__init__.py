@@ -1,0 +1,1 @@
+"""Recognition tests package."""

@@ -70,3 +70,7 @@ composer.lock
 venv/
 __pycache__/
 *.pyc
+
+# pip install artifacts
+.eggs/
+*.egg-info/

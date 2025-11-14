@@ -56,6 +56,7 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 
 - Never fabricate benchmark numbers, latency claims, or accuracy metrics. Document the collection method and timestamp in commit messages or accompanying docs when sharing measurements.
 - All public reports or markdown summaries produced from scripts must source their values directly from the most recent benchmark run.
+- **DO NOT EVER GENERATE FAKE RESULTS! ALL CONTENT MUST ORIGINATE FROM ACTUAL API CALLS.** If data is unavailable, return an explicit empty state or error message rather than inventing placeholder values.
 
 ## Context Alt Text — Abilities + MCP Adapter Integration Guide (macOS + LocalWP)
 

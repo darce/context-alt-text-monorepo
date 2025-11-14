@@ -1,10 +1,14 @@
 import { renderHook, waitFor } from '@testing-library/react';
-import { vi } from 'vitest';
+import { afterEach, vi } from 'vitest';
 
 import { useClusterMediaMap } from '../useClusterMediaMap';
 import type { ClusterSummary } from '../../../api/recognitionApi';
 import { fetchMediaMeta } from '../../utils/mediaMeta';
 import * as mediaMeta from '../../utils/mediaMeta';
+
+afterEach(() => {
+  vi.restoreAllMocks();
+});
 
 describe('useClusterMediaMap', () => {
   it('fetches missing media metadata', async () => {
@@ -27,5 +31,24 @@ describe('useClusterMediaMap', () => {
 
     await waitFor(() => expect(fetchMediaMeta).toHaveBeenCalledWith(1));
     await waitFor(() => expect(result.current[1]?.url).toBe('https://example.com/foo.jpg'));
+  });
+
+  it('fetches metadata for drawer-only faces', async () => {
+    vi.spyOn(mediaMeta, 'fetchMediaMeta').mockResolvedValue({ url: 'https://example.com/extra.jpg' });
+
+    const clusters: ClusterSummary[] = [
+      {
+        id: 'cluster-1',
+        label: 'cluster-1',
+        face_count: 1,
+        member_ids: ['face-1'],
+        representative_face: { media_id: null, bbox: { x: 0, y: 0, width: 0, height: 0 } },
+        sample_faces: [],
+      },
+    ];
+
+    renderHook(() => useClusterMediaMap(clusters, [42]));
+
+    await waitFor(() => expect(fetchMediaMeta).toHaveBeenCalledWith(42));
   });
 });

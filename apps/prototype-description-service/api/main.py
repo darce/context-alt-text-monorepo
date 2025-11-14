@@ -1,4 +1,5 @@
 from fastapi import FastAPI
+from recognition.config.cache import configure_dev_cache
 
 from api.schemas.health import HealthResponse
 from recognition.application.health import check_health as recognition_health
@@ -8,6 +9,7 @@ from roster.interface_adapters.http.health_router import router as roster_router
 from scene.application.health import check_health as scene_health
 from scene.interface_adapters.http.health_router import router as scene_router
 
+configure_dev_cache()
 
 def create_app() -> FastAPI:
     app = FastAPI(

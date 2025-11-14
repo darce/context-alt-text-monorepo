@@ -11,7 +11,7 @@ export type FaceThumbnailProps = {
   onClick?: () => void;
 };
 
-const PADDING_RATIO = 0.05; // 5% padding around bbox for expression context
+const PADDING_RATIO = 0.01; // 1% padding keeps expressions contextual without clipping background
 
 export const FaceThumbnail = ({ face, mediaMeta, size = 96, onClick }: FaceThumbnailProps): React.JSX.Element => {
   const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
@@ -43,7 +43,7 @@ export const FaceThumbnail = ({ face, mediaMeta, size = 96, onClick }: FaceThumb
 
       const { x, y, width, height } = face.bbox;
 
-      // Calculate padding (5% of bbox dimensions)
+      // Calculate padding (1% of bbox dimensions)
       const paddingX = width * PADDING_RATIO;
       const paddingY = height * PADDING_RATIO;
 

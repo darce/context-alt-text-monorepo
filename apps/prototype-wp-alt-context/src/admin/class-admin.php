@@ -179,9 +179,11 @@ class Admin {
 					'workbenchRecognitionJobs'       => rest_url( 'acx/v1/workbench/recognition/jobs' ),
 					'workbenchRecognitionCluster'    => rest_url( 'acx/v1/workbench/recognition/cluster' ),
 					'workbenchRecognitionClusters'   => rest_url( 'acx/v1/workbench/recognition/clusters' ),
-					// Legacy keys kept for backward compatibility with older bundles.
-					'workbenchFaceScan'              => rest_url( 'acx/v1/workbench/recognition/analyze' ),
-					'workbenchFaceClusters'          => rest_url( 'acx/v1/workbench/recognition/clusters' ),
+					'workbenchRecognitionMediaIdentities' => rest_url( 'acx/v1/workbench/recognition/media-identities' ),
+					'workbenchRecognitionReassignIdentity' => rest_url( 'acx/v1/workbench/recognition/clusters/reassign' ),
+					// Legacy keys kept for backward compatibility with older bundles that still use "face" terminology.
+					'workbenchFaceScan'                   => rest_url( 'acx/v1/workbench/recognition/analyze' ),
+					'workbenchFaceClusters'               => rest_url( 'acx/v1/workbench/recognition/clusters' ),
 					'recognitionAnalyze'  => rest_url( 'acx/v1/recognition/analyze' ),
 					'recognitionJobs'     => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'  => rest_url( 'acx/v1/recognition/cluster' ),

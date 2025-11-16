@@ -132,7 +132,7 @@ class Api {
 		$items = array_map(
 			function ( int $attachment_id ): array {
 				$alt_text = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
-				$thumb    = wp_get_attachment_image_url( $attachment_id, 'thumbnail' );
+				$thumb    = wp_get_attachment_image_url( $attachment_id, 'medium_large' );
 				$meta     = wp_get_attachment_metadata( $attachment_id );
 				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
 

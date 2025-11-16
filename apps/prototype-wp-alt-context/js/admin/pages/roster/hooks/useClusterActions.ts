@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import type { AnalyzeResponse } from '../../../api/recognitionApi';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
-import { reassignClusterFace, scanFaces } from '../../../api/recognitionApi';
+import { reassignClusterIdentity, scanFaces } from '../../../api/recognitionApi';
 
 type ClusterActionOptions = {
 	onReassignSettled?: () => void;
@@ -16,7 +16,7 @@ export const useClusterActions = ({ onReassignSettled, onRescanSettled, onCommit
 
 	const reassignMutation = useMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
 		mutationFn: (variables) =>
-			reassignClusterFace({ faceId: variables.faceId, targetClusterId: variables.targetClusterId }),
+			reassignClusterIdentity({ identityId: variables.faceId, targetClusterId: variables.targetClusterId }),
 		onSuccess: () => {
 			queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
 		},
@@ -59,7 +59,7 @@ export const useClusterActions = ({ onReassignSettled, onRescanSettled, onCommit
 			return 'Cluster committed to roster entry.';
 		}
 		if (reassignMutation.isSuccess) {
-			return 'Face assignment updated.';
+			return 'Identity assignment updated.';
 		}
 		return null;
 	}, [rescanMutation.data, rescanMutation.isSuccess, commitMutation.isSuccess, reassignMutation.isSuccess]);

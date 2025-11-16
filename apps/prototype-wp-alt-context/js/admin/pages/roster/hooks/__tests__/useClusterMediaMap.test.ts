@@ -18,9 +18,14 @@ describe('useClusterMediaMap', () => {
       {
         id: 'cluster-1',
         label: 'cluster-1',
+        identity_count: 1,
         face_count: 1,
         member_ids: ['face-1'],
+        representative_identity: { media_id: 1, bbox: { x: 0, y: 0, width: 10, height: 10 } },
         representative_face: { media_id: 1, bbox: { x: 0, y: 0, width: 10, height: 10 } },
+        sample_identities: [
+          { id: 'face-1', media_id: 1, similarity: 0.9, confidence: 0.8, bbox: { x: 0, y: 0, width: 10, height: 10 } },
+        ],
         sample_faces: [
           { id: 'face-1', media_id: 1, similarity: 0.9, confidence: 0.8, bbox: { x: 0, y: 0, width: 10, height: 10 } },
         ],
@@ -40,9 +45,12 @@ describe('useClusterMediaMap', () => {
       {
         id: 'cluster-1',
         label: 'cluster-1',
+        identity_count: 0,
         face_count: 1,
         member_ids: ['face-1'],
+        representative_identity: { media_id: null, bbox: { x: 0, y: 0, width: 0, height: 0 } },
         representative_face: { media_id: null, bbox: { x: 0, y: 0, width: 0, height: 0 } },
+        sample_identities: [],
         sample_faces: [],
       },
     ];

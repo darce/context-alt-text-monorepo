@@ -1,0 +1,22 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "lib": ["DOM", "ES2022"],
+    "jsx": "react-jsx",
+    "strict": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "isolatedModules": true,
+    "resolveJsonModule": true,
+    "types": ["vite/client", "vitest", "vitest/globals"],
+    "baseUrl": ".",
+    "paths": {
+      "~/*": ["js/*"]
+    }
+  },
+  "include": ["js/**/*", "src/**/*", "vitest.setup.ts"],
+  "references": []
+}

@@ -2,19 +2,13 @@ import React, { useMemo, useState } from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { useClusterFaces, useScanFaces, useScanStatus } from '../hooks/useRecognitionHooks';
+import { useClusterIdentities, useScanIdentities, useScanStatus } from '../hooks/useRecognitionHooks';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
 import { MediaSelection } from './workbench/MediaSelection';
-import {
-  BatchPanel,
-  ConfirmPanel,
-  RecentJobsPanel,
-  ScanActionPanel,
-  rosterClustersUrl,
-} from './workbench/Panels';
+import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
 
 type AltContextAdminConfig = {
   nonce: string;
@@ -72,19 +66,13 @@ const WORKBENCH_SECTIONS: WorkbenchSection[] = [
     id: TAB_IDS.batch,
     label: __('Batch', 'alt-context'),
     title: __('Batch Operations', 'alt-context'),
-    body: __(
-      'Group the selected media, run recognition jobs, and prep face scans before publishing.',
-      'alt-context',
-    ),
+    body: __('Group the selected media, run recognition jobs, and prep face scans before publishing.', 'alt-context'),
   },
   {
     id: TAB_IDS.confirm,
     label: __('Confirm', 'alt-context'),
     title: __('Confirm & Publish', 'alt-context'),
-    body: __(
-      'Compare before/after states, spot-check compliance, and push updates to WordPress media.',
-      'alt-context',
-    ),
+    body: __('Compare before/after states, spot-check compliance, and push updates to WordPress media.', 'alt-context'),
   },
 ];
 
@@ -110,7 +98,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const totalCount = mediaData?.total ?? 0;
   const allPageRowsChecked = isPageFullySelected(mediaItems);
 
-  const scanMutation = useScanFaces({
+  const scanMutation = useScanIdentities({
     onMutate: () => {
       setScanError(null);
     },
@@ -125,13 +113,13 @@ export const WorkbenchPage = (): React.JSX.Element => {
       setScanError(message);
     },
   });
-  const clusterMutation = useClusterFaces({
+  const clusterMutation = useClusterIdentities({
     onSuccess: (data) => {
       setClusterMessage(
         sprintf(
-          __('Created %d clusters for %d faces.', 'alt-context'),
+          __('Created %d clusters for %d identities.', 'alt-context'),
           data.clusters_created,
-          data.total_faces_clustered,
+          data.total_identities_clustered,
         ),
       );
     },
@@ -209,6 +197,15 @@ export const WorkbenchPage = (): React.JSX.Element => {
           >
             <h2 id="acx-workbench-section-scan">{scanSection.title}</h2>
             <p>{scanSection.body}</p>
+
+            <ScanActionPanel
+              selectedCount={selectedMedia.length}
+              onScanFaces={handleScanFaces}
+              isScanning={scanMutation.isPending}
+              statusText={scanStatusText}
+              jobId={jobId}
+              errorMessage={scanError}
+            />
             <MediaSelection
               items={mediaItems}
               isLoading={mediaQuery.isFetching}
@@ -224,14 +221,6 @@ export const WorkbenchPage = (): React.JSX.Element => {
               totalPages={totalPages}
               onPageChange={setCurrentPage}
               areAllPageRowsChecked={allPageRowsChecked}
-            />
-            <ScanActionPanel
-              selectedCount={selectedMedia.length}
-              onScanFaces={handleScanFaces}
-              isScanning={scanMutation.isPending}
-              statusText={scanStatusText}
-              jobId={jobId}
-              errorMessage={scanError}
             />
           </TabsContent>
 

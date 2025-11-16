@@ -6,13 +6,13 @@ insightface:
   det_thresh: 0.5
   det_size: [640, 640]
 
-recognition:
+identity_detection:
   default_threshold: 0.45
-  max_faces_per_image: 999
+  max_identities_per_image: 999
   embedding_dimension: 1024
   max_candidates: 10
 
 clustering:
   similarity_threshold: 0.6
-  min_cluster_size: 2
-  max_cluster_size: 1000
+  min_identity_cluster_size: 2
+  max_identity_cluster_size: 1000

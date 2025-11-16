@@ -8,6 +8,7 @@ PYTHON_BIN="${PYTHON_BIN:-python}"
 DEFAULT_HOST="0.0.0.0"
 DEFAULT_PORT="8000"
 ENV_FILE="${PROJECT_ROOT}/.env"
+DB_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.db.yml"
 
 has_network_access() {
   if [[ "${ASSUME_OFFLINE:-0}" == "1" ]]; then
@@ -55,6 +56,7 @@ Commands:
 Environment variables:
   PYTHON_BIN        Python executable to use (default: python)
   SKIP_INSTALL      Set to 1 to skip dependency installation during start
+  SKIP_DB_START     Set to 1 to skip starting the dockerized Postgres dependency
   HOST              Uvicorn host binding (default: 0.0.0.0)
   PORT              Uvicorn port (default: 8000)
   FORCE_INSTALL     Set to 1 to force reinstalling deps even when offline
@@ -74,6 +76,26 @@ load_env() {
     source "${ENV_FILE}"
     set +a
   fi
+}
+
+ensure_postgres() {
+  if [[ "${SKIP_DB_START:-0}" == "1" ]]; then
+    echo "[prototype-local] SKIP_DB_START=1: skipping docker compose Postgres startup." >&2
+    return
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    echo "[prototype-local] Docker is not available; cannot start Postgres container. Set SKIP_DB_START=1 to silence this warning." >&2
+    return
+  fi
+
+  if [[ ! -f "${DB_COMPOSE_FILE}" ]]; then
+    echo "[prototype-local] ${DB_COMPOSE_FILE} not found; skipping Postgres startup." >&2
+    return
+  fi
+
+  echo "[prototype-local] Ensuring dockerized Postgres is running..." >&2
+  docker compose -f "${DB_COMPOSE_FILE}" up -d postgres
 }
 
 start_service() {
@@ -128,6 +150,27 @@ stop_service() {
   else
     echo "[prototype-local] Port ${port} is free." >&2
   fi
+
+  stop_postgres
+}
+
+stop_postgres() {
+  if [[ "${SKIP_DB_START:-0}" == "1" ]]; then
+    return
+  fi
+
+  if ! command -v docker >/dev/null 2>&1; then
+    return
+  fi
+
+  if [[ ! -f "${DB_COMPOSE_FILE}" ]]; then
+    return
+  fi
+
+  if docker compose -f "${DB_COMPOSE_FILE}" ps --services --filter "status=running" | grep -q "^postgres\$"; then
+    echo "[prototype-local] Stopping dockerized Postgres..." >&2
+    docker compose -f "${DB_COMPOSE_FILE}" stop postgres >/dev/null 2>&1 || true
+  fi
 }
 
 COMMAND="${1:-start}"
@@ -135,6 +178,7 @@ COMMAND="${1:-start}"
 case "${COMMAND}" in
   start)
     maybe_install_deps
+    ensure_postgres
     start_service
     ;;
   install)

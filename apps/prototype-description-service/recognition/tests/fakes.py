@@ -6,19 +6,19 @@ from dataclasses import dataclass
 from typing import Any, Iterable, List, Sequence
 from uuid import UUID, uuid4
 
-from db.models import MediaFace
+from db.models import MediaIdentity
 
 
 class DummySession:
     """Lightweight stand-in for an AsyncSession."""
 
-    def __init__(self, existing_face_keys: list[tuple[int, int]] | None = None) -> None:
+    def __init__(self, existing_identity_keys: list[tuple[int, int]] | None = None) -> None:
         self.added: List[Any] = []
         self.flush_calls = 0
         self.commit_calls = 0
         self.committed = False
         self.refreshed: List[Any] = []
-        self._existing_face_keys = existing_face_keys or []
+        self._existing_identity_keys = existing_identity_keys or []
 
     def add(self, obj: Any) -> None:
         self.added.append(obj)
@@ -37,7 +37,7 @@ class DummySession:
         return
 
     async def execute(self, stmt):  # noqa: ARG002
-        return FakeResult(list(self._existing_face_keys))
+        return FakeResult(list(self._existing_identity_keys))
 
 
 class FakeResult:
@@ -57,23 +57,23 @@ class FakeResult:
 
 
 @dataclass(frozen=True)
-class SimpleFace:
+class SimpleIdentity:
     id: UUID
     confidence: float = 0.9
 
 
-def make_simple_face(confidence: float = 0.9) -> SimpleFace:
-    return SimpleFace(id=uuid4(), confidence=confidence)
+def make_simple_identity(confidence: float = 0.9) -> SimpleIdentity:
+    return SimpleIdentity(id=uuid4(), confidence=confidence)
 
 
-def make_media_face(
+def make_media_identity(
     tenant_id: UUID,
     media_id: int,
     confidence: float = 0.9,
     embedding: Iterable[float] | None = None,
-) -> MediaFace:
+) -> MediaIdentity:
     base_embedding = list(embedding) if embedding is not None else [0.0] * 1024
-    face = MediaFace(
+    identity = MediaIdentity(
         tenant_id=tenant_id,
         media_id=media_id,
         media_url=f"https://example.com/{media_id}.jpg",
@@ -84,9 +84,7 @@ def make_media_face(
         confidence=confidence,
         embedding=base_embedding,
     )
-    if getattr(face, "id", None) is None:
-        face.id = uuid4()
-    return face
-
-
-__all__ = ["DummySession", "FakeResult", "SimpleFace", "make_simple_face", "make_media_face"]
+    if getattr(identity, "id", None) is None:
+        identity.id = uuid4()
+    return identity
+__all__ = ["DummySession", "FakeResult", "SimpleIdentity", "make_simple_identity", "make_media_identity"]

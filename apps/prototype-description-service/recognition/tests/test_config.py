@@ -14,7 +14,7 @@ def test_get_settings_reads_yaml_overrides(tmp_path, monkeypatch):
     config_file.write_text(
         dedent(
             """
-            recognition:
+            identity_detection:
               default_threshold: 0.9
             clustering:
               similarity_threshold: 0.75
@@ -26,7 +26,7 @@ def test_get_settings_reads_yaml_overrides(tmp_path, monkeypatch):
 
     loaded = recognition_settings.get_settings()
 
-    assert loaded.recognition.default_threshold == 0.9
+    assert loaded.identity_detection.default_threshold == 0.9
     assert loaded.clustering.similarity_threshold == 0.75
 
 

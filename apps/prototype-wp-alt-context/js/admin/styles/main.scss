@@ -5,6 +5,4 @@
 @use './base/reset';
 @use './base/layout';
 
-@use './components/dashboard';
-@use './components/workbench';
-@use './components/tabs';
+@use './components/index';

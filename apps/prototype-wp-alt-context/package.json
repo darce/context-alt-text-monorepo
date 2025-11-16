@@ -14,6 +14,7 @@
     "format:check": "prettier --check \"**/*.{ts,tsx,js,jsx,php,json,css,scss,md}\"",
     "check:architecture": "node scripts/check-architecture-compliance.js",
     "check:all": "npm run lint && npm run check:architecture && npm run test",
+    "type-check": "tsc --noEmit --project tsconfig.type-check.json",
     "nuke": "rm -rf node_modules public && npm install && npm run build"
   },
   "devDependencies": {

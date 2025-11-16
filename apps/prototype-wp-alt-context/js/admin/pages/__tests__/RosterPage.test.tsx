@@ -16,12 +16,18 @@ vi.mock('@wordpress/i18n', () => ({
 const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary => ({
   id: 'cluster-1',
   label: 'cluster-1',
+  identity_count: 2,
   face_count: 2,
   member_ids: ['1', '2'],
+  representative_identity: {
+    media_id: 1,
+    bbox: { x: 0, y: 0, width: 10, height: 10 },
+  },
   representative_face: {
     media_id: 1,
     bbox: { x: 0, y: 0, width: 10, height: 10 },
   },
+  sample_identities: [],
   sample_faces: [],
   ...overrides,
 });
@@ -36,7 +42,7 @@ describe('ClusterGallery', () => {
         onRetry={vi.fn()}
         mediaMap={{}}
         onSelectCluster={vi.fn()}
-        onFaceDragStart={vi.fn()}
+        onIdentityDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
         onDropTargetChange={vi.fn()}
         onDropFace={vi.fn()}
@@ -60,7 +66,7 @@ describe('ClusterGallery', () => {
         onRetry={vi.fn()}
         mediaMap={{}}
         onSelectCluster={onSelect}
-        onFaceDragStart={vi.fn()}
+        onIdentityDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
         onDropTargetChange={vi.fn()}
         onDropFace={vi.fn()}
@@ -76,9 +82,9 @@ describe('ClusterGallery', () => {
   it('invokes drop handler when a face is dropped on another cluster', () => {
     const onDropFace = vi.fn();
     const clusterA = makeCluster({
-      sample_faces: [
+      sample_identities: [
         {
-          id: 'face-1',
+          id: 'identity-1',
           media_id: 10,
           similarity: 0.9,
           confidence: 0.9,
@@ -96,7 +102,7 @@ describe('ClusterGallery', () => {
         onRetry={vi.fn()}
         mediaMap={{}}
         onSelectCluster={vi.fn()}
-        onFaceDragStart={vi.fn()}
+        onIdentityDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
         onDropTargetChange={vi.fn()}
         onDropFace={onDropFace}
@@ -105,7 +111,7 @@ describe('ClusterGallery', () => {
       />
     );
 
-    const draggable = screen.getByLabelText(/Move face from media 10/);
+    const draggable = screen.getByLabelText(/Move identity from media 10/);
     fireEvent.dragStart(draggable);
     const target = screen.getByRole('button', { name: /cluster-2/ });
     fireEvent.dragOver(target);

@@ -1,17 +1,17 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import type { ClusterFace, ClusterSummary } from '../../api/recognitionApi';
+import type { ClusterIdentity, ClusterSummary } from '../../api/recognitionApi';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { MediaMap } from './hooks/useClusterMediaMap';
-import { FaceThumbnail } from './FaceThumbnail';
+import { IdentityThumbnail } from './IdentityThumbnail';
 
 type Props = {
   cluster: ClusterSummary | null;
-  faces: ClusterFace[];
+  identities: ClusterIdentity[];
   mediaMap: MediaMap;
   onClose: () => void;
-  onRescanCluster: (cluster: ClusterSummary, faces: ClusterFace[]) => void;
+  onRescanCluster: (cluster: ClusterSummary, identities: ClusterIdentity[]) => void;
   isRescanning: boolean;
   onCommitCluster: (cluster: ClusterSummary, assignment: { rosterEntryId?: number; newEntryName?: string }) => void;
   isCommitting: boolean;
@@ -31,7 +31,7 @@ type Props = {
 
 export const ClusterDrawerPanel = ({
   cluster,
-  faces,
+  identities,
   mediaMap,
   onClose,
   onRescanCluster,
@@ -65,8 +65,8 @@ export const ClusterDrawerPanel = ({
 
   const isCreatingEntry = selectedEntryId === 'create';
   const canCommit = (isCreatingEntry && newEntryName.trim().length > 0) || (!isCreatingEntry && selectedEntryId !== '');
-  const facesToDisplay = faces ?? [];
-  const hasFaces = facesToDisplay.length > 0;
+  const identitiesToDisplay = identities ?? [];
+  const hasIdentities = identitiesToDisplay.length > 0;
 
   const handleCommit = () => {
     if (!canCommit) {
@@ -88,48 +88,53 @@ export const ClusterDrawerPanel = ({
           <div>
             <p className="acx-cluster-drawer__label">{__('Cluster', 'alt-context')}</p>
             <h3>{cluster.label || cluster.id}</h3>
-            <p>{sprintf(_n('%d face', '%d faces', cluster.face_count, 'alt-context'), cluster.face_count)}</p>
+            <p>
+              {sprintf(
+                _n('%d identity', '%d identities', cluster.identity_count ?? cluster.face_count, 'alt-context'),
+                cluster.identity_count ?? cluster.face_count,
+              )}
+            </p>
           </div>
           <button type="button" className="acx-link-button" onClick={onClose}>
             {__('Close', 'alt-context')}
           </button>
         </header>
 
-        <div className="acx-cluster-drawer__faces">
-          {isDetailLoading ? (
-            <p>{__('Loading faces…', 'alt-context')}</p>
-          ) : !hasFaces ? (
-            <p>{__('No faces found for this cluster.', 'alt-context')}</p>
-          ) : (
-            facesToDisplay.map((face) => (
-              <figure
-                key={face.id}
-                className="acx-cluster-drawer__face"
-                draggable
-                aria-label={sprintf(__('Move face from media %d', 'alt-context'), face.media_id)}
-                onDragStart={(event) => {
-                  event.dataTransfer?.setData('text/plain', face.id);
-                  event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
-                  onFaceDragStart(cluster.id, face.id);
-                }}
-                onDragEnd={onFaceDragEnd}
-              >
-                <a
-                  href={`${window.location.origin}/wp-admin/post.php?post=${face.media_id}&action=edit`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <FaceThumbnail face={face} mediaMeta={mediaMap[face.media_id]} size={128} />
-                </a>
-                <figcaption>
-                  {sprintf(__('Similarity: %s', 'alt-context'), face.similarity.toFixed(2))}
-                  <br />
-                  {sprintf(__('Media %d', 'alt-context'), face.media_id)}
-                </figcaption>
-              </figure>
-            ))
-          )}
-        </div>
+            <div className="acx-cluster-drawer__faces">
+              {isDetailLoading ? (
+                <p>{__('Loading identities…', 'alt-context')}</p>
+              ) : !hasIdentities ? (
+                <p>{__('No identities found for this cluster.', 'alt-context')}</p>
+              ) : (
+                identitiesToDisplay.map((identity) => (
+                  <figure
+                    key={identity.id}
+                    className="acx-cluster-drawer__face"
+                    draggable
+                    aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
+                    onDragStart={(event) => {
+                      event.dataTransfer?.setData('text/plain', identity.id);
+                      event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
+                      onFaceDragStart(cluster.id, identity.id);
+                    }}
+                    onDragEnd={onFaceDragEnd}
+                  >
+                    <a
+                      href={`${window.location.origin}/wp-admin/post.php?post=${identity.media_id}&action=edit`}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
+                    </a>
+                    <figcaption>
+                      {sprintf(__('Similarity: %s', 'alt-context'), identity.similarity.toFixed(2))}
+                      <br />
+                      {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
+                    </figcaption>
+                  </figure>
+                ))
+              )}
+            </div>
 
         {detailError && <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>}
 
@@ -157,7 +162,7 @@ export const ClusterDrawerPanel = ({
               onDiscardDrop();
             }}
           >
-            {__('Drop faces here to remove them from this cluster.', 'alt-context')}
+            {__('Drop identities here to remove them from this cluster.', 'alt-context')}
           </div>
         </div>
 
@@ -165,8 +170,8 @@ export const ClusterDrawerPanel = ({
           <button
             type="button"
             className="acx-apply-panel__scan"
-            onClick={() => onRescanCluster(cluster, facesToDisplay)}
-            disabled={isRescanning || !hasFaces}
+            onClick={() => onRescanCluster(cluster, identitiesToDisplay)}
+            disabled={isRescanning || !hasIdentities}
           >
             {isRescanning ? __('Rescanning…', 'alt-context') : __('Rescan with sensitive settings', 'alt-context')}
           </button>

@@ -1,0 +1,44 @@
+%% Frontend component relationships for the prototype SPA
+classDiagram
+    class WordPressAdmin {
+        +render_dashboard_page()
+        +render_workbench_page()
+        +render_roster_page()
+    }
+    class AdminSPA {
+        +HashRouter
+        +AltContextAdmin config
+    }
+    class DashboardPage {
+        +Hero copy
+        +Static panels
+    }
+    class WorkbenchPage {
+        +Radix Tabs (scan/batch/confirm)
+        +React Query useWorkbenchMedia()
+        +MediaSelection
+        +BatchPanel
+    }
+    class RosterPage {
+        +Radix Tabs (entries/clusters)
+    }
+    class TabsPrimitive {
+        <<RadixUI>>
+        +Tabs
+        +TabsList
+        +TabsTrigger
+        +TabsContent
+    }
+    class ApiEndpoint {
+        <<REST>>
+        +GET /cat/v1/workbench/media
+    }
+
+    WordPressAdmin --> AdminSPA : localizes AltContextAdmin\nand enqueues bundle
+    AdminSPA --> DashboardPage : route /dashboard
+    AdminSPA --> WorkbenchPage : route /workbench
+    AdminSPA --> RosterPage : route /roster
+    WorkbenchPage --> TabsPrimitive
+    RosterPage --> TabsPrimitive
+    WorkbenchPage --> ApiEndpoint : fetch media queue
+    ApiEndpoint --> WordPressAdmin : registered via Api.init()

@@ -1,0 +1,38 @@
+:root {
+  --acx-cluster-card-thumb-size: 50px;
+  --gap: 5px;
+}
+
+.acx-cluster-grid {
+}
+
+.acx-cluster-card {
+  &__faces {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    grid-auto-rows: 1fr;
+    gap: var(--gap);
+    width: calc(var(--acx-cluster-card-thumb-size) * 2 + var(--gap));
+    height: calc(var(--acx-cluster-card-thumb-size) * 2 + var(--gap));
+  }
+
+  &__face {
+    width: var(--acx-cluster-card-thumb-size);
+    height: var(--acx-cluster-card-thumb-size);
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    margin: 0;
+  }
+
+  &__face &__thumb {
+    width: 100%;
+    aspect-ratio: 1 / 1;
+    object-fit: cover;
+    border-radius: 50%;
+  }
+
+  &__drawer &__thumb {
+    border-radius: 8px;
+  }
+}

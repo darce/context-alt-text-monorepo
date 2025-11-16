@@ -1,7 +1,7 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import type { ClusterSummary } from '../api/recognitionApi';
+import type { ClusterIdentity, ClusterSummary } from '../api/recognitionApi';
 import type { RosterEntry } from '../api/rosterApi';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
@@ -10,8 +10,6 @@ import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
 import { ClusterGrid } from './roster/ClusterGrid';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
-import type { ClusterFace } from '../api/recognitionApi';
-
 const ROSTER_TABS = {
   entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
   clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
@@ -30,10 +28,10 @@ export const RosterPage = (): React.JSX.Element => {
     [clusters, selectedClusterId],
   );
   const clusterDetailQuery = useRecognitionCluster(selectedClusterId, Boolean(selectedClusterId));
-  const drawerFaces = clusterDetailQuery.data?.sample_faces ?? selectedCluster?.sample_faces ?? [];
+  const drawerIdentities = clusterDetailQuery.data?.sample_identities ?? selectedCluster?.sample_identities ?? [];
   const drawerMediaIds = React.useMemo(
-    () => Array.from(new Set(drawerFaces.map((face) => face.media_id))),
-    [drawerFaces],
+    () => Array.from(new Set(drawerIdentities.map((identity) => identity.media_id))),
+    [drawerIdentities],
   );
   const mediaMap = useClusterMediaMap(clusters, drawerMediaIds);
   const entriesQuery = useRosterEntries();
@@ -66,9 +64,9 @@ export const RosterPage = (): React.JSX.Element => {
     actions.reassignMutation.mutate({ faceId: payload.faceId, targetClusterId });
   };
 
-  const handleRescanCluster = (cluster: ClusterSummary, faces: ClusterFace[]): void => {
-    const sourceFaces = faces.length > 0 ? faces : cluster.sample_faces;
-    const mediaIds = Array.from(new Set(sourceFaces.map((face) => face.media_id)));
+  const handleRescanCluster = (cluster: ClusterSummary, identities: ClusterIdentity[]): void => {
+    const sourceIdentities = identities.length > 0 ? identities : cluster.sample_identities;
+    const mediaIds = Array.from(new Set(sourceIdentities.map((identity) => identity.media_id)));
     if (mediaIds.length === 0) {
       return;
     }
@@ -103,7 +101,7 @@ export const RosterPage = (): React.JSX.Element => {
         </h1>
         <p className="acx-roster__subtitle">
           {__(
-            'Review roster entries and fine-tune facial clusters to keep recognition accurate across batches.',
+            'Review roster entries and fine-tune identity clusters to keep recognition accurate across batches.',
             'alt-context',
           )}
         </p>
@@ -132,7 +130,7 @@ export const RosterPage = (): React.JSX.Element => {
             onRetry={clustersQuery.refetch}
             mediaMap={mediaMap}
             onSelectCluster={handleSelectCluster}
-            onFaceDragStart={dragDrop.handleFaceDragStart}
+            onIdentityDragStart={dragDrop.handleFaceDragStart}
             onFaceDragEnd={dragDrop.handleFaceDragEnd}
             onDropTargetChange={dragDrop.handleDropTargetChange}
             onDropFace={handleDropFace}
@@ -144,7 +142,7 @@ export const RosterPage = (): React.JSX.Element => {
 
       <ClusterDrawerPanel
         cluster={selectedCluster}
-        faces={drawerFaces}
+        identities={drawerIdentities}
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={
           clusterDetailQuery.isError

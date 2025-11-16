@@ -84,6 +84,24 @@ class RecognitionProxyController {
 
 		register_rest_route(
 			'acx/v1',
+			'/workbench/recognition/media-identities',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_media_identities' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'media_ids' => array(
+						'type'        => 'array',
+						'required'    => true,
+						'items'       => array( 'type' => 'integer' ),
+						'description' => 'Attachment IDs to fetch detected identities for (max 100).',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/workbench/recognition/clusters',
 			array(
 				'methods'             => 'GET',
@@ -97,7 +115,7 @@ class RecognitionProxyController {
 			'/workbench/recognition/clusters/reassign',
 			array(
 				'methods'             => 'POST',
-				'callback'            => array( $this, 'reassign_cluster_face' ),
+				'callback'            => array( $this, 'reassign_cluster_identity' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
@@ -158,16 +176,42 @@ class RecognitionProxyController {
 		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
 	}
 
-	public function reassign_cluster_face( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$face_id = sanitize_text_field( (string) $request->get_param( 'face_id' ) );
-		if ( '' === $face_id ) {
-			return new WP_Error( 'missing_face_id', 'Face ID is required.', array( 'status' => 400 ) );
+	public function get_media_identities( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$media_ids = $request->get_param( 'media_ids' );
+		if ( ! is_array( $media_ids ) || empty( $media_ids ) ) {
+			return new WP_Error( 'missing_media_ids', 'Provide one or more media_ids to fetch identities.', array( 'status' => 400 ) );
+		}
+
+		$ids = array();
+		foreach ( $media_ids as $media_id ) {
+			$abs = absint( $media_id );
+			if ( $abs > 0 ) {
+				$ids[] = $abs;
+			}
+		}
+
+		if ( empty( $ids ) || count( $ids ) > 100 ) {
+			return new WP_Error( 'invalid_media_ids', 'Provide between 1 and 100 valid attachment IDs.', array( 'status' => 400 ) );
+		}
+
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'media_ids' => $ids,
+		);
+
+		return $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query );
+	}
+
+	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
+		if ( '' === $identity_id ) {
+			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
 		}
 
 		$target = $request->get_param( 'target_cluster_id' );
 		$payload = array(
 			'tenant_id'         => $this->get_tenant_id(),
-			'face_id'           => $face_id,
+			'identity_id'       => $identity_id,
 			'target_cluster_id' => $target ? sanitize_text_field( (string) $target ) : null,
 			'user_id'           => get_current_user_id(),
 		);

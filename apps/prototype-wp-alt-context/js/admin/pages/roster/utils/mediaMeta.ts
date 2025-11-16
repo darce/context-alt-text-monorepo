@@ -26,17 +26,23 @@ export const fetchMediaMeta = async (mediaId: number): Promise<MediaMeta> => {
 			credentials: 'same-origin',
 		});
 
-		if (!response.ok) {
-			return null;
-		}
+	if (!response.ok) {
+		return { url: null };
+	}
 
 		const payload = await response.json();
+		const sizes = payload.media_details?.sizes ?? {};
+		const preferredUrl =
+			sizes?.thumbnail?.source_url ??
+			sizes?.medium?.source_url ??
+			sizes?.medium_large?.source_url ??
+			sizes?.large?.source_url ??
+			payload.source_url ??
+			sizes?.full?.source_url ??
+			null;
+
 		return {
-			url:
-				payload.source_url ??
-				payload.media_details?.sizes?.thumbnail?.source_url ??
-				payload.media_details?.sizes?.medium?.source_url ??
-				null,
+			url: preferredUrl,
 			width: payload.media_details?.width ?? payload.media_details?.sizes?.full?.width,
 			height: payload.media_details?.height ?? payload.media_details?.sizes?.full?.height,
 		};

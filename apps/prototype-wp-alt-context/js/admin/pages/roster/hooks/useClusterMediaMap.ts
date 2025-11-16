@@ -11,9 +11,12 @@ export const useClusterMediaMap = (clusters: ClusterSummary[], additionalMediaId
   useEffect(() => {
     const mediaIds = new Set<number>();
     clusters.forEach((cluster) => {
-      cluster.sample_faces.forEach((face: ClusterSummary['sample_faces'][number]) => mediaIds.add(face.media_id));
-      if (cluster.representative_face.media_id) {
-        mediaIds.add(cluster.representative_face.media_id);
+      const identities = cluster.sample_identities ?? cluster.sample_faces ?? [];
+      identities.forEach((identity: ClusterSummary['sample_identities'][number]) => mediaIds.add(identity.media_id));
+      const representativeMedia =
+        cluster.representative_identity?.media_id ?? cluster.representative_face?.media_id ?? null;
+      if (representativeMedia) {
+        mediaIds.add(representativeMedia);
       }
     });
     additionalMediaIds.forEach((id) => mediaIds.add(id));

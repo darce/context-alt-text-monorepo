@@ -42,16 +42,16 @@ class Tenant(Base):
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    media_faces: Mapped[list["MediaFace"]] = relationship(
+    media_identities: Mapped[list["MediaIdentity"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
-    face_clusters: Mapped[list["FaceCluster"]] = relationship(
+    identity_clusters: Mapped[list["IdentityCluster"]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
 
 
-class MediaFace(Base):
-    __tablename__ = "media_faces"
+class MediaIdentity(Base):
+    __tablename__ = "media_identities"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -82,23 +82,23 @@ class MediaFace(Base):
     )
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
-    tenant: Mapped[Tenant] = relationship(back_populates="media_faces")
-    cluster_members: Mapped[list["ClusterMember"]] = relationship(
-        back_populates="face", cascade="all, delete-orphan"
+    tenant: Mapped[Tenant] = relationship(back_populates="media_identities")
+    cluster_memberships: Mapped[list["IdentityMember"]] = relationship(
+        back_populates="identity", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
         UniqueConstraint(
-            "tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_face"
+            "tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"
         ),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         Index(
-            "idx_media_faces_tenant",
+            "idx_media_identities_tenant",
             "tenant_id",
             postgresql_where=text("NOT is_deleted"),
         ),
         Index(
-            "idx_media_faces_embedding",
+            "idx_media_identities_embedding",
             "embedding",
             postgresql_using="ivfflat",
             postgresql_ops={"embedding": "vector_cosine_ops"},
@@ -106,8 +106,8 @@ class MediaFace(Base):
     )
 
 
-class FaceCluster(Base):
-    __tablename__ = "face_clusters"
+class IdentityCluster(Base):
+    __tablename__ = "identity_clusters"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -116,10 +116,10 @@ class FaceCluster(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     label: Mapped[str | None] = mapped_column(String(255))
-    representative_face_id: Mapped[uuid.UUID | None] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("media_faces.id", ondelete="SET NULL")
+    representative_identity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="SET NULL")
     )
-    face_count: Mapped[int] = mapped_column(
+    identity_count: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
     roster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
@@ -135,27 +135,27 @@ class FaceCluster(Base):
     )
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
-    tenant: Mapped[Tenant] = relationship(back_populates="face_clusters")
-    representative_face: Mapped[MediaFace | None] = relationship(
-        "MediaFace", foreign_keys=[representative_face_id]
+    tenant: Mapped[Tenant] = relationship(back_populates="identity_clusters")
+    representative_identity: Mapped[MediaIdentity | None] = relationship(
+        "MediaIdentity", foreign_keys=[representative_identity_id]
     )
-    members: Mapped[list["ClusterMember"]] = relationship(
+    members: Mapped[list["IdentityMember"]] = relationship(
         back_populates="cluster", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "label", name="unique_tenant_label"),
-        Index("idx_face_clusters_tenant", "tenant_id"),
+        UniqueConstraint("tenant_id", "label", name="unique_tenant_identity_label"),
+        Index("idx_identity_clusters_tenant", "tenant_id"),
         Index(
-            "idx_face_clusters_roster",
+            "idx_identity_clusters_roster",
             "roster_id",
             postgresql_where=text("roster_id IS NOT NULL"),
         ),
     )
 
 
-class ClusterMember(Base):
-    __tablename__ = "cluster_members"
+class IdentityMember(Base):
+    __tablename__ = "identity_members"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -164,10 +164,10 @@ class ClusterMember(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     cluster_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("face_clusters.id", ondelete="CASCADE"), nullable=False
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
     )
-    face_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), ForeignKey("media_faces.id", ondelete="CASCADE"), nullable=False
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
     )
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
     assigned_at: Mapped[datetime] = mapped_column(
@@ -178,20 +178,20 @@ class ClusterMember(Base):
     )
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
-    cluster: Mapped[FaceCluster] = relationship(back_populates="members")
-    face: Mapped[MediaFace] = relationship(back_populates="cluster_members")
+    cluster: Mapped[IdentityCluster] = relationship(back_populates="members")
+    identity: Mapped[MediaIdentity] = relationship(back_populates="cluster_memberships")
 
     __table_args__ = (
         CheckConstraint("similarity >= 0 AND similarity <= 1", name="similarity_range"),
-        UniqueConstraint("cluster_id", "face_id", name="unique_cluster_member"),
-        UniqueConstraint("tenant_id", "face_id", name="unique_face_membership"),
-        Index("idx_cluster_members_cluster", "cluster_id"),
-        Index("idx_cluster_members_face", "face_id"),
+        UniqueConstraint("cluster_id", "identity_id", name="unique_identity_member"),
+        UniqueConstraint("tenant_id", "identity_id", name="unique_identity_membership"),
+        Index("idx_identity_members_cluster", "cluster_id"),
+        Index("idx_identity_members_identity", "identity_id"),
     )
 
 
-class FaceScanJob(Base):
-    __tablename__ = "face_scan_jobs"
+class IdentityScanJob(Base):
+    __tablename__ = "identity_scan_jobs"
 
     id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
@@ -207,7 +207,7 @@ class FaceScanJob(Base):
     processed_media: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
-    faces_detected: Mapped[int] = mapped_column(
+    identities_detected: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
     )
     error_message: Mapped[str | None] = mapped_column(Text)
@@ -234,8 +234,8 @@ class FaceScanJob(Base):
 
 __all__ = [
     "Tenant",
-    "MediaFace",
-    "FaceCluster",
-    "ClusterMember",
-    "FaceScanJob",
+    "MediaIdentity",
+    "IdentityCluster",
+    "IdentityMember",
+    "IdentityScanJob",
 ]

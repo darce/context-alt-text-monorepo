@@ -10,10 +10,10 @@ from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import FaceCluster, FaceScanJob, Tenant
+from db.models import IdentityCluster, IdentityScanJob, Tenant
 from db.session import get_session
-from recognition.application.face_clustering_service import FaceClusteringService
-from recognition.application.face_scan_service import FaceScanService
+from recognition.application.identity_clustering_service import IdentityClusteringService
+from recognition.application.identity_scan_service import IdentityScanService
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 
 router = APIRouter(tags=["recognition"])
@@ -44,16 +44,16 @@ class ClusterRequest(BaseModel):
 
 class ClusterResponse(BaseModel):
     clusters_created: int
-    total_faces_clustered: int
+    total_identities_clustered: int
 
 
 class ClusterSummaryResponse(BaseModel):
     id: str
     label: str
-    face_count: int
+    identity_count: int
     member_ids: List[str]
-    representative_face: dict
-    sample_faces: List[dict]
+    representative_identity: dict
+    sample_identities: List[dict]
 
 
 def get_embedding_provider() -> FaceEmbeddingProvider:
@@ -67,7 +67,7 @@ async def analyze_media(
     provider: FaceEmbeddingProvider = Depends(get_embedding_provider),
 ) -> AnalyzeResponse:
     await _ensure_tenant(session, request.tenant_id, request.site_url)
-    job = FaceScanJob(
+    job = IdentityScanJob(
         tenant_id=request.tenant_id,
         status="pending",
         media_ids=[item.media_id for item in request.media_items],
@@ -79,8 +79,8 @@ async def analyze_media(
     await session.commit()
     await session.refresh(job)
 
-    service = FaceScanService(session, provider, request.tenant_id)
-    await service.scan_batch(job, [item.model_dump() for item in request.media_items], request.user_id)
+    service = IdentityScanService(session, provider, request.tenant_id)
+    await service.scan_identities(job, [item.model_dump() for item in request.media_items], request.user_id)
 
     await session.refresh(job)
     return AnalyzeResponse(job_id=job.id, status=job.status, total_media=job.total_media)
@@ -98,7 +98,7 @@ async def _ensure_tenant(session: AsyncSession, tenant_id: UUID, site_url: Optio
 
 @router.get("/jobs/{job_id}")
 async def get_analysis_job(job_id: UUID, session: AsyncSession = Depends(get_session)) -> dict:
-    job = await session.get(FaceScanJob, job_id)
+    job = await session.get(IdentityScanJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
@@ -107,7 +107,7 @@ async def get_analysis_job(job_id: UUID, session: AsyncSession = Depends(get_ses
         "status": job.status,
         "total_media": job.total_media,
         "processed_media": job.processed_media,
-        "faces_detected": job.faces_detected,
+        "identities_detected": job.identities_detected,
         "error_message": job.error_message,
         "created_at": job.created_at.isoformat() if job.created_at else None,
         "completed_at": job.completed_at.isoformat() if job.completed_at else None,
@@ -119,14 +119,14 @@ async def cluster_media(
     request: ClusterRequest,
     session: AsyncSession = Depends(get_session),
 ) -> ClusterResponse:
-    service = FaceClusteringService(
+    service = IdentityClusteringService(
         session=session,
         tenant_id=request.tenant_id,
         similarity_threshold=request.similarity_threshold or 0.6,
     )
-    clusters = await service.cluster_faces()
-    total_faces = sum(cluster.face_count for cluster in clusters)
-    return ClusterResponse(clusters_created=len(clusters), total_faces_clustered=total_faces)
+    clusters = await service.cluster_identities()
+    total_identities = sum(cluster.identity_count for cluster in clusters)
+    return ClusterResponse(clusters_created=len(clusters), total_identities_clustered=total_identities)
 
 
 @router.get("/clusters", response_model=List[ClusterSummaryResponse])
@@ -137,9 +137,9 @@ async def list_clusters(
     session: AsyncSession = Depends(get_session),
 ) -> List[ClusterSummaryResponse]:
     stmt = (
-        select(FaceCluster)
-        .where(FaceCluster.tenant_id == tenant_id)
-        .order_by(FaceCluster.created_at.desc())
+        select(IdentityCluster)
+        .where(IdentityCluster.tenant_id == tenant_id)
+        .order_by(IdentityCluster.created_at.desc())
         .limit(limit)
         .offset(offset)
     )
@@ -147,7 +147,7 @@ async def list_clusters(
     result = await session.execute(stmt)
     clusters = result.scalars().all()
 
-    service = FaceClusteringService(session, tenant_id)
+    service = IdentityClusteringService(session, tenant_id)
     summaries: List[ClusterSummaryResponse] = []
 
     for cluster in clusters:

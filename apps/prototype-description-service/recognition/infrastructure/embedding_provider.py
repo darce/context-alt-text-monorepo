@@ -116,13 +116,16 @@ class FaceEmbeddingProvider:
         if norm:
             stats = stats / norm
 
-        padded = np.pad(stats, (0, self.settings.recognition.embedding_dimension // 2 - stats.shape[0]))
-        return padded[: self.settings.recognition.embedding_dimension // 2]
+        padded = np.pad(
+            stats,
+            (0, self.settings.identity_detection.embedding_dimension // 2 - stats.shape[0]),
+        )
+        return padded[: self.settings.identity_detection.embedding_dimension // 2]
 
     def model_info(self) -> dict[str, object]:
         return {
             "model_name": self.settings.insightface.model_name,
             "device": self.settings.insightface.device,
-            "embedding_dimension": self.settings.recognition.embedding_dimension,
+            "embedding_dimension": self.settings.identity_detection.embedding_dimension,
             "detection_threshold": self.settings.insightface.det_thresh,
         }

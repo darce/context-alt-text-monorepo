@@ -38,6 +38,21 @@ if [[ -z "${DB_HOST}" || -z "${DB_PORT}" || -z "${DB_USER}" || -z "${DB_PASS}" |
   exit 1
 fi
 
+DOCKER_COMPOSE="${PROJECT_ROOT}/docker-compose.db.yml"
+if docker compose version >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker compose)
+elif command -v docker-compose >/dev/null 2>&1; then
+  COMPOSE_CMD=(docker-compose)
+else
+  echo "[reset-dev-db] docker compose plugin or docker-compose binary is required." >&2
+  exit 1
+fi
+
+if ! "${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" ps postgres >/dev/null 2>&1; then
+  echo "[reset-dev-db] Starting dockerized postgres via docker compose..." >&2
+  "${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" up -d postgres
+fi
+
 ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
 ADMIN_PASS="${ADMIN_PGPASSWORD:-${DB_PASS}}"
 
@@ -74,25 +89,24 @@ run_user_psql() {
 
 cd "${PROJECT_ROOT}"
 
-echo "[reset-dev-db] Dropping database \"${DB_NAME}\" using admin user ${ADMIN_USER}..." >&2
-run_admin_psql postgres -c "DROP DATABASE IF EXISTS \"${DB_NAME}\";" >/dev/null
+echo "[reset-dev-db] Dropping database \"${DB_NAME}\" using container postgres..." >&2
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "DROP DATABASE IF EXISTS \"${DB_NAME}\";" >/dev/null
+
+echo "[reset-dev-db] Ensuring role \"${DB_USER}\" exists..." >&2
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN CREATE ROLE \"${DB_USER}\" LOGIN PASSWORD '${DB_PASS}'; ELSE ALTER ROLE \"${DB_USER}\" WITH LOGIN PASSWORD '${DB_PASS}'; END IF; END \$\$;" >/dev/null
 
 echo "[reset-dev-db] Creating database \"${DB_NAME}\"..." >&2
-run_admin_psql postgres -c "CREATE DATABASE \"${DB_NAME}\";" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "CREATE DATABASE \"${DB_NAME}\" WITH OWNER \"${DB_USER}\";" >/dev/null
 
 echo "[reset-dev-db] Setting database owner to ${DB_USER}..." >&2
-run_admin_psql postgres -c "ALTER DATABASE \"${DB_NAME}\" OWNER TO \"${DB_USER}\";" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "ALTER DATABASE \"${DB_NAME}\" OWNER TO \"${DB_USER}\";" >/dev/null
 
 echo "[reset-dev-db] Ensuring pgvector extension and schema privileges..." >&2
-run_admin_psql "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
-run_admin_psql "${DB_NAME}" -c "ALTER SCHEMA public OWNER TO \"${DB_USER}\";" >/dev/null
-run_admin_psql "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO \"${DB_USER}\";" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "ALTER SCHEMA public OWNER TO \"${DB_USER}\";" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO \"${DB_USER}\";" >/dev/null
 
 echo "[reset-dev-db] Applying migrations as ${DB_USER}..." >&2
-if [[ "${DB_HOST}" == /* ]]; then
-  PGHOST= PGPORT="${DB_PORT}" PGPASSWORD="${DB_PASS}" alembic -c db/alembic.ini upgrade head
-else
-  PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGPASSWORD="${DB_PASS}" alembic -c db/alembic.ini upgrade head
-fi
+PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGUSER="${DB_USER}" PGPASSWORD="${DB_PASS}" alembic -c db/alembic.ini upgrade head
 
 echo "[reset-dev-db] Done – database dropped, recreated, and migrated for development environment." >&2

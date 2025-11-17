@@ -7,6 +7,7 @@ PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
 DEFAULT_HOST="0.0.0.0"
 DEFAULT_PORT="7860"
+COLIMA_PROFILE="${COLIMA_PROFILE:-default}"
 
 has_network_access() {
   if [[ "${ASSUME_OFFLINE:-0}" == "1" ]]; then
@@ -79,6 +80,21 @@ install_deps() {
   fi
 }
 
+stop_colima_profile() {
+  if [[ "${STOP_COLIMA_ON_EXIT:-1}" != "1" ]]; then
+    return
+  fi
+
+  if ! command -v colima >/dev/null 2>&1; then
+    return
+  fi
+
+  if colima status --profile "${COLIMA_PROFILE}" >/dev/null 2>&1; then
+    echo "[recognition-local] Stopping Colima profile '${COLIMA_PROFILE}'..." >&2
+    colima stop --profile "${COLIMA_PROFILE}" >/dev/null 2>&1 || true
+  fi
+}
+
 start_service() {
   export RECOG_SETTINGS="${PROJECT_ROOT}/recognition_core/config/settings.yaml"
   export LOCAL_CACHE_ROOT="${LOCAL_CACHE_ROOT:-/Volumes/Butter}"
@@ -96,10 +112,17 @@ start_service() {
     exit 1
   fi
 
+  DOCKER_PGHOST="${PGHOST:-localhost}"
+  DOCKER_PGPORT="${PGPORT:-5432}"
+  DOCKER_PGUSER="${PGUSER:-postgres}"
+  DOCKER_PGPASS="${PGPASSWORD:-postgres}"
+  echo "[recognition-local] Docker Postgres is expected at ${DOCKER_PGHOST}:${DOCKER_PGPORT} (user=${DOCKER_PGUSER})" >&2
+  echo "[recognition-local] Start it with 'docker compose -f docker-compose.db.yml up -d postgres' if it is not running." >&2
+
   cd "${PROJECT_ROOT}"
 
   echo "[recognition-local] Starting uvicorn on ${HOST_VALUE}:${PORT_VALUE}" >&2
-  exec uvicorn app:app --host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload --reload-dir "${PROJECT_ROOT}"
+  "${PYTHON_BIN}" -m uvicorn app:app --host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload --reload-dir "${PROJECT_ROOT}"
 }
 
 stop_service() {
@@ -132,12 +155,15 @@ stop_service() {
   else
     echo "[recognition-local] Port ${port} is free." >&2
   fi
+
+  stop_colima_profile
 }
 
 COMMAND="${1:-start}"
 
 case "${COMMAND}" in
   start)
+    trap stop_colima_profile EXIT
     maybe_install_deps
     start_service
     ;;

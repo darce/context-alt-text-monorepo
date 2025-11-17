@@ -9,6 +9,70 @@ DEFAULT_HOST="0.0.0.0"
 DEFAULT_PORT="8000"
 ENV_FILE="${PROJECT_ROOT}/.env"
 DB_COMPOSE_FILE="${PROJECT_ROOT}/docker-compose.db.yml"
+COMPOSE_CMD=()
+
+resolve_compose_command() {
+  if [[ "${#COMPOSE_CMD[@]}" -gt 0 ]]; then
+    return 0
+  fi
+
+  if docker compose version >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker compose)
+    return 0
+  fi
+
+  if command -v docker-compose >/dev/null 2>&1; then
+    COMPOSE_CMD=(docker-compose)
+    return 0
+  fi
+
+  return 1
+}
+
+docker_daemon_running() {
+  docker info >/dev/null 2>&1
+}
+
+cleanup_colima_profile() {
+  local profile="$1"
+
+  colima stop --profile "${profile}" >/dev/null 2>&1 || true
+  if command -v limactl >/dev/null 2>&1; then
+    limactl stop "${profile}" >/dev/null 2>&1 || true
+  fi
+}
+
+start_colima() {
+  if ! command -v colima >/dev/null 2>&1; then
+    return 1
+  fi
+
+  local profile="${COLIMA_PROFILE:-default}"
+  if colima status --profile "${profile}" >/dev/null 2>&1; then
+    return 0
+  fi
+
+  cleanup_colima_profile "${profile}"
+
+  echo "[prototype-local] Docker daemon unavailable. Attempting to start Colima profile '${profile}'..." >&2
+  if colima start --profile "${profile}"; then
+    return 0
+  fi
+
+  echo "[prototype-local] Colima start failed; attempting to stop any stale '${profile}' instance..." >&2
+  cleanup_colima_profile "${profile}"
+
+  echo "[prototype-local] Retrying Colima start for profile '${profile}'..." >&2
+  if colima start --profile "${profile}"; then
+    return 0
+  fi
+
+  echo "[prototype-local] Failed to start Colima profile '${profile}'. Start Docker manually or set SKIP_DB_START=1." >&2
+  if command -v limactl >/dev/null 2>&1; then
+    echo "[prototype-local] Hint: 'limactl list' to inspect lingering Lima VMs, or 'limactl delete ${profile}' to reset the Colima VM." >&2
+  fi
+  return 1
+}
 
 has_network_access() {
   if [[ "${ASSUME_OFFLINE:-0}" == "1" ]]; then
@@ -94,8 +158,23 @@ ensure_postgres() {
     return
   fi
 
+  if ! resolve_compose_command; then
+    echo "[prototype-local] docker compose plugin or docker-compose binary is required to manage Postgres. Set SKIP_DB_START=1 to silence this warning." >&2
+    return
+  fi
+
+  if ! docker_daemon_running; then
+    if ! start_colima; then
+      return 1
+    fi
+    if ! docker_daemon_running; then
+      echo "[prototype-local] Docker daemon is still unavailable after attempting to start Colima." >&2
+      return 1
+    fi
+  fi
+
   echo "[prototype-local] Ensuring dockerized Postgres is running..." >&2
-  docker compose -f "${DB_COMPOSE_FILE}" up -d postgres
+  "${COMPOSE_CMD[@]}" -f "${DB_COMPOSE_FILE}" up -d postgres
 }
 
 start_service() {
@@ -167,9 +246,17 @@ stop_postgres() {
     return
   fi
 
-  if docker compose -f "${DB_COMPOSE_FILE}" ps --services --filter "status=running" | grep -q "^postgres\$"; then
+  if ! resolve_compose_command; then
+    return
+  fi
+
+  if ! docker_daemon_running; then
+    return
+  fi
+
+  if "${COMPOSE_CMD[@]}" -f "${DB_COMPOSE_FILE}" ps --services --filter "status=running" | grep -q "^postgres\$"; then
     echo "[prototype-local] Stopping dockerized Postgres..." >&2
-    docker compose -f "${DB_COMPOSE_FILE}" stop postgres >/dev/null 2>&1 || true
+    "${COMPOSE_CMD[@]}" -f "${DB_COMPOSE_FILE}" stop postgres >/dev/null 2>&1 || true
   fi
 }
 

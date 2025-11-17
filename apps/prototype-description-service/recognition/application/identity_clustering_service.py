@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+from datetime import datetime
 from typing import Dict, List, Tuple
 from uuid import UUID, uuid4
 
@@ -10,8 +11,17 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, IdentityMember, MediaIdentity
+from db.tenant_context import set_tenant_context
 
 logger = logging.getLogger(__name__)
+
+
+class ClusterNotFoundError(Exception):
+    """Raised when a cluster cannot be found for the current tenant."""
+
+
+class ClusterLabelConflictError(Exception):
+    """Raised when attempting to reuse an existing cluster label."""
 
 
 class IdentityClusteringService:
@@ -26,6 +36,9 @@ class IdentityClusteringService:
         self.session = session
         self.tenant_id = tenant_id
         self.threshold = similarity_threshold
+
+    async def _ensure_tenant_context(self) -> None:
+        await set_tenant_context(self.session, self.tenant_id)
 
     async def cluster_identities(self) -> List[IdentityCluster]:
         logger.info("Starting identity clustering for tenant %s", self.tenant_id)
@@ -198,3 +211,67 @@ class IdentityClusteringService:
                 for member, identity in sample_rows
             ],
         }
+
+    async def rename_cluster(self, cluster_id: UUID, new_label: str) -> IdentityCluster:
+        await self._ensure_tenant_context()
+        cluster = await self.session.get(IdentityCluster, cluster_id)
+        if not cluster or cluster.tenant_id != self.tenant_id:
+            raise ClusterNotFoundError
+
+        existing_stmt = select(IdentityCluster).where(
+            IdentityCluster.tenant_id == self.tenant_id,
+            IdentityCluster.label == new_label,
+            IdentityCluster.id != cluster_id,
+        )
+        existing_cluster = await self.session.execute(existing_stmt)
+        if existing_cluster.scalar_one_or_none():
+            raise ClusterLabelConflictError
+
+        cluster.label = new_label
+        cluster.updated_at = datetime.utcnow()
+        await self.session.commit()
+        await self._ensure_tenant_context()
+        await self.session.refresh(cluster)
+        return cluster
+
+    async def merge_cluster_into_label(self, source_id: UUID, target_label: str) -> tuple[IdentityCluster, int]:
+        await self._ensure_tenant_context()
+        source = await self.session.get(IdentityCluster, source_id)
+        if not source or source.tenant_id != self.tenant_id:
+            raise ClusterNotFoundError
+
+        target_stmt = select(IdentityCluster).where(
+            IdentityCluster.tenant_id == self.tenant_id,
+            IdentityCluster.label == target_label,
+        )
+        target_result = await self.session.execute(target_stmt)
+        target = target_result.scalar_one_or_none()
+
+        if not target:
+            target = IdentityCluster(
+                tenant_id=self.tenant_id,
+                label=target_label,
+                representative_identity_id=source.representative_identity_id,
+                identity_count=0,
+                similarity_threshold=self.threshold,
+                clustering_algorithm=source.clustering_algorithm,
+            )
+            self.session.add(target)
+            await self.session.flush()
+
+        members_result = await self.session.execute(
+            select(IdentityMember).where(IdentityMember.cluster_id == source.id)
+        )
+        members = members_result.scalars().all()
+        for member in members:
+            member.cluster_id = target.id
+        moved_count = len(members)
+
+        target.identity_count += moved_count
+        target.updated_at = datetime.utcnow()
+
+        await self.session.delete(source)
+        await self.session.commit()
+        await self._ensure_tenant_context()
+        await self.session.refresh(target)
+        return target, moved_count

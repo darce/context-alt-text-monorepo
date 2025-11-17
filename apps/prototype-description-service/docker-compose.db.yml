@@ -5,13 +5,14 @@ services:
     image: pgvector/pgvector:pg17
     container_name: prototype_description_db
     environment:
-      POSTGRES_USER: postgres
-      POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: context_alt_text
+      POSTGRES_USER: ${PGUSER}
+      POSTGRES_PASSWORD: ${PGPASSWORD}
+      POSTGRES_DB: ${DB_NAME}
     ports:
       - "55432:5432"
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U postgres -d context_alt_text"]
+      test:
+        ["CMD-SHELL", "pg_isready -U ${PGUSER} -d ${DB_NAME}"]
       interval: 5s
       timeout: 3s
       retries: 10

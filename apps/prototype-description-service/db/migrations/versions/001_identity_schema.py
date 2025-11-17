@@ -13,6 +13,14 @@ branch_labels = None
 depends_on = None
 
 EMBEDDING_DIMENSION = 1024
+SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
+
+TENANT_TABLES = [
+    "media_identities",
+    "identity_clusters",
+    "identity_members",
+    "identity_scan_jobs",
+]
 
 
 def upgrade() -> None:
@@ -160,6 +168,11 @@ def upgrade() -> None:
         sa.Column("error_message", sa.Text()),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
+            "started_at",
+            sa.TIMESTAMP(timezone=True),
+            nullable=True,
+        ),
+        sa.Column(
             "completed_at",
             sa.TIMESTAMP(timezone=True),
             nullable=True,
@@ -196,6 +209,43 @@ def upgrade() -> None:
         ["status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
     )
+    op.create_index(
+        "idx_media_identities_tenant_id",
+        "media_identities",
+        ["tenant_id", "id"],
+    )
+    op.create_index(
+        "idx_identity_clusters_tenant_id",
+        "identity_clusters",
+        ["tenant_id", "id"],
+    )
+    op.create_index(
+        "idx_identity_members_tenant_id",
+        "identity_members",
+        ["tenant_id", "id"],
+    )
+    op.create_index(
+        "idx_identity_scan_jobs_tenant_id",
+        "identity_scan_jobs",
+        ["tenant_id", "id"],
+    )
+    op.create_index(
+        "idx_media_identities_tenant_media",
+        "media_identities",
+        ["tenant_id", "media_id"],
+    )
+
+    for table in TENANT_TABLES:
+        op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} FORCE ROW LEVEL SECURITY")
+        op.execute(
+            f"""
+            CREATE POLICY tenant_isolation_{table} ON {table}
+            FOR ALL
+            USING (tenant_id = {SAFE_TENANT_EXPR})
+            WITH CHECK (tenant_id = {SAFE_TENANT_EXPR})
+            """
+        )
 
 
 def downgrade() -> None:
@@ -207,9 +257,16 @@ def downgrade() -> None:
     op.drop_index("idx_identity_clusters_tenant", table_name="identity_clusters")
     op.drop_index("idx_media_identities_embedding", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant", table_name="media_identities")
+    op.drop_index("idx_media_identities_tenant_media", table_name="media_identities")
+    op.drop_index("idx_media_identities_tenant_id", table_name="media_identities")
+    op.drop_index("idx_identity_scan_jobs_tenant_id", table_name="identity_scan_jobs")
+    op.drop_index("idx_identity_members_tenant_id", table_name="identity_members")
+    op.drop_index("idx_identity_clusters_tenant_id", table_name="identity_clusters")
+    for table in TENANT_TABLES:
+        op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
+        op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
+        op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     op.drop_table("identity_scan_jobs")
     op.drop_table("identity_members")
     op.drop_table("identity_clusters")
     op.drop_table("media_identities")
-    # recreate original tables for downgrade path
-    # (not needed in greenfield, left intentionally blank)

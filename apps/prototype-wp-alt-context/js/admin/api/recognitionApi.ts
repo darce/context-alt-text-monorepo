@@ -57,6 +57,27 @@ export type MediaIdentitiesResponse = {
   identities_by_media: Record<string, ClusterIdentity[]>;
 };
 
+export type DetectedIdentity = {
+  id: string;
+  media_id: number;
+  cluster_id: string | null;
+  cluster_label: string | null;
+  is_auto_label: boolean;
+  bbox: RepresentativeBounds['bbox'];
+  confidence: number;
+  similarity: number | null;
+  detected_at?: string;
+  thumbnail_url?: string | null;
+};
+
+export type UpdateClusterLabelRequest = {
+  label: string;
+};
+
+export type MergeClusterRequest = {
+  target_label: string;
+};
+
 export type ClusterSummary = {
   id: string;
   label: string;
@@ -82,6 +103,34 @@ export type ReassignClusterIdentityRequest = {
 export type ReassignClusterFaceRequest = {
   faceId: string;
   targetClusterId?: string | null;
+};
+
+export const updateClusterLabel = async (
+  clusterId: string,
+  label: string,
+): Promise<void> => {
+  const base = getEndpoint('workbenchRecognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${clusterId}`;
+
+  await fetchApi(url, {
+    method: 'PATCH',
+    body: { label },
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const mergeCluster = async (
+  sourceId: string,
+  targetLabel: string,
+): Promise<void> => {
+  const base = getEndpoint('workbenchRecognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${sourceId}/merge`;
+
+  await fetchApi(url, {
+    method: 'POST',
+    body: { target_label: targetLabel },
+    restNonce: getConfig().nonce,
+  });
 };
 
 export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeResponse> => {

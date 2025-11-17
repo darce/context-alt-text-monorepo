@@ -1,14 +1,19 @@
+import { useMemo } from 'react';
 import { useQuery } from '@tanstack/react-query';
 
+import { useMediaIdentities } from './useMediaIdentities';
+import type { DetectedIdentity } from '../api/recognitionApi';
+
 type WorkbenchMediaItem = {
-	id: number;
-	title: string;
-	altText: string | null;
-	status: 'missing' | 'complete';
-	thumbnailUrl: string | null;
-	mimeType: string;
-	editUrl: string;
-	tags: string[];
+  id: number;
+  title: string;
+  altText: string | null;
+  status: 'missing' | 'complete';
+  thumbnailUrl: string | null;
+  mimeType: string;
+  editUrl: string;
+  tags: string[];
+  identities?: DetectedIdentity[];
 };
 
 type WorkbenchMediaResponse = {
@@ -24,13 +29,31 @@ type Params = {
 	enabled: boolean;
 };
 
-export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) =>
-	useQuery<WorkbenchMediaResponse, Error>({
+export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) => {
+	const mediaQuery = useQuery<WorkbenchMediaResponse, Error>({
 		queryKey: ['workbench-media', { page, perPage, search }],
 		queryFn: () => fetchWorkbenchMedia({ page, perPage, search }),
 		placeholderData: (previousData) => previousData,
 		enabled,
 	});
+
+	const mediaIds = mediaQuery.data?.items.map((item) => item.id) ?? [];
+	const identitiesQuery = useMediaIdentities(mediaIds, enabled && mediaIds.length > 0);
+
+	const itemsWithIdentities = useMemo(() => {
+		const identitiesByMedia = identitiesQuery.data?.identities_by_media ?? {};
+		return mediaQuery.data?.items.map((item) => ({
+			...item,
+			identities: identitiesByMedia[String(item.id)] ?? [],
+		}));
+	}, [mediaQuery.data?.items, identitiesQuery.data]);
+
+	return {
+		...mediaQuery,
+		itemsWithIdentities,
+		identitiesQuery,
+	};
+};
 
 type FetchParams = {
 	page: number;

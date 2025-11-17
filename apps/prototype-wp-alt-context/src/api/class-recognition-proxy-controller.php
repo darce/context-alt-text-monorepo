@@ -119,6 +119,26 @@ class RecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)',
+			array(
+				'methods'             => 'PATCH',
+				'callback'            => array( $this, 'update_cluster_label' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters/(?P<source_id>[a-f0-9-]+)/merge',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'merge_cluster' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function can_manage_recognition(): bool {
@@ -217,6 +237,46 @@ class RecognitionProxyController {
 		);
 
 		return $this->proxy_request( 'POST', '/recognition/clusters/reassign', $payload );
+	}
+
+	public function update_cluster_label( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		$label      = sanitize_text_field( (string) $request->get_param( 'label' ) );
+
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $label ) {
+			return new WP_Error( 'missing_label', 'Label cannot be empty.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'label'     => $label,
+		);
+
+		return $this->proxy_request( 'PATCH', sprintf( '/recognition/clusters/%s', $cluster_id ), $payload );
+	}
+
+	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$source_id    = sanitize_text_field( (string) $request->get_param( 'source_id' ) );
+		$target_label = sanitize_text_field( (string) $request->get_param( 'target_label' ) );
+
+		if ( '' === $source_id ) {
+			return new WP_Error( 'missing_source_id', 'Source cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $target_label ) {
+			return new WP_Error( 'missing_target_label', 'Target label is required.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id'    => $this->get_tenant_id(),
+			'target_label' => $target_label,
+		);
+
+		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/merge', $source_id ), $payload );
 	}
 
 	private function build_media_items( array $media_ids ): array {

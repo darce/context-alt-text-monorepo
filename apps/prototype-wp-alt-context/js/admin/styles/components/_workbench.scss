@@ -158,6 +158,133 @@
   }
 }
 
+.acx-identity-status {
+  margin-top: var(--acx-space-8);
+  display: flex;
+  align-items: center;
+  gap: var(--acx-space-8);
+  color: var(--acx-color-text-muted);
+
+  &__retry {
+    padding: var(--acx-space-4) var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    background-color: var(--acx-color-surface-alt);
+    cursor: pointer;
+    font-size: 0.85rem;
+  }
+}
+
+.acx-identity-clusters {
+  margin-top: var(--acx-space-8);
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-12);
+
+  &__empty {
+    margin: 0;
+    font-size: 0.85rem;
+    color: var(--acx-color-text-muted);
+  }
+}
+
+.acx-identity-cluster {
+  display: flex;
+  align-items: center;
+  gap: var(--acx-space-12);
+  padding: var(--acx-space-8) 0;
+
+  &__preview {
+    position: relative;
+    width: 40px;
+    height: 40px;
+  }
+
+  &__thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    border: 1px solid var(--acx-color-border);
+    object-fit: cover;
+
+    &--placeholder {
+      background-color: var(--acx-color-panel);
+    }
+  }
+
+  &__count {
+    position: absolute;
+    bottom: -4px;
+    right: -4px;
+    font-size: 0.7rem;
+    padding: 0 var(--acx-space-4);
+    background-color: var(--acx-color-accent);
+    color: var(--acx-color-accent-contrast);
+    border-radius: var(--acx-space-4);
+  }
+
+  &__info {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-4);
+  }
+
+  &__label {
+    font-weight: 600;
+  }
+
+  &__action {
+    background: none;
+    border: none;
+    padding: 0;
+    color: var(--acx-color-accent);
+    cursor: pointer;
+    align-self: flex-start;
+  }
+
+  &__edit {
+    display: flex;
+    gap: var(--acx-space-8);
+    align-items: center;
+    flex-wrap: wrap;
+  }
+
+  &__input {
+    padding: var(--acx-space-4) var(--acx-space-8);
+    border: 1px solid var(--acx-color-border);
+    min-width: 200px;
+  }
+
+  &__save,
+  &__cancel {
+    padding: var(--acx-space-4) var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    background-color: var(--acx-color-surface-alt);
+    cursor: pointer;
+  }
+
+  &__save {
+    background-color: var(--acx-color-accent);
+    border-color: var(--acx-color-accent);
+    color: var(--acx-color-accent-contrast);
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__cancel {
+    color: var(--acx-color-text);
+  }
+
+  &__error {
+    margin: 0;
+    font-size: 0.8rem;
+    color: var(--acx-color-danger, #a00);
+  }
+}
+
 .acx-apply-panel {
   display: flex;
   flex-direction: column;

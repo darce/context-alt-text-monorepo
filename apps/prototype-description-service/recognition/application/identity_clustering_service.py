@@ -7,6 +7,7 @@ from datetime import datetime
 from typing import Dict, List, Tuple
 from uuid import UUID, uuid4
 
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -87,7 +88,6 @@ class IdentityClusteringService:
             select(MediaIdentity)
             .where(
                 MediaIdentity.tenant_id == self.tenant_id,
-                MediaIdentity.is_deleted.is_(False),
                 ~membership_exists,
             )
             .order_by(MediaIdentity.created_at)
@@ -114,7 +114,6 @@ class IdentityClusteringService:
             select(MediaIdentity, distance_expr)
             .where(
                 MediaIdentity.tenant_id == self.tenant_id,
-                MediaIdentity.is_deleted.is_(False),
                 ~membership_exists,
                 distance_expr < max_distance,
             )
@@ -275,3 +274,61 @@ class IdentityClusteringService:
         await self._ensure_tenant_context()
         await self.session.refresh(target)
         return target, moved_count
+
+    async def merge_similar_clusters(self, threshold: float = 0.85) -> int:
+        await self._ensure_tenant_context()
+        stmt = (
+            select(IdentityCluster, MediaIdentity.embedding)
+            .join(MediaIdentity, IdentityCluster.representative_identity_id == MediaIdentity.id)
+            .where(IdentityCluster.tenant_id == self.tenant_id)
+        )
+        result = await self.session.execute(stmt)
+        clusters = [
+            (cluster, np.array(embedding, dtype=np.float32))
+            for cluster, embedding in result.all()
+            if embedding is not None
+        ]
+
+        merges_performed = 0
+        i = 0
+        while i < len(clusters):
+            target_cluster, target_embedding = clusters[i]
+            j = i + 1
+            while j < len(clusters):
+                source_cluster, source_embedding = clusters[j]
+                numerator = float(np.dot(target_embedding, source_embedding))
+                denom = float(np.linalg.norm(target_embedding) * np.linalg.norm(source_embedding))
+                similarity = numerator / denom if denom else 0.0
+
+                if similarity >= threshold:
+                    moved = await self._merge_cluster_objects(source_cluster, target_cluster)
+                    if moved:
+                        merges_performed += 1
+                    clusters.pop(j)
+                else:
+                    j += 1
+            i += 1
+
+        if merges_performed:
+            await self.session.commit()
+            await self._ensure_tenant_context()
+        else:
+            await self.session.flush()
+
+        return merges_performed
+
+    async def _merge_cluster_objects(self, source: IdentityCluster, target: IdentityCluster) -> int:
+        members_result = await self.session.execute(
+            select(IdentityMember).where(IdentityMember.cluster_id == source.id)
+        )
+        members = members_result.scalars().all()
+        moved = 0
+        for member in members:
+            member.cluster_id = target.id
+            moved += 1
+
+        target.identity_count += source.identity_count
+        target.updated_at = datetime.utcnow()
+
+        await self.session.delete(source)
+        return moved

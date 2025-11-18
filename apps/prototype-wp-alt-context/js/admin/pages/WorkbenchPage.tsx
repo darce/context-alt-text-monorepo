@@ -1,5 +1,6 @@
-import React, { useMemo, useState } from 'react';
+import React, { useMemo, useState, useEffect } from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
+import { useQueryClient } from '@tanstack/react-query';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { useClusterIdentities, useScanIdentities, useScanStatus } from '../hooks/useRecognitionHooks';
@@ -80,6 +81,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [activeSection, setActiveSection] = useState<WorkbenchTab>(TAB_IDS.scan);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const queryClient = useQueryClient();
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
@@ -93,10 +95,11 @@ export const WorkbenchPage = (): React.JSX.Element => {
   });
 
   const mediaData = mediaQuery.data;
-  const mediaItems = mediaData?.items ?? [];
+  const mediaItems = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
   const totalPages = mediaData?.totalPages ?? 1;
   const totalCount = mediaData?.total ?? 0;
   const allPageRowsChecked = isPageFullySelected(mediaItems);
+  const identityQuery = mediaQuery.identitiesQuery;
 
   const scanMutation = useScanIdentities({
     onMutate: () => {
@@ -106,6 +109,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
       rememberJob(data.job_id);
       setClusterMessage(null);
       setActiveSection(TAB_IDS.confirm);
+      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
     onError: (error) => {
       const message =
@@ -127,6 +131,12 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));
   const scanStatusText =
     scanStatusQuery.data?.status ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
+
+  useEffect(() => {
+    if (scanStatusQuery.data?.status === 'completed') {
+      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+    }
+  }, [scanStatusQuery.data?.status, queryClient]);
 
   const statusMessage = useMemo(() => {
     if (mediaQuery.isFetching) {
@@ -206,22 +216,23 @@ export const WorkbenchPage = (): React.JSX.Element => {
               jobId={jobId}
               errorMessage={scanError}
             />
-            <MediaSelection
-              items={mediaItems}
-              isLoading={mediaQuery.isFetching}
-              isError={mediaQuery.isError}
-              onRetry={mediaQuery.isError ? () => mediaQuery.refetch() : undefined}
-              statusMessage={statusMessage}
-              searchQuery={searchQuery}
-              onSearchChange={handleSearchChange}
-              selection={selection}
-              onToggleRow={toggleRow}
-              onToggleAll={(checked) => toggleAll(mediaItems, checked)}
-              currentPage={currentPage}
-              totalPages={totalPages}
-              onPageChange={setCurrentPage}
-              areAllPageRowsChecked={allPageRowsChecked}
-            />
+        <MediaSelection
+          items={mediaItems}
+          isLoading={mediaQuery.isFetching}
+          isError={mediaQuery.isError}
+          onRetry={mediaQuery.isError ? () => mediaQuery.refetch() : undefined}
+          statusMessage={statusMessage}
+          searchQuery={searchQuery}
+          onSearchChange={handleSearchChange}
+          selection={selection}
+          onToggleRow={toggleRow}
+          onToggleAll={(checked) => toggleAll(mediaItems, checked)}
+          currentPage={currentPage}
+          totalPages={totalPages}
+          onPageChange={setCurrentPage}
+          areAllPageRowsChecked={allPageRowsChecked}
+          identityQuery={identityQuery}
+        />
           </TabsContent>
 
           <TabsContent

@@ -9,8 +9,13 @@ from uuid import uuid4
 import pytest
 from unittest.mock import AsyncMock
 
+from sqlalchemy import select
+
 from recognition.application.identity_clustering_service import IdentityClusteringService
 from recognition.tests.fakes import DummySession, FakeResult, make_media_identity, make_simple_identity
+from db.session import async_session_factory
+from db.models import Tenant, MediaIdentity, IdentityCluster, IdentityMember
+from db.tenant_context import set_tenant_context, clear_tenant_context
 
 
 class ClusterServiceHarness(IdentityClusteringService):
@@ -165,3 +170,78 @@ def test_cluster_identities_caps_members_at_configured_limit():
 
     assert clusters
     assert len(service.created_clusters[0]) == 2
+
+
+@pytest.mark.asyncio
+async def test_merge_similar_clusters_merges_expected(require_database):
+    tenant_id = uuid4()
+    async with async_session_factory() as session:
+        session.add(Tenant(id=tenant_id, site_url=f"https://{tenant_id}.example.com"))
+        await session.commit()
+
+        await set_tenant_context(session, tenant_id)
+        identity_a = make_media_identity(tenant_id, media_id=11, embedding=[1.0] * 1024)
+        identity_b = make_media_identity(
+            tenant_id,
+            media_id=22,
+            embedding=[0.99] * 512 + [1.01] * 512,
+        )
+        identity_c = make_media_identity(tenant_id, media_id=33, embedding=[0.0] * 1024)
+        session.add_all([identity_a, identity_b, identity_c])
+        await session.flush()
+
+        cluster_a = IdentityCluster(
+            tenant_id=tenant_id,
+            label="cluster-a",
+            representative_identity_id=identity_a.id,
+            identity_count=1,
+        )
+        cluster_b = IdentityCluster(
+            tenant_id=tenant_id,
+            label="cluster-b",
+            representative_identity_id=identity_b.id,
+            identity_count=1,
+        )
+        cluster_c = IdentityCluster(
+            tenant_id=tenant_id,
+            label="cluster-c",
+            representative_identity_id=identity_c.id,
+            identity_count=1,
+        )
+        session.add_all([cluster_a, cluster_b, cluster_c])
+        await session.flush()
+
+        session.add_all(
+            [
+                IdentityMember(
+                    tenant_id=tenant_id,
+                    cluster_id=cluster_a.id,
+                    identity_id=identity_a.id,
+                    similarity=0.9,
+                ),
+                IdentityMember(
+                    tenant_id=tenant_id,
+                    cluster_id=cluster_b.id,
+                    identity_id=identity_b.id,
+                    similarity=0.9,
+                ),
+                IdentityMember(
+                    tenant_id=tenant_id,
+                    cluster_id=cluster_c.id,
+                    identity_id=identity_c.id,
+                    similarity=0.4,
+                ),
+            ]
+        )
+        await session.commit()
+
+        await set_tenant_context(session, tenant_id)
+        service = IdentityClusteringService(session=session, tenant_id=tenant_id)
+        merges = await service.merge_similar_clusters(threshold=0.95)
+        assert merges == 1
+
+        remaining_clusters = await session.execute(select(IdentityCluster))
+        labels = {cluster.label for cluster in remaining_clusters.scalars().all()}
+        assert "cluster-c" in labels
+        assert len(labels) == 2
+        await clear_tenant_context(session)

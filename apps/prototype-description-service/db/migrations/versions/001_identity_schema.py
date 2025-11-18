@@ -56,7 +56,6 @@ def upgrade() -> None:
         sa.Column("bbox_height", sa.Integer(), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
-        sa.Column("is_deleted", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "updated_at",
@@ -184,7 +183,6 @@ def upgrade() -> None:
         "idx_media_identities_tenant",
         "media_identities",
         ["tenant_id"],
-        postgresql_where=sa.text("NOT is_deleted"),
     )
     op.create_index(
         "idx_media_identities_embedding",

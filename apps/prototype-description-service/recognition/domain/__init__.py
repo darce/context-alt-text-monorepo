@@ -1,5 +1,5 @@
 """Domain layer for recognition entities."""
 
-from recognition.domain.entities import FaceDetection, FaceEmbedding
+from recognition.domain.entities import IdentityDetection, IdentityEmbedding
 
-__all__ = ["FaceDetection", "FaceEmbedding"]
+__all__ = ["IdentityDetection", "IdentityEmbedding"]

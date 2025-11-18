@@ -14,7 +14,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
-from recognition.domain.entities import FaceEmbedding
+from recognition.domain.entities import IdentityEmbedding
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -34,6 +34,11 @@ class IdentityScanService:
         media_items: Iterable[dict[str, object]],
         user_id: Optional[int] = None,
     ) -> None:
+        if hasattr(self.session, "get"):
+            persistent_job = await self.session.get(IdentityScanJob, job.id)
+            if persistent_job is None:
+                raise RuntimeError(f"IdentityScanJob {job.id} no longer exists")
+            job = persistent_job
         job.started_at = datetime.utcnow()
         job.status = "running"
         await self.session.flush()
@@ -78,7 +83,7 @@ class IdentityScanService:
         self,
         media_id: int,
         media_url: str,
-        embeddings: Iterable[FaceEmbedding],
+        embeddings: Iterable[IdentityEmbedding],
         created_by_user_id: Optional[int],
     ) -> list[MediaIdentity]:
         existing_keys = await self._existing_identity_keys(media_id)
@@ -129,7 +134,6 @@ class IdentityScanService:
         stmt = select(MediaIdentity.bbox_x, MediaIdentity.bbox_y).where(
             MediaIdentity.tenant_id == self.tenant_id,
             MediaIdentity.media_id == media_id,
-            MediaIdentity.is_deleted.is_(False),
         )
         result = await self.session.execute(stmt)
         return {(row[0], row[1]) for row in result.all()}

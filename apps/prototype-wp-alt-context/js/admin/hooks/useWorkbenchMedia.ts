@@ -1,8 +1,8 @@
-import { useMemo } from 'react';
-import { useQuery } from '@tanstack/react-query';
+import { useEffect, useMemo } from 'react';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useMediaIdentities } from './useMediaIdentities';
-import type { DetectedIdentity } from '../api/recognitionApi';
+import { fetchMediaIdentities, type MediaIdentitiesResponse, type DetectedIdentity } from '../api/recognitionApi';
 
 type WorkbenchMediaItem = {
   id: number;
@@ -27,32 +27,6 @@ type Params = {
 	perPage: number;
 	search?: string;
 	enabled: boolean;
-};
-
-export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) => {
-	const mediaQuery = useQuery<WorkbenchMediaResponse, Error>({
-		queryKey: ['workbench-media', { page, perPage, search }],
-		queryFn: () => fetchWorkbenchMedia({ page, perPage, search }),
-		placeholderData: (previousData) => previousData,
-		enabled,
-	});
-
-	const mediaIds = mediaQuery.data?.items.map((item) => item.id) ?? [];
-	const identitiesQuery = useMediaIdentities(mediaIds, enabled && mediaIds.length > 0);
-
-	const itemsWithIdentities = useMemo(() => {
-		const identitiesByMedia = identitiesQuery.data?.identities_by_media ?? {};
-		return mediaQuery.data?.items.map((item) => ({
-			...item,
-			identities: identitiesByMedia[String(item.id)] ?? [],
-		}));
-	}, [mediaQuery.data?.items, identitiesQuery.data]);
-
-	return {
-		...mediaQuery,
-		itemsWithIdentities,
-		identitiesQuery,
-	};
 };
 
 type FetchParams = {
@@ -95,4 +69,65 @@ const fetchWorkbenchMedia = async ({
 	return response.json();
 };
 
-export type { WorkbenchMediaItem, WorkbenchMediaResponse };
+	export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) => {
+	const queryClient = useQueryClient();
+
+	const mediaQuery = useQuery<WorkbenchMediaResponse, Error>({
+		queryKey: ['workbench-media', { page, perPage, search }],
+		queryFn: () => fetchWorkbenchMedia({ page, perPage, search }),
+		placeholderData: (previousData) => previousData,
+		enabled,
+	});
+
+	const mediaIds = mediaQuery.data?.items.map((item) => item.id) ?? [];
+	const identitiesQuery = useMediaIdentities(mediaIds, enabled && mediaIds.length > 0);
+
+	const itemsWithIdentities = useMemo(() => {
+		const identitiesByMedia = identitiesQuery.data?.identities_by_media ?? {};
+		return mediaQuery.data?.items.map((item) => ({
+			...item,
+			identities: identitiesByMedia[String(item.id)] ?? [],
+		}));
+	}, [mediaQuery.data?.items, identitiesQuery.data]);
+
+	useEffect(() => {
+		if (!mediaQuery.isSuccess) {
+			return;
+		}
+		const totalPages = mediaQuery.data?.totalPages ?? 1;
+		const nextPage = page + 1;
+		if (nextPage > totalPages) {
+			return;
+		}
+
+		let canceled = false;
+		const nextKey = ['workbench-media', { page: nextPage, perPage, search }];
+		queryClient
+			.prefetchQuery(nextKey, () => fetchWorkbenchMedia({ page: nextPage, perPage, search }))
+			.then((nextData) => {
+				if (canceled || !nextData) {
+					return;
+				}
+				const nextMediaIds = nextData.items.map((item) => item.id);
+				if (nextMediaIds.length === 0) {
+					return;
+				}
+				queryClient.prefetchQuery(['media-identities', nextMediaIds], () =>
+					fetchMediaIdentities(nextMediaIds),
+				);
+			})
+			.catch(() => undefined);
+
+		return () => {
+			canceled = true;
+		};
+	}, [mediaQuery.isSuccess, mediaQuery.data?.totalPages, page, perPage, search, queryClient]);
+
+		return {
+			...mediaQuery,
+			itemsWithIdentities,
+			identitiesQuery,
+		};
+	};
+
+	export type { WorkbenchMediaItem, WorkbenchMediaResponse };

@@ -1,8 +1,11 @@
 import { ChangeEvent } from 'react';
 import { __, sprintf } from '@wordpress/i18n';
+import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
+import { IdentityClusterList } from './IdentityClusterList';
 import { mediaEditUrl } from './Panels';
+import type { MediaIdentitiesResponse } from '../../api/recognitionApi';
 
 type Props = {
   items: WorkbenchMediaItem[];
@@ -19,6 +22,7 @@ type Props = {
   totalPages: number;
   onPageChange: (page: number) => void;
   areAllPageRowsChecked: boolean;
+  identityQuery: UseQueryResult<MediaIdentitiesResponse, Error>;
 };
 
 export const MediaSelection = ({
@@ -36,39 +40,60 @@ export const MediaSelection = ({
   totalPages,
   onPageChange,
   areAllPageRowsChecked,
-}: Props): React.JSX.Element => (
-  <div className="acx-media-selection">
-    <MediaSelectionToolbar
-      searchQuery={searchQuery}
-      onSearchChange={onSearchChange}
-      statusMessage={statusMessage}
-      isError={isError}
-      onRetry={onRetry}
-    />
+  identityQuery,
+}: Props): React.JSX.Element => {
+  const identityStatusMessage = identityQuery.isLoading
+    ? __('Loading identity data…', 'alt-context')
+    : identityQuery.isError
+    ? __('Unable to load identity data.', 'alt-context')
+    : null;
 
-    <table className="acx-media-selection__table">
-      <thead>
-        <tr>
-          <th scope="col">
-            <input
-              type="checkbox"
-              aria-label={__('Select all items on this page', 'alt-context')}
-              checked={areAllPageRowsChecked}
-              onChange={(event) => onToggleAll(event.target.checked)}
-              disabled={items.length === 0}
-            />
-          </th>
-          <th scope="col">{__('Preview', 'alt-context')}</th>
-          <th scope="col">{__('Details', 'alt-context')}</th>
-          <th scope="col">{__('Tags', 'alt-context')}</th>
-        </tr>
-      </thead>
-      <tbody>{renderRows({ items, isLoading, onToggleRow, selection })}</tbody>
-    </table>
+  return (
+    <>
+      <div className="acx-media-selection">
+        <MediaSelectionToolbar
+          searchQuery={searchQuery}
+          onSearchChange={onSearchChange}
+          statusMessage={statusMessage}
+          isError={isError}
+          onRetry={onRetry}
+        />
 
-    <MediaSelectionPagination currentPage={currentPage} totalPages={totalPages} onPageChange={onPageChange} />
-  </div>
-);
+        <table className="acx-media-selection__table">
+          <thead>
+            <tr>
+              <th scope="col">
+                <input
+                  type="checkbox"
+                  aria-label={__('Select all items on this page', 'alt-context')}
+                  checked={areAllPageRowsChecked}
+                  onChange={(event) => onToggleAll(event.target.checked)}
+                  disabled={items.length === 0}
+                />
+              </th>
+              <th scope="col">{__('Preview', 'alt-context')}</th>
+              <th scope="col">{__('Details', 'alt-context')}</th>
+              <th scope="col">{__('Tags', 'alt-context')}</th>
+            </tr>
+          </thead>
+          <tbody>{renderRows({ items, isLoading, onToggleRow, selection })}</tbody>
+        </table>
+
+        <MediaSelectionPagination currentPage={currentPage} totalPages={totalPages} onPageChange={onPageChange} />
+      </div>
+      {identityStatusMessage && (
+        <div className="acx-identity-status">
+          <span>{identityStatusMessage}</span>
+          {identityQuery.isError && (
+            <button type="button" className="acx-identity-status__retry" onClick={() => identityQuery.refetch()}>
+              {__('Retry', 'alt-context')}
+            </button>
+          )}
+        </div>
+      )}
+    </>
+  );
+};
 
 type MediaSelectionToolbarProps = {
   searchQuery: string;
@@ -191,6 +216,7 @@ const renderRows = ({
             <p className="acx-media-selection__media-title">{item.title}</p>
             <p className="acx-media-selection__media-alt">{item.altText ?? __('No alt text yet', 'alt-context')}</p>
           </a>
+          <IdentityClusterList identities={item.identities ?? []} mediaId={item.id} />
         </td>
         <td>
           {item.tags.length === 0 ? (

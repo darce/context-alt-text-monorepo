@@ -71,9 +71,6 @@ class MediaIdentity(Base):
     embedding: Mapped[list[float]] = mapped_column(
         Vector(_DB_SETTINGS.pgvector_dimension), nullable=False
     )
-    is_deleted: Mapped[bool] = mapped_column(
-        Boolean, nullable=False, server_default=text("false")
-    )
     created_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now()
     )
@@ -92,11 +89,7 @@ class MediaIdentity(Base):
             "tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"
         ),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
-        Index(
-            "idx_media_identities_tenant",
-            "tenant_id",
-            postgresql_where=text("NOT is_deleted"),
-        ),
+        Index("idx_media_identities_tenant", "tenant_id"),
         Index(
             "idx_media_identities_embedding",
             "embedding",

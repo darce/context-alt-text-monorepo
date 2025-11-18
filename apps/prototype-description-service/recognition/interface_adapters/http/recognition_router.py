@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import Dict, List, Optional
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -110,6 +110,15 @@ class MergeClusterResponse(BaseModel):
     target_identity_count: int
 
 
+class MergeSimilarRequest(BaseModel):
+    tenant_id: UUID
+    threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+
+
+class MergeSimilarResponse(BaseModel):
+    merges_performed: int
+
+
 def get_embedding_provider() -> FaceEmbeddingProvider:
     return FaceEmbeddingProvider()
 
@@ -131,13 +140,12 @@ async def analyze_media(
     )
 
     session.add(job)
-    await session.commit()
-    await session.refresh(job)
+    await session.flush()
+    # job remains pending; IdentityScanService will update status and commit.
 
     service = IdentityScanService(session, provider, request.tenant_id)
     await service.scan_identities(job, [item.model_dump() for item in request.media_items], request.user_id)
 
-    await session.refresh(job)
     return AnalyzeResponse(job_id=job.id, status=job.status, total_media=job.total_media)
 
 
@@ -154,10 +162,11 @@ async def _ensure_tenant(session: AsyncSession, tenant_id: UUID, site_url: Optio
 @router.get("/jobs/{job_id}")
 async def get_analysis_job(
     job_id: UUID,
-    tenant_id: UUID,
+    tenant_id: Optional[UUID] = None,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    await set_tenant_context(session, tenant_id)
+    if tenant_id:
+        await set_tenant_context(session, tenant_id)
     job = await session.get(IdentityScanJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -222,16 +231,33 @@ async def list_clusters(
 @router.get("/media/identities", response_model=MediaIdentitiesResponse)
 async def get_media_identities(
     tenant_id: UUID,
-    media_ids: List[int] = Query(..., min_length=1, max_length=100),
+    media_ids: List[int] | None = Query(
+        None,
+        max_length=100,
+    ),
+    request: Request = None,
     session: AsyncSession = Depends(get_session),
 ) -> MediaIdentitiesResponse:
     await set_tenant_context(session, tenant_id)
+    resolved_ids: List[int] = list(media_ids or [])
+    if not resolved_ids and request is not None:
+        for key, value in request.query_params.multi_items():
+            if key in {"media_ids", "media_ids[]"} or key.startswith("media_ids["):
+                try:
+                    resolved_ids.append(int(value))
+                except ValueError:
+                    raise HTTPException(status_code=422, detail="media_ids must be integers")
+
+    if not resolved_ids:
+        raise HTTPException(status_code=422, detail="At least one media_id is required")
+    if len(resolved_ids) > 100:
+        raise HTTPException(status_code=422, detail="Too many media_ids (max 100)")
+
     stmt = (
         select(MediaIdentity)
         .where(
             MediaIdentity.tenant_id == tenant_id,
-            MediaIdentity.is_deleted.is_(False),
-            MediaIdentity.media_id.in_(media_ids),
+            MediaIdentity.media_id.in_(resolved_ids),
         )
         .options(selectinload(MediaIdentity.cluster_memberships))
     )
@@ -254,7 +280,7 @@ async def get_media_identities(
             cluster_labels[cluster.id] = (label, is_auto)
 
     identities_by_media: Dict[str, List[MediaIdentityDetail]] = {}
-    for media_id in media_ids:
+    for media_id in resolved_ids:
         media_entries = [
             identity
             for identity in identities
@@ -331,3 +357,14 @@ async def merge_cluster(
         identities_moved=moved,
         target_identity_count=target.identity_count,
     )
+
+
+@router.post("/clusters/merge-similar", response_model=MergeSimilarResponse)
+async def merge_similar_clusters(
+    request: MergeSimilarRequest,
+    session: AsyncSession = Depends(get_session),
+) -> MergeSimilarResponse:
+    await set_tenant_context(session, request.tenant_id)
+    service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
+    merges = await service.merge_similar_clusters(threshold=request.threshold)
+    return MergeSimilarResponse(merges_performed=merges)

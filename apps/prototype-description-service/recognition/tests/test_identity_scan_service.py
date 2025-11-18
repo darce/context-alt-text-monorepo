@@ -12,7 +12,7 @@ from PIL import Image
 
 from db.models import IdentityScanJob, MediaIdentity
 from recognition.application.identity_scan_service import IdentityScanService
-from recognition.domain.entities import FaceDetection, FaceEmbedding
+from recognition.domain.entities import IdentityDetection, IdentityEmbedding
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 from recognition.tests.fakes import DummySession
 
@@ -20,17 +20,17 @@ from recognition.tests.fakes import DummySession
 class DeterministicProvider(FaceEmbeddingProvider):
     """Predictable provider that returns a configurable number of embeddings."""
 
-    def __init__(self, faces_per_media: int = 1) -> None:
+    def __init__(self, identities_per_media: int = 1) -> None:
         super().__init__()
-        self.faces_per_media = faces_per_media
+        self.identities_per_media = identities_per_media
 
-    async def analyze(self, image: Image.Image) -> List[FaceEmbedding]:  # noqa: ARG002
+    async def analyze(self, image: Image.Image) -> List[IdentityEmbedding]:  # noqa: ARG002
         detections = []
-        for idx in range(self.faces_per_media):
+        for idx in range(self.identities_per_media):
             bbox = (idx, idx, idx + 10, idx + 10)
-            detection = FaceDetection(bbox=bbox, confidence=0.8)
+            detection = IdentityDetection(bbox=bbox, confidence=0.8)
             detections.append(
-                FaceEmbedding(
+                IdentityEmbedding(
                     embedding=np.ones(1024, dtype=np.float32),
                     detection=detection,
                 )
@@ -63,7 +63,7 @@ def _make_job(tenant_id):
 
 def test_scan_identities_persists_data():
     session = DummySession()
-    provider = DeterministicProvider(faces_per_media=2)
+    provider = DeterministicProvider(identities_per_media=2)
     service = DummyIdentityScanService(session, provider, uuid4())
     job = _make_job(service.tenant_id)
 
@@ -98,9 +98,9 @@ def test_save_identities_normalizes_bbox_dimensions():
     provider = DeterministicProvider()
     service = DummyIdentityScanService(session, provider, uuid4())
 
-    detection = FaceDetection(bbox=(10, 20, 5, 15), confidence=0.6)
+    detection = IdentityDetection(bbox=(10, 20, 5, 15), confidence=0.6)
     embeddings = [
-        FaceEmbedding(
+        IdentityEmbedding(
             embedding=np.arange(1024, dtype=np.float32),
             detection=detection,
         )
@@ -126,8 +126,8 @@ def test_save_identities_skips_existing_bboxes():
     provider = DeterministicProvider()
     service = DummyIdentityScanService(session, provider, uuid4())
 
-    detection = FaceDetection(bbox=(0, 0, 10, 10), confidence=0.9)
-    embeddings = [FaceEmbedding(embedding=np.arange(1024, dtype=np.float32), detection=detection)]
+    detection = IdentityDetection(bbox=(0, 0, 10, 10), confidence=0.9)
+    embeddings = [IdentityEmbedding(embedding=np.arange(1024, dtype=np.float32), detection=detection)]
 
     saved = asyncio.run(
         service._save_identities(
@@ -147,8 +147,8 @@ def test_save_identities_skips_duplicates_in_same_batch():
     provider = DeterministicProvider()
     service = DummyIdentityScanService(session, provider, uuid4())
 
-    detection = FaceDetection(bbox=(5, 5, 15, 15), confidence=0.9)
-    duplicate_embedding = FaceEmbedding(embedding=np.ones(1024, dtype=np.float32), detection=detection)
+    detection = IdentityDetection(bbox=(5, 5, 15, 15), confidence=0.9)
+    duplicate_embedding = IdentityEmbedding(embedding=np.ones(1024, dtype=np.float32), detection=detection)
     embeddings = [duplicate_embedding, duplicate_embedding]
 
     saved = asyncio.run(
@@ -169,7 +169,7 @@ def test_scan_identities_respects_max_identities_per_image():
     """Future safeguard to prevent runaway detections per asset."""
 
     session = DummySession()
-    provider = DeterministicProvider(faces_per_media=5)
+    provider = DeterministicProvider(identities_per_media=5)
     service = DummyIdentityScanService(session, provider, uuid4())
     job = _make_job(service.tenant_id)
 

@@ -9,8 +9,8 @@ import numpy as np
 
 
 @dataclass(frozen=True)
-class FaceDetection:
-    """Detected face bounding box and confidence metadata."""
+class IdentityDetection:
+    """Detected identity (face) bounding box and confidence metadata."""
 
     bbox: Tuple[int, int, int, int]
     confidence: float
@@ -22,11 +22,11 @@ class FaceDetection:
 
 
 @dataclass(frozen=True)
-class FaceEmbedding:
-    """Face embedding combined with the original detection."""
+class IdentityEmbedding:
+    """Identity embedding combined with the original detection."""
 
     embedding: np.ndarray
-    detection: FaceDetection
+    detection: IdentityDetection
 
     def to_list(self) -> list[float]:
         return self.embedding.tolist()

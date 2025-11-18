@@ -11,7 +11,7 @@ import numpy as np
 from PIL import Image
 
 from recognition.config import get_settings
-from recognition.domain.entities import FaceDetection, FaceEmbedding
+from recognition.domain.entities import IdentityDetection, IdentityEmbedding
 
 logger = logging.getLogger(__name__)
 
@@ -70,20 +70,20 @@ class FaceEmbeddingProvider:
         rgb_array = np.array(pil_image)
         return cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
 
-    async def analyze(self, image: Image.Image) -> List[FaceEmbedding]:
+    async def analyze(self, image: Image.Image) -> List[IdentityEmbedding]:
         await self._ensure_model_loaded()
 
         cv2_image = self._pil_to_cv2(image)
         assert self._app is not None
 
         faces = self._app.get(cv2_image)
-        results: List[FaceEmbedding] = []
+        results: List[IdentityEmbedding] = []
 
         for face in faces:
             bbox = face.bbox.astype(int)
             x_min, y_min, x_max, y_max = bbox
 
-            detection = FaceDetection(
+            detection = IdentityDetection(
                 bbox=(x_min, y_min, x_max, y_max),
                 confidence=float(face.det_score),
                 landmarks=getattr(face, "kps", None),
@@ -93,7 +93,7 @@ class FaceEmbeddingProvider:
             context_vec = self._context_vector(face, image)
             composite = np.concatenate([identity_vec, context_vec])
 
-            results.append(FaceEmbedding(embedding=composite, detection=detection))
+            results.append(IdentityEmbedding(embedding=composite, detection=detection))
 
         logger.info("Detected %d faces", len(results))
         return results

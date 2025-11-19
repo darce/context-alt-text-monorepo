@@ -5,6 +5,7 @@ from recognition.config.settings import (
     IdentityClusteringSettings,
     IdentityDetectionSettings,
     InsightFaceSettings,
+    ThumbnailSettings,
     RecognitionSettings,
     get_settings,
 )
@@ -16,4 +17,5 @@ __all__ = [
     "IdentityClusteringSettings",
     "RecognitionSettings",
     "ClusteringSettings",
+    "ThumbnailSettings",
 ]

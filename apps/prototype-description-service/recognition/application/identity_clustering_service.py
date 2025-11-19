@@ -43,6 +43,7 @@ class IdentityClusteringService:
 
     async def cluster_identities(self) -> List[IdentityCluster]:
         logger.info("Starting identity clustering for tenant %s", self.tenant_id)
+        await self._ensure_tenant_context()
 
         unclustered_identities = await self._get_unclustered_identities()
         if not unclustered_identities:
@@ -57,7 +58,10 @@ class IdentityClusteringService:
                 continue
 
             candidates = await self._find_similar_identities(seed_identity)
-            if len(candidates) < 2:
+            if not any(identity.id == seed_identity.id for identity, _ in candidates):
+                candidates.insert(0, (seed_identity, 1.0))
+
+            if not candidates:
                 processed_ids.add(seed_identity.id)
                 continue
 
@@ -132,6 +136,7 @@ class IdentityClusteringService:
         return identities_with_scores
 
     async def _create_cluster(self, identities_with_scores: List[Tuple[MediaIdentity, float]]) -> IdentityCluster:
+        await self._ensure_tenant_context()
         representative = max(identities_with_scores, key=lambda pair: pair[0].confidence)[0]
 
         cluster = IdentityCluster(
@@ -187,6 +192,7 @@ class IdentityClusteringService:
             "member_ids": member_ids,
             "representative_identity": {
                 "media_id": cluster.representative_identity.media_id if cluster.representative_identity else None,
+                "thumbnail_url": cluster.representative_identity.thumbnail_url if cluster.representative_identity else None,
                 "bbox": {
                     "x": cluster.representative_identity.bbox_x if cluster.representative_identity else 0,
                     "y": cluster.representative_identity.bbox_y if cluster.representative_identity else 0,
@@ -199,6 +205,7 @@ class IdentityClusteringService:
                     "id": str(identity.id),
                     "media_id": identity.media_id,
                     "similarity": member.similarity,
+                    "thumbnail_url": identity.thumbnail_url,
                     "bbox": {
                         "x": identity.bbox_x,
                         "y": identity.bbox_y,

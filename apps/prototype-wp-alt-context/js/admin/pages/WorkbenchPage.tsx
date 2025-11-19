@@ -110,6 +110,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
       setClusterMessage(null);
       setActiveSection(TAB_IDS.confirm);
       queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+      clusterMutation.mutate();
     },
     onError: (error) => {
       const message =
@@ -126,6 +127,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
           data.total_identities_clustered,
         ),
       );
+      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
   });
   const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));

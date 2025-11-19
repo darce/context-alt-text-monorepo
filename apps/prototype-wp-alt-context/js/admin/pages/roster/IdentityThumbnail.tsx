@@ -17,11 +17,14 @@ export const IdentityThumbnail = ({ identity, mediaMeta, size = 96, onClick }: I
   const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
 
   React.useEffect(() => {
+    if (identity.thumbnail_url) {
+      setCroppedSrc(null);
+      return;
+    }
     if (!mediaMeta?.url) {
       setCroppedSrc(null);
       return;
     }
-
     let cancelled = false;
     const img = new Image();
     img.crossOrigin = 'anonymous';
@@ -92,15 +95,17 @@ export const IdentityThumbnail = ({ identity, mediaMeta, size = 96, onClick }: I
     return () => {
       cancelled = true;
     };
-  }, [identity.bbox, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size]);
+  }, [identity.thumbnail_url, identity.bbox, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size]);
 
-  if (!mediaMeta?.url) {
+  const resolvedSrc = identity.thumbnail_url ?? croppedSrc ?? mediaMeta?.url ?? null;
+
+  if (!resolvedSrc) {
     return <div className="acx-cluster-card__face--placeholder" aria-hidden="true" />;
   }
 
   return (
     <img
-      src={croppedSrc ?? mediaMeta.url}
+      src={resolvedSrc}
       alt={sprintf(__('Identity from media %d', 'alt-context'), identity.media_id)}
       width={size}
       height={size}

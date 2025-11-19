@@ -2,7 +2,12 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
-import { mergeCluster, updateClusterLabel, type DetectedIdentity } from '../../api/recognitionApi';
+import {
+  mergeCluster,
+  updateClusterLabel,
+  type DetectedIdentity,
+  type MediaIdentitiesResponse,
+} from '../../api/recognitionApi';
 
 type Props = {
   identities: DetectedIdentity[];
@@ -59,13 +64,64 @@ const IdentityClusterItem = ({ cluster }: ClusterItemProps): React.JSX.Element =
   const [labelInput, setLabelInput] = React.useState(cluster.label ?? '');
   const [error, setError] = React.useState<string | null>(null);
 
+  const clusterEditableId = React.useMemo(() => {
+    if (cluster.clusterId) {
+      return cluster.clusterId;
+    }
+    const memberWithCluster = cluster.members.find((member) => member.cluster_id);
+    return memberWithCluster?.cluster_id ?? null;
+  }, [cluster.clusterId, cluster.members]);
+
   const invalidateIdentities = React.useCallback(() => {
     queryClient.invalidateQueries({ queryKey: ['media-identities'] });
   }, [queryClient]);
 
+  const updateCachedClusterLabel = React.useCallback(
+    (clusterId: string, nextLabel: string) => {
+      queryClient.setQueriesData<MediaIdentitiesResponse>(
+        { queryKey: ['media-identities'] },
+        (current) => {
+          if (!current) {
+            return current;
+          }
+
+          let changed = false;
+          const nextMap: MediaIdentitiesResponse['identities_by_media'] = {};
+
+          for (const [mediaKey, identities] of Object.entries(current.identities_by_media)) {
+            let mediaChanged = false;
+            const updatedIdentities = identities.map((identity) => {
+              if (identity.cluster_id !== clusterId) {
+                return identity;
+              }
+              mediaChanged = true;
+              changed = true;
+              return {
+                ...identity,
+                cluster_label: nextLabel,
+                is_auto_label: false,
+              };
+            });
+            nextMap[mediaKey] = mediaChanged ? updatedIdentities : identities;
+          }
+
+          if (!changed) {
+            return current;
+          }
+
+          return { identities_by_media: nextMap };
+        },
+      );
+    },
+    [queryClient],
+  );
+
   const renameMutation = useMutation({
-    mutationFn: (label: string) => updateClusterLabel(cluster.clusterId as string, label),
-    onSuccess: () => {
+    mutationFn: (label: string) => updateClusterLabel(clusterEditableId as string, label),
+    onSuccess: (_data, updatedLabel) => {
+      if (clusterEditableId) {
+        updateCachedClusterLabel(clusterEditableId, updatedLabel);
+      }
       invalidateIdentities();
       setIsEditing(false);
       setError(null);
@@ -73,8 +129,11 @@ const IdentityClusterItem = ({ cluster }: ClusterItemProps): React.JSX.Element =
   });
 
   const mergeMutation = useMutation({
-    mutationFn: (label: string) => mergeCluster(cluster.clusterId as string, label),
-    onSuccess: () => {
+    mutationFn: (label: string) => mergeCluster(clusterEditableId as string, label),
+    onSuccess: (_data, updatedLabel) => {
+      if (clusterEditableId) {
+        updateCachedClusterLabel(clusterEditableId, updatedLabel);
+      }
       invalidateIdentities();
       setIsEditing(false);
       setError(null);
@@ -83,7 +142,7 @@ const IdentityClusterItem = ({ cluster }: ClusterItemProps): React.JSX.Element =
 
   const representative = cluster.members[0];
   const labelText = cluster.label ?? __('Unlabeled identity', 'alt-context');
-  const canEdit = Boolean(cluster.clusterId);
+  const canEdit = Boolean(clusterEditableId);
 
   const startEditing = () => {
     if (!canEdit) {
@@ -132,10 +191,22 @@ const IdentityClusterItem = ({ cluster }: ClusterItemProps): React.JSX.Element =
       <div className="acx-identity-cluster__info">
         {!isEditing ? (
           <>
-            <span className="acx-identity-cluster__label">{labelText}</span>
+            {canEdit && !cluster.label ? (
+              <button
+                type="button"
+                className="acx-identity-cluster__label acx-identity-cluster__label--action"
+                onClick={startEditing}
+              >
+                {labelText}
+              </button>
+            ) : (
+              <span className="acx-identity-cluster__label">{labelText}</span>
+            )}
             {canEdit && (
               <button type="button" className="acx-identity-cluster__action" onClick={startEditing}>
-                {cluster.isAutoLabel ? __('Name this person', 'alt-context') : __('Edit label', 'alt-context')}
+                {!cluster.label || cluster.isAutoLabel
+                  ? __('Name this person', 'alt-context')
+                  : __('Edit label', 'alt-context')}
               </button>
             )}
           </>

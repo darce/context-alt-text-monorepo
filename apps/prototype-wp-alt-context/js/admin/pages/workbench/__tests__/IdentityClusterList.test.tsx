@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 
 import { IdentityClusterList } from '../IdentityClusterList';
 import * as api from '../../../api/recognitionApi';
+import type { MediaIdentitiesResponse } from '../../../api/recognitionApi';
 
 vi.mock('../../../api/recognitionApi', () => ({
   mergeCluster: vi.fn(),
@@ -14,7 +15,8 @@ const renderWithClient = (ui: React.ReactElement) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
-  return render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  const utils = render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
+  return { client, ...utils };
 };
 
 const baseIdentity = {
@@ -38,7 +40,18 @@ describe('IdentityClusterList', () => {
 
   it('allows renaming a manually labeled cluster', async () => {
     (api.updateClusterLabel as vi.Mock).mockResolvedValue({});
-    renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { client } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [
+          {
+            ...baseIdentity,
+          },
+        ],
+      },
+    };
+    client.setQueryData(['media-identities', [1]], cacheData);
 
     fireEvent.click(screen.getByRole('button', { name: /edit label/i }));
     const input = screen.getByPlaceholderText(/enter a name/i);
@@ -46,6 +59,10 @@ describe('IdentityClusterList', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'New Label'));
+
+    const updated = client.getQueryData<MediaIdentitiesResponse>(['media-identities', [1]]);
+    expect(updated?.identities_by_media['1'][0].cluster_label).toBe('New Label');
+    expect(updated?.identities_by_media['1'][0].is_auto_label).toBe(false);
   });
 
   it('merges auto-labeled clusters via mergeCluster', async () => {
@@ -58,7 +75,18 @@ describe('IdentityClusterList', () => {
       is_auto_label: true,
     };
 
-    renderWithClient(<IdentityClusterList identities={[autoIdentity]} mediaId={1} />);
+    const { client } = renderWithClient(<IdentityClusterList identities={[autoIdentity]} mediaId={1} />);
+
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [
+          {
+            ...autoIdentity,
+          },
+        ],
+      },
+    };
+    client.setQueryData(['media-identities', [1]], cacheData);
 
     fireEvent.click(screen.getByRole('button', { name: /Name this person/i }));
     const input = screen.getByPlaceholderText(/enter a name/i);
@@ -66,5 +94,30 @@ describe('IdentityClusterList', () => {
     fireEvent.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-auto', 'Person A'));
+
+    const updated = client.getQueryData<MediaIdentitiesResponse>(['media-identities', [1]]);
+    expect(updated?.identities_by_media['1'][0].cluster_label).toBe('Person A');
+    expect(updated?.identities_by_media['1'][0].is_auto_label).toBe(false);
+  });
+
+  it('renders persisted thumbnails when provided', () => {
+    const identityWithThumb = {
+      ...baseIdentity,
+      thumbnail_url: 'https://example.com/thumb.jpg',
+    };
+
+    renderWithClient(<IdentityClusterList identities={[identityWithThumb]} mediaId={1} />);
+    const image = screen.getByRole('img', { name: /detected identity thumbnail/i });
+    expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+  });
+
+  it('allows clicking the unlabeled text to start editing', () => {
+    const unlabeled = {
+      ...baseIdentity,
+      cluster_label: null,
+    };
+    renderWithClient(<IdentityClusterList identities={[unlabeled]} mediaId={1} />);
+    fireEvent.click(screen.getByRole('button', { name: /Unlabeled identity/i }));
+    expect(screen.getByPlaceholderText(/enter a name/i)).toBeInTheDocument();
   });
 });

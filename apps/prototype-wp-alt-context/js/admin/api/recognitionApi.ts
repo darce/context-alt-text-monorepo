@@ -51,6 +51,7 @@ export type ClusterIdentity = {
   similarity: number;
   confidence: number;
   bbox: RepresentativeBounds['bbox'];
+  thumbnail_url?: string | null;
 };
 
 export type MediaIdentitiesResponse = {

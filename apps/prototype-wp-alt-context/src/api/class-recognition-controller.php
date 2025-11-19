@@ -123,7 +123,14 @@ class RecognitionController {
 	}
 
 	public function get_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		return $this->proxy_request( 'GET', sprintf( '/recognition/jobs/%s', $request->get_param( 'job_id' ) ) );
+		return $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/jobs/%s', $request->get_param( 'job_id' ) ),
+			[],
+			[
+				'tenant_id' => $this->get_tenant_id(),
+			]
+		);
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {

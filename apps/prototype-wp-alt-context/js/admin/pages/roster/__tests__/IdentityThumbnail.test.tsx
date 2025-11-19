@@ -19,6 +19,12 @@ describe('IdentityThumbnail', () => {
     expect(container.querySelector('.acx-cluster-card__face--placeholder')).toBeInTheDocument();
   });
 
+  it('uses backend-provided thumbnail when available', () => {
+    render(<IdentityThumbnail identity={{ ...identity, thumbnail_url: 'https://example.com/thumb.jpg' }} size={96} />);
+    const image = screen.getByRole('img');
+    expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+  });
+
   it('calls onClick when provided', async () => {
     const onClick = vi.fn();
     render(<IdentityThumbnail identity={identity} mediaMeta={{ url: 'https://example.com/1.jpg' }} onClick={onClick} />);

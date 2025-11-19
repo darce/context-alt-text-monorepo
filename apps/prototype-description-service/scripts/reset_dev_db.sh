@@ -48,10 +48,9 @@ else
   exit 1
 fi
 
-if ! "${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" ps postgres >/dev/null 2>&1; then
-  echo "[reset-dev-db] Starting dockerized postgres via docker compose..." >&2
-  "${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" up -d postgres
-fi
+echo "[reset-dev-db] Restarting dockerized postgres to close lingering sessions..." >&2
+"${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" stop postgres >/dev/null 2>&1 || true
+"${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" up -d postgres >/dev/null
 
 ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
 ADMIN_PASS="${ADMIN_PGPASSWORD:-${DB_PASS}}"

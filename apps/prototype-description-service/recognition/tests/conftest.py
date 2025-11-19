@@ -3,14 +3,13 @@
 from __future__ import annotations
 
 import asyncio
-from typing import AsyncIterator
-
 import os
 from pathlib import Path
+from typing import AsyncIterator
 
 import pytest
 import pytest_asyncio
-from httpx import AsyncClient, ASGITransport
+from httpx import ASGITransport, AsyncClient
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
@@ -56,3 +55,23 @@ async def require_database() -> AsyncIterator[None]:
     except (OperationalError, SQLAlchemyError) as exc:
         pytest.skip(f"Database unreachable: {exc}")
     yield
+
+
+@pytest.fixture(scope="session", autouse=True)
+def configure_thumbnail_storage(tmp_path_factory):
+    """Store generated thumbnails in a disposable directory during tests."""
+
+    tmp_dir = tmp_path_factory.mktemp("thumbnails")
+    prev_dir = os.environ.get("THUMBNAIL_DIR")
+    prev_base = os.environ.get("THUMBNAIL_BASE_URL")
+    os.environ["THUMBNAIL_DIR"] = str(tmp_dir)
+    os.environ["THUMBNAIL_BASE_URL"] = "/test-thumbnails"
+    yield
+    if prev_dir is not None:
+        os.environ["THUMBNAIL_DIR"] = prev_dir
+    else:
+        os.environ.pop("THUMBNAIL_DIR", None)
+    if prev_base is not None:
+        os.environ["THUMBNAIL_BASE_URL"] = prev_base
+    else:
+        os.environ.pop("THUMBNAIL_BASE_URL", None)

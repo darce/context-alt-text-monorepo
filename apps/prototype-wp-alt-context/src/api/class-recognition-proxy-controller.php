@@ -124,6 +124,16 @@ class RecognitionProxyController {
 			'acx/v1',
 			'/workbench/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)',
 			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_cluster_detail' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)',
+			array(
 				'methods'             => 'PATCH',
 				'callback'            => array( $this, 'update_cluster_label' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
@@ -174,7 +184,12 @@ class RecognitionProxyController {
 			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
 		}
 
-		return $this->proxy_request( 'GET', sprintf( '/recognition/jobs/%s', $job_id ) );
+		return $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/jobs/%s', $job_id ),
+			array(),
+			array( 'tenant_id' => $this->get_tenant_id() )
+		);
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -194,6 +209,20 @@ class RecognitionProxyController {
 		);
 
 		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
+	}
+
+	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = (string) $request->get_param( 'cluster_id' );
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/clusters/%s', $cluster_id ),
+			array(),
+			array( 'tenant_id' => $this->get_tenant_id() )
+		);
 	}
 
 	public function get_media_identities( WP_REST_Request $request ): WP_REST_Response|WP_Error {

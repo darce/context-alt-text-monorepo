@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import asyncio
+import os
+from pathlib import Path
 from typing import List
 from uuid import uuid4
 
@@ -73,7 +75,13 @@ def test_scan_identities_persists_data():
     assert job.status == "completed"
     assert job.identities_detected == 2
     assert job.processed_media == 1
-    assert len([obj for obj in session.added if isinstance(obj, MediaIdentity)]) == 2
+    saved_identities = [obj for obj in session.added if isinstance(obj, MediaIdentity)]
+    assert len(saved_identities) == 2
+    thumbnail_dir = Path(os.environ["THUMBNAIL_DIR"])
+    for identity in saved_identities:
+        assert identity.thumbnail_url
+        thumb_path = thumbnail_dir / f"{identity.id}.jpg"
+        assert thumb_path.exists()
     assert session.commit_calls == 1
 
 
@@ -112,6 +120,7 @@ def test_save_identities_normalizes_bbox_dimensions():
             media_url="https://example.com/99.jpg",
             embeddings=embeddings,
             created_by_user_id=None,
+            source_image=service._image,
         )
     )
 
@@ -135,6 +144,7 @@ def test_save_identities_skips_existing_bboxes():
             media_url="https://example.com/77.jpg",
             embeddings=embeddings,
             created_by_user_id=None,
+            source_image=service._image,
         )
     )
 
@@ -157,6 +167,7 @@ def test_save_identities_skips_duplicates_in_same_batch():
             media_url="https://example.com/101.jpg",
             embeddings=embeddings,
             created_by_user_id=None,
+            source_image=service._image,
         )
     )
 

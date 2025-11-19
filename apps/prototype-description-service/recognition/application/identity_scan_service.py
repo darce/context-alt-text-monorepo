@@ -6,7 +6,7 @@ import logging
 from datetime import datetime
 from io import BytesIO
 from typing import Iterable, Optional
-from uuid import UUID
+from uuid import UUID, uuid4
 
 import httpx
 from PIL import Image
@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityScanJob, MediaIdentity
 from recognition.domain.entities import IdentityEmbedding
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
+from recognition.infrastructure.thumbnail_service import ThumbnailService
 
 logger = logging.getLogger(__name__)
 
@@ -27,6 +28,7 @@ class IdentityScanService:
         self.session = session
         self.embedding_provider = embedding_provider
         self.tenant_id = tenant_id
+        self._thumbnail_service = ThumbnailService()
 
     async def scan_identities(
         self,
@@ -59,6 +61,7 @@ class IdentityScanService:
                     media_url=media_url,
                     embeddings=embeddings,
                     created_by_user_id=user_id,
+                    source_image=image,
                 )
 
                 processed_media += 1
@@ -85,6 +88,7 @@ class IdentityScanService:
         media_url: str,
         embeddings: Iterable[IdentityEmbedding],
         created_by_user_id: Optional[int],
+        source_image: Image.Image,
     ) -> list[MediaIdentity]:
         existing_keys = await self._existing_identity_keys(media_id)
         new_keys: set[tuple[int, int]] = set()
@@ -120,9 +124,25 @@ class IdentityScanService:
                 created_by_user_id=created_by_user_id,
             )
             self.session.add(identity)
+            if getattr(identity, "id", None) is None:
+                identity.id = uuid4()
+            self._maybe_generate_thumbnail(identity, embedding, source_image)
             saved.append(identity)
 
         return saved
+
+    def _maybe_generate_thumbnail(self, identity: MediaIdentity, embedding: IdentityEmbedding, image: Image.Image) -> None:
+        if not self._thumbnail_service.enabled:
+            return
+        bbox = (
+            float(identity.bbox_x),
+            float(identity.bbox_y),
+            float(identity.bbox_width),
+            float(identity.bbox_height),
+        )
+        url = self._thumbnail_service.save(image=image, bbox=bbox, identity_id=identity.id)
+        if url:
+            identity.thumbnail_url = url
 
     async def _fetch_image(self, url: str) -> Image.Image:
         async with httpx.AsyncClient(timeout=30.0) as client:

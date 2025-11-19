@@ -56,6 +56,7 @@ def upgrade() -> None:
         sa.Column("bbox_height", sa.Integer(), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
+        sa.Column("thumbnail_url", sa.String(length=500)),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "updated_at",

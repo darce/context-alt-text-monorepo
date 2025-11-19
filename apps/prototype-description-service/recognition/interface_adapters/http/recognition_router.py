@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Dict, List, Optional
 from uuid import UUID
+from urllib.parse import urlparse
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, HttpUrl
@@ -21,6 +23,9 @@ from recognition.application.identity_clustering_service import (
 )
 from recognition.application.identity_scan_service import IdentityScanService
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
+from recognition.config import get_settings
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["recognition"])
 
@@ -86,6 +91,30 @@ class MediaIdentitiesResponse(BaseModel):
     identities_by_media: Dict[str, List[MediaIdentityDetail]]
 
 
+def _resolve_thumbnail_url(raw_url: Optional[str], request: Optional[Request]) -> Optional[str]:
+    if not raw_url or request is None:
+        return raw_url
+
+    try:
+        parsed_url = urlparse(raw_url)
+    except ValueError:
+        return raw_url
+
+    # If the stored URL already points to a different origin (e.g., S3), leave it alone.
+    settings = get_settings()
+    configured = settings.thumbnail.base_url or ""
+    configured_host = urlparse(configured).netloc if configured else ""
+
+    if parsed_url.scheme and parsed_url.netloc:
+        request_base = str(request.base_url).rstrip("/")
+        if configured_host and parsed_url.netloc == configured_host:
+            return f"{request_base}{parsed_url.path}"
+        return raw_url
+
+    path = raw_url if raw_url.startswith("/") else f"/{raw_url}"
+    return f"{str(request.base_url).rstrip('/')}{path}"
+
+
 class UpdateClusterLabelRequest(BaseModel):
     tenant_id: UUID
     label: str = Field(..., min_length=1, max_length=255)
@@ -142,9 +171,21 @@ async def analyze_media(
     session.add(job)
     await session.flush()
     # job remains pending; IdentityScanService will update status and commit.
-
     service = IdentityScanService(session, provider, request.tenant_id)
     await service.scan_identities(job, [item.model_dump() for item in request.media_items], request.user_id)
+
+    try:
+        await set_tenant_context(session, request.tenant_id)
+        similarity_threshold = getattr(request, "similarity_threshold", None) or 0.6
+        clustering_service = IdentityClusteringService(
+            session=session,
+            tenant_id=request.tenant_id,
+            similarity_threshold=similarity_threshold,
+        )
+        await clustering_service.cluster_identities()
+    except Exception:  # pragma: no cover - clustering is best-effort
+        logger.exception("Failed to cluster identities automatically for tenant %s", request.tenant_id)
+        await session.rollback()
 
     return AnalyzeResponse(job_id=job.id, status=job.status, total_media=job.total_media)
 
@@ -162,11 +203,10 @@ async def _ensure_tenant(session: AsyncSession, tenant_id: UUID, site_url: Optio
 @router.get("/jobs/{job_id}")
 async def get_analysis_job(
     job_id: UUID,
-    tenant_id: Optional[UUID] = None,
+    tenant_id: UUID,
     session: AsyncSession = Depends(get_session),
 ) -> dict:
-    if tenant_id:
-        await set_tenant_context(session, tenant_id)
+    await set_tenant_context(session, tenant_id)
     job = await session.get(IdentityScanJob, job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
@@ -307,7 +347,7 @@ async def get_media_identities(
                     confidence=identity.confidence,
                     similarity=membership.similarity if membership else None,
                     detected_at=identity.created_at.isoformat() if identity.created_at else None,
-                    thumbnail_url=getattr(identity, "thumbnail_url", None),
+                    thumbnail_url=_resolve_thumbnail_url(getattr(identity, "thumbnail_url", None), request),
                 )
             )
         identities_by_media[str(media_id)] = details

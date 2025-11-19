@@ -62,15 +62,15 @@ def test_cluster_identities_creates_cluster_for_candidates():
     assert service.created_clusters[0][0][0] is identity_a
 
 
-def test_cluster_identities_skips_solitary_identities():
+def test_cluster_identities_creates_cluster_for_solitary_identities():
     lonely_identity = make_simple_identity()
     identity_map = {lonely_identity: [(lonely_identity, 1.0)]}
     service = ClusterServiceHarness(identity_map)
 
     clusters = asyncio.run(service.cluster_identities())
 
-    assert clusters == []
-    assert service.created_clusters == []
+    assert len(clusters) == 1
+    assert len(service.created_clusters) == 1
 
 
 def test_create_cluster_persists_members_and_commits():
@@ -104,6 +104,7 @@ def test_get_cluster_summary_returns_serializable_payload():
         bbox_y=2,
         bbox_width=10,
         bbox_height=12,
+        thumbnail_url="https://example.com/thumb.jpg",
     )
     cluster = SimpleNamespace(
         id=cluster_id,
@@ -124,6 +125,7 @@ def test_get_cluster_summary_returns_serializable_payload():
         bbox_width=5,
         bbox_height=6,
         confidence=0.88,
+        thumbnail_url="https://example.com/sample.jpg",
     )
     member_rows = [(uuid4(),), (uuid4(),)]
     session.execute = AsyncMock(side_effect=[FakeResult([(sample_member, sample_identity)]), FakeResult(member_rows)])

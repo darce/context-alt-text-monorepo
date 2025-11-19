@@ -64,11 +64,22 @@ class ClusteringSettings(IdentityClusteringSettings):
     """Legacy alias exposed for backward compatibility."""
 
 
+class ThumbnailSettings(BaseSettings):
+    storage_dir: Path = Path.home() / ".context-alt-text" / "thumbnails"
+    base_url: str = "http://localhost:8000/thumbnails"
+    size: int = 128
+    padding_ratio: float = 0.15
+    quality: int = 90
+
+    model_config = SettingsConfigDict(env_file=str(ENV_FILE), env_file_encoding="utf-8")
+
+
 @dataclass(frozen=True)
 class RecognitionConfig:
     insightface: InsightFaceSettings
     identity_detection: IdentityDetectionSettings
     identity_clustering: IdentityClusteringSettings
+    thumbnail: ThumbnailSettings
 
     @property
     def recognition(self) -> IdentityDetectionSettings:
@@ -96,9 +107,11 @@ def get_settings() -> RecognitionConfig:
         **yaml_values.get("identity_detection", yaml_values.get("recognition", {}))
     )
     identity_clustering = IdentityClusteringSettings(**yaml_values.get("clustering", {}))
+    thumbnail = ThumbnailSettings(**yaml_values.get("thumbnails", {}))
 
     return RecognitionConfig(
         insightface=insightface,
         identity_detection=identity_detection,
         identity_clustering=identity_clustering,
+        thumbnail=thumbnail,
     )

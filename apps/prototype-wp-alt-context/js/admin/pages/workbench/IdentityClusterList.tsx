@@ -22,6 +22,23 @@ type ClusterGroup = {
   members: DetectedIdentity[];
 };
 
+const formatClusterLabel = (
+  clusterId: string | null,
+  rawLabel: string | null,
+  isAutoLabel: boolean,
+): string | null => {
+  if (!clusterId) {
+    return rawLabel;
+  }
+
+  if (rawLabel && !isAutoLabel) {
+    return rawLabel;
+  }
+
+  const normalizedId = clusterId.replace(/-/g, '');
+  return `cluster-${normalizedId}`;
+};
+
 export const IdentityClusterList = ({ identities }: Props): React.JSX.Element => {
   const clusters = React.useMemo<ClusterGroup[]>(() => {
     const groups = new Map<string, ClusterGroup>();
@@ -61,7 +78,14 @@ type ClusterItemProps = {
 const IdentityClusterItem = ({ cluster }: ClusterItemProps): React.JSX.Element => {
   const queryClient = useQueryClient();
   const [isEditing, setIsEditing] = React.useState(false);
-  const [labelInput, setLabelInput] = React.useState(cluster.label ?? '');
+  const derivedLabel = React.useMemo(
+    () => formatClusterLabel(cluster.clusterId, cluster.label, cluster.isAutoLabel),
+    [cluster.clusterId, cluster.label, cluster.isAutoLabel],
+  );
+  const [labelInput, setLabelInput] = React.useState(derivedLabel ?? '');
+  React.useEffect(() => {
+    setLabelInput(derivedLabel ?? '');
+  }, [derivedLabel]);
   const [error, setError] = React.useState<string | null>(null);
 
   const clusterEditableId = React.useMemo(() => {
@@ -141,7 +165,7 @@ const IdentityClusterItem = ({ cluster }: ClusterItemProps): React.JSX.Element =
   });
 
   const representative = cluster.members[0];
-  const labelText = cluster.label ?? __('Unlabeled identity', 'alt-context');
+  const labelText = derivedLabel ?? __('Unlabeled identity', 'alt-context');
   const canEdit = Boolean(clusterEditableId);
 
   const startEditing = () => {

@@ -61,7 +61,7 @@ composer.lock
 .phpunit.result.cache
 
 # Vite build output
-/public/assets/dist/
+**/public/assets/dist/
 /dist/
 /build/
 

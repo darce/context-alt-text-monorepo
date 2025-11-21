@@ -2,6 +2,28 @@
 
 set -euo pipefail
 
+WITH_SAMPLE_DATA=0
+POSITIONAL_ARGS=()
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --with-sample-data)
+      WITH_SAMPLE_DATA=1
+      shift
+      ;;
+    *)
+      POSITIONAL_ARGS+=("$1")
+      shift
+      ;;
+  esac
+done
+
+if ((${#POSITIONAL_ARGS[@]})); then
+  set -- "${POSITIONAL_ARGS[@]}"
+else
+  set --
+fi
+
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 ENV_FILE="${PROJECT_ROOT}/.env"
@@ -38,6 +60,8 @@ if [[ -z "${DB_HOST}" || -z "${DB_PORT}" || -z "${DB_USER}" || -z "${DB_PASS}" |
   exit 1
 fi
 
+export DB_HOST DB_PORT DB_USER DB_PASS DB_NAME
+
 DOCKER_COMPOSE="${PROJECT_ROOT}/docker-compose.db.yml"
 if docker compose version >/dev/null 2>&1; then
   COMPOSE_CMD=(docker compose)
@@ -54,37 +78,6 @@ echo "[reset-dev-db] Restarting dockerized postgres to close lingering sessions.
 
 ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
 ADMIN_PASS="${ADMIN_PGPASSWORD:-${DB_PASS}}"
-
-run_admin_psql() {
-  local database=$1
-  shift
-  local cmd=(env -u PGHOST)
-  [[ "${DB_HOST}" == /* ]] && cmd+=("PGPORT=${DB_PORT}")
-  if [[ -n "${ADMIN_PASS}" ]]; then
-    cmd+=("PGPASSWORD=${ADMIN_PASS}")
-  fi
-  if [[ "${DB_HOST}" == /* ]]; then
-    cmd+=("psql" "-U" "${ADMIN_USER}" "-d" "${database}")
-  else
-    cmd+=("psql" "-h" "${DB_HOST}" "-p" "${DB_PORT}" "-U" "${ADMIN_USER}" "-d" "${database}")
-  fi
-  cmd+=("$@")
-  "${cmd[@]}"
-}
-
-run_user_psql() {
-  local database=$1
-  shift
-  local cmd=(env -u PGHOST "PGPASSWORD=${DB_PASS}")
-  [[ "${DB_HOST}" == /* ]] && cmd+=("PGPORT=${DB_PORT}")
-  if [[ "${DB_HOST}" == /* ]]; then
-    cmd+=("psql" "-U" "${DB_USER}" "-d" "${database}")
-  else
-    cmd+=("psql" "-h" "${DB_HOST}" "-p" "${DB_PORT}" "-U" "${DB_USER}" "-d" "${database}")
-  fi
-  cmd+=("$@")
-  "${cmd[@]}"
-}
 
 cd "${PROJECT_ROOT}"
 
@@ -107,5 +100,134 @@ docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c 
 
 echo "[reset-dev-db] Applying migrations as ${DB_USER}..." >&2
 PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGUSER="${DB_USER}" PGPASSWORD="${DB_PASS}" alembic -c db/alembic.ini upgrade head
+
+if [[ "${WITH_SAMPLE_DATA}" == "1" ]]; then
+  echo "[reset-dev-db] Seeding sample data for manual testing (--with-sample-data)..." >&2
+  PYTHONPATH="${PROJECT_ROOT}" \
+    DB_HOST="${DB_HOST}" \
+    DB_PORT="${DB_PORT}" \
+    DB_USER="${DB_USER}" \
+    DB_PASS="${DB_PASS}" \
+    DB_NAME="${DB_NAME}" \
+    python <<'PY'
+import math
+import os
+import random
+import uuid
+
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import URL
+from sqlalchemy.orm import Session
+
+from db.models import IdentityCluster, IdentityMember, MediaIdentity, Tenant
+
+def make_embedding(seed: int) -> list[float]:
+    rng = random.Random(seed)
+    values = [rng.random() for _ in range(1024)]
+    norm = math.sqrt(sum(v * v for v in values)) or 1.0
+    return [v / norm for v in values]
+
+def main() -> None:
+    db_host = os.environ["DB_HOST"]
+    db_port = os.environ["DB_PORT"]
+    db_user = os.environ["DB_USER"]
+    db_pass = os.environ["DB_PASS"]
+    db_name = os.environ["DB_NAME"]
+
+    url = URL.create(
+        "postgresql+psycopg",
+        username=db_user,
+        password=db_pass,
+        host=db_host or None,
+        port=int(db_port) if db_port else None,
+        database=db_name,
+    )
+
+    engine = create_engine(url, future=True)
+
+    tenant_id = uuid.uuid4()
+
+    with Session(engine) as session:
+        tenant = Tenant(id=tenant_id, site_url="https://sample.local")
+        session.add(tenant)
+        session.flush()
+
+        session.execute(text(f"SET app.current_tenant = '{tenant_id}'"))
+
+        media_objects: list[MediaIdentity] = []
+        for idx in range(1, 6):
+            embedding = make_embedding(idx)
+            identity = MediaIdentity(
+                tenant_id=tenant_id,
+                media_id=idx,
+                media_url=f"https://sample.local/media/{idx}.jpg",
+                bbox_x=0,
+                bbox_y=0,
+                bbox_width=120,
+                bbox_height=120,
+                confidence=0.9,
+                embedding=embedding,
+                created_by_user_id=1,
+            )
+            session.add(identity)
+            media_objects.append(identity)
+        session.flush()
+
+        cluster_a = IdentityCluster(
+            tenant_id=tenant_id,
+            label="sample-cluster-a",
+            representative_identity_id=media_objects[0].id,
+            identity_count=3,
+            similarity_threshold=0.6,
+            clustering_algorithm="seed",
+        )
+        cluster_b = IdentityCluster(
+            tenant_id=tenant_id,
+            label="sample-cluster-b",
+            representative_identity_id=media_objects[3].id,
+            identity_count=2,
+            similarity_threshold=0.6,
+            clustering_algorithm="seed",
+        )
+        session.add_all([cluster_a, cluster_b])
+        session.flush()
+
+        for identity in media_objects[:3]:
+            session.add(
+                IdentityMember(
+                    tenant_id=tenant_id,
+                    cluster_id=cluster_a.id,
+                    identity_id=identity.id,
+                    similarity=0.95,
+                    created_by_user_id=identity.created_by_user_id,
+                )
+            )
+
+        for identity in media_objects[3:5]:
+            session.add(
+                IdentityMember(
+                    tenant_id=tenant_id,
+                    cluster_id=cluster_b.id,
+                    identity_id=identity.id,
+                    similarity=0.9,
+                    created_by_user_id=identity.created_by_user_id,
+                )
+            )
+
+        session.commit()
+
+        session.execute(text("RESET app.current_tenant"))
+
+        with engine.begin() as conn:
+            conn.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            conn.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+            conn.execute(text("RESET app.bypass_rls"))
+
+    print("[reset-dev-db] Sample data created with tenant https://sample.local")
+
+if __name__ == "__main__":
+    main()
+PY
+fi
 
 echo "[reset-dev-db] Done – database dropped, recreated, and migrated for development environment." >&2

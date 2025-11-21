@@ -38,7 +38,7 @@ class MediaItem(BaseModel):
 class AnalyzeRequest(BaseModel):
     tenant_id: UUID
     site_url: Optional[HttpUrl] = None
-    media_items: List[MediaItem] = Field(..., min_items=1, max_items=100)
+    media_items: List[MediaItem] = Field(..., min_length=1, max_length=100)
     user_id: Optional[int] = None
 
 
@@ -56,6 +56,10 @@ class ClusterRequest(BaseModel):
 class ClusterResponse(BaseModel):
     clusters_created: int
     total_identities_clustered: int
+    merges_performed: int = Field(
+        default=0,
+        description="Number of auto-merge operations performed",
+    )
 
 
 class ClusterSummaryResponse(BaseModel):
@@ -142,6 +146,7 @@ class MergeClusterResponse(BaseModel):
 class MergeSimilarRequest(BaseModel):
     tenant_id: UUID
     threshold: float = Field(default=0.85, ge=0.0, le=1.0)
+    max_iterations: Optional[int] = Field(default=None, ge=1, le=10)
 
 
 class MergeSimilarResponse(BaseModel):
@@ -182,7 +187,7 @@ async def analyze_media(
             tenant_id=request.tenant_id,
             similarity_threshold=similarity_threshold,
         )
-        await clustering_service.cluster_identities()
+        await clustering_service.cluster_identities_incremental()
     except Exception:  # pragma: no cover - clustering is best-effort
         logger.exception("Failed to cluster identities automatically for tenant %s", request.tenant_id)
         await session.rollback()
@@ -234,9 +239,31 @@ async def cluster_media(
         tenant_id=request.tenant_id,
         similarity_threshold=request.similarity_threshold or 0.6,
     )
-    clusters = await service.cluster_identities()
+    clusters = await service.cluster_identities_incremental()
+    settings = get_settings()
+
+    merges = 0
+    if settings.identity_clustering.auto_merge_enabled:
+        try:
+            merges = await service.merge_similar_clusters(
+                threshold=settings.identity_clustering.auto_merge_threshold,
+                max_iterations=settings.identity_clustering.auto_merge_max_iterations,
+            )
+            if merges:
+                logger.info(
+                    "Auto-merged %d clusters for tenant %s",
+                    merges,
+                    request.tenant_id,
+                )
+        except Exception as exc:  # pragma: no cover - defensive logging
+            logger.warning("Auto-merge failed for tenant %s: %s", request.tenant_id, exc)
+
     total_identities = sum(cluster.identity_count for cluster in clusters)
-    return ClusterResponse(clusters_created=len(clusters), total_identities_clustered=total_identities)
+    return ClusterResponse(
+        clusters_created=len(clusters),
+        total_identities_clustered=total_identities,
+        merges_performed=merges,
+    )
 
 
 @router.get("/clusters", response_model=List[ClusterSummaryResponse])
@@ -406,5 +433,10 @@ async def merge_similar_clusters(
 ) -> MergeSimilarResponse:
     await set_tenant_context(session, request.tenant_id)
     service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
-    merges = await service.merge_similar_clusters(threshold=request.threshold)
+    settings = get_settings()
+    max_iterations = request.max_iterations or settings.identity_clustering.auto_merge_max_iterations
+    merges = await service.merge_similar_clusters(
+        threshold=request.threshold,
+        max_iterations=max_iterations,
+    )
     return MergeSimilarResponse(merges_performed=merges)

@@ -48,6 +48,22 @@ class IdentityClusteringSettings(BaseSettings):
     similarity_threshold: float = 0.6
     min_identity_cluster_size: int = Field(2, alias="min_cluster_size")
     max_identity_cluster_size: int = Field(1000, alias="max_cluster_size")
+    auto_merge_enabled: bool = Field(
+        default=True,
+        description="Automatically merge similar clusters after clustering",
+    )
+    auto_merge_threshold: float = Field(
+        default=0.85,
+        ge=0.0,
+        le=1.0,
+        description="Similarity threshold for auto-merge operations",
+    )
+    auto_merge_max_iterations: int = Field(
+        default=3,
+        ge=1,
+        le=10,
+        description="Maximum number of merge iterations per clustering run",
+    )
 
     model_config = SettingsConfigDict(env_file=str(ENV_FILE), env_file_encoding="utf-8")
 

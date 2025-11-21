@@ -148,6 +148,29 @@ class IdentityCluster(Base):
     )
 
 
+class ClusterCentroid(Base):
+    __tablename__ = "mv_identity_cluster_centroids"
+    __table_args__ = {"info": {"is_materialized_view": True}}
+
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    member_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    centroid: Mapped[list[float]] = mapped_column(
+        Vector(_DB_SETTINGS.pgvector_dimension)
+    )
+    refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    cluster: Mapped["IdentityCluster"] = relationship(
+        "IdentityCluster",
+        primaryjoin="ClusterCentroid.cluster_id == IdentityCluster.id",
+        viewonly=True,
+    )
+
+
 class IdentityMember(Base):
     __tablename__ = "identity_members"
 
@@ -230,6 +253,7 @@ __all__ = [
     "Tenant",
     "MediaIdentity",
     "IdentityCluster",
+    "ClusterCentroid",
     "IdentityMember",
     "IdentityScanJob",
 ]

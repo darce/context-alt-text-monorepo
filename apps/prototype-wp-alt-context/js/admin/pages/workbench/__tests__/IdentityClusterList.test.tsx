@@ -117,7 +117,7 @@ describe('IdentityClusterList', () => {
       cluster_label: null,
     };
     renderWithClient(<IdentityClusterList identities={[unlabeled]} mediaId={1} />);
-    fireEvent.click(screen.getByRole('button', { name: /Unlabeled identity/i }));
+    fireEvent.click(screen.getByRole('button', { name: /cluster-clust/i }));
     expect(screen.getByPlaceholderText(/enter a name/i)).toBeInTheDocument();
   });
 });

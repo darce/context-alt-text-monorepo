@@ -14,15 +14,24 @@ from db.session import async_session_factory, engine
 async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:
     """Set app.current_tenant for the current session/transaction."""
     tenant_value = str(tenant_id).replace("'", "''")
-    # asyncpg rejects placeholders in SET LOCAL, so interpolate a literal UUID.
-    await session.execute(
-        text(f"SET LOCAL app.current_tenant = '{tenant_value}'")
-    )
+    await session.execute(text("RESET app.bypass_rls"))
+    await session.execute(text(f"SET LOCAL app.current_tenant = '{tenant_value}'"))
 
 
 async def clear_tenant_context(session: AsyncSession) -> None:
     """Reset the tenant context so pooled connections don’t leak state."""
     await session.execute(text("RESET app.current_tenant"))
+    await session.execute(text("RESET app.bypass_rls"))
+
+
+async def enable_rls_bypass(session: AsyncSession) -> None:
+    """Temporarily disable RLS policies for maintenance operations."""
+    await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+
+
+async def disable_rls_bypass(session: AsyncSession) -> None:
+    """Reset RLS bypass flag."""
+    await session.execute(text("RESET app.bypass_rls"))
 
 
 async def get_tenant_aware_session(
@@ -40,4 +49,5 @@ async def get_tenant_aware_session(
 def _reset_context_on_checkout(dbapi_conn, connection_record, connection_proxy) -> None:  # pragma: no cover
     cursor = dbapi_conn.cursor()
     cursor.execute("RESET app.current_tenant")
+    cursor.execute("RESET app.bypass_rls")
     cursor.close()

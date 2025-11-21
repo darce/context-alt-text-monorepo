@@ -9,11 +9,16 @@ import pytest
 import pytest_asyncio
 from httpx import AsyncClient
 from PIL import Image
-from sqlalchemy import select
+from sqlalchemy import select, text
 
 from db.models import IdentityCluster, IdentityMember, IdentityScanJob, Tenant
 from db.session import async_session_factory
-from db.tenant_context import clear_tenant_context, set_tenant_context
+from db.tenant_context import (
+    clear_tenant_context,
+    disable_rls_bypass,
+    enable_rls_bypass,
+    set_tenant_context,
+)
 from recognition.application.identity_clustering_service import IdentityClusteringService
 from recognition.application.identity_scan_service import IdentityScanService
 from recognition.domain.entities import IdentityDetection, IdentityEmbedding
@@ -73,6 +78,12 @@ async def cluster_with_member(tenant_id: str):
         await session.commit()
         await clear_tenant_context(session)
         return cluster, identity
+
+
+async def refresh_centroid_view(session):
+    await enable_rls_bypass(session)
+    await session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+    await disable_rls_bypass(session)
 
 
 @pytest.mark.asyncio
@@ -222,6 +233,8 @@ async def test_merge_similar_endpoint_merges_clusters(async_client: AsyncClient,
             ]
         )
         await session.commit()
+        await refresh_centroid_view(session)
+        await session.commit()
         await clear_tenant_context(session)
 
     response = await async_client.post(
@@ -238,6 +251,47 @@ async def test_merge_similar_endpoint_merges_clusters(async_client: AsyncClient,
         assert "cluster-c" in labels
         assert len(labels) == 2
         await clear_tenant_context(session)
+
+
+@pytest.mark.asyncio
+async def test_suggest_similar_clusters_returns_matches(async_client: AsyncClient, tenant_id: str):
+    tenant_uuid = UUID(tenant_id)
+    query_vector = [1.0] * 1024
+
+    async with async_session_factory() as session:
+        await set_tenant_context(session, tenant_uuid)
+        identity = make_media_identity(tenant_uuid, media_id=610, embedding=query_vector)
+        session.add(identity)
+        await session.flush()
+
+        cluster = IdentityCluster(
+            tenant_id=tenant_uuid,
+            label="cluster-suggest",
+            representative_identity_id=identity.id,
+            identity_count=1,
+        )
+        session.add(cluster)
+        await session.flush()
+
+        session.add(
+            IdentityMember(
+                tenant_id=tenant_uuid,
+                cluster_id=cluster.id,
+                identity_id=identity.id,
+                similarity=0.99,
+            )
+        )
+        await session.commit()
+        await refresh_centroid_view(session)
+        await session.commit()
+        await clear_tenant_context(session)
+
+    params = [("tenant_id", tenant_id)] + [("embedding", f"{value}") for value in query_vector]
+    response = await async_client.get("/recognition/clusters/suggest", params=params)
+    assert response.status_code == 200
+    matches = response.json()["matches"]
+    assert matches
+    assert matches[0]["label"] == "cluster-suggest"
 
 
 class StubEmbeddingProvider:
@@ -290,7 +344,7 @@ async def test_end_to_end_scan_to_rename_flow(async_client: AsyncClient):
 
         await set_tenant_context(session, tenant_id)
         clustering_service = IdentityClusteringService(session=session, tenant_id=tenant_id)
-        clusters = await clustering_service.cluster_identities()
+        clusters = await clustering_service.cluster_identities_incremental()
         assert clusters
         cluster_id = clusters[0].id
         await clear_tenant_context(session)

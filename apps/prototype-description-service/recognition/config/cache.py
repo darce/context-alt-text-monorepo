@@ -1,5 +1,6 @@
-from pathlib import Path
 import os
+from pathlib import Path
+
 
 def configure_dev_cache() -> None:
     if os.environ.get("ENVIRONMENT") != "development":
@@ -20,5 +21,6 @@ def configure_dev_cache() -> None:
     }
     for key, value in overrides.items():
         os.environ.setdefault(key, str(value))
+
 
 configure_dev_cache()

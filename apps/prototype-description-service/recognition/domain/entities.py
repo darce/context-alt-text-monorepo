@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional, Tuple
 
 import numpy as np
 
@@ -12,9 +11,9 @@ import numpy as np
 class IdentityDetection:
     """Detected identity (face) bounding box and confidence metadata."""
 
-    bbox: Tuple[int, int, int, int]
+    bbox: tuple[int, int, int, int]
     confidence: float
-    landmarks: Optional[np.ndarray] = None
+    landmarks: np.ndarray | None = None
 
     def area(self) -> float:
         x_min, y_min, x_max, y_max = self.bbox
@@ -29,4 +28,5 @@ class IdentityEmbedding:
     detection: IdentityDetection
 
     def to_list(self) -> list[float]:
-        return self.embedding.tolist()
+        result = self.embedding.tolist()
+        return result  # type: ignore[no-any-return]

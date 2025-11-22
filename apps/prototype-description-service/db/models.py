@@ -7,7 +7,6 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
-    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -31,21 +30,15 @@ _DB_SETTINGS = get_database_settings()
 class Tenant(Base):
     __tablename__ = "tenants"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_url: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
 
-    media_identities: Mapped[list["MediaIdentity"]] = relationship(
-        back_populates="tenant", cascade="all, delete-orphan"
-    )
-    identity_clusters: Mapped[list["IdentityCluster"]] = relationship(
+    media_identities: Mapped[list[MediaIdentity]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+    identity_clusters: Mapped[list[IdentityCluster]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
 
@@ -53,9 +46,7 @@ class Tenant(Base):
 class MediaIdentity(Base):
     __tablename__ = "media_identities"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
@@ -68,27 +59,21 @@ class MediaIdentity(Base):
     bbox_height: Mapped[int] = mapped_column(Integer, nullable=False)
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
-    embedding: Mapped[list[float]] = mapped_column(
-        Vector(_DB_SETTINGS.pgvector_dimension), nullable=False
-    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension), nullable=False)
     thumbnail_url: Mapped[str | None] = mapped_column(String(500))
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
     tenant: Mapped[Tenant] = relationship(back_populates="media_identities")
-    cluster_memberships: Mapped[list["IdentityMember"]] = relationship(
+    cluster_memberships: Mapped[list[IdentityMember]] = relationship(
         back_populates="identity", cascade="all, delete-orphan"
     )
 
     __table_args__ = (
-        UniqueConstraint(
-            "tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"
-        ),
+        UniqueConstraint("tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         Index("idx_media_identities_tenant", "tenant_id"),
         Index(
@@ -103,9 +88,7 @@ class MediaIdentity(Base):
 class IdentityCluster(Base):
     __tablename__ = "identity_clusters"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
@@ -113,17 +96,13 @@ class IdentityCluster(Base):
     representative_identity_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="SET NULL")
     )
-    identity_count: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
+    identity_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     roster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     similarity_threshold: Mapped[float | None] = mapped_column(Float)
     clustering_algorithm: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default=text("'cosine_similarity'")
     )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now()
-    )
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
@@ -133,9 +112,7 @@ class IdentityCluster(Base):
     representative_identity: Mapped[MediaIdentity | None] = relationship(
         "MediaIdentity", foreign_keys=[representative_identity_id]
     )
-    members: Mapped[list["IdentityMember"]] = relationship(
-        back_populates="cluster", cascade="all, delete-orphan"
-    )
+    members: Mapped[list[IdentityMember]] = relationship(back_populates="cluster", cascade="all, delete-orphan")
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "label", name="unique_tenant_identity_label"),
@@ -159,24 +136,48 @@ class ClusterCentroid(Base):
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
     member_count: Mapped[int] = mapped_column(Integer, nullable=False)
-    centroid: Mapped[list[float]] = mapped_column(
-        Vector(_DB_SETTINGS.pgvector_dimension)
-    )
+    centroid: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension))
     refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
-    cluster: Mapped["IdentityCluster"] = relationship(
+    cluster: Mapped[IdentityCluster] = relationship(
         "IdentityCluster",
         primaryjoin="ClusterCentroid.cluster_id == IdentityCluster.id",
         viewonly=True,
     )
 
 
+class IdentityClusterRepresentative(Base):
+    __tablename__ = "identity_cluster_representatives"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
+    )
+    embedding: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension), nullable=False)
+    quality_score: Mapped[float] = mapped_column(Float, nullable=False)
+    diversity_score: Mapped[float | None] = mapped_column(Float)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped[Tenant] = relationship()
+    cluster: Mapped[IdentityCluster] = relationship()
+    identity: Mapped[MediaIdentity] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("cluster_id", "identity_id", name="unique_cluster_representative"),
+        CheckConstraint("quality_score >= 0 AND quality_score <= 1", name="quality_score_range"),
+    )
+
+
 class IdentityMember(Base):
     __tablename__ = "identity_members"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
@@ -187,12 +188,8 @@ class IdentityMember(Base):
         UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
     )
     similarity: Mapped[float] = mapped_column(Float, nullable=False)
-    assigned_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now()
-    )
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now()
-    )
+    assigned_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
 
     cluster: Mapped[IdentityCluster] = relationship(back_populates="members")
@@ -210,27 +207,35 @@ class IdentityMember(Base):
 class IdentityScanJob(Base):
     __tablename__ = "identity_scan_jobs"
 
-    id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True), primary_key=True, default=uuid.uuid4
-    )
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
-    status: Mapped[str] = mapped_column(
-        String(20), nullable=False, server_default=text("'pending'")
-    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
     media_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
     total_media: Mapped[int] = mapped_column(Integer, nullable=False)
-    processed_media: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
-    identities_detected: Mapped[int] = mapped_column(
-        Integer, nullable=False, server_default=text("0")
-    )
+    processed_media: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    identities_detected: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     error_message: Mapped[str | None] = mapped_column(Text)
-    created_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now()
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+
+
+class IdentityClusteringJob(Base):
+    __tablename__ = "identity_clustering_jobs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+    progress: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
+    total_identities: Mapped[int | None] = mapped_column(Integer)
+    processed_identities: Mapped[int | None] = mapped_column(Integer, server_default=text("0"))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)

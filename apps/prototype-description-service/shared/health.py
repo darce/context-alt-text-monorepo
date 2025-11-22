@@ -1,8 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import dataclass, asdict
-from datetime import datetime, timezone
-from typing import Any, Dict
+from dataclasses import asdict, dataclass
+from datetime import UTC, datetime
+from typing import Any
 
 
 @dataclass(frozen=True, slots=True)
@@ -14,9 +14,9 @@ class HealthReport:
     timestamp: datetime
 
     @classmethod
-    def ok(cls, service: str) -> "HealthReport":
-        return cls(service=service, status="ok", timestamp=datetime.now(timezone.utc))
+    def ok(cls, service: str) -> HealthReport:
+        return cls(service=service, status="ok", timestamp=datetime.now(UTC))
 
-    def to_dict(self) -> Dict[str, Any]:
+    def to_dict(self) -> dict[str, Any]:
         """Convert the report into a serializable dictionary."""
         return asdict(self)

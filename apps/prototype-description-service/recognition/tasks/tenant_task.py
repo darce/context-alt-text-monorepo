@@ -2,19 +2,18 @@
 
 from __future__ import annotations
 
+from collections.abc import Awaitable, Callable
 from functools import wraps
-from typing import Any, Awaitable, Callable, TypeVar
+from typing import Any, TypeVar
 from uuid import UUID
 
-from sqlalchemy.ext.asyncio import AsyncSession
-
 from db.session import async_session_factory
-from db.tenant_context import set_tenant_context, clear_tenant_context
+from db.tenant_context import clear_tenant_context, set_tenant_context
 
 T = TypeVar("T")
 
 
-def tenant_task(func: Callable[[AsyncSession, Any], Awaitable[T]]) -> Callable[..., Awaitable[T]]:
+def tenant_task(func: Callable[..., Awaitable[T]]) -> Callable[..., Awaitable[T]]:
     """
     Decorator that supplies an AsyncSession with tenant context to the wrapped task.
 

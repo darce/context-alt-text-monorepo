@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-from typing import List, Optional
 
 import cv2
 import numpy as np
@@ -30,8 +29,8 @@ class FaceEmbeddingProvider:
             return
 
         async with self._model_lock:
-            if self._model_loaded:
-                return
+            if self._model_loaded:  # Double-check after acquiring lock
+                return  # type: ignore[unreachable]
 
             try:
                 from insightface.app import FaceAnalysis
@@ -46,15 +45,16 @@ class FaceEmbeddingProvider:
                 root=str(self.settings.insightface.cache_dir),
                 providers=list(self._get_providers()),
             )
-            self._app.prepare(
-                ctx_id=0 if self.settings.insightface.device == "cuda" else -1,
-                det_size=tuple(self.settings.insightface.det_size),
-                det_thresh=self.settings.insightface.det_thresh,
-            )
+            if self._app is not None:  # Type narrowing for mypy
+                self._app.prepare(  # type: ignore[unreachable]
+                    ctx_id=0 if self.settings.insightface.device == "cuda" else -1,
+                    det_size=tuple(self.settings.insightface.det_size),
+                    det_thresh=self.settings.insightface.det_thresh,
+                )
             self._model_loaded = True
             logger.info("InsightFace model loaded")
 
-    def _get_providers(self) -> List[str]:
+    def _get_providers(self) -> list[str]:
         providers = list(self.settings.insightface.providers)
         if providers:
             return providers
@@ -70,14 +70,14 @@ class FaceEmbeddingProvider:
         rgb_array = np.array(pil_image)
         return cv2.cvtColor(rgb_array, cv2.COLOR_RGB2BGR)
 
-    async def analyze(self, image: Image.Image) -> List[IdentityEmbedding]:
+    async def analyze(self, image: Image.Image) -> list[IdentityEmbedding]:
         await self._ensure_model_loaded()
 
         cv2_image = self._pil_to_cv2(image)
         assert self._app is not None
 
-        faces = self._app.get(cv2_image)
-        results: List[IdentityEmbedding] = []
+        faces = self._app.get(cv2_image)  # type: ignore[unreachable]
+        results: list[IdentityEmbedding] = []
 
         for face in faces:
             bbox = face.bbox.astype(int)
@@ -103,14 +103,17 @@ class FaceEmbeddingProvider:
         width = max(1, bbox[2] - bbox[0])
         height = max(1, bbox[3] - bbox[1])
         area = width * height
-        stats = np.array([
-            width,
-            height,
-            area,
-            face.det_score,
-            float(getattr(face, "age", 0.0)),
-            float(getattr(face, "gender", 0.5)),
-        ], dtype=np.float32)
+        stats = np.array(
+            [
+                width,
+                height,
+                area,
+                face.det_score,
+                float(getattr(face, "age", 0.0)),
+                float(getattr(face, "gender", 0.5)),
+            ],
+            dtype=np.float32,
+        )
 
         norm = np.linalg.norm(stats)
         if norm:

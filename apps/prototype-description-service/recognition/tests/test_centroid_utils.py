@@ -2,9 +2,9 @@ import numpy as np
 import pytest
 
 from recognition.application.centroid_utils import (
+    _normalize_vector,
     compute_centroid,
     compute_similarity,
-    _normalize_vector,
     update_centroid_incremental,
 )
 

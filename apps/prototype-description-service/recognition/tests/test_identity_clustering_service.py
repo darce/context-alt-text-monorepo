@@ -4,35 +4,42 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import os
 from types import SimpleNamespace
+from unittest.mock import AsyncMock
 from uuid import UUID, uuid4
 
 import numpy as np
 import pytest
-from unittest.mock import AsyncMock
-
 from sqlalchemy import select, text
 
-from recognition.application.identity_clustering_service import (
-    ClusterSearchEntry,
-    IdentityClusteringService,
-)
-from recognition.application.centroid_utils import compute_similarity
-from recognition.tests.fakes import DummySession, FakeResult, make_media_identity
-from db.session import async_session_factory
+if os.getenv("RUN_DB_TESTS") != "1":
+    pytest.skip("Skipping DB-backed clustering tests; set RUN_DB_TESTS=1 to enable", allow_module_level=True)
+
 from db.models import (
     ClusterCentroid,
-    Tenant,
-    MediaIdentity,
     IdentityCluster,
+    IdentityClusterRepresentative,
     IdentityMember,
+    MediaIdentity,
+    Tenant,
 )
+from db.session import async_session_factory
+from db.settings import get_database_settings
 from db.tenant_context import (
     clear_tenant_context,
     disable_rls_bypass,
     enable_rls_bypass,
     set_tenant_context,
 )
+from recognition.application.centroid_utils import _normalize_vector, compute_similarity
+from recognition.application.cluster_repository import ClusterSearchEntry
+from recognition.application.clustering_settings import ClusteringSettings
+from recognition.application.identity_clustering_service import (
+    IdentityClusteringService,
+)
+from recognition.application.representative_selection import decide_representative_acceptance
+from recognition.tests.fakes import DummySession, FakeResult, make_media_identity
 
 
 def make_stub_identity(vector):
@@ -40,6 +47,7 @@ def make_stub_identity(vector):
         id=uuid4(),
         embedding=vector,
         confidence=0.9,
+        media_id=1,
         created_by_user_id=None,
     )
 
@@ -47,35 +55,79 @@ def make_stub_identity(vector):
 class ClusterServiceHarness(IdentityClusteringService):
     """Overrides data access to exercise coordinator logic deterministically."""
 
-    def __init__(self, unclustered, existing_entries=None):
+    def __init__(self, unclustered, existing_entries=None, representatives=None):
         super().__init__(session=DummySession(), tenant_id=uuid4())
         self._unclustered = unclustered
         self._existing_entries = existing_entries or []
+        self._representatives = representatives or {}
         self.created_clusters: list[IdentityCluster] = []
         self.assigned_identities: list[UUID] = []
         self.refreshed = False
 
-    async def _get_unclustered_identities(self):
-        return list(self._unclustered)
+        # Override repository methods
+        async def _override_unclustered():
+            return list(self._unclustered)
 
-    async def _get_clusters_with_centroids(self):
-        return list(self._existing_entries)
+        async def _override_centroids():
+            return list(self._existing_entries)
 
-    async def _create_cluster_with_centroid(self, identities):
-        cluster, entry = await super()._create_cluster_with_centroid(identities)
-        self.created_clusters.append(cluster)
-        self._existing_entries.append(entry)
-        return cluster, entry
+        async def _override_reps():
+            return self._representatives
 
-    async def _assign_to_cluster(self, identity, identity_vector, entry, similarity):
-        await super()._assign_to_cluster(identity, identity_vector, entry, similarity)
-        self.assigned_identities.append(identity.id)
+        async def _override_count_reps(cluster_id, media_id):
+            return 0
+
+        self.repository.get_unclustered_identities = _override_unclustered
+        self.repository.get_clusters_with_centroids = _override_centroids
+        self.repository.get_clusters_with_representatives = _override_reps
+        self.repository.count_representatives_for_media = _override_count_reps
+
+        # Override factory to track created clusters
+        original_create = self.factory.create_cluster_with_centroid
+
+        async def _override_create(identities, add_representative_callback=None):
+            cluster, entry = await original_create(identities, add_representative_callback)
+            self.created_clusters.append(cluster)
+            self._existing_entries.append(entry)
+            return cluster, entry
+
+        self.factory.create_cluster_with_centroid = _override_create
+
+        # Override assigner to track assignments
+        original_assign = self.assigner.assign_to_cluster
+
+        async def _override_assign(identity, identity_vector, entry, similarity):
+            await original_assign(identity, identity_vector, entry, similarity)
+            self.assigned_identities.append(identity.id)
+
+        async def _override_assign_by_id(identity, identity_vector, cluster_id, similarity):
+            # Find or create entry for this cluster
+            entry = next((e for e in self._existing_entries if e.cluster.id == cluster_id), None)
+            if not entry:
+                entry = ClusterSearchEntry(
+                    cluster=IdentityCluster(
+                        id=cluster_id,
+                        tenant_id=self.tenant_id,
+                        label="rep-only",
+                        identity_count=0,
+                        clustering_algorithm="test",
+                    ),
+                    centroid=identity_vector,
+                    member_count=0,
+                )
+                self._existing_entries.append(entry)
+            await _override_assign(identity, identity_vector, entry, similarity)
+
+        self.assigner.assign_to_cluster = _override_assign
+        self.assigner.assign_to_cluster_by_id = _override_assign_by_id
 
     async def _refresh_centroid_view(self):
         self.refreshed = True
 
 
 async def refresh_centroid_view(session):
+    """Refresh the materialized view. Always uses RLS bypass for the refresh operation."""
+    # REFRESH MATERIALIZED VIEW needs to read from source tables without RLS
     await enable_rls_bypass(session)
     await session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
     await disable_rls_bypass(session)
@@ -150,6 +202,55 @@ def test_cluster_identities_creates_new_cluster_when_similarity_low():
     assert service.assigned_identities == []
 
 
+def test_cluster_identities_assigns_via_representatives():
+    tenant_id = uuid4()
+    cluster = IdentityCluster(
+        tenant_id=tenant_id,
+        label="cluster-with-rep",
+        representative_identity_id=None,
+        identity_count=1,
+        similarity_threshold=0.6,
+        clustering_algorithm="test",
+    )
+    cluster.id = uuid4()
+    rep_vector = np.array([0.99, 0.01, 0.0], dtype=np.float32)
+    identity = make_stub_identity([0.99, 0.0, 0.01])
+    service = ClusterServiceHarness(
+        unclustered=[identity],
+        existing_entries=[ClusterSearchEntry(cluster=cluster, centroid=rep_vector, member_count=1)],
+        representatives={cluster.id: [rep_vector]},
+    )
+
+    clusters = asyncio.run(service.cluster_identities_incremental())
+
+    assert clusters == []
+    assert service.assigned_identities == [identity.id]
+    assert service.created_clusters == []
+
+
+def test_create_cluster_adds_representatives(monkeypatch):
+    tenant_id = uuid4()
+    session = DummySession()
+    service = IdentityClusteringService(session=session, tenant_id=tenant_id)
+
+    identity1 = make_media_identity(tenant_id, media_id=1, confidence=0.9, embedding=[1.0, 0.0, 0.0, 0.0])
+    identity2 = make_media_identity(tenant_id, media_id=2, confidence=0.8, embedding=[0.0, 1.0, 0.0, 0.0])
+
+    mock_add_rep = AsyncMock()
+    service._add_representative_embedding = mock_add_rep
+
+    cluster, _ = asyncio.run(
+        service.factory.create_cluster_with_centroid(
+            [identity1, identity2],
+            add_representative_callback=mock_add_rep,
+        )
+    )
+
+    assert mock_add_rep.await_count == 2
+    called_ids = {call.args[1].id for call in mock_add_rep.await_args_list}
+    assert called_ids == {identity1.id, identity2.id}
+
+
 def test_cluster_identities_respects_threshold_for_borderline_similarity():
     tenant_id = uuid4()
     cluster = IdentityCluster(
@@ -202,12 +303,14 @@ async def test_assign_to_cluster_logs_borderline_and_validates(caplog):
         similarity_threshold=0.6,
         strict_validation=True,
     )
-    service._validate_assignment = AsyncMock()
+    # Track original method for assertion
+    original_validate = service.assigner._validate_assignment
+    service.assigner._validate_assignment = AsyncMock(wraps=original_validate)
 
     with caplog.at_level(logging.WARNING):
-        await service._assign_to_cluster(identity, identity_vector, entry, similarity)
+        await service.assigner.assign_to_cluster(identity, identity_vector, entry, similarity)
 
-    service._validate_assignment.assert_awaited_once()
+    service.assigner._validate_assignment.assert_awaited_once()
     assert any("Borderline assignment" in record.message for record in caplog.records)
 
 
@@ -218,7 +321,12 @@ def test_create_cluster_persists_members_and_flushes():
 
     identity1 = make_media_identity(tenant_id, media_id=1, confidence=0.95)
     identity2 = make_media_identity(tenant_id, media_id=2, confidence=0.75)
-    cluster, entry = asyncio.run(service._create_cluster_with_centroid([identity1, identity2]))
+    cluster, entry = asyncio.run(
+        service.factory.create_cluster_with_centroid(
+            [identity1, identity2],
+            add_representative_callback=service._add_representative_embedding,
+        )
+    )
 
     assert cluster.identity_count == 2
     assert entry.member_count == 2
@@ -350,7 +458,10 @@ async def test_merge_similar_clusters_merges_expected(require_database):
         merges = await service.merge_similar_clusters(threshold=0.95)
         assert merges == 1
 
-        remaining_clusters = await session.execute(select(IdentityCluster))
+        await set_tenant_context(session, tenant_id)
+        remaining_clusters = await session.execute(
+            select(IdentityCluster).where(IdentityCluster.tenant_id == tenant_id)
+        )
         labels = {cluster.label for cluster in remaining_clusters.scalars().all()}
         assert "cluster-c" in labels
         assert len(labels) == 2
@@ -402,10 +513,139 @@ async def test_materialized_view_stores_normalized_centroid(require_database):
         await refresh_centroid_view(session)
         await set_tenant_context(session, tenant_id)
         result = await session.execute(
-            select(ClusterCentroid.centroid).where(ClusterCentroid.cluster_id == cluster.id)
+            select(ClusterCentroid.centroid)
+            .where(ClusterCentroid.cluster_id == cluster.id)
+            .where(ClusterCentroid.tenant_id == tenant_id)
         )
         centroid = result.scalar_one()
         norm = float(np.linalg.norm(np.array(centroid, dtype=np.float32)))
 
         assert norm == pytest.approx(1.0, abs=1e-3)
         await clear_tenant_context(session)
+
+
+@pytest.mark.asyncio
+async def test_representative_matching_blocks_centroid_drift(require_database):
+    settings = get_database_settings()
+    tenant_id = uuid4()
+    async with async_session_factory() as session:
+        session.add(Tenant(id=tenant_id, site_url=f"https://{tenant_id}.example.com"))
+        await session.commit()
+
+        try:
+            await set_tenant_context(session, tenant_id)
+            base_embeddings = []
+            for idx in range(3):
+                vec = np.zeros(settings.pgvector_dimension, dtype=np.float32)
+                vec[idx] = 1.0
+                base_embeddings.append(vec.tolist())
+
+            identities = [
+                make_media_identity(tenant_id, media_id=media_id, embedding=embedding)
+                for media_id, embedding in enumerate(base_embeddings, start=1)
+            ]
+            session.add_all(identities)
+            await session.commit()
+            await set_tenant_context(session, tenant_id)
+
+            service = IdentityClusteringService(
+                session=session,
+                tenant_id=tenant_id,
+                settings=ClusteringSettings(similarity_threshold=0.6, auto_merge_enabled=False),
+            )
+            cluster, _ = await service.factory.create_cluster_with_centroid(
+                identities,
+                add_representative_callback=service._add_representative_embedding,
+            )
+            await session.commit()
+            base_cluster_id = cluster.id
+
+            await set_tenant_context(session, tenant_id)
+            await refresh_centroid_view(session)
+            await set_tenant_context(session, tenant_id)
+
+            candidate_vec = np.zeros(settings.pgvector_dimension, dtype=np.float32)
+            candidate_vec[:3] = 1.0
+            candidate_identity = make_media_identity(
+                tenant_id,
+                media_id=99,
+                embedding=candidate_vec.tolist(),
+            )
+            session.add(candidate_identity)
+            await session.commit()
+            await set_tenant_context(session, tenant_id)
+
+            await refresh_centroid_view(session)
+            await set_tenant_context(session, tenant_id)
+            centroid_row = await session.execute(
+                select(ClusterCentroid.centroid)
+                .where(ClusterCentroid.cluster_id == base_cluster_id)
+                .where(ClusterCentroid.tenant_id == tenant_id)
+            )
+            centroid_vector = np.array(centroid_row.scalar_one(), dtype=np.float32)
+            candidate_vector = np.array(candidate_identity.embedding, dtype=np.float32)
+            centroid_similarity = compute_similarity(candidate_vector, centroid_vector)
+            assert centroid_similarity > service.threshold
+
+            new_clusters = await service.cluster_identities_incremental()
+            await set_tenant_context(session, tenant_id)
+            member_result = await session.execute(
+                select(IdentityMember.cluster_id).where(IdentityMember.identity_id == candidate_identity.id)
+            )
+            assigned_cluster_id = member_result.scalar_one()
+
+            assert assigned_cluster_id != base_cluster_id
+            assert len(new_clusters) == 1
+        finally:
+            await clear_tenant_context(session)
+
+
+@pytest.mark.asyncio
+async def test_representatives_table_populated_after_clustering(require_database):
+    settings = get_database_settings()
+    tenant_id = uuid4()
+    async with async_session_factory() as session:
+        session.add(Tenant(id=tenant_id, site_url=f"https://{tenant_id}.example.com"))
+        await session.commit()
+
+        try:
+            await set_tenant_context(session, tenant_id)
+            embeddings = []
+            for idx in range(3):
+                vec = np.zeros(settings.pgvector_dimension, dtype=np.float32)
+                vec[idx] = 1.0
+                embeddings.append(vec.tolist())
+
+            identities = [
+                make_media_identity(tenant_id, media_id=idx + 10, embedding=embedding)
+                for idx, embedding in enumerate(embeddings)
+            ]
+            session.add_all(identities)
+            await session.commit()
+            await set_tenant_context(session, tenant_id)
+
+            service = IdentityClusteringService(session=session, tenant_id=tenant_id, similarity_threshold=0.6)
+            cluster, _ = await service.factory.create_cluster_with_centroid(
+                identities,
+                add_representative_callback=service._add_representative_embedding,
+            )
+            await session.commit()
+            cluster_id = cluster.id
+            await set_tenant_context(session, tenant_id)
+
+            await set_tenant_context(session, tenant_id)
+            result = await session.execute(
+                select(IdentityClusterRepresentative).where(IdentityClusterRepresentative.cluster_id == cluster_id)
+            )
+            reps = result.scalars().all()
+
+            assert len(reps) == len(identities)
+            assert {rep.identity_id for rep in reps} == {identity.id for identity in identities}
+            assert all(rep.tenant_id == tenant_id for rep in reps)
+            expected_confidence = {identity.id: identity.confidence for identity in identities}
+            for rep in reps:
+                norm = float(np.linalg.norm(np.array(rep.embedding, dtype=np.float32)))
+                assert norm == pytest.approx(1.0, abs=1e-6)
+                assert rep.quality_score == expected_confidence[rep.identity_id]
+        finally:
+            await clear_tenant_context(session)

@@ -2,22 +2,26 @@
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Sequence
 from dataclasses import dataclass
-from typing import Any, Iterable, List, Sequence
+from typing import Any
 from uuid import UUID, uuid4
 
+import numpy as np
+
 from db.models import MediaIdentity
+from db.settings import get_database_settings
 
 
 class DummySession:
     """Lightweight stand-in for an AsyncSession."""
 
     def __init__(self, existing_identity_keys: list[tuple[int, int]] | None = None) -> None:
-        self.added: List[Any] = []
+        self.added: list[Any] = []
         self.flush_calls = 0
         self.commit_calls = 0
         self.committed = False
-        self.refreshed: List[Any] = []
+        self.refreshed: list[Any] = []
         self._existing_identity_keys = existing_identity_keys or []
 
     def add(self, obj: Any) -> None:
@@ -46,11 +50,16 @@ class FakeResult:
     def __init__(self, rows: Sequence[Any]) -> None:
         self._rows = list(rows)
 
-    def all(self) -> List[Any]:
+    def all(self) -> list[Any]:
         return list(self._rows)
 
-    def scalars(self) -> "FakeResult":
+    def scalars(self) -> FakeResult:
         return self
+
+    def scalar_one(self):
+        if not self._rows:
+            return None
+        return self._rows[0]
 
     def __iter__(self):
         return iter(self._rows)
@@ -72,7 +81,17 @@ def make_media_identity(
     confidence: float = 0.9,
     embedding: Iterable[float] | None = None,
 ) -> MediaIdentity:
-    base_embedding = list(embedding) if embedding is not None else [0.0] * 1024
+    settings = get_database_settings()
+    vec = np.array(
+        embedding if embedding is not None else [1.0] + [0.0] * (settings.pgvector_dimension - 1), dtype=np.float32
+    )
+    norm = float(np.linalg.norm(vec))
+    if norm == 0.0:
+        vec = np.zeros(settings.pgvector_dimension, dtype=np.float32)
+        vec[0] = 1.0
+    else:
+        vec = vec / norm
+    base_embedding = vec.tolist()
     identity = MediaIdentity(
         tenant_id=tenant_id,
         media_id=media_id,
@@ -87,4 +106,6 @@ def make_media_identity(
     if getattr(identity, "id", None) is None:
         identity.id = uuid4()
     return identity
+
+
 __all__ = ["DummySession", "FakeResult", "SimpleIdentity", "make_simple_identity", "make_media_identity"]

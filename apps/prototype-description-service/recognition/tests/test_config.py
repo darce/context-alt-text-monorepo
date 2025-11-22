@@ -18,6 +18,8 @@ def test_get_settings_reads_yaml_overrides(tmp_path, monkeypatch):
               default_threshold: 0.9
             clustering:
               similarity_threshold: 0.75
+              max_reps_per_media: 5
+              ward_sync_batch_limit: 50
             """
         ).strip()
     )
@@ -28,6 +30,8 @@ def test_get_settings_reads_yaml_overrides(tmp_path, monkeypatch):
 
     assert loaded.identity_detection.default_threshold == 0.9
     assert loaded.clustering.similarity_threshold == 0.75
+    assert loaded.clustering.max_reps_per_media == 5
+    assert loaded.clustering.ward_sync_batch_limit == 50
 
 
 def test_get_settings_is_cached_until_cleared(tmp_path, monkeypatch):

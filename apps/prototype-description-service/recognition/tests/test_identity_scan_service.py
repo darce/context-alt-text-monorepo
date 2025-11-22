@@ -5,7 +5,6 @@ from __future__ import annotations
 import asyncio
 import os
 from pathlib import Path
-from typing import List
 from uuid import uuid4
 
 import numpy as np
@@ -26,7 +25,7 @@ class DeterministicProvider(FaceEmbeddingProvider):
         super().__init__()
         self.identities_per_media = identities_per_media
 
-    async def analyze(self, image: Image.Image) -> List[IdentityEmbedding]:  # noqa: ARG002
+    async def analyze(self, image: Image.Image) -> list[IdentityEmbedding]:  # noqa: ARG002
         detections = []
         for idx in range(self.identities_per_media):
             bbox = (idx, idx, idx + 10, idx + 10)
@@ -127,7 +126,7 @@ def test_save_identities_normalizes_bbox_dimensions():
     assert len(saved) == 1
     assert saved[0].bbox_width == 0
     assert saved[0].bbox_height == 0
-    assert saved[0].embedding == embeddings[0].embedding.tolist()
+    assert pytest.approx(np.linalg.norm(np.array(saved[0].embedding, dtype=np.float32)), rel=1e-6) == 1.0
 
 
 def test_save_identities_skips_existing_bboxes():
@@ -173,6 +172,30 @@ def test_save_identities_skips_duplicates_in_same_batch():
 
     assert len(saved) == 1
     assert len([obj for obj in session.added if isinstance(obj, MediaIdentity)]) == 1
+
+
+def test_save_identities_normalizes_embeddings_before_storage():
+    session = DummySession()
+    provider = DeterministicProvider()
+    service = DummyIdentityScanService(session, provider, uuid4())
+
+    detection = IdentityDetection(bbox=(0, 0, 10, 10), confidence=0.9)
+    raw_embedding = np.ones(1024, dtype=np.float32) * 3.0  # norm != 1
+    embeddings = [IdentityEmbedding(embedding=raw_embedding, detection=detection)]
+
+    saved = asyncio.run(
+        service._save_identities(
+            media_id=202,
+            media_url="https://example.com/202.jpg",
+            embeddings=embeddings,
+            created_by_user_id=None,
+            source_image=service._image,
+        )
+    )
+
+    assert len(saved) == 1
+    stored = saved[0].embedding
+    assert pytest.approx(np.linalg.norm(np.array(stored, dtype=np.float32)), rel=1e-6) == 1.0
 
 
 @pytest.mark.xfail(reason="Pending enforcement of max_identities_per_image from settings")

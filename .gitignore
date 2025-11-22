@@ -74,6 +74,3 @@ __pycache__/
 # pip install artifacts
 .eggs/
 *.egg-info/
-
-# Agentic
-docs/tasks/**/*.md

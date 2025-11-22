@@ -14,6 +14,7 @@ dependencies = [
     "alembic>=1.13.2,<2.0.0",
     "psycopg[binary,pool]>=3.2.1,<4.0.0",
     "numpy>=1.26.0,<2.0.0",
+    "scikit-learn>=1.4.0,<2.0.0",
     "pillow>=10.0.0,<11.0.0",
     "opencv-python>=4.9.0.72,<=4.9.0.80",
     "pydantic-settings>=2.0.4,<3.0.0",
@@ -37,8 +38,12 @@ include = [
 [project.optional-dependencies]
 dev = [
     "ruff>=0.7.0,<1.0.0",
+    "mypy>=1.7.0,<2.0.0",
     "pytest>=8.3.0,<9.0.0",
     "pytest-asyncio>=0.21.0,<0.23.0",
+    # Type stubs for mypy
+    "types-PyYAML",
+    "types-Pillow",
 ]
 local = [
     "onnxruntime-silicon>=1.16.3 ; platform_system == \"Darwin\" and platform_machine == \"arm64\"",
@@ -51,3 +56,78 @@ remote = [
 [build-system]
 requires = ["setuptools>=68.0.0"]
 build-backend = "setuptools.build_meta"
+
+[tool.ruff]
+line-length = 120
+target-version = "py311"
+
+[tool.ruff.lint]
+select = [
+    "E",    # pycodestyle errors
+    "W",    # pycodestyle warnings
+    "F",    # pyflakes
+    "I",    # isort
+    "N",    # pep8-naming
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "ASYNC", # flake8-async
+]
+ignore = [
+    "E501",  # line too long (handled by formatter)
+    "B008",  # FastAPI uses function calls in defaults (Depends, Query)
+    "B904",  # Allow raise without `from` in HTTP exception handlers
+    "SIM108", # Ternary operators can reduce readability
+]
+
+[tool.ruff.lint.per-file-ignores]
+"__init__.py" = ["F401"]  # Allow unused imports in __init__
+"tests/**/*.py" = ["F401", "F811", "B017"]  # Allow fixtures and broad exceptions in tests
+"*/tests/**/*.py" = ["F401", "F811", "B017"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = false  # Gradual typing: start lenient
+check_untyped_defs = true
+warn_redundant_casts = true
+warn_unused_ignores = true
+warn_no_return = true
+warn_unreachable = true
+strict_equality = true
+no_implicit_optional = true
+
+# Per-module options (strict on new code)
+[[tool.mypy.overrides]]
+module = [
+    "recognition.application.cluster_repository",
+    "recognition.application.cluster_factory",
+    "recognition.application.cluster_assignment",
+    "recognition.application.identity_clustering_service",
+]
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+
+# Relax strictness for test files (allow mocking)
+[[tool.mypy.overrides]]
+module = ["recognition.tests.*", "recognition.infrastructure.tests.*"]
+disallow_untyped_defs = false
+disable_error_code = ["method-assign", "arg-type", "index"]
+
+# Ignore missing imports for packages without stubs
+[[tool.mypy.overrides]]
+module = [
+    "insightface.*",
+    "onnxruntime.*",
+    "cv2.*",
+    "pgvector.*",
+    "asyncpg.*",
+    "sklearn.*",
+]
+ignore_missing_imports = true

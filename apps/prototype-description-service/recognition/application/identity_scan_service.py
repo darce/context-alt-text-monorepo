@@ -3,17 +3,19 @@
 from __future__ import annotations
 
 import logging
+from collections.abc import Iterable
 from datetime import datetime
 from io import BytesIO
-from typing import Iterable, Optional
 from uuid import UUID, uuid4
 
 import httpx
+import numpy as np
 from PIL import Image
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
+from recognition.application.centroid_utils import _normalize_vector
 from recognition.domain.entities import IdentityEmbedding
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 from recognition.infrastructure.thumbnail_service import ThumbnailService
@@ -34,7 +36,7 @@ class IdentityScanService:
         self,
         job: IdentityScanJob,
         media_items: Iterable[dict[str, object]],
-        user_id: Optional[int] = None,
+        user_id: int | None = None,
     ) -> None:
         if hasattr(self.session, "get"):
             persistent_job = await self.session.get(IdentityScanJob, job.id)
@@ -50,7 +52,7 @@ class IdentityScanService:
 
         try:
             for media_item in media_items:
-                media_id = int(media_item["media_id"])
+                media_id = int(media_item["media_id"])  # type: ignore[call-overload]
                 media_url = str(media_item["media_url"])
 
                 image = await self._fetch_image(media_url)
@@ -87,7 +89,7 @@ class IdentityScanService:
         media_id: int,
         media_url: str,
         embeddings: Iterable[IdentityEmbedding],
-        created_by_user_id: Optional[int],
+        created_by_user_id: int | None,
         source_image: Image.Image,
     ) -> list[MediaIdentity]:
         existing_keys = await self._existing_identity_keys(media_id)
@@ -120,18 +122,20 @@ class IdentityScanService:
                 bbox_width=width,
                 bbox_height=height,
                 confidence=detection.confidence,
-                embedding=embedding.embedding.tolist(),
+                embedding=_normalize_vector(np.array(embedding.embedding, dtype=np.float32)).tolist(),
                 created_by_user_id=created_by_user_id,
             )
             self.session.add(identity)
             if getattr(identity, "id", None) is None:
                 identity.id = uuid4()
-            self._maybe_generate_thumbnail(identity, embedding, source_image)
+            self._generate_thumbnail_if_enabled(identity, embedding, source_image)
             saved.append(identity)
 
         return saved
 
-    def _maybe_generate_thumbnail(self, identity: MediaIdentity, embedding: IdentityEmbedding, image: Image.Image) -> None:
+    def _generate_thumbnail_if_enabled(
+        self, identity: MediaIdentity, embedding: IdentityEmbedding, image: Image.Image
+    ) -> None:
         if not self._thumbnail_service.enabled:
             return
         bbox = (

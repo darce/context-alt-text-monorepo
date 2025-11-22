@@ -5,7 +5,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 from functools import lru_cache
 from pathlib import Path
-from typing import Tuple
 
 import yaml
 from pydantic import Field
@@ -20,9 +19,9 @@ class InsightFaceSettings(BaseSettings):
     model_name: str = "buffalo_l"
     device: str = "auto"
     cache_dir: Path = Path.home() / ".insightface" / "models"
-    providers: Tuple[str, ...] = ()
+    providers: tuple[str, ...] = ()
     det_thresh: float = 0.5
-    det_size: Tuple[int, int] = (640, 640)
+    det_size: tuple[int, int] = (640, 640)
 
     model_config = SettingsConfigDict(env_file=str(ENV_FILE), env_file_encoding="utf-8")
 
@@ -49,11 +48,11 @@ class IdentityClusteringSettings(BaseSettings):
     min_identity_cluster_size: int = Field(2, alias="min_cluster_size")
     max_identity_cluster_size: int = Field(1000, alias="max_cluster_size")
     auto_merge_enabled: bool = Field(
-        default=True,
+        default=False,
         description="Automatically merge similar clusters after clustering",
     )
     auto_merge_threshold: float = Field(
-        default=0.85,
+        default=0.6,
         ge=0.0,
         le=1.0,
         description="Similarity threshold for auto-merge operations",
@@ -64,6 +63,15 @@ class IdentityClusteringSettings(BaseSettings):
         le=10,
         description="Maximum number of merge iterations per clustering run",
     )
+    max_reps_per_media: int = Field(default=2, ge=1)
+    min_diversity_similarity: float = Field(default=0.85, ge=0.0, le=1.0)
+    quality_weight: float = Field(default=0.7, ge=0.0, le=1.0)
+    diversity_weight: float = Field(default=0.3, ge=0.0, le=1.0)
+    borderline_window: float = Field(default=0.05, ge=0.0)
+    ward_sync_batch_limit: int = Field(default=100, ge=1)
+    normalization_atol: float = Field(default=1e-5, ge=0.0)
+    ward_async_max_identities: int = Field(default=5000, ge=1)
+    auto_merge_max_identities: int = Field(default=2000, ge=1)
 
     model_config = SettingsConfigDict(env_file=str(ENV_FILE), env_file_encoding="utf-8")
 

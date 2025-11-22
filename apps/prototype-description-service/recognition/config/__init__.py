@@ -5,8 +5,8 @@ from recognition.config.settings import (
     IdentityClusteringSettings,
     IdentityDetectionSettings,
     InsightFaceSettings,
-    ThumbnailSettings,
     RecognitionSettings,
+    ThumbnailSettings,
     get_settings,
 )
 

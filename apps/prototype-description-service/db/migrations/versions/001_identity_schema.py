@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-from alembic import op
 import sqlalchemy as sa
+from alembic import op
 from pgvector.sqlalchemy import Vector
-
 
 revision = "001_identity_schema"
 down_revision = None
@@ -21,11 +20,14 @@ TENANT_TABLES = [
     "identity_clusters",
     "identity_members",
     "identity_scan_jobs",
+    "identity_cluster_representatives",
+    "identity_clustering_jobs",
 ]
 
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
+    op.execute("DROP TABLE IF EXISTS identity_clustering_jobs CASCADE")
     op.execute("DROP TABLE IF EXISTS identity_scan_jobs CASCADE")
     op.execute("DROP TABLE IF EXISTS identity_members CASCADE")
     op.execute("DROP TABLE IF EXISTS identity_clusters CASCADE")
@@ -37,7 +39,13 @@ def upgrade() -> None:
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("site_url", sa.String(length=255), nullable=False, unique=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), onupdate=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            onupdate=sa.func.now(),
+            nullable=False,
+        ),
     )
 
     op.create_table(
@@ -67,6 +75,7 @@ def upgrade() -> None:
         ),
         sa.Column("created_by_user_id", sa.Integer()),
         sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        sa.CheckConstraint("abs(vector_norm(embedding) - 1.0) < 0.01", name="media_identity_embedding_unit_norm"),
         sa.UniqueConstraint("tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"),
     )
 
@@ -85,9 +94,7 @@ def upgrade() -> None:
             sa.dialects.postgresql.UUID(as_uuid=True),
             sa.ForeignKey("media_identities.id", ondelete="SET NULL"),
         ),
-        sa.Column(
-            "identity_count", sa.Integer(), nullable=False, server_default=sa.text("0")
-        ),
+        sa.Column("identity_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("roster_id", sa.dialects.postgresql.UUID(as_uuid=True)),
         sa.Column("similarity_threshold", sa.Float()),
         sa.Column(
@@ -138,6 +145,36 @@ def upgrade() -> None:
     )
 
     op.create_table(
+        "identity_cluster_representatives",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
+        sa.Column("quality_score", sa.Float(), nullable=False),
+        sa.Column("diversity_score", sa.Float()),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
+        sa.CheckConstraint("quality_score >= 0 AND quality_score <= 1", name="quality_score_range"),
+        sa.CheckConstraint("abs(vector_norm(embedding) - 1.0) < 0.01", name="cluster_rep_embedding_unit_norm"),
+        sa.UniqueConstraint("cluster_id", "identity_id", name="unique_cluster_representative"),
+    )
+
+    op.create_table(
         "identity_scan_jobs",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
@@ -181,6 +218,26 @@ def upgrade() -> None:
         sa.Column("created_by_user_id", sa.Integer()),
     )
 
+    op.create_table(
+        "identity_clustering_jobs",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'pending'")),
+        sa.Column("progress", sa.Float(), nullable=False, server_default=sa.text("0")),
+        sa.Column("total_identities", sa.Integer(), nullable=True),
+        sa.Column("processed_identities", sa.Integer(), nullable=True, server_default=sa.text("0")),
+        sa.Column("error_message", sa.Text()),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+        sa.Column("created_by_user_id", sa.Integer()),
+    )
+
     op.create_index(
         "idx_media_identities_tenant",
         "media_identities",
@@ -209,6 +266,13 @@ def upgrade() -> None:
         ["status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
     )
+    op.create_index("idx_identity_clustering_jobs_tenant", "identity_clustering_jobs", ["tenant_id"])
+    op.create_index(
+        "idx_identity_clustering_jobs_status",
+        "identity_clustering_jobs",
+        ["status"],
+        postgresql_where=sa.text("status IN ('pending', 'running')"),
+    )
     op.create_index(
         "idx_media_identities_tenant_id",
         "media_identities",
@@ -233,6 +297,28 @@ def upgrade() -> None:
         "idx_media_identities_tenant_media",
         "media_identities",
         ["tenant_id", "media_id"],
+    )
+    op.create_index(
+        "idx_cluster_reps_tenant",
+        "identity_cluster_representatives",
+        ["tenant_id"],
+    )
+    op.create_index(
+        "idx_cluster_reps_cluster",
+        "identity_cluster_representatives",
+        ["cluster_id"],
+    )
+    op.create_index(
+        "idx_cluster_reps_embedding",
+        "identity_cluster_representatives",
+        ["embedding"],
+        postgresql_using="ivfflat",
+        postgresql_ops={"embedding": "vector_cosine_ops"},
+    )
+    op.create_index(
+        "idx_cluster_reps_diversity",
+        "identity_cluster_representatives",
+        ["cluster_id", "diversity_score"],
     )
 
     for table in TENANT_TABLES:
@@ -354,37 +440,6 @@ def upgrade() -> None:
         """
     )
 
-    # Create vector normalization function
-    op.execute(
-        """
-        CREATE OR REPLACE FUNCTION normalize_vector(vec public.vector)
-        RETURNS public.vector AS $$
-        DECLARE
-            elements text[];
-            norm_sq double precision;
-        BEGIN
-            -- Cast vector to text, strip brackets, and split into elements
-            elements := string_to_array(trim(both '[]' from vec::text), ',');
-
-            SELECT SUM( (val::double precision) * (val::double precision) )
-            INTO norm_sq
-            FROM unnest(elements) AS val;
-
-            IF norm_sq IS NULL OR norm_sq = 0 THEN
-                RETURN vec;
-            END IF;
-
-            RETURN (
-                '[' || array_to_string(
-                    ARRAY(SELECT (val::double precision) / sqrt(norm_sq) FROM unnest(elements) AS val),
-                    ','
-                ) || ']'
-            )::public.vector;
-        END;
-        $$ LANGUAGE plpgsql IMMUTABLE STRICT;
-        """
-    )
-
     op.execute(
         f"""
         CREATE MATERIALIZED VIEW mv_identity_cluster_centroids AS
@@ -392,7 +447,7 @@ def upgrade() -> None:
             SELECT
                 im.cluster_id,
                 mi.tenant_id,
-                normalize_vector(mi.embedding::public.vector)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
+                l2_normalize(mi.embedding)::vector({EMBEDDING_DIMENSION}) AS unit_embedding,
                 mi.updated_at
             FROM identity_members im
             JOIN media_identities mi ON mi.id = im.identity_id
@@ -414,7 +469,7 @@ def upgrade() -> None:
             member_count,
             CASE
                 WHEN member_count > 0 AND avg_embedding IS NOT NULL THEN
-                    normalize_vector(avg_embedding::public.vector)::vector({EMBEDDING_DIMENSION})
+                    l2_normalize(avg_embedding)::vector({EMBEDDING_DIMENSION})
                 ELSE NULL
             END AS centroid,
             refreshed_at
@@ -456,6 +511,7 @@ def downgrade() -> None:
     op.execute("DROP TRIGGER IF EXISTS trg_mark_centroid_dirty_on_members ON identity_members")
     op.execute("DROP FUNCTION IF EXISTS mark_dirty_on_identity_members")
     op.execute("DROP FUNCTION IF EXISTS notify_cluster_centroid_dirty")
+
     op.drop_table("identity_cluster_refresh_queue")
     op.drop_index("idx_identity_scan_jobs_status", table_name="identity_scan_jobs")
     op.drop_index("idx_identity_scan_jobs_tenant", table_name="identity_scan_jobs")
@@ -467,14 +523,22 @@ def downgrade() -> None:
     op.drop_index("idx_media_identities_tenant", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_media", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_id", table_name="media_identities")
+    op.drop_index("idx_identity_clustering_jobs_status", table_name="identity_clustering_jobs")
     op.drop_index("idx_identity_scan_jobs_tenant_id", table_name="identity_scan_jobs")
+    op.drop_index("idx_identity_clustering_jobs_tenant", table_name="identity_clustering_jobs")
     op.drop_index("idx_identity_members_tenant_id", table_name="identity_members")
     op.drop_index("idx_identity_clusters_tenant_id", table_name="identity_clusters")
+    op.drop_index("idx_cluster_reps_embedding", table_name="identity_cluster_representatives")
+    op.drop_index("idx_cluster_reps_diversity", table_name="identity_cluster_representatives")
+    op.drop_index("idx_cluster_reps_cluster", table_name="identity_cluster_representatives")
+    op.drop_index("idx_cluster_reps_tenant", table_name="identity_cluster_representatives")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     op.drop_table("identity_scan_jobs")
+    op.drop_table("identity_cluster_representatives")
+    op.drop_table("identity_clustering_jobs")
     op.drop_table("identity_members")
     op.drop_table("identity_clusters")
     op.drop_table("media_identities")

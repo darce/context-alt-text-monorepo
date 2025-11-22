@@ -2,41 +2,80 @@
 
 from __future__ import annotations
 
-from typing import AsyncIterator
+import contextlib
+import os
+from collections.abc import AsyncIterator
 from uuid import UUID
 
+from asyncpg.exceptions import InFailedSQLTransactionError
 from sqlalchemy import event, text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.session import async_session_factory, engine
+from db.session import engine
 
 
 async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:
     """Set app.current_tenant for the current session/transaction."""
     tenant_value = str(tenant_id).replace("'", "''")
-    await session.execute(text("RESET app.bypass_rls"))
-    await session.execute(text(f"SET LOCAL app.current_tenant = '{tenant_value}'"))
+    try:
+        await session.execute(text("RESET app.bypass_rls"))
+        await session.execute(text(f"SET LOCAL app.current_tenant = '{tenant_value}'"))
+    except DBAPIError as e:
+        # Only rollback if transaction is actually aborted
+        if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+            await session.rollback()
+            await session.execute(text("RESET app.bypass_rls"))
+            await session.execute(text(f"SET LOCAL app.current_tenant = '{tenant_value}'"))
+        else:
+            raise
+    if os.getenv("ALLOW_RLS_BYPASS_FOR_TESTS") == "1":
+        try:
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        except DBAPIError as e:
+            # Only rollback if transaction is actually aborted
+            if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+                await session.rollback()
+                await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+            else:
+                raise
 
 
 async def clear_tenant_context(session: AsyncSession) -> None:
     """Reset the tenant context so pooled connections don’t leak state."""
+    with contextlib.suppress(Exception):
+        await session.rollback()
     await session.execute(text("RESET app.current_tenant"))
     await session.execute(text("RESET app.bypass_rls"))
 
 
 async def enable_rls_bypass(session: AsyncSession) -> None:
     """Temporarily disable RLS policies for maintenance operations."""
-    await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    try:
+        await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+    except DBAPIError as e:
+        # Only rollback if transaction is actually aborted
+        if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+            await session.rollback()
+            await session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
+        else:
+            raise
 
 
 async def disable_rls_bypass(session: AsyncSession) -> None:
     """Reset RLS bypass flag."""
-    await session.execute(text("RESET app.bypass_rls"))
+    try:
+        await session.execute(text("RESET app.bypass_rls"))
+    except DBAPIError as e:
+        # Only rollback if transaction is actually aborted
+        if e.orig and isinstance(e.orig.__cause__, InFailedSQLTransactionError):
+            await session.rollback()
+            await session.execute(text("RESET app.bypass_rls"))
+        else:
+            raise
 
 
-async def get_tenant_aware_session(
-    session: AsyncSession, tenant_id: UUID
-) -> AsyncIterator[AsyncSession]:
+async def get_tenant_aware_session(session: AsyncSession, tenant_id: UUID) -> AsyncIterator[AsyncSession]:
     """Dependency that yields a session with tenant context set."""
     await set_tenant_context(session, tenant_id)
     try:

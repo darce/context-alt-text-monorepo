@@ -118,12 +118,12 @@ Commands:
   help         Show this help text
 
 Environment variables:
-  PYTHON_BIN        Python executable to use (default: python)
-  SKIP_INSTALL      Set to 1 to skip dependency installation during start
-  SKIP_DB_START     Set to 1 to skip starting the dockerized Postgres dependency
-  HOST              Uvicorn host binding (default: 0.0.0.0)
-  PORT              Uvicorn port (default: 8000)
-  FORCE_INSTALL     Set to 1 to force reinstalling deps even when offline
+  PYTHON_BIN           Python executable to use (default: python)
+  SKIP_INSTALL         Set to 1 to skip dependency installation during start
+  SKIP_DB_START        Set to 1 to skip starting the dockerized Postgres dependency
+  HOST                 Uvicorn host binding (default: 0.0.0.0)
+  PORT                 Uvicorn port (default: 8000)
+  FORCE_INSTALL        Set to 1 to force reinstalling deps even when offline
 USAGE
 }
 

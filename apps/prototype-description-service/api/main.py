@@ -1,18 +1,24 @@
+from urllib.parse import urlparse
+
 from fastapi import FastAPI
 from fastapi.staticfiles import StaticFiles
-from urllib.parse import urlparse
-from recognition.config.cache import configure_dev_cache
-from recognition.config import get_settings
 
+from api.logging_config import configure_logging
 from api.schemas.health import HealthResponse
 from recognition.application.health import check_health as recognition_health
+from recognition.config import get_settings
+from recognition.config.cache import configure_dev_cache
 from recognition.interface_adapters.http import router as recognition_router
 from roster.application.health import check_health as roster_health
 from roster.interface_adapters.http.health_router import router as roster_router
 from scene.application.health import check_health as scene_health
 from scene.interface_adapters.http.health_router import router as scene_router
 
+# Configure logging to show diagnostic output
+configure_logging("INFO")
+
 configure_dev_cache()
+
 
 def create_app() -> FastAPI:
     app = FastAPI(

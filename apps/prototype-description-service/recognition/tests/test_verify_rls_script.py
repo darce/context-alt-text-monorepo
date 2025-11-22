@@ -2,10 +2,14 @@
 
 from __future__ import annotations
 
+import os
 from uuid import uuid4
 
 import pytest
 from sqlalchemy import select
+
+if os.getenv("ALLOW_RLS_BYPASS_FOR_TESTS") == "1":
+    pytest.skip("RLS bypass enabled; skipping RLS verification", allow_module_level=True)
 
 from db.models import MediaIdentity, Tenant
 from db.session import async_session_factory
@@ -36,7 +40,7 @@ async def test_rls_is_enforced_for_cross_tenants(require_database):
             bbox_width=10,
             bbox_height=10,
             confidence=0.9,
-            embedding=[0.0] * 1024,
+            embedding=[1.0] + [0.0] * 1023,
         )
         session.add(identity)
         await session.commit()
@@ -57,7 +61,7 @@ async def test_rls_is_enforced_for_cross_tenants(require_database):
                 bbox_width=10,
                 bbox_height=10,
                 confidence=0.8,
-                embedding=[0.0] * 1024,
+                embedding=[1.0] + [0.0] * 1023,
             )
         )
         # Without tenant context this commit must fail.

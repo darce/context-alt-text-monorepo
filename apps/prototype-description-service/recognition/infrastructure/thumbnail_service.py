@@ -2,10 +2,9 @@
 
 from __future__ import annotations
 
-import uuid
 import os
+import uuid
 from pathlib import Path
-from typing import Tuple
 
 from PIL import Image
 
@@ -41,7 +40,9 @@ class ThumbnailService:
     def _destination_path(self, identity_id: uuid.UUID) -> Path:
         return self._storage_dir / f"{identity_id}.jpg"
 
-    def save(self, *, image: Image.Image, bbox: Tuple[float, float, float, float], identity_id: uuid.UUID) -> str | None:
+    def save(
+        self, *, image: Image.Image, bbox: tuple[float, float, float, float], identity_id: uuid.UUID
+    ) -> str | None:
         if not self.enabled:
             return None
 
@@ -54,7 +55,7 @@ class ThumbnailService:
         tmp_path.replace(dest_path)
         return self.build_url(identity_id)
 
-    def _crop_square(self, image: Image.Image, bbox: Tuple[float, float, float, float]) -> Image.Image:
+    def _crop_square(self, image: Image.Image, bbox: tuple[float, float, float, float]) -> Image.Image:
         x, y, width, height = bbox
         padding_x = width * self._padding_ratio
         padding_y = height * self._padding_ratio

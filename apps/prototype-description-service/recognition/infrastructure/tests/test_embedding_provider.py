@@ -1,7 +1,6 @@
+import asyncio
 import sys
 import types
-
-import asyncio
 
 import numpy as np
 import pytest
@@ -35,8 +34,8 @@ class DummyFaceAnalysis:
 def fake_insightface(monkeypatch):
     module = types.ModuleType("insightface")
     app_module = types.ModuleType("insightface.app")
-    app_module.FaceAnalysis = DummyFaceAnalysis
-    module.app = app_module
+    app_module.FaceAnalysis = DummyFaceAnalysis  # type: ignore[attr-defined]
+    module.app = app_module  # type: ignore[attr-defined]
     monkeypatch.setitem(sys.modules, "insightface", module)
     monkeypatch.setitem(sys.modules, "insightface.app", app_module)
     yield

@@ -98,8 +98,16 @@ docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c 
 docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "ALTER SCHEMA public OWNER TO \"${DB_USER}\";" >/dev/null
 docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO \"${DB_USER}\";" >/dev/null
 
+echo "[reset-dev-db] Cleaning up any existing custom functions..." >&2
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS notify_cluster_centroid_dirty(uuid) CASCADE;" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_identity_members() CASCADE;" >/dev/null
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_media_identities() CASCADE;" >/dev/null
+
 echo "[reset-dev-db] Applying migrations as ${DB_USER}..." >&2
 PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGUSER="${DB_USER}" PGPASSWORD="${DB_PASS}" alembic -c db/alembic.ini upgrade head
+
+echo "[reset-dev-db] Setting up test user for RLS testing..." >&2
+docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -f /docker-entrypoint-initdb.d/010-create-test-role.sql >/dev/null
 
 if [[ "${WITH_SAMPLE_DATA}" == "1" ]]; then
   echo "[reset-dev-db] Seeding sample data for manual testing (--with-sample-data)..." >&2

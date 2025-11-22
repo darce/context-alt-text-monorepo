@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from typing import List
 from uuid import UUID
 
 import numpy as np
@@ -27,13 +26,13 @@ class ClusterMatch(BaseModel):
 
 
 class SuggestionResponse(BaseModel):
-    matches: List[ClusterMatch]
+    matches: list[ClusterMatch]
 
 
 @router.get("/clusters/suggest", response_model=SuggestionResponse)
 async def suggest_similar_clusters(
     tenant_id: UUID = Query(..., description="Tenant UUID"),
-    embedding: List[float] = Query(..., description="Embedding vector for the query identity"),
+    embedding: list[float] = Query(..., description="Embedding vector for the query identity"),
     top_k: int = Query(5, ge=1, le=20, description="Maximum number of matches to return"),
     threshold: float = Query(0.6, ge=0.0, le=1.0, description="Minimum similarity to include a match"),
     session: AsyncSession = Depends(get_session),
@@ -52,7 +51,7 @@ async def suggest_similar_clusters(
     result = await session.execute(stmt)
 
     query_vector = np.array(embedding, dtype=np.float32)
-    matches: List[tuple[IdentityCluster, float]] = []
+    matches: list[tuple[IdentityCluster, float]] = []
 
     for cluster, centroid, member_count in result.all():
         if centroid is None or not member_count:

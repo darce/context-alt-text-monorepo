@@ -3,9 +3,8 @@
 from __future__ import annotations
 
 import logging
-from typing import Dict, List, Optional
-from uuid import UUID
 from urllib.parse import urlparse
+from uuid import UUID
 
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, HttpUrl
@@ -13,7 +12,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
-from db.models import IdentityCluster, IdentityMember, IdentityScanJob, MediaIdentity, Tenant
+from db.models import IdentityCluster, IdentityScanJob, MediaIdentity, Tenant
 from db.session import get_session
 from db.tenant_context import set_tenant_context
 from recognition.application.identity_clustering_service import (
@@ -22,8 +21,8 @@ from recognition.application.identity_clustering_service import (
     IdentityClusteringService,
 )
 from recognition.application.identity_scan_service import IdentityScanService
-from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 from recognition.config import get_settings
+from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +36,9 @@ class MediaItem(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     tenant_id: UUID
-    site_url: Optional[HttpUrl] = None
-    media_items: List[MediaItem] = Field(..., min_length=1, max_length=100)
-    user_id: Optional[int] = None
+    site_url: HttpUrl | None = None
+    media_items: list[MediaItem] = Field(..., min_length=1, max_length=100)
+    user_id: int | None = None
 
 
 class AnalyzeResponse(BaseModel):
@@ -50,7 +49,7 @@ class AnalyzeResponse(BaseModel):
 
 class ClusterRequest(BaseModel):
     tenant_id: UUID
-    similarity_threshold: Optional[float] = 0.6
+    similarity_threshold: float | None = 0.6
 
 
 class ClusterResponse(BaseModel):
@@ -60,15 +59,16 @@ class ClusterResponse(BaseModel):
         default=0,
         description="Number of auto-merge operations performed",
     )
+    job_id: str | None = None
 
 
 class ClusterSummaryResponse(BaseModel):
     id: str
     label: str
     identity_count: int
-    member_ids: List[str]
+    member_ids: list[str]
     representative_identity: dict
-    sample_identities: List[dict]
+    sample_identities: list[dict]
 
 
 class MediaIdentityBBox(BaseModel):
@@ -81,22 +81,22 @@ class MediaIdentityBBox(BaseModel):
 class MediaIdentityDetail(BaseModel):
     id: str
     media_id: int
-    cluster_id: Optional[str]
-    cluster_label: Optional[str]
+    cluster_id: str | None
+    cluster_label: str | None
     is_auto_label: bool = False
     bbox: MediaIdentityBBox
     confidence: float
-    similarity: Optional[float]
-    detected_at: Optional[str]
-    thumbnail_url: Optional[str] = None
+    similarity: float | None
+    detected_at: str | None
+    thumbnail_url: str | None = None
 
 
 class MediaIdentitiesResponse(BaseModel):
-    identities_by_media: Dict[str, List[MediaIdentityDetail]]
+    identities_by_media: dict[str, list[MediaIdentityDetail]]
 
 
-def _resolve_thumbnail_url(raw_url: Optional[str], request: Optional[Request]) -> Optional[str]:
-    if not raw_url or request is None:
+def _resolve_thumbnail_url(raw_url: str | None, request: Request) -> str | None:
+    if not raw_url:
         return raw_url
 
     try:
@@ -146,11 +146,27 @@ class MergeClusterResponse(BaseModel):
 class MergeSimilarRequest(BaseModel):
     tenant_id: UUID
     threshold: float = Field(default=0.85, ge=0.0, le=1.0)
-    max_iterations: Optional[int] = Field(default=None, ge=1, le=10)
+    max_iterations: int | None = Field(default=None, ge=1, le=10)
 
 
 class MergeSimilarResponse(BaseModel):
     merges_performed: int
+
+
+class ClusteringJobResponse(BaseModel):
+    id: str
+    status: str
+    progress: float
+    total_identities: int | None = None
+    processed_identities: int | None = None
+    error_message: str | None = None
+
+
+class StartClusteringJobResponse(BaseModel):
+    status: str
+    job_id: str | None = None
+    clusters_created: int | None = None
+    assigned: int | None = None
 
 
 def get_embedding_provider() -> FaceEmbeddingProvider:
@@ -195,7 +211,64 @@ async def analyze_media(
     return AnalyzeResponse(job_id=job.id, status=job.status, total_media=job.total_media)
 
 
-async def _ensure_tenant(session: AsyncSession, tenant_id: UUID, site_url: Optional[HttpUrl]) -> None:
+@router.post("/clustering/jobs", response_model=StartClusteringJobResponse)
+async def start_clustering_job(
+    tenant_id: UUID = Query(..., description="Tenant ID for RLS scoping"),
+    session: AsyncSession = Depends(get_session),
+) -> StartClusteringJobResponse:
+    """Kick off clustering for all unclustered identities. Returns job_id if queued."""
+
+    await set_tenant_context(session, tenant_id)
+    service = IdentityClusteringService(session=session, tenant_id=tenant_id)
+    result = await service.cluster_identities_hybrid()
+
+    if result["status"] == "complete":
+        clusters_raw = result.get("clusters") or []
+        clusters_list = clusters_raw if isinstance(clusters_raw, list) else []
+        assigned_raw = result.get("assigned")
+        assigned_count = assigned_raw if isinstance(assigned_raw, int) else 0
+        return StartClusteringJobResponse(
+            status="complete",
+            job_id=None,
+            clusters_created=len(clusters_list),
+            assigned=assigned_count,
+        )
+
+    job_id_obj = result.get("job_id")
+    assigned_raw = result.get("assigned")
+    assigned_count = assigned_raw if isinstance(assigned_raw, int) else 0
+    return StartClusteringJobResponse(
+        status="pending",
+        job_id=str(job_id_obj) if isinstance(job_id_obj, (UUID, str)) else None,
+        clusters_created=None,
+        assigned=assigned_count,
+    )
+
+
+@router.get("/clustering/jobs/{job_id}", response_model=ClusteringJobResponse)
+async def get_clustering_job_status(
+    job_id: UUID,
+    tenant_id: UUID = Query(..., description="Tenant ID for RLS scoping"),
+    session: AsyncSession = Depends(get_session),
+) -> ClusteringJobResponse:
+    await set_tenant_context(session, tenant_id)
+    service = IdentityClusteringService(session=session, tenant_id=tenant_id)
+    job = await service.get_clustering_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+
+    progress = float(job.progress or 0.0)
+    return ClusteringJobResponse(
+        id=str(job.id),
+        status=job.status,
+        progress=progress,
+        total_identities=job.total_identities,
+        processed_identities=job.processed_identities,
+        error_message=job.error_message,
+    )
+
+
+async def _ensure_tenant(session: AsyncSession, tenant_id: UUID, site_url: HttpUrl | None) -> None:
     tenant = await session.get(Tenant, tenant_id)
     if tenant:
         return
@@ -266,13 +339,13 @@ async def cluster_media(
     )
 
 
-@router.get("/clusters", response_model=List[ClusterSummaryResponse])
+@router.get("/clusters", response_model=list[ClusterSummaryResponse])
 async def list_clusters(
     tenant_id: UUID,
     limit: int = 50,
     offset: int = 0,
     session: AsyncSession = Depends(get_session),
-) -> List[ClusterSummaryResponse]:
+) -> list[ClusterSummaryResponse]:
     await set_tenant_context(session, tenant_id)
     stmt = (
         select(IdentityCluster)
@@ -286,11 +359,11 @@ async def list_clusters(
     clusters = result.scalars().all()
 
     service = IdentityClusteringService(session, tenant_id)
-    summaries: List[ClusterSummaryResponse] = []
+    summaries: list[ClusterSummaryResponse] = []
 
     for cluster in clusters:
         summary = await service.get_cluster_summary(cluster.id)
-        summaries.append(ClusterSummaryResponse(**summary))
+        summaries.append(ClusterSummaryResponse(**summary))  # type: ignore[arg-type]
 
     return summaries
 
@@ -298,16 +371,16 @@ async def list_clusters(
 @router.get("/media/identities", response_model=MediaIdentitiesResponse)
 async def get_media_identities(
     tenant_id: UUID,
-    media_ids: List[int] | None = Query(
+    request: Request,
+    media_ids: list[int] | None = Query(
         None,
         max_length=100,
     ),
-    request: Request = None,
     session: AsyncSession = Depends(get_session),
 ) -> MediaIdentitiesResponse:
     await set_tenant_context(session, tenant_id)
-    resolved_ids: List[int] = list(media_ids or [])
-    if not resolved_ids and request is not None:
+    resolved_ids: list[int] = list(media_ids or [])
+    if not resolved_ids:
         for key, value in request.query_params.multi_items():
             if key in {"media_ids", "media_ids[]"} or key.startswith("media_ids["):
                 try:
@@ -331,13 +404,9 @@ async def get_media_identities(
     result = await session.execute(stmt)
     identities = result.scalars().all()
 
-    cluster_ids = {
-        membership.cluster_id
-        for identity in identities
-        for membership in identity.cluster_memberships
-    }
+    cluster_ids = {membership.cluster_id for identity in identities for membership in identity.cluster_memberships}
 
-    cluster_labels: Dict[UUID, tuple[Optional[str], bool]] = {}
+    cluster_labels: dict[UUID, tuple[str | None, bool]] = {}
     if cluster_ids:
         cluster_stmt = select(IdentityCluster).where(IdentityCluster.id.in_(cluster_ids))
         cluster_result = await session.execute(cluster_stmt)
@@ -346,25 +415,23 @@ async def get_media_identities(
             is_auto = bool(label and label.startswith("cluster-"))
             cluster_labels[cluster.id] = (label, is_auto)
 
-    identities_by_media: Dict[str, List[MediaIdentityDetail]] = {}
+    identities_by_media: dict[str, list[MediaIdentityDetail]] = {}
     for media_id in resolved_ids:
-        media_entries = [
-            identity
-            for identity in identities
-            if identity.media_id == media_id
-        ]
-        details: List[MediaIdentityDetail] = []
+        media_entries = [identity for identity in identities if identity.media_id == media_id]
+        details: list[MediaIdentityDetail] = []
         for identity in media_entries:
             membership = identity.cluster_memberships[0] if identity.cluster_memberships else None
             cluster_id = str(membership.cluster_id) if membership else None
-            label_info = cluster_labels.get(membership.cluster_id) if membership else (None, False)
+            label_info = cluster_labels.get(membership.cluster_id) if membership else None
+            cluster_label = label_info[0] if label_info else None
+            is_auto_label = label_info[1] if label_info else False
             details.append(
                 MediaIdentityDetail(
                     id=str(identity.id),
                     media_id=identity.media_id,
                     cluster_id=cluster_id,
-                    cluster_label=label_info[0],
-                    is_auto_label=label_info[1],
+                    cluster_label=cluster_label,
+                    is_auto_label=is_auto_label,
                     bbox=MediaIdentityBBox(
                         x=identity.bbox_x,
                         y=identity.bbox_y,

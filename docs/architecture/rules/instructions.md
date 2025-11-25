@@ -53,6 +53,7 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 > **You may ONLY modify files within this monorepo.**
 
 **Allowed paths:**
+
 - `apps/prototype-wp-alt-context/`
 - `apps/prototype-description-service/`
 - `packages/`
@@ -60,6 +61,7 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 - `scripts/`
 
 **Never modify:**
+
 - WordPress core files (`wp-config.php`, `.htaccess`, etc.)
 - LocalWP configuration
 - Files in `~/Local Sites/` or any WordPress installation directory
@@ -106,7 +108,7 @@ interface CaptionProviderInterface {
 ```typescript
 // TypeScript: Define types before implementation
 interface RecognitionService {
-    detectFaces(imageUrl: string): Promise<DetectedFace[]>;
+  detectFaces(imageUrl: string): Promise<DetectedFace[]>;
 }
 ```
 
@@ -185,12 +187,14 @@ refactor/clustering-pipeline
 Before building custom UI, check [RADIX_UI_COMPONENT_GUIDE.md](RADIX_UI_COMPONENT_GUIDE.md) for pre-vetted accessible patterns.
 
 **Size limits:**
+
 - Maximum **300 lines** per component file
 - Maximum **5 useState** hooks (use `useReducer` for complex state)
 - Maximum **3 useEffect** hooks (prefer derived state)
 - Maximum **10 props** (split component if exceeded)
 
 **Extract when:**
+
 - JSX block exceeds 50 lines
 - Pattern appears 2+ times
 - Conditional nesting exceeds 2 levels
@@ -208,10 +212,10 @@ const value = initialValue;
 
 // BAD: Derived state in useState
 const [filtered, setFiltered] = useState([]);
-useEffect(() => setFiltered(items.filter(x => x.active)), [items]);
+useEffect(() => setFiltered(items.filter((x) => x.active)), [items]);
 
 // GOOD: Compute during render
-const filtered = useMemo(() => items.filter(x => x.active), [items]);
+const filtered = useMemo(() => items.filter((x) => x.active), [items]);
 
 // BAD: Chained effects
 useEffect(() => setB(a + 1), [a]);
@@ -219,8 +223,8 @@ useEffect(() => setC(b * 2), [b]);
 
 // GOOD: Handle in event or derive
 const handleChange = (newA: number) => {
-    setA(newA);
-    setC((newA + 1) * 2);
+  setA(newA);
+  setC((newA + 1) * 2);
 };
 ```
 
@@ -230,9 +234,9 @@ Use React Query for all API calls:
 
 ```tsx
 const { data, isLoading, error, refetch } = useQuery({
-    queryKey: ['clusters', tenantId],
-    queryFn: () => fetchClusters(tenantId),
-    staleTime: 60_000,
+  queryKey: ["clusters", tenantId],
+  queryFn: () => fetchClusters(tenantId),
+  staleTime: 60_000,
 });
 ```
 
@@ -251,18 +255,21 @@ const { data, isLoading, error, refetch } = useQuery({
 ### WordPress Plugin (PHP)
 
 **Standards:**
+
 - PSR-12 + WordPress Coding Standards
 - PHP 8.1+ features (typed properties, readonly, named arguments)
 - PHPStan level 8 for static analysis
 - Docblocks on all public methods
 
 **Security:**
+
 - Nonce required for all state mutations
 - Centralize capability checks in a Security class
 - Escape all output, sanitize all input
 - Rate limiting via keyed transients
 
 **REST API:**
+
 - Routes registered under `acx/v1/` namespace
 - Return WP_REST_Response with appropriate status codes
 - Include helpful error messages with WP_Error codes
@@ -270,23 +277,27 @@ const { data, isLoading, error, refetch } = useQuery({
 ### Recognition Service (Python/FastAPI)
 
 **Architecture:**
+
 - Hexagonal boundaries: adapters separate from domain logic
 - Adapters in `recognition_core/adapters/`
 - Domain logic in `recognition_core/domain/`
 - Services orchestrate adapters
 
 **Standards:**
+
 - Type hints on all functions
 - Google-style docstrings describing side effects
 - Target < 40 lines per function
 - `mypy` and `flake8` must pass
 
 **Configuration:**
+
 - All settings via pydantic Settings backed by environment variables
 - No hard-coded paths or hostnames
 - Fail fast on missing required configuration
 
 **Coverage:**
+
 - 80% overall minimum
 - 95% on critical pipelines (recognition, clustering)
 
@@ -310,11 +321,13 @@ const { data, isLoading, error, refetch } = useQuery({
 ### Unit Tests
 
 **PHP (PHPUnit 10+):**
+
 - Mock HTTP responses for external services
 - Use WP_Mock for WordPress functions
 - Data providers for edge cases
 
 **Frontend (Vitest + Testing Library):**
+
 - Test behavior, not implementation
 - Mock API with MSW (Mock Service Worker)
 - Test loading, error, and success states
@@ -329,6 +342,7 @@ const { data, isLoading, error, refetch } = useQuery({
 ### E2E Tests (Playwright)
 
 Test critical user flows:
+
 - Workbench -> Generate alt text -> Review -> Approve
 - Recognition flow -> Review matches -> Accept/reject
 - Bulk operations with queue monitoring
@@ -442,6 +456,7 @@ $clean_array = array_map('absint', $_POST['ids']);
 ### ASCII Only
 
 Use ASCII characters only in documentation:
+
 - `[x]` instead of checkmark emoji
 - `[ ]` instead of X emoji
 - `WARNING` instead of warning emoji
@@ -481,13 +496,13 @@ composer phpcs       # Code style
 
 ### Key Files
 
-| Purpose | Location |
-|---------|----------|
-| Roadmap | `docs/roadmaps/roadmap-v3.hybrid.md` |
-| API Contracts | `docs/architecture/contracts/` |
+| Purpose         | Location                                              |
+| --------------- | ----------------------------------------------------- |
+| Roadmap         | `docs/roadmaps/roadmap-v3.hybrid.md`                  |
+| API Contracts   | `docs/architecture/contracts/`                        |
 | Component Guide | `docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md` |
-| Backend UML | `docs/architecture/backend-uml/` |
-| Frontend UML | `docs/architecture/frontend-uml/` |
+| Backend UML     | `docs/architecture/backend-uml/`                      |
+| Frontend UML    | `docs/architecture/frontend-uml/`                     |
 
 ### Getting Help
 

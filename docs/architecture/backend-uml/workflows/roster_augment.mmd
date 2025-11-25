@@ -18,5 +18,5 @@ sequenceDiagram
     RS-->>API: True (appended)
     API->>HYBRID: background reload request (debounced)
     HYBRID->>STORE: load_roster_entries()
-    HYBRID->>HYBRID: rebuild FAISS index (weighted aggregates)
+    HYBRID->>HYBRID: refresh cluster centroids (pgvector)
     API-->>WP: 200 OK + updated entry snapshot

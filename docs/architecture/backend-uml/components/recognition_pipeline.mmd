@@ -1,0 +1,53 @@
+---
+title: Recognition Pipeline Components
+---
+flowchart LR
+    subgraph domain["Application Services"]
+        scan["IdentityScanService\nscan_identities()"]
+        cluster["IdentityClusteringService\ncluster_identities_incremental()"]
+    end
+
+    subgraph clustering["Clustering Components"]
+        chinese_whispers["ChineseWhispersClustering\n(graph-based algorithm)"]
+        cluster_factory["ClusterFactory\n(create_cluster_with_centroid)"]
+        cluster_assigner["ClusterAssigner\n(assign_to_cluster)"]
+        cluster_merger["ClusterMerger\n(merge_similar_clusters)"]
+    end
+
+    subgraph adapters["Adapters"]
+        embed_provider["FaceEmbeddingProvider\n(InsightFace wrapper)"]
+        cluster_repo["ClusterRepository\n(DB operations)"]
+        rep_matcher["RepresentativeMatcher\n(similarity search)"]
+    end
+
+    subgraph infra["Infrastructure"]
+        pg["PostgreSQL + pgvector\n(media_identities, identity_clusters)"]
+        settings["ClusteringSettings\n(Pydantic config)"]
+    end
+
+    scan --> embed_provider
+    scan --> pg
+    
+    cluster --> chinese_whispers
+    cluster --> cluster_factory
+    cluster --> cluster_assigner
+    cluster --> cluster_repo
+    cluster --> rep_matcher
+    
+    cluster_merger --> cluster_repo
+    cluster_repo --> pg
+    
+    rep_matcher -.->|reads| cluster_repo
+
+    settings --> scan
+    settings --> cluster
+
+    classDef domain fill:#ffffff,stroke:#000000,color:#000000;
+    classDef clustering fill:#fafafa,stroke:#000000,color:#000000;
+    classDef adapters fill:#f5f5f5,stroke:#000000,color:#000000;
+    classDef infra fill:#e0e0e0,stroke:#000000,color:#000000;
+
+    class scan,cluster domain;
+    class chinese_whispers,cluster_factory,cluster_assigner,cluster_merger clustering;
+    class embed_provider,cluster_repo,rep_matcher adapters;
+    class pg,settings infra;

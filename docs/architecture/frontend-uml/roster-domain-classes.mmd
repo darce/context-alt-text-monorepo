@@ -65,6 +65,6 @@ FaceObservation "1" --> "1" ObservationEmbedding : embedding
 FaceObservation --> LabelStatusEnum
 AugmentedEmbedding --> EmbeddingSourceEnum
 
-note for FaceObservation "clusterGroupId groups unknowns\nsuggestedRosterId stores FAISS match\nlabelStatus tracks user confirmation"
-note for AugmentedEmbedding "Synced to Recognition Service FAISS\nMultiple embeddings per person for variance"
+note for FaceObservation "clusterGroupId groups unknowns\nsuggestedRosterId stores similarity match\nlabelStatus tracks user confirmation"
+note for AugmentedEmbedding "Synced to Recognition Service (pgvector)\nMultiple embeddings per person for variance"
 note for LabelStatusEnum "SUGGESTED: backend recommendation\nCONFIRMED: user accepted suggestion\nCORRECTED: user changed from suggestion\nREJECTED: user marked as not a face"

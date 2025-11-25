@@ -6,7 +6,7 @@ flowchart LR
         decorator["track_augment_request\n(async decorator)"]
         ctx_manager["track_aggregate_recomputation\n(context manager)"]
         roster_fn["update_roster_metrics(stats, model)"]
-        faiss_fn["update_faiss_metrics(stats)"]
+        centroid_fn["update_centroid_metrics(stats)"]
         prometheus["prometheus_client Gauges/Counters/Histograms"]
     end
 
@@ -14,7 +14,7 @@ flowchart LR
         augment_api["/roster/{id}/augment\nFastAPI handler"]
         roster_service["RosterService\naggregate recompute"]
         service_info["/service/info\nFastAPI handler"]
-        hybrid_manager["HybridIndexManager\nreload stats"]
+        cluster_service["IdentityClusteringService\nclustering stats"]
     end
 
     augment_api --> decorator
@@ -24,8 +24,8 @@ flowchart LR
     ctx_manager --> prometheus
 
     service_info --> roster_fn
-    service_info --> faiss_fn
-    hybrid_manager --> faiss_fn
+    service_info --> centroid_fn
+    cluster_service --> centroid_fn
 
     roster_fn --> prometheus
-    faiss_fn --> prometheus
+    centroid_fn --> prometheus

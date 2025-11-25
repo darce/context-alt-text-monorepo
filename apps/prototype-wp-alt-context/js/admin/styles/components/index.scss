@@ -1,7 +1,9 @@
 @use './dashboard';
 @use './workbench';
 @use './tabs';
+@use './combobox';
 
 /** componets */
 @use './cluster-grid';
 @use './media-selection';
+@use './identity-cluster-list';

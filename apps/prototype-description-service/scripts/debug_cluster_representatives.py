@@ -51,6 +51,9 @@ def main() -> None:
         session.execute(text("SET LOCAL app.bypass_rls = 'true'"))
 
         # Get media identity information
+        # Convert media_ids to integers for SQL query
+        media_ids_int = [int(mid) for mid in args.media_ids]
+
         media_query = text("""
             SELECT
                 mi.id AS identity_id,
@@ -62,10 +65,10 @@ def main() -> None:
             FROM media_identities mi
             LEFT JOIN identity_members im ON im.identity_id = mi.id
             LEFT JOIN identity_clusters ic ON ic.id = im.cluster_id
-            WHERE mi.media_id IN :media_ids
+            WHERE mi.media_id = ANY(:media_ids)
             ORDER BY mi.media_id
         """)
-        media_result = session.execute(media_query.bindparams(media_ids=tuple(args.media_ids)))
+        media_result = session.execute(media_query, {"media_ids": media_ids_int})
 
         print("=== Media Identity Information ===\n")
         identities = []
@@ -90,6 +93,7 @@ def main() -> None:
             return
 
         print("\n=== Cluster Representatives ===\n")
+        cluster_ids_list = list(set(cluster_ids))
         rep_query = text("""
             SELECT
                 icr.cluster_id,
@@ -100,10 +104,10 @@ def main() -> None:
             FROM identity_cluster_representatives icr
             JOIN identity_clusters ic ON ic.id = icr.cluster_id
             LEFT JOIN media_identities mi ON mi.id = icr.identity_id
-            WHERE icr.cluster_id IN :cluster_ids
+            WHERE icr.cluster_id = ANY(:cluster_ids)
             GROUP BY icr.cluster_id, ic.label
         """)
-        rep_result = session.execute(rep_query.bindparams(cluster_ids=tuple(set(cluster_ids))))
+        rep_result = session.execute(rep_query, {"cluster_ids": cluster_ids_list})
 
         rep_data = {}
         for row in rep_result:
@@ -153,9 +157,9 @@ def main() -> None:
                 FROM identity_cluster_representatives icr
                 JOIN identity_clusters ic ON ic.id = icr.cluster_id
                 LEFT JOIN media_identities mi ON mi.id = icr.identity_id
-                WHERE icr.cluster_id IN :cluster_ids
+                WHERE icr.cluster_id = ANY(:cluster_ids)
             """)
-            rep_detail_result = session.execute(rep_detail_query.bindparams(cluster_ids=tuple(other_clusters)))
+            rep_detail_result = session.execute(rep_detail_query, {"cluster_ids": other_clusters})
 
             print(f"Media {identity['media_id']} (in cluster {identity['cluster_label']}):")
             best_match = None

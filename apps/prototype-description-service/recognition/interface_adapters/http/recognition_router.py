@@ -3,17 +3,18 @@
 from __future__ import annotations
 
 import logging
+from typing import TypeVar
 from urllib.parse import urlparse
 from uuid import UUID
 
-from fastapi import APIRouter, Depends, HTTPException, Query, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Request
 from pydantic import BaseModel, Field, HttpUrl
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 
 from db.models import IdentityCluster, IdentityScanJob, MediaIdentity, Tenant
-from db.session import get_session
+from db.session import async_session_factory, get_session
 from db.tenant_context import set_tenant_context
 from recognition.application.identity_clustering_service import (
     ClusterLabelConflictError,
@@ -26,6 +27,12 @@ from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 
 logger = logging.getLogger(__name__)
 
+
+def get_embedding_provider() -> FaceEmbeddingProvider:
+    """Provide a FaceEmbeddingProvider instance for dependency injection."""
+    return FaceEmbeddingProvider()
+
+
 router = APIRouter(tags=["recognition"])
 
 
@@ -37,14 +44,100 @@ class MediaItem(BaseModel):
 class AnalyzeRequest(BaseModel):
     tenant_id: UUID
     site_url: HttpUrl | None = None
-    media_items: list[MediaItem] = Field(..., min_length=1, max_length=100)
+    media_items: list[MediaItem] = Field(
+        ...,
+        min_length=1,
+        max_length=300,
+        description="Attachment IDs and URLs to analyze (chunked server-side into batches of 10).",
+    )
     user_id: int | None = None
 
 
 class AnalyzeResponse(BaseModel):
-    job_id: UUID
+    job_ids: list[UUID]  # List of job IDs for each processed chunk
+    job_id: UUID | None = Field(
+        default=None,
+        description="Primary job ID for backward compatibility (first job in the list).",
+    )
     status: str
     total_media: int
+
+
+T = TypeVar("T")
+
+
+def _chunk_items(items: list[T], size: int) -> list[list[T]]:
+    """Split a list into chunks of given size."""
+    return [items[i : i + size] for i in range(0, len(items), size)]
+
+
+async def _process_scan_chunk(
+    job_id: UUID,
+    tenant_id: UUID,
+    media_items: list[dict[str, object]],
+    user_id: int | None,
+) -> None:
+    """Run a scan job in the background using a fresh session and provider."""
+    async with async_session_factory() as session:
+        try:
+            await set_tenant_context(session, tenant_id)
+            provider = FaceEmbeddingProvider()
+            service = IdentityScanService(session, provider, tenant_id)
+            job = await session.get(IdentityScanJob, job_id)
+            if not job:
+                logger.error("Background scan job %s not found for tenant %s", job_id, tenant_id)
+                return
+            await service.scan_identities(job, media_items, user_id)
+        except Exception:
+            logger.exception("Background scan job %s failed", job_id)
+
+
+@router.post("/analyze", response_model=AnalyzeResponse)
+async def analyze_media(
+    request: AnalyzeRequest,
+    background_tasks: BackgroundTasks,
+    session: AsyncSession = Depends(get_session),
+) -> AnalyzeResponse:
+    """
+    Enqueue chunked scan jobs and return immediately so the caller is not blocked by long-running inference.
+    """
+    await set_tenant_context(session, request.tenant_id)
+    await _ensure_tenant(session, request.tenant_id, request.site_url)
+
+    # Split media items into chunks of 10 to avoid timeouts
+    chunks = _chunk_items(request.media_items, 10)
+    job_ids: list[UUID] = []
+    total_media = len(request.media_items)
+
+    for chunk in chunks:
+        # Re-set tenant context for each chunk (RLS requirement after commit)
+        await set_tenant_context(session, request.tenant_id)
+
+        job = IdentityScanJob(
+            tenant_id=request.tenant_id,
+            status="pending",
+            media_ids=[item.media_id for item in chunk],
+            total_media=len(chunk),
+            created_by_user_id=request.user_id,
+        )
+        session.add(job)
+        await session.flush()
+        job_id = job.id
+        logger.info("Created IdentityScanJob with ID: %s", job_id)
+        job_ids.append(job_id)
+
+        background_tasks.add_task(
+            _process_scan_chunk,
+            job_id,
+            request.tenant_id,
+            [item.model_dump() for item in chunk],
+            request.user_id,
+        )
+
+    await session.commit()
+
+    primary_job = job_ids[0] if job_ids else None
+    return AnalyzeResponse(job_ids=job_ids, job_id=primary_job, status="queued", total_media=total_media)
 
 
 class ClusterRequest(BaseModel):
@@ -138,8 +231,39 @@ class MergeClusterRequest(BaseModel):
 
 class MergeClusterResponse(BaseModel):
     source_id: str
+    source_label: str | None = None
     target_id: str
+    target_label: str | None = None
     identities_moved: int
+    moved_identity_ids: list[str] = Field(
+        default_factory=list,
+        description="Identity IDs moved from the source into the target cluster",
+    )
+    target_identity_count: int
+
+
+class RevertMergeRequest(BaseModel):
+    tenant_id: UUID
+    target_cluster_id: UUID
+    moved_identity_ids: list[UUID] = Field(
+        ...,
+        min_length=1,
+        max_length=500,
+        description="Identity IDs that were moved during the merge operation.",
+    )
+    source_label: str | None = Field(
+        None,
+        max_length=255,
+        description="Original label of the merged cluster (if available).",
+    )
+    user_id: int | None = None
+
+
+class RevertMergeResponse(BaseModel):
+    restored_cluster_id: str
+    restored_label: str | None
+    restored_identity_count: int
+    target_cluster_id: str
     target_identity_count: int
 
 
@@ -151,6 +275,15 @@ class MergeSimilarRequest(BaseModel):
 
 class MergeSimilarResponse(BaseModel):
     merges_performed: int
+
+
+class SplitClusterRequest(BaseModel):
+    tenant_id: UUID
+
+
+class SplitClusterResponse(BaseModel):
+    new_cluster_id: str | None
+    moved_count: int
 
 
 class ClusteringJobResponse(BaseModel):
@@ -167,48 +300,6 @@ class StartClusteringJobResponse(BaseModel):
     job_id: str | None = None
     clusters_created: int | None = None
     assigned: int | None = None
-
-
-def get_embedding_provider() -> FaceEmbeddingProvider:
-    return FaceEmbeddingProvider()
-
-
-@router.post("/analyze", response_model=AnalyzeResponse)
-async def analyze_media(
-    request: AnalyzeRequest,
-    session: AsyncSession = Depends(get_session),
-    provider: FaceEmbeddingProvider = Depends(get_embedding_provider),
-) -> AnalyzeResponse:
-    await set_tenant_context(session, request.tenant_id)
-    await _ensure_tenant(session, request.tenant_id, request.site_url)
-    job = IdentityScanJob(
-        tenant_id=request.tenant_id,
-        status="pending",
-        media_ids=[item.media_id for item in request.media_items],
-        total_media=len(request.media_items),
-        created_by_user_id=request.user_id,
-    )
-
-    session.add(job)
-    await session.flush()
-    # job remains pending; IdentityScanService will update status and commit.
-    service = IdentityScanService(session, provider, request.tenant_id)
-    await service.scan_identities(job, [item.model_dump() for item in request.media_items], request.user_id)
-
-    try:
-        await set_tenant_context(session, request.tenant_id)
-        similarity_threshold = getattr(request, "similarity_threshold", None) or 0.6
-        clustering_service = IdentityClusteringService(
-            session=session,
-            tenant_id=request.tenant_id,
-            similarity_threshold=similarity_threshold,
-        )
-        await clustering_service.cluster_identities_incremental()
-    except Exception:  # pragma: no cover - clustering is best-effort
-        logger.exception("Failed to cluster identities automatically for tenant %s", request.tenant_id)
-        await session.rollback()
-
-    return AnalyzeResponse(job_id=job.id, status=job.status, total_media=job.total_media)
 
 
 @router.post("/clustering/jobs", response_model=StartClusteringJobResponse)
@@ -368,6 +459,28 @@ async def list_clusters(
     return summaries
 
 
+@router.get("/clusters/labels", response_model=list[str])
+async def list_cluster_labels(
+    tenant_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> list[str]:
+    """Get a list of unique, user-assigned cluster labels for autocomplete."""
+    await set_tenant_context(session, tenant_id)
+    stmt = (
+        select(IdentityCluster.label)
+        .where(
+            IdentityCluster.tenant_id == tenant_id,
+            IdentityCluster.label.is_not(None),
+            ~IdentityCluster.label.startswith("cluster-"),  # Exclude auto-generated labels
+        )
+        .distinct()
+        .order_by(IdentityCluster.label)
+    )
+    result = await session.execute(stmt)
+    labels = result.scalars().all()
+    return [label for label in labels if label is not None]
+
+
 @router.get("/media/identities", response_model=MediaIdentitiesResponse)
 async def get_media_identities(
     tenant_id: UUID,
@@ -481,14 +594,49 @@ async def merge_cluster(
     await set_tenant_context(session, request.tenant_id)
     service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
     try:
-        target, moved = await service.merge_cluster_into_label(source_id, request.target_label)
+        target, moved, moved_ids, source_label = await service.merge_cluster_into_label(
+            source_id,
+            request.target_label,
+        )
     except ClusterNotFoundError:
         raise HTTPException(status_code=404, detail="Cluster not found")
 
     return MergeClusterResponse(
         source_id=str(source_id),
+        source_label=source_label,
         target_id=str(target.id),
+        target_label=target.label,
         identities_moved=moved,
+        moved_identity_ids=[str(identity_id) for identity_id in moved_ids],
+        target_identity_count=target.identity_count,
+    )
+
+
+@router.post("/clusters/revert-merge", response_model=RevertMergeResponse)
+async def revert_merge(
+    request: RevertMergeRequest,
+    session: AsyncSession = Depends(get_session),
+) -> RevertMergeResponse:
+    await set_tenant_context(session, request.tenant_id)
+    service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
+    try:
+        restored, target = await service.revert_merge(
+            target_cluster_id=request.target_cluster_id,
+            moved_identity_ids=request.moved_identity_ids,
+            source_label=request.source_label,
+        )
+    except ClusterNotFoundError:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    except ClusterLabelConflictError:
+        raise HTTPException(status_code=409, detail="Label already exists for this tenant")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+
+    return RevertMergeResponse(
+        restored_cluster_id=str(restored.id),
+        restored_label=restored.label,
+        restored_identity_count=restored.identity_count,
+        target_cluster_id=str(target.id),
         target_identity_count=target.identity_count,
     )
 
@@ -507,3 +655,18 @@ async def merge_similar_clusters(
         max_iterations=max_iterations,
     )
     return MergeSimilarResponse(merges_performed=merges)
+
+
+@router.post("/clusters/{cluster_id}/split", response_model=SplitClusterResponse)
+async def split_cluster(
+    cluster_id: UUID,
+    request: SplitClusterRequest,
+    session: AsyncSession = Depends(get_session),
+) -> SplitClusterResponse:
+    await set_tenant_context(session, request.tenant_id)
+    service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
+    new_id, count = await service.split_cluster(cluster_id)
+    return SplitClusterResponse(
+        new_cluster_id=str(new_id) if new_id else None,
+        moved_count=count,
+    )

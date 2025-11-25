@@ -3,7 +3,12 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { useClusterIdentities, useScanIdentities, useScanStatus } from '../hooks/useRecognitionHooks';
+import {
+  useClusterIdentities,
+  useScanIdentities,
+  useScanStatus,
+  useMultiScanStatus,
+} from '../hooks/useRecognitionHooks';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
@@ -81,6 +86,8 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [activeSection, setActiveSection] = useState<WorkbenchTab>(TAB_IDS.scan);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
+  const [isWaitingForScanCompletion, setIsWaitingForScanCompletion] = useState(false);
   const queryClient = useQueryClient();
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
@@ -104,13 +111,21 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const scanMutation = useScanIdentities({
     onMutate: () => {
       setScanError(null);
+      setActiveJobIds([]);
+      setIsWaitingForScanCompletion(false);
     },
     onSuccess: (data) => {
-      rememberJob(data.job_id);
+      if (data.job_id) {
+        rememberJob(data.job_id);
+      }
+
+      const jobIds = data.job_ids ?? (data.job_id ? [data.job_id] : []);
+      setActiveJobIds(jobIds);
+      setIsWaitingForScanCompletion(true);
+
       setClusterMessage(null);
       setActiveSection(TAB_IDS.confirm);
       queryClient.invalidateQueries({ queryKey: ['media-identities'] });
-      clusterMutation.mutate();
     },
     onError: (error) => {
       const message =
@@ -129,16 +144,55 @@ export const WorkbenchPage = (): React.JSX.Element => {
       );
       queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
+    onError: (error) => {
+      const message =
+        error instanceof Error ? error.message : __('Clustering failed. Please try again.', 'alt-context');
+      setScanError(message);
+    },
   });
+
   const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));
-  const scanStatusText =
-    scanStatusQuery.data?.status ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
+  const multiScanStatus = useMultiScanStatus(activeJobIds, activeJobIds.length > 0);
+
+  const scanStatusText = useMemo(() => {
+    if (clusterMutation.isPending) {
+      return __('Clustering faces…', 'alt-context');
+    }
+
+    if (activeJobIds.length > 0) {
+      const completed = multiScanStatus.filter((q) => q.data?.status === 'completed').length;
+      const failed = multiScanStatus.filter((q) => q.data?.status === 'failed').length;
+      const total = activeJobIds.length;
+
+      if (completed + failed === total) {
+        return 'completed';
+      }
+      return sprintf(__('Processing %d/%d batches…', 'alt-context'), completed + failed, total);
+    }
+    return scanStatusQuery.data?.status ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
+  }, [activeJobIds, multiScanStatus, scanStatusQuery.data?.status, scanMutation.isPending, clusterMutation.isPending]);
 
   useEffect(() => {
     if (scanStatusQuery.data?.status === 'completed') {
       queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     }
   }, [scanStatusQuery.data?.status, queryClient]);
+
+  useEffect(() => {
+    if (!isWaitingForScanCompletion || activeJobIds.length === 0) {
+      return;
+    }
+
+    const allCompleted = multiScanStatus.every(
+      (query) => query.data?.status === 'completed' || query.data?.status === 'failed',
+    );
+
+    if (allCompleted && multiScanStatus.length === activeJobIds.length) {
+      setIsWaitingForScanCompletion(false);
+      clusterMutation.mutate();
+      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+    }
+  }, [multiScanStatus, activeJobIds, isWaitingForScanCompletion, clusterMutation, queryClient]);
 
   const statusMessage = useMemo(() => {
     if (mediaQuery.isFetching) {
@@ -218,23 +272,23 @@ export const WorkbenchPage = (): React.JSX.Element => {
               jobId={jobId}
               errorMessage={scanError}
             />
-        <MediaSelection
-          items={mediaItems}
-          isLoading={mediaQuery.isFetching}
-          isError={mediaQuery.isError}
-          onRetry={mediaQuery.isError ? () => mediaQuery.refetch() : undefined}
-          statusMessage={statusMessage}
-          searchQuery={searchQuery}
-          onSearchChange={handleSearchChange}
-          selection={selection}
-          onToggleRow={toggleRow}
-          onToggleAll={(checked) => toggleAll(mediaItems, checked)}
-          currentPage={currentPage}
-          totalPages={totalPages}
-          onPageChange={setCurrentPage}
-          areAllPageRowsChecked={allPageRowsChecked}
-          identityQuery={identityQuery}
-        />
+            <MediaSelection
+              items={mediaItems}
+              isLoading={mediaQuery.isFetching}
+              isError={mediaQuery.isError}
+              onRetry={mediaQuery.isError ? () => mediaQuery.refetch() : undefined}
+              statusMessage={statusMessage}
+              searchQuery={searchQuery}
+              onSearchChange={handleSearchChange}
+              selection={selection}
+              onToggleRow={toggleRow}
+              onToggleAll={(checked) => toggleAll(mediaItems, checked)}
+              currentPage={currentPage}
+              totalPages={totalPages}
+              onPageChange={setCurrentPage}
+              areAllPageRowsChecked={allPageRowsChecked}
+              identityQuery={identityQuery}
+            />
           </TabsContent>
 
           <TabsContent

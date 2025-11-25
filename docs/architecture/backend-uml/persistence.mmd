@@ -1,0 +1,73 @@
+---
+title: Recognition Service Persistence (PostgreSQL + pgvector)
+---
+erDiagram
+    TENANTS {
+        uuid id PK
+        varchar site_url UK
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    MEDIA_IDENTITIES {
+        uuid id PK
+        uuid tenant_id FK
+        int media_id
+        text media_url
+        int bbox_x
+        int bbox_y
+        int bbox_width
+        int bbox_height
+        float confidence
+        vector embedding
+        varchar thumbnail_url
+        timestamp created_at
+    }
+
+    IDENTITY_CLUSTERS {
+        uuid id PK
+        uuid tenant_id FK
+        varchar label UK
+        uuid representative_identity_id FK
+        int identity_count
+        uuid roster_id
+        float similarity_threshold
+        varchar clustering_algorithm
+        timestamp created_at
+        timestamp updated_at
+    }
+
+    IDENTITY_MEMBERS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid cluster_id FK
+        uuid identity_id FK
+        float similarity
+        timestamp assigned_at
+    }
+
+    IDENTITY_CLUSTER_REPRESENTATIVES {
+        uuid id PK
+        uuid cluster_id FK
+        uuid identity_id FK
+        vector embedding
+        float quality_score
+        float diversity_score
+        timestamp created_at
+    }
+
+    MV_IDENTITY_CLUSTER_CENTROIDS {
+        uuid cluster_id PK
+        uuid tenant_id
+        int member_count
+        vector centroid
+        timestamp refreshed_at
+    }
+
+    TENANTS ||--o{ MEDIA_IDENTITIES : "owns"
+    TENANTS ||--o{ IDENTITY_CLUSTERS : "owns"
+    IDENTITY_CLUSTERS ||--o{ IDENTITY_MEMBERS : "contains"
+    IDENTITY_CLUSTERS ||--o{ IDENTITY_CLUSTER_REPRESENTATIVES : "has"
+    IDENTITY_CLUSTERS ||--|| MV_IDENTITY_CLUSTER_CENTROIDS : "summarized_by"
+    MEDIA_IDENTITIES ||--o| IDENTITY_MEMBERS : "belongs_to"
+    MEDIA_IDENTITIES ||--o| IDENTITY_CLUSTER_REPRESENTATIVES : "represents"

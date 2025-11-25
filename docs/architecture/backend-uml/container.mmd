@@ -1,0 +1,44 @@
+---
+title: Recognition Service Containers
+---
+flowchart TB
+    subgraph api["FastAPI Surface"]
+        main_router["api/routes/main.py\nScene + service endpoints"]
+        recognition_router["recognition/interface_adapters/http/recognition_router.py\nClustering + analysis endpoints"]
+        dependency_layer["api/dependencies.py\nDepends wiring + singletons"]
+    end
+
+    subgraph domain["Domain Layer"]
+        clustering_service["IdentityClusteringService\nClustering logic + incremental learning"]
+        scan_service["IdentityScanService\nEmbedding extraction + persistence"]
+        metrics["shared/metrics.py\nstructured logging + timers"]
+    end
+
+    subgraph adapters["Adapters"]
+        cluster_repo["recognition/application/cluster_repository.py\nDB persistence + queries"]
+        embedding_provider["recognition/infrastructure/embedding_provider.py\nFace embedding extraction"]
+        thumbnail_service["recognition/infrastructure/thumbnail_service.py\nThumbnail generation"]
+    end
+
+    subgraph infra["Infrastructure"]
+        postgres["PostgreSQL + pgvector\n(identities, clusters, centroids)"]
+        settings["shared/config/settings.py\nPydantic settings"]
+    end
+
+    main_router --> dependency_layer
+    recognition_router --> dependency_layer
+    dependency_layer --> clustering_service
+    dependency_layer --> scan_service
+
+    clustering_service --> metrics
+    scan_service --> metrics
+
+    clustering_service --> cluster_repo
+    scan_service --> embedding_provider
+    scan_service --> thumbnail_service
+
+    cluster_repo --> postgres
+    
+    settings --> dependency_layer
+    settings --> clustering_service
+    settings --> scan_service

@@ -25,11 +25,11 @@ sequenceDiagram
         API->>Queue: enqueue reload task
         Queue->>Queue: rebuild_index()
         alt reload failure
-            Queue->>Logger: error("Hybrid index rebuild failed")
-            Queue->>Metrics: faiss_reload_duration_seconds.observe()
+            Queue->>Logger: error("Cluster centroid refresh failed")
+            Queue->>Metrics: centroid_refresh_duration_seconds.observe()
             Queue->>Alerts: notify failure (future hook)
             Queue-->>Queue: leave entry for retry/backoff
         else reload success
-            Queue->>Metrics: faiss_index_last_reload_timestamp.set()
+            Queue->>Metrics: centroid_last_refresh_timestamp.set()
         end
     end

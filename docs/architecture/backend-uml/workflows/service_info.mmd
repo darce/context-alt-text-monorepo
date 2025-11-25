@@ -17,4 +17,4 @@ sequenceDiagram
     Hybrid-->>Embed: entry_count + embedding_count + reload metadata
     Embed-->>RecSvc: aggregated stats
     RecSvc-->>API: model, recognition, embedding, performance, cache blocks
-    API-->>Client: 200 OK JSON (includes roster + FAISS stats snapshot)
+    API-->>Client: 200 OK JSON (includes clustering stats snapshot)

@@ -1,0 +1,25 @@
+---
+title: Recognition Service Context
+---
+flowchart LR
+    subgraph client["WordPress Site"]
+        wp_plugin["Context Alt Text Plugin"]
+    end
+
+    subgraph service["Recognition Service (apps/prototype-description-service)"]
+        api_router["FastAPI HTTP surface\n/api/v0/**"]
+        clustering_service["IdentityClusteringService\n(Clustering Logic)"]
+        scan_service["IdentityScanService\n(Embedding Extraction)"]
+    end
+
+    subgraph data_plane["Persistence & Models"]
+        postgres["PostgreSQL + pgvector\n(identities, clusters, centroids)"]
+        model_weights["InsightFace weights\n(local cache)"]
+    end
+
+    wp_plugin -->|REST/JSON| api_router
+    api_router --> clustering_service
+    api_router --> scan_service
+    clustering_service --> postgres
+    scan_service --> postgres
+    scan_service --> model_weights

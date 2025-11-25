@@ -8,25 +8,22 @@ flowchart LR
 
     subgraph backend["Recognition Service (FastAPI)"]
         api["HTTP API (/api/v0/**)"]
-        docs["Docs: backend-recognition-service/*"]
         config["shared/config settings.yaml / .env"]
     end
 
     subgraph infra["Persistence & Models"]
-        postgres["PostgreSQL + pgvector"]
-        faiss["FAISS index"]
+        postgres["PostgreSQL + pgvector\n(embeddings + clusters)"]
         weights["InsightFace weights"]
     end
 
-    subgraph team_docs["Legacy Diagrams"]
-        legacy["docs/architecture/backend-uml/**\n(historical reference)"]
+    subgraph clustering["Clustering Layer"]
+        chinese_whispers["Chinese Whispers\n(graph-based clustering)"]
+        rep_matcher["RepresentativeMatcher\n(similarity search)"]
     end
 
     plugin -->|Roster + recognition calls| api
     api --> postgres
-    api --> faiss
+    api --> chinese_whispers
+    chinese_whispers --> postgres
+    rep_matcher --> postgres
     api --> weights
-    docs --> plugin
-    docs --> api
-    docs --> config
-    legacy -.-> docs

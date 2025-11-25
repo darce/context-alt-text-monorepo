@@ -5,7 +5,6 @@ classDiagram
         +registerAssets(): void
         +registerRestControllers(): void
         +registerMenus(): void
-        +maybeBootAbilities(): void
     }
 
     class Menu {
@@ -16,19 +15,6 @@ classDiagram
         +registerAutomation(): void
         +registerSettings(): void
         +registerAccountCenter(): void
-    }
-
-    class AbilitiesRegistrar {
-        <<Feature Flagged>>
-        +registerAbilities(): void
-        +tools: array
-        +isEnabled(): bool
-    }
-
-    class McpAdapter {
-        <<Deferred Adapter>>
-        +registerTools(abilities): void
-        +serve(): void
     }
 
     class Admin {
@@ -146,8 +132,6 @@ classDiagram
     ContextAltText --> API : initializes
     ContextAltText --> Template : registers
     ContextAltText --> Frontend : bootstraps FE hooks
-    ContextAltText --> AbilitiesRegistrar : feature gate
-    AbilitiesRegistrar --> McpAdapter : registers tools
 
     Menu --> DashboardPage : registers
     Menu --> AltTextWorkbenchPage : registers
@@ -175,4 +159,3 @@ classDiagram
     Admin --> Template : reads constants
     Frontend --> Template : reads constants
 
-    note for AbilitiesRegistrar "Feature gated by CAT_ENABLE_ABILITIES / CAT_ENABLE_MCP; disabled for MVP"

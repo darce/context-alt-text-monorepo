@@ -13,7 +13,7 @@ This document illustrates ideal component architecture patterns vs anti-patterns
 
 ## Component Size & Composition
 
-### ❌ Anti-Pattern: God Component (Current)
+### Anti-Pattern: God Component (Current)
 
 ```mermaid
 graph TD
@@ -31,15 +31,15 @@ graph TD
     RosterRoute -.->|"Direct fetch"| API1["useRoster hook"]
     RosterRoute -.->|"Direct fetch"| API2["useRecognitionObservations"]
 
-    style RosterRoute fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style Search fill:#ffd43b,stroke:#fab005
-    style Filters fill:#ffd43b,stroke:#fab005
-    style Table fill:#ffd43b,stroke:#fab005
-    style Pagination fill:#ffd43b,stroke:#fab005
-    style EditModal fill:#ffd43b,stroke:#fab005
-    style ObsDialog fill:#ffd43b,stroke:#fab005
-    style ImageModal fill:#ffd43b,stroke:#fab005
-    style BulkActions fill:#ffd43b,stroke:#fab005
+    style RosterRoute fill:#000,stroke:#000,color:#fff,stroke-width:3px
+    style Search fill:#333,stroke:#000,color:#fff
+    style Filters fill:#333,stroke:#000,color:#fff
+    style Table fill:#333,stroke:#000,color:#fff
+    style Pagination fill:#333,stroke:#000,color:#fff
+    style EditModal fill:#333,stroke:#000,color:#fff
+    style ObsDialog fill:#333,stroke:#000,color:#fff
+    style ImageModal fill:#333,stroke:#000,color:#fff
+    style BulkActions fill:#333,stroke:#000,color:#fff
 ```
 
 **Problems:**
@@ -52,7 +52,7 @@ graph TD
 
 ---
 
-### ✅ Ideal Pattern: Composed Architecture
+### Ideal: Composed Architecture
 
 ```mermaid
 graph TD
@@ -82,12 +82,12 @@ graph TD
     useRosterData --> useRoster["useRoster<br/>API Hook"]
     useRosterData --> useRecognitionObs["useRecognitionObservations<br/>API Hook"]
 
-    style RosterRoute fill:#51cf66,stroke:#2f9e44,color:#fff
-    style useRosterData fill:#339af0,stroke:#1864ab,color:#fff
-    style useRosterState fill:#339af0,stroke:#1864ab,color:#fff
-    style RosterToolbar fill:#e0e0e0,stroke:#666
-    style RosterTable fill:#e0e0e0,stroke:#666
-    style RosterModals fill:#e0e0e0,stroke:#666
+    style RosterRoute fill:#fff,stroke:#000,color:#000,stroke-width:3px
+    style useRosterData fill:#e8e8e8,stroke:#000,color:#000,stroke-width:2px
+    style useRosterState fill:#e8e8e8,stroke:#000,color:#000,stroke-width:2px
+    style RosterToolbar fill:#f5f5f5,stroke:#000,color:#000
+    style RosterTable fill:#f5f5f5,stroke:#000,color:#000
+    style RosterModals fill:#f5f5f5,stroke:#000,color:#000
 ```
 
 **Benefits:**
@@ -103,7 +103,7 @@ graph TD
 
 ## State Management Patterns
 
-### ❌ Anti-Pattern: useState Explosion
+### Anti-Pattern: useState Explosion
 
 ```tsx
 // RosterRoute.tsx - Current (2,543 lines)
@@ -155,7 +155,7 @@ export const RosterRoute = ({ bootstrap, config }) => {
 
 ---
 
-### ✅ Ideal Pattern: useReducer + Custom Hook
+### Ideal: useReducer + Custom Hook
 
 ```tsx
 // hooks/useRosterState.ts (~80 lines)
@@ -317,7 +317,7 @@ export const RosterRoute = ({ bootstrap, config }) => {
 
 ## Data Fetching Architecture
 
-### ❌ Anti-Pattern: Hooks Called Directly in Component
+### Anti-Pattern: Hooks Called Directly in Component
 
 ```tsx
 // RosterRoute.tsx - Current
@@ -369,7 +369,7 @@ export const RosterRoute = ({ bootstrap, config }) => {
 
 ---
 
-### ✅ Ideal Pattern: Custom Data Hook
+### Ideal: Custom Data Hook
 
 ```tsx
 // hooks/useRosterData.ts (~120 lines)
@@ -478,7 +478,7 @@ export const RosterRoute = ({ bootstrap, config }) => {
 
 ## Refactoring Case Study: RosterRoute
 
-### Current Structure (2,543 lines ❌)
+### Current Structure (2,543 lines) - AVOID
 
 ```mermaid
 graph TB
@@ -497,21 +497,21 @@ graph TB
         A12["Data Transformations<br/>Normalizers + filters<br/>~150 lines"]
     end
 
-    style A1 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A2 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A3 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A4 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A5 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A6 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A7 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A8 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A9 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A10 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A11 fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style A12 fill:#ff6b6b,stroke:#c92a2a,color:#fff
+    style A1 fill:#000,stroke:#000,color:#fff
+    style A2 fill:#222,stroke:#000,color:#fff
+    style A3 fill:#333,stroke:#000,color:#fff
+    style A4 fill:#333,stroke:#000,color:#fff
+    style A5 fill:#222,stroke:#000,color:#fff
+    style A6 fill:#333,stroke:#000,color:#fff
+    style A7 fill:#222,stroke:#000,color:#fff
+    style A8 fill:#000,stroke:#000,color:#fff
+    style A9 fill:#222,stroke:#000,color:#fff
+    style A10 fill:#333,stroke:#000,color:#fff
+    style A11 fill:#222,stroke:#000,color:#fff
+    style A12 fill:#333,stroke:#000,color:#fff
 ```
 
-### Refactored Structure (8 files, ~1,200 lines total ✅)
+### Refactored Structure (8 files, ~1,200 lines total) - TARGET
 
 ```mermaid
 graph TB
@@ -562,20 +562,20 @@ graph TB
 
     H2 --> U1
 
-    style RC fill:#51cf66,stroke:#2f9e44,color:#fff
-    style H1 fill:#339af0,stroke:#1864ab,color:#fff
-    style H2 fill:#339af0,stroke:#1864ab,color:#fff
-    style C1 fill:#e0e0e0,stroke:#666
-    style C2 fill:#e0e0e0,stroke:#666
-    style C3 fill:#e0e0e0,stroke:#666
-    style S1 fill:#f8f9fa,stroke:#adb5bd
-    style S2 fill:#f8f9fa,stroke:#adb5bd
-    style S3 fill:#f8f9fa,stroke:#adb5bd
-    style S4 fill:#f8f9fa,stroke:#adb5bd
-    style S5 fill:#f8f9fa,stroke:#adb5bd
-    style S6 fill:#f8f9fa,stroke:#adb5bd
-    style S7 fill:#f8f9fa,stroke:#adb5bd
-    style U1 fill:#ffd43b,stroke:#fab005
+    style RC fill:#fff,stroke:#000,color:#000,stroke-width:3px
+    style H1 fill:#e8e8e8,stroke:#000,color:#000,stroke-width:2px
+    style H2 fill:#e8e8e8,stroke:#000,color:#000,stroke-width:2px
+    style C1 fill:#f0f0f0,stroke:#000,color:#000
+    style C2 fill:#f0f0f0,stroke:#000,color:#000
+    style C3 fill:#f0f0f0,stroke:#000,color:#000
+    style S1 fill:#f8f8f8,stroke:#000,color:#000
+    style S2 fill:#f8f8f8,stroke:#000,color:#000
+    style S3 fill:#f8f8f8,stroke:#000,color:#000
+    style S4 fill:#f8f8f8,stroke:#000,color:#000
+    style S5 fill:#f8f8f8,stroke:#000,color:#000
+    style S6 fill:#f8f8f8,stroke:#000,color:#000
+    style S7 fill:#f8f8f8,stroke:#000,color:#000
+    style U1 fill:#ddd,stroke:#000,color:#000
 ```
 
 ### Refactoring Steps
@@ -596,16 +596,16 @@ graph LR
 
     Step6["6. Extract Normalizers<br/>Data transformation utils<br/>-150 lines"] --> Done
 
-    Done["RosterRoute.tsx<br/>~250 lines<br/>✅ Maintainable"]
+    Done["RosterRoute.tsx<br/>~250 lines<br/>Maintainable"]
 
-    style Start fill:#ff6b6b,stroke:#c92a2a,color:#fff
-    style Done fill:#51cf66,stroke:#2f9e44,color:#fff
-    style Step1 fill:#ffd43b,stroke:#fab005
-    style Step2 fill:#ffd43b,stroke:#fab005
-    style Step3 fill:#ffd43b,stroke:#fab005
-    style Step4 fill:#ffd43b,stroke:#fab005
-    style Step5 fill:#ffd43b,stroke:#fab005
-    style Step6 fill:#ffd43b,stroke:#fab005
+    style Start fill:#000,stroke:#000,color:#fff,stroke-width:3px
+    style Done fill:#fff,stroke:#000,color:#000,stroke-width:3px
+    style Step1 fill:#e8e8e8,stroke:#000,color:#000
+    style Step2 fill:#e8e8e8,stroke:#000,color:#000
+    style Step3 fill:#e8e8e8,stroke:#000,color:#000
+    style Step4 fill:#e8e8e8,stroke:#000,color:#000
+    style Step5 fill:#e8e8e8,stroke:#000,color:#000
+    style Step6 fill:#e8e8e8,stroke:#000,color:#000
 ```
 
 ### File Structure After Refactoring

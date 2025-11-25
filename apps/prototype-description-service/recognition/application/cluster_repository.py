@@ -83,6 +83,28 @@ class ClusterRepository:
         result = await self.session.execute(stmt)
         return list(result.scalars().all())
 
+    async def count_unclustered_identities(self) -> int:
+        """Count identities that haven't been assigned to any cluster."""
+        membership_exists = (
+            select(1)
+            .where(
+                IdentityMember.tenant_id == self.tenant_id,
+                IdentityMember.identity_id == MediaIdentity.id,
+            )
+            .exists()
+        )
+
+        stmt = (
+            select(func.count())
+            .select_from(MediaIdentity)
+            .where(
+                MediaIdentity.tenant_id == self.tenant_id,
+                ~membership_exists,
+            )
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def get_clusters_with_centroids(self) -> list[ClusterSearchEntry]:
         """Get all clusters with their computed centroids from the materialized view."""
         stmt = (

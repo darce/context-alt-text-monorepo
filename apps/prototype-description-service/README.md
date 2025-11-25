@@ -99,6 +99,39 @@ INSIGHTFACE_HOME=/data/cache/insightface
 
 Any InsightFace/HuggingFace clients we add inherit these settings automatically.
 
+## Development Commands
+
+This project uses a Makefile for common development tasks:
+
+```bash
+# Run all checks (lint + typecheck + test)
+make check
+
+# Run linting only
+make lint
+
+# Run type checking only
+make typecheck
+
+# Auto-fix formatting and linting issues
+make format
+
+# Run tests only
+make test
+
+# Format, typecheck, and test (for CI)
+make ci
+
+# Install dependencies
+make install
+
+# Clean cache files
+make clean
+
+# Show all available commands
+make help
+```
+
 ### Available health endpoints
 
 | Endpoint                  | Description                            |

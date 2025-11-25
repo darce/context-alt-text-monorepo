@@ -1,5 +1,5 @@
 export type HTTPOptions = {
-	method?: 'GET' | 'POST';
+	method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
 	body?: unknown;
 	restNonce?: string;
 };

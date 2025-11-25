@@ -21,11 +21,13 @@ The match percentage shown to users in the cluster merge UI represents **centroi
 ### Current Implementation
 
 **Frontend** (`IdentityClusterList.tsx` line 379):
+
 ```tsx
 {Math.round(similarity * 100)}%
 ```
 
 **Backend** (`suggestion_router.py`):
+
 ```python
 distance_expr = ClusterCentroid.centroid.cosine_distance(embedding)
 # ...
@@ -34,12 +36,12 @@ similarity = 1.0 - float(distance)
 
 ### The Similarity Types in the Pipeline
 
-| Similarity Type | What It Measures | Where Used | Current Threshold |
-|-----------------|------------------|------------|-------------------|
-| **Representative similarity** | New face vs. best representative face | Clustering decision (Stage 1) | 0.65 |
-| **Centroid similarity** | New face vs. cluster centroid (average) | Suggestion API, borderline validation | 0.60 |
-| **Member similarity** | New face vs. random existing members | Member validation | 0.68 |
-| **Pairwise similarity** | Any two faces within a cluster | Quality validation | N/A |
+| Similarity Type               | What It Measures                        | Where Used                            | Current Threshold |
+| ----------------------------- | --------------------------------------- | ------------------------------------- | ----------------- |
+| **Representative similarity** | New face vs. best representative face   | Clustering decision (Stage 1)         | 0.65              |
+| **Centroid similarity**       | New face vs. cluster centroid (average) | Suggestion API, borderline validation | 0.60              |
+| **Member similarity**         | New face vs. random existing members    | Member validation                     | 0.68              |
+| **Pairwise similarity**       | Any two faces within a cluster          | Quality validation                    | N/A               |
 
 ### The Problem
 
@@ -54,6 +56,7 @@ The user sees **centroid similarity** (suggestion API), but clustering decisions
 ### Recommendation
 
 The UI should show **representative similarity** (the score used for the initial match decision), not centroid similarity. Additionally, consider showing both scores with labels:
+
 - "Best match: 64%"
 - "Average similarity: 58%"
 
@@ -66,6 +69,7 @@ The UI should show **representative similarity** (the score used for the initial
 **Status**: ⚠️ Used for suggestions API, but NOT for clustering decisions
 
 **Evidence from logs**:
+
 ```
 best_centroid=0.0000
 ```
@@ -82,11 +86,13 @@ centroid_candidates = [
 Since **all clusters have representatives** (they're created with representatives), `centroid_candidates` is always empty. The centroid fallback path is never executed.
 
 **Current uses**:
+
 1. ✅ Suggestion API (`/identities/{id}/suggestions`) - uses centroid for quick matching
 2. ✅ Borderline validation - checks centroid as secondary validation
 3. ❌ Primary clustering - never used (all clusters have representatives)
 
-**Recommendation**: 
+**Recommendation**:
+
 - Keep centroids for the suggestion API (fast pgvector index search)
 - Remove centroid fallback from clustering logic (dead path)
 - Consider replacing centroid-based suggestions with representative-based suggestions for consistency
@@ -120,6 +126,7 @@ async def _stage2_batch_clustering(
 ```
 
 **Files to remove/archive**:
+
 - `recognition/application/ward_clustering.py` - Never called
 - `recognition/application/clustering_utils.py::convert_threshold_to_euclidean()` - Only used by Ward
 - Settings: `ward_sync_batch_limit`, `ward_async_max_identities` - Never used
@@ -149,6 +156,7 @@ member_validation_threshold: float = 0.68
 ```
 
 A 0.68 member threshold applied to:
+
 - **High-confidence detection** (det_score=0.99, large bbox) → probably correct
 - **Low-confidence detection** (det_score=0.75, small bbox) → might be wrong
 
@@ -164,12 +172,12 @@ def confidence_adjusted_similarity(
 ) -> float:
     """
     Adjust similarity based on detection confidence.
-    
+
     High-confidence pairs get their similarity preserved.
     Low-confidence pairs get their similarity dampened.
     """
     confidence_factor = (source_confidence * target_confidence) ** 0.5
-    
+
     # Interpolate between raw similarity and a lower "uncertain" value
     uncertain_baseline = 0.3
     return uncertain_baseline + (raw_similarity - uncertain_baseline) * confidence_factor
@@ -193,11 +201,11 @@ def adaptive_threshold(base_threshold: float, confidence: float) -> float:
 
 ### Why This Helps
 
-| Scenario | Current Behavior | With Adaptive Thresholds |
-|----------|------------------|--------------------------|
+| Scenario                           | Current Behavior  | With Adaptive Thresholds             |
+| ---------------------------------- | ----------------- | ------------------------------------ |
 | High-quality face, 0.62 similarity | Rejected (< 0.65) | Accepted (threshold lowered to 0.60) |
-| Low-quality face, 0.66 similarity | Accepted | Rejected (threshold raised to 0.70) |
-| Blurry face, 0.60 similarity | Rejected | Rejected (requires higher threshold) |
+| Low-quality face, 0.66 similarity  | Accepted          | Rejected (threshold raised to 0.70)  |
+| Blurry face, 0.60 similarity       | Rejected          | Rejected (requires higher threshold) |
 
 ---
 
@@ -205,28 +213,31 @@ def adaptive_threshold(base_threshold: float, confidence: float) -> float:
 
 ### Face Clustering Landscape
 
-| Algorithm | Type | Pros | Cons | Used By |
-|-----------|------|------|------|---------|
-| **DBSCAN** | Density-based | No predefined clusters, handles noise | Sensitive to eps parameter | Facebook, Google Photos |
-| **Chinese Whispers** | Graph-based | Linear time, non-parametric | Can merge distinct people via bridging | dlib, OpenFace |
-| **Agglomerative (Ward)** | Hierarchical | Deterministic, good quality | O(n²) space, O(n³) time | Academic |
-| **Approximate Rank-Order** | Nearest-neighbor | Scalable, handles hard cases | Complex implementation | Microsoft Face API |
-| **HDBSCAN** | Density-based | Handles varying densities | Slower than DBSCAN | Some research systems |
+| Algorithm                  | Type             | Pros                                  | Cons                                   | Used By                 |
+| -------------------------- | ---------------- | ------------------------------------- | -------------------------------------- | ----------------------- |
+| **DBSCAN**                 | Density-based    | No predefined clusters, handles noise | Sensitive to eps parameter             | Facebook, Google Photos |
+| **Chinese Whispers**       | Graph-based      | Linear time, non-parametric           | Can merge distinct people via bridging | dlib, OpenFace          |
+| **Agglomerative (Ward)**   | Hierarchical     | Deterministic, good quality           | O(n²) space, O(n³) time                | Academic                |
+| **Approximate Rank-Order** | Nearest-neighbor | Scalable, handles hard cases          | Complex implementation                 | Microsoft Face API      |
+| **HDBSCAN**                | Density-based    | Handles varying densities             | Slower than DBSCAN                     | Some research systems   |
 
 ### Industry Best Practices
 
 **Google Photos** (2015 paper):
+
 - Uses DBSCAN with cosine distance
 - Threshold: ~0.4 (more permissive)
 - Relies heavily on user corrections
 - Prioritizes recall over precision
 
 **Facebook**:
+
 - Deep learning face verification model
 - Threshold chosen for 99.63% accuracy on LFW
 - Uses approximate nearest neighbor for scale
 
 **Apple Photos**:
+
 - On-device clustering
 - Conservative thresholds (privacy-first)
 - Heavy use of temporal/spatial context
@@ -234,6 +245,7 @@ def adaptive_threshold(base_threshold: float, confidence: float) -> float:
 ### Key Insight
 
 **Industry prefers recall over precision for face clustering**:
+
 - It's easier to split a merged cluster than to find unmatched singletons
 - User corrections are expected and designed for
 - The goal is to surface potential matches, not make perfect decisions
@@ -245,6 +257,7 @@ def adaptive_threshold(base_threshold: float, confidence: float) -> float:
 ### Chinese Whispers Overview
 
 **Algorithm**:
+
 1. Build similarity graph (edges where similarity > threshold)
 2. Initialize each node with unique label
 3. Iterate: each node adopts the label of its most-connected neighbors
@@ -271,6 +284,7 @@ cw_threshold: float = 0.75  # Very strict - drops many valid edges
 ```
 
 With a 0.75 threshold:
+
 - Edges between 0.65-0.75 are dropped
 - These might be valid same-person matches in different lighting
 - Creates more singletons than necessary
@@ -296,6 +310,7 @@ labels = clusterer.fit_predict(distances)
 ```
 
 **Advantages**:
+
 - Handles varying cluster densities
 - Explicit outlier detection (label = -1)
 - Cluster persistence (confidence scores)
@@ -324,6 +339,7 @@ Stage 2: Chinese Whispers (for remaining)
 ```
 
 **Problems**:
+
 1. Too many thresholds (0.65, 0.68, 0.70, 0.73, 0.75)
 2. Overlapping validation layers
 3. Dead code paths (centroid fallback, Ward)
@@ -349,14 +365,14 @@ Stage 3: Batch Clustering (for remaining)
 
 ### Threshold Simplification
 
-| Current | Proposed | Rationale |
-|---------|----------|-----------|
-| 5 thresholds | 2 thresholds | Reduce cognitive load |
-| 0.65 (match) | 0.62 (match) | Increase recall |
-| 0.68 (member validation) | Remove | Overfitted check |
-| 0.70 (borderline upper) | Remove | Unnecessary complexity |
-| 0.73 (centroid match) | Remove | Dead code |
-| 0.75 (Chinese Whispers) | 0.50 (suggestion) | User-assisted for borderline |
+| Current                  | Proposed          | Rationale                    |
+| ------------------------ | ----------------- | ---------------------------- |
+| 5 thresholds             | 2 thresholds      | Reduce cognitive load        |
+| 0.65 (match)             | 0.62 (match)      | Increase recall              |
+| 0.68 (member validation) | Remove            | Overfitted check             |
+| 0.70 (borderline upper)  | Remove            | Unnecessary complexity       |
+| 0.73 (centroid match)    | Remove            | Dead code                    |
+| 0.75 (Chinese Whispers)  | 0.50 (suggestion) | User-assisted for borderline |
 
 ### Dead Code Removal Checklist
 
@@ -370,11 +386,13 @@ Stage 3: Batch Clustering (for remaining)
 ### Validation Layer Simplification
 
 **Current** (3 validation layers):
+
 1. Borderline validation (centroid check)
 2. Member validation (random member check)
 3. Quality validation (cluster health check)
 
 **Proposed** (1 validation + user review):
+
 1. Single similarity threshold
 2. Borderline cases → user review
 3. Remove automated secondary validation
@@ -390,11 +408,13 @@ Stage 3: Batch Clustering (for remaining)
 1. **Match % in UI** = centroid similarity, but decisions use representative + member similarity → user confusion
 
 2. **Dead code**:
+
    - Ward clustering (`ward_clustering.py`) - never called
    - Centroid fallback path - all clusters have representatives
    - Associated settings and utilities
 
 3. **Pipeline is overfitted**:
+
    - `member_validation_threshold` raised to 0.68 to fix one issue
    - Created new issue (too many false negatives)
    - Pattern: fix one bug → introduce another

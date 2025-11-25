@@ -8,7 +8,12 @@ import { useWorkbenchMedia } from '../../../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../../../hooks/useMediaSelectionState';
 import { useRecognitionJobHistory } from '../../../hooks/useRecognitionJobHistory';
 import { useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
-import { useScanIdentities, useScanStatus, useClusterIdentities } from '../../../hooks/useRecognitionHooks';
+import {
+  useScanIdentities,
+  useScanStatus,
+  useClusterIdentities,
+  useMultiScanStatus,
+} from '../../../hooks/useRecognitionHooks';
 
 vi.mock('../../../hooks/useWorkbenchMedia', () => ({
   useWorkbenchMedia: vi.fn(),
@@ -30,6 +35,7 @@ vi.mock('../../../hooks/useRecognitionHooks', () => ({
   useScanIdentities: vi.fn(),
   useScanStatus: vi.fn(),
   useClusterIdentities: vi.fn(),
+  useMultiScanStatus: vi.fn(),
 }));
 
 type ScanOutcome = 'success' | 'error';
@@ -53,12 +59,17 @@ describe('WorkbenchPage', () => {
   const prefetchIdentities = vi.fn();
 
   const mockUseWorkbenchMedia = useWorkbenchMedia as unknown as vi.MockedFunction<typeof useWorkbenchMedia>;
-  const mockUseMediaSelectionState = useMediaSelectionState as unknown as vi.MockedFunction<typeof useMediaSelectionState>;
-  const mockUseRecognitionJobHistory = useRecognitionJobHistory as unknown as vi.MockedFunction<typeof useRecognitionJobHistory>;
+  const mockUseMediaSelectionState = useMediaSelectionState as unknown as vi.MockedFunction<
+    typeof useMediaSelectionState
+  >;
+  const mockUseRecognitionJobHistory = useRecognitionJobHistory as unknown as vi.MockedFunction<
+    typeof useRecognitionJobHistory
+  >;
   const mockUseWorkbenchFilters = useWorkbenchFilters as unknown as vi.MockedFunction<typeof useWorkbenchFilters>;
   const mockUseScanIdentities = useScanIdentities as unknown as vi.MockedFunction<typeof useScanIdentities>;
   const mockUseScanStatus = useScanStatus as unknown as vi.MockedFunction<typeof useScanStatus>;
   const mockUseClusterIdentities = useClusterIdentities as unknown as vi.MockedFunction<typeof useClusterIdentities>;
+  const mockUseMultiScanStatus = useMultiScanStatus as unknown as vi.MockedFunction<typeof useMultiScanStatus>;
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
@@ -136,6 +147,8 @@ describe('WorkbenchPage', () => {
       isFetching: false,
       refetch: vi.fn(),
     } as any);
+
+    mockUseMultiScanStatus.mockReturnValue([]);
 
     mockUseClusterIdentities.mockReturnValue({
       mutate: vi.fn(),

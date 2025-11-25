@@ -76,6 +76,11 @@ echo "[reset-dev-db] Restarting dockerized postgres to close lingering sessions.
 "${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" stop postgres >/dev/null 2>&1 || true
 "${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" up -d postgres >/dev/null
 
+echo "[reset-dev-db] Waiting for Postgres to be ready..." >&2
+until docker exec prototype_description_db pg_isready -U "${DB_USER}" >/dev/null 2>&1; do
+  sleep 1
+done
+
 ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
 ADMIN_PASS="${ADMIN_PGPASSWORD:-${DB_PASS}}"
 

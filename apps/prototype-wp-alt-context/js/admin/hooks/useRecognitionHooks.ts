@@ -1,4 +1,4 @@
-import { useMutation, useQuery, type UseMutationOptions } from '@tanstack/react-query';
+import { useMutation, useQueries, useQuery, type UseMutationOptions } from '@tanstack/react-query';
 
 import {
   clusterFaces,
@@ -24,7 +24,19 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     queryKey: ['recognition-status', jobId],
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId as string),
-    refetchInterval: (query) => (query.state.data?.status === 'running' ? 1500 : false),
+    refetchInterval: (query) =>
+      query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+  });
+
+export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
+  useQueries({
+    queries: jobIds.map((jobId) => ({
+      queryKey: ['recognition-status', jobId],
+      queryFn: () => fetchScanStatus(jobId),
+      enabled: Boolean(jobId) && enabled,
+      refetchInterval: (query: any) =>
+        query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+    })),
   });
 
 export const useClusterIdentities = (options?: UseMutationOptions<ClusterResponse, Error, void, unknown>) =>

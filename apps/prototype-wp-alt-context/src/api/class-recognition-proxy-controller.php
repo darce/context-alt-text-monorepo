@@ -53,9 +53,9 @@ class RecognitionProxyController {
 						'type'              => 'array',
 						'required'          => true,
 						'items'             => array( 'type' => 'integer' ),
-						'description'       => 'Array of attachment IDs to analyze (max 100).',
+						'description'       => 'Array of attachment IDs to analyze (max 300).',
 						'validate_callback' => static function ( $value ): bool {
-							return is_array( $value ) && count( $value ) > 0 && count( $value ) <= 100;
+							return is_array( $value ) && count( $value ) > 0 && count( $value ) <= 300;
 						},
 					),
 				),
@@ -112,6 +112,16 @@ class RecognitionProxyController {
 
 		register_rest_route(
 			'acx/v1',
+			'/workbench/recognition/clusters/labels',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'list_cluster_labels' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/workbench/recognition/clusters/reassign',
 			array(
 				'methods'             => 'POST',
@@ -146,6 +156,26 @@ class RecognitionProxyController {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'merge_cluster' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/identities/(?P<identity_id>[a-f0-9-]+)/suggestions',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_identity_suggestions' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters/revert-merge',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'revert_merge_cluster' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
@@ -209,6 +239,14 @@ class RecognitionProxyController {
 		);
 
 		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
+	}
+
+	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+		);
+
+		return $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
 	}
 
 	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -306,6 +344,58 @@ class RecognitionProxyController {
 		);
 
 		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/merge', $source_id ), $payload );
+	}
+
+	public function get_identity_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
+
+		if ( '' === $identity_id ) {
+			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
+		}
+
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'top_k'     => absint( $request->get_param( 'top_k' ) ?? 5 ),
+			'threshold' => (float) ( $request->get_param( 'threshold' ) ?? 0.6 ),
+		);
+
+		return $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/identities/%s/suggestions', $identity_id ),
+			array(),
+			$query
+		);
+	}
+
+	public function revert_merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$target_cluster_id   = sanitize_text_field( (string) $request->get_param( 'target_cluster_id' ) );
+		$moved_identity_ids  = $request->get_param( 'moved_identity_ids' );
+		$source_label        = $request->get_param( 'source_label' );
+
+		if ( '' === $target_cluster_id ) {
+			return new WP_Error( 'missing_target_cluster_id', 'Target cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( ! is_array( $moved_identity_ids ) || empty( $moved_identity_ids ) ) {
+			return new WP_Error( 'missing_moved_identity_ids', 'Provide one or more identity IDs to revert.', array( 'status' => 400 ) );
+		}
+
+		$sanitized_ids = array_map(
+			static function ( $value ): string {
+				return sanitize_text_field( (string) $value );
+			},
+			$moved_identity_ids
+		);
+
+		$payload = array(
+			'tenant_id'          => $this->get_tenant_id(),
+			'target_cluster_id'  => $target_cluster_id,
+			'moved_identity_ids' => $sanitized_ids,
+			'source_label'       => $source_label ? sanitize_text_field( (string) $source_label ) : null,
+			'user_id'            => get_current_user_id(),
+		);
+
+		return $this->proxy_request( 'POST', '/recognition/clusters/revert-merge', $payload );
 	}
 
 	private function build_media_items( array $media_ids ): array {

@@ -100,6 +100,26 @@ class RecognitionController {
 				],
 			]
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/identities/(?P<identity_id>[a-f0-9-]+)/suggestions',
+			[
+				'methods'             => 'GET',
+				'callback'            => [ $this, 'get_identity_suggestions' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/clusters/revert-merge',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'revert_merge_cluster' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
 	}
 
 	public function can_manage_recognition(): bool {
@@ -193,6 +213,58 @@ class RecognitionController {
 		];
 
 		return $this->proxy_request( 'GET', '/recognition/media/identities', [], $query );
+	}
+
+	public function get_identity_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
+
+		if ( '' === $identity_id ) {
+			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', [ 'status' => 400 ] );
+		}
+
+		$query = [
+			'tenant_id' => $this->get_tenant_id(),
+			'top_k'     => absint( $request->get_param( 'top_k' ) ?? 5 ),
+			'threshold' => (float) ( $request->get_param( 'threshold' ) ?? 0.6 ),
+		];
+
+		return $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/identities/%s/suggestions', $identity_id ),
+			[],
+			$query
+		);
+	}
+
+	public function revert_merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$target_cluster_id  = sanitize_text_field( (string) $request->get_param( 'target_cluster_id' ) );
+		$moved_identity_ids = $request->get_param( 'moved_identity_ids' );
+		$source_label       = $request->get_param( 'source_label' );
+
+		if ( '' === $target_cluster_id ) {
+			return new WP_Error( 'missing_target_cluster_id', 'Target cluster ID is required.', [ 'status' => 400 ] );
+		}
+
+		if ( ! is_array( $moved_identity_ids ) || empty( $moved_identity_ids ) ) {
+			return new WP_Error( 'missing_moved_identity_ids', 'Provide one or more identity IDs to revert.', [ 'status' => 400 ] );
+		}
+
+		$sanitized_ids = array_map(
+			static function ( $value ): string {
+				return sanitize_text_field( (string) $value );
+			},
+			$moved_identity_ids
+		);
+
+		$payload = [
+			'tenant_id'          => $this->get_tenant_id(),
+			'target_cluster_id'  => $target_cluster_id,
+			'moved_identity_ids' => $sanitized_ids,
+			'source_label'       => $source_label ? sanitize_text_field( (string) $source_label ) : null,
+			'user_id'            => get_current_user_id(),
+		];
+
+		return $this->proxy_request( 'POST', '/recognition/clusters/revert-merge', $payload );
 	}
 
 	private function proxy_request( string $method, string $path, array $body = [], array $query = [] ): WP_REST_Response|WP_Error {

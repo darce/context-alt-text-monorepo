@@ -1,0 +1,188 @@
+@use '../tokens/colors';
+@use '../tokens/spacing';
+
+.acx-identity-cluster {
+  display: flex;
+  align-items: center;
+  padding: 8px;
+  background-color: #fff;
+  border: 1px solid #e2e8f0; // slate-200
+  border-radius: 8px;
+  margin-bottom: 8px;
+
+  &__preview {
+    display: flex;
+    align-items: center;
+    margin-right: 12px;
+  }
+
+  &__thumb {
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    object-fit: cover;
+    background-color: #f1f5f9; // slate-100
+
+    &--placeholder {
+      display: inline-block;
+    }
+  }
+
+  &__count {
+    margin-left: -10px;
+    background-color: #f1f5f9;
+    border: 2px solid #fff;
+    border-radius: 12px;
+    padding: 2px 6px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #64748b; // slate-500
+    z-index: 1;
+  }
+
+  &__info {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+
+  &__label {
+    font-weight: 500;
+    color: #0f172a; // slate-950
+
+    &--action {
+      background: none;
+      border: none;
+      padding: 0;
+      cursor: pointer;
+      text-decoration: underline;
+      text-decoration-style: dotted;
+      text-underline-offset: 4px;
+
+      &:hover {
+        color: #2563eb; // blue-600
+      }
+    }
+  }
+
+  &__action {
+    background: none;
+    border: none;
+    padding: 4px 8px;
+    font-size: 12px;
+    color: #64748b; // slate-500
+    cursor: pointer;
+    border-radius: 4px;
+
+    &:hover {
+      background-color: #f1f5f9; // slate-100
+      color: #0f172a; // slate-950
+    }
+
+    &:disabled {
+      opacity: 0.5;
+      cursor: not-allowed;
+    }
+  }
+
+  &__edit {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    width: 100%;
+    max-width: 400px;
+  }
+
+  &__save {
+    padding: 6px 12px;
+    background-color: #0f172a; // slate-950
+    color: #fff;
+    border: none;
+    border-radius: 6px;
+    font-size: 14px;
+    font-weight: 500;
+    cursor: pointer;
+
+    &:hover {
+      background-color: #1e293b; // slate-800
+    }
+
+    &:disabled {
+      opacity: 0.7;
+      cursor: not-allowed;
+    }
+  }
+
+  &__cancel {
+    padding: 6px 12px;
+    background-color: transparent;
+    color: #64748b; // slate-500
+    border: 1px solid #e2e8f0; // slate-200
+    border-radius: 6px;
+    font-size: 14px;
+    cursor: pointer;
+
+    &:hover {
+      background-color: #f8fafc; // slate-50
+      color: #0f172a; // slate-950
+    }
+  }
+
+  &__undo {
+    margin-left: auto;
+    font-size: 12px;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+
+    button {
+      background: none;
+      border: none;
+      padding: 0;
+      color: #2563eb; // blue-600
+      cursor: pointer;
+      text-decoration: underline;
+
+      &:hover {
+        color: #1d4ed8; // blue-700
+      }
+    }
+  }
+
+  &__error {
+    width: 100%;
+    margin-top: 4px;
+    font-size: 12px;
+    color: #ef4444; // red-500
+  }
+
+  &__suggestion-meta {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-left: auto;
+    font-size: 12px;
+    color: #64748b; // slate-500
+  }
+
+  &__match-score {
+    font-weight: 500;
+    
+    &--high {
+      color: #16a34a; // green-600
+    }
+    
+    &--medium {
+      color: #ca8a04; // yellow-600
+    }
+  }
+}
+
+// Ensure combobox content has background
+.acx-combobox__content {
+  background-color: #fff !important;
+  z-index: 9999; // Ensure it sits above other elements
+}

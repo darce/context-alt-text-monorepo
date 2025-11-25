@@ -30,7 +30,11 @@ wp-config.php
 /wp-content/uploads/
 
 # Log files
-*.log
+# *.log
+
+# archives
+apps/archived-recognition-service/**
+apps/archived-wp-context-alt-text/**
 
 # htaccess
 /.htaccess

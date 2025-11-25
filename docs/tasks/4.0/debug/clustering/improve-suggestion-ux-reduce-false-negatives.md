@@ -28,13 +28,13 @@ MEMBER VALIDATION FAILED: identity=3666dac5-29f1-4d28-aac6-2804a6c78de3,
 
 ### Current Thresholds (from `clustering_settings.py`)
 
-| Threshold | Value | Purpose |
-|-----------|-------|---------|
-| `similarity_threshold` | 0.65 | Minimum similarity to match a representative |
-| `borderline_upper_threshold` | 0.70 | Matches below this trigger validation |
-| `borderline_validation_threshold` | 0.60 | Centroid must be at least this similar |
-| `member_validation_threshold` | **0.68** | Avg member similarity must be at least this |
-| `member_validation_sample_size` | 3 | Number of random members to check |
+| Threshold                         | Value    | Purpose                                      |
+| --------------------------------- | -------- | -------------------------------------------- |
+| `similarity_threshold`            | 0.65     | Minimum similarity to match a representative |
+| `borderline_upper_threshold`      | 0.70     | Matches below this trigger validation        |
+| `borderline_validation_threshold` | 0.60     | Centroid must be at least this similar       |
+| `member_validation_threshold`     | **0.68** | Avg member similarity must be at least this  |
+| `member_validation_sample_size`   | 3        | Number of random members to check            |
 
 ### Why Member Validation Fails for Valid Matches
 
@@ -57,6 +57,7 @@ MEMBER VALIDATION FAILED: identity=3666dac5, rep=0.6426, avg_member=0.5691 < thr
 ```
 
 **Interpretation**:
+
 - Representative match: **0.6426** (passes 0.60 threshold ✓)
 - Average member similarity: **0.5691** (fails 0.68 threshold ✗)
 - Result: New singleton cluster created instead of suggesting the match
@@ -69,11 +70,11 @@ MEMBER VALIDATION FAILED: identity=3666dac5, rep=0.6426, avg_member=0.5691 < thr
 
 Instead of a binary accept/reject decision, introduce three outcomes:
 
-| Decision | Criteria | Action |
-|----------|----------|--------|
-| **Accept** | rep ≥ 0.65 AND avg_member ≥ 0.68 | Auto-assign to cluster |
+| Decision    | Criteria                         | Action                                      |
+| ----------- | -------------------------------- | ------------------------------------------- |
+| **Accept**  | rep ≥ 0.65 AND avg_member ≥ 0.68 | Auto-assign to cluster                      |
 | **Suggest** | rep ≥ 0.60 AND avg_member ≥ 0.55 | Surface as suggestion for user confirmation |
-| **Reject** | rep < 0.60 OR avg_member < 0.55 | Create new cluster |
+| **Reject**  | rep < 0.60 OR avg_member < 0.55  | Create new cluster                          |
 
 ### Implementation Strategy
 
@@ -111,20 +112,20 @@ async def _validate_member_similarity(
 ) -> tuple[bool, bool]:  # Returns (should_accept, should_suggest)
     """
     Validate a representative match by checking similarity with existing members.
-    
+
     Returns:
         (should_accept, should_suggest) where:
         - should_accept: True if auto-assignment is safe
         - should_suggest: True if should surface as suggestion (only if not accepted)
     """
     # ... existing member similarity calculation ...
-    
+
     avg_member_similarity = np.mean(similarities)
-    
+
     # Strong match: auto-accept
     if avg_member_similarity >= self.settings.member_validation_threshold:
         return True, False
-    
+
     # Borderline match: suggest for user confirmation
     if avg_member_similarity >= self.settings.suggestion_threshold:  # e.g., 0.55
         logger.info(
@@ -137,7 +138,7 @@ async def _validate_member_similarity(
             self.settings.member_validation_threshold,
         )
         return False, True
-    
+
     # Poor match: reject
     return False, False
 ```
@@ -169,6 +170,7 @@ async def _create_suggestion(
 1. **Add suggestion indicator to IdentityClusterList**: Show a badge or icon for clusters with pending suggestions
 
 2. **Create SuggestionReviewPanel**: Modal or sidebar to review suggestions
+
    - Show the identity image
    - Show top 3 cluster members for comparison
    - Show similarity scores
@@ -200,13 +202,15 @@ async def _create_suggestion(
 
 ### Option D: Suggested Matches (Recommended)
 
-**Pros**: 
+**Pros**:
+
 - User gets final say on borderline cases
 - No silent rejections of valid matches
 - Preserves protection against obvious false positives
 - Better UX than manual merging
 
 **Cons**:
+
 - Requires new database table
 - Requires new UI component
 - More user clicks (but for good reason)
@@ -216,12 +220,15 @@ async def _create_suggestion(
 ## Success Metrics
 
 1. **Reduced singleton clusters**: Measure % of identities that end up in clusters of size 1
+
    - Target: Reduce from current ~40% to <20%
 
 2. **Suggestion acceptance rate**: Track how often users accept suggestions
+
    - Target: >70% acceptance rate (indicates good suggestion quality)
 
 3. **Manual merge frequency**: Track how often users manually merge clusters
+
    - Target: Reduce by 50%
 
 4. **User satisfaction**: Survey/feedback on clustering workflow
@@ -268,7 +275,7 @@ Rep matching: best_cluster=..., best_similarity=0.6426 (threshold=0.6000)
 Member validation: rep=0.6426, avg_member=0.5691 < threshold=0.6800
 MEMBER VALIDATION FAILED
 
-# Pattern 2: Borderline rep similarity, borderline member similarity  
+# Pattern 2: Borderline rep similarity, borderline member similarity
 Rep matching: best_cluster=..., best_similarity=0.6103 (threshold=0.6000)
 Member validation: rep=0.6103, avg_member=0.6234 < threshold=0.6800
 MEMBER VALIDATION FAILED
@@ -282,11 +289,11 @@ Member validation PASSED
 ### Threshold Distribution Analysis
 
 | Avg Member Similarity | Count | Current Decision | Proposed Decision |
-|-----------------------|-------|------------------|-------------------|
-| 0.68+ | ~30% | Accept | Accept |
-| 0.55-0.68 | ~25% | Reject | **Suggest** |
-| 0.45-0.55 | ~15% | Reject | Reject |
-| <0.45 | ~30% | Reject | Reject |
+| --------------------- | ----- | ---------------- | ----------------- |
+| 0.68+                 | ~30%  | Accept           | Accept            |
+| 0.55-0.68             | ~25%  | Reject           | **Suggest**       |
+| 0.45-0.55             | ~15%  | Reject           | Reject            |
+| <0.45                 | ~30%  | Reject           | Reject            |
 
 **Impact**: ~25% of currently rejected matches would become suggestions for user review.
 

@@ -169,7 +169,8 @@ def main() -> None:
             f"{emb_norm_str}{centroid_norm_str}"
         )
 
-    print("\nPairwise cosine similarities:")
+    print("\nPairwise cosine similarities (Direct Identity vs Identity):")
+    print("NOTE: This differs from clustering logic which compares Identity vs Representative or Centroid.")
     for left, right in itertools.combinations(rows, 2):
         vec_left = np.array(left["embedding"], dtype=np.float32)
         vec_right = np.array(right["embedding"], dtype=np.float32)

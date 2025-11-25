@@ -19,12 +19,12 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
-    "@vitejs/plugin-react": "^5.1.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^14.1.2",
     "@testing-library/user-event": "^14.6.1",
-    "jsdom": "^22.1.0",
+    "@vitejs/plugin-react": "^5.1.0",
     "eslint": "^9.39.1",
+    "jsdom": "^22.1.0",
     "sass": "^1.80.6",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.46.3",
@@ -33,11 +33,14 @@
     "vitest-axe": "^0.1.0"
   },
   "dependencies": {
+    "@radix-ui/react-popover": "^1.1.15",
     "@radix-ui/react-slot": "^1.2.3",
     "@radix-ui/react-tabs": "^1.1.13",
     "@tanstack/react-query": "^5.90.7",
     "@wordpress/element": "^6.34.0",
     "@wordpress/i18n": "^6.7.0",
+    "cmdk": "^1.1.1",
+    "lucide-react": "^0.554.0",
     "react-router-dom": "^7.9.5"
   },
   "engines": {

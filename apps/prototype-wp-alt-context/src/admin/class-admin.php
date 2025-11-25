@@ -181,6 +181,8 @@ class Admin {
 					'workbenchRecognitionClusters'   => rest_url( 'acx/v1/workbench/recognition/clusters' ),
 					'workbenchRecognitionMediaIdentities' => rest_url( 'acx/v1/workbench/recognition/media-identities' ),
 					'workbenchRecognitionReassignIdentity' => rest_url( 'acx/v1/workbench/recognition/clusters/reassign' ),
+					'workbenchRecognitionIdentitySuggestions' => rest_url( 'acx/v1/workbench/recognition/identities' ),
+					'workbenchRecognitionRevertMerge' => rest_url( 'acx/v1/workbench/recognition/clusters/revert-merge' ),
 					// Legacy keys kept for backward compatibility with older bundles that still use "face" terminology.
 					'workbenchFaceScan'                   => rest_url( 'acx/v1/workbench/recognition/analyze' ),
 					'workbenchFaceClusters'               => rest_url( 'acx/v1/workbench/recognition/clusters' ),
@@ -188,6 +190,8 @@ class Admin {
 					'recognitionJobs'     => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'  => rest_url( 'acx/v1/recognition/cluster' ),
 					'recognitionClusters' => rest_url( 'acx/v1/recognition/clusters' ),
+					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),
+					'recognitionRevertMerge' => rest_url( 'acx/v1/recognition/clusters/revert-merge' ),
 					'rosterEntries'       => rest_url( 'acx/v1/roster/entries' ),
 					'rosterClusters'      => rest_url( 'acx/v1/roster/clusters' ),
 				),

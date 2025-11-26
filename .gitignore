@@ -51,7 +51,7 @@ apps/archived-wp-context-alt-text/**
 # uncomment the next line
 #/wp-content/themes
 
-docs/literature
+#docs/literature
 .DS_Store
 .vscode/settings.json
 .env

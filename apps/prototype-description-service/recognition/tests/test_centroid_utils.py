@@ -1,7 +1,7 @@
 import numpy as np
 import pytest
 
-from recognition.application.centroid_utils import (
+from recognition.application.clustering.centroid_utils import (
     _normalize_vector,
     compute_centroid,
     compute_similarity,

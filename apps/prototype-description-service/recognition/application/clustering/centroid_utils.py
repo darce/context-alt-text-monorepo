@@ -36,7 +36,8 @@ def update_centroid_incremental(
         raise ValueError("old_count must be non-negative")
 
     old_vector = np.array(old_centroid, dtype=np.float32)
-    new_vector = _normalize_vector(np.array(new_embedding, dtype=np.float32))
+    new_vector = np.array(new_embedding, dtype=np.float32)
+    new_vector = _normalize_vector(new_vector)
 
     weighted_old = old_vector * float(old_count)
     updated = (weighted_old + new_vector) / float(old_count + 1)
@@ -48,8 +49,11 @@ def compute_similarity(
     embedding_b: Sequence[float] | np.ndarray,
 ) -> float:
     """Return cosine similarity between two embeddings clamped to [0, 1]."""
-    vec_a = _normalize_vector(np.array(embedding_a, dtype=np.float32))
-    vec_b = _normalize_vector(np.array(embedding_b, dtype=np.float32))
+    vec_a = np.array(embedding_a, dtype=np.float32)
+    vec_b = np.array(embedding_b, dtype=np.float32)
+
+    vec_a = _normalize_vector(vec_a)
+    vec_b = _normalize_vector(vec_b)
 
     similarity = float(np.dot(vec_a, vec_b))
     # Floating point drift may produce values slightly outside the range.

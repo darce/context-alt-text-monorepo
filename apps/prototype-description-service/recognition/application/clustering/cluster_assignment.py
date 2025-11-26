@@ -10,15 +10,32 @@ import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, IdentityMember, MediaIdentity
-from recognition.application.assignment_guard import log_borderline_assignment
-from recognition.application.centroid_utils import (
+from recognition.application.clustering.centroid_utils import (
     compute_similarity,
     update_centroid_incremental,
 )
-from recognition.application.cluster_repository import ClusterSearchEntry
-from recognition.application.clustering_settings import ClusteringSettings
+from recognition.application.clustering.cluster_repository import ClusterSearchEntry
+from recognition.application.clustering.clustering_settings import ClusteringSettings
 
 logger = logging.getLogger(__name__)
+
+
+def _log_borderline_assignment(
+    identity_id,
+    cluster_id,
+    similarity: float,
+    threshold: float,
+    window: float,
+) -> None:
+    """Log when an assignment is within the configured window of the threshold."""
+    if abs(similarity - threshold) <= window:
+        logger.warning(
+            "Borderline assignment: identity %s to cluster %s (similarity %.4f, threshold %.4f)",
+            identity_id,
+            cluster_id,
+            similarity,
+            threshold,
+        )
 
 
 class ClusterAssigner:
@@ -72,8 +89,7 @@ class ClusterAssigner:
         This creates a membership record, updates the in-memory centroid,
         and optionally validates the assignment.
         """
-        log_borderline_assignment(
-            logger,
+        _log_borderline_assignment(
             identity.id,
             entry.cluster.id,
             similarity,

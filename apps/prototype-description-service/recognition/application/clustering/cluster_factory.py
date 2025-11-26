@@ -9,12 +9,12 @@ import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, IdentityMember, MediaIdentity
-from recognition.application.centroid_utils import (
-    _normalize_vector,
+from recognition.application.clustering.centroid_utils import (
     compute_centroid,
     compute_similarity,
 )
-from recognition.application.cluster_repository import ClusterSearchEntry
+from recognition.application.clustering.cluster_repository import ClusterSearchEntry
+from recognition.domain.embeddings import prepare_embedding
 
 
 class ClusterFactory:
@@ -48,8 +48,8 @@ class ClusterFactory:
         if not identities:
             raise ValueError("Cannot create cluster without identities")
 
-        # Compute centroid from normalized embeddings
-        embeddings = [_normalize_vector(np.array(identity.embedding, dtype=np.float32)) for identity in identities]
+        # Compute centroid from normalized embeddings (ensure 1024D for compatibility)
+        embeddings = [prepare_embedding(identity.embedding) for identity in identities]
         centroid_vector = compute_centroid(embeddings)
 
         # Use highest confidence identity as representative
@@ -70,7 +70,7 @@ class ClusterFactory:
         # Create membership records
         for identity in identities:
             similarity = compute_similarity(
-                _normalize_vector(np.array(identity.embedding, dtype=np.float32)),
+                prepare_embedding(identity.embedding),
                 centroid_vector,
             )
             member = IdentityMember(

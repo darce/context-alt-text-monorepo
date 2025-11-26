@@ -15,8 +15,8 @@ import networkx as nx
 import numpy as np
 
 from db.models import IdentityCluster, MediaIdentity
-from recognition.application.clustering_settings import ClusteringSettings
-from recognition.application.clustering_utils import (
+from recognition.application.clustering.clustering_settings import ClusteringSettings
+from recognition.application.clustering.clustering_utils import (
     group_identities_by_label,
     normalize_embeddings,
 )

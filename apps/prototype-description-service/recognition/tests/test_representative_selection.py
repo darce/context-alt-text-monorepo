@@ -1,8 +1,8 @@
 import numpy as np
 import pytest
 
-from recognition.application.clustering_settings import ClusteringSettings
-from recognition.application.representative_selection import decide_representative_acceptance
+from recognition.application.clustering.clustering_settings import ClusteringSettings
+from recognition.application.representatives.representative_selection import decide_representative_acceptance
 
 
 def test_accepts_first_representative():

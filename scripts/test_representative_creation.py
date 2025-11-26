@@ -15,8 +15,8 @@ sys.path.append(str(REPO_ROOT / "apps" / "prototype-description-service"))
 
 from db.models import MediaIdentity, Tenant
 from db.settings import get_database_settings
-from recognition.application.identity_clustering_service import IdentityClusteringService
-from recognition.application.clustering_settings import ClusteringSettings
+from recognition.application.clustering.identity_clustering_service import IdentityClusteringService
+from recognition.application.clustering.clustering_settings import ClusteringSettings
 
 async def main():
     settings = get_database_settings()
@@ -62,7 +62,7 @@ async def main():
         # We need to use the service's callback
         cluster, entry = await service.factory.create_cluster_with_centroid(
             [identity],
-            add_representative_callback=service._add_representative_embedding
+            add_representative_callback=service._rep_manager.add_representative
         )
         
         await session.commit()

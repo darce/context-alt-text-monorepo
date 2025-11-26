@@ -16,12 +16,12 @@ from sqlalchemy.orm import selectinload
 from db.models import IdentityCluster, IdentityScanJob, MediaIdentity, Tenant
 from db.session import async_session_factory, get_session
 from db.tenant_context import set_tenant_context
-from recognition.application.identity_clustering_service import (
+from recognition.application.clustering.identity_clustering_service import (
     ClusterLabelConflictError,
     ClusterNotFoundError,
     IdentityClusteringService,
 )
-from recognition.application.identity_scan_service import IdentityScanService
+from recognition.application.scanning.identity_scan_service import IdentityScanService
 from recognition.config import get_settings
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 

@@ -32,19 +32,20 @@ from db.tenant_context import (
     enable_rls_bypass,
     set_tenant_context,
 )
-from recognition.application.centroid_utils import _normalize_vector, compute_similarity
-from recognition.application.cluster_repository import ClusterSearchEntry
-from recognition.application.clustering_settings import ClusteringSettings
-from recognition.application.identity_clustering_service import (
+from recognition.application.clustering.centroid_utils import _normalize_vector, compute_similarity
+from recognition.application.clustering.cluster_repository import ClusterSearchEntry
+from recognition.application.clustering.clustering_settings import ClusteringSettings
+from recognition.application.clustering.identity_clustering_service import (
     IdentityClusteringService,
 )
-from recognition.application.representative_selection import decide_representative_acceptance
+from recognition.application.representatives.representative_selection import decide_representative_acceptance
 from recognition.tests.fakes import DummySession, FakeResult, make_media_identity
 
 
-def make_stub_identity(vector):
+def make_stub_identity(vector, tenant_id=None):
     return SimpleNamespace(
         id=uuid4(),
+        tenant_id=tenant_id or uuid4(),
         embedding=vector,
         confidence=0.9,
         media_id=1,
@@ -237,7 +238,7 @@ def test_create_cluster_adds_representatives(monkeypatch):
     identity2 = make_media_identity(tenant_id, media_id=2, confidence=0.8, embedding=[0.0, 1.0, 0.0, 0.0])
 
     mock_add_rep = AsyncMock()
-    service._add_representative_embedding = mock_add_rep
+    service._rep_manager.add_representative = mock_add_rep
 
     cluster, _ = asyncio.run(
         service.factory.create_cluster_with_centroid(
@@ -324,7 +325,7 @@ def test_create_cluster_persists_members_and_flushes():
     cluster, entry = asyncio.run(
         service.factory.create_cluster_with_centroid(
             [identity1, identity2],
-            add_representative_callback=service._add_representative_embedding,
+            add_representative_callback=service._rep_manager.add_representative,
         )
     )
 
@@ -555,7 +556,7 @@ async def test_representative_matching_blocks_centroid_drift(require_database):
             )
             cluster, _ = await service.factory.create_cluster_with_centroid(
                 identities,
-                add_representative_callback=service._add_representative_embedding,
+                add_representative_callback=service._rep_manager.add_representative,
             )
             await session.commit()
             base_cluster_id = cluster.id
@@ -627,7 +628,7 @@ async def test_representatives_table_populated_after_clustering(require_database
             service = IdentityClusteringService(session=session, tenant_id=tenant_id, similarity_threshold=0.6)
             cluster, _ = await service.factory.create_cluster_with_centroid(
                 identities,
-                add_representative_callback=service._add_representative_embedding,
+                add_representative_callback=service._rep_manager.add_representative,
             )
             await session.commit()
             cluster_id = cluster.id

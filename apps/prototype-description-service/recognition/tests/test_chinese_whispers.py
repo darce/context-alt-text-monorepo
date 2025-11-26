@@ -5,8 +5,8 @@ import numpy as np
 import pytest
 
 from db.models import IdentityCluster, MediaIdentity
-from recognition.application.chinese_whispers import ChineseWhispersClustering
-from recognition.application.clustering_settings import ClusteringSettings
+from recognition.application.clustering.chinese_whispers import ChineseWhispersClustering
+from recognition.application.clustering.clustering_settings import ClusteringSettings
 
 
 @pytest.mark.asyncio

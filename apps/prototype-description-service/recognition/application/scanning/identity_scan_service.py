@@ -15,7 +15,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
-from recognition.application.centroid_utils import _normalize_vector
+from recognition.application.clustering.centroid_utils import _normalize_vector
 from recognition.domain.entities import IdentityEmbedding
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 from recognition.infrastructure.thumbnail_service import ThumbnailService

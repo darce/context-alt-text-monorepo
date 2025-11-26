@@ -10,6 +10,7 @@ import numpy as np
 from PIL import Image
 
 from recognition.config import get_settings
+from recognition.domain.embeddings import build_extended_embedding
 from recognition.domain.entities import IdentityDetection, IdentityEmbedding
 
 logger = logging.getLogger(__name__)
@@ -89,41 +90,32 @@ class FaceEmbeddingProvider:
                 landmarks=getattr(face, "kps", None),
             )
 
+            # Build extended 1024D embedding using structured layout
             identity_vec = face.normed_embedding
-            context_vec = self._context_vector(face, image)
-            composite = np.concatenate([identity_vec, context_vec])
+
+            # Extract optional attributes from InsightFace
+            pose = None
+            if hasattr(face, "pose") and face.pose is not None:
+                pose = tuple(face.pose)  # (pitch, yaw, roll)
+
+            age = int(face.age) if hasattr(face, "age") and face.age is not None else None
+            gender = int(face.gender) if hasattr(face, "gender") and face.gender is not None else None
+            landmarks = face.kps if hasattr(face, "kps") else None
+
+            composite = build_extended_embedding(
+                face_embedding=identity_vec,
+                det_score=float(face.det_score),
+                bbox=(x_min, y_min, x_max, y_max),
+                pose=pose,
+                age=age,
+                gender=gender,
+                landmarks=landmarks,
+            )
 
             results.append(IdentityEmbedding(embedding=composite, detection=detection))
 
         logger.info("Detected %d faces", len(results))
         return results
-
-    def _context_vector(self, face, image: Image.Image) -> np.ndarray:
-        bbox = face.bbox.astype(int)
-        width = max(1, bbox[2] - bbox[0])
-        height = max(1, bbox[3] - bbox[1])
-        area = width * height
-        stats = np.array(
-            [
-                width,
-                height,
-                area,
-                face.det_score,
-                float(getattr(face, "age", 0.0)),
-                float(getattr(face, "gender", 0.5)),
-            ],
-            dtype=np.float32,
-        )
-
-        norm = np.linalg.norm(stats)
-        if norm:
-            stats = stats / norm
-
-        padded = np.pad(
-            stats,
-            (0, self.settings.identity_detection.embedding_dimension // 2 - stats.shape[0]),
-        )
-        return padded[: self.settings.identity_detection.embedding_dimension // 2]
 
     def model_info(self) -> dict[str, object]:
         return {

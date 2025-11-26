@@ -16,7 +16,7 @@ from db.models import (
     IdentityMember,
     MediaIdentity,
 )
-from recognition.application.centroid_utils import _normalize_vector
+from recognition.application.clustering.centroid_utils import _normalize_vector
 
 
 class ClusterSearchEntry:

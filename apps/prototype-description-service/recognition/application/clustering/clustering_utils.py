@@ -6,13 +6,20 @@ from collections.abc import Iterable, Sequence
 
 import numpy as np
 
-from recognition.application.centroid_utils import _normalize_vector
+from recognition.domain.embeddings import prepare_embedding
+
+EmbeddingLike = Sequence[float] | np.ndarray
 
 
-def normalize_embeddings(embeddings: Iterable[Sequence[float] | np.ndarray]) -> np.ndarray:
-    """Return a float32 array of unit-normalized embeddings."""
+def normalize_embeddings(embeddings: Iterable[EmbeddingLike]) -> np.ndarray:
+    """Return a float32 array of unit-normalized 1024D embeddings.
 
-    return np.array([_normalize_vector(np.array(vec, dtype=np.float32)) for vec in embeddings], dtype=np.float32)
+    Handles both legacy 512D and new 1024D embeddings, padding as needed.
+    """
+    return np.array(
+        [prepare_embedding(list(vec) if not isinstance(vec, np.ndarray) else vec) for vec in embeddings],
+        dtype=np.float32,
+    )
 
 
 def convert_threshold_to_euclidean(cosine_threshold: float, embeddings: np.ndarray, atol: float = 1e-5) -> float:

@@ -12,7 +12,7 @@ import pytest
 from PIL import Image
 
 from db.models import IdentityScanJob, MediaIdentity
-from recognition.application.identity_scan_service import IdentityScanService
+from recognition.application.scanning.identity_scan_service import IdentityScanService
 from recognition.domain.entities import IdentityDetection, IdentityEmbedding
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 from recognition.tests.fakes import DummySession

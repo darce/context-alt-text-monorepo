@@ -8,9 +8,8 @@ import pytest
 from sklearn.metrics import adjusted_rand_score, completeness_score, homogeneity_score
 
 from db.models import IdentityCluster, MediaIdentity
-from recognition.application.chinese_whispers import ChineseWhispersClustering
-from recognition.application.clustering_settings import ClusteringSettings
-from recognition.application.ward_clustering import run_ward_clustering
+from recognition.application.clustering.chinese_whispers import ChineseWhispersClustering
+from recognition.application.clustering.clustering_settings import ClusteringSettings
 
 logger = logging.getLogger(__name__)
 
@@ -99,18 +98,7 @@ async def test_cw_clustering_accuracy():
     # Try 0.08 for a challenging but possible dataset.
     data_hard = generate_synthetic_data(num_people=10, samples_per_person=10, noise_level=0.08)
 
-    # Run Ward
-    from recognition.application.ward_clustering import run_ward_clustering
-
-    settings_ward = ClusteringSettings(similarity_threshold=0.6)
-
-    identity_to_cluster_map.clear()
-    await run_ward_clustering(data_hard.identities, settings_ward, create_cluster=capture_create_cluster)
-    pred_labels_ward = [identity_to_cluster_map.get(i, -1) for i in data_hard.identities]
-    ari_ward = adjusted_rand_score(data_hard.true_labels, pred_labels_ward)
-    print(f"\nWard Accuracy (Medium, noise=0.08): ARI={ari_ward:.4f}")
-
-    # Run CW
+    # Run CW on harder data
     settings_cw = ClusteringSettings(cw_threshold=0.65, cw_iterations=20)
     cw_hard = ChineseWhispersClustering(settings_cw)
 
@@ -118,7 +106,7 @@ async def test_cw_clustering_accuracy():
     await cw_hard.cluster(data_hard.identities, create_cluster=capture_create_cluster)
     pred_labels_cw = [identity_to_cluster_map.get(i, -1) for i in data_hard.identities]
     ari_cw = adjusted_rand_score(data_hard.true_labels, pred_labels_cw)
-    print(f"CW Accuracy (Medium, noise=0.08): ARI={ari_cw:.4f}")
+    print(f"\nCW Accuracy (Medium, noise=0.08): ARI={ari_cw:.4f}")
 
     # 3. PCA + Whitening
     from sklearn.decomposition import PCA

@@ -20,8 +20,8 @@ from db.tenant_context import (
     enable_rls_bypass,
     set_tenant_context,
 )
-from recognition.application.identity_clustering_service import IdentityClusteringService
-from recognition.application.identity_scan_service import IdentityScanService
+from recognition.application.clustering.identity_clustering_service import IdentityClusteringService
+from recognition.application.scanning.identity_scan_service import IdentityScanService
 from recognition.domain.entities import IdentityDetection, IdentityEmbedding
 from recognition.tests.fakes import make_media_identity
 

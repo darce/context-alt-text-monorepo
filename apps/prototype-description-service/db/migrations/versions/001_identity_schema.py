@@ -22,6 +22,7 @@ TENANT_TABLES = [
     "identity_scan_jobs",
     "identity_cluster_representatives",
     "identity_clustering_jobs",
+    "tenant_clustering_configs",
 ]
 
 
@@ -236,6 +237,79 @@ def upgrade() -> None:
         sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("created_by_user_id", sa.Integer()),
+    )
+
+    # Tenant-specific clustering configuration (1:1 with tenants)
+    op.create_table(
+        "tenant_clustering_configs",
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            primary_key=True,
+        ),
+        # === Core Thresholds ===
+        sa.Column("similarity_threshold", sa.Float(), nullable=False, server_default=sa.text("0.65")),
+        sa.Column("member_validation_threshold", sa.Float(), nullable=False, server_default=sa.text("0.68")),
+        sa.Column("cw_threshold", sa.Float(), nullable=False, server_default=sa.text("0.75")),
+        # === Confidence Weighting (Option C) ===
+        sa.Column("confidence_weighting_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("confidence_midpoint", sa.Float(), nullable=False, server_default=sa.text("0.85")),
+        sa.Column("threshold_max_adjustment", sa.Float(), nullable=False, server_default=sa.text("0.10")),
+        sa.Column("min_bbox_area", sa.Integer(), nullable=False, server_default=sa.text("10000")),
+        # === Algorithm Selection ===
+        sa.Column("use_hdbscan_for_outliers", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("hdbscan_min_cluster_size", sa.Integer(), nullable=False, server_default=sa.text("2")),
+        sa.Column("hdbscan_min_samples", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("two_pass_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("pass1_threshold", sa.Float(), nullable=False, server_default=sa.text("0.75")),
+        sa.Column("pass2_merge_threshold", sa.Float(), nullable=False, server_default=sa.text("0.65")),
+        # === Auto-Tuning ===
+        sa.Column("auto_tune_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("threshold_min", sa.Float(), nullable=False, server_default=sa.text("0.50")),
+        sa.Column("threshold_max", sa.Float(), nullable=False, server_default=sa.text("0.80")),
+        sa.Column("auto_tune_target_acceptance", sa.Float(), nullable=False, server_default=sa.text("0.70")),
+        # === Session Inference ===
+        sa.Column("session_boost_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("session_similarity_threshold", sa.Float(), nullable=False, server_default=sa.text("0.85")),
+        sa.Column("session_boost_amount", sa.Float(), nullable=False, server_default=sa.text("0.05")),
+        # === Metadata ===
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        # === Constraints ===
+        sa.CheckConstraint(
+            "similarity_threshold >= 0 AND similarity_threshold <= 1", name="similarity_threshold_range"
+        ),
+        sa.CheckConstraint(
+            "member_validation_threshold >= 0 AND member_validation_threshold <= 1",
+            name="member_validation_threshold_range",
+        ),
+        sa.CheckConstraint("cw_threshold >= 0 AND cw_threshold <= 1", name="cw_threshold_range"),
+        sa.CheckConstraint("confidence_midpoint >= 0 AND confidence_midpoint <= 1", name="confidence_midpoint_range"),
+        sa.CheckConstraint(
+            "threshold_max_adjustment >= 0 AND threshold_max_adjustment <= 0.5", name="threshold_max_adjustment_range"
+        ),
+        sa.CheckConstraint("min_bbox_area >= 0", name="min_bbox_area_positive"),
+        sa.CheckConstraint("hdbscan_min_cluster_size >= 2", name="hdbscan_min_cluster_size_valid"),
+        sa.CheckConstraint("hdbscan_min_samples >= 1", name="hdbscan_min_samples_valid"),
+        sa.CheckConstraint("pass1_threshold >= 0 AND pass1_threshold <= 1", name="pass1_threshold_range"),
+        sa.CheckConstraint(
+            "pass2_merge_threshold >= 0 AND pass2_merge_threshold <= 1", name="pass2_merge_threshold_range"
+        ),
+        sa.CheckConstraint("threshold_min >= 0 AND threshold_min <= 1", name="threshold_min_range"),
+        sa.CheckConstraint("threshold_max >= 0 AND threshold_max <= 1", name="threshold_max_range"),
+        sa.CheckConstraint("threshold_min <= threshold_max", name="threshold_min_max_order"),
+        sa.CheckConstraint(
+            "auto_tune_target_acceptance >= 0 AND auto_tune_target_acceptance <= 1",
+            name="auto_tune_target_acceptance_range",
+        ),
+        sa.CheckConstraint(
+            "session_similarity_threshold >= 0 AND session_similarity_threshold <= 1",
+            name="session_similarity_threshold_range",
+        ),
+        sa.CheckConstraint(
+            "session_boost_amount >= 0 AND session_boost_amount <= 0.5", name="session_boost_amount_range"
+        ),
     )
 
     op.create_index(
@@ -536,6 +610,7 @@ def downgrade() -> None:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    op.drop_table("tenant_clustering_configs")
     op.drop_table("identity_scan_jobs")
     op.drop_table("identity_cluster_representatives")
     op.drop_table("identity_clustering_jobs")

@@ -7,6 +7,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    Boolean,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -41,6 +42,66 @@ class Tenant(Base):
     identity_clusters: Mapped[list[IdentityCluster]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    clustering_config: Mapped[TenantClusteringConfig | None] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan", uselist=False
+    )
+
+
+class TenantClusteringConfig(Base):
+    """Per-tenant clustering configuration settings.
+
+    Stores customizable clustering parameters that can be adjusted
+    per-tenant to optimize for their specific data characteristics.
+
+    All fields have sensible defaults matching ClusteringSettings.
+    """
+
+    __tablename__ = "tenant_clustering_configs"
+
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("tenants.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+
+    # === Core Thresholds ===
+    similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.65"))
+    member_validation_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.68"))
+    cw_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.75"))
+
+    # === Confidence Weighting (Option C) ===
+    confidence_weighting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    confidence_midpoint: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.85"))
+    threshold_max_adjustment: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.10"))
+    min_bbox_area: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10000"))
+
+    # === Algorithm Selection ===
+    use_hdbscan_for_outliers: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    hdbscan_min_cluster_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("2"))
+    hdbscan_min_samples: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
+    two_pass_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    pass1_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.75"))
+    pass2_merge_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.65"))
+
+    # === Auto-Tuning ===
+    auto_tune_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    threshold_min: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.50"))
+    threshold_max: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.80"))
+    auto_tune_target_acceptance: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.70"))
+
+    # === Session Inference ===
+    session_boost_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    session_similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.85"))
+    session_boost_amount: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.05"))
+
+    # === Metadata ===
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+    # Relationship
+    tenant: Mapped[Tenant] = relationship(back_populates="clustering_config")
 
 
 class MediaIdentity(Base):
@@ -256,6 +317,7 @@ class IdentityClusteringJob(Base):
 
 __all__ = [
     "Tenant",
+    "TenantClusteringConfig",
     "MediaIdentity",
     "IdentityCluster",
     "ClusterCentroid",

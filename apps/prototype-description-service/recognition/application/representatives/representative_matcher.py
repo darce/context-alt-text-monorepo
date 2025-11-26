@@ -9,7 +9,14 @@ from uuid import UUID
 import numpy as np
 
 from db.models import MediaIdentity
-from recognition.application.centroid_utils import _normalize_vector, compute_similarity
+from recognition.application.clustering.centroid_utils import compute_similarity
+from recognition.application.clustering.clustering_logger import log_rep_match, log_threshold_adjusted
+from recognition.application.clustering.clustering_settings import ClusteringSettings
+from recognition.application.representatives.confidence_utils import (
+    adaptive_threshold,
+    compute_detection_confidence,
+)
+from recognition.domain.embeddings import prepare_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -19,7 +26,11 @@ BorderlineValidationFn = Callable[[MediaIdentity, np.ndarray, UUID, float], Awai
 
 
 class RepresentativeMatcher:
-    """Assign identities to clusters using representative embeddings (no centroid reliance)."""
+    """Assign identities to clusters using representative embeddings (no centroid reliance).
+
+    Optionally supports confidence-weighted adaptive thresholds (Option C) when
+    settings.confidence_weighting_enabled is True.
+    """
 
     def __init__(
         self,
@@ -27,11 +38,68 @@ class RepresentativeMatcher:
         add_representative_embedding: AddRepFn,
         assign_to_cluster_by_id: AssignFn,
         borderline_validation: BorderlineValidationFn | None = None,
+        settings: ClusteringSettings | None = None,
     ) -> None:
         self.threshold = threshold
         self._add_representative_embedding = add_representative_embedding
         self._assign_to_cluster_by_id = assign_to_cluster_by_id
         self._borderline_validation = borderline_validation
+        self._settings = settings
+
+    def _compute_effective_threshold(self, identity: MediaIdentity) -> float:
+        """Compute the effective threshold for this identity based on detection confidence.
+
+        If confidence weighting is enabled, adjusts the base threshold based on
+        detection quality (det_score and bbox size). High-quality detections get
+        a lower threshold (easier to match), low-quality get higher (stricter).
+
+        Returns:
+            Effective threshold for this identity's matching.
+        """
+        if not self._settings or not self._settings.confidence_weighting_enabled:
+            return self.threshold
+
+        # Compute detection confidence from identity attributes
+        det_score = identity.confidence if identity.confidence is not None else 0.9
+        bbox_area = (identity.bbox_width or 100) * (identity.bbox_height or 100)
+
+        confidence = compute_detection_confidence(
+            det_score=det_score,
+            bbox_area=bbox_area,
+            min_bbox_area=self._settings.min_bbox_area,
+        )
+
+        effective_threshold = adaptive_threshold(
+            base_threshold=self.threshold,
+            confidence=confidence,
+            confidence_midpoint=self._settings.confidence_midpoint,
+            threshold_max_adjustment=self._settings.threshold_max_adjustment,
+        )
+
+        logger.debug(
+            "Confidence weighting: identity=%s, det_score=%.3f, bbox_area=%d, "
+            "confidence=%.3f, base_threshold=%.3f, effective_threshold=%.3f",
+            identity.id,
+            det_score,
+            bbox_area,
+            confidence,
+            self.threshold,
+            effective_threshold,
+        )
+
+        # Structured logging for threshold adjustment (only when different from base)
+        if abs(effective_threshold - self.threshold) > 0.001:
+            log_threshold_adjusted(
+                tenant_id=identity.tenant_id,
+                identity_id=identity.id,
+                base_threshold=self.threshold,
+                effective_threshold=effective_threshold,
+                confidence=confidence,
+                det_score=det_score,
+                bbox_area=bbox_area,
+            )
+
+        return effective_threshold
 
     def _find_best_rep_match(
         self,
@@ -87,14 +155,18 @@ class RepresentativeMatcher:
         still_unclustered: list[MediaIdentity] = []
 
         for identity in candidates:
-            identity_vector = _normalize_vector(np.array(identity.embedding, dtype=np.float32))
+            identity_vector = prepare_embedding(identity.embedding)
             best_cluster_id, best_similarity = self._find_best_rep_match(
                 identity_vector,
                 representatives_by_cluster,
             )
 
-            if best_cluster_id and best_similarity >= self.threshold:
+            # Use effective threshold (potentially adjusted by confidence weighting)
+            effective_threshold = self._compute_effective_threshold(identity)
+
+            if best_cluster_id and best_similarity >= effective_threshold:
                 # Check if match is in borderline range (needs validation)
+                # Use original threshold for borderline check to keep validation consistent
                 is_borderline = (
                     borderline_upper is not None
                     and best_similarity < borderline_upper
@@ -130,12 +202,24 @@ class RepresentativeMatcher:
                     )
 
                 logger.info(
-                    "Rep match ACCEPT%s: identity=%s, similarity=%.4f >= threshold=%.4f, cluster=%s",
+                    "Rep match ACCEPT%s: identity=%s, similarity=%.4f >= threshold=%.4f%s, cluster=%s",
                     " (validated)" if is_borderline else "",
                     identity.id,
                     best_similarity,
-                    self.threshold,
+                    effective_threshold,
+                    f" (adjusted from {self.threshold:.4f})" if effective_threshold != self.threshold else "",
                     best_cluster_id,
+                )
+                # Structured logging: match accepted
+                log_rep_match(
+                    tenant_id=identity.tenant_id,
+                    identity_id=identity.id,
+                    cluster_id=best_cluster_id,
+                    similarity=best_similarity,
+                    threshold=effective_threshold,
+                    accepted=True,
+                    effective_threshold=effective_threshold if effective_threshold != self.threshold else None,
+                    is_borderline=is_borderline,
                 )
                 await self._assign_to_cluster_by_id(identity, identity_vector, best_cluster_id, best_similarity)
                 rep_embedding = await self._add_representative_embedding(best_cluster_id, identity)
@@ -144,10 +228,21 @@ class RepresentativeMatcher:
                 assigned_count += 1
             else:
                 logger.debug(
-                    "Rep match REJECT: identity=%s, similarity=%.4f < threshold=%.4f",
+                    "Rep match REJECT: identity=%s, similarity=%.4f < threshold=%.4f%s",
                     identity.id,
                     best_similarity,
-                    self.threshold,
+                    effective_threshold,
+                    f" (adjusted from {self.threshold:.4f})" if effective_threshold != self.threshold else "",
+                )
+                # Structured logging: match rejected
+                log_rep_match(
+                    tenant_id=identity.tenant_id,
+                    identity_id=identity.id,
+                    cluster_id=None,
+                    similarity=best_similarity,
+                    threshold=effective_threshold,
+                    accepted=False,
+                    effective_threshold=effective_threshold if effective_threshold != self.threshold else None,
                 )
                 still_unclustered.append(identity)
 

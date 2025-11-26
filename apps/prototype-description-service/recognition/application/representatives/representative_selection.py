@@ -6,7 +6,7 @@ import logging
 
 import numpy as np
 
-from recognition.application.centroid_utils import _normalize_vector, compute_similarity
+from recognition.application.clustering.centroid_utils import _normalize_vector, compute_similarity
 
 logger = logging.getLogger(__name__)
 

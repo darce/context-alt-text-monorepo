@@ -47,6 +47,9 @@ dev = [
     "types-Pillow",
     "types-networkx",
 ]
+clustering = [
+    "hdbscan>=0.8.33,<1.0.0",  # Optional: better clustering for small batches
+]
 local = [
     "onnxruntime-silicon>=1.16.3 ; platform_system == \"Darwin\" and platform_machine == \"arm64\"",
     "onnxruntime>=1.16.0 ; platform_system != \"Darwin\" or platform_machine != \"arm64\"",

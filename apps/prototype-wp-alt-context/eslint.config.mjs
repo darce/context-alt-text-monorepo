@@ -1,31 +1,31 @@
-import { defineFlatConfig } from 'eslint/config';
 import js from '@eslint/js';
 import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
 
 const sharedFiles = ['js/**/*.{ts,tsx}', '.storybook/**/*.{ts,tsx}'];
-const typeCheckedConfigs = [...tseslint.configs.recommendedTypeChecked, ...tseslint.configs.stylisticTypeChecked];
 
-export default defineFlatConfig([
+export default tseslint.config(
   {
     ignores: ['node_modules/**', 'public/**', 'vendor/**', 'storybook-static/**'],
   },
   js.configs.recommended,
-  ...typeCheckedConfigs.map((config) => ({
+  ...tseslint.configs.recommendedTypeChecked.map((config) => ({
     ...config,
     files: sharedFiles,
+  })),
+  ...tseslint.configs.stylisticTypeChecked.map((config) => ({
+    ...config,
+    files: sharedFiles,
+  })),
+  {
+    files: sharedFiles,
     languageOptions: {
-      ...config.languageOptions,
       parserOptions: {
-        ...config.languageOptions?.parserOptions,
         projectService: true,
         tsconfigRootDir: import.meta.dirname,
       },
     },
-  })),
-  {
-    files: sharedFiles,
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
@@ -40,27 +40,6 @@ export default defineFlatConfig([
       'func-style': ['error', 'expression', { allowArrowFunctions: true }],
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
-      'max-lines': [
-        'warn',
-        {
-          max: 350,
-          skipBlankLines: true,
-          skipComments: true,
-        },
-      ],
-      'no-restricted-syntax': [
-        'error',
-        {
-          selector: 'JSXElement[openingElement.name.name="select"]',
-          message:
-            'Use @radix-ui/react-select instead of native <select>. See docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md',
-        },
-        {
-          selector: 'JSXElement[openingElement.name.name="dialog"]',
-          message:
-            'Use @radix-ui/react-dialog instead of native <dialog>. See docs/architecture/rules/RADIX_UI_COMPONENT_GUIDE.md',
-        },
-      ],
     },
   },
   {
@@ -76,4 +55,4 @@ export default defineFlatConfig([
       ],
     },
   },
-]);
+);

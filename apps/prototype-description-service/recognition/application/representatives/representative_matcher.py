@@ -10,6 +10,7 @@ import numpy as np
 
 from db.models import MediaIdentity
 from recognition.application.clustering.centroid_utils import compute_similarity
+from recognition.application.clustering.cluster_validation import MemberValidationResult
 from recognition.application.clustering.clustering_logger import log_rep_match, log_threshold_adjusted
 from recognition.application.clustering.clustering_settings import ClusteringSettings
 from recognition.application.representatives.confidence_utils import (
@@ -23,6 +24,8 @@ logger = logging.getLogger(__name__)
 AssignFn = Callable[[MediaIdentity, np.ndarray, UUID, float], Awaitable[None]]
 AddRepFn = Callable[[UUID, MediaIdentity], Awaitable[np.ndarray | None]]
 BorderlineValidationFn = Callable[[MediaIdentity, np.ndarray, UUID, float], Awaitable[bool]]
+SuggestionValidationFn = Callable[[MediaIdentity, np.ndarray, UUID, float], Awaitable[MemberValidationResult]]
+CreateSuggestionFn = Callable[[UUID, UUID, float, float], Awaitable[None]]
 
 
 class RepresentativeMatcher:
@@ -30,6 +33,15 @@ class RepresentativeMatcher:
 
     Optionally supports confidence-weighted adaptive thresholds (Option C) when
     settings.confidence_weighting_enabled is True.
+
+    Supports suggestion tier for borderline matches when suggestion_validation and
+    create_suggestion callbacks are provided.
+
+    Early Stage Suggestion Guard:
+    During early training (labeled_cluster_count < maturity_point), borderline matches
+    that exceed the threshold but are below high_confidence_threshold create suggestions
+    instead of auto-assigning. This prevents false positives when cluster representatives
+    aren't yet stable.
     """
 
     def __init__(
@@ -39,12 +51,24 @@ class RepresentativeMatcher:
         assign_to_cluster_by_id: AssignFn,
         borderline_validation: BorderlineValidationFn | None = None,
         settings: ClusteringSettings | None = None,
+        suggestion_validation: SuggestionValidationFn | None = None,
+        create_suggestion: CreateSuggestionFn | None = None,
+        labeled_cluster_count: int = 0,
     ) -> None:
         self.threshold = threshold
         self._add_representative_embedding = add_representative_embedding
         self._assign_to_cluster_by_id = assign_to_cluster_by_id
         self._borderline_validation = borderline_validation
         self._settings = settings
+        self._suggestion_validation = suggestion_validation
+        self._create_suggestion = create_suggestion
+        self._labeled_cluster_count = labeled_cluster_count
+
+    def _is_early_stage(self) -> bool:
+        """Check if we're in early training stage."""
+        if not self._settings:
+            return False
+        return self._labeled_cluster_count < self._settings.adaptive_threshold_maturity_point
 
     def _compute_effective_threshold(self, identity: MediaIdentity) -> float:
         """Compute the effective threshold for this identity based on detection confidence.
@@ -53,10 +77,25 @@ class RepresentativeMatcher:
         detection quality (det_score and bbox size). High-quality detections get
         a lower threshold (easier to match), low-quality get higher (stricter).
 
+        IMPORTANT: During early stage (few labeled clusters), confidence weighting
+        is DISABLED to prevent false positives. We need to be stricter, not more
+        lenient, when cluster representatives aren't stable yet.
+
         Returns:
             Effective threshold for this identity's matching.
         """
         if not self._settings or not self._settings.confidence_weighting_enabled:
+            return self.threshold
+
+        # CRITICAL: Disable confidence weighting during early stage
+        # During early training, clusters are not stable and we should be stricter
+        # to avoid false positive accumulation (snowball effect)
+        if self._is_early_stage():
+            logger.debug(
+                "Confidence weighting DISABLED (early stage): identity=%s, using base threshold=%.3f",
+                identity.id,
+                self.threshold,
+            )
             return self.threshold
 
         # Compute detection confidence from identity attributes
@@ -118,6 +157,56 @@ class RepresentativeMatcher:
 
         return best_cluster_id, best_similarity
 
+    def _check_complete_link(
+        self,
+        identity_vector: np.ndarray,
+        cluster_id: UUID,
+        representatives_by_cluster: dict[UUID, list[np.ndarray]],
+    ) -> tuple[bool, float, float]:
+        """Check complete-link validation against ALL representatives of a cluster.
+
+        Instead of just checking if ONE rep is similar enough, we check that:
+        1. The MINIMUM similarity to any rep is above a floor (even the worst match is acceptable)
+        2. The AVERAGE similarity across all reps is above a threshold
+
+        This catches lookalikes who match one photo (e.g., same angle) but not others.
+
+        Returns:
+            (passed, min_similarity, avg_similarity)
+        """
+        if not self._settings or not self._settings.complete_link_enabled:
+            return True, 1.0, 1.0  # Skip check if disabled
+
+        reps = representatives_by_cluster.get(cluster_id, [])
+        if len(reps) < 2:
+            # Not enough representatives for meaningful complete-link check
+            return True, 1.0, 1.0
+
+        similarities = [compute_similarity(identity_vector, rep) for rep in reps]
+        min_sim = min(similarities)
+        avg_sim = sum(similarities) / len(similarities)
+
+        floor_passed = min_sim >= self._settings.complete_link_min_floor
+        avg_passed = avg_sim >= self._settings.complete_link_avg_threshold
+
+        passed = floor_passed and avg_passed
+
+        logger.debug(
+            "Complete-link check: cluster=%s, num_reps=%d, min_sim=%.4f (floor=%.4f, %s), "
+            "avg_sim=%.4f (threshold=%.4f, %s), passed=%s",
+            cluster_id,
+            len(reps),
+            min_sim,
+            self._settings.complete_link_min_floor,
+            "PASS" if floor_passed else "FAIL",
+            avg_sim,
+            self._settings.complete_link_avg_threshold,
+            "PASS" if avg_passed else "FAIL",
+            passed,
+        )
+
+        return passed, min_sim, avg_sim
+
     def best_match(
         self,
         identity_vector: np.ndarray,
@@ -167,20 +256,136 @@ class RepresentativeMatcher:
             if best_cluster_id and best_similarity >= effective_threshold:
                 # Check if match is in borderline range (needs validation)
                 # Use original threshold for borderline check to keep validation consistent
-                is_borderline = (
-                    borderline_upper is not None
-                    and best_similarity < borderline_upper
-                    and self._borderline_validation is not None
+                is_borderline = borderline_upper is not None and best_similarity < borderline_upper
+
+                # === Complete-Link Guard ===
+                # Check that new face matches ALL representatives, not just the nearest one.
+                # A lookalike might be 0.92 to one photo but 0.80 to another angle.
+                complete_link_passed, min_sim, avg_sim = self._check_complete_link(
+                    identity_vector,
+                    best_cluster_id,
+                    representatives_by_cluster,
                 )
 
-                # Validate borderline matches before assigning
-                if is_borderline:
+                if not complete_link_passed:
+                    # Complete-link failed - create suggestion instead of auto-assigning
+                    if self._create_suggestion is not None:
+                        logger.info(
+                            "Rep match COMPLETE_LINK_SUGGESTION: identity=%s -> cluster=%s, "
+                            "best_sim=%.4f but min_rep_sim=%.4f, avg_rep_sim=%.4f (creating suggestion)",
+                            identity.id,
+                            best_cluster_id,
+                            best_similarity,
+                            min_sim,
+                            avg_sim,
+                        )
+                        await self._create_suggestion(
+                            identity.id,
+                            best_cluster_id,
+                            best_similarity,
+                            avg_sim,  # Use avg rep similarity as quality indicator
+                        )
+                        continue
+                    else:
+                        # No suggestion callback - reject the match entirely
+                        logger.warning(
+                            "Rep match REJECTED (complete-link): identity=%s, best_sim=%.4f, "
+                            "min_rep_sim=%.4f, avg_rep_sim=%.4f",
+                            identity.id,
+                            best_similarity,
+                            min_sim,
+                            avg_sim,
+                        )
+                        still_unclustered.append(identity)
+                        continue
+
+                # === Early Stage Suggestion Guard ===
+                # During early training, matches below high-confidence threshold create suggestions
+                # instead of auto-assigning, even if they pass the regular threshold.
+                # This prevents false positives when cluster representatives aren't stable yet.
+                if (
+                    self._settings
+                    and self._settings.early_stage_suggestion_enabled
+                    and self._is_early_stage()
+                    and self._create_suggestion is not None
+                    and best_similarity < self._settings.early_stage_high_confidence_threshold
+                ):
+                    logger.info(
+                        "Rep match EARLY_STAGE_SUGGESTION: identity=%s -> cluster=%s, "
+                        "similarity=%.4f < high_confidence=%.4f (labeled_clusters=%d < maturity=%d)",
+                        identity.id,
+                        best_cluster_id,
+                        best_similarity,
+                        self._settings.early_stage_high_confidence_threshold,
+                        self._labeled_cluster_count,
+                        self._settings.adaptive_threshold_maturity_point,
+                    )
+                    await self._create_suggestion(
+                        identity.id,
+                        best_cluster_id,
+                        best_similarity,
+                        best_similarity,  # Use rep similarity as avg_member for early-stage suggestions
+                    )
+                    # Don't add to still_unclustered - identity has a pending suggestion
+                    # and should not be processed by Chinese Whispers
+                    continue
+
+                # Use suggestion-aware validation if available
+                if is_borderline and self._suggestion_validation is not None:
+                    logger.info(
+                        "Rep match BORDERLINE: identity=%s, similarity=%.4f, validating with suggestion tier...",
+                        identity.id,
+                        best_similarity,
+                    )
+                    validation_result = await self._suggestion_validation(
+                        identity,
+                        identity_vector,
+                        best_cluster_id,
+                        best_similarity,
+                    )
+
+                    if validation_result.should_accept:
+                        logger.info(
+                            "Rep match VALIDATED (accept): identity=%s, similarity=%.4f, avg_member=%.4f",
+                            identity.id,
+                            best_similarity,
+                            validation_result.avg_member_similarity,
+                        )
+                        # Fall through to assignment below
+                    elif validation_result.should_suggest and self._create_suggestion:
+                        logger.info(
+                            "Rep match SUGGESTION: identity=%s -> cluster=%s, similarity=%.4f, avg_member=%.4f",
+                            identity.id,
+                            best_cluster_id,
+                            best_similarity,
+                            validation_result.avg_member_similarity,
+                        )
+                        await self._create_suggestion(
+                            identity.id,
+                            best_cluster_id,
+                            best_similarity,
+                            validation_result.avg_member_similarity,
+                        )
+                        # Don't add to still_unclustered - identity has a pending suggestion
+                        # and should not be processed by Chinese Whispers
+                        continue
+                    else:
+                        logger.warning(
+                            "Rep match REJECTED (validation failed): identity=%s, similarity=%.4f, avg_member=%.4f",
+                            identity.id,
+                            best_similarity,
+                            validation_result.avg_member_similarity,
+                        )
+                        still_unclustered.append(identity)
+                        continue
+
+                # Fall back to legacy validation if suggestion validation not available
+                elif is_borderline and self._borderline_validation is not None:
                     logger.info(
                         "Rep match BORDERLINE: identity=%s, similarity=%.4f, validating...",
                         identity.id,
                         best_similarity,
                     )
-                    assert self._borderline_validation is not None  # type narrowing
                     validation_passed = await self._borderline_validation(
                         identity,
                         identity_vector,

@@ -7,18 +7,20 @@ This is a thin orchestrator that delegates to specialized modules:
 - BatchClusteringProcessor: Batch and centroid-based matching
 - ClusteringJobService: Async job management
 - ClusterOperations: Rename, merge, revert, split operations
+- SuggestionService: Borderline match suggestions for user review
 """
 
 from __future__ import annotations
 
 import logging
-import time
 from collections.abc import Sequence
-from uuid import UUID
+from uuid import UUID, uuid4
 
+import numpy as np
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityCluster, IdentityClusteringJob
+from db.models import ClusterCentroid, IdentityCluster, IdentityClusteringJob, MediaIdentity
 from recognition.application.clustering.batch_clustering import BatchClusteringProcessor
 from recognition.application.clustering.cluster_assignment import ClusterAssigner
 from recognition.application.clustering.cluster_factory import ClusterFactory
@@ -32,17 +34,12 @@ from recognition.application.clustering.cluster_management import (
 from recognition.application.clustering.cluster_repository import ClusterRepository, ClusterSearchEntry
 from recognition.application.clustering.cluster_validation import ClusterValidator
 from recognition.application.clustering.clustering_job_service import ClusteringJobService
-from recognition.application.clustering.clustering_logger import (
-    log_batch_complete,
-    log_batch_start,
-    log_cluster_created,
-)
 from recognition.application.clustering.clustering_settings import ClusteringSettings
+from recognition.application.clustering.suggestion_service import SuggestionService
 from recognition.application.clustering.tenant_context import TenantContextManager
 from recognition.application.representatives.representative_manager import RepresentativeManager
 from recognition.application.representatives.representative_matcher import RepresentativeMatcher
 from recognition.config import get_settings
-from recognition.domain.embeddings import prepare_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +84,7 @@ class IdentityClusteringService:
                 similarity_override=similarity_threshold,
             )
         self.threshold = self.settings.similarity_threshold
+        self._base_threshold = self.threshold  # Store base threshold for adaptive computation
         self.strict_validation = strict_validation
 
         # Infrastructure
@@ -106,6 +104,23 @@ class IdentityClusteringService:
         # Validation
         self._validator = ClusterValidator(session, tenant_id, self.settings)
 
+        # Suggestion service (for borderline matches)
+        self._suggestion_service = SuggestionService(session, tenant_id)
+
+        # Wrapper for creating suggestions that matches the callback signature
+        async def create_suggestion_wrapper(
+            identity_id: UUID,
+            cluster_id: UUID,
+            rep_similarity: float,
+            avg_member_similarity: float,
+        ) -> None:
+            await self._suggestion_service.create_suggestion(
+                identity_id=identity_id,
+                cluster_id=cluster_id,
+                representative_similarity=rep_similarity,
+                avg_member_similarity=avg_member_similarity,
+            )
+
         # Batch processing
         self._batch_processor = BatchClusteringProcessor(
             session=session,
@@ -117,6 +132,8 @@ class IdentityClusteringService:
             add_representative=self._rep_manager.add_representative,
             assign_to_cluster=self.assigner.assign_to_cluster_by_id,
             refresh_view=self._context.refresh_centroid_view,
+            ensure_context=self._context.ensure_context,
+            create_suggestion=create_suggestion_wrapper,
         )
 
         # Job service
@@ -147,141 +164,73 @@ class IdentityClusteringService:
         """Lightweight structured telemetry via logger."""
         logger.info("clustering_telemetry: %s", event)
 
-    # =========================================================================
-    # Main clustering entry points
-    # =========================================================================
+    def _update_adaptive_threshold(self, cluster_count: int) -> float:
+        """Update effective threshold based on cluster maturity.
 
-    async def cluster_identities_incremental(self) -> list[IdentityCluster]:
-        """Cluster unassigned identities by comparing them to existing cluster centroids."""
-        batch_start_time = time.time()
+        Computes adaptive threshold and propagates to sub-components.
+        Follows curriculum learning: strict early, relax as system matures.
 
-        logger.info("Starting incremental clustering for tenant %s", self.tenant_id)
-        self._log_telemetry({"stage": "incremental_start", "tenant_id": str(self.tenant_id)})
-        await self._context.ensure_context()
+        Args:
+            cluster_count: Number of existing clusters.
 
-        # Refresh and load existing clusters
-        await self._context.refresh_centroid_view()
-        existing_clusters = await self.repository.get_clusters_with_centroids()
-        self._centroid_cache = existing_clusters
-        self._validator.set_centroid_cache(existing_clusters)
-        representatives_by_cluster = await self.repository.get_clusters_with_representatives()
-        unclustered = await self.repository.get_unclustered_identities()
+        Returns:
+            The new effective threshold.
+        """
+        new_threshold = self.settings.compute_adaptive_threshold(cluster_count)
 
-        if not unclustered:
-            logger.info("No unclustered identities for tenant %s", self.tenant_id)
-            return []
-
-        log_batch_start(
-            tenant_id=self.tenant_id,
-            batch_size=len(unclustered),
-            existing_clusters=len(existing_clusters),
-            algorithm="incremental",
-        )
-
-        created_clusters: list[IdentityCluster] = []
-        rep_matcher = self._create_representative_matcher()
-
-        logger.info(
-            "=== Clustering batch: %d unclustered, %d existing clusters, %d with reps ===",
-            len(unclustered),
-            len(existing_clusters),
-            len(representatives_by_cluster),
-        )
-
-        # Initial representative matching
-        borderline_upper = self._get_borderline_upper()
-        _, unclustered, representatives_by_cluster = await rep_matcher.match(
-            unclustered, representatives_by_cluster, borderline_upper=borderline_upper
-        )
-
-        logger.info("After initial rep matching: %d identities remaining", len(unclustered))
-
-        # Process remaining identities one by one
-        for idx, identity in enumerate(unclustered):
+        if new_threshold != self.threshold:
             logger.info(
-                "--- Processing identity %d/%d: media_id=%s ---",
-                idx + 1,
-                len(unclustered),
-                identity.media_id,
+                "Adaptive threshold: %.4f -> %.4f (cluster_count=%d, base=%.4f, strict=%.4f)",
+                self.threshold,
+                new_threshold,
+                cluster_count,
+                self._base_threshold,
+                self.settings.adaptive_threshold_strict,
             )
-            identity_vector = prepare_embedding(identity.embedding)
+            self.threshold = new_threshold
+            # Update sub-components that cache the threshold
+            self.factory.threshold = new_threshold
+            self.assigner.threshold = new_threshold
+            self._operations.threshold = new_threshold
+            self._batch_processor.set_adaptive_threshold(new_threshold)
 
-            # Try representative matching
-            assigned_count, _, representatives_by_cluster = await rep_matcher.match(
-                [identity], representatives_by_cluster, borderline_upper=borderline_upper
+        # Set cold start mode based on cluster count
+        is_cold_start = cluster_count < self.settings.adaptive_threshold_maturity_point
+        self._batch_processor.set_cold_start(is_cold_start, cluster_count)
+
+        if is_cold_start:
+            logger.info(
+                "Cold start mode: cluster_count=%d < maturity_point=%d",
+                cluster_count,
+                self.settings.adaptive_threshold_maturity_point,
             )
-            if assigned_count:
-                logger.info("Assigned via representative match")
-                continue
 
-            # Try centroid matching for clusters without representatives
-            centroid_candidates = [e for e in existing_clusters if e.cluster.id not in representatives_by_cluster]
-            best_entry, best_similarity = self.assigner.find_best_cluster_match(identity_vector, centroid_candidates)
+        return new_threshold
 
-            if best_entry and best_similarity >= self.threshold:
-                logger.info("✓ Matched via centroid (similarity=%.4f)", best_similarity)
-                await self.assigner.assign_to_cluster(identity, identity_vector, best_entry, best_similarity)
-                rep_embedding = await self._rep_manager.add_representative(best_entry.cluster.id, identity)
-                if rep_embedding is not None:
-                    representatives_by_cluster.setdefault(best_entry.cluster.id, []).append(rep_embedding)
-            else:
-                # Create new cluster
-                logger.info("✗ Creating NEW cluster")
-                cluster, entry = await self.factory.create_cluster_with_centroid(
-                    [identity],
-                    add_representative_callback=self._rep_manager.add_representative,
-                )
-                created_clusters.append(cluster)
-                existing_clusters.append(entry)
-                reps = await self.repository.get_cluster_representatives(cluster.id)
-                if reps:
-                    representatives_by_cluster[cluster.id] = reps
+    # =========================================================================
+    # Main clustering entry point
+    # =========================================================================
 
-                log_cluster_created(
-                    tenant_id=self.tenant_id,
-                    cluster_id=cluster.id,
-                    member_count=1,
-                    algorithm="incremental",
-                )
+    async def cluster_unclustered_identities(self) -> dict[str, object]:
+        """
+        Cluster unassigned identities using representative matching and graph clustering.
 
-        logger.info("=== Batch complete: created %d new clusters ===", len(created_clusters))
+        Routes to sync or async processing based on batch size.
+        This is the single canonical entry point for all clustering operations.
 
-        await self.session.commit()
-        await self._context.refresh_centroid_view()
-
-        # Log metrics
-        batch_duration_ms = (time.time() - batch_start_time) * 1000
-        singleton_count = sum(1 for c in created_clusters if c.identity_count == 1)
-        log_batch_complete(
-            tenant_id=self.tenant_id,
-            batch_size=len(unclustered),
-            assigned_count=len(unclustered) - len(created_clusters),
-            created_count=len(created_clusters),
-            singleton_count=singleton_count,
-            duration_ms=batch_duration_ms,
-            algorithm="incremental",
-        )
-
-        # Auto-merge if enabled
-        await self._run_auto_merge_if_enabled(existing_clusters)
-
-        logger.info("Incremental clustering complete: %d new clusters", len(created_clusters))
-        self._log_telemetry(
-            {
-                "stage": "incremental_complete",
-                "tenant_id": str(self.tenant_id),
-                "created_clusters": len(created_clusters),
-            }
-        )
-        return created_clusters
-
-    async def cluster_identities(self) -> list[IdentityCluster]:
-        """Backward compatibility shim for legacy callers."""
-        return await self.cluster_identities_incremental()
-
-    async def cluster_identities_hybrid(self) -> dict[str, object]:
-        """Two-stage clustering with sync/async routing."""
+        Returns:
+            dict with keys:
+                - status: "complete" or "pending"
+                - assigned: number of identities assigned to existing clusters
+                - clusters: list of newly created clusters (sync only)
+                - job_id: job ID for async tracking (async only)
+                - queued_count: number queued for async processing (async only)
+        """
         await self._context.ensure_context()
+
+        # Get current cluster count for adaptive threshold
+        existing_clusters = await self.repository.get_clusters_with_centroids()
+        self._update_adaptive_threshold(len(existing_clusters))
 
         unclustered_count = await self.repository.count_unclustered_identities()
 
@@ -289,12 +238,20 @@ class IdentityClusteringService:
             return {"status": "complete", "assigned": 0, "clusters": []}
 
         if unclustered_count <= self.settings.ward_sync_batch_limit:
-            # Sync path
+            # Sync path - generate a job_id for log correlation
+            job_id = uuid4()
+            logger.info("[job=%s] Starting sync clustering for %d identities", job_id, unclustered_count)
             unclustered = await self.repository.get_unclustered_identities()
-            clusters = await self._batch_processor.cluster_batch_incremental(unclustered)
+            clusters = await self._batch_processor.process_clustering_batch(unclustered, job_id=job_id)
             await self._run_auto_merge_if_enabled([])
             await self.session.commit()
             await self._context.refresh_centroid_view()
+            logger.info(
+                "[job=%s] Sync clustering complete: %d assigned, %d new clusters",
+                job_id,
+                len(unclustered) - len(clusters),
+                len(clusters),
+            )
             return {
                 "status": "complete",
                 "assigned": len(unclustered) - len(clusters),
@@ -323,8 +280,20 @@ class IdentityClusteringService:
     # Helper methods
     # =========================================================================
 
-    def _create_representative_matcher(self) -> RepresentativeMatcher:
-        """Create a RepresentativeMatcher with current settings."""
+    async def _create_representative_matcher(self) -> RepresentativeMatcher:
+        """Create a RepresentativeMatcher with current settings.
+
+        Includes labeled cluster count for early-stage suggestion guard.
+        """
+        # Determine which validation approach to use
+        use_suggestion_tier = self.settings.suggestion_enabled and self.settings.member_validation_enabled
+
+        # Get labeled cluster count for early-stage detection
+        labeled_cluster_count = await self.repository.count_labeled_clusters()
+
+        # Early-stage also uses suggestions (even without full suggestion tier validation)
+        use_suggestions = use_suggestion_tier or self.settings.early_stage_suggestion_enabled
+
         return RepresentativeMatcher(
             threshold=self.threshold,
             add_representative_embedding=self._rep_manager.add_representative,
@@ -332,9 +301,43 @@ class IdentityClusteringService:
             borderline_validation=(
                 self._validator.validate_representative_match
                 if (self.settings.borderline_validation_enabled or self.settings.member_validation_enabled)
+                and not use_suggestion_tier
                 else None
             ),
             settings=self.settings,
+            suggestion_validation=(
+                self._validator.validate_representative_match_with_suggestion if use_suggestion_tier else None
+            ),
+            create_suggestion=self._create_suggestion if use_suggestions else None,
+            labeled_cluster_count=labeled_cluster_count,
+        )
+
+    async def _create_suggestion(
+        self,
+        identity_id: UUID,
+        cluster_id: UUID,
+        rep_similarity: float,
+        avg_member_similarity: float,
+    ) -> None:
+        """Create a suggestion record for user review via SuggestionService."""
+        # Compute priority based on cold start state and cluster confirmation
+        # During cold start, we need to query the cluster's user_confirmed status
+        cluster = await self.session.get(IdentityCluster, cluster_id)
+        cluster_user_confirmed = cluster.user_confirmed if cluster else False
+
+        priority = SuggestionService.compute_priority(
+            representative_similarity=rep_similarity,
+            cluster_count=self._batch_processor._cluster_count,
+            cluster_user_confirmed=cluster_user_confirmed,
+            maturity_point=self.settings.adaptive_threshold_maturity_point,
+        )
+
+        await self._suggestion_service.create_suggestion(
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            representative_similarity=rep_similarity,
+            avg_member_similarity=avg_member_similarity,
+            priority=priority,
         )
 
     def _get_borderline_upper(self) -> float | None:
@@ -431,6 +434,73 @@ class IdentityClusteringService:
             max_iterations or self.settings.auto_merge_max_iterations,
         )
 
-    async def split_cluster(self, cluster_id: UUID) -> tuple[UUID | None, int]:
-        """Split a mixed cluster using DBSCAN."""
-        return await self._operations.split_cluster(cluster_id)
+    async def split_cluster(self, cluster_id: UUID, n_clusters: int = 0) -> tuple[list[UUID], list[int]]:
+        """
+        Split a mixed cluster using hierarchical clustering.
+
+        Args:
+            cluster_id: The cluster to split
+            n_clusters: Number of clusters to split into.
+                       0 = auto-detect based on similarity (default)
+                       2+ = force exactly this many clusters
+
+        Returns:
+            Tuple of (new_cluster_ids, moved_counts)
+        """
+        return await self._operations.split_cluster(cluster_id, n_clusters=n_clusters)
+
+    async def assign_identity_to_cluster(
+        self,
+        identity_id: UUID,
+        cluster_id: UUID,
+    ) -> None:
+        """
+        Assign an identity to a cluster (for suggestion acceptance).
+
+        This is used when a user accepts a suggestion to assign an identity
+        to a borderline cluster match.
+
+        Args:
+            identity_id: The identity to assign
+            cluster_id: The target cluster
+
+        Raises:
+            ValueError: If identity or cluster not found
+        """
+        from recognition.application.clustering.centroid_utils import (
+            _normalize_vector,
+            compute_similarity,
+        )
+
+        await self._context.ensure_context()
+
+        identity = await self.session.get(MediaIdentity, identity_id)
+        if not identity or identity.tenant_id != self.tenant_id:
+            raise ValueError(f"Identity {identity_id} not found for tenant")
+
+        cluster = await self.session.get(IdentityCluster, cluster_id)
+        if not cluster or cluster.tenant_id != self.tenant_id:
+            raise ValueError(f"Cluster {cluster_id} not found for tenant")
+
+        # Get identity embedding vector
+        identity_vector = _normalize_vector(np.array(identity.embedding, dtype=np.float32))
+
+        # Get cluster centroid for similarity calculation
+        centroid_stmt = select(ClusterCentroid).where(ClusterCentroid.cluster_id == cluster_id)
+        centroid_result = await self.session.execute(centroid_stmt)
+        centroid_record = centroid_result.scalar_one_or_none()
+
+        if centroid_record is not None and centroid_record.centroid is not None:
+            centroid_vector = _normalize_vector(np.array(centroid_record.centroid, dtype=np.float32))
+            similarity = compute_similarity(identity_vector, centroid_vector)
+        else:
+            similarity = 1.0  # First member
+
+        await self.assigner.assign_to_cluster_by_id(identity, identity_vector, cluster_id, similarity)
+
+        logger.info(
+            "Assigned identity %s to cluster %s via suggestion acceptance (similarity=%.4f)",
+            identity_id,
+            cluster_id,
+            similarity,
+        )

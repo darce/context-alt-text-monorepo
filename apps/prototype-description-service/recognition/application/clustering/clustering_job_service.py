@@ -106,8 +106,8 @@ class ClusteringJobService:
         )
 
         try:
-            # Use the batch processor
-            clusters = await self._batch_processor.cluster_batch_incremental(identities)
+            # Use the batch processor with job_id for log correlation
+            clusters = await self._batch_processor.process_clustering_batch(identities, job_id=job_id)
 
             await self.repository.update_clustering_job(
                 job_id,

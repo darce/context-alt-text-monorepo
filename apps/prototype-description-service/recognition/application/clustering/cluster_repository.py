@@ -105,6 +105,21 @@ class ClusterRepository:
         result = await self.session.execute(stmt)
         return int(result.scalar_one() or 0)
 
+    async def count_labeled_clusters(self) -> int:
+        """Count clusters that have a user-assigned label (not auto-generated)."""
+        stmt = (
+            select(func.count())
+            .select_from(IdentityCluster)
+            .where(
+                IdentityCluster.tenant_id == self.tenant_id,
+                IdentityCluster.label.isnot(None),
+                # Exclude auto-generated labels like "cluster-abc123"
+                ~IdentityCluster.label.like("cluster-%"),
+            )
+        )
+        result = await self.session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     async def get_clusters_with_centroids(self) -> list[ClusterSearchEntry]:
         """Get all clusters with their computed centroids from the materialized view."""
         stmt = (

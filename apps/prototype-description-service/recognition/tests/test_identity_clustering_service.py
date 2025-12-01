@@ -50,6 +50,8 @@ def make_stub_identity(vector, tenant_id=None):
         confidence=0.9,
         media_id=1,
         created_by_user_id=None,
+        bbox_width=100,
+        bbox_height=100,
     )
 
 
@@ -69,6 +71,9 @@ class ClusterServiceHarness(IdentityClusteringService):
         async def _override_unclustered():
             return list(self._unclustered)
 
+        async def _override_count_unclustered():
+            return len(self._unclustered)
+
         async def _override_centroids():
             return list(self._existing_entries)
 
@@ -79,6 +84,7 @@ class ClusterServiceHarness(IdentityClusteringService):
             return 0
 
         self.repository.get_unclustered_identities = _override_unclustered
+        self.repository.count_unclustered_identities = _override_count_unclustered
         self.repository.get_clusters_with_centroids = _override_centroids
         self.repository.get_clusters_with_representatives = _override_reps
         self.repository.count_representatives_for_media = _override_count_reps
@@ -86,8 +92,8 @@ class ClusterServiceHarness(IdentityClusteringService):
         # Override factory to track created clusters
         original_create = self.factory.create_cluster_with_centroid
 
-        async def _override_create(identities, add_representative_callback=None):
-            cluster, entry = await original_create(identities, add_representative_callback)
+        async def _override_create(identities, add_representative_callback=None, label=None):
+            cluster, entry = await original_create(identities, add_representative_callback, label)
             self.created_clusters.append(cluster)
             self._existing_entries.append(entry)
             return cluster, entry
@@ -121,6 +127,8 @@ class ClusterServiceHarness(IdentityClusteringService):
 
         self.assigner.assign_to_cluster = _override_assign
         self.assigner.assign_to_cluster_by_id = _override_assign_by_id
+        # Also update the batch processor's callback since it holds a copy
+        self._batch_processor._assign_to_cluster = _override_assign_by_id
 
     async def _refresh_centroid_view(self):
         self.refreshed = True
@@ -137,18 +145,20 @@ async def refresh_centroid_view(session):
 def test_cluster_identities_returns_empty_when_no_candidates():
     service = ClusterServiceHarness(unclustered=[])
 
-    clusters = asyncio.run(service.cluster_identities_incremental())
+    result = asyncio.run(service.cluster_unclustered_identities())
 
-    assert clusters == []
+    assert result["status"] == "complete"
+    assert result["clusters"] == []
 
 
 def test_cluster_identities_creates_cluster_for_unclustered_identity():
     identity = make_stub_identity([1.0, 0.0, 0.0])
     service = ClusterServiceHarness(unclustered=[identity])
 
-    clusters = asyncio.run(service.cluster_identities_incremental())
+    result = asyncio.run(service.cluster_unclustered_identities())
 
-    assert len(clusters) == 1
+    assert result["status"] == "complete"
+    assert len(result["clusters"]) == 1
     assert len(service.created_clusters) == 1
     assert service.assigned_identities == []
 
@@ -172,9 +182,10 @@ def test_cluster_identities_assigns_to_existing_cluster():
     identity = make_stub_identity([0.99, 0.01, 0.0])
     service = ClusterServiceHarness(unclustered=[identity], existing_entries=[entry])
 
-    clusters = asyncio.run(service.cluster_identities_incremental())
+    result = asyncio.run(service.cluster_unclustered_identities())
 
-    assert clusters == []
+    assert result["status"] == "complete"
+    assert result["clusters"] == []
     assert service.assigned_identities == [identity.id]
 
 
@@ -197,9 +208,10 @@ def test_cluster_identities_creates_new_cluster_when_similarity_low():
     identity = make_stub_identity([1.0, 0.0, 0.0])
     service = ClusterServiceHarness(unclustered=[identity], existing_entries=[entry])
 
-    clusters = asyncio.run(service.cluster_identities_incremental())
+    result = asyncio.run(service.cluster_unclustered_identities())
 
-    assert len(clusters) == 1
+    assert result["status"] == "complete"
+    assert len(result["clusters"]) == 1
     assert service.assigned_identities == []
 
 
@@ -222,9 +234,10 @@ def test_cluster_identities_assigns_via_representatives():
         representatives={cluster.id: [rep_vector]},
     )
 
-    clusters = asyncio.run(service.cluster_identities_incremental())
+    result = asyncio.run(service.cluster_unclustered_identities())
 
-    assert clusters == []
+    assert result["status"] == "complete"
+    assert result["clusters"] == []
     assert service.assigned_identities == [identity.id]
     assert service.created_clusters == []
 
@@ -271,9 +284,10 @@ def test_cluster_identities_respects_threshold_for_borderline_similarity():
     identity = make_stub_identity([0.55, 0.835])
     service = ClusterServiceHarness(unclustered=[identity], existing_entries=[entry])
 
-    clusters = asyncio.run(service.cluster_identities_incremental())
+    result = asyncio.run(service.cluster_unclustered_identities())
 
-    assert len(clusters) == 1  # new cluster created instead of assignment
+    assert result["status"] == "complete"
+    assert len(result["clusters"]) == 1  # new cluster created instead of assignment
     assert service.assigned_identities == []
 
 
@@ -588,7 +602,7 @@ async def test_representative_matching_blocks_centroid_drift(require_database):
             centroid_similarity = compute_similarity(candidate_vector, centroid_vector)
             assert centroid_similarity > service.threshold
 
-            new_clusters = await service.cluster_identities_incremental()
+            result = await service.cluster_unclustered_identities()
             await set_tenant_context(session, tenant_id)
             member_result = await session.execute(
                 select(IdentityMember.cluster_id).where(IdentityMember.identity_id == candidate_identity.id)
@@ -596,7 +610,7 @@ async def test_representative_matching_blocks_centroid_drift(require_database):
             assigned_cluster_id = member_result.scalar_one()
 
             assert assigned_cluster_id != base_cluster_id
-            assert len(new_clusters) == 1
+            assert len(result["clusters"]) == 1
         finally:
             await clear_tenant_context(session)
 

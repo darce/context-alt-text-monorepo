@@ -1,18 +1,21 @@
 ---
-title: Recognition Service Startup
+title: Prototype Description Service Startup
 ---
 sequenceDiagram
-    participant App as FastAPI Application
-    participant Settings as Pydantic Settings
-    participant Factory as shared/startup/adapter_factory.py
-    participant Roster as RosterStorageAdapter
-    participant Hybrid as HybridIndexManager
-    participant RecSvc as FaceRecognitionService
+    participant CLI as Uvicorn/CLI
+    participant App as api.main:create_app
+    participant Settings as recognition.config.get_settings
+    participant Cache as configure_dev_cache()
+    participant Static as FastAPI StaticFiles
+    participant Routers as recognition.interface_adapters.http.router
+    participant Session as db.session.async_session_factory
 
-    App->>Settings: load()
-    App->>Factory: build_roster_storage(DATABASE_URL)
-    Factory-->>App: Roster adapter (PostgreSQL or SQLite)
-    App->>Hybrid: HybridIndexManager(roster_adapter)
-    App->>RecSvc: FaceRecognitionService(embedding_router(Hybrid))
-    App->>App: stash singletons in dependencies
-    App-->>App: set initialization_complete = True
+    CLI->>App: import api.main:app
+    App->>App: configure_logging("INFO")
+    App->>Cache: configure_dev_cache()
+    App->>Settings: load YAML + .env -> RecognitionConfig
+    App->>Static: mount thumbnails_dir (base_url from settings)
+    App->>Routers: include /recognition + /roster + /scene routers
+    App->>Session: wire get_session dependency
+    App-->>CLI: FastAPI app ready
+    Note over Routers,Session: Per-request dependencies set app.current_tenant for RLS

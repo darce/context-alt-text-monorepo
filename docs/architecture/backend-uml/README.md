@@ -2,15 +2,14 @@
 
 This folder breaks the recognition service diagrams into focused slices so developers and future agents can jump straight to the view they need:
 
-- `context.mmd` — external actors and systems the service integrates with.
-- `context_integration.mmd` — how the recognition service slots into the broader WordPress + documentation ecosystem (replaces the old unified view).
-- `container.mmd` — key runtime components inside `apps/recognition-service`.
-- `persistence.mmd` — database entities and the pgvector/HNSW index.
-- `components/recognition_pipeline.mmd` — how `FaceRecognitionService` talks to adapters and infrastructure.
-- `components/postgres_roster_adapter.mmd` — module split inside the PostgreSQL roster storage adapter.
-- `domain/roster_domain.mmd` — core roster entities, ports, and adapters.
-- `observability/metrics.mmd` — how `shared/metrics.py` hooks FastAPI handlers and services into Prometheus gauges/counters.
-- `workflows/` — sequence diagrams for high-signal flows (progressive learning, roster ETag caching, hybrid index cycle, error/retry handling, startup wiring, recognition requests, service info stats). Add more detailed diagrams here when a roadmap slice introduces new behaviour, naming each file after the scenario it covers.
+- `context.mmd` — external actors and systems the prototype description service integrates with.
+- `context_integration.mmd` — WordPress plugin touchpoints, tenant context, caches, and stores.
+- `container.mmd` — key runtime components inside `apps/prototype-description-service`.
+- `persistence.mmd` — database entities for identities, clusters, suggestions, jobs, and the pgvector centroid view.
+- `components/recognition_pipeline.mmd` — how `IdentityScanService` and `IdentityClusteringService` orchestrate adapters and algorithms.
+- `domain/identity_domain.mmd` — recognition domain entities (value objects + persistence models).
+- `observability/metrics.mmd` — metrics/health routers and the clustering metrics dataclass.
+- `workflows/` — sequence diagrams for core flows (analyze chunking, clustering status, suggestion review, centroid refresh, startup wiring, training stage insight). Add more detailed diagrams here when a roadmap slice introduces new behaviour, naming each file after the scenario it covers.
 
 ### Authoring Guidelines
 

@@ -1,129 +1,53 @@
-%% Complete Recognition Workflow - MVP Implementation (October 2025)
-%% End-to-end flow from Workbench through Recognition Service to Roster
-
 sequenceDiagram
-    actor Admin as WordPress Admin
-    participant WB as Workbench UI
-    participant Hook as useRecognitionJob
-    participant Submit as useRecognitionSubmit
-    participant Poll as useRecognitionPoll
-    participant API as WP REST API
-    participant Service as RecognitionService (PHP)
-    participant Backend as Recognition API (Remote)
-    participant ObsMgr as ObservationManager
-    participant Roster as RosterService
-    participant Notice as Notice System
+    actor Admin as Admin
+    participant UI as Workbench UI
+    participant Hooks as React Query hooks
+    participant WPAPI as WP REST proxy
+    participant RecSvc as Recognition Service
 
-    Note over Admin,Notice: Phase 1: Media Selection & Recognition Trigger
+    Note over Admin,RecSvc: Phase 1 - Scan identities
+    Admin->>UI: Select media rows
+    UI->>Hooks: useScanIdentities.mutate(mediaIds)
+    Hooks->>WPAPI: POST /recognition/analyze {media_ids:[...]}
+    WPAPI->>RecSvc: /recognition/analyze
+    RecSvc-->>WPAPI: {job_ids:[uuid]}
+    WPAPI-->>Hooks: AnalyzeResponse
+    Hooks->>Hooks: remember job_ids in useRecognitionJobHistory
 
-    Admin->>WB: Select images in Workbench
-    WB->>WB: Update selectedIds state
-    Admin->>WB: Click "Run Recognition"
-    
-    WB->>Hook: runRecognition(selectedIds)
-    Hook->>Submit: submitRecognitionJob(ids)
-    
-    Note over Submit,API: Validation & Request Building
-    Submit->>Submit: Validate IDs (toUniqueNumericIds)
-    Submit->>Submit: buildApiUrl(/recognition/analyze)
-    Submit->>Submit: buildHeaders(nonce)
-    
-    Submit->>API: POST /recognition/analyze<br/>{attachment_ids: [123, 456]}
-    
-    Note over API,Backend: Backend Recognition Processing
-    API->>Service: analyzeAttachments(ids)
-    Service->>Service: fetchAttachmentUrls()
-    
-    loop For each attachment
-        Service->>Backend: POST /api/v0/analyze-scene<br/>{image_url, policy}
-        Backend->>Backend: Run face detection
-        Backend->>Backend: Generate embeddings
-        Backend->>Backend: Match against roster
-        Backend-->>Service: SceneAnalysisResult<br/>{faces: [...], matches: [...]}
+    Note over Hooks,RecSvc: Phase 2 - Poll job status
+    loop every 1.5s while pending
+        Hooks->>WPAPI: GET /recognition/jobs/{job_id}
+        WPAPI->>RecSvc: /recognition/jobs/{job_id}
+        RecSvc-->>WPAPI: {status:"running"|"completed"|"failed"}
+        WPAPI-->>Hooks: ScanStatus
     end
-    
-    Service->>ObsMgr: persistObservations(results)
-    ObsMgr->>ObsMgr: Store in post_meta<br/>_cat_observations
-    
-    Service-->>API: RecognitionJobSummary<br/>{jobId, status, stats}
-    API-->>Submit: 200 OK {job_id, status}
-    
-    Submit-->>Hook: Job created successfully
-    Hook->>Poll: Start polling (jobId)
-    
-    Note over Poll,API: Phase 2: Status Polling
-    
-    loop Every 2 seconds (max 30s)
-        Poll->>API: GET /recognition/status/:jobId
-        API->>Service: getJobStatus(jobId)
-        Service-->>API: {status: 'processing', progress: 50%}
-        API-->>Poll: Job status update
-        
-        alt Job Complete
-            Service-->>API: {status: 'completed', results}
-            API-->>Poll: Job completed
-            Poll->>Poll: Stop polling
-            Poll-->>Hook: Job finished
-            Hook->>Notice: Success notification
-            Notice->>Admin: "Recognition complete: 3 faces found"
-        else Job Error
-            Service-->>API: {status: 'error', error: message}
-            API-->>Poll: Job failed
-            Poll->>Poll: Stop polling
-            Poll-->>Hook: Job error
-            Hook->>Notice: Error notification
-            Notice->>Admin: "Recognition failed: timeout"
-        else Timeout
-            Poll->>Poll: Max attempts reached
-            Poll-->>Hook: Polling timeout
-            Hook->>Notice: Warning notification
-            Notice->>Admin: "Recognition is taking longer than expected"
-        end
-    end
-    
-    Note over Admin,Roster: Phase 3: Observation Review
-    
-    Admin->>WB: Navigate to Roster Manager
-    WB->>API: GET /observations?status=needs_review
-    API->>ObsMgr: fetchPendingObservations()
-    ObsMgr-->>API: Observations list
-    API-->>WB: Display pending faces
-    
-    alt Create New Roster Entry
-        Admin->>WB: "Create new person"
-        WB->>API: POST /roster<br/>{label, type: 'person', metadata}
-        API->>Roster: createAndSync(entry)
-        Roster->>Backend: POST /api/v0/roster<br/>Sync embeddings
-        Backend-->>Roster: {remote_id: 'abc123'}
-        Roster->>ObsMgr: autoAssignPending(remote_id)
-        ObsMgr->>ObsMgr: Update observations<br/>status: 'assigned'
-        Roster-->>API: Entry created
-        API-->>WB: Success + updated observations
-        WB->>Notice: Success notification
-    else Assign to Existing
-        Admin->>WB: Select existing roster entry
-        WB->>API: PATCH /observations/:id<br/>{roster_id: 'abc123'}
-        API->>ObsMgr: assignObservation(id, roster_id)
-        ObsMgr-->>API: Observation assigned
-        API-->>WB: Success
-    else Dismiss
-        Admin->>WB: "Not relevant"
-        WB->>API: PATCH /observations/:id<br/>{status: 'dismissed'}
-        API->>ObsMgr: dismissObservation(id)
-        ObsMgr-->>API: Observation dismissed
-        API-->>WB: Success
-    end
-    
-    Note over Admin,Notice: Phase 4: Alt-Text Generation (Future)
-    
-    Admin->>WB: Select images with resolved observations
-    Admin->>WB: "Generate Alt Text"
-    WB->>API: POST /alt-text/generate<br/>{attachment_ids, use_observations: true}
-    API->>Service: generateAltText(ids, policy)
-    Service->>Service: Compose prompt with entities
-    Service->>Service: Call LLM provider (GPT/Claude)
-    Service->>Service: Update _wp_attachment_image_alt
-    Service-->>API: Generation results
-    API-->>WB: Alt text updated
-    WB->>Notice: Success notification
-    Notice->>Admin: "Alt text generated for 5 images"
+    Hooks->>UI: show status text / errors
+
+    Note over Admin,RecSvc: Phase 3 - Cluster identities
+    Admin->>UI: Click "Cluster identities"
+    UI->>Hooks: useClusterIdentities.mutate()
+    Hooks->>WPAPI: POST /recognition/clustering/jobs
+    WPAPI->>RecSvc: /recognition/clustering/jobs
+    RecSvc-->>WPAPI: {status:"complete"|pending,...}
+    WPAPI-->>Hooks: ClusterResponse
+    Hooks->>Hooks: invalidate queries ['media-identities','recognition-clusters']
+
+    Note over Admin,RecSvc: Phase 4 - Review clusters + suggestions
+    UI->>Hooks: useRecognitionClusters()
+    Hooks->>WPAPI: GET /recognition/clusters
+    WPAPI->>RecSvc: /recognition/clusters
+    RecSvc-->>WPAPI: ClusterSummary[]
+    WPAPI-->>Hooks: cache clusters
+
+    UI->>Hooks: useClusterSuggestions(identityId)
+    Hooks->>WPAPI: GET /recognition/identities/{id}/suggestions
+    WPAPI->>RecSvc: /recognition/identities/{id}/suggestions
+    RecSvc-->>WPAPI: {matches:[...]}
+    WPAPI-->>Hooks: suggestions
+
+    Note over Admin,RecSvc: Phase 5 - Persist decisions
+    Admin->>UI: Accept suggestion / relabel / merge / split
+    UI->>WPAPI: POST /recognition/suggestions/{id}/accept | PATCH /recognition/clusters/{id}
+    WPAPI->>RecSvc: mutate suggestion or cluster
+    RecSvc-->>WPAPI: success
+    WPAPI-->>Hooks: invalidate ['recognition-clusters','identity-suggestions']

@@ -1,70 +1,106 @@
 classDiagram
-%% v2 Roster & Observation Domain Model
-%% Aligns with CONSOLIDATED_FACE_DETECTION_PLAN.md Section 5
+%% Roster page & cluster management (current React UI)
 
-class RosterPerson {
+class RosterEntry {
+  +id: number
+  +name: string
+  +tags: string[]
+  +cluster_count: number
+  +updated_at: string
+}
+
+class ClusterSummary {
   +id: string
-  +displayName: string
-  +aliases: string[]
-  +avatarUrl: string | null
-  +meta: json
-  +createdAt: datetime
-  +updatedAt: datetime
+  +label: string
+  +identity_count: number
+  +sample_identities: ClusterIdentity[]
 }
 
-class AugmentedEmbedding {
-  +personId: string
-  +model: string
-  +vec: blob
-  +source: enum("observation","curated")
-  +createdAt: datetime
-  +quality: enum("high","medium","low")
+class ClusterIdentity {
+  +id: string
+  +media_id: number
+  +similarity: number
+  +confidence: number
+  +thumbnail_url: string?
 }
 
-class FaceObservation {
-  +id: bigint
-  +attachmentId: bigint
-  +bboxX: number
-  +bboxY: number
-  +bboxW: number
-  +bboxH: number
-  +clusterGroupId: string | null
-  +suggestedRosterId: string | null
-  +suggestedScore: decimal | null
-  +confirmedRosterId: string | null
-  +labelStatus: enum
-  +createdAt: datetime
-  +updatedAt: datetime
+class RosterPage {
+  <<component>>
+  +tabs: entries|clusters
+  +selectedClusterId: string|null
 }
 
-class ObservationEmbedding {
-  +observationId: bigint
-  +model: string
-  +vec: blob
-  +createdAt: datetime
+class ClusterGrid {
+  <<component>>
+  +clusters: ClusterSummary[]
+  +onSelectCluster(id)
+  +onDropFace(targetClusterId)
 }
 
-class LabelStatusEnum {
-  <<enumeration>>
-  UNLABELED
-  SUGGESTED
-  CONFIRMED
-  REJECTED
-  CORRECTED
+class ClusterDrawerPanel {
+  <<component>>
+  +cluster: ClusterSummary
+  +identities: ClusterIdentity[]
+  +onRescanCluster()
+  +onCommitCluster()
+  +drag/drop handlers
 }
 
-class EmbeddingSourceEnum {
-  <<enumeration>>
-  OBSERVATION
-  CURATED
+class useRosterEntries {
+  <<hook>>
+  +data: RosterEntry[]
+  +isLoading: boolean
+  +refetch(): void
 }
 
-RosterPerson "1" --> "many" AugmentedEmbedding : has vectors
-RosterPerson "1" --> "many" FaceObservation : confirmed labels
-FaceObservation "1" --> "1" ObservationEmbedding : embedding
-FaceObservation --> LabelStatusEnum
-AugmentedEmbedding --> EmbeddingSourceEnum
+class useClusterActions {
+  <<hook>>
+  +reassignMutation()
+  +rescanMutation()
+  +commitMutation()
+  +statusMessage: string|null
+}
 
-note for FaceObservation "clusterGroupId groups unknowns\nsuggestedRosterId stores similarity match\nlabelStatus tracks user confirmation"
-note for AugmentedEmbedding "Synced to Recognition Service (pgvector)\nMultiple embeddings per person for variance"
-note for LabelStatusEnum "SUGGESTED: backend recommendation\nCONFIRMED: user accepted suggestion\nCORRECTED: user changed from suggestion\nREJECTED: user marked as not a face"
+class useClusterDragDrop {
+  <<hook>>
+  +dragPayload
+  +dropTarget
+  +handleFaceDragStart()
+  +handleDropFace()
+  +resetDragState()
+}
+
+class useClusterMediaMap {
+  <<hook>>
+  +mediaMap: Map~media_id, url~
+}
+
+class RecognitionApi {
+  <<module>>
+  +listRecognitionClusters()
+  +getRecognitionCluster(id)
+  +reassignClusterIdentity()
+  +scanFaces({clusterId, mediaIds})
+}
+
+class RosterApi {
+  <<module>>
+  +listRosterEntries()
+  +commitClusterToRosterEntry()
+}
+
+RosterPage --> ClusterGrid
+RosterPage --> ClusterDrawerPanel
+RosterPage --> useRosterEntries
+RosterPage --> useClusterDragDrop
+RosterPage --> useClusterActions
+RosterPage --> useClusterMediaMap
+ClusterGrid --> useClusterDragDrop
+ClusterGrid --> RecognitionApi
+ClusterDrawerPanel --> useClusterActions
+ClusterDrawerPanel --> RosterApi
+useClusterActions --> RecognitionApi
+useClusterActions --> RosterApi
+useRosterEntries --> RosterApi
+ClusterSummary --> ClusterIdentity
+RosterPage --> RosterEntry

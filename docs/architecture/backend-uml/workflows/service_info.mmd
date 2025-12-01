@@ -1,20 +1,16 @@
 ---
-title: Service Info Endpoint
+title: Training Stage Insight
 ---
 sequenceDiagram
-    participant Client as Observer
-    participant API as FastAPI /service/info
-    participant RecSvc as FaceRecognitionService
-    participant Embed as EmbeddingRouterAdapter
-    participant Hybrid as HybridIndexManager
+    participant Client as Admin SPA
+    participant API as /recognition/training-stage
+    participant Session as AsyncSession
+    participant DB as identity_clusters + media_identities
+    participant Settings as ClusteringSettingsModel
 
-    Client->>API: GET /api/v0/service/info
-    API->>RecSvc: get_service_info()
-    RecSvc->>Embed: get_loaded_count()
-    RecSvc->>Embed: get_loaded_names()
-    RecSvc->>Embed: get_reload_stats()
-    Embed->>Hybrid: get_stats()
-    Hybrid-->>Embed: entry_count + embedding_count + reload metadata
-    Embed-->>RecSvc: aggregated stats
-    RecSvc-->>API: model, recognition, embedding, performance, cache blocks
-    API-->>Client: 200 OK JSON (includes clustering stats snapshot)
+    Client->>API: GET training-stage?tenant_id=
+    API->>Session: set_tenant_context()
+    API->>DB: count labeled clusters (label not null, not cluster-*)
+    API->>DB: count all clusters + identities
+    API->>Settings: compute_adaptive_threshold(labeled_count)
+    API-->>Client: stage, stage_label, cluster_count, identity_count,\ncurrent_threshold, base_threshold, strict_threshold, maturity_point, progress_percent

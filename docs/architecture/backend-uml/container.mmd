@@ -1,44 +1,81 @@
 ---
-title: Recognition Service Containers
+title: Prototype Description Service Containers
 ---
 flowchart TB
-    subgraph api["FastAPI Surface"]
-        main_router["api/routes/main.py\nScene + service endpoints"]
-        recognition_router["recognition/interface_adapters/http/recognition_router.py\nClustering + analysis endpoints"]
-        dependency_layer["api/dependencies.py\nDepends wiring + singletons"]
+    subgraph api["FastAPI Surface (api/main.py)"]
+        app_factory["create_app()\nlogging + cache bootstrap\nStaticFiles /thumbnails"]
+        recognition_router["recognition/interface_adapters/http\nrecognition_router + suggestion_router"]
+        metrics_router["metrics_router\n/recognition/metrics*"]
+        health_routers["/health + subsystem health\nrecognition / roster / scene"]
     end
 
-    subgraph domain["Domain Layer"]
-        clustering_service["IdentityClusteringService\nClustering logic + incremental learning"]
-        scan_service["IdentityScanService\nEmbedding extraction + persistence"]
-        metrics["shared/metrics.py\nstructured logging + timers"]
+    subgraph services["Application Services"]
+        scan_service["IdentityScanService\nchunked scans + persistence"]
+        clustering_service["IdentityClusteringService\nsync/async orchestration"]
+        suggestion_service["SuggestionService\nborderline match queue"]
     end
 
-    subgraph adapters["Adapters"]
-        cluster_repo["recognition/application/cluster_repository.py\nDB persistence + queries"]
-        embedding_provider["recognition/infrastructure/embedding_provider.py\nFace embedding extraction"]
-        thumbnail_service["recognition/infrastructure/thumbnail_service.py\nThumbnail generation"]
+    subgraph clustering["Clustering Orchestration"]
+        context_mgr["TenantContextManager\nRLS + centroid refresh"]
+        repository["ClusterRepository\nqueries + job records"]
+        factory["ClusterFactory\ncreate clusters + centroids"]
+        assigner["ClusterAssigner\nmembership + centroid updates"]
+        rep_manager["RepresentativeManager\nstore representative embeddings"]
+        matcher["RepresentativeMatcher\nrep matching + complete-link"]
+        validator["ClusterValidator\nborderline + member checks"]
+        batch_processor["BatchClusteringProcessor\nrep match + graph/HDBSCAN"]
+        job_service["ClusteringJobService\npending jobs + processing"]
     end
 
-    subgraph infra["Infrastructure"]
-        postgres["PostgreSQL + pgvector\n(identities, clusters, centroids)"]
-        settings["shared/config/settings.py\nPydantic settings"]
+    subgraph infra["Adapters & Infrastructure"]
+        embedding_provider["FaceEmbeddingProvider\nInsightFace wrapper"]
+        thumbnail_service["ThumbnailService\nbbox crops to filesystem"]
+        async_session["AsyncSession (db/session.py)\nget_session dependency"]
+        postgres["PostgreSQL + pgvector\nRLS policies"]
+        settings["recognition.config.get_settings()\nPydantic settings + YAML/.env"]
     end
 
-    main_router --> dependency_layer
-    recognition_router --> dependency_layer
-    dependency_layer --> clustering_service
-    dependency_layer --> scan_service
+    app_factory --> recognition_router
+    app_factory --> metrics_router
+    app_factory --> health_routers
 
-    clustering_service --> metrics
-    scan_service --> metrics
+    recognition_router --> async_session
+    metrics_router --> async_session
+    recognition_router --> scan_service
+    recognition_router --> clustering_service
+    recognition_router --> suggestion_service
 
-    clustering_service --> cluster_repo
     scan_service --> embedding_provider
     scan_service --> thumbnail_service
+    scan_service --> async_session
 
-    cluster_repo --> postgres
-    
-    settings --> dependency_layer
-    settings --> clustering_service
+    clustering_service --> context_mgr
+    clustering_service --> repository
+    clustering_service --> factory
+    clustering_service --> assigner
+    clustering_service --> rep_manager
+    clustering_service --> validator
+    clustering_service --> batch_processor
+    clustering_service --> job_service
+    clustering_service --> suggestion_service
+
+    batch_processor --> repository
+    batch_processor --> assigner
+    batch_processor --> factory
+    batch_processor --> validator
+    batch_processor --> matcher
+
+    matcher --> validator
+    matcher --> assigner
+    matcher --> rep_manager
+
+    job_service --> repository
+    repository --> async_session
+    context_mgr --> async_session
+    suggestion_service --> async_session
+
+    async_session --> postgres
+    settings --> embedding_provider
     settings --> scan_service
+    settings --> clustering_service
+    settings --> thumbnail_service

@@ -5,8 +5,8 @@ erDiagram
     TENANTS {
         uuid id PK
         varchar site_url UK
-        timestamp created_at
-        timestamp updated_at
+        timestamptz created_at
+        timestamptz updated_at
     }
 
     MEDIA_IDENTITIES {
@@ -21,20 +21,26 @@ erDiagram
         float confidence
         vector embedding
         varchar thumbnail_url
-        timestamp created_at
+        timestamptz created_at
+        timestamptz updated_at
+        int created_by_user_id
     }
 
     IDENTITY_CLUSTERS {
         uuid id PK
         uuid tenant_id FK
-        varchar label UK
+        varchar label
         uuid representative_identity_id FK
         int identity_count
         uuid roster_id
         float similarity_threshold
         varchar clustering_algorithm
-        timestamp created_at
-        timestamp updated_at
+        bool user_confirmed
+        int confirmation_count
+        varchar confirmation_source
+        timestamptz created_at
+        timestamptz updated_at
+        int created_by_user_id
     }
 
     IDENTITY_MEMBERS {
@@ -43,7 +49,9 @@ erDiagram
         uuid cluster_id FK
         uuid identity_id FK
         float similarity
-        timestamp assigned_at
+        timestamptz assigned_at
+        timestamptz created_at
+        int created_by_user_id
     }
 
     IDENTITY_CLUSTER_REPRESENTATIVES {
@@ -53,7 +61,7 @@ erDiagram
         vector embedding
         float quality_score
         float diversity_score
-        timestamp created_at
+        timestamptz created_at
     }
 
     MV_IDENTITY_CLUSTER_CENTROIDS {
@@ -61,13 +69,64 @@ erDiagram
         uuid tenant_id
         int member_count
         vector centroid
-        timestamp refreshed_at
+        timestamptz refreshed_at
+    }
+
+    IDENTITY_SCAN_JOBS {
+        uuid id PK
+        uuid tenant_id FK
+        varchar status
+        int[] media_ids
+        int total_media
+        int processed_media
+        int identities_detected
+        text error_message
+        timestamptz created_at
+        timestamptz started_at
+        timestamptz completed_at
+        int created_by_user_id
+    }
+
+    IDENTITY_CLUSTERING_JOBS {
+        uuid id PK
+        uuid tenant_id FK
+        varchar status
+        float progress
+        int total_identities
+        int processed_identities
+        text error_message
+        timestamptz created_at
+        timestamptz started_at
+        timestamptz completed_at
+        int created_by_user_id
+    }
+
+    IDENTITY_SUGGESTIONS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid identity_id FK
+        uuid suggested_cluster_id FK
+        float representative_similarity
+        float avg_member_similarity
+        float confidence_score
+        int priority
+        varchar resolution
+        timestamptz created_at
+        timestamptz resolved_at
     }
 
     TENANTS ||--o{ MEDIA_IDENTITIES : "owns"
     TENANTS ||--o{ IDENTITY_CLUSTERS : "owns"
+    TENANTS ||--o{ IDENTITY_SUGGESTIONS : "owns"
+    TENANTS ||--o{ IDENTITY_SCAN_JOBS : "owns"
+    TENANTS ||--o{ IDENTITY_CLUSTERING_JOBS : "owns"
+
     IDENTITY_CLUSTERS ||--o{ IDENTITY_MEMBERS : "contains"
-    IDENTITY_CLUSTERS ||--o{ IDENTITY_CLUSTER_REPRESENTATIVES : "has"
+    IDENTITY_CLUSTERS ||--o{ IDENTITY_CLUSTER_REPRESENTATIVES : "has reps"
     IDENTITY_CLUSTERS ||--|| MV_IDENTITY_CLUSTER_CENTROIDS : "summarized_by"
-    MEDIA_IDENTITIES ||--o| IDENTITY_MEMBERS : "belongs_to"
+    IDENTITY_CLUSTERS ||--o| MEDIA_IDENTITIES : "representative_identity"
+
+    MEDIA_IDENTITIES ||--o| IDENTITY_MEMBERS : "member"
     MEDIA_IDENTITIES ||--o| IDENTITY_CLUSTER_REPRESENTATIVES : "represents"
+    MEDIA_IDENTITIES ||--o{ IDENTITY_SUGGESTIONS : "candidate_for"
+    IDENTITY_CLUSTERS ||--o{ IDENTITY_SUGGESTIONS : "suggested_target"

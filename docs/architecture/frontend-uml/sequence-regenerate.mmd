@@ -1,16 +1,25 @@
 sequenceDiagram
-    participant Admin as WP Admin UI
-    participant Plugin as Context Alt Text (WP)
-    participant Recognition as Recognition API
-    participant LLM as Caption Provider
+    %% Merge cluster + undo (MergeUndoBanner)
+    actor Admin
+    participant Item as IdentityClusterItem
+    participant Hooks as useClusterMutations
+    participant WPAPI as WP REST /recognition/clusters
+    participant RecSvc as Recognition Service
 
-    Admin->>Plugin: Trigger "Regenerate Alt Texts"
-    Plugin->>Plugin: Fetch attachments with stale policy hash
-    loop For each attachment
-        Plugin->>Recognition: POST /api/v0/analyze-scene (if requires_scene_analysis)
-        Recognition-->>Plugin: SceneAnalysisResult
-        Plugin->>LLM: generateCaption(request)
-        LLM-->>Plugin: Caption draft
-        Plugin->>Plugin: Update draft + audit log
-    end
-    Plugin-->>Admin: Batch regenerate summary
+    Admin->>Item: Enter target label + click "Merge"
+    Item->>Hooks: mergeMutation.mutate({sourceId,targetLabel})
+    Hooks->>WPAPI: POST /recognition/clusters/{sourceId}/merge {target_label}
+    WPAPI->>RecSvc: merge_similar_clusters()
+    RecSvc-->>WPAPI: MergeClusterResponse {moved_identity_ids,...}
+    WPAPI-->>Hooks: success
+    Hooks->>Hooks: invalidate ['recognition-clusters']
+    Hooks-->>Item: show MergeUndoBanner with response
+
+    Admin->>Item: Click "Undo"
+    Item->>Hooks: revertMergeMutation.mutate({target_cluster_id,...})
+    Hooks->>WPAPI: POST /recognition/clusters/revert-merge {target_cluster_id, moved_identity_ids}
+    WPAPI->>RecSvc: revert_merge()
+    RecSvc-->>WPAPI: RevertMergeResponse {restored_cluster_id,...}
+    WPAPI-->>Hooks: success
+    Hooks->>Hooks: invalidate ['recognition-clusters']
+    Hooks-->>Item: hide banner, refresh list

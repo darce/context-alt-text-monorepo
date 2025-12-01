@@ -1,66 +1,25 @@
 sequenceDiagram
-%% Remote Cluster Review Flow (Oct 2025)
-%% Editor triggers server-side detection, clusters faces, confirms identities
+    %% Inline cluster relabel with suggestions
+    participant Admin
+    participant Item as IdentityClusterItem
+    participant Prompt as InlineSuggestionPrompt
+    participant Hooks as useClusterSuggestions/useMutation
+    participant WPAPI as WP REST /recognition/clusters
+    participant RecSvc as Recognition Service
 
-autonumber
-participant User as Editor
-participant Workbench as WorkbenchRoute
-participant Actions as FaceScanActions
-participant Panel as UnknownPeoplePanel
-participant Detail as ClusterDetailView
-participant Modal as ClusterConfirmationModal
-participant Hooks as React Query Hooks
-participant API as WP REST (recognition)
-participant Service as Recognition Service
-participant DB as WP Storage
-
-%% Phase 0: Trigger remote face scan (no MediaPipe)
-User->>Workbench: Open Workbench
-Workbench->>Actions: Mount scan controls
-User->>Actions: Click "Scan for Faces"
-Actions->>Hooks: useFaceScan.scanFaces(attachmentIds)
-Hooks->>API: POST /cat/v1/recognition/scan
-API->>Service: enqueueDetectionBatch(attachmentIds)
-Service-->>API: { jobId, queuedCount }
-API-->>Hooks: Scan accepted payload
-Hooks-->>Actions: Update result & clear errors
-Actions->>Hooks: invalidateQuery("unknown-clusters")
-Actions->>Hooks: invalidateQuery("cluster-detail")
-
-%% Phase 1: Load unknown clusters
-Workbench->>Panel: Render panel
-Panel->>Hooks: useUnknownClusters.fetch()
-Hooks->>API: GET /cat/v1/clusters
-API-->>Hooks: ClusterSummary[]
-Hooks-->>Panel: clusters + pagination
-Panel-->>User: Display cluster cards
-
-%% Phase 2: Inspect cluster detail & suggestions
-User->>Panel: Select cluster
-Panel->>Detail: Mount detail view
-Detail->>Hooks: useClusterDetail.fetch(clusterId)
-Hooks->>API: GET /cat/v1/clusters/{clusterId}
-API-->>Hooks: ClusterSummary + faces
-Hooks-->>Detail: faces + metrics
-Detail->>Hooks: useClusterSuggestions.fetch(clusterId)
-Hooks->>API: GET /cat/v1/clusters/{clusterId}/suggestions
-API-->>Hooks: ClusterSuggestion[]
-Hooks-->>Detail: roster suggestions
-Detail-->>User: Show faces with hints
-
-%% Phase 3: Confirm identities & cascade updates
-User->>Detail: Click "Label Selected"
-Detail->>Modal: Open confirmation modal
-Modal-->>User: Choose roster + faces
-User->>Modal: Confirm labeling
-Modal->>Hooks: confirmCluster(clusterId, payload)
-Hooks->>API: POST /cat/v1/clusters/{clusterId}/confirm
-API->>DB: Persist roster assignment
-API->>Service: queueEmbeddingIngest(clusterId)
-Service-->>API: Ingest acknowledgement
-API-->>Hooks: { labeledCount, warnings, errors }
-Hooks-->>Modal: Success result
-Modal->>Hooks: invalidate cluster caches
-Hooks->>Panel: Refetch unknown clusters
-Hooks->>Detail: Refetch cluster detail
-Modal-->>User: Toast "Faces labeled"
+    Admin->>Item: Click cluster label combobox
+    Item->>Prompt: open with identity context
+    Prompt->>Hooks: useClusterSuggestions(identityId)
+    Hooks->>WPAPI: GET /recognition/identities/{id}/suggestions
+    WPAPI->>RecSvc: /recognition/identities/{id}/suggestions
+    RecSvc-->>WPAPI: {matches:[{cluster_id,label,similarity}]}
+    WPAPI-->>Hooks: suggestions cached
+    Hooks-->>Prompt: suggested labels + existing labels
+    Admin->>Prompt: Choose label or type new
+    Prompt->>Hooks: updateClusterLabel(clusterId,label)
+    Hooks->>WPAPI: PATCH /recognition/clusters/{id} {label}
+    WPAPI->>RecSvc: update label + updated_at
+    RecSvc-->>WPAPI: ClusterSummary
+    WPAPI-->>Hooks: success
+    Hooks->>Hooks: invalidate ['recognition-clusters','identity-suggestions']
+    Hooks-->>Item: show success + latest label

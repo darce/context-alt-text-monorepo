@@ -1,22 +1,35 @@
 ---
-title: Progressive Learning (Augment Roster Entry)
+title: Persisted Suggestion Review
 ---
 sequenceDiagram
-    participant WP as WP Plugin
-    participant API as FastAPI /roster/{id}/augment
-    participant RS as RosterService
-    participant VAL as DataValidationPort
-    participant STORE as RosterStoragePort (PostgreSQL)
-    participant HYBRID as HybridIndexManager
+    participant ClusterSvc as IdentityClusteringService
+    participant SuggestionSvc as SuggestionService
+    participant DB as identity_suggestions table
+    participant Client as Admin SPA
+    participant API as /recognition/suggestions*
+    participant Assign as assign_identity_to_cluster()
+    participant Session as AsyncSession
 
-    WP->>API: POST augment payload (embedding, observationId)
-    API->>RS: add_augmented_embedding(...)
-    RS->>VAL: validate_embedding(vector, model)
-    VAL-->>RS: []
-    RS->>STORE: save_roster_entry(updated entry)
-    STORE-->>RS: success
-    RS-->>API: True (appended)
-    API->>HYBRID: background reload request (debounced)
-    HYBRID->>STORE: load_roster_entries()
-    HYBRID->>HYBRID: refresh cluster centroids (pgvector)
-    API-->>WP: 200 OK + updated entry snapshot
+    ClusterSvc->>SuggestionSvc: create_suggestion(identity_id, cluster_id, scores, priority)
+    SuggestionSvc->>DB: insert pending suggestion
+    DB-->>ClusterSvc: suggestion_id (resolution=pending)
+
+    Client->>API: GET /recognition/suggestions?tenant_id=...
+    API->>Session: set_tenant_context()
+    API->>DB: fetch pending suggestions + cluster/identity details
+    API-->>Client: suggestions[]
+
+    Client->>API: POST /recognition/suggestions/{id}/accept
+    API->>Session: set_tenant_context()
+    API->>SuggestionSvc: accept_suggestion(id)
+    API->>Assign: assign_identity_to_cluster(identity_id, cluster_id)
+    API->>SuggestionSvc: expire_suggestions_for_identity(identity_id)
+    API->>DB: commit
+    API-->>Client: resolution=accepted
+
+    alt user rejects
+        Client->>API: POST /recognition/suggestions/{id}/reject
+        API->>SuggestionSvc: reject_suggestion(id)
+        API->>DB: commit
+        API-->>Client: resolution=rejected
+    end

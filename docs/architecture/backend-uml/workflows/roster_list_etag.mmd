@@ -1,17 +1,19 @@
 ---
-title: Roster Listing with ETag Cache
+title: Cluster Listing (Tenant Scoped)
 ---
 sequenceDiagram
-    participant Client as WordPress Plugin
-    participant API as FastAPI /roster
-    participant Service as RosterService
+    participant Client as Admin SPA
+    participant API as /recognition/clusters
+    participant Session as AsyncSession
+    participant DB as identity_clusters + centroids
+    participant ClusterSvc as IdentityClusteringService
 
-    Client->>API: GET /api/v0/roster (If-None-Match: "abc123")
-    API->>Service: get_entries(model)
-    Service-->>API: entries[]
-    API->>API: compute ETag(entries)
-    alt ETag unchanged
-        API-->>Client: 304 Not Modified (ETag: "abc123")
-    else New roster content
-        API-->>Client: 200 OK payload (ETag: "def456")
+    Client->>API: GET clusters?tenant_id=&limit=&offset=
+    API->>Session: set_tenant_context()
+    API->>DB: select clusters ORDER BY created_at DESC LIMIT/OFFSET
+    loop per cluster
+        API->>ClusterSvc: get_cluster_summary(cluster_id)
+        ClusterSvc->>DB: load members + representative + centroid
+        ClusterSvc-->>API: summary (label, members, rep, centroid)
     end
+    API-->>Client: list[ClusterSummaryResponse]

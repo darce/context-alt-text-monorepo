@@ -1,139 +1,5 @@
 classDiagram
-%% Consolidated Face Recognition Data Structures (Oct 2025)
-%% Frontend consumes backend-owned clustering + suggestions only
-
-class ClusterSummary {
-  +id: string
-  +faceCount: number
-  +sampleFace: ClusterSampleFace | null
-  +suggestion: ClusterSummarySuggestion | null
-  +createdAt: string | null
-  +updatedAt: string | null
-}
-
-class ClusterSampleFace {
-  +attachmentId: number
-  +thumbnailUrl: string | null
-  +bbox: ClusterBoundingBox | null
-}
-
-class ClusterSummarySuggestion {
-  +rosterId: string
-  +displayName: string
-  +confidence: number | null
-  +reason: string | null
-}
-
-class ClusterFaceDetail {
-  +id: string
-  +attachmentId: number
-  +bbox: ClusterBoundingBox
-  +thumbnailUrl: string | null
-  +clusterId: string | null
-  +detectedAt: string | null
-  +resolvedAt: string | null
-  +rosterId: string | null
-  +embeddingId: string | null
-}
-
-class ClusterBoundingBox {
-  +x: number
-  +y: number
-  +width: number
-  +height: number
-  +imageWidth: number | null
-  +imageHeight: number | null
-}
-
-class ClusterSuggestion {
-  +clusterId: string
-  +rosterId: string
-  +displayName: string
-  +confidence: number
-  +confidenceLevel: "high" | "medium" | "low" | undefined
-  +matchCount: number
-  +faceIds: string[]
-  +reason: string | null
-}
-
-class FaceScanResult {
-  +jobId: string
-  +queuedCount: number
-  +priority: "normal" | "high"
-}
-
-class FaceScanError {
-  +message: string
-  +code: string | undefined
-  +status: number | undefined
-}
-
-class UseUnknownClusters {
-  <<hook>>
-  +clusters: ClusterSummary[]
-  +total: number
-  +page: number
-  +perPage: number
-  +isLoading: boolean
-  +error: Error | null
-  +refetch(): Promise<unknown>
-}
-
-class UseClusterDetail {
-  <<hook>>
-  +cluster: ClusterSummary
-  +faces: ClusterFaceDetail[]
-  +isLoading: boolean
-  +error: Error | null
-  +refetch(): Promise<unknown>
-}
-
-class UseClusterSuggestions {
-  <<hook>>
-  +suggestions: ClusterSuggestion[]
-  +isLoading: boolean
-  +error: Error | null
-  +refetch(): Promise<unknown>
-}
-
-class UseFaceScan {
-  <<hook>>
-  +scanFaces(ids: number[], options?): Promise<void>
-  +isScanning: boolean
-  +error: FaceScanError | null
-  +result: FaceScanResult | null
-  +reset(): void
-}
-
-class UsePeopleSuggestions {
-  <<hook>>
-  +faces: DetectedFaceFE[]
-  +isLoading: boolean
-  +error: Error | null
-  +identifyFaces(attachmentId: number, faces: DetectedFaceRequest[]): Promise<void>
-  +submitLabel(faceId: string, label: Label): Promise<void>
-  +bulkConfirm(rosterId: string, faceIds: string[]): Promise<void>
-  +reset(): void
-}
-
-class DetectedFaceFE {
-  +faceId: string
-  +bbox: BoundingBox
-  +attachmentId: number
-  +clusterId: string | null
-  +suggestions: Suggestion[]
-  +labelDraft: Label | null
-  +confirmedRosterId: string | null
-  +observationId: string | null
-  +confidence: number
-}
-
-class DetectedFaceRequest {
-  +bbox: BoundingBox
-  +faceId?: string
-  +label?: Label
-  +observationId?: string
-}
+%% Recognition Data Structures (Front-end) — current TS types
 
 class BoundingBox {
   +x: number
@@ -142,27 +8,105 @@ class BoundingBox {
   +height: number
 }
 
-class Suggestion {
-  +rosterId: string
-  +displayName: string
-  +score: number
+class RepresentativeBounds {
+  +media_id: number | null
+  +bbox: BoundingBox
 }
 
-class Label {
-  +rosterId?: string
-  +newName?: string
-  +displayName?: string
+class ClusterIdentity {
+  +id: string
+  +media_id: number
+  +similarity: number
+  +confidence: number
+  +bbox: BoundingBox
+  +thumbnail_url: string?
+  +debug_metrics: DebugMetrics?
 }
 
-ClusterSummary --> ClusterSampleFace
-ClusterSummary --> ClusterSummarySuggestion
-ClusterFaceDetail --> ClusterBoundingBox
-UseUnknownClusters ..> ClusterSummary
-UseClusterDetail ..> ClusterSummary
-UseClusterDetail ..> ClusterFaceDetail
-UseClusterSuggestions ..> ClusterSuggestion
-UseFaceScan ..> FaceScanResult
-UseFaceScan ..> FaceScanError
-UsePeopleSuggestions ..> DetectedFaceFE
-UsePeopleSuggestions ..> DetectedFaceRequest
-UsePeopleSuggestions ..> Label
+class DetectedIdentity {
+  +id: string
+  +media_id: number
+  +cluster_id: string | null
+  +cluster_label: string | null
+  +is_auto_label: boolean
+  +bbox: BoundingBox
+  +confidence: number
+  +similarity: number | null
+  +detected_at: string?
+  +thumbnail_url: string?
+  +debug_metrics: DebugMetrics?
+}
+
+class DebugMetrics {
+  +pose: { pitch:number, yaw:number, roll:number }
+  +age: number
+  +gender: "female" | "male"
+  +det_score: number
+  +bbox_area: number
+  +landmark_quality: number
+  +clustering_method: string | null
+  +clustering_algorithm: string | null
+  +similarity_threshold: number | null
+  +match_similarity: number | null
+}
+
+class ClusterSummary {
+  +id: string
+  +label: string
+  +is_auto_label: boolean
+  +identity_count: number
+  +member_ids: string[]
+  +representative_identity: RepresentativeBounds
+  +sample_identities: ClusterIdentity[]
+}
+
+class ClusterSuggestion {
+  +cluster_id: string
+  +label: string
+  +similarity: number
+  +identity_count: number
+}
+
+class IdentitySuggestionsResponse {
+  +matches: ClusterSuggestion[]
+}
+
+class MediaIdentitiesResponse {
+  +identities_by_media: Map~string, DetectedIdentity[]~
+}
+
+class PendingSuggestion {
+  +id: string
+  +identity_id: string
+  +suggested_cluster_id: string
+  +representative_similarity: number
+  +avg_member_similarity: number
+  +confidence_score: number
+  +priority: int
+  +resolution: string
+  +created_at: string
+  +resolved_at: string?
+  +cluster_label: string?
+  +cluster_member_count: int?
+  +identity_media_id: int?
+}
+
+class TrainingStageResponse {
+  +stage: "early" | "developing" | "mature"
+  +stage_label: string
+  +cluster_count: number
+  +identity_count: number
+  +current_threshold: number
+  +base_threshold: number
+  +strict_threshold: number
+  +maturity_point: number
+  +progress_percent: number
+}
+
+ClusterSummary --> RepresentativeBounds
+ClusterSummary --> ClusterIdentity : sample_identities
+ClusterIdentity --> DebugMetrics
+DetectedIdentity --> DebugMetrics
+IdentitySuggestionsResponse --> ClusterSuggestion
+MediaIdentitiesResponse --> DetectedIdentity
+PendingSuggestion --> ClusterSummary : suggested_cluster_id

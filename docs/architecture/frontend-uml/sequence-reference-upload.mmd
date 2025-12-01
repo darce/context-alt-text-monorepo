@@ -1,15 +1,16 @@
 sequenceDiagram
-    participant Admin as WP Admin UI
-    participant Plugin as Context Alt Text (WP)
-    participant Media as Media Library
-    participant Recognition as Recognition API
+    %% Rescan cluster from Roster drawer (high sensitivity)
+    participant Admin
+    participant Drawer as ClusterDrawerPanel
+    participant Hooks as useClusterActions.rescanMutation
+    participant WPAPI as WP REST /recognition/analyze
+    participant RecSvc as Recognition Service
 
-    Admin->>Plugin: Add new roster entry
-    Plugin->>Media: Upload reference image
-    Media-->>Plugin: Attachment ID + URL
-    Plugin->>Recognition: POST /api/v0/embeddings (image URL)
-    Recognition-->>Plugin: EmbeddingsResponse
-    Plugin->>Recognition: POST /api/v0/roster (label, type, embeddings)
-    Recognition-->>Plugin: { remote_id }
-    Plugin->>Media: Store remote_id + avatarId metadata
-    Plugin-->>Admin: Show roster entry as SYNCED
+    Admin->>Drawer: Click "Rescan with high sensitivity"
+    Drawer->>Hooks: rescanMutation.mutate({cluster, mediaIds})
+    Hooks->>WPAPI: POST /recognition/analyze {media_ids, sensitivity:"high", cluster_id}
+    WPAPI->>RecSvc: /recognition/analyze
+    RecSvc-->>WPAPI: {job_ids:[uuid], status:"queued"}
+    WPAPI-->>Hooks: AnalyzeResponse
+    Hooks-->>Drawer: show statusMessage
+    Hooks->>Hooks: invalidate ['recognition-clusters']

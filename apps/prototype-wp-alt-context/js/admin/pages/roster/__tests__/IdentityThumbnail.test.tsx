@@ -3,7 +3,7 @@ import userEvent from '@testing-library/user-event';
 import { vi } from 'vitest';
 
 import { IdentityThumbnail } from '../IdentityThumbnail';
-import type { ClusterIdentity } from '../../api/recognitionApi';
+import type { ClusterIdentity } from '../../../api/recognition';
 
 const identity: ClusterIdentity = {
   id: 'identity-1',
@@ -27,7 +27,9 @@ describe('IdentityThumbnail', () => {
 
   it('calls onClick when provided', async () => {
     const onClick = vi.fn();
-    render(<IdentityThumbnail identity={identity} mediaMeta={{ url: 'https://example.com/1.jpg' }} onClick={onClick} />);
+    render(
+      <IdentityThumbnail identity={identity} mediaMeta={{ url: 'https://example.com/1.jpg' }} onClick={onClick} />,
+    );
     const thumb = screen.getByRole('img');
     await userEvent.click(thumb);
     expect(onClick).toHaveBeenCalled();

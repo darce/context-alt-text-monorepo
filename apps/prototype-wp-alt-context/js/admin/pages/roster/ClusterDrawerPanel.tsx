@@ -1,12 +1,13 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import type { ClusterIdentity, ClusterSummary } from '../../api/recognitionApi';
+import type { ClusterIdentity, ClusterSummary } from '../../api/recognition';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { MediaMap } from './hooks/useClusterMediaMap';
 import { IdentityThumbnail } from './IdentityThumbnail';
+import { Combobox } from '../../../components/ui/combobox';
 
-type Props = {
+interface Props {
   cluster: ClusterSummary | null;
   identities: ClusterIdentity[];
   mediaMap: MediaMap;
@@ -22,12 +23,11 @@ type Props = {
   detailError?: string | null;
   onFaceDragStart: (clusterId: string, faceId: string) => void;
   onFaceDragEnd: () => void;
-  onDropTargetChange: (target: string | 'discard' | null) => void;
-  onDropFace: (clusterId: string | null) => void;
-  dropTarget: string | 'discard' | null;
+  onDropTargetChange: (target: string | null) => void;
+  dropTarget: string | null;
   isDragging: boolean;
   onDiscardDrop: () => void;
-};
+}
 
 export const ClusterDrawerPanel = ({
   cluster,
@@ -46,13 +46,47 @@ export const ClusterDrawerPanel = ({
   onFaceDragStart,
   onFaceDragEnd,
   onDropTargetChange,
-  onDropFace,
   dropTarget,
   isDragging,
   onDiscardDrop,
 }: Props): React.JSX.Element | null => {
   const [selectedEntryId, setSelectedEntryId] = React.useState('');
   const [newEntryName, setNewEntryName] = React.useState('');
+
+  const createFaceDragStart = React.useCallback(
+    (faceId: string) => (event: React.DragEvent<HTMLElement>) => {
+      if (!cluster) {
+        return;
+      }
+      event.dataTransfer?.setData('text/plain', faceId);
+      event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
+      onFaceDragStart(cluster.id, faceId);
+    },
+    [onFaceDragStart, cluster],
+  );
+
+  const handleDropzoneDragOver = React.useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!isDragging) {
+        return;
+      }
+      event.preventDefault();
+      onDropTargetChange('discard');
+    },
+    [isDragging, onDropTargetChange],
+  );
+
+  const handleDropzoneDrop = React.useCallback(
+    (event: React.DragEvent<HTMLDivElement>) => {
+      if (!isDragging) {
+        return;
+      }
+      event.preventDefault();
+      onDropTargetChange(null);
+      onDiscardDrop();
+    },
+    [isDragging, onDiscardDrop, onDropTargetChange],
+  );
 
   React.useEffect(() => {
     setSelectedEntryId('');
@@ -90,8 +124,8 @@ export const ClusterDrawerPanel = ({
             <h3>{cluster.label || cluster.id}</h3>
             <p>
               {sprintf(
-                _n('%d identity', '%d identities', cluster.identity_count ?? cluster.face_count, 'alt-context'),
-                cluster.identity_count ?? cluster.face_count,
+                _n('%d identity', '%d identities', cluster.identity_count, 'alt-context'),
+                cluster.identity_count,
               )}
             </p>
           </div>
@@ -100,67 +134,50 @@ export const ClusterDrawerPanel = ({
           </button>
         </header>
 
-            <div className="acx-cluster-drawer__faces">
-              {isDetailLoading ? (
-                <p>{__('Loading identities…', 'alt-context')}</p>
-              ) : !hasIdentities ? (
-                <p>{__('No identities found for this cluster.', 'alt-context')}</p>
-              ) : (
-                identitiesToDisplay.map((identity) => (
-                  <figure
-                    key={identity.id}
-                    className="acx-cluster-drawer__face"
-                    draggable
-                    aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
-                    onDragStart={(event) => {
-                      event.dataTransfer?.setData('text/plain', identity.id);
-                      event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
-                      onFaceDragStart(cluster.id, identity.id);
-                    }}
-                    onDragEnd={onFaceDragEnd}
-                  >
-                    <a
-                      href={`${window.location.origin}/wp-admin/post.php?post=${identity.media_id}&action=edit`}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
-                    </a>
-                    <figcaption>
-                      {sprintf(__('Similarity: %s', 'alt-context'), identity.similarity.toFixed(2))}
-                      <br />
-                      {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
-                    </figcaption>
-                  </figure>
-                ))
-              )}
-            </div>
+        <div className="acx-cluster-drawer__faces">
+          {isDetailLoading ? (
+            <p>{__('Loading identities…', 'alt-context')}</p>
+          ) : !hasIdentities ? (
+            <p>{__('No identities found for this cluster.', 'alt-context')}</p>
+          ) : (
+            identitiesToDisplay.map((identity) => (
+              <figure
+                key={identity.id}
+                className="acx-cluster-drawer__face"
+                draggable
+                aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
+                onDragStart={createFaceDragStart(identity.id)}
+                onDragEnd={onFaceDragEnd}
+              >
+                <a
+                  href={`${window.location.origin}/wp-admin/post.php?post=${identity.media_id}&action=edit`}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
+                </a>
+                <figcaption>
+                  {sprintf(__('Similarity: %s', 'alt-context'), identity.similarity.toFixed(2))}
+                  <br />
+                  {sprintf(__('Media %d', 'alt-context'), identity.media_id)}
+                </figcaption>
+              </figure>
+            ))
+          )}
+        </div>
 
         {detailError && <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{detailError}</p>}
 
         <div className="acx-cluster-drawer__dropzone-wrapper">
           <div
             className={`acx-cluster-drawer__dropzone${dropTarget === 'discard' ? ' is-drop-target' : ''}`}
-            onDragOver={(event) => {
-              if (!isDragging) {
-                return;
-              }
-              event.preventDefault();
-              onDropTargetChange('discard');
-            }}
+            onDragOver={handleDropzoneDragOver}
             onDragLeave={() => {
               if (dropTarget === 'discard') {
                 onDropTargetChange(null);
               }
             }}
-            onDrop={(event) => {
-              if (!isDragging) {
-                return;
-              }
-              event.preventDefault();
-              onDropTargetChange(null);
-              onDiscardDrop();
-            }}
+            onDrop={handleDropzoneDrop}
           >
             {__('Drop identities here to remove them from this cluster.', 'alt-context')}
           </div>
@@ -179,20 +196,22 @@ export const ClusterDrawerPanel = ({
 
         <div className="acx-cluster-drawer__assignment">
           <label htmlFor="acx-roster-entry-select">{__('Commit to roster entry', 'alt-context')}</label>
-          <select
-            id="acx-roster-entry-select"
+          <Combobox
+            options={[
+              { value: '', label: __('Select an entry', 'alt-context') },
+              ...rosterEntries.map((entry) => ({
+                value: entry.id.toString(),
+                label: entry.name,
+              })),
+              { value: 'create', label: __('Create new entry…', 'alt-context') },
+            ]}
             value={selectedEntryId}
-            onChange={(event) => setSelectedEntryId(event.target.value)}
+            onSelect={(nextValue: string) => setSelectedEntryId(nextValue)}
+            ariaLabel={__('Commit to roster entry', 'alt-context')}
+            placeholder={__('Select an entry', 'alt-context')}
             className="acx-cluster-drawer__select"
-          >
-            <option value="">{__('Select an entry', 'alt-context')}</option>
-            {rosterEntries.map((entry) => (
-              <option key={entry.id} value={entry.id.toString()}>
-                {entry.name}
-              </option>
-            ))}
-            <option value="create">{__('Create new entry…', 'alt-context')}</option>
-          </select>
+            id="acx-roster-entry-select"
+          />
 
           {selectedEntryId === 'create' && (
             <input

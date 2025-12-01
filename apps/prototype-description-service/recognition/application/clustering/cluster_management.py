@@ -143,6 +143,7 @@ async def build_cluster_summary(session: AsyncSession, cluster: IdentityCluster)
     return {
         "id": str(cluster.id),
         "label": cluster.label,
+        "is_auto_label": bool(cluster.label and cluster.label.startswith("cluster-")),
         "identity_count": cluster.identity_count,
         "member_ids": member_ids,
         "representative_identity": {
@@ -200,7 +201,11 @@ class ClusterOperations:
         self._ensure_context = ensure_context
 
     async def rename_cluster(self, cluster_id: UUID, new_label: str) -> IdentityCluster:
-        """Rename a cluster, ensuring the new label is unique for the tenant."""
+        """Rename a cluster, ensuring the new label is unique for the tenant.
+
+        Setting a label is a form of user confirmation - the user is explicitly
+        identifying this cluster's contents.
+        """
         await self._ensure_context()
         cluster = await self.session.get(IdentityCluster, cluster_id)
         if not cluster or cluster.tenant_id != self.tenant_id:
@@ -217,6 +222,9 @@ class ClusterOperations:
 
         cluster.label = new_label
         cluster.updated_at = datetime.utcnow()
+        # Labeling a cluster is a user confirmation
+        cluster.user_confirmed = True
+        cluster.confirmation_source = "label"
         await self.session.commit()
         await self._ensure_context()
         await self.session.refresh(cluster)
@@ -254,9 +262,17 @@ class ClusterOperations:
                 identity_count=0,
                 similarity_threshold=self.threshold,
                 clustering_algorithm=source.clustering_algorithm,
+                # Creating a cluster with a label is a user confirmation
+                user_confirmed=True,
+                confirmation_source="merge",
             )
             self.session.add(target)
             await self.session.flush()
+        else:
+            # Merging into an existing cluster confirms it
+            target.user_confirmed = True
+            if not target.confirmation_source:
+                target.confirmation_source = "merge"
 
         # Move members from source to target
         members_result = await self.session.execute(
@@ -395,12 +411,25 @@ class ClusterOperations:
 
         return restored_cluster, target_cluster
 
-    async def split_cluster(self, cluster_id: UUID) -> tuple[UUID | None, int]:
+    async def split_cluster(self, cluster_id: UUID, n_clusters: int = 0) -> tuple[list[UUID], list[int]]:
         """
-        Split a mixed cluster using DBSCAN.
-        Returns (new_cluster_id, moved_count).
+        Split a mixed cluster using Agglomerative Hierarchical Clustering.
+
+        Uses a dendrogram-based approach. If n_clusters=0 (default), automatically
+        determines the optimal number of clusters using a distance threshold.
+        Otherwise, splits into exactly n_clusters groups.
+
+        Args:
+            cluster_id: The cluster to split
+            n_clusters: Number of clusters to split into.
+                       0 = auto-detect based on similarity threshold (default)
+                       2+ = force exactly this many clusters
+
+        Returns:
+            Tuple of (new_cluster_ids, moved_counts) for each new cluster created.
+            The original cluster keeps the largest group; new clusters get the rest.
         """
-        from sklearn.cluster import DBSCAN
+        from recognition.application.clustering.hierarchical_clustering import HierarchicalClustering
 
         await self._ensure_context()
 
@@ -411,58 +440,98 @@ class ClusterOperations:
             .where(IdentityMember.cluster_id == cluster_id)
         )
         result = await self.session.execute(stmt)
-        identities = result.scalars().all()
+        identities = list(result.scalars().all())
 
         if not identities or len(identities) < 2:
-            return None, 0
+            logger.info(
+                "Split cluster %s: only %d identities, need at least 2 to split",
+                cluster_id,
+                len(identities) if identities else 0,
+            )
+            return [], []
 
-        # 2. Prepare embeddings
-        embeddings = np.array([id.embedding for id in identities])
+        # 2. Use HierarchicalClustering to split identities
+        hierarchical = HierarchicalClustering(distance_threshold=0.30)
+        clusters_by_label = hierarchical.split_identities(identities, n_clusters)
+
+        # Check if we found multiple groups
+        if len(clusters_by_label) <= 1:
+            logger.info("Split cluster %s: All faces similar enough to stay together, nothing to split", cluster_id)
+            return [], []
+
+        # Build label array for compatibility with existing code
+        identity_to_label: dict[UUID, int] = {}
+        for label, members in clusters_by_label.items():
+            for member in members:
+                identity_to_label[member.id] = label
+
+        labels = [identity_to_label[id.id] for id in identities]
         ids = [id.id for id in identities]
 
-        # 3. Run DBSCAN
-        # eps=0.35 corresponds to cosine similarity of ~0.65
-        clustering = DBSCAN(eps=0.35, min_samples=2, metric="cosine").fit(embeddings)
-        labels = clustering.labels_
+        logger.info("Split cluster %s: Hierarchical clustering labels=%s", cluster_id, labels)
 
-        unique_labels = set(labels)
-        if len(unique_labels) <= 1:
-            # Only one group (or all noise), nothing to split
-            return None, 0
+        # 5. Count members per group
+        label_counts: dict[int, int] = {}
+        for label in labels:
+            label_counts[label] = label_counts.get(label, 0) + 1
 
-        # 4. Perform Split
-        # We move Group 1 (and others if any) to a new cluster.
-        group_1_indices = [i for i, label in enumerate(labels) if label == 1]
-        if not group_1_indices:
-            return None, 0
+        # Sort by count descending, keep largest in original cluster
+        sorted_labels = sorted(label_counts.items(), key=lambda x: x[1], reverse=True)
+        largest_label = sorted_labels[0][0]
 
-        new_cluster_id = uuid4()
-        new_cluster = IdentityCluster(
-            id=new_cluster_id,
-            tenant_id=self.tenant_id,
-            label=f"Split from {str(cluster_id)[:8]}",
-            identity_count=len(group_1_indices),
-            clustering_algorithm="dbscan_split",
-        )
-        self.session.add(new_cluster)
-        await self.session.flush()
+        # Get the original cluster for updates
+        original_cluster = await self.session.get(IdentityCluster, cluster_id)
+        if not original_cluster:
+            logger.error("Split cluster %s: Original cluster not found", cluster_id)
+            return [], []
 
-        group_1_identity_ids = [ids[i] for i in group_1_indices]
+        # Mark original as user-confirmed
+        original_cluster.user_confirmed = True
+        if not original_cluster.confirmation_source:
+            original_cluster.confirmation_source = "split"
 
-        # Move members
-        update_members_stmt = text(
-            "UPDATE identity_members SET cluster_id = :new_cluster_id WHERE identity_id = ANY(:identity_ids)"
-        ).bindparams(new_cluster_id=new_cluster_id, identity_ids=group_1_identity_ids)
-        await self.session.execute(update_members_stmt)
+        new_cluster_ids: list[UUID] = []
+        moved_counts: list[int] = []
 
-        # Move representatives
-        update_reps_stmt = text(
-            "UPDATE identity_cluster_representatives SET cluster_id = :new_cluster_id WHERE identity_id = ANY(:identity_ids)"
-        ).bindparams(new_cluster_id=new_cluster_id, identity_ids=group_1_identity_ids)
-        await self.session.execute(update_reps_stmt)
+        # 5. Create new clusters for each non-largest group
+        for label, count in sorted_labels[1:]:  # Skip largest (index 0)
+            indices_for_group = [i for i, lbl in enumerate(labels) if lbl == label]
+            identity_ids_for_group = [ids[i] for i in indices_for_group]
 
-        # Update counts
-        remaining_count = len(identities) - len(group_1_indices)
+            new_cluster_id = uuid4()
+            new_cluster = IdentityCluster(
+                id=new_cluster_id,
+                tenant_id=self.tenant_id,
+                label=f"Split from {str(cluster_id)[:8]}",
+                identity_count=count,
+                clustering_algorithm="hierarchical_split",
+                user_confirmed=True,
+                confirmation_source="split",
+            )
+            self.session.add(new_cluster)
+            await self.session.flush()
+
+            # Move members
+            update_members_stmt = text(
+                "UPDATE identity_members SET cluster_id = :new_cluster_id WHERE identity_id = ANY(:identity_ids)"
+            ).bindparams(new_cluster_id=new_cluster_id, identity_ids=identity_ids_for_group)
+            await self.session.execute(update_members_stmt)
+
+            # Move representatives
+            update_reps_stmt = text(
+                "UPDATE identity_cluster_representatives SET cluster_id = :new_cluster_id WHERE identity_id = ANY(:identity_ids)"
+            ).bindparams(new_cluster_id=new_cluster_id, identity_ids=identity_ids_for_group)
+            await self.session.execute(update_reps_stmt)
+
+            new_cluster_ids.append(new_cluster_id)
+            moved_counts.append(count)
+
+            logger.info(
+                "Split cluster %s: Created new cluster %s with %d identities", cluster_id, new_cluster_id, count
+            )
+
+        # 6. Update original cluster count
+        remaining_count = label_counts[largest_label]
         update_count_stmt = text(
             "UPDATE identity_clusters SET identity_count = :count WHERE id = :cluster_id"
         ).bindparams(count=remaining_count, cluster_id=cluster_id)
@@ -471,4 +540,13 @@ class ClusterOperations:
         await self.session.commit()
         await self._refresh_view()
 
-        return new_cluster_id, len(group_1_indices)
+        total_moved = sum(moved_counts)
+        logger.info(
+            "Split cluster %s complete: created %d new clusters, moved %d identities, %d remain",
+            cluster_id,
+            len(new_cluster_ids),
+            total_moved,
+            remaining_count,
+        )
+
+        return new_cluster_ids, moved_counts

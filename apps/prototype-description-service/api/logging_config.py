@@ -75,10 +75,10 @@ def configure_logging(level: str = "INFO") -> None:
 
     recognition_filter = RecognitionFilter()
 
-    # Console handler: keep existing format
+    # Console handler: include timestamps
     console_handler = logging.StreamHandler(sys.stdout)
     console_handler.setLevel(getattr(logging, level.upper()))
-    console_handler.setFormatter(logging.Formatter("%(levelname)s:     %(name)s - %(message)s"))
+    console_handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s:     %(name)s - %(message)s"))
     console_handler.addFilter(recognition_filter)
     root.addHandler(console_handler)
 

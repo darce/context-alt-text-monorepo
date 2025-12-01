@@ -1,19 +1,14 @@
 ---
-title: Cluster Centroid Refresh Cycle
+title: Centroid View Refresh
 ---
 sequenceDiagram
-    participant Scheduler as ClusterRepository (scheduled)
-    participant Storage as PostgreSQL
-    participant MV as Materialized View (centroids)
+    participant ClusterSvc as IdentityClusteringService
+    participant Context as TenantContextManager
+    participant Session as AsyncSession
+    participant MV as mv_identity_cluster_centroids
 
-    loop After clustering operations
-        Scheduler->>Scheduler: refresh_centroids()
-        alt refresh needed
-            Scheduler->>Storage: get identity_members with embeddings
-            Storage-->>Scheduler: cluster members
-            Scheduler->>MV: REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids
-            MV-->>Scheduler: updated centroids
-        else skip
-            Scheduler-->>Scheduler: no-op (no new members)
-        end
-    end
+    ClusterSvc->>Context: refresh_centroid_view()
+    Context->>Session: SET LOCAL app.bypass_rls = 'true'
+    Context->>MV: REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids
+    Context->>Session: RESET app.bypass_rls
+    MV-->>ClusterSvc: centroids ready for rep matching + suggestions

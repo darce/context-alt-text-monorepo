@@ -1,64 +1,50 @@
-flowchart TD
-%% Remote Face Recognition Workflow (Oct 2025)
-%% Frontend consumes server-side detection, clustering, and suggestions
+flowchart LR
+%% Workbench -> WP REST proxy -> Recognition service (current endpoints)
 
-subgraph Frontend
-	A[FaceScanActions<br/>Editor clicks 'Scan for Faces']
-	B[UnknownPeoplePanel<br/>useUnknownClusters]
-	C[ClusterDetailView<br/>useClusterDetail]
-	D[useClusterSuggestions]
-	E[ClusterConfirmationModal]
+subgraph Workbench["Admin SPA (React)"]
+    selectMedia["MediaSelection\n(useWorkbenchMedia)"]
+    scanActions["ScanActionPanel\nscanFaces()"]
+    statusPanel["RecentJobsPanel\npoll useScanStatus/useMultiScanStatus"]
+    clusterPanel["BatchPanel\nclusterFaces()"]
+    clusterList["IdentityClusterList\nuseRecognitionClusters"]
+    suggestions["SuggestionReviewPanel\npending suggestions"]
 end
 
-subgraph WordPress
-	F[/POST /cat/v1/recognition/scan/]
-	G[/GET /cat/v1/clusters/]
-	H[/GET /cat/v1/clusters/&#123;id&#125;/]
-	I[/GET /cat/v1/clusters/&#123;id&#125;/suggestions/]
-	J[/POST /cat/v1/clusters/&#123;id&#125;/confirm/]
-	K[ScanController<br/>enqueueBatch]
-	L[ClusterController<br/>list/detail]
-	M[SuggestionController]
-	N[ConfirmController]
-	O[UnknownFaceRepository]
+subgraph WPProxy["WP REST proxy (PHP)"]
+    postAnalyze["POST /recognition/analyze"]
+    getJob["GET /recognition/jobs/{id}"]
+    postCluster["POST /recognition/clustering/jobs"]
+    getClusters["GET /recognition/clusters"]
+    getSuggestions["GET /recognition/suggestions"]
+    actSuggestion["POST /recognition/suggestions/{id}/accept|reject"]
 end
 
-subgraph RecognitionService
-	P[Detect & Embed Faces]
-	Q[Cluster Unknown Faces]
-	R[Generate Roster Suggestions]
-	S[Ingest Confirmed Embeddings]
+subgraph Recognition["Prototype Description Service"]
+    analyze["/recognition/analyze\nBackgroundTasks chunking"]
+    jobStatus["/recognition/jobs/{id}\nIdentityScanJob"]
+    clustering["/recognition/clustering/jobs\nIdentityClusteringService"]
+    clusters["/recognition/clusters\n+ /clusters/labels"]
+    suggestionsApi["/recognition/suggestions\nSuggestionService"]
 end
 
-A --> F
-F --> K
-K --> P
-P --> Q
-Q --> O
-O --> L
-L --> G
-B --> G
-G --> B
-
-C --> H
-H --> L
-L --> C
-
-C --> I
-I --> M
-M --> D
-D --> C
-
-E --> J
-J --> N
-N --> O
-N --> S
-S --> R
-R --> M
-
-J -->|Invalidate caches| B
-J -->|Invalidate caches| C
-
-style Frontend fill:#ffffff,stroke:#000000,color:#000000,stroke-width:2px
-style WordPress fill:#e0e0e0,stroke:#000000,color:#000000,stroke-width:2px
-style RecognitionService fill:#cccccc,stroke:#000000,color:#000000,stroke-width:2px
+selectMedia --> scanActions
+scanActions --> postAnalyze
+postAnalyze --> analyze
+analyze --> jobStatus
+statusPanel --> getJob
+getJob --> jobStatus
+statusPanel --> clusterPanel
+clusterPanel --> postCluster
+postCluster --> clustering
+clustering --> clusters
+clusters --> getClusters
+getClusters --> clusterList
+clusterList --> suggestions
+suggestions --> getSuggestions
+getSuggestions --> suggestionsApi
+suggestions --> actSuggestion
+actSuggestion --> suggestionsApi
+actSuggestion --> getClusters
+style Workbench fill:#ffffff,stroke:#000000,color:#000000,stroke-width:2px
+style WPProxy fill:#e0e0e0,stroke:#000000,color:#000000,stroke-width:2px
+style Recognition fill:#cccccc,stroke:#000000,color:#000000,stroke-width:2px

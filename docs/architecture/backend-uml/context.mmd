@@ -1,25 +1,34 @@
 ---
-title: Recognition Service Context
+title: Prototype Description Service Context
 ---
 flowchart LR
     subgraph client["WordPress Site"]
-        wp_plugin["Context Alt Text Plugin"]
+        wp_plugin["Context Alt Text Plugin\n(Admin SPA)"]
     end
 
-    subgraph service["Recognition Service (apps/prototype-description-service)"]
-        api_router["FastAPI HTTP surface\n/api/v0/**"]
-        clustering_service["IdentityClusteringService\n(Clustering Logic)"]
-        scan_service["IdentityScanService\n(Embedding Extraction)"]
+    subgraph service["Prototype Description Service (FastAPI)"]
+        recognition_api["/recognition/**\nAnalyze + clustering + suggestions"]
+        metrics_api["/recognition/metrics*\nQuality snapshots"]
+        health_api["/health + /recognition/health\nSubsystem probes"]
+        background_tasks["FastAPI BackgroundTasks\nchunked scans"]
     end
 
-    subgraph data_plane["Persistence & Models"]
-        postgres["PostgreSQL + pgvector\n(identities, clusters, centroids)"]
-        model_weights["InsightFace weights\n(local cache)"]
+    subgraph data_plane["Data & Models"]
+        postgres["PostgreSQL + pgvector\nmultitenant (app.current_tenant)"]
+        model_weights["InsightFace weights/cache\nFaceAnalysis model files"]
+        thumbnails["Thumbnail storage\nmounted static path"]
     end
 
-    wp_plugin -->|REST/JSON| api_router
-    api_router --> clustering_service
-    api_router --> scan_service
-    clustering_service --> postgres
-    scan_service --> postgres
-    scan_service --> model_weights
+    wp_plugin -->|Tenant-scoped REST calls\nanalyze, clusters, suggestions| recognition_api
+    wp_plugin --> metrics_api
+    wp_plugin --> health_api
+
+    recognition_api -->|creates jobs + writes embeddings| postgres
+    recognition_api -->|invokes| background_tasks
+    background_tasks -->|IdentityScanService + FaceEmbeddingProvider| model_weights
+    background_tasks -->|MediaIdentity rows + thumbnails| postgres
+    background_tasks --> thumbnails
+
+    recognition_api -->|IdentityClusteringService\n+ suggestion APIs| postgres
+    metrics_api -->|SQL aggregates| postgres
+    thumbnails --> wp_plugin

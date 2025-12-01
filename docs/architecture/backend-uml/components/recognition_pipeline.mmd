@@ -2,52 +2,70 @@
 title: Recognition Pipeline Components
 ---
 flowchart LR
-    subgraph domain["Application Services"]
+    subgraph ingestion["Ingestion"]
+        analyze_endpoint["/recognition/analyze\nchunked BackgroundTasks"]
         scan["IdentityScanService\nscan_identities()"]
-        cluster["IdentityClusteringService\ncluster_identities_incremental()"]
+        embed["FaceEmbeddingProvider\nInsightFace 1024D"]
+        thumb["ThumbnailService\noptional crops"]
+        persist_identity["MediaIdentity + IdentityScanJob\nrows persisted"]
     end
 
-    subgraph clustering["Clustering Components"]
-        chinese_whispers["ChineseWhispersClustering\n(graph-based algorithm)"]
-        cluster_factory["ClusterFactory\n(create_cluster_with_centroid)"]
-        cluster_assigner["ClusterAssigner\n(assign_to_cluster)"]
-        cluster_merger["ClusterMerger\n(merge_similar_clusters)"]
+    subgraph orchestrator["Clustering Orchestration"]
+        cluster["IdentityClusteringService\ncluster_unclustered_identities()"]
+        context_mgr["TenantContextManager\nSET LOCAL app.current_tenant\nrefresh MV"]
+        repo["ClusterRepository\nunclustered ids + centroids\njob records"]
+        rep_matcher["RepresentativeMatcher\ncomplete-link guard + suggestions"]
+        validator["ClusterValidator\nmember/threshold checks"]
+        rep_manager["RepresentativeManager\nstores representative embeddings"]
+        factory["ClusterFactory\ncreates clusters + centroids"]
+        assigner["ClusterAssigner\nwrites IdentityMember"]
+        suggestions["SuggestionService\npending queue + priority"]
+        batch["BatchClusteringProcessor\ncentroid match + graph/HDBSCAN"]
+        jobs["ClusteringJobService\nsync vs async jobs"]
     end
 
-    subgraph adapters["Adapters"]
-        embed_provider["FaceEmbeddingProvider\n(InsightFace wrapper)"]
-        cluster_repo["ClusterRepository\n(DB operations)"]
-        rep_matcher["RepresentativeMatcher\n(similarity search)"]
+    subgraph algorithms["Graph/Density Algorithms"]
+        rep_only["RepresentativeOnlyClustering\ncold-start chunk"]
+        hdbscan["HDBSCANClustering\n<= hdbscan_max_batch_size"]
+        chinese_whispers["ChineseWhispersClustering\nlarge batches"]
     end
 
-    subgraph infra["Infrastructure"]
-        pg["PostgreSQL + pgvector\n(media_identities, identity_clusters)"]
-        settings["ClusteringSettings\n(Pydantic config)"]
+    subgraph persistence["Persistence"]
+        pg["PostgreSQL + pgvector\nidentities, clusters, reps, members,\nsuggestions, jobs, centroids MV"]
     end
 
-    scan --> embed_provider
-    scan --> pg
-    
-    cluster --> chinese_whispers
-    cluster --> cluster_factory
-    cluster --> cluster_assigner
-    cluster --> cluster_repo
+    analyze_endpoint --> scan
+    scan --> embed
+    embed --> scan
+    scan --> thumb
+    scan --> persist_identity
+    persist_identity --> pg
+
+    cluster --> context_mgr
+    cluster --> repo
+    cluster --> factory
     cluster --> rep_matcher
-    
-    cluster_merger --> cluster_repo
-    cluster_repo --> pg
-    
-    rep_matcher -.->|reads| cluster_repo
+    cluster --> batch
+    cluster --> jobs
+    cluster --> suggestions
 
-    settings --> scan
-    settings --> cluster
+    rep_matcher --> validator
+    rep_matcher --> rep_manager
+    rep_matcher --> assigner
+    rep_matcher --> suggestions
 
-    classDef domain fill:#ffffff,stroke:#000000,color:#000000;
-    classDef clustering fill:#fafafa,stroke:#000000,color:#000000;
-    classDef adapters fill:#f5f5f5,stroke:#000000,color:#000000;
-    classDef infra fill:#e0e0e0,stroke:#000000,color:#000000;
+    batch --> assigner
+    batch --> rep_manager
+    batch --> validator
+    batch --> factory
+    batch --> repo
+    batch --> rep_only
+    batch --> hdbscan
+    batch --> chinese_whispers
 
-    class scan,cluster domain;
-    class chinese_whispers,cluster_factory,cluster_assigner,cluster_merger clustering;
-    class embed_provider,cluster_repo,rep_matcher adapters;
-    class pg,settings infra;
+    assigner --> pg
+    rep_manager --> pg
+    repo --> pg
+    suggestions --> pg
+    jobs --> repo
+    context_mgr --> pg

@@ -1,95 +1,125 @@
 classDiagram
-    %% Face Clustering Frontend Components (November 2025)
-    %% Workbench implementation with IdentityClusterList
+%% Workbench identity clustering components (React)
 
-    class IdentityClusterList {
-        <<component>>
-        +render() JSX.Element
-        +identities: DetectedIdentity[]
-        +mediaId: number
-        -clusters: ClusterGroup[]
-    }
+class WorkbenchPage {
+  <<component>>
+  +tabs: scan|batch|confirm
+  +activeJobIds: string[]
+  +clusterMessage: string|null
+}
 
-    class IdentityClusterItem {
-        <<component>>
-        +render() JSX.Element
-        +cluster: ClusterGroup
-        -isEditing: boolean
-        -labelInput: string
-        -error: string|null
-        -lastMerge: MergeClusterResponse|null
-        +handleMerge(targetLabel: string)
-        +handleSplit()
-        +handleUpdateLabel()
-    }
+class IdentityClusterList {
+  <<component>>
+  +mediaItems: DetectedIdentity[]
+  +onMergeUndo()
+  +onLabelUpdate()
+}
 
-    class Combobox {
-        <<component>>
-        +render() JSX.Element
-        +value: string
-        +onChange(value: string)
-        +options: ComboboxOption[]
-        +onSearch(term: string)
-        +renderOption?(option: ComboboxOption) JSX.Element
-        +isLoading: boolean
-    }
+class IdentityClusterItem {
+  <<component>>
+  +cluster: ClusterGroup
+  +onMerge(label)
+  +onSplit()
+  +onReassign(identityId, targetClusterId?)
+  +onLabelChange(label)
+}
 
-    class recognitionApi {
-        <<module>>
-        +fetchClusterLabels()
-        +fetchIdentitySuggestions(identityId: string, topK: number)
-        +mergeCluster(clusterId: string, targetLabel: string)
-        +revertMergeCluster(clusterId: string, targetId: string)
-        +updateClusterLabel(clusterId: string, label: string)
-        +reassignClusterIdentity(identityId: string, targetClusterId: string)
-        +splitCluster(clusterId: string)
-    }
+class ClusterActions {
+  <<hook>>
+  +mergeCluster()
+  +revertMerge()
+  +splitCluster()
+  +reassignIdentity()
+}
 
-    class ClusterGroup {
-        <<type>>
-        +key: string
-        +clusterId: string|null
-        +label: string|null
-        +isAutoLabel: boolean
-        +members: DetectedIdentity[]
-    }
+class ClusterEditForm {
+  <<component>>
+  +labelInput: string
+  +existingLabels: string[]
+  +onSubmit(label)
+}
 
-    class DetectedIdentity {
-        <<type>>
-        +id: string
-        +media_id: number
-        +cluster_id: string|null
-        +cluster_label: string|null
-        +is_auto_label: boolean
-        +bbox: BBox
-        +confidence: number
-        +similarity: number|null
-        +thumbnail_url: string|null
-    }
+class SuggestionReviewPanel {
+  <<component>>
+  +suggestions: PendingSuggestion[]
+  +onAccept(id)
+  +onReject(id)
+}
 
-    class ClusterSuggestion {
-        <<type>>
-        +cluster_id: string
-        +label: string
-        +similarity: number
-        +identity_count: number
-    }
+class InlineSuggestionPrompt {
+  <<component>>
+  +options: ComboboxOption[]
+  +onSelect(clusterId)
+}
 
-    class ComboboxOption {
-        <<type>>
-        +value: string
-        +label: string
-        +group: string
-        +similarity: number
-        +identityCount: number
-    }
+class DebugMetricsPanel {
+  <<component>>
+  +debugMetrics: DebugMetrics
+}
 
-    IdentityClusterList --> IdentityClusterItem : renders
-    IdentityClusterItem --> Combobox : renders
-    IdentityClusterItem --> recognitionApi : calls
-    
-    IdentityClusterList ..> ClusterGroup : uses
-    ClusterGroup --> DetectedIdentity : contains
-    IdentityClusterItem ..> ClusterSuggestion : uses via Combobox
-    Combobox ..> ComboboxOption : uses
+class MergeUndoBanner {
+  <<component>>
+  +lastMerge: MergeClusterResponse
+  +onUndo()
+}
 
+class TrainingStageBanner {
+  <<component>>
+  +stage: TrainingStageResponse
+}
+
+class ClusterGroup {
+  <<type>>
+  +clusterId: string|null
+  +label: string|null
+  +isAutoLabel: boolean
+  +members: DetectedIdentity[]
+}
+
+class ComboboxOption {
+  <<type>>
+  +value: string
+  +label: string
+  +group: string
+  +similarity: number
+  +identityCount: number
+}
+
+class Hooks {
+  <<React Query>>
+  +useClusterSuggestions(identityId)
+  +useClusterMutations()
+  +useClusterEditState()
+  +useRecognitionClusters()
+  +useRecognitionCluster()
+}
+
+class RecognitionApi {
+  <<module>>
+  +listRecognitionClusters()
+  +fetchIdentitySuggestions(identityId, topK)
+  +updateClusterLabel()
+  +mergeCluster()
+  +revertMergeCluster()
+  +splitCluster()
+  +reassignClusterIdentity()
+  +acceptSuggestion()
+  +rejectSuggestion()
+}
+
+WorkbenchPage --> IdentityClusterList
+WorkbenchPage --> SuggestionReviewPanel
+WorkbenchPage --> TrainingStageBanner
+WorkbenchPage --> MergeUndoBanner
+IdentityClusterList --> IdentityClusterItem
+IdentityClusterItem --> ClusterActions
+IdentityClusterItem --> ClusterEditForm
+IdentityClusterItem --> InlineSuggestionPrompt
+IdentityClusterItem --> DebugMetricsPanel
+ClusterActions --> RecognitionApi
+ClusterEditForm --> Hooks : existingLabels
+InlineSuggestionPrompt --> Hooks : useClusterSuggestions
+MergeUndoBanner --> ClusterActions
+SuggestionReviewPanel --> RecognitionApi
+SuggestionReviewPanel --> Hooks : invalidate queries
+Hooks --> RecognitionApi

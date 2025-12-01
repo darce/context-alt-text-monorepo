@@ -1,161 +1,89 @@
 classDiagram
-    class ContextAltText {
-        <<Plugin Bootstrap>>
-        +init(): void
-        +registerAssets(): void
-        +registerRestControllers(): void
-        +registerMenus(): void
-    }
+%% Admin SPA modules (React + WP REST config)
 
-    class Menu {
-        <<Admin Menu>>
-        +registerDashboard(): void
-        +registerWorkbench(): void
-        +registerRoster(): void
-        +registerAutomation(): void
-        +registerSettings(): void
-        +registerAccountCenter(): void
-    }
+class AltContextAdminConfig {
+  <<window.AltContextAdmin>>
+  +nonce: string
+  +endpoints: map
+  +tenant_id?: string
+  +devMode?: boolean | string | number
+}
 
-    class Admin {
-        +bootstrap(): void
-        +enqueue_script(hookSuffix): void
-        +force_module_type(tag, handle, src): string
-        +get_config(): array
-        +get_data(): array
-        -scanner: MissingAltTextScanner
-        -metrics: DashboardMetricsService
-        -featureFlags: FeatureFlags
-        -mediaResolver: WorkbenchMediaResolver
-        -rosterService: RosterDomainService
-        -rosterScheduler: RosterSyncScheduler
-        -settingsRepository: SettingsRepository
-        -rosterObservations: RosterObservationManager
-    }
+class ApiConfig {
+  +getConfig(): ApiConfig
+  +getEndpoint(primary, ...fallbacks): string
+  +isDevMode(): boolean
+}
 
-    class Frontend {
-        +bootstrap(): void
-        +enqueue_script(screen): void
-        +get_config(): array
-        +get_data(): array
-    }
+class HttpClient {
+  +fetchApi<T>(url, opts): Promise<T>
+  +stripTrailingSlash(url): string
+}
 
-    class API {
-        +init(): void
-    }
+class WorkbenchPage {
+  +tabs: ["scan","batch","confirm"]
+  +useRecognitionJobHistory()
+  +useMediaSelectionState()
+  +useWorkbenchMedia()
+  +useRecognitionHooks()
+}
 
-    class Template {
-        +init(): void
-        +custom_template(templates): array
-        +load_custom_template(template): string
-    }
+class WorkbenchHooks {
+  +useWorkbenchMedia(params)
+  +useMediaSelectionState()
+  +useWorkbenchFilters()
+  +useRecognitionJobHistory()
+}
 
-    class DashboardPage {
-        +render(): void
-        +register_screen(): void
-    }
+class RecognitionHooks {
+  +useScanIdentities()
+  +useScanStatus()
+  +useMultiScanStatus()
+  +useClusterIdentities()
+  +useRecognitionClusters()
+  +useRecognitionCluster()
+  +useTrainingStage()
+}
 
-    class AltTextWorkbenchPage {
-        +render(): void
-        +register_screen(): void
-    }
+class ClusterEditingHooks {
+  +useClusterEditState()
+  +useClusterMutations()
+  +useClusterSuggestions()
+}
 
-    class RosterPage {
-        +render(): void
-        +register_screen(): void
-        +render_observations_panel(): string
-    }
+class WorkbenchComponents {
+  +MediaSelection
+  +TrainingStageBanner
+  +BatchPanel
+  +ConfirmPanel
+  +IdentityClusterList
+  +SuggestionReviewPanel
+  +MergeUndoBanner
+}
 
-    class AutomationQueuePage {
-        +render(): void
-        +register_screen(): void
-    }
+class RosterPage {
+  +tabs: ["entries","clusters"]
+  +useRosterEntries()
+  +useRecognitionClusters()
+  +useRecognitionCluster()
+}
 
-    class PluginSettingsPage {
-        +render(): void
-        +register_settings(): void
-    }
+class RosterComponents {
+  +ClusterGrid
+  +ClusterDrawerPanel
+  +useClusterMediaMap()
+  +useClusterDragDrop()
+  +useClusterActions()
+}
 
-    class AccountCenterPage {
-        +render(): void
-    }
-
-    class DashboardMetricsService {
-        +getHeroStatus(): array
-        +getCoverageCard(): array
-        +getLatestActivityCard(): array
-        +getRecognitionInsightsCard(): array
-        +getAutomationPipelineCard(): array
-    }
-
-    class MissingAltTextScanner {
-        +get_summary(): array
-        +prime_counts(): void
-    }
-
-    class WorkbenchMediaResolver {
-        +fetch(filters): array
-    }
-
-    class RosterSyncScheduler {
-        +registerHooks(): void
-        +schedule(): void
-    }
-
-    class RosterObservationManager {
-        +autoAssignPending(entries): array
-        +resolveObservationWithRoster(resolution, entry): array
-        +retryPendingForEntries(entries): void
-    }
-
-    class RosterDomainService {
-        +syncFromRemote(): bool
-        +getLocalRoster(filters): array
-        +resolveObservation(observation, entry): array
-    }
-
-    class FeatureFlags {
-        +abilitiesEnabled(): bool
-        +rosterUiEnabled(): bool
-        +workbenchEnabled(): bool
-        +workbenchRecognitionEnabled(): bool
-    }
-
-    class SettingsRepository {
-        +getAll(): array
-        +getRecognitionSettings(): array
-        +persistRecognitionSettings(data): bool
-    }
-
-    ContextAltText --> Menu : bootstraps
-    ContextAltText --> Admin : bootstraps
-    ContextAltText --> API : initializes
-    ContextAltText --> Template : registers
-    ContextAltText --> Frontend : bootstraps FE hooks
-
-    Menu --> DashboardPage : registers
-    Menu --> AltTextWorkbenchPage : registers
-    Menu --> RosterPage : registers
-    Menu --> AutomationQueuePage : registers
-    Menu --> PluginSettingsPage : registers
-    Menu --> AccountCenterPage : registers
-
-    Admin --> DashboardMetricsService : pulls cards
-    Admin --> MissingAltTextScanner : primes counts
-    Admin --> FeatureFlags : reads
-    Admin --> WorkbenchMediaResolver : loads queue
-    Admin --> RosterDomainService : sync + data
-    Admin --> RosterSyncScheduler : ensures cron
-    Admin --> SettingsRepository : loads/persists
-    Admin --> RosterObservationManager : triage queue
-
-    RosterPage --> RosterDomainService : fetches entries
-    RosterPage --> RosterObservationManager : integrates queue
-    RosterPage --> DashboardMetricsService : renders stats
-
-    PluginSettingsPage --> SettingsRepository : persists config
-    AutomationQueuePage --> WorkbenchMediaResolver : reads jobs
-
-    Admin --> Template : reads constants
-    Frontend --> Template : reads constants
-
+AltContextAdminConfig --> ApiConfig : localized
+ApiConfig --> HttpClient : supplies endpoints/nonce
+WorkbenchPage --> WorkbenchHooks
+WorkbenchPage --> RecognitionHooks
+WorkbenchPage --> ClusterEditingHooks
+WorkbenchPage --> WorkbenchComponents
+WorkbenchComponents --> ClusterEditingHooks
+RosterPage --> RosterComponents
+RosterPage --> RecognitionHooks
+RosterComponents --> RecognitionHooks
+RosterComponents --> HttpClient

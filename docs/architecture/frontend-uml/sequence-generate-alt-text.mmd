@@ -1,15 +1,20 @@
 sequenceDiagram
-    participant Admin as WP Admin UI
-    participant Plugin as Context Alt Text (WP)
-    participant Recognition as Recognition API
-    participant LLM as Caption Provider
+    %% Persisted suggestion acceptance flow
+    actor Admin
+    participant UI as SuggestionReviewPanel
+    participant Hooks as useMutation (React Query)
+    participant WPAPI as WP REST /recognition/suggestions
+    participant RecSvc as Recognition Service
+    participant DB as identity_suggestions + clusters
 
-    Admin->>Plugin: Select images missing alt text
-    Plugin->>Recognition: POST /api/v0/analyze-scene (image URL)
-    Recognition-->>Plugin: SceneAnalysisResult
-    Plugin->>LLM: generateCaption(SceneAnalysisResult, policy)
-    LLM-->>Plugin: Caption draft
-    Plugin->>Admin: Display draft alt text + entities
-    Admin->>Plugin: Approve draft
-    Plugin->>Plugin: Persist _wp_attachment_image_alt meta
-    Plugin-->>Admin: Confirmation + activity log entry
+    Admin->>UI: Click "Accept" on suggestion card
+    UI->>Hooks: acceptSuggestion(suggestion_id)
+    Hooks->>WPAPI: POST /recognition/suggestions/{id}/accept
+    WPAPI->>RecSvc: /recognition/suggestions/{id}/accept
+    RecSvc->>DB: set resolution='accepted'; resolved_at=now
+    RecSvc->>RecSvc: assign_identity_to_cluster()
+    RecSvc-->>WPAPI: SuggestionActionResponse
+    WPAPI-->>Hooks: resolution=accepted
+    Hooks->>Hooks: invalidate queries ['recognition-clusters','recognition-suggestions','identity-suggestions']
+    Hooks-->>UI: update list + toast
+    UI-->>Admin: Show updated badge + cluster counts

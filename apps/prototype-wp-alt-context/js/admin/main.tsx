@@ -7,12 +7,12 @@ import './styles/main.scss';
 
 const rootElement = document.getElementById('alt-context-admin-app');
 if (rootElement) {
-	rootElement.removeAttribute('hidden');
+  rootElement.removeAttribute('hidden');
 
-	const root = createRoot(rootElement);
-	root.render(
-		<React.StrictMode>
-			<App />
-		</React.StrictMode>,
-	);
+  const root = createRoot(rootElement);
+  root.render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  );
 }

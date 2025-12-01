@@ -168,11 +168,14 @@ class Admin {
 	}
 
 	private function localize_spa_config( string $handle ): void {
+		$is_dev_mode = wp_get_environment_type() === 'development';
+
 		wp_localize_script(
 			$handle,
 			'AltContextAdmin',
 			array(
 				'nonce'     => wp_create_nonce( 'wp_rest' ),
+				'devMode'   => $is_dev_mode,
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
 					'workbenchRecognitionAnalyze'    => rest_url( 'acx/v1/workbench/recognition/analyze' ),
@@ -183,6 +186,9 @@ class Admin {
 					'workbenchRecognitionReassignIdentity' => rest_url( 'acx/v1/workbench/recognition/clusters/reassign' ),
 					'workbenchRecognitionIdentitySuggestions' => rest_url( 'acx/v1/workbench/recognition/identities' ),
 					'workbenchRecognitionRevertMerge' => rest_url( 'acx/v1/workbench/recognition/clusters/revert-merge' ),
+					'workbenchRecognitionCreateClusterForIdentity' => rest_url( 'acx/v1/workbench/recognition/clusters/create-for-identity' ),
+					'workbenchRecognitionTrainingStage' => rest_url( 'acx/v1/workbench/recognition/training-stage' ),
+					'workbenchRecognitionSuggestions' => rest_url( 'acx/v1/workbench/recognition/suggestions' ),
 					// Legacy keys kept for backward compatibility with older bundles that still use "face" terminology.
 					'workbenchFaceScan'                   => rest_url( 'acx/v1/workbench/recognition/analyze' ),
 					'workbenchFaceClusters'               => rest_url( 'acx/v1/workbench/recognition/clusters' ),

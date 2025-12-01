@@ -10,7 +10,7 @@ const scriptPath = path.join(repoRoot, 'scripts', 'local-wp-cli.sh');
 
 describe('local-wp-cli.sh', () => {
   it('fails when socket metadata is missing', () => {
-    const env = {
+    const env: NodeJS.ProcessEnv = {
       ...process.env,
       LOCALWP_SITE_PATH: '/tmp/site',
       ALT_CONTEXT_WP_CLI_DRY_RUN: '1',

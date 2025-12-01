@@ -140,9 +140,7 @@ export const useClusterSuggestions = ({
         queryKey: ['clusters'],
         queryFn: () => listRecognitionClusters({ limit: 500 }),
       });
-      return clusters
-        .filter((c: ClusterSummary) => c.label && !c.is_auto_label)
-        .map((c: ClusterSummary) => c.label);
+      return clusters.filter((c: ClusterSummary) => c.label && !c.is_auto_label).map((c: ClusterSummary) => c.label);
     } catch {
       return [];
     }

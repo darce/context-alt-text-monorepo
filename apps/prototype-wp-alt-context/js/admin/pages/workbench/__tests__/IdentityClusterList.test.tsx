@@ -1,17 +1,23 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { describe, expect, it, vi, beforeEach, type Mock } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
-import { IdentityClusterList } from '../IdentityClusterList';
-import * as api from '../../../api/recognitionApi';
-import type { MediaIdentitiesResponse } from '../../../api/recognitionApi';
+import { IdentityClusterList } from '../identity-clusters';
+import * as api from '../../../api/recognition';
+import type { MediaIdentitiesResponse } from '../../../api/recognition';
 
 // Mock ResizeObserver for Radix UI
 window.ResizeObserver = class ResizeObserver {
-  observe() {}
-  unobserve() {}
-  disconnect() {}
+  observe(): void {
+    return undefined;
+  }
+  unobserve(): void {
+    return undefined;
+  }
+  disconnect(): void {
+    return undefined;
+  }
 };
 
 // Mock PointerCapture for Radix UI
@@ -22,11 +28,11 @@ window.HTMLElement.prototype.releasePointerCapture = vi.fn();
 // Mock scrollIntoView for cmdk
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
-vi.mock('../../../api/recognitionApi', () => ({
+vi.mock('../../../api/recognition', () => ({
   mergeCluster: vi.fn(),
   updateClusterLabel: vi.fn(),
-  fetchClusterLabels: vi.fn().mockResolvedValue([]),
   fetchIdentitySuggestions: vi.fn().mockResolvedValue({ matches: [] }),
+  listRecognitionClusters: vi.fn().mockResolvedValue([]),
   revertMergeCluster: vi.fn(),
   reassignClusterIdentity: vi.fn(),
   splitCluster: vi.fn(),
@@ -55,6 +61,10 @@ const baseIdentity = {
 };
 
 describe('IdentityClusterList', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+  });
+
   it('renders placeholder when no identities exist', () => {
     renderWithClient(<IdentityClusterList identities={[]} mediaId={1} />);
     expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
@@ -134,7 +144,10 @@ describe('IdentityClusterList', () => {
       moved_identity_ids: ['identity-1'],
       target_identity_count: 2,
     });
-    (api.fetchClusterLabels as Mock).mockResolvedValue(['Existing Label']);
+    // Mock existing clusters (new API)
+    (api.listRecognitionClusters as Mock).mockResolvedValue([
+      { id: 'target-cluster', label: 'Existing Label', identity_count: 1 },
+    ]);
 
     // Mock window.confirm
     vi.spyOn(window, 'confirm').mockImplementation(() => true);
@@ -175,7 +188,10 @@ describe('IdentityClusterList', () => {
       target_cluster_id: 'target-cluster',
       target_identity_count: 1,
     });
-    (api.fetchClusterLabels as Mock).mockResolvedValue(['Existing Label']);
+    // Mock existing clusters (new API)
+    (api.listRecognitionClusters as Mock).mockResolvedValue([
+      { id: 'target-cluster', label: 'Existing Label', identity_count: 1 },
+    ]);
     vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
     const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
@@ -263,6 +279,7 @@ describe('IdentityClusterList', () => {
 
     await user.click(screen.getByRole('button', { name: /split cluster/i }));
 
-    await waitFor(() => expect(api.splitCluster).toHaveBeenCalledWith('cluster-1'));
+    // Split always forces 2 clusters to guarantee a split happens
+    await waitFor(() => expect(api.splitCluster).toHaveBeenCalledWith('cluster-1', 2));
   });
 });

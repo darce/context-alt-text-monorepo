@@ -1,0 +1,100 @@
+---
+title: Backend Master Architecture
+---
+flowchart TB
+    %% Styles for WCAG Contrast
+    %% Light backgrounds with dark text for readability
+    classDef external fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
+    classDef api fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
+    classDef service fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
+    classDef core fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef infra fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
+    classDef db fill:#eceff1,stroke:#263238,stroke-width:2px,color:#000
+
+    subgraph External["External Systems"]
+        wp["WordPress Plugin\n(Context Alt Text)"]:::external
+    end
+
+    subgraph Backend["Prototype Description Service"]
+        
+        subgraph API["API Layer"]
+            main["FastAPI App\n(api/main.py)"]:::api
+            rec_router["Recognition Router\n(/recognition)"]:::api
+            metrics_router["Metrics Router\n(/metrics)"]:::api
+            health_router["Health Router\n(/health)"]:::api
+            other_routers["Roster & Scene Routers"]:::api
+        end
+
+        subgraph Application["Application Services"]
+            scan_svc["IdentityScanService"]:::service
+            cluster_svc["IdentityClusteringService"]:::service
+            suggest_svc["SuggestionService"]:::service
+            job_svc["ClusteringJobService"]:::service
+        end
+
+        subgraph Domain["Clustering Core"]
+            context["TenantContextManager"]:::core
+            repo["ClusterRepository"]:::core
+            factory["ClusterFactory"]:::core
+            assigner["ClusterAssigner"]:::core
+            validator["ClusterValidator"]:::core
+            matcher["RepresentativeMatcher"]:::core
+            batch["BatchClusteringProcessor"]:::core
+            rep_manager["RepresentativeManager"]:::core
+        end
+
+        subgraph Infra["Infrastructure & Adapters"]
+            embed["FaceEmbeddingProvider\n(InsightFace)"]:::infra
+            thumb["ThumbnailService"]:::infra
+            db_sess["AsyncSession"]:::infra
+        end
+    end
+
+    subgraph Data["Persistence"]
+        pg[("PostgreSQL\n(pgvector)")]:::db
+        fs[("File System\n(Thumbnails)")]:::db
+    end
+
+    %% Connections
+    wp -->|REST| main
+    main --> rec_router
+    main --> metrics_router
+    main --> health_router
+    main --> other_routers
+
+    rec_router --> scan_svc
+    rec_router --> cluster_svc
+    rec_router --> suggest_svc
+
+    %% Scanning Flow
+    scan_svc --> embed
+    scan_svc --> thumb
+    scan_svc --> db_sess
+
+    %% Clustering Flow
+    cluster_svc --> context
+    cluster_svc --> repo
+    cluster_svc --> factory
+    cluster_svc --> assigner
+    cluster_svc --> validator
+    cluster_svc --> batch
+    cluster_svc --> job_svc
+    cluster_svc --> suggest_svc
+
+    %% Core Dependencies
+    batch --> matcher
+    batch --> repo
+    batch --> factory
+    batch --> assigner
+    batch --> validator
+    
+    matcher --> validator
+    matcher --> assigner
+    matcher --> rep_manager
+    
+    %% Infra Dependencies
+    repo --> db_sess
+    context --> db_sess
+    suggest_svc --> db_sess
+    db_sess --> pg
+    thumb --> fs

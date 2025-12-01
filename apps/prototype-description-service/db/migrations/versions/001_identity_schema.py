@@ -22,18 +22,15 @@ TENANT_TABLES = [
     "identity_scan_jobs",
     "identity_cluster_representatives",
     "identity_clustering_jobs",
-    "tenant_clustering_configs",
+    "identity_suggestions",
 ]
 
 
 def upgrade() -> None:
     op.execute("CREATE EXTENSION IF NOT EXISTS vector")
-    op.execute("DROP TABLE IF EXISTS identity_clustering_jobs CASCADE")
-    op.execute("DROP TABLE IF EXISTS identity_scan_jobs CASCADE")
-    op.execute("DROP TABLE IF EXISTS identity_members CASCADE")
-    op.execute("DROP TABLE IF EXISTS identity_clusters CASCADE")
-    op.execute("DROP TABLE IF EXISTS media_identities CASCADE")
-    op.execute("DROP TABLE IF EXISTS tenants CASCADE")
+    # NOTE: DROP statements removed - they were causing data loss when alembic version tracking
+    # got corrupted. Use scripts/reset_dev_db.sh explicitly if you need a clean slate.
+    # The migration is the baseline - if tables already exist, alembic won't re-run this.
 
     op.create_table(
         "tenants",
@@ -58,6 +55,12 @@ def upgrade() -> None:
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "identity_type",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'face'"),
+        ),
         sa.Column("media_id", sa.Integer(), nullable=False),
         sa.Column("media_url", sa.Text(), nullable=False),
         sa.Column("bbox_x", sa.Integer(), nullable=False),
@@ -77,7 +80,11 @@ def upgrade() -> None:
         sa.Column("created_by_user_id", sa.Integer()),
         sa.CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
         sa.CheckConstraint("abs(vector_norm(embedding) - 1.0) < 0.01", name="media_identity_embedding_unit_norm"),
-        sa.UniqueConstraint("tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"),
+        sa.CheckConstraint(
+            "identity_type IN ('face', 'brand', 'pose', 'gait')",
+            name="valid_identity_type",
+        ),
+        sa.UniqueConstraint("tenant_id", "media_id", "identity_type", "bbox_x", "bbox_y", name="unique_media_identity"),
     )
 
     op.create_table(
@@ -88,6 +95,12 @@ def upgrade() -> None:
             sa.dialects.postgresql.UUID(as_uuid=True),
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
             nullable=False,
+        ),
+        sa.Column(
+            "identity_type",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'face'"),
         ),
         sa.Column("label", sa.String(length=255)),
         sa.Column(
@@ -104,6 +117,10 @@ def upgrade() -> None:
             nullable=False,
             server_default=sa.text("'cosine_similarity'"),
         ),
+        # User confirmation tracking for cold-start ground truth
+        sa.Column("user_confirmed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("confirmation_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("confirmation_source", sa.String(length=20)),  # label, merge, assignment, split, reject
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "updated_at",
@@ -112,7 +129,15 @@ def upgrade() -> None:
             onupdate=sa.func.now(),
         ),
         sa.Column("created_by_user_id", sa.Integer()),
-        sa.UniqueConstraint("tenant_id", "label", name="unique_tenant_identity_label"),
+        sa.CheckConstraint(
+            "identity_type IN ('face', 'brand', 'pose', 'gait')",
+            name="cluster_valid_identity_type",
+        ),
+        sa.CheckConstraint(
+            "confirmation_source IS NULL OR confirmation_source IN ('label', 'merge', 'assignment', 'split', 'reject')",
+            name="valid_confirmation_source",
+        ),
+        sa.UniqueConstraint("tenant_id", "identity_type", "label", name="unique_tenant_identity_label"),
     )
 
     op.create_table(
@@ -239,76 +264,71 @@ def upgrade() -> None:
         sa.Column("created_by_user_id", sa.Integer()),
     )
 
-    # Tenant-specific clustering configuration (1:1 with tenants)
+    # Identity suggestions for borderline cluster matches (0.55-0.68 avg_member similarity)
+    # These are surfaced to users for confirmation rather than being silently rejected.
     op.create_table(
-        "tenant_clustering_configs",
+        "identity_suggestions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column(
             "tenant_id",
             sa.dialects.postgresql.UUID(as_uuid=True),
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
-            primary_key=True,
+            nullable=False,
         ),
-        # === Core Thresholds ===
-        sa.Column("similarity_threshold", sa.Float(), nullable=False, server_default=sa.text("0.65")),
-        sa.Column("member_validation_threshold", sa.Float(), nullable=False, server_default=sa.text("0.68")),
-        sa.Column("cw_threshold", sa.Float(), nullable=False, server_default=sa.text("0.75")),
-        # === Confidence Weighting (Option C) ===
-        sa.Column("confidence_weighting_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("confidence_midpoint", sa.Float(), nullable=False, server_default=sa.text("0.85")),
-        sa.Column("threshold_max_adjustment", sa.Float(), nullable=False, server_default=sa.text("0.10")),
-        sa.Column("min_bbox_area", sa.Integer(), nullable=False, server_default=sa.text("10000")),
-        # === Algorithm Selection ===
-        sa.Column("use_hdbscan_for_outliers", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("hdbscan_min_cluster_size", sa.Integer(), nullable=False, server_default=sa.text("2")),
-        sa.Column("hdbscan_min_samples", sa.Integer(), nullable=False, server_default=sa.text("1")),
-        sa.Column("two_pass_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("pass1_threshold", sa.Float(), nullable=False, server_default=sa.text("0.75")),
-        sa.Column("pass2_merge_threshold", sa.Float(), nullable=False, server_default=sa.text("0.65")),
-        # === Auto-Tuning ===
-        sa.Column("auto_tune_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("threshold_min", sa.Float(), nullable=False, server_default=sa.text("0.50")),
-        sa.Column("threshold_max", sa.Float(), nullable=False, server_default=sa.text("0.80")),
-        sa.Column("auto_tune_target_acceptance", sa.Float(), nullable=False, server_default=sa.text("0.70")),
-        # === Session Inference ===
-        sa.Column("session_boost_enabled", sa.Boolean(), nullable=False, server_default=sa.text("false")),
-        sa.Column("session_similarity_threshold", sa.Float(), nullable=False, server_default=sa.text("0.85")),
-        sa.Column("session_boost_amount", sa.Float(), nullable=False, server_default=sa.text("0.05")),
-        # === Metadata ===
+        sa.Column(
+            "identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "suggested_cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        # Similarity scores
+        sa.Column("representative_similarity", sa.Float(), nullable=False),
+        sa.Column("avg_member_similarity", sa.Float(), nullable=False),
+        sa.Column("confidence_score", sa.Float(), nullable=False),
+        # Priority level: 1=CRITICAL (cold start), 2=HIGH, 3=NORMAL, 4=LOW
+        sa.Column("priority", sa.Integer(), nullable=False, server_default=sa.text("3")),
+        # Timestamps
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
-        sa.Column("updated_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
-        # === Constraints ===
+        sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        # Resolution status: 'pending', 'accepted', 'rejected', 'expired'
+        sa.Column(
+            "resolution",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'pending'"),
+        ),
+        # Constraints
         sa.CheckConstraint(
-            "similarity_threshold >= 0 AND similarity_threshold <= 1", name="similarity_threshold_range"
+            "representative_similarity >= 0 AND representative_similarity <= 1",
+            name="representative_similarity_range",
         ),
         sa.CheckConstraint(
-            "member_validation_threshold >= 0 AND member_validation_threshold <= 1",
-            name="member_validation_threshold_range",
-        ),
-        sa.CheckConstraint("cw_threshold >= 0 AND cw_threshold <= 1", name="cw_threshold_range"),
-        sa.CheckConstraint("confidence_midpoint >= 0 AND confidence_midpoint <= 1", name="confidence_midpoint_range"),
-        sa.CheckConstraint(
-            "threshold_max_adjustment >= 0 AND threshold_max_adjustment <= 0.5", name="threshold_max_adjustment_range"
-        ),
-        sa.CheckConstraint("min_bbox_area >= 0", name="min_bbox_area_positive"),
-        sa.CheckConstraint("hdbscan_min_cluster_size >= 2", name="hdbscan_min_cluster_size_valid"),
-        sa.CheckConstraint("hdbscan_min_samples >= 1", name="hdbscan_min_samples_valid"),
-        sa.CheckConstraint("pass1_threshold >= 0 AND pass1_threshold <= 1", name="pass1_threshold_range"),
-        sa.CheckConstraint(
-            "pass2_merge_threshold >= 0 AND pass2_merge_threshold <= 1", name="pass2_merge_threshold_range"
-        ),
-        sa.CheckConstraint("threshold_min >= 0 AND threshold_min <= 1", name="threshold_min_range"),
-        sa.CheckConstraint("threshold_max >= 0 AND threshold_max <= 1", name="threshold_max_range"),
-        sa.CheckConstraint("threshold_min <= threshold_max", name="threshold_min_max_order"),
-        sa.CheckConstraint(
-            "auto_tune_target_acceptance >= 0 AND auto_tune_target_acceptance <= 1",
-            name="auto_tune_target_acceptance_range",
+            "avg_member_similarity >= 0 AND avg_member_similarity <= 1",
+            name="avg_member_similarity_range",
         ),
         sa.CheckConstraint(
-            "session_similarity_threshold >= 0 AND session_similarity_threshold <= 1",
-            name="session_similarity_threshold_range",
+            "confidence_score >= 0 AND confidence_score <= 1",
+            name="confidence_score_range",
         ),
         sa.CheckConstraint(
-            "session_boost_amount >= 0 AND session_boost_amount <= 0.5", name="session_boost_amount_range"
+            "priority >= 1 AND priority <= 4",
+            name="valid_priority",
+        ),
+        sa.CheckConstraint(
+            "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
+            name="valid_resolution",
+        ),
+        # Prevent duplicate pending suggestions for same identity/cluster pair
+        sa.UniqueConstraint(
+            "identity_id",
+            "suggested_cluster_id",
+            name="unique_identity_suggestion",
         ),
     )
 
@@ -318,6 +338,11 @@ def upgrade() -> None:
         ["tenant_id"],
     )
     op.create_index(
+        "idx_media_identities_tenant_type",
+        "media_identities",
+        ["tenant_id", "identity_type"],
+    )
+    op.create_index(
         "idx_media_identities_embedding",
         "media_identities",
         ["embedding"],
@@ -325,6 +350,11 @@ def upgrade() -> None:
         postgresql_ops={"embedding": "vector_cosine_ops"},
     )
     op.create_index("idx_identity_clusters_tenant", "identity_clusters", ["tenant_id"])
+    op.create_index(
+        "idx_identity_clusters_tenant_type",
+        "identity_clusters",
+        ["tenant_id", "identity_type"],
+    )
     op.create_index(
         "idx_identity_clusters_roster",
         "identity_clusters",
@@ -393,6 +423,33 @@ def upgrade() -> None:
         "idx_cluster_reps_diversity",
         "identity_cluster_representatives",
         ["cluster_id", "diversity_score"],
+    )
+    op.create_index(
+        "idx_identity_suggestions_tenant",
+        "identity_suggestions",
+        ["tenant_id"],
+    )
+    op.create_index(
+        "idx_identity_suggestions_identity",
+        "identity_suggestions",
+        ["identity_id"],
+    )
+    op.create_index(
+        "idx_identity_suggestions_cluster",
+        "identity_suggestions",
+        ["suggested_cluster_id"],
+    )
+    # Partial index for pending suggestions ordered by priority then confidence
+    op.create_index(
+        "idx_identity_suggestions_pending",
+        "identity_suggestions",
+        ["tenant_id", "priority", "confidence_score"],
+        postgresql_where=sa.text("resolution = 'pending'"),
+    )
+    op.create_index(
+        "idx_identity_suggestions_tenant_id",
+        "identity_suggestions",
+        ["tenant_id", "id"],
     )
 
     for table in TENANT_TABLES:
@@ -592,8 +649,10 @@ def downgrade() -> None:
     op.drop_index("idx_identity_members_identity", table_name="identity_members")
     op.drop_index("idx_identity_members_cluster", table_name="identity_members")
     op.drop_index("idx_identity_clusters_roster", table_name="identity_clusters")
+    op.drop_index("idx_identity_clusters_tenant_type", table_name="identity_clusters")
     op.drop_index("idx_identity_clusters_tenant", table_name="identity_clusters")
     op.drop_index("idx_media_identities_embedding", table_name="media_identities")
+    op.drop_index("idx_media_identities_tenant_type", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_media", table_name="media_identities")
     op.drop_index("idx_media_identities_tenant_id", table_name="media_identities")
@@ -606,11 +665,16 @@ def downgrade() -> None:
     op.drop_index("idx_cluster_reps_diversity", table_name="identity_cluster_representatives")
     op.drop_index("idx_cluster_reps_cluster", table_name="identity_cluster_representatives")
     op.drop_index("idx_cluster_reps_tenant", table_name="identity_cluster_representatives")
+    op.drop_index("idx_identity_suggestions_tenant_id", table_name="identity_suggestions")
+    op.drop_index("idx_identity_suggestions_pending", table_name="identity_suggestions")
+    op.drop_index("idx_identity_suggestions_cluster", table_name="identity_suggestions")
+    op.drop_index("idx_identity_suggestions_identity", table_name="identity_suggestions")
+    op.drop_index("idx_identity_suggestions_tenant", table_name="identity_suggestions")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
-    op.drop_table("tenant_clustering_configs")
+    op.drop_table("identity_suggestions")
     op.drop_table("identity_scan_jobs")
     op.drop_table("identity_cluster_representatives")
     op.drop_table("identity_clustering_jobs")

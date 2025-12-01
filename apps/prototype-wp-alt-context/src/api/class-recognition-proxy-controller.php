@@ -96,6 +96,11 @@ class RecognitionProxyController {
 						'items'       => array( 'type' => 'integer' ),
 						'description' => 'Attachment IDs to fetch detected identities for (max 100).',
 					),
+					'include_debug' => array(
+						'type'        => 'string',
+						'required'    => false,
+						'description' => 'Include debug metrics (pose, age, gender, etc.) in response.',
+					),
 				),
 			)
 		);
@@ -116,6 +121,16 @@ class RecognitionProxyController {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'list_cluster_labels' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/training-stage',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_training_stage' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
@@ -162,6 +177,16 @@ class RecognitionProxyController {
 
 		register_rest_route(
 			'acx/v1',
+			'/workbench/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/split',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'split_cluster' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/workbench/recognition/identities/(?P<identity_id>[a-f0-9-]+)/suggestions',
 			array(
 				'methods'             => 'GET',
@@ -176,6 +201,59 @@ class RecognitionProxyController {
 			array(
 				'methods'             => 'POST',
 				'callback'            => array( $this, 'revert_merge_cluster' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/clusters/create-for-identity',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'create_cluster_for_identity' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		// Pending suggestions (persisted during clustering)
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/suggestions',
+			array(
+				'methods'             => 'GET',
+				'callback'            => array( $this, 'get_pending_suggestions' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+				'args'                => array(
+					'limit'  => array(
+						'type'        => 'integer',
+						'default'     => 10,
+						'description' => 'Maximum number of suggestions to return.',
+					),
+					'offset' => array(
+						'type'        => 'integer',
+						'default'     => 0,
+						'description' => 'Number of suggestions to skip.',
+					),
+				),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/suggestions/(?P<suggestion_id>[a-f0-9-]+)/accept',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'accept_suggestion' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/suggestions/(?P<suggestion_id>[a-f0-9-]+)/reject',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'reject_suggestion' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
@@ -223,12 +301,12 @@ class RecognitionProxyController {
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$payload = array(
-			'tenant_id'            => $this->get_tenant_id(),
-			'similarity_threshold' => (float) ( $request->get_param( 'similarity_threshold' ) ?? 0.6 ),
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
 		);
 
-		return $this->proxy_request( 'POST', '/recognition/cluster', $payload );
+		// Use the hybrid clustering endpoint which runs Chinese Whispers for unmatched identities
+		return $this->proxy_request( 'POST', '/recognition/clustering/jobs', array(), $query );
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -247,6 +325,14 @@ class RecognitionProxyController {
 		);
 
 		return $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
+	}
+
+	public function get_training_stage( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+		);
+
+		return $this->proxy_request( 'GET', '/recognition/training-stage', array(), $query );
 	}
 
 	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -285,6 +371,12 @@ class RecognitionProxyController {
 			'tenant_id' => $this->get_tenant_id(),
 			'media_ids' => $ids,
 		);
+
+		// Forward include_debug param for development environments
+		$include_debug = $request->get_param( 'include_debug' );
+		if ( $include_debug ) {
+			$query['include_debug'] = 'true';
+		}
 
 		return $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query );
 	}
@@ -346,6 +438,23 @@ class RecognitionProxyController {
 		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/merge', $source_id ), $payload );
 	}
 
+	public function split_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		$n_clusters = absint( $request->get_param( 'n_clusters' ) ?? 0 );
+
+		$payload = array(
+			'tenant_id'  => $this->get_tenant_id(),
+			'n_clusters' => $n_clusters,
+		);
+
+		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/split', $cluster_id ), $payload );
+	}
+
 	public function get_identity_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
 
@@ -396,6 +505,99 @@ class RecognitionProxyController {
 		);
 
 		return $this->proxy_request( 'POST', '/recognition/clusters/revert-merge', $payload );
+	}
+
+	public function create_cluster_for_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
+		$label       = sanitize_text_field( (string) $request->get_param( 'label' ) );
+
+		if ( '' === $identity_id ) {
+			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $label ) {
+			return new WP_Error( 'missing_label', 'Label is required.', array( 'status' => 400 ) );
+		}
+
+		$payload = array(
+			'tenant_id'   => $this->get_tenant_id(),
+			'identity_id' => $identity_id,
+			'label'       => $label,
+			'user_id'     => get_current_user_id(),
+		);
+
+		return $this->proxy_request( 'POST', '/recognition/clusters/create-for-identity', $payload );
+	}
+
+	/**
+	 * Get pending suggestions created during clustering.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error Response or error.
+	 */
+	public function get_pending_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+			'limit'     => absint( $request->get_param( 'limit' ) ?? 10 ),
+			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
+		);
+
+		return $this->proxy_request(
+			'GET',
+			'/recognition/suggestions',
+			array(),
+			$query
+		);
+	}
+
+	/**
+	 * Accept a suggestion - assign identity to suggested cluster.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error Response or error.
+	 */
+	public function accept_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
+
+		if ( '' === $suggestion_id ) {
+			return new WP_Error( 'missing_suggestion_id', 'Suggestion ID is required.', array( 'status' => 400 ) );
+		}
+
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+		);
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/suggestions/%s/accept', $suggestion_id ),
+			array(),
+			$query
+		);
+	}
+
+	/**
+	 * Reject a suggestion - identity stays where it is.
+	 *
+	 * @param WP_REST_Request $request Request object.
+	 * @return WP_REST_Response|WP_Error Response or error.
+	 */
+	public function reject_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
+
+		if ( '' === $suggestion_id ) {
+			return new WP_Error( 'missing_suggestion_id', 'Suggestion ID is required.', array( 'status' => 400 ) );
+		}
+
+		$query = array(
+			'tenant_id' => $this->get_tenant_id(),
+		);
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/suggestions/%s/reject', $suggestion_id ),
+			array(),
+			$query
+		);
 	}
 
 	private function build_media_items( array $media_ids ): array {

@@ -36,6 +36,11 @@ vi.mock('../../../hooks/useRecognitionHooks', () => ({
   useScanStatus: vi.fn(),
   useClusterIdentities: vi.fn(),
   useMultiScanStatus: vi.fn(),
+  useTrainingStage: vi.fn(() => ({
+    data: null,
+    isLoading: false,
+    isError: false,
+  })),
 }));
 
 type ScanOutcome = 'success' | 'error';
@@ -58,32 +63,49 @@ describe('WorkbenchPage', () => {
   const clearHistory = vi.fn();
   const prefetchIdentities = vi.fn();
 
-  const mockUseWorkbenchMedia = useWorkbenchMedia as unknown as vi.MockedFunction<typeof useWorkbenchMedia>;
-  const mockUseMediaSelectionState = useMediaSelectionState as unknown as vi.MockedFunction<
-    typeof useMediaSelectionState
-  >;
-  const mockUseRecognitionJobHistory = useRecognitionJobHistory as unknown as vi.MockedFunction<
-    typeof useRecognitionJobHistory
-  >;
-  const mockUseWorkbenchFilters = useWorkbenchFilters as unknown as vi.MockedFunction<typeof useWorkbenchFilters>;
-  const mockUseScanIdentities = useScanIdentities as unknown as vi.MockedFunction<typeof useScanIdentities>;
-  const mockUseScanStatus = useScanStatus as unknown as vi.MockedFunction<typeof useScanStatus>;
-  const mockUseClusterIdentities = useClusterIdentities as unknown as vi.MockedFunction<typeof useClusterIdentities>;
-  const mockUseMultiScanStatus = useMultiScanStatus as unknown as vi.MockedFunction<typeof useMultiScanStatus>;
+  const mockUseWorkbenchMedia = vi.mocked(useWorkbenchMedia);
+  const mockUseMediaSelectionState = vi.mocked(useMediaSelectionState);
+  const mockUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
+  const mockUseWorkbenchFilters = vi.mocked(useWorkbenchFilters);
+  const mockUseScanIdentities = vi.mocked(useScanIdentities);
+  const mockUseScanStatus = vi.mocked(useScanStatus);
+  const mockUseClusterIdentities = vi.mocked(useClusterIdentities);
+  const mockUseMultiScanStatus = vi.mocked(useMultiScanStatus);
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
       return {
         mutate: (mediaIds: number[]) => {
-          options?.onMutate?.();
+          // React Query 5.90+ callbacks have additional context arguments
+          const mockContext = {} as never;
+          options?.onMutate?.(mediaIds, mockContext);
           if (outcome === 'success') {
-            options?.onSuccess?.({ job_id: 'job-123', status: 'queued', total_media: mediaIds.length });
+            options?.onSuccess?.(
+              { job_id: 'job-123', status: 'queued', total_media: mediaIds.length },
+              mediaIds,
+              undefined,
+              mockContext,
+            );
           } else {
-            options?.onError?.(new Error('Scan failed'));
+            options?.onError?.(new Error('Scan failed'), mediaIds, undefined, mockContext);
           }
         },
+        mutateAsync: vi.fn(),
         isPending: false,
-      };
+        isIdle: true,
+        isSuccess: false,
+        isError: false,
+        reset: vi.fn(),
+        status: 'idle',
+        data: undefined,
+        error: null,
+        variables: undefined,
+        context: undefined,
+        failureCount: 0,
+        failureReason: null,
+        submittedAt: 0,
+        isPaused: false,
+      } as unknown as ReturnType<typeof useScanIdentities>;
     });
   };
 
@@ -114,7 +136,7 @@ describe('WorkbenchPage', () => {
         isError: false,
         refetch: prefetchIdentities,
       },
-    } as any);
+    } as unknown as ReturnType<typeof useWorkbenchMedia>);
 
     mockUseMediaSelectionState.mockReturnValue({
       selection: { '11': true },
@@ -143,17 +165,23 @@ describe('WorkbenchPage', () => {
     });
 
     mockUseScanStatus.mockReturnValue({
-      data: { status: 'pending' },
+      data: {
+        job_id: 'job-initial',
+        status: 'pending',
+        total_media: 1,
+        processed_media: 0,
+        identities_detected: 0,
+      },
       isFetching: false,
       refetch: vi.fn(),
-    } as any);
+    } as unknown as ReturnType<typeof useScanStatus>);
 
     mockUseMultiScanStatus.mockReturnValue([]);
 
     mockUseClusterIdentities.mockReturnValue({
       mutate: vi.fn(),
       isPending: false,
-    } as any);
+    } as unknown as ReturnType<typeof useClusterIdentities>);
   });
 
   it('surfaces scan errors in the UI', async () => {
@@ -181,10 +209,16 @@ describe('WorkbenchPage', () => {
   it('refreshes identities automatically when a job completes', () => {
     setupScanMutation('success');
     mockUseScanStatus.mockReturnValue({
-      data: { status: 'completed' },
+      data: {
+        job_id: 'job-initial',
+        status: 'completed',
+        total_media: 1,
+        processed_media: 1,
+        identities_detected: 1,
+      },
       isFetching: false,
       refetch: vi.fn(),
-    } as any);
+    } as unknown as ReturnType<typeof useScanStatus>);
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');

@@ -3,11 +3,12 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
-import { IdentityClusterList } from './IdentityClusterList';
+import { IdentityClusterList } from './identity-clusters';
 import { mediaEditUrl } from './Panels';
-import type { MediaIdentitiesResponse } from '../../api/recognitionApi';
+import type { MediaIdentitiesResponse } from '../../api/recognition';
+import { Checkbox } from '../../../components/ui/checkbox';
 
-type Props = {
+interface Props {
   items: WorkbenchMediaItem[];
   isLoading: boolean;
   isError: boolean;
@@ -23,7 +24,7 @@ type Props = {
   onPageChange: (page: number) => void;
   areAllPageRowsChecked: boolean;
   identityQuery: UseQueryResult<MediaIdentitiesResponse, Error>;
-};
+}
 
 export const MediaSelection = ({
   items,
@@ -45,8 +46,8 @@ export const MediaSelection = ({
   const identityStatusMessage = identityQuery.isLoading
     ? __('Loading identity data…', 'alt-context')
     : identityQuery.isError
-    ? __('Unable to load identity data.', 'alt-context')
-    : null;
+      ? __('Unable to load identity data.', 'alt-context')
+      : null;
 
   return (
     <>
@@ -63,11 +64,10 @@ export const MediaSelection = ({
           <thead>
             <tr>
               <th scope="col">
-                <input
-                  type="checkbox"
-                  aria-label={__('Select all items on this page', 'alt-context')}
+                <Checkbox
+                  ariaLabel={__('Select all items on this page', 'alt-context')}
                   checked={areAllPageRowsChecked}
-                  onChange={(event) => onToggleAll(event.target.checked)}
+                  onCheckedChange={(checked: boolean) => onToggleAll(checked)}
                   disabled={items.length === 0}
                 />
               </th>
@@ -85,7 +85,7 @@ export const MediaSelection = ({
         <div className="acx-identity-status">
           <span>{identityStatusMessage}</span>
           {identityQuery.isError && (
-            <button type="button" className="acx-identity-status__retry" onClick={() => identityQuery.refetch()}>
+            <button type="button" className="acx-identity-status__retry" onClick={() => void identityQuery.refetch()}>
               {__('Retry', 'alt-context')}
             </button>
           )}
@@ -95,13 +95,13 @@ export const MediaSelection = ({
   );
 };
 
-type MediaSelectionToolbarProps = {
+interface MediaSelectionToolbarProps {
   searchQuery: string;
   onSearchChange: (event: ChangeEvent<HTMLInputElement>) => void;
   statusMessage: string;
   isError: boolean;
   onRetry?: () => void;
-};
+}
 
 const MediaSelectionToolbar = ({
   searchQuery,
@@ -134,11 +134,11 @@ const MediaSelectionToolbar = ({
   </div>
 );
 
-type MediaSelectionPaginationProps = {
+interface MediaSelectionPaginationProps {
   currentPage: number;
   totalPages: number;
   onPageChange: (page: number) => void;
-};
+}
 
 const MediaSelectionPagination = ({ currentPage, totalPages, onPageChange }: MediaSelectionPaginationProps) => (
   <div className="acx-media-selection__pagination" role="navigation" aria-label={__('Media pagination', 'alt-context')}>
@@ -190,11 +190,10 @@ const renderRows = ({
     return (
       <tr key={key}>
         <td>
-          <input
-            type="checkbox"
-            aria-label={sprintf(__('Select media item %s', 'alt-context'), item.title)}
+          <Checkbox
+            ariaLabel={sprintf(__('Select media item %s', 'alt-context'), item.title)}
             checked={selection[key] ?? false}
-            onChange={(event) => onToggleRow(item, event.target.checked)}
+            onCheckedChange={(checked: boolean) => onToggleRow(item, checked)}
           />
         </td>
         <td className="acx-media-selection__thumb-cell">
@@ -213,7 +212,10 @@ const renderRows = ({
         </td>
         <td className="acx-media-selection__details">
           <a href={mediaEditUrl(item.id)} className="acx-media-selection__link">
-            <p className="acx-media-selection__media-title">{item.title}</p>
+            <p className="acx-media-selection__media-title">
+              {item.title}
+              <span className="acx-media-selection__media-id"> (#{item.id})</span>
+            </p>
             <p className="acx-media-selection__media-alt">{item.altText ?? __('No alt text yet', 'alt-context')}</p>
           </a>
           <IdentityClusterList identities={item.identities ?? []} mediaId={item.id} />

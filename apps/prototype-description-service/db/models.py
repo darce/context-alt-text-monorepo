@@ -42,66 +42,9 @@ class Tenant(Base):
     identity_clusters: Mapped[list[IdentityCluster]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
-    clustering_config: Mapped[TenantClusteringConfig | None] = relationship(
-        back_populates="tenant", cascade="all, delete-orphan", uselist=False
+    identity_suggestions: Mapped[list[IdentitySuggestion]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
     )
-
-
-class TenantClusteringConfig(Base):
-    """Per-tenant clustering configuration settings.
-
-    Stores customizable clustering parameters that can be adjusted
-    per-tenant to optimize for their specific data characteristics.
-
-    All fields have sensible defaults matching ClusteringSettings.
-    """
-
-    __tablename__ = "tenant_clustering_configs"
-
-    tenant_id: Mapped[uuid.UUID] = mapped_column(
-        UUID(as_uuid=True),
-        ForeignKey("tenants.id", ondelete="CASCADE"),
-        primary_key=True,
-    )
-
-    # === Core Thresholds ===
-    similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.65"))
-    member_validation_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.68"))
-    cw_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.75"))
-
-    # === Confidence Weighting (Option C) ===
-    confidence_weighting_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    confidence_midpoint: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.85"))
-    threshold_max_adjustment: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.10"))
-    min_bbox_area: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("10000"))
-
-    # === Algorithm Selection ===
-    use_hdbscan_for_outliers: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    hdbscan_min_cluster_size: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("2"))
-    hdbscan_min_samples: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
-    two_pass_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    pass1_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.75"))
-    pass2_merge_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.65"))
-
-    # === Auto-Tuning ===
-    auto_tune_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    threshold_min: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.50"))
-    threshold_max: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.80"))
-    auto_tune_target_acceptance: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.70"))
-
-    # === Session Inference ===
-    session_boost_enabled: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
-    session_similarity_threshold: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.85"))
-    session_boost_amount: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.05"))
-
-    # === Metadata ===
-    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
-    updated_at: Mapped[datetime] = mapped_column(
-        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
-    )
-
-    # Relationship
-    tenant: Mapped[Tenant] = relationship(back_populates="clustering_config")
 
 
 class MediaIdentity(Base):
@@ -163,6 +106,10 @@ class IdentityCluster(Base):
     clustering_algorithm: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default=text("'cosine_similarity'")
     )
+    # User confirmation tracking for cold-start ground truth
+    user_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    confirmation_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    confirmation_source: Mapped[str | None] = mapped_column(String(20))  # label, merge, assignment, split, reject
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -315,12 +262,95 @@ class IdentityClusteringJob(Base):
     )
 
 
+class IdentitySuggestion(Base):
+    """Borderline cluster match suggestions for user confirmation.
+
+    Stores suggestions for matches that fall in the borderline range
+    (0.55-0.68 avg_member_similarity) to surface to users for confirmation,
+    rather than being silently rejected or auto-assigned.
+
+    Priority levels (lower = more urgent):
+    - 1 (CRITICAL): Cold start, first 30 clusters, needs immediate confirmation
+    - 2 (HIGH): High similarity (>0.90) but cluster not yet user-confirmed
+    - 3 (NORMAL): Regular suggestions
+    - 4 (LOW): Borderline matches, low confidence
+
+    Resolution states:
+    - pending: Awaiting user review
+    - accepted: User confirmed the match (identity assigned to cluster)
+    - rejected: User rejected the match
+    - expired: Suggestion invalidated (e.g., cluster deleted, identity reassigned)
+    """
+
+    __tablename__ = "identity_suggestions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
+    )
+    suggested_cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+
+    # Similarity scores
+    representative_similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    avg_member_similarity: Mapped[float] = mapped_column(Float, nullable=False)
+    confidence_score: Mapped[float] = mapped_column(Float, nullable=False)
+
+    # Priority level (1=critical, 2=high, 3=normal, 4=low)
+    priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("3"))
+
+    # Timestamps
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    # Resolution status
+    resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+
+    # Relationships
+    tenant: Mapped[Tenant] = relationship(back_populates="identity_suggestions")
+    identity: Mapped[MediaIdentity] = relationship()
+    suggested_cluster: Mapped[IdentityCluster] = relationship()
+
+    __table_args__ = (
+        CheckConstraint(
+            "representative_similarity >= 0 AND representative_similarity <= 1",
+            name="representative_similarity_range",
+        ),
+        CheckConstraint(
+            "avg_member_similarity >= 0 AND avg_member_similarity <= 1",
+            name="avg_member_similarity_range",
+        ),
+        CheckConstraint(
+            "confidence_score >= 0 AND confidence_score <= 1",
+            name="confidence_score_range",
+        ),
+        CheckConstraint(
+            "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
+            name="valid_resolution",
+        ),
+        UniqueConstraint("identity_id", "suggested_cluster_id", name="unique_identity_suggestion"),
+        Index("idx_identity_suggestions_tenant", "tenant_id"),
+        Index("idx_identity_suggestions_identity", "identity_id"),
+        Index("idx_identity_suggestions_cluster", "suggested_cluster_id"),
+        Index(
+            "idx_identity_suggestions_pending",
+            "tenant_id",
+            "confidence_score",
+            postgresql_where=text("resolution = 'pending'"),
+        ),
+    )
+
+
 __all__ = [
     "Tenant",
-    "TenantClusteringConfig",
     "MediaIdentity",
     "IdentityCluster",
     "ClusterCentroid",
     "IdentityMember",
     "IdentityScanJob",
+    "IdentitySuggestion",
 ]

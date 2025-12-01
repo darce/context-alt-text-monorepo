@@ -1,0 +1,92 @@
+---
+title: Frontend Master Architecture
+---
+flowchart TB
+    %% Styles for WCAG Contrast
+    classDef external fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
+    classDef page fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
+    classDef component fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
+    classDef hook fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
+    classDef api fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
+    classDef type fill:#eceff1,stroke:#263238,stroke-width:2px,color:#000
+
+    subgraph Config["Configuration"]
+        window["window.AltContextAdmin"]:::external
+        api_config["ApiConfig\n(nonce, endpoints)"]:::external
+    end
+
+    subgraph Pages["Admin Pages"]
+        workbench["WorkbenchPage\n(Scan, Batch, Confirm)"]:::page
+        roster["RosterPage\n(Entries, Clusters)"]:::page
+    end
+
+    subgraph WorkbenchUI["Workbench Components"]
+        media_sel["MediaSelection"]:::component
+        scan_panel["ScanActionPanel"]:::component
+        cluster_list["IdentityClusterList"]:::component
+        cluster_item["IdentityClusterItem"]:::component
+        suggestion["SuggestionReviewPanel"]:::component
+        training["TrainingStageBanner"]:::component
+        batch["BatchPanel"]:::component
+        confirm["ConfirmPanel"]:::component
+    end
+
+    subgraph RosterUI["Roster Components"]
+        grid["ClusterGrid"]:::component
+        drawer["ClusterDrawerPanel"]:::component
+    end
+
+    subgraph Hooks["React Hooks"]
+        rec_hooks["useRecognitionHooks\n(scan, cluster, status)"]:::hook
+        job_hooks["useRecognitionJobHistory"]:::hook
+        media_hooks["useWorkbenchMedia"]:::hook
+        filter_hooks["useWorkbenchFilters"]:::hook
+        cluster_hooks["useClusterMutations\n(merge, split, label)"]:::hook
+        roster_hooks["useRosterEntries"]:::hook
+    end
+
+    subgraph API["API Layer"]
+        http["HttpClient"]:::api
+        rec_api["RecognitionApi"]:::api
+        roster_api["RosterApi"]:::api
+        scan_api["ScanApi"]:::api
+    end
+
+    %% Configuration Flow
+    window --> api_config
+    api_config --> http
+
+    %% Page Composition
+    workbench --> media_sel
+    workbench --> scan_panel
+    workbench --> training
+    workbench --> suggestion
+    workbench --> batch
+    workbench --> confirm
+    
+    confirm --> cluster_list
+    cluster_list --> cluster_item
+
+    roster --> grid
+    roster --> drawer
+
+    %% Hook Usage
+    workbench --> rec_hooks
+    workbench --> job_hooks
+    workbench --> media_hooks
+    workbench --> filter_hooks
+    
+    cluster_item --> cluster_hooks
+    suggestion --> cluster_hooks
+    
+    roster --> roster_hooks
+
+    %% API Integration
+    rec_hooks --> rec_api
+    rec_hooks --> scan_api
+    cluster_hooks --> rec_api
+    roster_hooks --> roster_api
+    
+    rec_api --> http
+    roster_api --> http
+    scan_api --> http

@@ -78,6 +78,12 @@
     font-weight: 600;
   }
 
+  &__media-id {
+    font-weight: 400;
+    font-size: 0.85em;
+    color: var(--acx-color-text-muted);
+  }
+
   &__media-alt {
     margin: var(--acx-space-4) 0 0;
     color: var(--acx-color-text-muted);

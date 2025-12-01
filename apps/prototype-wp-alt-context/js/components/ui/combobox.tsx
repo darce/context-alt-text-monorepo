@@ -9,7 +9,7 @@ const Command = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive>
 >(({ className, ...props }, ref) => (
-  <CommandPrimitive ref={ref} className={`acx-combobox__command ${className || ''}`} {...props} />
+  <CommandPrimitive ref={ref} className={`acx-combobox__command ${className ?? ''}`} {...props} />
 ));
 Command.displayName = CommandPrimitive.displayName;
 
@@ -18,7 +18,7 @@ const CommandInput = React.forwardRef<
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Input>
 >(({ className, ...props }, ref) => (
   <div className="acx-combobox__input-wrapper" cmdk-input-wrapper="">
-    <CommandPrimitive.Input ref={ref} className={`acx-combobox__input ${className || ''}`} {...props} />
+    <CommandPrimitive.Input ref={ref} className={`acx-combobox__input ${className ?? ''}`} {...props} />
   </div>
 ));
 CommandInput.displayName = CommandPrimitive.Input.displayName;
@@ -27,7 +27,7 @@ const CommandList = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.List>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.List>
 >(({ className, ...props }, ref) => (
-  <CommandPrimitive.List ref={ref} className={`acx-combobox__list ${className || ''}`} {...props} />
+  <CommandPrimitive.List ref={ref} className={`acx-combobox__list ${className ?? ''}`} {...props} />
 ));
 CommandList.displayName = CommandPrimitive.List.displayName;
 
@@ -41,7 +41,7 @@ const CommandGroup = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Group>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Group>
 >(({ className, ...props }, ref) => (
-  <CommandPrimitive.Group ref={ref} className={`acx-combobox__group ${className || ''}`} {...props} />
+  <CommandPrimitive.Group ref={ref} className={`acx-combobox__group ${className ?? ''}`} {...props} />
 ));
 CommandGroup.displayName = CommandPrimitive.Group.displayName;
 
@@ -49,7 +49,7 @@ const CommandItem = React.forwardRef<
   React.ElementRef<typeof CommandPrimitive.Item>,
   React.ComponentPropsWithoutRef<typeof CommandPrimitive.Item>
 >(({ className, ...props }, ref) => (
-  <CommandPrimitive.Item ref={ref} className={`acx-combobox__item ${className || ''}`} {...props} />
+  <CommandPrimitive.Item ref={ref} className={`acx-combobox__item ${className ?? ''}`} {...props} />
 ));
 CommandItem.displayName = CommandPrimitive.Item.displayName;
 
@@ -59,7 +59,7 @@ export interface ComboboxOption {
   value: string;
   label: string;
   group?: string;
-  [key: string]: any;
+  [key: string]: unknown;
 }
 
 interface ComboboxProps {
@@ -77,9 +77,10 @@ interface ComboboxProps {
   disabled?: boolean;
   isLoading?: boolean;
   renderOption?: (option: ComboboxOption) => React.ReactNode;
+  id?: string;
 }
 
-export function Combobox({
+export const Combobox = ({
   options,
   value,
   onSelect,
@@ -93,9 +94,10 @@ export function Combobox({
   ariaLabel,
   disabled,
   renderOption,
-}: ComboboxProps) {
+  id,
+}: ComboboxProps): React.ReactElement => {
   const [open, setOpen] = React.useState(false);
-  const [inputValue, setInputValue] = React.useState(value || '');
+  const [inputValue, setInputValue] = React.useState(value ?? '');
 
   // Sync internal input value with external value prop if provided
   React.useEffect(() => {
@@ -113,53 +115,91 @@ export function Combobox({
 
   const selectedOption = options.find((option) => option.value === value);
 
-  // Group options
-  const groupedOptions = options.reduce((acc, option) => {
-    const group = option.group || 'Others';
-    if (!acc[group]) acc[group] = [];
-    acc[group].push(option);
-    return acc;
-  }, {} as Record<string, ComboboxOption[]>);
+  // Group options with explicit ordering: "Suggested" first, then "All Labels", then others
+  const groupedOptions = React.useMemo(() => {
+    const groups = options.reduce(
+      (acc, option) => {
+        const group = option.group ?? 'Others';
+        if (!acc[group]) {
+          acc[group] = [];
+        }
+        acc[group].push(option);
+        return acc;
+      },
+      {} as Record<string, ComboboxOption[]>,
+    );
+
+    // Define explicit group order
+    const groupOrder = ['Suggested', 'All Labels', 'Others'];
+    const orderedEntries: [string, ComboboxOption[]][] = [];
+
+    // Add groups in order
+    for (const groupName of groupOrder) {
+      if (groups[groupName]) {
+        orderedEntries.push([groupName, groups[groupName]]);
+      }
+    }
+
+    // Add any other groups not in the predefined order
+    for (const groupName of Object.keys(groups)) {
+      if (!groupOrder.includes(groupName)) {
+        orderedEntries.push([groupName, groups[groupName]]);
+      }
+    }
+
+    return orderedEntries;
+  }, [options]);
+
+  const handleOpenChange = React.useCallback((isOpen: boolean) => {
+    setOpen(isOpen);
+    if (isOpen) {
+      setInputValue('');
+    }
+  }, []);
+
+  const handleSelectOption = React.useCallback(
+    (option: ComboboxOption) => {
+      const nextValue = option.value === value ? '' : option.value;
+      onSelect?.(nextValue);
+      onValueChange?.(option.label);
+      setOpen(false);
+    },
+    [onSelect, onValueChange, value],
+  );
 
   return (
-    <PopoverPrimitive.Root
-      open={open}
-      onOpenChange={(isOpen) => {
-        setOpen(isOpen);
-        if (isOpen) {
-          // Clear the input when opening to allow fresh typing
-          setInputValue('');
-        }
-      }}
-    >
+    <PopoverPrimitive.Root open={open} onOpenChange={handleOpenChange}>
       <PopoverPrimitive.Trigger asChild>
         <button
+          id={id}
           role="combobox"
           aria-expanded={open}
           aria-label={ariaLabel}
           disabled={disabled}
-          className={`acx-combobox__trigger ${className || ''}`}
+          className={`acx-combobox__trigger ${className ?? ''}`}
           data-placeholder={!value}
         >
-          {value || placeholder}
+          {selectedOption?.label ?? value ?? placeholder}
           <ChevronsUpDown className="acx-combobox__icon" />
         </button>
       </PopoverPrimitive.Trigger>
       <PopoverPrimitive.Content className="acx-combobox__content" align="start">
         <Command
           filter={(value, search) => {
-            if (value.toLowerCase().includes(search.toLowerCase())) return 1;
+            if (value.toLowerCase().includes(search.toLowerCase())) {
+              return 1;
+            }
             return 0;
           }}
         >
           <CommandInput
-            placeholder={searchPlaceholder || placeholder}
+            placeholder={searchPlaceholder ?? placeholder}
             value={inputValue}
             onValueChange={handleInputChange}
           />
           <CommandList>
             <CommandEmpty>
-              {emptyMessage || emptyText}
+              {emptyMessage ?? emptyText}
               {onCreate && inputValue && (
                 <div className="acx-combobox__create">
                   <button
@@ -174,18 +214,13 @@ export function Combobox({
                 </div>
               )}
             </CommandEmpty>
-            {Object.entries(groupedOptions).map(([group, groupOptions]) => (
+            {groupedOptions.map(([group, groupOptions]) => (
               <CommandGroup key={group} heading={group}>
                 {groupOptions.map((option) => (
                   <CommandItem
                     key={option.value}
                     value={option.label} // Use label for filtering
-                    onSelect={() => {
-                      const nextValue = option.value === value ? '' : option.value;
-                      if (onSelect) onSelect(nextValue);
-                      if (onValueChange) onValueChange(option.label); // Update text input with label
-                      setOpen(false);
-                    }}
+                    onSelect={() => handleSelectOption(option)}
                     data-selected={value === option.value}
                   >
                     <Check
@@ -201,4 +236,4 @@ export function Combobox({
       </PopoverPrimitive.Content>
     </PopoverPrimitive.Root>
   );
-}
+};

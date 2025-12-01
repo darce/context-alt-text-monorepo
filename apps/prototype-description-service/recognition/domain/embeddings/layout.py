@@ -41,6 +41,28 @@ similarity computation. The metadata fields (512+) are used for:
 
 from __future__ import annotations
 
+from typing_extensions import TypedDict
+
+
+class PoseMetrics(TypedDict):
+    """Pose angles in degrees."""
+
+    pitch: float
+    yaw: float
+    roll: float
+
+
+class DecodedDebugMetrics(TypedDict):
+    """Decoded debug metrics from extended embedding."""
+
+    pose: PoseMetrics
+    age: float
+    gender: str
+    det_score: float
+    bbox_area: int
+    landmark_quality: float
+
+
 # Slice indices - primary face embedding
 FACE_EMBEDDING_START = 0
 FACE_EMBEDDING_END = 512
@@ -94,3 +116,44 @@ def get_pose_slice():
 def get_metadata_slice():
     """Return slice for all metadata (512-1023)."""
     return slice(FACE_EMBEDDING_END, EXTENDED_EMBEDDING_DIM)
+
+
+def decode_debug_metrics(embedding: list[float]) -> DecodedDebugMetrics | None:
+    """Extract debug metrics from a 1024D extended embedding.
+
+    Returns a dictionary with denormalized InsightFace attributes:
+    - pose: {pitch, yaw, roll} in degrees
+    - age: estimated age (0-100)
+    - gender: 'female' or 'male'
+    - det_score: detection confidence [0.0, 1.0]
+    - bbox_area: bounding box area in pixels²
+    - landmark_quality: landmark position std deviation
+
+    If the embedding is only 512D (legacy), returns None.
+    """
+    if len(embedding) < EXTENDED_EMBEDDING_DIM:
+        return None
+
+    # Denormalize values
+    pitch = embedding[POSE_START] * POSE_SCALE
+    yaw = embedding[POSE_START + 1] * POSE_SCALE
+    roll = embedding[POSE_START + 2] * POSE_SCALE
+
+    age = embedding[AGE_IDX] * AGE_SCALE
+    gender_val = embedding[GENDER_IDX]
+    det_score = embedding[DET_SCORE_IDX]
+    bbox_area = embedding[BBOX_AREA_IDX] * BBOX_AREA_SCALE
+    landmark_quality = embedding[LANDMARK_QUALITY_IDX] * LANDMARK_STD_SCALE
+
+    return {
+        "pose": {
+            "pitch": round(pitch, 1),
+            "yaw": round(yaw, 1),
+            "roll": round(roll, 1),
+        },
+        "age": round(age, 1),
+        "gender": "female" if gender_val < 0.5 else "male",
+        "det_score": round(det_score, 3),
+        "bbox_area": round(bbox_area),
+        "landmark_quality": round(landmark_quality, 2),
+    }

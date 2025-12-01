@@ -8,67 +8,68 @@ import {
   revertMergeCluster,
   scanFaces,
   updateClusterLabel,
-} from '../recognitionApi';
+} from '../recognition';
 
 vi.mock('../config', () => ({
   getEndpoint: vi.fn((...keys: string[]) => `https://example.com/${keys[0] ?? 'default'}`),
-  getConfig: vi.fn(() => ({ nonce: 'nonce-123', endpoints: {} })),
+  getConfig: vi.fn(() => ({ nonce: 'nonce-123', endpoints: {}, devMode: false })),
+  isDevMode: vi.fn(() => false),
 }));
 
 vi.mock('../../utils/http', () => ({
   fetchApi: vi.fn(),
+  stripTrailingSlash: (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value),
 }));
 
 describe('recognitionApi', () => {
+  const fetchApiMock = vi.mocked(httpModule.fetchApi);
+
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it('passes media IDs to fetchMediaIdentities', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({ identities_by_media: {} });
+    fetchApiMock.mockResolvedValue({ identities_by_media: {} });
     await fetchMediaIdentities([1, 2]);
-    expect(httpModule.fetchApi).toHaveBeenCalledTimes(1);
-    const url = new URL((httpModule.fetchApi as vi.Mock).mock.calls[0][0]);
+    expect(fetchApiMock).toHaveBeenCalledTimes(1);
+    const [endpoint] = fetchApiMock.mock.calls[0] ?? [];
+    const url = new URL(endpoint);
     expect(url.searchParams.getAll('media_ids[]')).toEqual(['1', '2']);
-    expect(httpModule.fetchApi).toHaveBeenCalledWith(expect.any(String), {
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
       method: 'GET',
       restNonce: 'nonce-123',
     });
   });
 
   it('sends nonce when fetching media identities', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({ identities_by_media: {} });
+    fetchApiMock.mockResolvedValue({ identities_by_media: {} });
     await fetchMediaIdentities([99]);
-    expect(httpModule.fetchApi).toHaveBeenCalledWith(expect.any(String), {
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
       method: 'GET',
       restNonce: 'nonce-123',
     });
   });
 
   it('calls updateClusterLabel with PATCH', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({});
+    fetchApiMock.mockResolvedValue({});
     await updateClusterLabel('cluster-1', 'New Label');
-    expect(httpModule.fetchApi).toHaveBeenCalledWith(expect.stringContaining('/cluster-1'), {
-      method: 'PATCH',
-      body: { label: 'New Label' },
-      restNonce: expect.any(String),
-    });
+    const [, options] = fetchApiMock.mock.calls[0] ?? [];
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.stringContaining('/cluster-1'), expect.any(Object));
+    expect(options).toMatchObject({ method: 'PATCH', body: { label: 'New Label' }, restNonce: 'nonce-123' });
   });
 
   it('calls mergeCluster with POST', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({});
+    fetchApiMock.mockResolvedValue({});
     await mergeCluster('source', 'target');
-    expect(httpModule.fetchApi).toHaveBeenCalledWith(expect.stringContaining('/source/merge'), {
-      method: 'POST',
-      body: { target_label: 'target' },
-      restNonce: expect.any(String),
-    });
+    const [, options] = fetchApiMock.mock.calls[0] ?? [];
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.stringContaining('/source/merge'), expect.any(Object));
+    expect(options).toMatchObject({ method: 'POST', body: { target_label: 'target' }, restNonce: 'nonce-123' });
   });
 
   it('fetches identity suggestions with tenant nonce', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({ matches: [] });
+    fetchApiMock.mockResolvedValue({ matches: [] });
     await fetchIdentitySuggestions('identity-123', 3, 0.7);
-    const call = (httpModule.fetchApi as vi.Mock).mock.calls[0];
+    const call = fetchApiMock.mock.calls[0];
     expect(call[0]).toContain('/identity-123/suggestions');
     expect(call[0]).toContain('top_k=3');
     expect(call[0]).toContain('threshold=0.7');
@@ -76,13 +77,13 @@ describe('recognitionApi', () => {
   });
 
   it('posts revert merge payload', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({});
+    fetchApiMock.mockResolvedValue({});
     await revertMergeCluster({
       targetClusterId: 'target-1',
       movedIdentityIds: ['id-1', 'id-2'],
       sourceLabel: 'Alice',
     });
-    expect(httpModule.fetchApi).toHaveBeenCalledWith(expect.any(String), {
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
       method: 'POST',
       body: {
         target_cluster_id: 'target-1',
@@ -94,7 +95,7 @@ describe('recognitionApi', () => {
   });
 
   it('normalizes job_id from job_ids array', async () => {
-    (httpModule.fetchApi as vi.Mock).mockResolvedValue({
+    fetchApiMock.mockResolvedValue({
       job_id: null,
       job_ids: ['job-1', 'job-2'],
       status: 'queued',

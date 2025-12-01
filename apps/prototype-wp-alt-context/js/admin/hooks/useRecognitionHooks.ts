@@ -1,4 +1,10 @@
-import { useMutation, useQueries, useQuery, type UseMutationOptions } from '@tanstack/react-query';
+import {
+  useMutation,
+  useQueries,
+  useQuery,
+  type UseMutationOptions,
+  type UseQueryOptions,
+} from '@tanstack/react-query';
 
 import {
   clusterFaces,
@@ -11,7 +17,9 @@ import {
   type ClusterResponse,
   type ClusterSummary,
   type ScanStatus,
-} from '../api/recognitionApi';
+} from '../api/recognition';
+import { fetchTrainingStage } from '../api/recognition/identityApi';
+import type { TrainingStageResponse } from '../api/recognition/types';
 
 export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse, Error, number[], unknown>) =>
   useMutation<AnalyzeResponse, Error, number[]>({
@@ -23,20 +31,22 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
   useQuery<ScanStatus>({
     queryKey: ['recognition-status', jobId],
     enabled: Boolean(jobId) && enabled,
-    queryFn: () => fetchScanStatus(jobId as string),
+    queryFn: () => fetchScanStatus(jobId!),
     refetchInterval: (query) =>
       query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
   });
 
 export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
   useQueries({
-    queries: jobIds.map((jobId) => ({
-      queryKey: ['recognition-status', jobId],
-      queryFn: () => fetchScanStatus(jobId),
-      enabled: Boolean(jobId) && enabled,
-      refetchInterval: (query: any) =>
-        query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
-    })),
+    queries: jobIds.map(
+      (jobId): UseQueryOptions<ScanStatus, Error> => ({
+        queryKey: ['recognition-status', jobId],
+        queryFn: () => fetchScanStatus(jobId),
+        enabled: Boolean(jobId) && enabled,
+        refetchInterval: (query) =>
+          query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+      }),
+    ),
   });
 
 export const useClusterIdentities = (options?: UseMutationOptions<ClusterResponse, Error, void, unknown>) =>
@@ -56,6 +66,18 @@ export const useRecognitionCluster = (clusterId: string | null, enabled = true) 
   useQuery<ClusterSummary>({
     queryKey: ['recognition-cluster', clusterId],
     enabled: Boolean(clusterId) && enabled,
-    queryFn: () => getRecognitionCluster(clusterId as string),
+    queryFn: () => getRecognitionCluster(clusterId!),
     staleTime: 30_000,
+  });
+
+/**
+ * Fetch training stage info based on curriculum learning.
+ * Shows current adaptive threshold and progress towards maturity.
+ */
+export const useTrainingStage = () =>
+  useQuery<TrainingStageResponse>({
+    queryKey: ['recognition-training-stage'],
+    queryFn: () => fetchTrainingStage(),
+    staleTime: 60_000, // Cache for 1 minute
+    refetchOnWindowFocus: false,
   });

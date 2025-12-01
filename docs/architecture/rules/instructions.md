@@ -69,6 +69,10 @@ All architectural decisions, contracts, and diagrams land in `docs/architecture`
 
 If a task seems to require external changes, STOP and propose an alternative within plugin boundaries.
 
+### Architecture Tooling Guardrail
+
+- Do not relax or edit compliance/lint scripts (e.g., `scripts/check-architecture-compliance.js`) to silence violations. Fix the offending code or update the documented rules instead.
+
 ### Greenfield Policy
 
 This plugin has no production users. Storage surfaces (database tables, options, caches) are disposable. Prefer clean rewrites over migrations or backward-compatibility shims. Keep tests in lockstep with schema changes.

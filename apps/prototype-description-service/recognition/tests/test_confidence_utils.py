@@ -288,11 +288,14 @@ class TestRepresentativeMatcherConfidenceWeighting:
             threshold_max_adjustment=0.10,
             min_bbox_area=10000,
         )
+        # Set labeled_cluster_count >= maturity_point so we're NOT in early stage
+        # (confidence weighting is disabled during early stage to prevent false positives)
         matcher = RepresentativeMatcher(
             threshold=0.65,
             add_representative_embedding=noop_add_rep,
             assign_to_cluster_by_id=noop_assign,
             settings=settings,
+            labeled_cluster_count=50,  # Past maturity point (30)
         )
 
         # High-quality: det_score=0.98, large face (200x200 = 40000 > 10000)
@@ -319,11 +322,14 @@ class TestRepresentativeMatcherConfidenceWeighting:
             threshold_max_adjustment=0.10,
             min_bbox_area=10000,
         )
+        # Set labeled_cluster_count >= maturity_point so we're NOT in early stage
+        # (confidence weighting is disabled during early stage to prevent false positives)
         matcher = RepresentativeMatcher(
             threshold=0.65,
             add_representative_embedding=noop_add_rep,
             assign_to_cluster_by_id=noop_assign,
             settings=settings,
+            labeled_cluster_count=50,  # Past maturity point (30)
         )
 
         # Low-quality: det_score=0.70, small face (50x50 = 2500 < 10000)

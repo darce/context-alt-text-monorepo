@@ -282,9 +282,11 @@ async def test_suggest_similar_clusters_returns_matches(async_client: AsyncClien
         session.add(identity)
         await session.flush()
 
+        # Use a user-like label (not "cluster-XXX") since the endpoint
+        # filters out auto-generated cluster labels
         cluster = IdentityCluster(
             tenant_id=tenant_uuid,
-            label="cluster-suggest",
+            label="Test Person",
             representative_identity_id=identity.id,
             identity_count=1,
         )
@@ -309,7 +311,7 @@ async def test_suggest_similar_clusters_returns_matches(async_client: AsyncClien
     assert response.status_code == 200
     matches = response.json()["matches"]
     assert matches
-    assert matches[0]["label"] == "cluster-suggest"
+    assert matches[0]["label"] == "Test Person"
 
 
 class StubEmbeddingProvider:
@@ -362,9 +364,9 @@ async def test_end_to_end_scan_to_rename_flow(async_client: AsyncClient):
 
         await set_tenant_context(session, tenant_id)
         clustering_service = IdentityClusteringService(session=session, tenant_id=tenant_id)
-        clusters = await clustering_service.cluster_identities_incremental()
-        assert clusters
-        cluster_id = clusters[0].id
+        result = await clustering_service.cluster_unclustered_identities()
+        assert result["clusters"]
+        cluster_id = result["clusters"][0].id
         await clear_tenant_context(session)
 
     response = await async_client.get(

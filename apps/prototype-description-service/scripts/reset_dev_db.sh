@@ -1,4 +1,10 @@
 #!/usr/bin/env bash
+#
+# reset_dev_db.sh - Reset the development database (native PostgreSQL)
+#
+# This script drops and recreates the database, runs migrations, and optionally seeds sample data.
+# It works with native PostgreSQL installed via Homebrew (no Docker required).
+#
 
 set -euo pipefail
 
@@ -37,9 +43,9 @@ set -a
 source "${ENV_FILE}"
 set +a
 
-ENVIRONMENT_VALUE="${ENVIRONMENT:-development}"
-if [[ "${ENVIRONMENT_VALUE}" != "development" ]]; then
-  echo "[reset-dev-db] Refusing to run because ENVIRONMENT=${ENVIRONMENT_VALUE}." >&2
+ENV_MODE_VALUE="${ENV_MODE:-local}"
+if [[ "${ENV_MODE_VALUE}" != "local" && "${ENV_MODE_VALUE}" != "development" ]]; then
+  echo "[reset-dev-db] Refusing to run because ENV_MODE=${ENV_MODE_VALUE} (must be 'local' or 'development')." >&2
   exit 1
 fi
 
@@ -49,70 +55,73 @@ if [[ "${ALLOW_DEV_DB_RESET:-0}" != "1" ]]; then
 fi
 
 # Resolve DB connection info directly from environment
-DB_HOST="${PGHOST:-}"
-DB_PORT="${PGPORT:-}"
+DB_HOST="${PGHOST:-localhost}"
+DB_PORT="${PGPORT:-5432}"
 DB_USER="${PGUSER:-}"
 DB_PASS="${PGPASSWORD:-}"
 DB_NAME="${DB_NAME:-}"
 
-if [[ -z "${DB_HOST}" || -z "${DB_PORT}" || -z "${DB_USER}" || -z "${DB_PASS}" || -z "${DB_NAME}" ]]; then
-  echo "[reset-dev-db] PGHOST, PGPORT, PGUSER, PGPASSWORD, and DB_NAME must be set in .env for this script." >&2
+if [[ -z "${DB_USER}" || -z "${DB_NAME}" ]]; then
+  echo "[reset-dev-db] PGUSER and DB_NAME must be set in .env for this script." >&2
   exit 1
 fi
 
 export DB_HOST DB_PORT DB_USER DB_PASS DB_NAME
 
-DOCKER_COMPOSE="${PROJECT_ROOT}/docker-compose.db.yml"
-if docker compose version >/dev/null 2>&1; then
-  COMPOSE_CMD=(docker compose)
-elif command -v docker-compose >/dev/null 2>&1; then
-  COMPOSE_CMD=(docker-compose)
-else
-  echo "[reset-dev-db] docker compose plugin or docker-compose binary is required." >&2
-  exit 1
-fi
-
-echo "[reset-dev-db] Restarting dockerized postgres to close lingering sessions..." >&2
-"${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" stop postgres >/dev/null 2>&1 || true
-"${COMPOSE_CMD[@]}" -f "${DOCKER_COMPOSE}" up -d postgres >/dev/null
-
-echo "[reset-dev-db] Waiting for Postgres to be ready..." >&2
-until docker exec prototype_description_db pg_isready -U "${DB_USER}" >/dev/null 2>&1; do
-  sleep 1
-done
-
-ADMIN_USER="${ADMIN_PGUSER:-${DB_USER}}"
-ADMIN_PASS="${ADMIN_PGPASSWORD:-${DB_PASS}}"
+# Admin user for creating databases (your macOS username for peer auth)
+ADMIN_USER="${ADMIN_PGUSER:-$(whoami)}"
 
 cd "${PROJECT_ROOT}"
 
-echo "[reset-dev-db] Dropping database \"${DB_NAME}\" using container postgres..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "DROP DATABASE IF EXISTS \"${DB_NAME}\";" >/dev/null
+# Helper to run psql as admin
+run_admin_psql() {
+  if [[ -n "${ADMIN_PGPASSWORD:-}" ]]; then
+    PGPASSWORD="${ADMIN_PGPASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${ADMIN_USER}" "$@"
+  else
+    # Use peer auth (no password needed for local macOS user)
+    psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${ADMIN_USER}" "$@"
+  fi
+}
+
+echo "[reset-dev-db] Checking PostgreSQL is running..." >&2
+if ! pg_isready -h "${DB_HOST}" -p "${DB_PORT}" >/dev/null 2>&1; then
+  echo "[reset-dev-db] PostgreSQL is not running. Start it with: brew services start postgresql@17" >&2
+  exit 1
+fi
+
+echo "[reset-dev-db] Terminating existing connections to \"${DB_NAME}\"..." >&2
+run_admin_psql -d postgres -c "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '${DB_NAME}' AND pid <> pg_backend_pid();" >/dev/null 2>&1 || true
+
+echo "[reset-dev-db] Dropping database \"${DB_NAME}\"..." >&2
+run_admin_psql -d postgres -c "DROP DATABASE IF EXISTS \"${DB_NAME}\";" >/dev/null
 
 echo "[reset-dev-db] Ensuring role \"${DB_USER}\" exists..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN CREATE ROLE \"${DB_USER}\" LOGIN PASSWORD '${DB_PASS}'; ELSE ALTER ROLE \"${DB_USER}\" WITH LOGIN PASSWORD '${DB_PASS}'; END IF; END \$\$;" >/dev/null
+run_admin_psql -d postgres -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${DB_USER}') THEN CREATE ROLE \"${DB_USER}\" LOGIN PASSWORD '${DB_PASS}'; ELSE ALTER ROLE \"${DB_USER}\" WITH LOGIN PASSWORD '${DB_PASS}'; END IF; END \$\$;" >/dev/null
 
 echo "[reset-dev-db] Creating database \"${DB_NAME}\"..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "CREATE DATABASE \"${DB_NAME}\" WITH OWNER \"${DB_USER}\";" >/dev/null
-
-echo "[reset-dev-db] Setting database owner to ${DB_USER}..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -c "ALTER DATABASE \"${DB_NAME}\" OWNER TO \"${DB_USER}\";" >/dev/null
+run_admin_psql -d postgres -c "CREATE DATABASE \"${DB_NAME}\" WITH OWNER \"${DB_USER}\";" >/dev/null
 
 echo "[reset-dev-db] Ensuring pgvector extension and schema privileges..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "ALTER SCHEMA public OWNER TO \"${DB_USER}\";" >/dev/null
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO \"${DB_USER}\";" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "CREATE EXTENSION IF NOT EXISTS vector;" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "ALTER SCHEMA public OWNER TO \"${DB_USER}\";" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "GRANT ALL ON SCHEMA public TO \"${DB_USER}\";" >/dev/null
 
 echo "[reset-dev-db] Cleaning up any existing custom functions..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS notify_cluster_centroid_dirty(uuid) CASCADE;" >/dev/null
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_identity_members() CASCADE;" >/dev/null
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_media_identities() CASCADE;" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS notify_cluster_centroid_dirty(uuid) CASCADE;" >/dev/null 2>&1
+run_admin_psql -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_identity_members() CASCADE;" >/dev/null 2>&1
+run_admin_psql -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_media_identities() CASCADE;" >/dev/null 2>&1
 
 echo "[reset-dev-db] Applying migrations as ${DB_USER}..." >&2
-PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGUSER="${DB_USER}" PGPASSWORD="${DB_PASS}" alembic -c db/alembic.ini upgrade head
+PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGUSER="${DB_USER}" PGPASSWORD="${DB_PASS}" python -m alembic -c db/alembic.ini upgrade head
 
 echo "[reset-dev-db] Setting up test user for RLS testing..." >&2
-docker exec prototype_description_db psql -U "${ADMIN_USER}" -d "${DB_NAME}" -f /docker-entrypoint-initdb.d/010-create-test-role.sql >/dev/null
+TEST_USER="${TEST_PGUSER:-recognition_test_user}"
+TEST_PASS="${TEST_PGPASSWORD:-recognition_test_password}"
+run_admin_psql -d "${DB_NAME}" -c "DO \$\$ BEGIN IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = '${TEST_USER}') THEN CREATE ROLE \"${TEST_USER}\" LOGIN PASSWORD '${TEST_PASS}'; END IF; END \$\$;" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO \"${TEST_USER}\";" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO \"${TEST_USER}\";" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO \"${TEST_USER}\";" >/dev/null
+run_admin_psql -d "${DB_NAME}" -c "ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO \"${TEST_USER}\";" >/dev/null
 
 if [[ "${WITH_SAMPLE_DATA}" == "1" ]]; then
   echo "[reset-dev-db] Seeding sample data for manual testing (--with-sample-data)..." >&2

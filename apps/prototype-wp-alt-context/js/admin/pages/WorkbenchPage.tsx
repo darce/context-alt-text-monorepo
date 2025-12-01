@@ -14,9 +14,11 @@ import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
 import { MediaSelection } from './workbench/MediaSelection';
+import { TrainingStageBanner } from './workbench/TrainingStageBanner';
+import { SuggestionReviewPanel } from './workbench/identity-clusters';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
 
-type AltContextAdminConfig = {
+interface AltContextAdminConfig {
   nonce: string;
   endpoints: {
     workbenchMedia: string;
@@ -31,7 +33,7 @@ type AltContextAdminConfig = {
     recognitionCluster: string;
     recognitionClusters: string;
   };
-};
+}
 
 declare global {
   interface Window {
@@ -51,12 +53,12 @@ const TAB_IDS = {
 } as const;
 type WorkbenchTab = (typeof TAB_IDS)[keyof typeof TAB_IDS];
 
-type WorkbenchSection = {
+interface WorkbenchSection {
   id: WorkbenchTab;
   label: string;
   title: string;
   body: string;
-};
+}
 
 const WORKBENCH_SECTIONS: WorkbenchSection[] = [
   {
@@ -125,7 +127,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
 
       setClusterMessage(null);
       setActiveSection(TAB_IDS.confirm);
-      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
     onError: (error) => {
       const message =
@@ -142,7 +144,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
           data.total_identities_clustered,
         ),
       );
-      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
     onError: (error) => {
       const message =
@@ -174,7 +176,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
 
   useEffect(() => {
     if (scanStatusQuery.data?.status === 'completed') {
-      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     }
   }, [scanStatusQuery.data?.status, queryClient]);
 
@@ -190,7 +192,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
     if (allCompleted && multiScanStatus.length === activeJobIds.length) {
       setIsWaitingForScanCompletion(false);
       clusterMutation.mutate();
-      queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     }
   }, [multiScanStatus, activeJobIds, isWaitingForScanCompletion, clusterMutation, queryClient]);
 
@@ -272,11 +274,13 @@ export const WorkbenchPage = (): React.JSX.Element => {
               jobId={jobId}
               errorMessage={scanError}
             />
+            <TrainingStageBanner />
+            <SuggestionReviewPanel />
             <MediaSelection
               items={mediaItems}
               isLoading={mediaQuery.isFetching}
               isError={mediaQuery.isError}
-              onRetry={mediaQuery.isError ? () => mediaQuery.refetch() : undefined}
+              onRetry={mediaQuery.isError ? () => void mediaQuery.refetch() : undefined}
               statusMessage={statusMessage}
               searchQuery={searchQuery}
               onSearchChange={handleSearchChange}

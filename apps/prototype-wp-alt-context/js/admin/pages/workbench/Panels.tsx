@@ -1,13 +1,13 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-type ScanActionPanelProps = {
+interface ScanActionPanelProps {
   selectedCount: number;
   onScanFaces: () => void;
   isScanning: boolean;
   statusText?: string;
   jobId?: string | null;
   errorMessage?: string | null;
-};
+}
 
 export const ScanActionPanel = ({
   selectedCount,
@@ -43,7 +43,7 @@ export const ScanActionPanel = ({
   </div>
 );
 
-export const BatchPanel = ({ items }: { items: Array<{ id: number; title: string; altText: string | null }> }) => (
+export const BatchPanel = ({ items }: { items: { id: number; title: string; altText: string | null }[] }) => (
   <div className="acx-apply-panel">
     <p>
       {sprintf(
@@ -66,14 +66,14 @@ export const BatchPanel = ({ items }: { items: Array<{ id: number; title: string
   </div>
 );
 
-type ConfirmPanelProps = {
+interface ConfirmPanelProps {
   jobId: string | null;
   status?: string;
   onCluster: () => void;
   isClustering: boolean;
   clusterMessage?: string | null;
   onViewClusters: () => void;
-};
+}
 
 export const ConfirmPanel = ({
   jobId,
@@ -103,13 +103,13 @@ export const ConfirmPanel = ({
   </div>
 );
 
-type RecentJobsPanelProps = {
+interface RecentJobsPanelProps {
   jobs: string[];
   statuses: Record<string, string>;
   activeJobId: string | null;
   onSelect: (jobId: string) => void;
   onClear: () => void;
-};
+}
 
 export const RecentJobsPanel = ({ jobs, statuses, activeJobId, onSelect, onClear }: RecentJobsPanelProps) => (
   <div className="acx-apply-panel">

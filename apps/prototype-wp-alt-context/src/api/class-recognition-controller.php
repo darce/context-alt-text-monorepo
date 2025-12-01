@@ -154,12 +154,12 @@ class RecognitionController {
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$payload = [
-			'tenant_id'            => $this->get_tenant_id(),
-			'similarity_threshold' => (float) $request->get_param( 'similarity_threshold' ) ?: 0.6,
+		$query = [
+			'tenant_id' => $this->get_tenant_id(),
 		];
 
-		return $this->proxy_request( 'POST', '/recognition/cluster', $payload );
+		// Use the hybrid clustering endpoint which runs Chinese Whispers for unmatched identities
+		return $this->proxy_request( 'POST', '/recognition/clustering/jobs', [], $query );
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -211,6 +211,12 @@ class RecognitionController {
 			'tenant_id' => $this->get_tenant_id(),
 			'media_ids' => $ids,
 		];
+
+		// Forward include_debug param for development environments
+		$include_debug = $request->get_param( 'include_debug' );
+		if ( $include_debug ) {
+			$query['include_debug'] = 'true';
+		}
 
 		return $this->proxy_request( 'GET', '/recognition/media/identities', [], $query );
 	}

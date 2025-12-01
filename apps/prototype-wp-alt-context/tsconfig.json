@@ -11,12 +11,13 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "resolveJsonModule": true,
-    "types": ["vite/client", "vitest", "vitest/globals"],
+    "types": ["vite/client", "vitest", "vitest/globals", "node"],
     "baseUrl": ".",
     "paths": {
       "~/*": ["js/*"]
     }
   },
   "include": ["js/**/*", "src/**/*", "vitest.setup.ts"],
+  "exclude": ["node_modules", "public", "vendor"],
   "references": []
 }

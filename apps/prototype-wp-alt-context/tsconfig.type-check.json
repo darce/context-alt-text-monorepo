@@ -1,5 +1,5 @@
 {
   "extends": "./tsconfig.json",
-  "include": ["js/admin/api/**/*.ts", "js/admin/pages/**/*.ts", "js/admin/pages/**/*.tsx", "js/admin/hooks/**/*.ts", "js/admin/hooks/**/*.tsx"],
-  "exclude": ["js/admin/**/__tests__/**"]
+  "include": ["js/**/*.ts", "js/**/*.tsx", "vitest.setup.ts"],
+  "exclude": ["node_modules", "public", "vendor"]
 }

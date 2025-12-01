@@ -1,22 +1,16 @@
 flowchart TD
-    Start([Plugin Loaded]) --> Scan[MissingAltTextScanner handles initial scan]
-    Scan --> Summary[DashboardMetricsService stores summary counts]
-    Summary --> AdminBootstrap[Admin SPA enqueued on dashboard/workbench routes]
-    AdminBootstrap --> Localize[ContextAltTextAdmin payload includes workbench.items]
-    Localize --> WorkbenchUI[Workbench App mounts]
-    WorkbenchUI --> Filters{User applies filters/search?}
-    Filters -- Yes --> Refetch[useWorkbenchMedia fetches /workbench/media]
-    Filters -- No --> ShowQueue[Render initial items from payload]
-    Refetch --> ShowQueue
-    ShowQueue --> RenderList["List-style rows rendered (thumbnail, metadata, alt preview)"]
-    RenderList --> RosterLink{Roster link available?}
-    RosterLink -- Yes --> RosterManager[Open roster manager with context]
-    RosterLink -- No --> RenderList
-    RenderList --> Select{User selects media?}
-    Select -- Yes --> SelectionToolbar[SelectionToolbar captures selection state]
-    SelectionToolbar --> BulkActions{Trigger bulk action?}
-    BulkActions -- Generate Alt Text --> Dispatch[emitDashboardEvent + enqueue background job]
-    BulkActions -- Review or other --> UpdateUI[Optimistic UI updates]
-    Dispatch --> BackendJob[Backend service generates alt text]
-    BackendJob --> QueueRefresh[Refetch queue to reflect new alt text status]
-    QueueRefresh --> WorkbenchUI
+    Start([Workbench mount]) --> LoadConfig[AltContextAdmin endpoints loaded]
+    LoadConfig --> FetchPage[useWorkbenchMedia(page, search)]
+    FetchPage --> MediaTable["MediaSelection list\n(thumbnail + detected identities)"]
+    MediaTable --> Filters{Search or paginate?}
+    Filters -- Yes --> UpdateParams[set page/search] --> FetchPage
+    MediaTable --> Select{Select rows?}
+    Select -- Yes --> SelectionState[useMediaSelectionState\ntrack ids + per-page select]
+    SelectionState --> ScanAction[ScanActionPanel.scanFaces()]
+    ScanAction --> JobHistory[useRecognitionJobHistory remembers job_id]
+    JobHistory --> PollStatuses[useScanStatus/useMultiScanStatus\nrefetchInterval=1.5s]
+    PollStatuses -->|all completed| TriggerCluster[BatchPanel.clusterFaces()]
+    TriggerCluster --> Invalidate[React Query invalidate media-identities]
+    MediaTable --> ConfirmTab[Confirm panel shows clusters + suggestions]
+    ConfirmTab --> RefreshClusters[listRecognitionClusters refetched]
+    RefreshClusters --> MediaTable

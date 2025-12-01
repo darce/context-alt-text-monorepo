@@ -1,35 +1,24 @@
 ---
-title: Error & Retry Path
+title: Scan Job Error Path
 ---
 sequenceDiagram
-    participant API as /roster/{id}/augment
-    participant Service as RosterService
-    participant Storage as RosterStoragePort
-    participant Metrics as shared/metrics.py
+    participant API as /recognition/analyze
+    participant Session as AsyncSession
+    participant BG as BackgroundTasks worker
+    participant ScanSvc as IdentityScanService
+    participant DB as PostgreSQL
     participant Logger as Logging
-    participant Queue as HybridIndexManager (reload)
-    participant Alerts as Alert Bus (future)
 
-    API->>Service: add_augmented_embedding(...)
-    Service->>Storage: save_roster_entry()
-    alt storage error
-        Storage-->>Service: raise Exception
-        Service->>Logger: error("Failed to persist augmented embedding")
-        Service->>Metrics: augmented_embedding_requests_total(status="error")
-        Service-->>API: propagate exception
-        API-->>Client: 500 error response
-    else saved
-        Storage-->>Service: success
-        Service->>Metrics: augmented_embedding_requests_total(status="success")
-        API-->>Client: 200 OK
-        API->>Queue: enqueue reload task
-        Queue->>Queue: rebuild_index()
-        alt reload failure
-            Queue->>Logger: error("Cluster centroid refresh failed")
-            Queue->>Metrics: centroid_refresh_duration_seconds.observe()
-            Queue->>Alerts: notify failure (future hook)
-            Queue-->>Queue: leave entry for retry/backoff
-        else reload success
-            Queue->>Metrics: centroid_last_refresh_timestamp.set()
-        end
+    API->>Session: create IdentityScanJob(status=pending)
+    API->>BG: add_task(_process_scan_chunk,...)
+    BG->>Session: set_tenant_context()
+    BG->>ScanSvc: scan_identities(job, media_items)
+    alt model/persistence error
+        ScanSvc-->>Logger: exception
+        ScanSvc->>DB: rollback()
+        ScanSvc->>DB: job.status="failed"; error_message; completed_at
+        DB-->>BG: commit failure status
+    else success
+        ScanSvc->>DB: job.status="completed"; counters updated
     end
+    API-->>Client: jobs recorded; poll /recognition/jobs/{id}

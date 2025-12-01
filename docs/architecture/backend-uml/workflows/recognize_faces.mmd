@@ -1,25 +1,35 @@
 ---
-title: Face Recognition Request
+title: Analyze Media & Extract Identities
 ---
 sequenceDiagram
-    participant Client as Client (WordPress / internal caller)
-    participant API as FastAPI /embeddings
-    participant RecSvc as FaceRecognitionService
-    participant EmbedRouter as EmbeddingRouterAdapter
-    participant Hybrid as HybridIndexManager
-    participant Model as InsightFaceAdapter
+    participant Client as WordPress Plugin
+    participant API as /recognition/analyze
+    participant Session as AsyncSession + tenant context
+    participant Jobs as IdentityScanJob rows
+    participant BG as BackgroundTasks (_process_scan_chunk)
+    participant ScanSvc as IdentityScanService
+    participant Provider as FaceEmbeddingProvider
+    participant DB as PostgreSQL + pgvector
+    participant Thumbs as ThumbnailService storage
 
-    Client->>API: POST /api/v0/embeddings {image, threshold?}
-    API->>API: validate payload + load image
-    API->>RecSvc: recognize_faces(image, threshold?)
-    RecSvc->>EmbedRouter: reload_if_needed()
-    EmbedRouter->>Hybrid: maybe_reload()
-    Hybrid-->>EmbedRouter: embeddings cached
-    RecSvc->>Model: analyze(image)
-    Model-->>RecSvc: face_embeddings[]
-    loop per face_embedding
-        RecSvc->>EmbedRouter: find_matches(embedding, threshold)
-        EmbedRouter-->>RecSvc: matches (top candidates)
+    Client->>API: POST analyze {tenant_id, site_url?, media_items[], user_id?}
+    API->>Session: set_tenant_context(); create tenant if missing
+    API->>API: chunk media_items into batches of 10
+    loop per chunk
+        API->>Session: insert IdentityScanJob(status=pending)
+        API->>BG: add_task(_process_scan_chunk, job_id, tenant_id, chunk, user_id)
     end
-    RecSvc-->>API: RecognitionResult (detections, embeddings, matches)
-    API-->>Client: 200 OK {faces: [...], threshold, processing_time_ms}
+    API-->>Client: 202 accepted {job_ids, status="queued"}
+
+    BG->>Session: async_session_factory()
+    BG->>Session: set_tenant_context(tenant_id)
+    BG->>Provider: load InsightFace model (if needed)
+    BG->>ScanSvc: scan_identities(job, media_items, user_id)
+    ScanSvc->>Provider: analyze(image) -> IdentityEmbedding[]
+    ScanSvc->>Thumbs: save cropped thumbnails (optional)
+    ScanSvc->>DB: insert MediaIdentity rows; update job counters
+    alt success
+        ScanSvc->>DB: commit; job.status="completed"
+    else error
+        ScanSvc->>DB: rollback; job.status="failed"; job.error_message
+    end

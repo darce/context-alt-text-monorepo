@@ -1,76 +1,76 @@
-%% Workbench Face Clustering Flow (November 2025)
-%% Remote recognition service performs detection and clustering
+%% Workbench recognition + clustering flow (React Query + WP REST)
 
 flowchart TD
-    user([Admin Editor]) --> route[WorkbenchPage]
+    user([Admin]) --> workbench[WorkbenchPage]
 
-    subgraph WorkbenchUI["Workbench UI"]
-        route --> clusterList[IdentityClusterList]
-        clusterList --> clusterItem[IdentityClusterItem]
-        clusterItem --> combobox[Combobox]
+    subgraph UI["Workbench UI"]
+        workbench --> mediaSelection[MediaSelection]
+        workbench --> scanPanel[ScanActionPanel]
+        workbench --> batchPanel[BatchPanel]
+        workbench --> confirmPanel[ConfirmPanel\nIdentityClusterList + SuggestionReviewPanel]
     end
 
-    subgraph HooksAndClients["React Hooks & API Client"]
-        clusterItem --> useMutation[useMutation (React Query)]
-        clusterItem --> useQuery[useQuery (React Query)]
-        useMutation --> api[recognitionApi]
-        useQuery --> api
+    subgraph Hooks["React Query hooks"]
+        scanPanel --> useScan[useScanIdentities]
+        scanPanel --> useStatus[useScanStatus/useMultiScanStatus]
+        batchPanel --> useClusterMutation[useClusterIdentities]
+        confirmPanel --> useClusters[useRecognitionClusters]
+        confirmPanel --> useClusterSuggestions[useClusterSuggestions]
     end
 
-    subgraph ReactQuery["React Query"]
+    subgraph Cache["React Query Cache"]
         queryClient[(QueryClient)]
     end
 
-    subgraph WPAPI["WP REST API"]
-        suggestionsEndpoint["GET /identities/{id}/suggestions"]
-        mergeEndpoint["POST /clusters/merge"]
-        revertEndpoint["POST /clusters/revert-merge"]
-        splitEndpoint["POST /clusters/{id}/split"]
-        updateLabelEndpoint["PATCH /clusters/{id}/label"]
+    subgraph WPAPI["WP REST (proxy endpoints)"]
+        postAnalyze["POST /recognition/analyze"]
+        getJobs["GET /recognition/jobs/{id}"]
+        postCluster["POST /recognition/clustering/jobs"]
+        getClusters["GET /recognition/clusters + /clusters/labels"]
+        getIdSuggestions["GET /recognition/identities/{id}/suggestions"]
+        postSuggestions["POST /recognition/suggestions/{id}/{action}"]
     end
 
-    subgraph PHPDomain["WordPress Domain Layer"]
-        proxyController[RecognitionProxyController]
+    subgraph Remote["Recognition Service"]
+        analyze["/recognition/analyze"]
+        jobs["/recognition/jobs/{id}"]
+        clustering["/recognition/clustering/jobs"]
+        clusters["/recognition/clusters"]
+        suggestions["/recognition/suggestions"]
     end
 
-    subgraph RemoteRecognition["Recognition Service (Remote)"]
-        remoteSuggest[Suggestion Router]
-        remoteCluster[Clustering Service]
-    end
+    %% Cache links
+    useScan --> queryClient
+    useStatus --> queryClient
+    useClusterMutation --> queryClient
+    useClusters --> queryClient
+    useClusterSuggestions --> queryClient
 
-    %% Hook ↔ React Query cache
-    useQuery --> queryClient
-    useMutation --> queryClient
+    %% API links
+    useScan --> postAnalyze
+    useStatus --> getJobs
+    useClusterMutation --> postCluster
+    useClusters --> getClusters
+    useClusterSuggestions --> getIdSuggestions
+    confirmPanel --> postSuggestions
 
-    %% API → REST endpoints
-    api -- fetchIdentitySuggestions --> suggestionsEndpoint
-    api -- mergeCluster --> mergeEndpoint
-    api -- revertMergeCluster --> revertEndpoint
-    api -- splitCluster --> splitEndpoint
-    api -- updateClusterLabel --> updateLabelEndpoint
+    %% Proxy links
+    postAnalyze --> analyze
+    getJobs --> jobs
+    postCluster --> clustering
+    getClusters --> clusters
+    getIdSuggestions --> suggestions
+    postSuggestions --> suggestions
 
-    %% REST → Controllers
-    suggestionsEndpoint --> proxyController
-    mergeEndpoint --> proxyController
-    revertEndpoint --> proxyController
-    splitEndpoint --> proxyController
-    updateLabelEndpoint --> proxyController
-
-    %% Controllers → Services
-    proxyController --> remoteSuggest
-    proxyController --> remoteCluster
-
-    %% Styling - WCAG-compliant high contrast
+    %% Styling
     classDef ui fill:#ffffff,stroke:#000000,color:#000000,stroke-width:2px
     classDef hook fill:#f5f5f5,stroke:#000000,color:#000000,stroke-width:1px
-    classDef query fill:#e0e0e0,stroke:#000000,color:#000000,stroke-width:1px
+    classDef cache fill:#e0e0e0,stroke:#000000,color:#000000,stroke-width:1px
     classDef api fill:#cccccc,stroke:#000000,color:#000000,stroke-width:1px
-    classDef domain fill:#b0b0b0,stroke:#000000,color:#000000,stroke-width:1px
     classDef remote fill:#999999,stroke:#000000,color:#000000,stroke-width:1px
 
-    class route,clusterList,clusterItem,combobox ui
-    class useMutation,useQuery,api hook
-    class queryClient query
-    class suggestionsEndpoint,mergeEndpoint,revertEndpoint,splitEndpoint,updateLabelEndpoint api
-    class proxyController domain
-    class remoteSuggest,remoteCluster remote
+    class workbench,mediaSelection,scanPanel,batchPanel,confirmPanel ui
+    class useScan,useStatus,useClusterMutation,useClusters,useClusterSuggestions hook
+    class queryClient cache
+    class postAnalyze,getJobs,postCluster,getClusters,getIdSuggestions,postSuggestions api
+    class analyze,jobs,clustering,clusters,suggestions remote

@@ -4,11 +4,13 @@ Provides multi-stage validation to prevent false positive cluster assignments:
 - Borderline validation: Re-checks against cluster centroid for marginal matches
 - Member validation: Checks similarity with random existing cluster members
 - Centroid validation: Validates centroid-based matches against members
+- Suggestion tier: Borderline matches (0.55-0.68) flagged for user confirmation
 """
 
 from __future__ import annotations
 
 import logging
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 from uuid import UUID
 
@@ -26,6 +28,24 @@ if TYPE_CHECKING:
     pass
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class MemberValidationResult:
+    """Result of member validation with suggestion flag.
+    Attributes:
+        should_accept: True if the match should be auto-accepted
+        should_suggest: True if the match should be surfaced as a suggestion
+        avg_member_similarity: Average similarity with existing cluster members
+        min_member_similarity: Minimum similarity with any member
+        sample_size: Number of members checked
+    """
+
+    should_accept: bool
+    should_suggest: bool
+    avg_member_similarity: float
+    min_member_similarity: float
+    sample_size: int
 
 
 class ClusterValidator:
@@ -163,15 +183,39 @@ class ClusterValidator:
         min_member_similarity = np.min(similarities)
 
         logger.info(
-            "Member validation: rep=%.4f, avg_member=%.4f, min_member=%.4f, threshold=%.4f (checked %d members)",
+            "Member validation: rep=%.4f, avg_member=%.4f, min_member=%.4f, threshold=%.4f, min_floor=%.4f (checked %d members)",
             rep_similarity,
             avg_member_similarity,
             min_member_similarity,
             self.settings.member_validation_threshold,
+            self.settings.member_validation_min_floor,
             len(similarities),
         )
 
-        # Require average similarity with existing members (changed from min to reduce false negatives)
+        # Check minimum floor first - ANY member below floor triggers rejection
+        # This prevents false positives where avg looks good but one member is very different
+        if min_member_similarity < self.settings.member_validation_min_floor:
+            logger.warning(
+                "MEMBER VALIDATION FAILED (min floor): identity=%s, rep=%.4f, min_member=%.4f < floor=%.4f. "
+                "At least one existing member is too dissimilar - preventing false positive.",
+                identity.id,
+                rep_similarity,
+                min_member_similarity,
+                self.settings.member_validation_min_floor,
+            )
+            log_validation_result(
+                tenant_id=self.tenant_id,
+                identity_id=identity.id,
+                cluster_id=cluster_id,
+                validation_type="member_min_floor",
+                passed=False,
+                similarity=float(min_member_similarity),
+                threshold=self.settings.member_validation_min_floor,
+                extra={"avg_member_similarity": float(avg_member_similarity), "sample_size": len(similarities)},
+            )
+            return False
+
+        # Require average similarity with existing members
         if avg_member_similarity < self.settings.member_validation_threshold:
             logger.warning(
                 "MEMBER VALIDATION FAILED: identity=%s, rep=%.4f, avg_member=%.4f < threshold=%.4f. "
@@ -215,6 +259,176 @@ class ClusterValidator:
         )
         return True
 
+    async def validate_member_similarity_with_suggestion(
+        self,
+        identity: MediaIdentity,
+        identity_vector: np.ndarray,
+        cluster_id: UUID,
+        rep_similarity: float,
+    ) -> MemberValidationResult:
+        """
+        Validate a representative match with suggestion tier support.
+
+        Returns a MemberValidationResult with:
+        - should_accept: True if avg_member_similarity >= member_validation_threshold (0.68)
+        - should_suggest: True if suggestion_threshold (0.55) <= avg_member_similarity < member_validation_threshold
+        - similarity scores for logging/persistence
+        """
+        # Get random sample of existing cluster members
+        stmt = (
+            select(MediaIdentity.embedding)
+            .join(IdentityMember, IdentityMember.identity_id == MediaIdentity.id)
+            .where(IdentityMember.cluster_id == cluster_id)
+            .where(MediaIdentity.id != identity.id)
+            .limit(self.settings.member_validation_sample_size)
+        )
+        result = await self.session.execute(stmt)
+        member_embeddings = [row[0] for row in result.all()]
+
+        if not member_embeddings:
+            logger.info(
+                "No existing members found for cluster %s, auto-accepting",
+                cluster_id,
+            )
+            return MemberValidationResult(
+                should_accept=True,
+                should_suggest=False,
+                avg_member_similarity=1.0,
+                min_member_similarity=1.0,
+                sample_size=0,
+            )
+
+        # Check similarity with each sampled member
+        similarities = []
+        for member_emb in member_embeddings:
+            member_vector = _normalize_vector(np.array(member_emb, dtype=np.float32))
+            sim = compute_similarity(identity_vector, member_vector)
+            similarities.append(sim)
+
+        avg_member_similarity = float(np.mean(similarities))
+        min_member_similarity = float(np.min(similarities))
+        sample_size = len(similarities)
+
+        accept_threshold = self.settings.member_validation_threshold
+        suggest_threshold = self.settings.suggestion_threshold
+        min_floor = self.settings.member_validation_min_floor
+
+        # Check minimum floor first - ANY member below floor triggers rejection
+        # This prevents false positives where avg looks good but one member is very different
+        if min_member_similarity < min_floor:
+            logger.warning(
+                "MEMBER VALIDATION FAILED (min floor): identity=%s, rep=%.4f, min_member=%.4f < floor=%.4f. "
+                "At least one existing member is too dissimilar - preventing false positive.",
+                identity.id,
+                rep_similarity,
+                min_member_similarity,
+                min_floor,
+            )
+            log_validation_result(
+                tenant_id=self.tenant_id,
+                identity_id=identity.id,
+                cluster_id=cluster_id,
+                validation_type="member_min_floor",
+                passed=False,
+                similarity=min_member_similarity,
+                threshold=min_floor,
+                extra={"avg_member_similarity": avg_member_similarity, "sample_size": sample_size},
+            )
+            return MemberValidationResult(
+                should_accept=False,
+                should_suggest=False,  # Don't even suggest if min floor fails
+                avg_member_similarity=avg_member_similarity,
+                min_member_similarity=min_member_similarity,
+                sample_size=sample_size,
+            )
+
+        # Determine outcome
+        if avg_member_similarity >= accept_threshold:
+            # Strong match: auto-accept
+            logger.info(
+                "Member validation PASSED (accept): identity=%s, rep=%.4f, avg_member=%.4f >= %.4f",
+                identity.id,
+                rep_similarity,
+                avg_member_similarity,
+                accept_threshold,
+            )
+            log_validation_result(
+                tenant_id=self.tenant_id,
+                identity_id=identity.id,
+                cluster_id=cluster_id,
+                validation_type="member",
+                passed=True,
+                similarity=avg_member_similarity,
+                threshold=accept_threshold,
+                extra={"min_member_similarity": min_member_similarity, "sample_size": sample_size},
+            )
+            return MemberValidationResult(
+                should_accept=True,
+                should_suggest=False,
+                avg_member_similarity=avg_member_similarity,
+                min_member_similarity=min_member_similarity,
+                sample_size=sample_size,
+            )
+
+        if self.settings.suggestion_enabled and avg_member_similarity >= suggest_threshold:
+            # Borderline match: suggest for user confirmation
+            logger.info(
+                "SUGGESTION CANDIDATE: identity=%s, rep=%.4f, avg_member=%.4f "
+                "(>= suggestion_threshold=%.4f but < accept_threshold=%.4f)",
+                identity.id,
+                rep_similarity,
+                avg_member_similarity,
+                suggest_threshold,
+                accept_threshold,
+            )
+            log_validation_result(
+                tenant_id=self.tenant_id,
+                identity_id=identity.id,
+                cluster_id=cluster_id,
+                validation_type="member_suggestion",
+                passed=False,
+                similarity=avg_member_similarity,
+                threshold=accept_threshold,
+                extra={
+                    "min_member_similarity": min_member_similarity,
+                    "sample_size": sample_size,
+                    "suggestion_threshold": suggest_threshold,
+                },
+            )
+            return MemberValidationResult(
+                should_accept=False,
+                should_suggest=True,
+                avg_member_similarity=avg_member_similarity,
+                min_member_similarity=min_member_similarity,
+                sample_size=sample_size,
+            )
+
+        # Poor match: reject
+        logger.warning(
+            "MEMBER VALIDATION FAILED: identity=%s, rep=%.4f, avg_member=%.4f < suggestion_threshold=%.4f",
+            identity.id,
+            rep_similarity,
+            avg_member_similarity,
+            suggest_threshold,
+        )
+        log_validation_result(
+            tenant_id=self.tenant_id,
+            identity_id=identity.id,
+            cluster_id=cluster_id,
+            validation_type="member",
+            passed=False,
+            similarity=avg_member_similarity,
+            threshold=suggest_threshold,
+            extra={"min_member_similarity": min_member_similarity, "sample_size": sample_size},
+        )
+        return MemberValidationResult(
+            should_accept=False,
+            should_suggest=False,
+            avg_member_similarity=avg_member_similarity,
+            min_member_similarity=min_member_similarity,
+            sample_size=sample_size,
+        )
+
     async def validate_representative_match(
         self,
         identity: MediaIdentity,
@@ -244,6 +458,56 @@ class ClusterValidator:
         return not (
             self.settings.member_validation_enabled
             and not await self.validate_member_similarity(identity, identity_vector, cluster_id, rep_similarity)
+        )
+
+    async def validate_representative_match_with_suggestion(
+        self,
+        identity: MediaIdentity,
+        identity_vector: np.ndarray,
+        cluster_id: UUID,
+        rep_similarity: float,
+    ) -> MemberValidationResult:
+        """
+        Combined validation for representative matches with suggestion tier support.
+
+        Checks:
+        1. Borderline validation (for 0.6-0.7 range): requires centroid >= 0.65
+        2. Member validation with suggestion tier
+
+        Returns:
+            MemberValidationResult with should_accept, should_suggest flags and similarity metrics.
+        """
+        # Check if this is a borderline match (centroid validation)
+        is_borderline = (
+            self.settings.borderline_validation_enabled and rep_similarity < self.settings.borderline_upper_threshold
+        )
+
+        # Run borderline validation if needed
+        if is_borderline and not await self.validate_borderline_match(
+            identity, identity_vector, cluster_id, rep_similarity
+        ):
+            # Borderline validation failed - reject completely (don't suggest)
+            return MemberValidationResult(
+                should_accept=False,
+                should_suggest=False,
+                avg_member_similarity=0.0,
+                min_member_similarity=0.0,
+                sample_size=0,
+            )
+
+        # Run member validation with suggestion tier
+        if self.settings.member_validation_enabled:
+            return await self.validate_member_similarity_with_suggestion(
+                identity, identity_vector, cluster_id, rep_similarity
+            )
+
+        # No member validation - auto accept
+        return MemberValidationResult(
+            should_accept=True,
+            should_suggest=False,
+            avg_member_similarity=1.0,
+            min_member_similarity=1.0,
+            sample_size=0,
         )
 
     async def validate_centroid_match(
@@ -279,8 +543,10 @@ class ClusterValidator:
         min_similarity = float(np.min(similarities))
 
         threshold = self.settings.member_validation_threshold
+        min_floor = self.settings.member_validation_min_floor
 
-        if avg_similarity >= threshold:
+        # Check both average AND minimum floor (prevents false positive from avg hiding low outlier)
+        if avg_similarity >= threshold and min_similarity >= min_floor:
             logger.info(
                 "Centroid match validation PASSED: centroid=%.4f, avg_member=%.4f, min_member=%.4f >= %.4f",
                 centroid_similarity,
@@ -289,6 +555,13 @@ class ClusterValidator:
                 threshold,
             )
             return True
+        elif min_similarity < min_floor:
+            logger.warning(
+                "Centroid match validation FAILED: min_member=%.4f < floor %.4f (lookalike detected)",
+                min_similarity,
+                min_floor,
+            )
+            return False
         else:
             logger.warning(
                 "Centroid match validation FAILED: centroid=%.4f, avg_member=%.4f < %.4f (cluster drift detected)",

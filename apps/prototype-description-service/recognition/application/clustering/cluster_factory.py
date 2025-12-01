@@ -34,6 +34,7 @@ class ClusterFactory:
         self,
         identities: Sequence[MediaIdentity],
         add_representative_callback: Callable[[UUID, MediaIdentity], Awaitable[np.ndarray | None]] | None = None,
+        label: str | None = None,
     ) -> tuple[IdentityCluster, ClusterSearchEntry]:
         """
         Create a new cluster from a sequence of identities.
@@ -41,6 +42,7 @@ class ClusterFactory:
         Args:
             identities: One or more identities to cluster together
             add_representative_callback: Optional callback to add representatives after creation
+            label: Optional label for the cluster (auto-generated if not provided)
 
         Returns:
             Tuple of (cluster, search_entry) for the newly created cluster
@@ -58,7 +60,7 @@ class ClusterFactory:
         # Create cluster entity
         cluster = IdentityCluster(
             tenant_id=self.tenant_id,
-            label=f"cluster-{uuid4().hex[:8]}",
+            label=label or f"cluster-{uuid4().hex[:8]}",
             representative_identity_id=representative.id,
             identity_count=len(identities),
             similarity_threshold=self.threshold,

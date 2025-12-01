@@ -1,19 +1,24 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
-import type { ClusterIdentity } from '../../api/recognitionApi';
+import type { ClusterIdentity } from '../../api/recognition';
 import type { MediaMeta } from './utils/mediaMeta';
 
-export type IdentityThumbnailProps = {
+export interface IdentityThumbnailProps {
   identity: ClusterIdentity;
   mediaMeta?: MediaMeta;
   size?: number;
   onClick?: () => void;
-};
+}
 
 const PADDING_RATIO = 0.15;
 
-export const IdentityThumbnail = ({ identity, mediaMeta, size = 96, onClick }: IdentityThumbnailProps): React.JSX.Element => {
+export const IdentityThumbnail = ({
+  identity,
+  mediaMeta,
+  size = 96,
+  onClick,
+}: IdentityThumbnailProps): React.JSX.Element => {
   const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
 
   React.useEffect(() => {

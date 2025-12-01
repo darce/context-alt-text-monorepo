@@ -5,7 +5,7 @@ import { ConfirmPanel, RecentJobsPanel, mediaEditUrl } from '../workbench/Panels
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
-  sprintf: (format: string, ...args: Array<string | number>) => {
+  sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
     return format.replace(/%s/g, () => String(args[index++]));
   },
@@ -28,7 +28,7 @@ describe('ConfirmPanel', () => {
         isClustering={false}
         clusterMessage={null}
         onViewClusters={vi.fn()}
-      />
+      />,
     );
 
     const button = screen.getByRole('button', { name: 'Open clusters in roster' });
@@ -45,7 +45,7 @@ describe('ConfirmPanel', () => {
         isClustering={false}
         clusterMessage={null}
         onViewClusters={viewClusters}
-      />
+      />,
     );
 
     const button = screen.getByRole('button', { name: 'Open clusters in roster' });
@@ -65,7 +65,7 @@ describe('RecentJobsPanel', () => {
         activeJobId={null}
         onSelect={onSelect}
         onClear={onClear}
-      />
+      />,
     );
 
     const jobButton = screen.getByRole('button', { name: /job-a/i });

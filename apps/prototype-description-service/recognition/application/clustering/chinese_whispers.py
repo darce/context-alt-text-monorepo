@@ -26,6 +26,9 @@ logger = logging.getLogger(__name__)
 CreateClusterFn: TypeAlias = Callable[[Sequence[MediaIdentity]], Awaitable[tuple[IdentityCluster, object]]]
 AddToClusterFn: TypeAlias = Callable[[UUID, Sequence[MediaIdentity]], Awaitable[None]]
 
+# Type alias for anchor embeddings: cluster_id -> list of representative embeddings
+AnchorEmbeddings: TypeAlias = dict[UUID, list[np.ndarray]]
+
 
 class ChineseWhispersClustering:
     """
@@ -36,24 +39,43 @@ class ChineseWhispersClustering:
     propagating labels based on edge weights (similarity).
     """
 
-    def __init__(self, settings: ClusteringSettings) -> None:
+    def __init__(self, settings: ClusteringSettings, adaptive_threshold: float | None = None) -> None:
         self.settings = settings
         # Use a stricter threshold for graph edges than for simple matching
         # to prevent "bridging" distinct clusters via weak links.
         # If settings doesn't have cw_threshold, default to slightly higher than similarity_threshold
-        self.edge_threshold = getattr(settings, "cw_threshold", settings.similarity_threshold + 0.05)
+        base_cw_threshold = getattr(settings, "cw_threshold", settings.similarity_threshold + 0.05)
+
+        # If adaptive threshold is provided, ensure CW threshold respects it
+        # Use adaptive_threshold + small offset (0.02) to ensure CW is at least as strict
+        if adaptive_threshold is not None:
+            self.edge_threshold = max(base_cw_threshold, adaptive_threshold + 0.02)
+        else:
+            self.edge_threshold = base_cw_threshold
+
         self.iterations = getattr(settings, "cw_iterations", 20)
 
     async def cluster(
         self,
         identities: list[MediaIdentity],
         create_cluster: CreateClusterFn,
-        anchors: list[MediaIdentity] | None = None,
+        anchor_embeddings: AnchorEmbeddings | None = None,
         add_to_cluster: AddToClusterFn | None = None,
+        job_id: UUID | None = None,
     ) -> list[IdentityCluster]:
         """
         Cluster identities using Chinese Whispers.
+
+        Args:
+            identities: New identities to cluster.
+            create_cluster: Callback to create new clusters.
+            anchor_embeddings: Optional dict mapping cluster_id to representative embeddings.
+                              These seed CW to help assign new identities to existing clusters.
+            add_to_cluster: Optional callback to add members to existing clusters.
+            job_id: Optional job ID for log correlation.
         """
+        log_prefix = f"[job={job_id}] " if job_id else ""
+
         if not identities:
             return []
 
@@ -62,8 +84,8 @@ class ChineseWhispersClustering:
             return [cluster]
 
         # 1. Build the graph
-        anchors = anchors or []
-        graph, label_to_cluster_id = self._build_graph(identities, anchors)
+        anchor_embeddings = anchor_embeddings or {}
+        graph, label_to_cluster_id = self._build_graph(identities, anchor_embeddings, log_prefix)
 
         # 2. Run Chinese Whispers
         self._run_chinese_whispers(graph)
@@ -82,14 +104,15 @@ class ChineseWhispersClustering:
                     cluster_id = label_to_cluster_id[label]
                     members_list: list[MediaIdentity] = [m for m in members if isinstance(m, MediaIdentity)]
                     await add_to_cluster(cluster_id, members_list)
-                    logger.info("  CW Added %d members to existing cluster %s", len(members), cluster_id)
+                    logger.info("%s  CW Added %d members to existing cluster %s", log_prefix, len(members), cluster_id)
             else:
                 members_list = [m for m in members if isinstance(m, MediaIdentity)]
                 cluster, _ = await create_cluster(members_list)
                 created_clusters.append(cluster)
 
         logger.info(
-            "Chinese Whispers created %d clusters from %d identities (edge_threshold=%.2f, iterations=%d)",
+            "%sChinese Whispers created %d clusters from %d identities (edge_threshold=%.2f, iterations=%d)",
+            log_prefix,
             len(created_clusters),
             len(identities),
             self.edge_threshold,
@@ -104,28 +127,37 @@ class ChineseWhispersClustering:
         for label, members in clusters_by_label.items():
             media_ids = [str(m.media_id) for m in members if isinstance(m, MediaIdentity)]
             logger.info(
-                "  CW Cluster (label=%s): %d members -> media_ids=[%s]", label, len(members), ", ".join(media_ids)
+                "%s  CW Cluster (label=%s): %d members -> media_ids=[%s]",
+                log_prefix,
+                label,
+                len(members),
+                ", ".join(media_ids),
             )
         return created_clusters
 
     def _build_graph(
-        self, identities: list[MediaIdentity], anchors: list[MediaIdentity]
+        self, identities: list[MediaIdentity], anchor_embeddings: AnchorEmbeddings, log_prefix: str = ""
     ) -> tuple[nx.Graph, dict[int, UUID]]:
         """
         Build a graph where nodes are identities and edges represent similarity > threshold.
-        Anchors are included as nodes with fixed initial labels.
+        Anchor embeddings are included as nodes with fixed initial labels tied to their cluster.
         """
         graph: nx.Graph = nx.Graph()
 
-        all_identities = identities + anchors
-        n_new = len(identities)
-        n_total = len(all_identities)
+        # Flatten anchor embeddings into a list with their cluster IDs
+        anchor_data: list[tuple[UUID, np.ndarray]] = []
+        for cluster_id, embs in anchor_embeddings.items():
+            for emb in embs:
+                anchor_data.append((cluster_id, emb))
 
-        # Normalize all embeddings once
-        embeddings = normalize_embeddings(identity.embedding for identity in all_identities)
+        n_new = len(identities)
+        n_anchors = len(anchor_data)
+
+        # Collect all embeddings: identities first, then anchors
+        all_embeddings = [identity.embedding for identity in identities] + [emb for _, emb in anchor_data]
+        embeddings = normalize_embeddings(all_embeddings)
 
         # Map for anchor labels
-        # We assign a unique label for each unique cluster_id in anchors
         # Labels 0 to n_new-1 are for new identities (initially self-labeled)
         # Labels >= n_new are for existing clusters
         label_to_cluster_id: dict[int, UUID] = {}
@@ -137,22 +169,14 @@ class ChineseWhispersClustering:
             graph.add_node(i, label=i, is_anchor=False)
 
         # Add anchors with cluster-based labels
-        for i in range(n_new, n_total):
-            anchor = all_identities[i]
-            # Ensure anchor has a cluster_id. If not, treat as separate (shouldn't happen for anchors)
-            if not hasattr(anchor, "cluster_id") or not anchor.cluster_id:
-                # Fallback: treat as unique label
-                lbl = next_label
+        for i, (cluster_id, _) in enumerate(anchor_data):
+            node_idx = n_new + i
+            if cluster_id not in cluster_id_to_label:
+                cluster_id_to_label[cluster_id] = next_label
+                label_to_cluster_id[next_label] = cluster_id
                 next_label += 1
-            else:
-                cid = anchor.cluster_id
-                if cid not in cluster_id_to_label:
-                    cluster_id_to_label[cid] = next_label
-                    label_to_cluster_id[next_label] = cid
-                    next_label += 1
-                lbl = cluster_id_to_label[cid]
-
-            graph.add_node(i, label=lbl, is_anchor=True)
+            lbl = cluster_id_to_label[cluster_id]
+            graph.add_node(node_idx, label=lbl, is_anchor=True)
 
         # Add edges
         # Compute similarity matrix: S = E . E^T
@@ -162,6 +186,7 @@ class ChineseWhispersClustering:
         # We only care about upper triangle (i < j)
         rows, cols = np.where(np.triu(sim_matrix, k=1) > self.edge_threshold)
 
+        # Build edges with weights
         edges = []
         for r, c in zip(rows, cols, strict=True):
             weight = float(sim_matrix[r, c])
@@ -170,10 +195,11 @@ class ChineseWhispersClustering:
         graph.add_weighted_edges_from(edges)
 
         logger.info(
-            "CW Graph: %d nodes (%d new, %d anchors), %d edges (threshold=%.4f)",
+            "%sCW Graph: %d nodes (%d new, %d anchors), %d edges (threshold=%.4f)",
+            log_prefix,
             graph.number_of_nodes(),
             n_new,
-            len(anchors),
+            n_anchors,
             graph.number_of_edges(),
             self.edge_threshold,
         )
@@ -191,10 +217,11 @@ class ChineseWhispersClustering:
                     break
                 # Only log if at least one node is new
                 if r < n_new or c < n_new:
-                    media_r = all_identities[r].media_id if hasattr(all_identities[r], "media_id") else "?"
-                    media_c = all_identities[c].media_id if hasattr(all_identities[c], "media_id") else "?"
+                    media_r = identities[r].media_id if r < n_new else "anchor"
+                    media_c = identities[c].media_id if c < n_new else "anchor"
                     logger.info(
-                        "  Dropped edge: %d (media %s) <-> %d (media %s) (sim=%.4f)",
+                        "%s  Dropped edge: %d (media %s) <-> %d (media %s) (sim=%.4f)",
+                        log_prefix,
                         r,
                         media_r,
                         c,
@@ -204,7 +231,8 @@ class ChineseWhispersClustering:
                     logged_count += 1
             if logged_count > 0:
                 logger.info(
-                    "CW Dropped %d edges just below threshold (%.4f - %.4f)",
+                    "%sCW Dropped %d edges just below threshold (%.4f - %.4f)",
+                    log_prefix,
                     len(dropped_rows),
                     self.edge_threshold - 0.1,
                     self.edge_threshold,

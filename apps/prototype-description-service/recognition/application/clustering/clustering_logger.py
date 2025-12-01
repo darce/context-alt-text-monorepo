@@ -49,6 +49,14 @@ class ClusteringEvent(str, Enum):
     # Algorithm selection
     ALGORITHM_SELECTED = "algorithm_selected"
 
+    # User feedback events (for precision/recall measurement)
+    # These are ground truth signals from user corrections
+    SUGGESTION_ACCEPTED = "suggestion_accepted"  # User confirms match → TRUE POSITIVE
+    SUGGESTION_REJECTED = "suggestion_rejected"  # User rejects match → FALSE POSITIVE
+    USER_MERGE = "user_merge"  # User manually merges → FALSE NEGATIVE (under-merged)
+    USER_SPLIT = "user_split"  # User splits/removes identity → FALSE POSITIVE (over-matched)
+    CLUSTER_LABELED = "cluster_labeled"  # User assigns name → confident cluster
+
 
 @dataclass
 class ClusteringLogEntry:
@@ -115,6 +123,8 @@ class ClusteringLogEntry:
         """Emit this entry as a structured log message."""
         data = self.to_dict()
         event_name = data.pop("event")
+        # Remove timestamp - already provided by logging formatter
+        data.pop("timestamp", None)
 
         # Format as structured log line for easy grep
         # Format: EVENT_NAME key1=value1 key2=value2 ...
@@ -294,4 +304,151 @@ def log_algorithm_selected(
         algorithm=algorithm,
         batch_size=batch_size,
         extra={"reason": reason},
+    ).log()
+
+
+# =============================================================================
+# User Feedback Events (Ground Truth for Precision/Recall)
+# =============================================================================
+
+
+def log_suggestion_accepted(
+    tenant_id: UUID,
+    identity_id: UUID,
+    cluster_id: UUID,
+    similarity: float,
+    cluster_size: int,
+) -> None:
+    """Log user accepting a suggestion → TRUE POSITIVE signal.
+
+    Args:
+        tenant_id: Tenant UUID
+        identity_id: Identity that was suggested
+        cluster_id: Cluster the identity was suggested for
+        similarity: Original match similarity when suggestion was created
+        cluster_size: Size of target cluster at acceptance time
+    """
+    ClusteringLogEntry(
+        event=ClusteringEvent.SUGGESTION_ACCEPTED,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        similarity=similarity,
+        extra={"cluster_size": cluster_size},
+    ).log()
+
+
+def log_suggestion_rejected(
+    tenant_id: UUID,
+    identity_id: UUID,
+    cluster_id: UUID,
+    similarity: float,
+    cluster_size: int,
+) -> None:
+    """Log user rejecting a suggestion → FALSE POSITIVE signal.
+
+    Args:
+        tenant_id: Tenant UUID
+        identity_id: Identity that was suggested
+        cluster_id: Cluster the identity was suggested for
+        similarity: Original match similarity when suggestion was created
+        cluster_size: Size of target cluster at rejection time
+    """
+    ClusteringLogEntry(
+        event=ClusteringEvent.SUGGESTION_REJECTED,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        similarity=similarity,
+        extra={"cluster_size": cluster_size},
+    ).log()
+
+
+def log_user_merge(
+    tenant_id: UUID,
+    source_cluster_id: UUID,
+    target_cluster_id: UUID,
+    moved_count: int,
+    source_size: int,
+    target_size: int,
+) -> None:
+    """Log user manually merging clusters → FALSE NEGATIVE signal (system under-merged).
+
+    Args:
+        tenant_id: Tenant UUID
+        source_cluster_id: Cluster being merged from
+        target_cluster_id: Cluster being merged into
+        moved_count: Number of identities moved
+        source_size: Original size of source cluster
+        target_size: Original size of target cluster
+    """
+    ClusteringLogEntry(
+        event=ClusteringEvent.USER_MERGE,
+        tenant_id=tenant_id,
+        cluster_id=target_cluster_id,
+        extra={
+            "source_cluster_id": str(source_cluster_id),
+            "moved_count": moved_count,
+            "source_size": source_size,
+            "target_size": target_size,
+        },
+    ).log()
+
+
+def log_user_split(
+    tenant_id: UUID,
+    identity_id: UUID,
+    source_cluster_id: UUID,
+    target_cluster_id: UUID | None,
+    source_size: int,
+    action: str = "remove",
+) -> None:
+    """Log user removing/moving identity from cluster → FALSE POSITIVE signal (system over-matched).
+
+    Args:
+        tenant_id: Tenant UUID
+        identity_id: Identity being removed/moved
+        source_cluster_id: Cluster identity was removed from
+        target_cluster_id: New cluster (if reassigned) or None (if just removed)
+        source_size: Size of source cluster before removal
+        action: "remove" (no new cluster), "reassign" (moved to existing), or "split" (new cluster)
+    """
+    ClusteringLogEntry(
+        event=ClusteringEvent.USER_SPLIT,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        cluster_id=source_cluster_id,
+        extra={
+            "target_cluster_id": str(target_cluster_id) if target_cluster_id else None,
+            "source_size": source_size,
+            "action": action,
+        },
+    ).log()
+
+
+def log_cluster_labeled(
+    tenant_id: UUID,
+    cluster_id: UUID,
+    label: str,
+    cluster_size: int,
+    is_first_label: bool = True,
+) -> None:
+    """Log user labeling a cluster → confidence signal.
+
+    Args:
+        tenant_id: Tenant UUID
+        cluster_id: Cluster being labeled
+        label: The label assigned
+        cluster_size: Size of cluster when labeled
+        is_first_label: True if this is the initial label, False if rename
+    """
+    ClusteringLogEntry(
+        event=ClusteringEvent.CLUSTER_LABELED,
+        tenant_id=tenant_id,
+        cluster_id=cluster_id,
+        extra={
+            "label": label,
+            "cluster_size": cluster_size,
+            "is_first_label": is_first_label,
+        },
     ).log()

@@ -1,11 +1,11 @@
 import React from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import type { ClusterIdentity, ClusterSummary } from '../../api/recognitionApi';
+import type { ClusterSummary } from '../../api/recognition';
 import type { MediaMap } from './hooks/useClusterMediaMap';
 import { IdentityThumbnail } from './IdentityThumbnail';
 
-type Props = {
+interface Props {
   clusters: ClusterSummary[];
   isLoading: boolean;
   isError: boolean;
@@ -14,11 +14,11 @@ type Props = {
   onSelectCluster: (cluster: ClusterSummary) => void;
   onIdentityDragStart: (clusterId: string, identityId: string) => void;
   onFaceDragEnd: () => void;
-  onDropTargetChange: (target: string | 'discard' | null) => void;
+  onDropTargetChange: (target: string | null) => void;
   onDropFace: (clusterId: string | null) => void;
-  dropTarget: string | 'discard' | null;
+  dropTarget: string | null;
   isDragging: boolean;
-};
+}
 
 export const ClusterGrid = ({
   clusters,
@@ -34,6 +34,47 @@ export const ClusterGrid = ({
   onFaceDragEnd,
   onSelectCluster,
 }: Props): React.JSX.Element => {
+  const handleKeyDown = React.useCallback(
+    (cluster: ClusterSummary) => (event: React.KeyboardEvent<HTMLElement>) => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onSelectCluster(cluster);
+      }
+    },
+    [onSelectCluster],
+  );
+
+  const handleDragOver = React.useCallback(
+    (clusterId: string) => (event: React.DragEvent<HTMLElement>) => {
+      if (!isDragging) {
+        return;
+      }
+      event.preventDefault();
+      onDropTargetChange(clusterId);
+    },
+    [isDragging, onDropTargetChange],
+  );
+
+  const handleDrop = React.useCallback(
+    (clusterId: string) => (event: React.DragEvent<HTMLElement>) => {
+      if (!isDragging) {
+        return;
+      }
+      event.preventDefault();
+      onDropFace(clusterId);
+    },
+    [isDragging, onDropFace],
+  );
+
+  const handleIdentityDragStart = React.useCallback(
+    (clusterId: string, identityId: string) => (event: React.DragEvent<HTMLElement>) => {
+      event.dataTransfer?.setData('text/plain', identityId);
+      event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
+      onIdentityDragStart(clusterId, identityId);
+    },
+    [onIdentityDragStart],
+  );
+
   if (isLoading) {
     return <p>{__('Loading clusters…', 'alt-context')}</p>;
   }
@@ -62,37 +103,25 @@ export const ClusterGrid = ({
           key={cluster.id}
           className={`acx-cluster-card${dropTarget === cluster.id ? ' is-drop-target' : ''}`}
           onClick={() => onSelectCluster(cluster)}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' || event.key === ' ') {
-              event.preventDefault();
-              onSelectCluster(cluster);
-            }
-          }}
-          onDragOver={(event) => {
-            if (!isDragging) {
-              return;
-            }
-            event.preventDefault();
-            onDropTargetChange(cluster.id);
-          }}
+          onKeyDown={handleKeyDown(cluster)}
+          onDragOver={handleDragOver(cluster.id)}
           onDragLeave={() => {
             if (dropTarget === cluster.id) {
               onDropTargetChange(null);
             }
           }}
-          onDrop={(event) => {
-            if (!isDragging) {
-              return;
-            }
-            event.preventDefault();
-            onDropFace(cluster.id);
-          }}
+          onDrop={handleDrop(cluster.id)}
           role="button"
           tabIndex={0}
         >
           <header className="acx-cluster-card__header">
             <h3>{cluster.label || sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}</h3>
-          <p>{sprintf(_n('%d identity', '%d identities', cluster.identity_count, 'alt-context'), cluster.identity_count)}</p>
+            <p>
+              {sprintf(
+                _n('%d identity', '%d identities', cluster.identity_count, 'alt-context'),
+                cluster.identity_count,
+              )}
+            </p>
           </header>
           <div className="acx-cluster-card__faces">
             {cluster.sample_identities.length === 0 ? (
@@ -104,11 +133,7 @@ export const ClusterGrid = ({
                   className="acx-cluster-card__face"
                   draggable
                   aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
-                  onDragStart={(event) => {
-                    event.dataTransfer?.setData('text/plain', identity.id);
-                    event.dataTransfer?.setDragImage(event.currentTarget, 0, 0);
-                    onIdentityDragStart(cluster.id, identity.id);
-                  }}
+                  onDragStart={handleIdentityDragStart(cluster.id, identity.id)}
                   onDragEnd={onFaceDragEnd}
                 >
                   <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} />

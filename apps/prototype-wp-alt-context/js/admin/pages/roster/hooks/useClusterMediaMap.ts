@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import type { ClusterSummary } from '../../../api/recognitionApi';
+import type { ClusterSummary } from '../../../api/recognition';
 import { fetchMediaMeta, type MediaMeta } from '../utils/mediaMeta';
 
 export type MediaMap = Record<number, MediaMeta>;
@@ -11,12 +11,9 @@ export const useClusterMediaMap = (clusters: ClusterSummary[], additionalMediaId
   useEffect(() => {
     const mediaIds = new Set<number>();
     clusters.forEach((cluster) => {
-      const identities = cluster.sample_identities ?? cluster.sample_faces ?? [];
-      identities.forEach((identity: ClusterSummary['sample_identities'][number]) => mediaIds.add(identity.media_id));
-      const representativeMedia =
-        cluster.representative_identity?.media_id ?? cluster.representative_face?.media_id ?? null;
-      if (representativeMedia) {
-        mediaIds.add(representativeMedia);
+      cluster.sample_identities.forEach((identity) => mediaIds.add(identity.media_id));
+      if (cluster.representative_identity?.media_id) {
+        mediaIds.add(cluster.representative_identity.media_id);
       }
     });
     additionalMediaIds.forEach((id) => mediaIds.add(id));
@@ -27,7 +24,7 @@ export const useClusterMediaMap = (clusters: ClusterSummary[], additionalMediaId
     }
 
     let cancelled = false;
-    (async () => {
+    const loadMeta = async (): Promise<void> => {
       const entries = await Promise.all(
         missing.map(async (id) => {
           const meta = await fetchMediaMeta(id);
@@ -44,7 +41,9 @@ export const useClusterMediaMap = (clusters: ClusterSummary[], additionalMediaId
         });
         return next;
       });
-    })();
+    };
+
+    void loadMeta();
 
     return () => {
       cancelled = true;

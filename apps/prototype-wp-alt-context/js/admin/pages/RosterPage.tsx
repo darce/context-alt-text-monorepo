@@ -1,7 +1,7 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import type { ClusterIdentity, ClusterSummary } from '../api/recognitionApi';
+import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
 import type { RosterEntry } from '../api/rosterApi';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
@@ -16,19 +16,23 @@ const ROSTER_TABS = {
 } as const;
 
 type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];
+type RosterEntriesQuery = Pick<ReturnType<typeof useRosterEntries>, 'isLoading' | 'isError' | 'data' | 'refetch'>;
 
 export const RosterPage = (): React.JSX.Element => {
   const [activeTab, setActiveTab] = React.useState<RosterTab>(ROSTER_TABS.entries.id);
   const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
-  const clusters = clustersQuery.data ?? [];
+  const clusters = React.useMemo(() => clustersQuery.data ?? [], [clustersQuery.data]);
   const selectedCluster = React.useMemo(
     () => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null,
     [clusters, selectedClusterId],
   );
   const clusterDetailQuery = useRecognitionCluster(selectedClusterId, Boolean(selectedClusterId));
-  const drawerIdentities = clusterDetailQuery.data?.sample_identities ?? selectedCluster?.sample_identities ?? [];
+  const drawerIdentities = React.useMemo(
+    () => clusterDetailQuery.data?.sample_identities ?? selectedCluster?.sample_identities ?? [],
+    [clusterDetailQuery.data, selectedCluster],
+  );
   const drawerMediaIds = React.useMemo(
     () => Array.from(new Set(drawerIdentities.map((identity) => identity.media_id))),
     [drawerIdentities],
@@ -48,7 +52,7 @@ export const RosterPage = (): React.JSX.Element => {
     const url = new URL(window.location.href);
     const tabParam = url.searchParams.get('tab');
     if (tabParam === ROSTER_TABS.clusters.id || tabParam === ROSTER_TABS.entries.id) {
-      setActiveTab(tabParam as RosterTab);
+      setActiveTab(tabParam);
     }
   }, []);
 
@@ -127,7 +131,7 @@ export const RosterPage = (): React.JSX.Element => {
             clusters={clusters}
             isLoading={clustersQuery.isLoading}
             isError={clustersQuery.isError}
-            onRetry={clustersQuery.refetch}
+            onRetry={() => void clustersQuery.refetch()}
             mediaMap={mediaMap}
             onSelectCluster={handleSelectCluster}
             onIdentityDragStart={dragDrop.handleFaceDragStart}
@@ -146,7 +150,7 @@ export const RosterPage = (): React.JSX.Element => {
         isDetailLoading={clusterDetailQuery.isLoading}
         detailError={
           clusterDetailQuery.isError
-            ? clusterDetailQuery.error?.message ?? __('Unable to load cluster details.', 'alt-context')
+            ? (clusterDetailQuery.error?.message ?? __('Unable to load cluster details.', 'alt-context'))
             : null
         }
         mediaMap={mediaMap}
@@ -161,7 +165,6 @@ export const RosterPage = (): React.JSX.Element => {
         onFaceDragStart={dragDrop.handleFaceDragStart}
         onFaceDragEnd={dragDrop.handleFaceDragEnd}
         onDropTargetChange={dragDrop.handleDropTargetChange}
-        onDropFace={handleDropFace}
         dropTarget={dragDrop.dropTarget}
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
@@ -170,7 +173,7 @@ export const RosterPage = (): React.JSX.Element => {
   );
 };
 
-const RosterEntriesSection = ({ query }: { query: ReturnType<typeof useRosterEntries> }) => {
+const RosterEntriesSection = ({ query }: { query: RosterEntriesQuery }) => {
   if (query.isLoading) {
     return <p>{__('Loading roster entries…', 'alt-context')}</p>;
   }
@@ -179,7 +182,7 @@ const RosterEntriesSection = ({ query }: { query: ReturnType<typeof useRosterEnt
     return (
       <div>
         <p>{__('Unable to load roster entries.', 'alt-context')}</p>
-        <button type="button" onClick={() => query.refetch()}>
+        <button type="button" onClick={() => void query.refetch()}>
           {__('Retry', 'alt-context')}
         </button>
       </div>

@@ -44,7 +44,7 @@ class RecognitionSettings(IdentityDetectionSettings):
 
 
 class IdentityClusteringSettings(BaseSettings):
-    similarity_threshold: float = 0.6
+    similarity_threshold: float = 0.75  # Raised from 0.70 - must exceed 0.75 to prevent false positives
     min_identity_cluster_size: int = Field(2, alias="min_cluster_size")
     max_identity_cluster_size: int = Field(1000, alias="max_cluster_size")
     auto_merge_enabled: bool = Field(

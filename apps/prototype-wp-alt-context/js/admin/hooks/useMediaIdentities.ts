@@ -1,6 +1,6 @@
 import { useQuery } from '@tanstack/react-query';
 
-import { fetchMediaIdentities, type MediaIdentitiesResponse } from '../api/recognitionApi';
+import { fetchMediaIdentities, type MediaIdentitiesResponse } from '../api/recognition';
 
 export const useMediaIdentities = (mediaIds: number[], enabled = true) =>
   useQuery<MediaIdentitiesResponse>({

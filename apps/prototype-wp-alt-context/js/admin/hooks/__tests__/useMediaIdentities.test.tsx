@@ -4,9 +4,9 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useMediaIdentities } from '../useMediaIdentities';
-import * as recognitionApi from '../../api/recognitionApi';
+import * as recognitionApi from '../../api/recognition';
 
-vi.mock('../../api/recognitionApi', () => ({
+vi.mock('../../api/recognition', () => ({
   fetchMediaIdentities: vi.fn(),
 }));
 
@@ -27,12 +27,13 @@ describe('useMediaIdentities', () => {
 
   it('fetches identities when enabled and media IDs exist', async () => {
     const { wrapper, queryClient } = createWrapper();
-    (recognitionApi.fetchMediaIdentities as vi.Mock).mockResolvedValue({ identities_by_media: {} });
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockResolvedValue({ identities_by_media: {} });
 
     const { result } = renderHook(() => useMediaIdentities([1, 2], true), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(recognitionApi.fetchMediaIdentities).toHaveBeenCalledWith([1, 2]);
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([1, 2]);
 
     queryClient.clear();
   });

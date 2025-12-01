@@ -1,26 +1,32 @@
 import { act, renderHook, waitFor } from '@testing-library/react';
 
-import { fetchScanStatus } from '../../api/recognitionApi';
+import { fetchScanStatus } from '../../api/recognition';
 import { useRecognitionJobHistory } from '../useRecognitionJobHistory';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
 }));
 
-vi.mock('../../api/recognitionApi', () => ({
+vi.mock('../../api/recognition', () => ({
   fetchScanStatus: vi.fn(),
 }));
 
 describe('useRecognitionJobHistory', () => {
-  const mockedFetchScanStatus = fetchScanStatus as vi.MockedFunction<typeof fetchScanStatus>;
+  const fetchScanStatusMock = vi.mocked(fetchScanStatus);
 
   beforeEach(() => {
     window.localStorage.clear();
-    mockedFetchScanStatus.mockReset();
+    fetchScanStatusMock.mockReset();
   });
 
   it('records jobs and fetches their statuses', async () => {
-    mockedFetchScanStatus.mockResolvedValue({ status: 'completed' } as { status: string });
+    fetchScanStatusMock.mockResolvedValue({
+      job_id: 'job-1',
+      status: 'completed',
+      total_media: 1,
+      processed_media: 1,
+      identities_detected: 1,
+    });
     const { result } = renderHook(() => useRecognitionJobHistory());
 
     act(() => {

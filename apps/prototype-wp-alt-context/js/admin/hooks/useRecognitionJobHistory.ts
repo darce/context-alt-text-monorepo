@@ -1,10 +1,13 @@
 import { useCallback, useEffect, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
-import { fetchScanStatus } from '../api/recognitionApi';
+import { fetchScanStatus } from '../api/recognition';
 
 const JOB_HISTORY_KEY = 'acx-recognition-jobs';
 const MAX_JOB_HISTORY = 5;
+
+const toStringArray = (value: unknown): string[] =>
+  Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : [];
 
 const readStoredHistory = (): string[] => {
   if (typeof window === 'undefined') {
@@ -13,8 +16,8 @@ const readStoredHistory = (): string[] => {
 
   try {
     const stored = window.localStorage.getItem(JOB_HISTORY_KEY);
-    const parsed = stored ? JSON.parse(stored) : [];
-    return Array.isArray(parsed) ? parsed : [];
+    const parsed: unknown = stored ? JSON.parse(stored) : [];
+    return toStringArray(parsed);
   } catch {
     return [];
   }
@@ -48,7 +51,7 @@ export const useRecognitionJobHistory = () => {
 
     let cancelled = false;
 
-    (async () => {
+    const fetchStatuses = async (): Promise<void> => {
       const entries = await Promise.all(
         jobHistory.map(async (id) => {
           try {
@@ -71,7 +74,9 @@ export const useRecognitionJobHistory = () => {
         });
         return next;
       });
-    })();
+    };
+
+    void fetchStatuses();
 
     return () => {
       cancelled = true;

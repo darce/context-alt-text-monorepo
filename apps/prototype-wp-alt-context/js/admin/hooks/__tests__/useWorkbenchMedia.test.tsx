@@ -4,15 +4,9 @@ import { renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
-import * as recognitionApi from '../../api/recognitionApi';
+import * as recognitionApi from '../../api/recognition';
 
-declare global {
-  interface Window {
-    AltContextAdmin?: Record<string, any>;
-  }
-}
-
-vi.mock('../../api/recognitionApi', () => ({
+vi.mock('../../api/recognition', () => ({
   fetchMediaIdentities: vi.fn(),
 }));
 
@@ -32,8 +26,14 @@ describe('useWorkbenchMedia', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     window.AltContextAdmin = {
-      endpoints: { workbenchMedia: '/wp-json/acx/v1/media' },
       nonce: 'test-nonce',
+      endpoints: {
+        workbenchMedia: '/wp-json/acx/v1/media',
+        recognitionAnalyze: '/wp-json/acx/v1/recognition/analyze',
+        recognitionJobs: '/wp-json/acx/v1/recognition/jobs',
+        recognitionCluster: '/wp-json/acx/v1/recognition/cluster',
+        recognitionClusters: '/wp-json/acx/v1/recognition/clusters',
+      },
     };
   });
 
@@ -50,8 +50,26 @@ describe('useWorkbenchMedia', () => {
     const { wrapper, queryClient } = createWrapper();
     const mediaResponse = {
       items: [
-        { id: 11, title: 'Item A', altText: null, status: 'missing', thumbnailUrl: null, mimeType: 'image/jpeg', editUrl: '#', tags: [] },
-        { id: 12, title: 'Item B', altText: 'Alt', status: 'missing', thumbnailUrl: null, mimeType: 'image/jpeg', editUrl: '#', tags: [] },
+        {
+          id: 11,
+          title: 'Item A',
+          altText: null,
+          status: 'missing',
+          thumbnailUrl: null,
+          mimeType: 'image/jpeg',
+          editUrl: '#',
+          tags: [],
+        },
+        {
+          id: 12,
+          title: 'Item B',
+          altText: 'Alt',
+          status: 'missing',
+          thumbnailUrl: null,
+          mimeType: 'image/jpeg',
+          editUrl: '#',
+          tags: [],
+        },
       ],
       total: 2,
       totalPages: 1,
@@ -64,20 +82,29 @@ describe('useWorkbenchMedia', () => {
     });
     globalThis.fetch = fetchMock as typeof fetch;
 
-    (recognitionApi.fetchMediaIdentities as vi.Mock).mockResolvedValue({
+    const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
+    fetchMediaIdentitiesMock.mockResolvedValue({
       identities_by_media: {
-        '11': [{ id: 'face-1', media_id: 11, cluster_id: 'cluster-1', cluster_label: 'Riley', is_auto_label: false, bbox: { x: 0, y: 0, width: 10, height: 10 }, confidence: 0.9, similarity: 0.85 }],
+        '11': [
+          {
+            id: 'face-1',
+            media_id: 11,
+            cluster_id: 'cluster-1',
+            cluster_label: 'Riley',
+            is_auto_label: false,
+            bbox: { x: 0, y: 0, width: 10, height: 10 },
+            confidence: 0.9,
+            similarity: 0.85,
+          },
+        ],
         '12': [],
       },
     });
 
-    const { result } = renderHook(
-      () => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }),
-      { wrapper },
-    );
+    const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), { wrapper });
 
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(recognitionApi.fetchMediaIdentities).toHaveBeenCalledWith([11, 12]);
+    expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([11, 12]);
 
     const merged = result.current.itemsWithIdentities;
     expect(merged).toHaveLength(2);
@@ -92,10 +119,7 @@ describe('useWorkbenchMedia', () => {
     const fetchMock = vi.fn();
     globalThis.fetch = fetchMock as typeof fetch;
 
-    renderHook(
-      () => useWorkbenchMedia({ page: 1, perPage: 10, enabled: false }),
-      { wrapper },
-    );
+    renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: false }), { wrapper });
 
     await waitFor(() => {
       expect(fetchMock).not.toHaveBeenCalled();

@@ -16,13 +16,18 @@ from sqlalchemy.orm import selectinload
 from db.models import IdentityCluster, IdentityScanJob, MediaIdentity, Tenant
 from db.session import async_session_factory, get_session
 from db.tenant_context import set_tenant_context
+from recognition.application.clustering.clustering_settings import (
+    ClusteringSettings as ClusteringSettingsModel,
+)
 from recognition.application.clustering.identity_clustering_service import (
     ClusterLabelConflictError,
     ClusterNotFoundError,
     IdentityClusteringService,
 )
+from recognition.application.clustering.suggestion_service import SuggestionService
 from recognition.application.scanning.identity_scan_service import IdentityScanService
 from recognition.config import get_settings
+from recognition.domain.embeddings.layout import PoseMetrics, decode_debug_metrics
 from recognition.infrastructure.embedding_provider import FaceEmbeddingProvider
 
 logger = logging.getLogger(__name__)
@@ -140,24 +145,14 @@ async def analyze_media(
     return AnalyzeResponse(job_ids=job_ids, job_id=primary_job, status="queued", total_media=total_media)
 
 
-class ClusterRequest(BaseModel):
-    tenant_id: UUID
-    similarity_threshold: float | None = 0.6
-
-
-class ClusterResponse(BaseModel):
-    clusters_created: int
-    total_identities_clustered: int
-    merges_performed: int = Field(
-        default=0,
-        description="Number of auto-merge operations performed",
-    )
-    job_id: str | None = None
+# NOTE: ClusterRequest and ClusterResponse were removed as dead code.
+# The old POST /cluster endpoint was removed in favor of POST /clustering/jobs.
 
 
 class ClusterSummaryResponse(BaseModel):
     id: str
     label: str
+    is_auto_label: bool = False
     identity_count: int
     member_ids: list[str]
     representative_identity: dict
@@ -171,6 +166,22 @@ class MediaIdentityBBox(BaseModel):
     height: int
 
 
+class DebugMetrics(BaseModel):
+    """InsightFace debug metrics extracted from extended embeddings."""
+
+    pose: PoseMetrics  # pitch, yaw, roll in degrees
+    age: float
+    gender: str  # 'female' or 'male'
+    det_score: float  # detection confidence [0, 1]
+    bbox_area: int  # bounding box area in pixels²
+    landmark_quality: float  # std deviation of landmark positions
+    # Clustering decision info
+    clustering_method: str | None = None  # e.g., 'representative_match', 'centroid_match', 'new_cluster'
+    clustering_algorithm: str | None = None  # e.g., 'cosine_similarity', 'chinese_whispers', 'hdbscan'
+    similarity_threshold: float | None = None  # threshold used for cluster assignment
+    match_similarity: float | None = None  # actual similarity score when matched
+
+
 class MediaIdentityDetail(BaseModel):
     id: str
     media_id: int
@@ -182,6 +193,7 @@ class MediaIdentityDetail(BaseModel):
     similarity: float | None
     detected_at: str | None
     thumbnail_url: str | None = None
+    debug_metrics: DebugMetrics | None = None
 
 
 class MediaIdentitiesResponse(BaseModel):
@@ -279,11 +291,81 @@ class MergeSimilarResponse(BaseModel):
 
 class SplitClusterRequest(BaseModel):
     tenant_id: UUID
+    n_clusters: int = 0  # 0 = auto-detect, 2+ = fixed number of clusters
 
 
 class SplitClusterResponse(BaseModel):
-    new_cluster_id: str | None
-    moved_count: int
+    """Response for split operation. Returns lists for multi-way splits."""
+
+    new_cluster_ids: list[str]  # IDs of newly created clusters
+    moved_counts: list[int]  # Number of identities moved to each new cluster
+    # Legacy single-cluster fields for backward compatibility
+    new_cluster_id: str | None = None
+    moved_count: int = 0
+
+
+# === Suggestion Models ===
+
+
+class SuggestionResponse(BaseModel):
+    """A pending suggestion for user review."""
+
+    id: str
+    identity_id: str
+    identity_thumbnail_url: str | None
+    identity_media_id: int
+    suggested_cluster_id: str
+    cluster_label: str | None
+    cluster_thumbnail_url: str | None
+    representative_similarity: float
+    avg_member_similarity: float
+    confidence_score: float
+    created_at: str
+
+
+class SuggestionsListResponse(BaseModel):
+    """List of pending suggestions with count."""
+
+    suggestions: list[SuggestionResponse]
+    total_count: int
+
+
+class SuggestionActionResponse(BaseModel):
+    """Response after accepting or rejecting a suggestion."""
+
+    suggestion_id: str
+    resolution: str
+    identity_id: str
+    cluster_id: str
+    message: str
+
+
+class ReassignIdentityRequest(BaseModel):
+    """Request to reassign an identity to a different cluster or create a new one."""
+
+    tenant_id: UUID
+    identity_id: UUID
+    target_cluster_id: UUID | None = Field(
+        None,
+        description="Target cluster UUID. If null, the identity is removed from its current cluster.",
+    )
+    target_label: str | None = Field(
+        None,
+        max_length=255,
+        description="Optional: create or find a cluster with this label instead of using target_cluster_id.",
+    )
+    user_id: int | None = None
+
+
+class ReassignIdentityResponse(BaseModel):
+    """Response for identity reassignment."""
+
+    identity_id: str
+    previous_cluster_id: str | None
+    target_cluster_id: str | None
+    target_label: str | None
+    created_new_cluster: bool = False
+    message: str
 
 
 class ClusteringJobResponse(BaseModel):
@@ -311,7 +393,7 @@ async def start_clustering_job(
 
     await set_tenant_context(session, tenant_id)
     service = IdentityClusteringService(session=session, tenant_id=tenant_id)
-    result = await service.cluster_identities_hybrid()
+    result = await service.cluster_unclustered_identities()
 
     if result["status"] == "complete":
         clusters_raw = result.get("clusters") or []
@@ -392,42 +474,9 @@ async def get_analysis_job(
     }
 
 
-@router.post("/cluster", response_model=ClusterResponse)
-async def cluster_media(
-    request: ClusterRequest,
-    session: AsyncSession = Depends(get_session),
-) -> ClusterResponse:
-    await set_tenant_context(session, request.tenant_id)
-    service = IdentityClusteringService(
-        session=session,
-        tenant_id=request.tenant_id,
-        similarity_threshold=request.similarity_threshold or 0.6,
-    )
-    clusters = await service.cluster_identities_incremental()
-    settings = get_settings()
-
-    merges = 0
-    if settings.identity_clustering.auto_merge_enabled:
-        try:
-            merges = await service.merge_similar_clusters(
-                threshold=settings.identity_clustering.auto_merge_threshold,
-                max_iterations=settings.identity_clustering.auto_merge_max_iterations,
-            )
-            if merges:
-                logger.info(
-                    "Auto-merged %d clusters for tenant %s",
-                    merges,
-                    request.tenant_id,
-                )
-        except Exception as exc:  # pragma: no cover - defensive logging
-            logger.warning("Auto-merge failed for tenant %s: %s", request.tenant_id, exc)
-
-    total_identities = sum(cluster.identity_count for cluster in clusters)
-    return ClusterResponse(
-        clusters_created=len(clusters),
-        total_identities_clustered=total_identities,
-        merges_performed=merges,
-    )
+# NOTE: The old POST /cluster endpoint was removed as dead code.
+# It used a legacy clustering path which did NOT run Chinese Whispers.
+# All clustering should go through POST /clustering/jobs which uses cluster_unclustered_identities().
 
 
 @router.get("/clusters", response_model=list[ClusterSummaryResponse])
@@ -457,6 +506,89 @@ async def list_clusters(
         summaries.append(ClusterSummaryResponse(**summary))  # type: ignore[arg-type]
 
     return summaries
+
+
+class TrainingStageResponse(BaseModel):
+    """Training stage info based on curriculum learning principles."""
+
+    stage: str  # 'early', 'developing', 'mature'
+    stage_label: str  # Human-readable label
+    cluster_count: int  # Total labeled clusters
+    identity_count: int  # Total detected identities
+    current_threshold: float  # Active similarity threshold
+    base_threshold: float  # Base threshold (at maturity)
+    strict_threshold: float  # Strict threshold (early stage)
+    maturity_point: int  # Cluster count for maturity
+    progress_percent: int  # 0-100 progress to maturity
+
+
+@router.get("/training-stage", response_model=TrainingStageResponse)
+async def get_training_stage(
+    tenant_id: UUID,
+    session: AsyncSession = Depends(get_session),
+) -> TrainingStageResponse:
+    """Get current training stage based on curriculum learning.
+
+    The system uses adaptive thresholds inspired by CurricularFace:
+    - Early stage (few clusters): Strict thresholds to avoid false positives
+    - Developing stage: Thresholds gradually relax as clusters are validated
+    - Mature stage (30+ clusters): Base threshold reached, system is stable
+
+    This helps users understand why some matches may not auto-assign.
+    """
+    await set_tenant_context(session, tenant_id)
+
+    # Get cluster count (labeled clusters only, excluding auto-generated labels)
+    labeled_stmt = select(IdentityCluster).where(
+        IdentityCluster.tenant_id == tenant_id,
+        IdentityCluster.label.is_not(None),
+        ~IdentityCluster.label.startswith("cluster-"),
+    )
+    labeled_result = await session.execute(labeled_stmt)
+    labeled_count = len(labeled_result.scalars().all())
+
+    # Get total cluster count
+    total_stmt = select(IdentityCluster).where(IdentityCluster.tenant_id == tenant_id)
+    total_result = await session.execute(total_stmt)
+    total_cluster_count = len(total_result.scalars().all())
+
+    # Get identity count
+    identity_stmt = select(MediaIdentity).where(MediaIdentity.tenant_id == tenant_id)
+    identity_result = await session.execute(identity_stmt)
+    identity_count = len(identity_result.scalars().all())
+
+    # Compute adaptive threshold
+    clustering_settings = ClusteringSettingsModel()
+    current_threshold = clustering_settings.compute_adaptive_threshold(labeled_count)
+
+    maturity_point = clustering_settings.adaptive_threshold_maturity_point
+    progress = min(100, int((labeled_count / maturity_point) * 100))
+
+    # Determine stage
+    if labeled_count == 0:
+        stage = "early"
+        stage_label = "Early Stage - High Precision Mode"
+    elif labeled_count < 10:
+        stage = "early"
+        stage_label = f"Early Stage - {labeled_count} labeled identities"
+    elif labeled_count < maturity_point:
+        stage = "developing"
+        stage_label = f"Developing - {labeled_count}/{maturity_point} to maturity"
+    else:
+        stage = "mature"
+        stage_label = f"Mature - {labeled_count} labeled identities"
+
+    return TrainingStageResponse(
+        stage=stage,
+        stage_label=stage_label,
+        cluster_count=total_cluster_count,
+        identity_count=identity_count,
+        current_threshold=round(current_threshold, 3),
+        base_threshold=clustering_settings.similarity_threshold,
+        strict_threshold=clustering_settings.adaptive_threshold_strict,
+        maturity_point=maturity_point,
+        progress_percent=progress,
+    )
 
 
 @router.get("/clusters/labels", response_model=list[str])
@@ -489,6 +621,10 @@ async def get_media_identities(
         None,
         max_length=100,
     ),
+    include_debug: bool = Query(
+        False,
+        description="Include InsightFace debug metrics (pose, age, gender, etc.)",
+    ),
     session: AsyncSession = Depends(get_session),
 ) -> MediaIdentitiesResponse:
     await set_tenant_context(session, tenant_id)
@@ -519,14 +655,20 @@ async def get_media_identities(
 
     cluster_ids = {membership.cluster_id for identity in identities for membership in identity.cluster_memberships}
 
-    cluster_labels: dict[UUID, tuple[str | None, bool]] = {}
+    # Store label, is_auto, similarity_threshold, clustering_algorithm per cluster
+    cluster_info: dict[UUID, dict] = {}
     if cluster_ids:
         cluster_stmt = select(IdentityCluster).where(IdentityCluster.id.in_(cluster_ids))
         cluster_result = await session.execute(cluster_stmt)
         for cluster in cluster_result.scalars().all():
             label = cluster.label or None
             is_auto = bool(label and label.startswith("cluster-"))
-            cluster_labels[cluster.id] = (label, is_auto)
+            cluster_info[cluster.id] = {
+                "label": label,
+                "is_auto": is_auto,
+                "similarity_threshold": cluster.similarity_threshold,
+                "clustering_algorithm": cluster.clustering_algorithm,
+            }
 
     identities_by_media: dict[str, list[MediaIdentityDetail]] = {}
     for media_id in resolved_ids:
@@ -535,9 +677,44 @@ async def get_media_identities(
         for identity in media_entries:
             membership = identity.cluster_memberships[0] if identity.cluster_memberships else None
             cluster_id = str(membership.cluster_id) if membership else None
-            label_info = cluster_labels.get(membership.cluster_id) if membership else None
-            cluster_label = label_info[0] if label_info else None
-            is_auto_label = label_info[1] if label_info else False
+            info = cluster_info.get(membership.cluster_id) if membership else None
+            cluster_label = info["label"] if info else None
+            is_auto_label = info["is_auto"] if info else False
+
+            # Extract debug metrics from embedding if requested
+            debug_metrics: DebugMetrics | None = None
+            if include_debug and identity.embedding is not None:
+                raw_metrics = decode_debug_metrics(list(identity.embedding))
+                if raw_metrics is not None:
+                    # Determine clustering method based on similarity
+                    # If similarity == 1.0, it's the founding member (new cluster)
+                    # Otherwise it was matched to an existing cluster
+                    raw_similarity = membership.similarity if membership else None
+                    if raw_similarity is not None:
+                        if raw_similarity >= 0.9999:
+                            # Founding member - not a "match" to anything
+                            clustering_method = "new_cluster"
+                            match_similarity = None  # Don't show 100% for singletons
+                        else:
+                            clustering_method = "similarity_match"
+                            match_similarity = raw_similarity
+                    else:
+                        clustering_method = None
+                        match_similarity = None
+
+                    debug_metrics = DebugMetrics(
+                        pose=raw_metrics["pose"],
+                        age=raw_metrics["age"],
+                        gender=raw_metrics["gender"],
+                        det_score=raw_metrics["det_score"],
+                        bbox_area=raw_metrics["bbox_area"],
+                        landmark_quality=raw_metrics["landmark_quality"],
+                        clustering_method=clustering_method,
+                        clustering_algorithm=info["clustering_algorithm"] if info else None,
+                        similarity_threshold=info["similarity_threshold"] if info else None,
+                        match_similarity=match_similarity,
+                    )
+
             details.append(
                 MediaIdentityDetail(
                     id=str(identity.id),
@@ -555,6 +732,7 @@ async def get_media_identities(
                     similarity=membership.similarity if membership else None,
                     detected_at=identity.created_at.isoformat() if identity.created_at else None,
                     thumbnail_url=_resolve_thumbnail_url(getattr(identity, "thumbnail_url", None), request),
+                    debug_metrics=debug_metrics,
                 )
             )
         identities_by_media[str(media_id)] = details
@@ -657,16 +835,399 @@ async def merge_similar_clusters(
     return MergeSimilarResponse(merges_performed=merges)
 
 
+@router.post("/clusters/reassign", response_model=ReassignIdentityResponse)
+async def reassign_identity(
+    request: ReassignIdentityRequest,
+    session: AsyncSession = Depends(get_session),
+) -> ReassignIdentityResponse:
+    """
+    Reassign an identity to a different cluster, or remove it from its current cluster.
+
+    This is used when:
+    - Assigning a singleton identity to an existing cluster
+    - Moving an identity from one cluster to another
+    - Removing an identity from a cluster ("wrong person" - creates new singleton cluster)
+    """
+    from uuid import uuid4
+
+    from sqlalchemy import select
+
+    await set_tenant_context(session, request.tenant_id)
+
+    # Get the identity
+    identity = await session.get(MediaIdentity, request.identity_id)
+    if not identity or identity.tenant_id != request.tenant_id:
+        raise HTTPException(status_code=404, detail="Identity not found")
+
+    # Find current membership
+    from db.models import IdentityMember
+
+    current_stmt = select(IdentityMember).where(
+        IdentityMember.identity_id == request.identity_id,
+        IdentityMember.tenant_id == request.tenant_id,
+    )
+    current_result = await session.execute(current_stmt)
+    current_member = current_result.scalar_one_or_none()
+    previous_cluster_id = current_member.cluster_id if current_member else None
+
+    created_new_cluster = False
+    new_cluster_id: UUID | None = None
+    new_cluster_label: str | None = None
+
+    if request.target_cluster_id:
+        # Assign to existing cluster
+        # First, remove old membership if exists to avoid duplicate key
+        if current_member and current_member.cluster_id != request.target_cluster_id:
+            await session.delete(current_member)
+            # Decrement old cluster count
+            old_cluster = await session.get(IdentityCluster, current_member.cluster_id)
+            if old_cluster:
+                old_cluster.identity_count = max(0, old_cluster.identity_count - 1)
+            await session.flush()  # Ensure deletion is processed before new assignment
+
+        # Now assign to target cluster
+        service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
+        await service.assign_identity_to_cluster(request.identity_id, request.target_cluster_id)
+
+        await session.commit()
+        message = "Identity assigned to cluster"
+    else:
+        # "Wrong person" - remove from current cluster and create new singleton cluster
+        if current_member:
+            old_cluster = await session.get(IdentityCluster, current_member.cluster_id)
+
+            # Delete old membership
+            await session.delete(current_member)
+            if old_cluster:
+                old_cluster.identity_count = max(0, old_cluster.identity_count - 1)
+
+            # Create new singleton cluster for this identity
+            new_cluster_id = uuid4()
+            new_cluster = IdentityCluster(
+                id=new_cluster_id,
+                tenant_id=request.tenant_id,
+                label=None,  # User can name it later
+                representative_identity_id=request.identity_id,
+                identity_count=1,
+                clustering_algorithm="user_reassign",
+                user_confirmed=True,
+                confirmation_source="reject",
+            )
+            session.add(new_cluster)
+            await session.flush()
+
+            # Create membership in new cluster
+            new_member = IdentityMember(
+                id=uuid4(),
+                tenant_id=request.tenant_id,
+                cluster_id=new_cluster_id,
+                identity_id=request.identity_id,
+                similarity=1.0,  # Perfect self-similarity
+            )
+            session.add(new_member)
+
+            await session.commit()
+            created_new_cluster = True
+            message = "Identity moved to new singleton cluster"
+        else:
+            message = "Identity was not in any cluster"
+
+    return ReassignIdentityResponse(
+        identity_id=str(request.identity_id),
+        previous_cluster_id=str(previous_cluster_id) if previous_cluster_id else None,
+        target_cluster_id=str(new_cluster_id)
+        if new_cluster_id
+        else (str(request.target_cluster_id) if request.target_cluster_id else None),
+        target_label=new_cluster_label,
+        created_new_cluster=created_new_cluster,
+        message=message,
+    )
+
+
+class CreateClusterForIdentityRequest(BaseModel):
+    tenant_id: UUID
+    identity_id: UUID
+    label: str = Field(..., min_length=1, max_length=255)
+    user_id: int | None = None
+
+
+class CreateClusterForIdentityResponse(BaseModel):
+    cluster_id: str
+    label: str
+    identity_id: str
+    message: str
+
+
+@router.post("/clusters/create-for-identity", response_model=CreateClusterForIdentityResponse)
+async def create_cluster_for_identity(
+    request: CreateClusterForIdentityRequest,
+    session: AsyncSession = Depends(get_session),
+) -> CreateClusterForIdentityResponse:
+    """
+    Create a new cluster with a label and assign a singleton identity to it.
+
+    This is used when a user gives a name to an unclustered identity.
+    """
+    from sqlalchemy import select
+
+    from db.models import IdentityMember
+
+    await set_tenant_context(session, request.tenant_id)
+
+    # Get the identity
+    identity = await session.get(MediaIdentity, request.identity_id)
+    if not identity or identity.tenant_id != request.tenant_id:
+        raise HTTPException(status_code=404, detail="Identity not found")
+
+    # Check if label already exists
+    existing_stmt = select(IdentityCluster).where(
+        IdentityCluster.tenant_id == request.tenant_id,
+        IdentityCluster.label == request.label,
+    )
+    existing_result = await session.execute(existing_stmt)
+    existing_cluster = existing_result.scalar_one_or_none()
+
+    if existing_cluster:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Label '{request.label}' already exists. Use reassign to add identity to existing cluster.",
+        )
+
+    # Check if identity is already a member of another cluster and remove it
+    current_member_stmt = select(IdentityMember).where(
+        IdentityMember.identity_id == request.identity_id,
+        IdentityMember.tenant_id == request.tenant_id,
+    )
+    current_member_result = await session.execute(current_member_stmt)
+    current_member = current_member_result.scalar_one_or_none()
+
+    if current_member:
+        # Remove from old cluster
+        old_cluster = await session.get(IdentityCluster, current_member.cluster_id)
+        await session.delete(current_member)
+        if old_cluster:
+            old_cluster.identity_count = max(0, old_cluster.identity_count - 1)
+        logger.info(
+            "Removed identity %s from cluster %s before creating new cluster",
+            request.identity_id,
+            current_member.cluster_id,
+        )
+
+    # Create new cluster with the identity
+    service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
+
+    cluster, _search_entry = await service.factory.create_cluster_with_centroid(
+        identities=[identity],
+        label=request.label,
+    )
+
+    await session.commit()
+
+    logger.info(
+        "Created cluster %s with label '%s' for singleton identity %s",
+        cluster.id,
+        request.label,
+        request.identity_id,
+    )
+
+    return CreateClusterForIdentityResponse(
+        cluster_id=str(cluster.id),
+        label=request.label,
+        identity_id=str(request.identity_id),
+        message="Created new cluster for identity",
+    )
+
+
 @router.post("/clusters/{cluster_id}/split", response_model=SplitClusterResponse)
 async def split_cluster(
     cluster_id: UUID,
     request: SplitClusterRequest,
     session: AsyncSession = Depends(get_session),
 ) -> SplitClusterResponse:
+    """
+    Split a cluster using hierarchical clustering.
+
+    If n_clusters=0 (default), automatically determines the optimal split
+    based on face similarity. If n_clusters>=2, forces exactly that many groups.
+    The largest group stays in the original cluster; others become new clusters.
+    """
+    logger.info(
+        "Split cluster request: cluster_id=%s, n_clusters=%d, tenant_id=%s",
+        cluster_id,
+        request.n_clusters,
+        request.tenant_id,
+    )
     await set_tenant_context(session, request.tenant_id)
     service = IdentityClusteringService(session=session, tenant_id=request.tenant_id)
-    new_id, count = await service.split_cluster(cluster_id)
+    new_ids, counts = await service.split_cluster(cluster_id, n_clusters=request.n_clusters)
+
+    # Build response with both new list format and legacy single-cluster fields
     return SplitClusterResponse(
-        new_cluster_id=str(new_id) if new_id else None,
-        moved_count=count,
+        new_cluster_ids=[str(id) for id in new_ids],
+        moved_counts=counts,
+        # Legacy fields: use first new cluster if any
+        new_cluster_id=str(new_ids[0]) if new_ids else None,
+        moved_count=counts[0] if counts else 0,
+    )
+
+
+# =============================================================================
+# Suggestion Endpoints
+# =============================================================================
+
+
+@router.get("/suggestions", response_model=SuggestionsListResponse)
+async def list_pending_suggestions(
+    tenant_id: UUID,
+    limit: int = Query(default=20, le=100),
+    offset: int = Query(default=0, ge=0),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionsListResponse:
+    """Get pending suggestions for user review, ordered by confidence (highest first)."""
+    await set_tenant_context(session, tenant_id)
+
+    suggestion_service = SuggestionService(session, tenant_id)
+    suggestions = await suggestion_service.get_pending_suggestions(limit=limit, offset=offset)
+    total_count = await suggestion_service.count_pending_suggestions()
+
+    # Build response with related entity details
+    response_suggestions: list[SuggestionResponse] = []
+    for s in suggestions:
+        # Load identity and cluster details
+        identity = await session.get(MediaIdentity, s.identity_id)
+        cluster = await session.get(IdentityCluster, s.suggested_cluster_id)
+
+        if identity is None or cluster is None:
+            continue
+
+        # Get cluster representative thumbnail
+        cluster_thumbnail = None
+        if cluster.representative_identity_id:
+            rep_identity = await session.get(MediaIdentity, cluster.representative_identity_id)
+            if rep_identity:
+                cluster_thumbnail = rep_identity.thumbnail_url
+
+        response_suggestions.append(
+            SuggestionResponse(
+                id=str(s.id),
+                identity_id=str(s.identity_id),
+                identity_thumbnail_url=identity.thumbnail_url,
+                identity_media_id=identity.media_id,
+                suggested_cluster_id=str(s.suggested_cluster_id),
+                cluster_label=cluster.label,
+                cluster_thumbnail_url=cluster_thumbnail,
+                representative_similarity=s.representative_similarity,
+                avg_member_similarity=s.avg_member_similarity,
+                confidence_score=s.confidence_score,
+                created_at=s.created_at.isoformat() if s.created_at else "",
+            )
+        )
+
+    return SuggestionsListResponse(
+        suggestions=response_suggestions,
+        total_count=total_count,
+    )
+
+
+@router.post("/suggestions/{suggestion_id}/accept", response_model=SuggestionActionResponse)
+async def accept_suggestion(
+    suggestion_id: UUID,
+    tenant_id: UUID = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionActionResponse:
+    """Accept a suggestion: assign the identity to the suggested cluster."""
+    await set_tenant_context(session, tenant_id)
+
+    suggestion_service = SuggestionService(session, tenant_id)
+    suggestion = await suggestion_service.get_suggestion_by_id(suggestion_id)
+
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+
+    if suggestion.resolution != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Suggestion already resolved: {suggestion.resolution}",
+        )
+
+    # Get the identity and assign it to the cluster
+    identity = await session.get(MediaIdentity, suggestion.identity_id)
+    if identity is None:
+        raise HTTPException(status_code=404, detail="Identity not found")
+
+    # Use clustering service to properly assign with representative management
+    service = IdentityClusteringService(session=session, tenant_id=tenant_id)
+
+    # Get identity embedding
+    from recognition.domain.embeddings import prepare_embedding
+
+    identity_vector = prepare_embedding(identity.embedding)
+
+    # Assign to cluster
+    await service.assigner.assign_to_cluster_by_id(
+        identity=identity,
+        identity_vector=identity_vector,
+        cluster_id=suggestion.suggested_cluster_id,
+        similarity=suggestion.representative_similarity,
+    )
+
+    # Try to add as representative if high quality
+    await service._rep_manager.add_representative(suggestion.suggested_cluster_id, identity)
+
+    # Mark the cluster as user-confirmed and increment confirmation count
+    cluster = await session.get(IdentityCluster, suggestion.suggested_cluster_id)
+    if cluster:
+        cluster.user_confirmed = True
+        cluster.confirmation_count += 1
+        if not cluster.confirmation_source:
+            cluster.confirmation_source = "assignment"
+
+    # Mark suggestion as accepted
+    await suggestion_service.accept_suggestion(suggestion_id)
+
+    # Expire any other pending suggestions for this identity
+    await suggestion_service.expire_suggestions_for_identity(suggestion.identity_id)
+
+    await session.commit()
+
+    return SuggestionActionResponse(
+        suggestion_id=str(suggestion_id),
+        resolution="accepted",
+        identity_id=str(suggestion.identity_id),
+        cluster_id=str(suggestion.suggested_cluster_id),
+        message="Identity assigned to cluster",
+    )
+
+
+@router.post("/suggestions/{suggestion_id}/reject", response_model=SuggestionActionResponse)
+async def reject_suggestion(
+    suggestion_id: UUID,
+    tenant_id: UUID = Query(...),
+    session: AsyncSession = Depends(get_session),
+) -> SuggestionActionResponse:
+    """Reject a suggestion: identity stays in its current cluster/singleton."""
+    await set_tenant_context(session, tenant_id)
+
+    suggestion_service = SuggestionService(session, tenant_id)
+    suggestion = await suggestion_service.get_suggestion_by_id(suggestion_id)
+
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Suggestion not found")
+
+    if suggestion.resolution != "pending":
+        raise HTTPException(
+            status_code=400,
+            detail=f"Suggestion already resolved: {suggestion.resolution}",
+        )
+
+    # Mark suggestion as rejected
+    await suggestion_service.reject_suggestion(suggestion_id)
+    await session.commit()
+
+    return SuggestionActionResponse(
+        suggestion_id=str(suggestion_id),
+        resolution="rejected",
+        identity_id=str(suggestion.identity_id),
+        cluster_id=str(suggestion.suggested_cluster_id),
+        message="Suggestion rejected - identity remains unchanged",
     )

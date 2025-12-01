@@ -1,0 +1,1560 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>13 Multisite</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_315" role="doc-pagebreak" title="315"/><a id="c13"/><span class="chapterNumber">13</span><br/><span class="chapterTitle">Multisite</span></h1>
+</header>
+<section><span id="c13-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c13-list-0001">
+<li id="c13-li-0001">Introduction to Multisite</li>
+<li id="c13-li-0002">Unique Terminology</li>
+<li id="c13-li-0003">Enabling &amp; Configuring</li>
+<li id="c13-li-0004">Common Functions</li>
+<li id="c13-li-0005">Creating New Sites</li>
+<li id="c13-li-0006">Switching between Sites</li>
+<li id="c13-li-0007">Network and Site Options and Meta</li>
+<li id="c13-li-0008">Users and Roles</li>
+<li id="c13-li-0009">Database Schemas</li>
+<li id="c13-li-0010">Query and Object Classes</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<aside>
+<div class="top hr"><hr/></div>
+<section><span id="c13-fea-0201"/>
+<h3 id="head-2-99">CODE DOWNLOADS FOR THIS CHAPTER</h3>
+<section><span id="c13-sec-0303"/>
+<p id="c13-para-0003">The code downloads for this chapter are at <code><a href="http://www.wiley.com/go/prowordpressdev2e">www.wiley.com/go/prowordpressdev2e</a></code> on the Downloads tab.</p>
+</section>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c13-para-0004">Multisite is an extremely powerful hidden feature that comes included with WordPress. Disabled by default, it is not the kind of feature that everyone will want to use and requires some additional configuration to make work smoothly.</p>
+<p id="c13-para-0005">Other projects and platforms often refer to this type of thing as <i>multitenancy</i>. Multisite allows any WordPress installation to be responsible for easily managing an unlimited number of sites inside it, traditionally called a <i>network</i> of sites. This network can have open registration of <span epub:type="pagebreak" id="Page_316" role="doc-pagebreak" title="316"/>users, sites, or both or neither. There are a ton of specialty Multisite plugins to help customize everything, from signups to domain aliasing and redirection.</p>
+<p id="c13-para-0006">Each site in your Multisite network can have separate plugins and themes activated. They each are responsible for their own unique content, and user roles and capabilities are still assigned on a per‐site basis.</p>
+<p id="c13-para-0007">As a plugin developer, you will need to understand what features are available when working with Multisite in WordPress so you know if and how to best support those features in the plugins you build.</p>
+<p id="c13-para-0008">Just because Multisite is built in to WordPress does not mean that it is identical to everything you are already familiar with. There are quite a few little things that make it just different enough to require planning for, and you don't want your plugins to not work correctly for someone who happens to be activating them in a Multisite environment.</p>
+</section>
+<section><span id="c13-sec-0003"/>
+<h2 id="head-2-100">TERMINOLOGY</h2>
+<p id="c13-para-0009">The most important new terms in Multisite are <i>global</i>, <i>installation</i>, <i>network</i>, and <i>site</i>. A <i>site</i> is a single site inside a network of sites. A <i>network</i> is a group of sites. The <i>installation</i> is everything together. <i>Global</i> generally refers to users and user metadata but may also refer to Must‐Use plugins, database drop‐ins, or anything else that spans the entire environment.</p>
+<p id="c13-para-0010">When you first activate Multisite, you will have one network and one site in your installation. You will have unrestricted access to the entire installation, including the ability to create new sites. If you want to have multiple networks within your installation, you will need to install a plugin to enable this additional hidden functionality.</p>
+<p id="c13-para-0011">When developing plugins for Multisite, you need to determine whether you want them to work across the entire installation, across a single network, or only in a single site. For example, you may want to retrieve posts from one site in the network to be used inside others, or you may want to create a network‐wide option for your plugin.</p>
+<p>All sites in your installation have a status. The status is important and can determine whether the site is viewable by the public. The following are the available site statuses in Multisite:</p>
+<ul class="check" id="c13-list-0002">
+<li id="c13-li-0011"><code>Public</code>: The site is public if the privacy setting is set to enable search engines.</li>
+<li id="c13-li-0012"><code>Archived</code>: The site has been archived and is not available to the public.</li>
+<li id="c13-li-0013"><code>Mature</code>: The site is flagged as being for a mature audience.</li>
+<li id="c13-li-0014"><code>Spam</code>: The site is considered spam and is not available to the public.</li>
+<li id="c13-li-0015"><code>Deleted</code>: The site is flagged for deletion and is not available to the public.</li>
+</ul>
+<p id="c13-para-0013">The only two statuses that don't remove the site from public viewing are <code>Public</code> and <code>Mature</code>. <code>Mature</code> can be used if you want to allow mature sites in your network but need a way to warn users prior to them viewing the content. <code>Public</code> is based on the privacy settings and whether search engines are allowed to index the site.</p>
+<p id="c13-para-0014"><span epub:type="pagebreak" id="Page_317" role="doc-pagebreak" title="317"/>Part of setting up Multisite means having to choose how domains for sites will be accessed: either as subdomains (<code><a href="http://site1.example.com">site1.example.com</a></code>) or as subdirectories (<code><a href="http://example.com/site1">example .com/site1</a></code>). You can even set a fully qualified domain name for each site (<code><a href="http://example1.com">example1.com</a></code>) so that visitors to your sites will have no idea they are all powered by a single install of WordPress. Future versions of WordPress and Multisite plan to remove this strict requirement, as servers can now be configured to accept generic requests allowing for WordPress to identify sites from any configuration type.</p>
+<p id="c13-para-0015">As you can imagine, this is an extremely powerful feature in WordPress. There is no limit to the number of sites WordPress can run; the only restriction is the resources available on your hosting environment. <code><a href="http://wordpress.com">WordPress.com</a></code> is the largest Multisite installation of WordPress, powering millions of sites together in one giant installation.</p>
+</section>
+<section><span id="c13-sec-0004"/>
+<h2 id="head-2-101">ADVANTAGES OF MULTISITE</h2>
+<p id="c13-para-0016">Running Multisite for your websites offers many advantages. The most obvious one is you have only a single install of WordPress to manage. This makes life much easier when keeping everything up to date. If you have 50 sites and a plugin update is released, updating it affects all sites in your installation. If each site were a separate install of WordPress, you would have to update the plugin 50 times.</p>
+<p id="c13-para-0017">Another advantage to Multisite is the ease with which you can aggregate content across your network. For example, if you have 50 sites in your network, you could easily aggregate all those posts to your main blog to showcase your network of sites. If the sites were separate installs of WordPress, it would take quite a bit more work to aggregate that content.</p>
+<p id="c13-para-0018">Managing sites in Multisite is also versatile. You can easily limit disk space usage on each site. You can dictate what file types are allowed for uploading along with file size limits. You can even lock down plugins and themes from being activated by the other site administrators.</p>
+</section>
+<section><span id="c13-sec-0005"/>
+<h2 id="head-2-102">ENABLING MULTISITE IN WORDPRESS</h2>
+<p id="c13-para-0019">Installing WordPress Multisite is straightforward. One of the great features of Multisite is that it can be enabled prior to installing WordPress, or anytime thereafter. If you decide to convert your WordPress site into Multisite a year down the road, you can easily do so.</p>
+<p>The first step to enabling Multisite is to modify your <code>wp‐config.php</code> file. This file contains your database connection settings and other important configuration options. To enable Multisite, you need to add the following line before where it says <code>/* That's all, stop editing! Happy blogging. */</code>:</p>
+<pre id="c13-code-0001"><code>define( 'WP_ALLOW_MULTISITE', true );</code></pre>
+<p id="c13-para-0021">Adding this line to your <code>wp‐config.php</code> file enables the Tools ➪ Network menu options, as shown in <a href="#c13-fig-0001" id="R_c13-fig-0001">Figure 13‐1</a>.</p>
+<figure> <img alt="Screenshot displaying the Network menu options in the Tools page, with the Settings option highlighted." class="center" src="images/c13f001.png"/>
+<figcaption>
+<p><span class="figureLabel"><a href="#R_c13-fig-0001" id="c13-fig-0001" role="doc-backlink"><b>FIGURE 13‐1</b></a>:</span> Tools ➪ Network menu options</p>
+</figcaption>
+</figure>
+<p id="c13-para-0022"><span epub:type="pagebreak" id="Page_318" role="doc-pagebreak" title="318"/>Visiting this new menu option takes you to the Create a Network admin page. If you have not done so already, you will be required to disable all plugins prior to enabling Multisite. This must be done to ensure that nothing unexpected is happening while the installation process is running.</p>
+<p id="c13-para-0023">Here you can find detailed instructions on the necessary steps to complete the Multisite installation. In this tutorial, you will configure Multisite to work with subdirectories, so if you plan to use subdomains, be sure to follow the installation instructions closely as the code may differ slightly.</p>
+<p id="c13-para-0024">If you are unsure whether to use subdomains or subdirectories, we strongly recommend starting with subdirectories, as the lookups and pathing for finding sites are much more flexible. If this feature ever gets removed, subdirectories will be the default installation type.</p>
+<p>Next you need to add the following code to your <code>wp‐config.php</code> file. Note that this is example code, and the <code>DOMAIN_CURRENT_SITE</code> constant would contain your website's domain in place of <code><a href="http://example.com">example.com</a></code>.</p>
+<pre id="c13-code-0002"><code>$base = '/';</code>
+<code>define( 'MULTISITE', true );</code>
+<code>define( 'SUBDOMAIN_INSTALL', false );</code>
+<code>define( 'DOMAIN_CURRENT_SITE', 'example.com' );</code>
+<code>define( 'PATH_CURRENT_SITE', '/' );</code>
+<code>define( 'SITE_ID_CURRENT_SITE', 1 );</code>
+<code>define( 'BLOG_ID_CURRENT_SITE', 1 );</code></pre>
+<p>If you are using Apache for your web server, the final step is to modify your <code>.htaccess</code> file in the root directory of your WordPress installation. Replace the existing WordPress rules with the following code:</p>
+<pre id="c13-code-0003"><code>RewriteEngine On</code>
+<code>RewriteBase /</code>
+<code>RewriteRule ^index\.php$ - [L]</code>
+<code> </code>
+<code># uploaded files</code>
+<code>RewriteRule ^([_0-9a-zA-Z-]+/)?files/(.+) wp-includes/ms-files.php?file=$2 [L]</code>
+<code> </code>
+<code># add a trailing slash to /wp-admin</code>
+<code>RewriteRule ^([_0-9a-zA-Z-]+/)?wp-admin$ $1wp-admin/ [R=301,L]</code>
+<code> </code>
+<code>RewriteCond %{REQUEST_FILENAME} -f [OR]</code>
+<code>RewriteCond %{REQUEST_FILENAME} -d</code>
+<code>RewriteRule ^ - [L]</code>
+<code>RewriteRule ^([_0-9a-zA-Z-]+/)?(wp-(content|admin|includes).*) $2 [L]</code>
+<code>RewriteRule ^([_0-9a-zA-Z-]+/)?(.*\.php)$ $2 [L]</code>
+<code>RewriteRule . index.php [L]</code></pre>
+<p id="c13-para-0027">If you are using Nginx, please review the following page:</p>
+<p id="c13-para-0028"><code><a href="http://wordpress.org/support/article/nginx">wordpress.org/support/article/nginx</a></code></p>
+<p id="c13-para-0029">After making the required changes, you may be required to log back into WordPress. Multisite is now enabled and installed and ready to use!</p>
+</section> <span epub:type="pagebreak" id="Page_319" role="doc-pagebreak" title="319"/>
+<section><span id="c13-sec-0006"/>
+<h2 id="head-2-103">MULTISITE FUNCTIONS</h2>
+<p id="c13-para-0030">When Multisite is enabled, an entirely new set of features and functions become available for plugin developers to take advantage of. Understanding what functions are available can help you include Multisite‐specific functionality in the plugins you create. It can also help to understand how you can make your plugins Multisite‐compatible from the beginning.</p>
+<section><span id="c13-sec-0007"/>
+<h3 id="head-3-205">The Site ID</h3>
+<p id="c13-para-0031">Every site has a unique ID. This ID will be used in just about every Multisite‐specific function you use and is how WordPress determines what site you want to work with. The ID is also used in the prefix of the database tables for each respective site.</p>
+<p id="c13-para-0032">For example, if you enable Multisite and create a second site in your network, WordPress creates several database tables prefixed like <code>wp_2_posts</code>, where <code>wp_</code> is the table prefix you defined when installing WordPress, and <code>2_</code> is the blog ID of the new site. As you create additional sites, WordPress creates additional database tables in the same manner.</p>
+<p>The blog ID is stored in the global variable <code>$blog_id</code>, as shown here:</p>
+<pre id="c13-code-0004"><code>&lt;?php</code>
+<code>global $blog_id;</code>
+<code>echo 'Current blog ID: ' . $blog_id;</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0034">The <code>$blog_id</code> global variable does exist in standard WordPress but will always be 1. In Multisite mode, the blog ID will be the ID of the blog the current user is viewing.</p>
+</section>
+<section><span id="c13-sec-0008"/>
+<h3 id="head-3-206">Common Functions</h3>
+<p>When working with WordPress Multisite, you can take advantage of some common functions. The first function is called <code>is_multisite()</code> and determines whether Multisite support is enabled. Look at the following example:</p>
+<pre id="c13-code-0005"><code>&lt;?php</code>
+<code>if ( is_multisite() ) {</code>
+<code> echo 'Multisite is enabled';</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0036">As you can see, this function does not accept any parameters. It simply checks whether Multisite is enabled in WordPress and returns <code>True</code> if so and <code>False</code> if not. Anytime you plan on using Multisite‐specific functions in WordPress, it's imperative that you use this function to verify that Multisite is running. If Multisite is not running, the default Multisite functions will not be available for use in WordPress, resulting in fatal errors in your plugin.</p>
+<p>Another useful function for retrieving network site posts is <code>get_blog_post()</code>. This function retrieves a post from any site in the network and is also a good example of a function you can study to better understand how switching between sites works.</p>
+<pre id="c13-code-0006"><code>&lt;?php get_blog_post( $blog_id, $post_id ); ?&gt;</code></pre>
+<p><span epub:type="pagebreak" id="Page_320" role="doc-pagebreak" title="320"/>The function accepts two parameters: <code>$site_id</code> and <code>$post_id</code>.</p>
+<pre id="c13-code-0007"><code>&lt;?php</code>
+<code>//set blog and post ID</code>
+<code>$multisite_blog_id = 2;</code>
+<code>$multisite_post_id = 1;</code>
+<code> </code>
+<code>//load the post data</code>
+<code>$post_details = get_blog_post(</code>
+<code> $multisite_blog_id, $multisite_post_id );</code>
+<code> </code>
+<code>//display the post title and content</code>
+<code>var_dump( $post_details );</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0039">This example assumes you have a site with an ID of 2 and you want to retrieve post ID 1. This is a quick‐and‐easy way to retrieve a post from any site in your network.</p>
+<p>It can also be useful to retrieve specific information about a site you are working with. To retrieve site information, you can use the <code>get_blog_details()</code> function.</p>
+<pre id="c13-code-0008"><code>&lt;?php get_blog_details( $fields, $get_all ); ?&gt;</code></pre>
+<p>The function accepts two parameters.</p>
+<ul class="check" id="c13-list-0003">
+<li id="c13-li-0016">
+<code>$fields</code>: A blog ID, a blog name, or an array of fields to query against</li>
+<li id="c13-li-0017">
+<code>$get_all</code>: Whether to retrieve all details</li>
+</ul>
+<p>This function returns an object containing all public variables stored in the <code>wp_blogs</code> table. You can also retrieve a single, specific variable.</p>
+<pre id="c13-code-0009"><code>&lt;?php</code>
+<code>$blog_details = get_blog_details( 1 );</code>
+<code>var_dump( $blog_details );</code>
+<code>?&gt;</code></pre>
+<p>Running the preceding code will produce the following object output:</p>
+<pre id="c13-code-0010"><code>WP_Site Object</code>
+<code>(</code>
+<code>    [blog_id] =&gt; 1</code>
+<code>    [site_id] =&gt; 1</code>
+<code>    [domain] =&gt; example.com</code>
+<code>    [path] =&gt; /</code>
+<code>    [registered] =&gt; 2010-10-31 19:14:59</code>
+<code>    [last_updated] =&gt; 2010-11-11 14:19:34</code>
+<code>    [public] =&gt; 1</code>
+<code>    [archived] =&gt; 0</code>
+<code>    [mature] =&gt; 0</code>
+<code>    [spam] =&gt; 0</code>
+<code>    [deleted] =&gt; 0</code>
+<code>    [lang_id] =&gt; 0</code>
+<code>    [blogname] =&gt; Example Website</code>
+<code>    [siteurl] =&gt; http://example.com</code>
+<code>    [post_count] =&gt; 420</code>
+<code>)</code></pre>
+<p><span epub:type="pagebreak" id="Page_321" role="doc-pagebreak" title="321"/>As you can see, there is a lot of valuable data returned about the site specified. You can also retrieve a single option value by stating the name to return, as shown here:</p>
+<pre id="c13-code-0011"><code>&lt;?php</code>
+<code>echo 'Total post count: ' . get_blog_details( 1 )-&gt;post_count;</code>
+<code>?&gt;</code></pre>
+<p>It can also be helpful to retrieve a list of all available sites in your Multisite network. A helpful function to accomplish this is the <code>get_sites()</code> function. This function will retrieve a list of sites in your network matching the requested arguments. Let's look at the following example:</p>
+<pre id="c13-code-0012"><code>&lt;?php</code>
+<code>//get a list of all public site IDs</code>
+<code>$args = array (</code>
+<code>    'public' =&gt; '1'</code>
+<code>);</code>
+<code> </code>
+<code>$sites = get_sites( $args );</code>
+<code> </code>
+<code>if ( is_array( $sites ) ) {</code>
+<code> </code>
+<code>    //loop through the site IDs</code>
+<code>    foreach ($sites as $site) {</code>
+<code>     </code>
+<code>        //display each site name</code>
+<code>        echo get_blog_details( $site-&gt;blog_id )-&gt;blogname . '&lt;br/&gt;';</code>
+<code>     </code>
+<code>    }</code>
+<code> </code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0046">This is a basic example showing you how to retrieve all network sites that are marked public. The <code>get_sites()</code> function accepts a number of arguments, which you can view a full list of at <code><a href="http://developer.wordpress.org/reference/functions/get_sites">developer.wordpress.org/reference/functions/get_sites</a></code>.</p>
+</section>
+<section><span id="c13-sec-0009"/>
+<h3 id="head-3-207">Switching and Restoring Sites</h3>
+<p id="c13-para-0047">One major advantage to using Multisite is how easy it is to aggregate content and other data between different sites in your network.</p>
+<p>You can use two primary functions to pull data from sites in your network. The first of these functions is <code>switch_to_blog()</code>. This function enables you to switch to any site in your network.</p>
+<pre id="c13-code-0013"><code>&lt;?php switch_to_blog( $site_id ); ?&gt;</code></pre>
+<p>The function accepts one parameter.</p>
+<ul class="check" id="c13-list-0004">
+<li id="c13-li-0018">
+<code>$site_id</code>: The ID of the site you want to switch to</li>
+</ul>
+<p id="c13-para-0050">The second function is <code>restore_current_blog()</code>. This function restores the user to the current site. You should always execute this function after calling <code>switch_to_blog()</code>. If not, everything that processes after the switch will pull from the site you switched to, not the current site. This can mess up your widgets, site settings, and more.</p>
+<p><span epub:type="pagebreak" id="Page_322" role="doc-pagebreak" title="322"/>Now look at an example. In this example, you create a custom settings page and display posts from blog ID 3.</p>
+<pre id="c13-code-0014"><code>&lt;?php</code>
+<code>add_action( 'admin_menu', 'pdev_multisite_switch_menu' );</code>
+<code>             </code>
+<code>function pdev_multisite_switch_menu() {</code>
+<code>             </code>
+<code>    //create custom top-level menu</code>
+<code>    add_menu_page( 'Multisite Switch', 'Multisite Switch',</code>
+<code>        'manage_options', 'pdev-network-switch', 'pdev_multisite_switch_page' );</code>
+<code>             </code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p>First create a custom top‐level menu. This will point to the <code>pdev_multisite_switch_page()</code> function, which will be the display page for the posts from site 3.</p>
+<pre id="c13-code-0015"><code>&lt;?php</code>
+<code>function pdev_multisite_switch_page() {</code>
+<code>             </code>
+<code>    if ( is_multisite() ) {</code>
+<code>             </code>
+<code>        //switch to blog ID 3</code>
+<code>        switch_to_blog( 3 );</code>
+<code>             </code>
+<code>        //create a custom Loop</code>
+<code>        $recent_posts = new WP_Query();</code>
+<code>        $recent_posts-&gt;query( 'posts_per_page=5' );</code>
+<code>             </code>
+<code>        //start the custom Loop</code>
+<code>        while ( $recent_posts-&gt;have_posts() ) :</code>
+<code>            $recent_posts-&gt;the_post();</code>
+<code>             </code>
+<code>            //store the recent posts in a variable</code>
+<code>            echo '&lt;p&gt;&lt;a href="' .get_permalink(). '"&gt;' .</code>
+<code>                get_the_title() .'&lt;/a&gt;&lt;/p&gt; ';</code>
+<code>             </code>
+<code>        endwhile;</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0053">As always, you need to verify that Multisite is enabled using the <code>is_multisite()</code> function check. If Multisite is not enabled, the <code>switch_to_blog()</code> and <code>restore_current_blog()</code> functions will not be available to use in your plugin. Next, use the <code>switch_to_blog()</code> function to switch to blog ID 3. In this case, you hard‐coded the blog ID, but this could always be a dynamic variable set by a user. <span epub:type="pagebreak" id="Page_323" role="doc-pagebreak" title="323"/>Now that you've switched to the site you want to pull content from, you need to create a custom loop to retrieve the content.</p>
+<p id="c13-para-0054">To create the custom loop, you define a variable named <code>$recent_posts</code> and instantiate an instance of <code>WP_Query</code>. Next set the query parameters; in this case, you set <code>posts_per_page</code> to 5. This returns the five latest posts found. Now that <code>WP_Query</code> has been defined, it's time to execute the loop and retrieve the results. You do this with the <code>have_posts()</code> and <code>the_post()</code> functions. The custom loop will then echo out the posts found from the query.</p>
+<p id="c13-para-0055">The final step is to execute <code>restore_current_blog()</code>. If you did not run this function, WordPress would stay on the site you switched to. If you execute additional loops below this, they would all pull from blog ID 3 and not from the current site you are viewing.</p>
+<p>Now when you visit the plugin settings page, the latest five posts from blog ID 3 display. Review the entire plugin, shown here:</p>
+<pre id="c13-code-0016"><code>&lt;?php</code>
+<code>/*</code>
+<code>Plugin Name: Multisite Switch Example Plugin</code>
+<code>Plugin URI: https://example.com/wordpress-plugins/my-plugin</code>
+<code>Description: A plugin to demonstrate Multisite site switching</code>
+<code>Version: 1.0</code>
+<code>Author: Brad Williams</code>
+<code>Author URI: https://wrox.com</code>
+<code>License: GPLv2</code>
+<code>*/</code>
+<code>             </code>
+<code>add_action( 'admin_menu', 'pdev_multisite_switch_menu' );</code>
+<code>             </code>
+<code>function pdev_multisite_switch_menu() {</code>
+<code>             </code>
+<code>    //create custom top-level menu</code>
+<code>    add_menu_page( 'Multisite Switch', 'Multisite Switch',</code>
+<code>        'manage_options',</code>
+<code>        'pdev-network-switch', 'pdev_multisite_switch_page' );</code>
+<code>             </code>
+<code>}</code>
+<code>             </code>
+<code>function pdev_multisite_switch_page() {</code>
+<code>             </code>
+<code>    if ( is_multisite() ) {</code>
+<code>             </code>
+<code>        //switch to blog ID 3</code>
+<code>        switch_to_blog( 3 );</code>
+<code>             </code>
+<code>        //create a custom Loop</code>
+<code>        $recent_posts = new WP_Query();</code>
+<code>        $recent_posts-&gt;query( 'posts_per_page=5' );</code>
+<code>             </code>
+<code>        //start the custom Loop</code>
+<code>        while ( $recent_posts-&gt;have_posts() ) :</code>
+<code>            $recent_posts-&gt;the_post();</code>
+<code>             <span epub:type="pagebreak" id="Page_324" role="doc-pagebreak" title="324"/></code>
+<code>            //store the recent posts in a variable</code>
+<code>            echo '&lt;p&gt;&lt;a href="' .get_permalink(). '"&gt;' .</code>
+<code>                get_the_title() .'&lt;/a&gt;&lt;/p&gt;';</code>
+<code>             </code>
+<code>        endwhile;</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code></pre>
+<p id="c13-para-0057">This is a basic example that demonstrates the power of the <code>switch_to_blog()</code> functionality in Multisite.</p>
+<p>The <code>switch_to_blog()</code> function is not just limited to site content. You can also retrieve other WordPress data including widgets, sidebars, menus, and more. Basically, any data stored in the content database tables (
+<code>wp_ID_tablename</code>) is available when using the <code>switch_to_blog()</code> function. Now look at a few examples. In the following example, you can assume you have a site with an ID of 3 and you want to retrieve a navigation menu from the site:</p>
+<pre id="c13-code-0017"><code>&lt;?php</code>
+<code>//switch to blog ID 3</code>
+<code>switch_to_blog( 3 );</code>
+<code>             </code>
+<code>//display the nav menu Main Menu</code>
+<code>wp_nav_menu( 'Main Menu' );</code>
+<code>             </code>
+<code>//restore the current site</code>
+<code>restore_current_blog();</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0059">First run <code>switch_to_blog()</code> to switch to blog ID 3. Next use the <code>wp_nav_menu()</code> function to display a menu named Main Menu from the site. Finally, run the <code>restore_current_blog()</code> function to reset to the blog you are viewing. The end result displays the nav menu Main Menu created on site 3 anywhere you run this code in your network.</p>
+<p>As another example, you can also easily load a site’s sidebar using the same method.</p>
+<pre id="c13-code-0018"><code>&lt;?php</code>
+<code>//switch to blog ID 34</code>
+<code>switch_to_blog( 34 );</code>
+<code>             </code>
+<code>//load the primary sidebar</code>
+<code>get_sidebar();</code>
+<code>             </code>
+<code>//restore the current site</code>
+<code>restore_current_blog();</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0061">It's important to note that <code>switch_to_blog()</code> is database‐only. This means a site's plugins are not included in a switch. So, if site 2 has the Halloween Revenge plugin running and you switch to site 2, Halloween Revenge will not be available for use unless it is also activated on the site performing the switch.</p>
+</section> <span epub:type="pagebreak" id="Page_325" role="doc-pagebreak" title="325"/>
+<section><span id="c13-sec-0010"/>
+<h3 id="head-3-208">Network Content Shortcode Examples</h3>
+<p id="c13-para-0062">Now take the switch example and integrate shortcode support. This plugin enables you to add a shortcode to a post on the current site, defining what blog ID you want some other posts from, and display those posts on your current post or page.</p>
+<p>First create a new shortcode using the <code>add_shortcode()</code> function, which will be introduced in <a href="c14.xhtml">Chapter 14</a>, “The Kitchen Sink.”</p>
+<pre id="c13-code-0019"><code>&lt;?php</code>
+<code>add_shortcode( 'network_posts', 'pdev_multisite_network_posts' );</code>
+<code>?&gt;</code></pre>
+<p>The new shortcode will be <code>[network_posts]</code>. Next create the function to generate the network posts to display when the shortcode is used in a post or page.</p>
+<pre id="c13-code-0020"><code>&lt;?php</code>
+<code>function pdev_multisite_network_posts( $attr ) {</code>
+<code>    extract( shortcode_atts( array(</code>
+<code>           "site_id"    =&gt;    '1',</code>
+<code>           "num"        =&gt;  '5'</code>
+<code>           ), $attr ) );</code>
+<code>            </code>
+<code>    if ( is_multisite() ) {</code>
+<code>            </code>
+<code>        $return_posts = '';</code>
+<code>            </code>
+<code>        //switch to site set in the shortcode</code>
+<code>        switch_to_blog( absint( $site_id ) );</code>
+<code>            </code>
+<code>        //create a custom Loop</code>
+<code>        $recent_posts = new WP_Query();</code>
+<code>        $recent_posts-&gt;query( 'posts_per_page=' . absint( $num ) );</code>
+<code>             </code>
+<code>        //start the custom Loop</code>
+<code>        while ( $recent_posts-&gt;have_posts() ) :</code>
+<code>           $recent_posts-&gt;the_post();</code>
+<code>            </code>
+<code>           //store the recent posts in a variable</code>
+<code>           $title = get_the_title();</code>
+<code>           $permalisk = get_the_permalink();</code>
+<code>           $return_posts .= '&lt;p&gt;&lt;a href="' . $permalink '"&gt;' . $title . '&lt;/a&gt;&lt;/p&gt;';</code>
+<code>            </code>
+<code>        endwhile;</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>        //return the results to display</code>
+<code>        return $return_posts;</code>
+<code>             </code>
+<code>    }</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0065"><span epub:type="pagebreak" id="Page_326" role="doc-pagebreak" title="326"/>The shortcode can accept two parameters: <code>site_id</code> and <code>num</code>. This enables the user to set which site in the network to pull the posts from and how many to display. As always, check to verify that Multisite is enabled on the site before proceeding.</p>
+<p id="c13-para-0066">
+<code>$return_posts</code> is the variable that stores all the posts to return to the shortcode for display, so start by setting that variable to nothing to flush it out. Next use the <code>switch_to_blog()</code> function to switch to the site specified in the shortcode. If the user did not set a specific blog ID, it will default to 1.</p>
+<p id="c13-para-0067">Now it's time to create a custom loop to retrieve the posts to display. You can see that the <code>posts_per_page</code> parameter is set to <code>$num</code>, which is set in the shortcode. If the user does not set the number of posts to display, it defaults to 5. Next loop through the posts loaded and store them in <code>$return_posts</code>.</p>
+<p id="c13-para-0068">After the custom loop finishes running, you need to execute <code>restore_current_blog()</code>. This resets the site to the site you are viewing, not the site you switched to earlier. The final step is to return <code>$return_posts</code>. This replaces the shortcode in a post or page with the custom loop results.</p>
+<p>Now you can easily retrieve posts from any site in your network using the shortcode such as <code>[network_posts site_id="3" num="10"]</code>. Review the full plugin, shown here:</p>
+<pre id="c13-code-0021"><code>&lt;?php</code>
+<code>/*</code>
+<code>Plugin Name: Multisite Switch Shortcode Plugin</code>
+<code>Plugin URI: https://example.com/wordpress-plugins/my-plugin</code>
+<code>Description: A plugin for aggregating content using a shortcode</code>
+<code>Version: 1.0</code>
+<code>Author: Brad Williams</code>
+<code>Author URI: https://wrox.com</code>
+<code>License: GPLv2</code>
+<code>*/</code>
+<code>             </code>
+<code>add_shortcode( 'network_posts', 'pdev_multisite_network_posts' );</code>
+<code>             </code>
+<code>function pdev_multisite_network_posts( $attr ) {</code>
+<code>    extract( shortcode_atts( array(</code>
+<code>            'site_id'    =&gt;    '1',</code>
+<code>            'num'        =&gt;    '5'</code>
+<code>            ), $attr ) );</code>
+<code>             </code>
+<code>    if ( is_multisite() ) {</code>
+<code>             </code>
+<code>        $return_posts = '';</code>
+<code>             </code>
+<code>        //switch to site set in the shortcode</code>
+<code>        switch_to_blog( absint( $site_id ) );</code>
+<code>             </code>
+<code>        //create a custom Loop</code>
+<code>        $recent_posts = new WP_Query();</code>
+<code>        $recent_posts-&gt;query( 'posts_per_page=' .absint( $num ) );</code>
+<code>             </code>
+<code>        //start the custom Loop</code>
+<code>        while ( $recent_posts-&gt;have_posts() ) :</code>
+<code>            $recent_posts-&gt;the_post();</code>
+<code>             <span epub:type="pagebreak" id="Page_327" role="doc-pagebreak" title="327"/></code>
+<code>            //store the recent posts in a variable</code>
+<code>            $return_posts .= '&lt;p&gt;&lt;a href="' .get_permalink().</code>
+<code>                '"&gt;' .get_the_title() .'&lt;/a&gt;&lt;/p&gt;';</code>
+<code>             </code>
+<code>        endwhile;</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>        //return the results to display</code>
+<code>        return $return_posts;</code>
+<code>             </code>
+<code>    }</code>
+<code>}</code></pre>
+<p>Now take the switch shortcode example to the next level and retrieve posts from multiple sites in the network and display them based on the latest post date. As in the previous example, use the <code>add_shortcode()</code> function to register the shortcode in your plugin.</p>
+<pre id="c13-code-0022"><code>&lt;?php</code>
+<code>add_shortcode( 'latest_network_posts',</code>
+<code>    'pdev_multisite_latest_network_posts' );</code>
+<code>?&gt;</code></pre>
+<p>Next create your custom <code>pdev_multisite_latest_network_posts()</code> function.</p>
+<pre id="c13-code-0023"><code>&lt;?php</code>
+<code>function pdev_multisite_latest_network_posts() {</code>
+<code>             </code>
+<code>    if ( is_multisite() ) {</code>
+<code>             </code>
+<code>        $return_posts = '';</code></pre>
+<p>As always, check to verify that Multisite is enabled using the <code>is_multisite()</code> function. You can also set <code>$return_posts</code> to nothing to flush it out. Now it's time to retrieve the posts.</p>
+<pre id="c13-code-0024"><code>//get posts from current site</code>
+<code>$local_posts = get_posts( 'numberposts=5' );</code>
+<code>             </code>
+<code>//switch to blog ID 3</code>
+<code>switch_to_blog( 3 );</code>
+<code>             </code>
+<code>//get posts from another site</code>
+<code>$network_posts = get_posts( 'numberposts=5' );</code>
+<code>             </code>
+<code>//restore the current site</code>
+<code>restore_current_blog();</code></pre>
+<p id="c13-para-0073">Use the <code>get_posts()</code> function to retrieve the latest five posts from the current site. Next switch to blog ID 3 and run the same <code>get_posts()</code> function to retrieve the five latest posts from that site. Notice that you are storing the returned array values in separate variables: <code>$local_posts</code> and <code>$network_posts</code>. Finally, call <code>restore_current_blog()</code> to reset to the current site you are on.</p>
+<p><span epub:type="pagebreak" id="Page_328" role="doc-pagebreak" title="328"/>Now that you have five posts from each site stored in separate arrays, you need to merge them into a single array.</p>
+<pre id="c13-code-0025"><code>//merge the two arrays</code>
+<code>$posts = array_merge( $local_posts, $network_posts );</code></pre>
+<p>Now that you have a single array of posts, you need to sort the posts based on the post date so that they are in proper reverse chronological order with the latest post first. Use the PHP <code>usort()</code> function to sort the array based on a custom comparison function you will create later.</p>
+<pre id="c13-code-0026"><code>//sort the post results by date</code>
+<code>usort( $posts, 'pdev_multisite_sort_posts_array' );</code></pre>
+<p>Now that the posts are in the proper order in the array, you need to loop through the results and assign them to the <code>$return_posts</code> variable.</p>
+<pre id="c13-code-0027"><code>foreach ( $posts as $post ) {</code>
+<code>             </code>
+<code>    //store latest posts in a variable</code>
+<code>    $return_posts .= $post-&gt;post_title .' - posted on '</code>
+<code>        .$post-&gt;post_date .'&lt;br/&gt;';</code>
+<code>             </code>
+<code>}</code></pre>
+<p>Use a standard <code>foreach</code> PHP loop to loop through the results. Finally, return the results for display by the shortcode.</p>
+<pre id="c13-code-0028"><code>    //return the results to display</code>
+<code>    return $return_posts;</code>
+<code>             </code>
+<code>    }</code>
+<code>}</code></pre>
+<p>The final step is to create the custom function <code>pdev_multisite_sort_posts_array()</code> to sort the post array by the date that was called earlier from the <code>usort</code> function.</p>
+<pre id="c13-code-0029"><code>//sort the array by date</code>
+<code>function pdev_multisite_sort_posts_array( $a, $b ) {</code>
+<code>             </code>
+<code>    //if dates are the same return 0</code>
+<code>    if ($a-&gt;post_date == $b-&gt;post_date)</code>
+<code>        return 0;</code>
+<code>             </code>
+<code>    //ternary operator to determine which date is newer</code>
+<code>    return $a-&gt;post_date &lt; $b-&gt;post_date ? 1 : -1;</code>
+<code>             </code>
+<code>}</code></pre>
+<p id="c13-para-0079">This function simply compares two values and returns either a 1 or –1 based on which is greater. The <code>usort()</code> function sorts based on the number assigned.</p>
+<p>Now the shortcode <code>[latest_network_posts]</code> will display the latest 10 posts between two sites based on the publish date. Review the entire plugin code, shown here:</p>
+<pre id="c13-code-0030"><code>&lt;?php</code>
+<code>/*</code>
+<code>Plugin Name: Multisite Latest Network Posts Plugin</code>
+<code>Plugin URI: https://example.com/wordpress-plugins/my-plugin<span epub:type="pagebreak" id="Page_329" role="doc-pagebreak" title="329"/></code>
+<code>Description: Displays the latest posts from multiple sites</code>
+<code>Version: 1.0</code>
+<code>Author: Brad Williams</code>
+<code>Author URI: https://wrox.com</code>
+<code>License: GPLv2</code>
+<code>*/</code>
+<code>             </code>
+<code>add_shortcode( 'latest_network_posts',</code>
+<code>    'pdev_multisite_latest_network_posts' );</code>
+<code>             </code>
+<code>function pdev_multisite_latest_network_posts() {</code>
+<code>             </code>
+<code>    if ( is_multisite() ) {</code>
+<code>             </code>
+<code>        $return_posts = '';</code>
+<code>             </code>
+<code>        //get posts from current site</code>
+<code>        $local_posts = get_posts( 'numberposts=5' );</code>
+<code>             </code>
+<code>        //switch to blog ID 3</code>
+<code>        switch_to_blog( 3 );</code>
+<code>             </code>
+<code>        //get posts from another site</code>
+<code>        $network_posts = get_posts( 'numberposts=5' );</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>        //merge the two arrays</code>
+<code>        $posts = array_merge( $local_posts, $network_posts );</code>
+<code>             </code>
+<code>        //sort the post results by date</code>
+<code>        usort( $posts, 'pdev_multisite_sort_posts_array' );</code>
+<code>             </code>
+<code>        foreach ( $posts as $post ) {</code>
+<code>             </code>
+<code>            //store latest posts in a variable</code>
+<code>            $return_posts .= $post-&gt;post_title .' - posted on '</code>
+<code>                .$post-&gt;post_date .'&lt;br/&gt;';</code>
+<code>             </code>
+<code>        }</code>
+<code>             </code>
+<code>        //return the results to display</code>
+<code>        return $return_posts;</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code>
+<code>             </code>
+<code>//sort the array by date</code>
+<code>function pdev_multisite_sort_posts_array( $a, $b ) {</code>
+<code>             </code>
+<code>    //if dates are the same return 0</code>
+<code>    if ($a-&gt;post_date == $b-&gt;post_date)</code>
+<code>        return 0;</code>
+<code>             <span epub:type="pagebreak" id="Page_330" role="doc-pagebreak" title="330"/></code>
+<code>    //ternary operator to determine which date is newer</code>
+<code>    return $a-&gt;post_date &lt; $b-&gt;post_date ? 1 : -1;</code>
+<code>             </code>
+<code>}</code></pre>
+</section>
+<section><span id="c13-sec-0011"/>
+<h3 id="head-3-209">A Network Content Widget Example</h3>
+<p>Another common task when working in a Multisite environment is a widget to display recent posts from sites in the network. You can create a plugin with a widget to display the recent posts from any site in the network.</p>
+<pre id="c13-code-0031"><code>&lt;?php</code>
+<code>//widgets_init action hook to execute custom function</code>
+<code>add_action( 'widgets_init', 'pdev_multisite_register_widget' );</code>
+<code>             </code>
+<code>//register our widget</code>
+<code>function pdev_multisite_register_widget() {</code>
+<code>    register_widget( 'pdev_multisite_widget' );</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p>First use the <code>widgets_init</code> action hook to run the custom function to register your new widget. In this example, the new widget will be registered as <code>pdev_multisite_widget</code>. Next create a new class using the registered widget name and extending the <code>WP_Widget</code>.</p>
+<pre id="c13-code-0032"><code>//pdev_multisite_widget class</code>
+<code>class PDEV_Multisite_Widget extends WP_Widget {</code>
+<code> </code>
+<code>    //process our new widget</code>
+<code>    function __construct() {</code>
+<code>             </code>
+<code>        $widget_ops = array( 'classname' =&gt; 'pdev_multisite_widget',</code>
+<code>            'description' =&gt;</code>
+<code>                'Display recent posts from a network site.' );</code>
+<code>        parent::__construct( 'pdev_multisite_widget_posts',</code>
+<code>            'Multisite Recent Posts', $widget_ops );</code>
+<code>             </code>
+<code>    }</code></pre>
+<p id="c13-para-0083">You also define the widget settings. You set the widget name to Multisite Recent Posts, the description of what the widget does, and the custom class name that will be used when displaying the widget.</p>
+<p>Now it's time to create the widget settings form. This widget contains three settings: the title, the site to load recent posts from, and the number of posts to display.</p>
+<pre id="c13-code-0033"><code>    //build our widget settings form</code>
+<code>    function form( $instance ) {</code>
+<code>        global $wpdb;</code>
+<code>             </code>
+<code>        $defaults = array( 'title' =&gt; 'Recent Posts',</code>
+<code>            'disp_number' =&gt; '5' );</code>
+<code>        $instance = wp_parse_args( (array) $instance, $defaults );</code>
+<code>        $title = $instance['title'];</code>
+<code>        $siteid = $instance['siteid'];</code>
+<code>        $disp_number = $instance['disp_number'];</code></pre>
+<p id="c13-para-0085"><span epub:type="pagebreak" id="Page_331" role="doc-pagebreak" title="331"/>You will be making a custom database query to retrieve the network blog IDs, so you need to define <code>$wpdb</code> as a global variable. The widget defaults are set in the <code>$defaults</code> variable; in this case, you set the default title to Recent Posts and the default number of posts to display to 5. Next, the instance values are loaded, which are your widget setting values.</p>
+<p>Now that you have loaded the widget values, you need to add the form field settings for the widget. The first field is a text field to store the widget title that will be displayed.</p>
+<pre id="c13-code-0034"><code>        //title textfield widget option</code>
+<code>        echo '&lt;p&gt;Title: &lt;input class="widefat" name="'</code>
+<code>            .$this-&gt;get_field_name( 'title' )</code>
+<code>            .'" type="text" value="'</code>
+<code>            .esc_attr( $title ). '"/&gt;&lt;/p&gt;';</code></pre>
+<p id="c13-para-0087">As always, you want to use the proper escaping function when displaying data entered by a user, in this case <code>esc_attr()</code> to display the <code>$title</code> value.</p>
+<p>The next field to add is a select form to set which site in the network to display recent posts from. To create this form field, you need to retrieve a list of all public blog IDs in your network. You'll use the <code>get_sites()</code> function to retrieve the IDs.</p>
+<pre id="c13-code-0035"><code>        //get a list of all public site IDs</code>
+<code>        $args = array (</code>
+<code>            'public' =&gt; '1'</code>
+<code>        );</code>
+<code> </code>
+<code>        $sites = get_sites( $args );</code></pre>
+<p>The function retrieves all public blog IDs in your Multisite network and returns them in an array stored in the <code>$sites</code> variable. Now that you have the blog IDs, you need to loop through the results to build the select list.</p>
+<pre id="c13-code-0036"><code>        if ( is_array( $sites ) ) {</code>
+<code> </code>
+<code>            echo '&lt;p&gt;';</code>
+<code>            echo 'Site to display recent posts';</code>
+<code>            echo '&lt;select name="' . $this-&gt;get_field_name( 'siteid' )</code>
+<code>                .'" class="widefat"&gt;';</code>
+<code>             </code>
+<code>            //loop through the blog IDs</code>
+<code>            foreach ( $sites as $site ) {</code>
+<code>             </code>
+<code>                //display each site as an option</code>
+<code>                echo '&lt;option value="' .$site-&gt;blog_id. '" '</code>
+<code>                    .selected( $site-&gt;blog_id, $siteid )</code>
+<code>                    . '&gt;' . get_blog_details( $site-&gt;blog_id )-&gt;blogname</code>
+<code>                    . '&lt;/option&gt;';</code>
+<code>             </code>
+<code>            }</code>
+<code>             </code>
+<code>            echo '&lt;/select&gt;';</code>
+<code>            echo '&lt;/p&gt;';</code>
+<code>        }</code></pre>
+<p id="c13-para-0090"><span epub:type="pagebreak" id="Page_332" role="doc-pagebreak" title="332"/>Before working with an array, it's a good practice to verify that it is actually an array. You can do so using the PHP function <code>is_array()</code>. After you confirm that <code>$blogs</code> is an array, you can display the option text and <code>select</code> field. To display each site as an <code>option</code>, loop through the array values. Use the <code>get_blog_details()</code> function to display the site name in the option field. The <code>$blog</code> variable, which stores the blog ID, is set to the value of the option field.</p>
+<p>The final form field to display is the number of posts option.</p>
+<pre id="c13-code-0037"><code>        //number to display textfield widget option</code>
+<code>        echo '&lt;p&gt;Number to display: &lt;input class="widefat" name="'</code>
+<code>            .$this-&gt;get_field_name( 'disp_number' ). '" type="text"</code>
+<code>            value="' .esc_attr( $disp_number ). '"/&gt;&lt;/p&gt;';</code>
+<code>             </code>
+<code>    }</code></pre>
+<p id="c13-para-0092">Just like the title option before, this is a standard text form field to store the number of posts to display. That's the final widget form field, so be sure to close out the function with <code>}</code>.</p>
+<p>Next you need to save your widget settings using the <code>update</code> widget class function.</p>
+<pre id="c13-code-0038"><code>    //save the widget settings</code>
+<code>    function update( $new_instance, $old_instance ) {</code>
+<code>             </code>
+<code>        $instance = $old_instance;</code>
+<code>        $instance['title'] = sanitize_text_field( $new_instance['title'] );</code>
+<code>        $instance['siteid'] = absint( $new_instance['siteid'] );</code>
+<code>        $instance['disp_number'] =</code>
+<code>            absint( $new_instance['disp_number'] );</code>
+<code>             </code>
+<code>        return $instance;</code>
+<code>    }</code></pre>
+<p id="c13-para-0094">The widget class will handle saving the options for you. Be sure to sanitize the widget settings. Both <code>siteid</code> and <code>disp_number</code> should always be a number, so use the <code>absint()</code> function to verify that the setting is a positive integer.</p>
+<p>The final step is to display the widget.</p>
+<pre id="c13-code-0039"><code>    //display the widget</code>
+<code>    function widget( $args, $instance ) {</code>
+<code>        extract( $args );</code>
+<code>             </code>
+<code>        echo $before_widget;</code>
+<code>             </code>
+<code>        //load the widget options</code>
+<code>        $title = apply_filters( 'widget_title', $instance['title'] );</code>
+<code>        $siteid = empty( $instance['siteid'] ) ? 1 :</code>
+<code>            $instance['siteid'];</code>
+<code>        $disp_number = empty( $instance['disp_number'] ) ? 5 :</code>
+<code>            $instance['disp_number'];</code>
+<code>             <span epub:type="pagebreak" id="Page_333" role="doc-pagebreak" title="333"/></code>
+<code>        //display the widget title</code>
+<code>        if ( !empty( $title ) ) {</code>
+<code>            echo $before_title . esc_html( $title ) . $after_title;</code>
+<code>        }</code>
+<code>             </code>
+<code>        echo '&lt;ul&gt;';</code></pre>
+<p id="c13-para-0096">First, extract the <code>$args</code> variable to gain access to the global theme values like <code>$before_widget</code> and <code>$after_widget</code>. Next load the widget settings. The <code>$siteid</code> and <code>$disp_number</code> variables are both using a ternary operator to set their values. This means if the option value is empty, it will be set to a default value. <code>$siteid</code> would default to 1, and <code>$disp_number</code> would default to 5.</p>
+<p>Now display the <code>$title</code>, surrounded by the <code>$before_title</code> and <code>$after_title</code> global theme values. Now it's time to display the recent posts from the site saved in the widget.</p>
+<pre id="c13-code-0040"><code>        //switch to site saved</code>
+<code>        switch_to_blog( absint( $siteid ) );</code>
+<code>             </code>
+<code>        //create a custom loop</code>
+<code>        $recent_posts = new WP_Query();</code>
+<code>        $recent_posts-&gt;query( 'posts_per_page='</code>
+<code>            . absint( $disp_number ) );</code>
+<code>             </code>
+<code>        //start the custom loop</code>
+<code>        while ( $recent_posts-&gt;have_posts() ) :</code>
+<code>            $recent_posts-&gt;the_post();</code>
+<code>             </code>
+<code>            //display the recent post title with link</code>
+<code>            echo '&lt;li&gt;&lt;a href="' . get_permalink() . '"&gt;'</code>
+<code>                . get_the_title() . '&lt;/a&gt;&lt;/li&gt;';</code>
+<code>             </code>
+<code>        endwhile;</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>        echo '&lt;/ul&gt;';</code>
+<code>        echo $after_widget;</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code></pre>
+<p id="c13-para-0098">Using the <code>switch_to_blog()</code> function again, the widget switches to the site saved in the widget settings. After the site has been loaded, create a custom loop using the <code>WP_Query</code> class. The <code>posts_per_page</code> query parameter is defined by the <code>$disp_number</code> widget setting. The recent posts display in an unordered list using a <code>while</code> loop. After the loop completes, you need to restore the current site using <code>restore_current_blog()</code>.</p>
+<p><span epub:type="pagebreak" id="Page_334" role="doc-pagebreak" title="334"/>You now have a Multisite widget to easily display posts from any site in your network! This simple example shows the power of aggregating content throughout a Multisite network in WordPress and how easy it is to accomplish that.</p>
+<pre id="c13-code-0041"><code>&lt;?php</code>
+<code>/*</code>
+<code>Plugin Name: Multisite Recent Posts Widget</code>
+<code>Plugin URI:  https://example.com</code>
+<code>Description: Retrieves the most recent posts in a Multisite network</code>
+<code>Author: Brad Williams</code>
+<code>Version: 1.0</code>
+<code>Author URI: https://wrox.com</code>
+<code>*/</code>
+<code>             </code>
+<code>//widgets_init action hook to execute custom function</code>
+<code>add_action( 'widgets_init', 'pdev_multisite_register_widget' );</code>
+<code>             </code>
+<code>//register our widget</code>
+<code>function pdev_multisite_register_widget() {</code>
+<code>    register_widget( 'pdev_multisite_widget' );</code>
+<code>}</code>
+<code>             </code>
+<code>//pdev_multisite_widget class</code>
+<code>class PDEV_Multisite_Widget extends WP_Widget {</code>
+<code> </code>
+<code>    //process our new widget</code>
+<code>    function __construct() {</code>
+<code>             </code>
+<code>        $widget_ops = array( 'classname' =&gt; 'pdev_multisite_widget',</code>
+<code>            'description' =&gt;</code>
+<code>                'Display recent posts from a network site.' );</code>
+<code>        parent::__construct( 'pdev_multisite_widget_posts',</code>
+<code>            'Multisite Recent Posts', $widget_ops );</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>     //build our widget settings form</code>
+<code>    function form( $instance ) {</code>
+<code>        global $wpdb;</code>
+<code>             </code>
+<code>        $defaults = array( 'title' =&gt; 'Recent Posts',</code>
+<code>            'disp_number' =&gt; '5' );</code>
+<code>        $instance = wp_parse_args( (array) $instance, $defaults );</code>
+<code>        $title = $instance['title'];</code>
+<code>        $siteid = $instance['siteid'];</code>
+<code>        $disp_number = $instance['disp_number'];</code>
+<code>             </code>
+<code>        //title textfield widget option</code>
+<code>        echo '&lt;p&gt;Title: &lt;input class="widefat" name="'</code>
+<code>            .$this-&gt;get_field_name( 'title' )</code>
+<code>            . '" type="text" value="' .esc_attr( $title )</code>
+<code>            . '"/&gt;&lt;/p&gt;';</code>
+<code>             <span epub:type="pagebreak" id="Page_335" role="doc-pagebreak" title="335"/></code>
+<code>        //get a list of all public site IDs</code>
+<code>        $args = array (</code>
+<code>            'public' =&gt; '1'</code>
+<code>        );</code>
+<code> </code>
+<code>        $sites = get_sites( $args );</code>
+<code> </code>
+<code>        if ( is_array( $sites ) ) {</code>
+<code> </code>
+<code>            echo '&lt;p&gt;';</code>
+<code>            echo 'Site to display recent posts';</code>
+<code>            echo '&lt;select name="' .$this-&gt;get_field_name('siteid')</code>
+<code>                .'" class="widefat"&gt;';</code>
+<code>             </code>
+<code>            //loop through the blog IDs</code>
+<code>            foreach ($sites as $site) {</code>
+<code>             </code>
+<code>                //display each site as an option</code>
+<code>                echo '&lt;option value="' .$site-&gt;blog_id. '" '</code>
+<code>                    .selected( $site-&gt;blog_id, $siteid )</code>
+<code>                    . '&gt;' .get_blog_details( $site-&gt;blog_id )-&gt;blogname</code>
+<code>                    . '&lt;/option&gt;';</code>
+<code>             </code>
+<code>            }</code>
+<code>             </code>
+<code>            echo '&lt;/select&gt;';</code>
+<code>            echo '&lt;/p&gt;';</code>
+<code>        }</code>
+<code>             </code>
+<code>        //number to display textfield widget option</code>
+<code>        echo '&lt;p&gt;Number to display: &lt;input class="widefat" name="'</code>
+<code>            .$this-&gt;get_field_name( 'disp_number' ). '" type="text"</code>
+<code>            value="' .esc_attr( $disp_number ). '"/&gt;&lt;/p&gt;';</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>      //save the widget settings</code>
+<code>    function update( $new_instance, $old_instance ) {</code>
+<code>             </code>
+<code>        $instance = $old_instance;</code>
+<code>        $instance['title'] = strip_tags( $new_instance['title'] );</code>
+<code>        $instance['siteid'] = absint( $new_instance['siteid'] );</code>
+<code>        $instance['disp_number'] =</code>
+<code>            absint( $new_instance['disp_number'] );</code>
+<code>             </code>
+<code>        return $instance;</code>
+<code>    }</code>
+<code>             </code>
+<code>     //display the widget</code>
+<code>    function widget( $args, $instance ) {</code>
+<code>        extract( $args );</code>
+<code>             </code>
+<code>        echo $before_widget;</code>
+<code>             </code>
+<code>        //load the widget options</code>
+<code>        $title = apply_filters( 'widget_title', $instance['title'] );<span epub:type="pagebreak" id="Page_336" role="doc-pagebreak" title="336"/></code>
+<code>        $siteid = empty( $instance['siteid'] ) ? 1 :</code>
+<code>            $instance['siteid'];</code>
+<code>         $disp_number = empty( $instance['disp_number'] ) ? 5 :</code>
+<code>             $instance['disp_number'];</code>
+<code>             </code>
+<code>         //display the widget title</code>
+<code>        if ( !empty( $title ) ) { echo $before_title . $title</code>
+<code>            . $after_title; };</code>
+<code>             </code>
+<code>        echo '&lt;ul&gt;';</code>
+<code>             </code>
+<code>        //switch to site saved</code>
+<code>        switch_to_blog( absint( $siteid ) );</code>
+<code>             </code>
+<code>        //create a custom loop</code>
+<code>        $recent_posts = new WP_Query();</code>
+<code>        $recent_posts-&gt;query( 'posts_per_page='</code>
+<code>            .absint( $disp_number ) );</code>
+<code>             </code>
+<code>        //start the custom Loop</code>
+<code>        while ( $recent_posts-&gt;have_posts() ) :</code>
+<code>            $recent_posts-&gt;the_post();</code>
+<code>             </code>
+<code>            //display the recent post title with link</code>
+<code>            echo '&lt;li&gt;&lt;a href="' .get_permalink(). '"&gt;'</code>
+<code>                .get_the_title() .'&lt;/a&gt;&lt;/li&gt;';</code>
+<code>             </code>
+<code>        endwhile;</code>
+<code>             </code>
+<code>        //restore the current site</code>
+<code>        restore_current_blog();</code>
+<code>             </code>
+<code>        echo '&lt;/ul&gt;';</code>
+<code>        echo $after_widget;</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code></pre>
+</section>
+<section><span id="c13-sec-0012"/>
+<h3 id="head-3-210">Creating a New Site</h3>
+<p>You can easily create new sites in your Multisite network in the Dashboard of WordPress. But what if you want to create a new site in your plugin? As always, there's a function for that, and it's called <code>wpmu_create_blog()</code>.</p>
+<pre id="c13-code-0042"><code>&lt;?php wpmu_create_blog( $domain, $path, $title,</code>
+<code>    $user_id, $meta, $site_id); ?&gt;</code></pre>
+<p>This function accepts six parameters.</p>
+<ul class="check" id="c13-list-0005">
+<li id="c13-li-0019">
+<code>$domain</code>: The domain of the new site.</li>
+<li id="c13-li-0020">
+<code>$path</code>: The path of the new site. This is the subdirectory or subdomain name depending on which setup you use.</li>
+<li id="c13-li-0021"><span epub:type="pagebreak" id="Page_337" role="doc-pagebreak" title="337"/>
+<code>$title</code>: The title of the new site.</li>
+<li id="c13-li-0022">
+<code>$user_id</code>: The user ID of the user account who will be the site admin.</li>
+<li id="c13-li-0023">
+<code>$meta</code>: Additional meta information.</li>
+<li id="c13-li-0024">
+<code>$site_id</code>: The blog ID of the site to be created.</li>
+</ul>
+<p id="c13-para-0102">The only required parameters are the first four; the last two are optional. If the new site is created successfully, the function returns the newly created blog ID. This function does all the heavy lifting of creating database tables, adding default content, assigning any user roles, and so on.</p>
+<p id="c13-para-0103">As you probably noticed, the function begins with <code>wpmu_</code>. Many of the Multisite functions were once a part of WordPress MU, prior to the merging of the two code bases in WordPress 3.0. These function names can contain <code>wpmu</code>, or <code>blog</code>, to support backward compatibility.</p>
+<p>As an example, create a plugin that enables users to create sites in WordPress Multisite. First, create a custom top‐level menu for the plugin page.</p>
+<pre id="c13-code-0043"><code>&lt;?php</code>
+<code>add_action( 'admin_menu', 'pdev_multisite_create_menu' );</code>
+<code>             </code>
+<code>function pdev_multisite_create_menu() {</code>
+<code>             </code>
+<code>    //create custom top-level menu</code>
+<code>    add_menu_page( 'Multisite Create Site Page',</code>
+<code>        'Multisite Create Site',</code>
+<code>        'manage_options', 'pdev-network-create',</code>
+<code>            'pdev_multisite_create_sites_page' );</code>
+<code>             </code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p>Now create the function to display a form for creating a new site.</p>
+<pre id="c13-code-0044"><code>&lt;?php</code>
+<code>function pdev_multisite_create_sites_page() {</code>
+<code>             </code>
+<code>    //check if multisite is enabled</code>
+<code>    if ( is_multisite() ) {</code></pre>
+<p>As always, you need to verify that Multisite is enabled before using any Multisite‐specific functions. Next add the code to retrieve the form fields submitted and create a new site in the network with the values.</p>
+<pre id="c13-code-0045"><code>&lt;?php</code>
+<code>//if the form was submitted lets process it</code>
+<code>        if ( isset( $_POST['create_site'] ) ) {</code>
+<code>             </code>
+<code>            //populate the variables based on form values</code>
+<code>            $domain = sanitize_text_field( $_POST['domain'] );</code>
+<code>            $path = sanitize_text_field( $_POST['path'] );</code>
+<code>            $title = sanitize_text_field( $_POST['title'] );</code>
+<code>            $user_id = absint( $_POST['user_id'] );</code>
+<code>             <span epub:type="pagebreak" id="Page_338" role="doc-pagebreak" title="338"/></code>
+<code>            //verify the required values are set</code>
+<code>            if ( $domain &amp;&amp; $path &amp;&amp; $title &amp;&amp; $user_id ) {</code>
+<code>             </code>
+<code>                //create the new site in WordPress</code>
+<code>                $new_site = wpmu_create_blog( $domain, $path,</code>
+<code>                    $title, $user_id );</code>
+<code>             </code>
+<code>                //if successfully display a message</code>
+<code>                if ( $new_site ) {</code>
+<code>             </code>
+<code>                    echo '&lt;div class="notice notice-success is-dismissible"&gt;New site '</code>
+<code>                        .$new_site. ' created successfully!&lt;/div&gt;';</code>
+<code>             </code>
+<code>             </code>
+<code>                }</code>
+<code>             </code>
+<code>            //if required values are not set display an error</code>
+<code>            } else {</code>
+<code>             </code>
+<code>                echo '&lt;div class="notice notice-error is-dismissible"&gt;</code>
+<code>                    New site could not be created.</code>
+<code>                    Required fields are missing&lt;/div&gt;';</code>
+<code>             </code>
+<code>            }</code>
+<code>             </code>
+<code>        }</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0107">First check whether <code>$_POST['create_site']</code> is set. This will be set only if the form has been submitted. Next populate the variables based on the form entries. Notice you'll be using the proper escaping functions to verify that the data submitted from the form is escaped properly.</p>
+<p id="c13-para-0108">Next verify that <code>$domain</code>, <code>$path</code>, <code>$title</code>, and <code>$user_id</code> all have values because they are the required fields when creating sites using <code>wpmu_create_blog()</code>. If the values are not filled out, an error message displays. After you verify that all values exist, it's time to execute the <code>wpmu_create_blog()</code> function to create the new site. If the site is created successfully, the variable <code>$new_site</code> will contain the ID of the newly created site, and a success message will be displayed.</p>
+<p>The final piece is to create the form for the new site fields.</p>
+<pre id="c13-code-0046"><code>        &lt;div class="wrap"&gt;</code>
+<code>            &lt;h2&gt;Create New Site&lt;/h2&gt;</code>
+<code>            &lt;form method="post"&gt;</code>
+<code>            &lt;table class="form-table"&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;</code>
+<code>                    &lt;label for="fname"&gt;Domain&lt;/label&gt;</code>
+<code>                &lt;/th&gt;</code>
+<code>                &lt;td&gt;&lt;input maxlength="45" size="25" name="domain"</code>
+<code>                    value="&lt;?php echo DOMAIN_CURRENT_SITE; ?&gt;"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;&lt;label for="fname"&gt;Path&lt;/label&gt;&lt;/th&gt;<span epub:type="pagebreak" id="Page_339" role="doc-pagebreak" title="339"/></code>
+<code>                &lt;td&gt;</code>
+<code>                    &lt;input maxlength="45" size="10" name="path"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;</code>
+<code>                    &lt;label for="fname"&gt;Title&lt;/label&gt;</code>
+<code>                &lt;/th&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                    &lt;input maxlength="45" size="25" name="title"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;</code>
+<code>                    &lt;label for="fname"&gt;User ID&lt;/label&gt;</code>
+<code>                &lt;/th&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                    &lt;input maxlength="45" size="3" name="user_id"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                &lt;input type="submit" name="create_site"</code>
+<code>                    value="Create Site" class="button-primary"/&gt;</code>
+<code>             </code>
+<code>                &lt;input type="submit" name="reset"</code>
+<code>                    value="Reset" class="button-secondary"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;/table&gt;</code>
+<code>            &lt;/form&gt;</code>
+<code>        &lt;/div&gt;</code></pre>
+<p>This is a fairly basic form that accepts the parameters required to create a new site.</p>
+<pre id="c13-code-0047"><code>&lt;?php</code>
+<code>/*</code>
+<code>Plugin Name: Multisite Create Site Example Plugin</code>
+<code>Plugin URI: http://example.com/wordpress-plugins/my-plugin</code>
+<code>Description: A plugin to demonstrate creating sites in Multisite</code>
+<code>Version: 1.0</code>
+<code>Author: Brad Williams</code>
+<code>Author URI: http://wrox.com</code>
+<code>License: GPLv2</code>
+<code>*/</code>
+<code>             </code>
+<code>add_action( 'admin_menu', 'pdev_multisite_create_menu' );</code>
+<code>             </code>
+<code>function pdev_multisite_create_menu() {</code>
+<code>             </code>
+<code>    //create custom top-level menu</code>
+<code>    add_menu_page( 'Multisite Create Site Page',</code>
+<code>        'Multisite Create Site',</code>
+<code>        'manage_options', 'pdev-network-create',</code>
+<code>        'pdev_multisite_create_site_settings' );</code>
+<code>             </code>
+<code>}</code>
+<code>             <span epub:type="pagebreak" id="Page_340" role="doc-pagebreak" title="340"/></code>
+<code>function pdev_multisite_create_site_settings() {</code>
+<code>             </code>
+<code>    //check if multisite is enabled</code>
+<code>    if ( is_multisite() ) {</code>
+<code>             </code>
+<code>        //if the form was submitted lets process it</code>
+<code>        if ( isset( $_POST['create_site'] ) ) {</code>
+<code>             </code>
+<code>            //populate the variables based on form values</code>
+<code>            $domain = sanitize_text_field( $_POST['domain'] );</code>
+<code>            $path = sanitize_text_field( $_POST['path'] );</code>
+<code>            $title = sanitize_text_field( $_POST['title'] );</code>
+<code>            $user_id = absint( $_POST['user_id'] );</code>
+<code>             </code>
+<code>            //verify the required values are set</code>
+<code>            if ( $domain &amp;&amp; $path &amp;&amp; $title &amp;&amp; $user_id ) {</code>
+<code>             </code>
+<code>                //create the new site in WordPress</code>
+<code>                $new_site = wpmu_create_blog( $domain, $path,</code>
+<code>                    $title, $user_id );</code>
+<code>             </code>
+<code>                //if successfully display a message</code>
+<code>                if ( $new_site ) {</code>
+<code>             </code>
+<code>                    echo '&lt;div class="notice notice-success is-dismissible"&gt;New site '</code>
+<code>                        .$new_site. ' created successfully!&lt;/div&gt;';</code>
+<code>             </code>
+<code>             </code>
+<code>                }</code>
+<code>             </code>
+<code>            //if required values are not set display an error</code>
+<code>            } else {</code>
+<code>             </code>
+<code>                echo '&lt;div class="notice notice-error is-dismissible"&gt;</code>
+<code>                    New site could not be created.</code>
+<code>                    Required fields are missing</code>
+<code>                    &lt;/div&gt;';</code>
+<code>             </code>
+<code>            }</code>
+<code>             </code>
+<code>        }</code>
+<code>        ?&gt;</code>
+<code>        &lt;div class="wrap"&gt;</code>
+<code>            &lt;h2&gt;Create New Site&lt;/h2&gt;</code>
+<code>            &lt;form method="post"&gt;</code>
+<code>            &lt;table class="form-table"&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;</code>
+<code>                    &lt;label for="fname"&gt;Domain&lt;/label&gt;</code>
+<code>                &lt;/th&gt;</code>
+<code>                &lt;td&gt;&lt;input maxlength="45" size="25" name="domain"</code>
+<code>                        value="&lt;?php echo DOMAIN_CURRENT_SITE; ?&gt;"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;<span epub:type="pagebreak" id="Page_341" role="doc-pagebreak" title="341"/></code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;&lt;label for="fname"&gt;Path&lt;/label&gt;&lt;/th&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                    &lt;input maxlength="45" size="10" name="path"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;&lt;label for="fname"&gt;Title&lt;/label&gt;&lt;/th&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                    &lt;input maxlength="45" size="25" name="title"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;th scope="row"&gt;</code>
+<code>                    &lt;label for="fname"&gt;User ID&lt;/label&gt;</code>
+<code>                &lt;/th&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                    &lt;input maxlength="45" size="3" name="user_id"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;tr valign="top"&gt;</code>
+<code>                &lt;td&gt;</code>
+<code>                &lt;input type="submit" name="create_site"</code>
+<code>                    value="Create Site" class="button-primary"/&gt;</code>
+<code>                &lt;input type="submit" name="reset" value="Reset"</code>
+<code>                    class="button-secondary"/&gt;</code>
+<code>                &lt;/td&gt;</code>
+<code>            &lt;/tr&gt;</code>
+<code>            &lt;/table&gt;</code>
+<code>            &lt;/form&gt;</code>
+<code>        &lt;/div&gt;</code>
+<code>        &lt;?php</code>
+<code>    } else {</code>
+<code>             </code>
+<code>        echo '&lt;p&gt;Multisite is not enabled&lt;/p&gt;';</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code></pre>
+<p>There is also an easy method to update a site's status. This is useful if you want to dynamically archive a site or flag a site as spam. To do so, use the <code>update_blog_status()</code> function.</p>
+<pre id="c13-code-0048"><code>&lt;?php update_blog_status( $blog_id, $pref, $value, $refresh ); ?&gt;</code></pre>
+<p>The function accepts four parameters.</p>
+<ul class="check" id="c13-list-0006">
+<li id="c13-li-0025">
+<code>$site_id</code>: The blog ID of the site to update</li>
+<li id="c13-li-0026">
+<code>$pref</code>: The status type to update</li>
+<li id="c13-li-0027">
+<code>$value</code>: The new value of the status</li>
+<li id="c13-li-0028">
+<code>$refresh</code>: Whether to refresh the site details cache</li>
+</ul>
+<p><span epub:type="pagebreak" id="Page_342" role="doc-pagebreak" title="342"/>The first three parameters are required. The <code>$pref</code> parameter is the status to update, which accepts <code>site_id</code>, <code>domain</code>, <code>path</code>, <code>registered</code>, <code>last_updated</code>, <code>public</code>, <code>archived</code>, <code>mature</code>, <code>spam</code>, <code>deleted</code>, and <code>lang_id</code>. In this example, you update a site in your network to be archived.</p>
+<pre id="c13-code-0049"><code>&lt;?php</code>
+<code>update_blog_status( $blog_id, 'archived', 1 );</code>
+<code>?&gt;</code></pre>
+</section>
+<section><span id="c13-sec-0013"/>
+<h3 id="head-3-211">Site Options</h3>
+<p>Site options in Multisite are stored identically to non‐Multisite options, but we recommend you use the dedicated family of functions to be explicit about what you are trying to do and why.</p>
+<ul class="check" id="c13-list-0007">
+<li id="c13-li-0029">
+<code>add_blog_option()</code>: Creates a new option</li>
+<li id="c13-li-0030">
+<code>update_blog_option()</code>: Updates an option and creates it if it doesn't exist</li>
+<li id="c13-li-0031">
+<code>get_blog_option()</code>: Loads a site option that already exists</li>
+<li id="c13-li-0032">
+<code>delete_blog_option()</code>: Deletes a site option</li>
+</ul>
+<p>The major difference between this set of functions and the standard option functions is you have to pass a blog ID parameter to each function. The function will then switch to the site specified, handle the option task, and then switch back to the current site.</p>
+<pre id="c13-code-0050"><code>&lt;?php add_blog_option( $blog_id, $key, $value ); ?&gt;</code></pre>
+<p id="c13-para-0116">The <code>$site_id</code> value is the ID of the site you want to add an option to. The <code>$key</code> value is the name of the option to add, and <code>$value</code> is the value of the new option.</p>
+<p>Loading site options is just as easy. Using the <code>get_blog_option()</code> function, you can load any site‐specific option required.</p>
+<pre id="c13-code-0051"><code>&lt;?php</code>
+<code>$site_id= 3;</code>
+<code>echo '&lt;p&gt;Site ID: '.$site_id.'&lt;/p&gt;';</code>
+<code>echo '&lt;p&gt;Site Name: ' .get_blog_option( $blog_id, 'blogname' )</code>
+<code>    .'&lt;/p&gt;';</code>
+<code>echo '&lt;p&gt;Site URL: ' .get_blog_option( $blog_id, 'siteurl' ) .'&lt;/p&gt;';</code>
+<code>?&gt;</code></pre>
+</section>
+<section><span id="c13-sec-0014"/>
+<h3 id="head-3-212">Network Options</h3>
+<p>Network options in Multisite are like Site Options but relate specifically to the network itself and are stored more like metadata than options.</p>
+<ul class="check" id="c13-list-0008">
+<li id="c13-li-0033">
+<code>add_network_option()</code>: Creates a new option</li>
+<li id="c13-li-0034">
+<code>update_network_option()</code>: Updates an option and creates it if it doesn't exist</li>
+<li id="c13-li-0035">
+<code>get_network_option()</code>: Loads an option that already exists</li>
+<li id="c13-li-0036">
+<code>delete_network_option()</code>: Deletes an option</li>
+</ul>
+<p><span epub:type="pagebreak" id="Page_343" role="doc-pagebreak" title="343"/>All of these will require you to either pass in a network ID as the first parameter or pass in <code>null</code> to use the current network. The function will then switch to the site specified, handle the option task, and then switch back to the current site.</p>
+<pre id="c13-code-0052"><code>&lt;?php add_network_option( $network_id, $key, $value ); ?&gt;</code></pre>
+<p id="c13-para-0120">The <code>$network_id</code> value is the ID of the network you want to add an option to. The <code>$key</code> value is the name of the option to add, and <code>$value</code> is the value of the new option.</p>
+<p>Loading network options is just as easy. Using the <code>get_network_option()</code> function, you can load any network‐specific option required.</p>
+<pre id="c13-code-0053"><code>&lt;?php</code>
+<code>$network_id= 3;</code>
+<code>echo '&lt;p&gt;Network ID: '.$network_id.'&lt;/p&gt;';</code>
+<code>echo '&lt;p&gt;Network Name: ' .get_network_option( $network_id, 'sitename' )</code>
+<code>    .'&lt;/p&gt;';</code>
+<code>echo '&lt;p&gt;Network URL: ' .get_network_option( $network_id, 'siteurl' ) .'&lt;/p&gt;';</code>
+<code>?&gt;</code></pre>
+</section>
+<section><span id="c13-sec-0015"/>
+<h3 id="head-3-213">Site Meta</h3>
+<p>Site meta in Multisite are stored globally and are a super useful way to add data to sites in a way that can be queried across multiple sites, whereas Network Options can be per site only, requiring site switching to aggregate them.</p>
+<ul class="check" id="c13-list-0009">
+<li id="c13-li-0037">
+<code>add_site_meta()</code>: Creates new metadata</li>
+<li id="c13-li-0038">
+<code>update_site_meta()</code>: Updates metadata and creates it if it doesn't exist</li>
+<li id="c13-li-0039">
+<code>get_site_meta()</code>: Loads metadata that already exists</li>
+<li id="c13-li-0040">
+<code>delete_site_meta()</code>: Deletes metadata</li>
+</ul>
+<p>These functions use the Metadata API inside WordPress to make querying for and caching these arbitrary values an absolute breeze.</p>
+<pre id="c13-code-0054"><code>&lt;?php add_site_meta( $site_id, $key, $value ); ?&gt;</code></pre>
+<p id="c13-para-0124">The <code>$site_id</code> value is the ID of the site you want to add metadata to. The <code>$key</code> value is the name of the metadata, and <code>$value</code> is the value of the new data.</p>
+<p id="c13-para-0125">Loading site metadata is just as easy. Using the <code>get_site_Meta()</code> function, you can load any site‐specific metadata required. WordPress currently does not store any data in this table on its own. It exists simply as a way to extend sites at a global level.</p>
+</section>
+<section><span id="c13-sec-0016"/>
+<h3 id="head-3-214">Users and Roles</h3>
+<p id="c13-para-0126">Users work slightly differently than in standard WordPress. If Allow New Registrations is enabled under Network Settings, visitors to your site can register new accounts. The major difference is that each site in your network will have its own different set of users based on who has access to those sites. Users can also have different roles on different sites throughout the network. Users are not automatically members of every site in your network.</p>
+<p><span epub:type="pagebreak" id="Page_344" role="doc-pagebreak" title="344"/>Before executing any code that is site‐specific, you should verify that the user logged in is a member of that site. Multisite features multiple functions for working with users. To verify that a user is a member of the site, use the <code>is_user_member_of_blog()</code> function.</p>
+<pre id="c13-code-0055"><code>&lt;?php is_user_member_of_blog( 0, $site_id ) ?&gt;</code></pre>
+<p>The function accepts two parameters, <code>$user_id</code> and <code>$site_id</code>, which are both optional. If the parameters are not specified, it defaults to the currently logged‐in user and the current site you are on.</p>
+<pre id="c13-code-0056"><code>&lt;?php</code>
+<code>if ( is_user_member_of_blog() ) {</code>
+<code>    //user is a member of this site</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p>You may specify a user ID if you want to verify that a user is a member of this site.</p>
+<pre id="c13-code-0057"><code>&lt;?php</code>
+<code>if ( is_user_member_of_blog( 42 ) ) {</code>
+<code>    //user 42 is a member of this site</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p>You can also specify a blog ID if you want to verify that the user is a member of a specific site.</p>
+<pre id="c13-code-0058"><code>&lt;?php</code>
+<code>if ( is_user_member_of_blog( 42, 3 ) ) {</code>
+<code>    //user 42 is a member of site ID 3</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p>Now that you understand how to check whether a user is a member of a site, let's look at how to add members to a site. In Multisite, you use the <code>add_user_to_blog()</code> function to add any user in WordPress to a specific site in your network.</p>
+<pre id="c13-code-0059"><code>&lt;?php add_user_to_blog( $blog_id, $user_id, $role ); ?&gt;</code></pre>
+<p>This function accepts three parameters.</p>
+<ul class="check" id="c13-list-0010">
+<li id="c13-li-0041">
+<code>$site_id</code>: The ID of the site you want to add the user to</li>
+<li id="c13-li-0042">
+<code>$user_id</code>: The ID of the user to add</li>
+<li id="c13-li-0043">
+<code>$role</code>: The user role the user will have on the site</li>
+</ul>
+<p>Look at the following working example:</p>
+<pre id="c13-code-0060"><code>&lt;?php</code>
+<code>$site_id = 18;</code>
+<code>$user_id = 4;</code>
+<code>$role = 'editor';</code>
+<code>             </code>
+<code>add_user_to_blog( $blog_id, $user_id, $role );</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0134"><span epub:type="pagebreak" id="Page_345" role="doc-pagebreak" title="345"/>Now build a real‐world example plugin. This plugin auto‐adds logged‐in users to any site they visit in your network. This is useful if you want users to become members on every site in your network without manually adding them to each one.</p>
+<p>Start by using the <code>init</code> action hook to execute your custom function to add users to a site.</p>
+<pre id="c13-code-0061"><code>&lt;?php</code>
+<code>add_action( 'init', 'pdev_multisite_add_user_to_site' );</code>
+<code>?&gt;</code></pre>
+<p>Next create the <code>pdev_multisite_add_user_to_site()</code> function to add the users.</p>
+<pre id="c13-code-0062"><code>&lt;?php</code>
+<code>function pdev_multisite_add_user_to_site() {</code>
+<code>             </code>
+<code>    //verify user is logged in before proceeding</code>
+<code>    if( !is_user_logged_in() ) {</code>
+<code>        return false;</code>
+<code>    }</code>
+<code>             </code>
+<code>    //verify user is not a member of this site</code>
+<code>    if( !is_user_member_of_blog() ) {</code>
+<code>             </code>
+<code>        //add user to this site as a subscriber</code>
+<code>        $site_id = get_current_blog_id();</code>
+<code>        $user_id = get_current_user_id();</code>
+<code>        add_user_to_blog( $site_id, $user_id, 'subscriber' );</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0137">The first step is to verify that the users are logged in and, if not, return <code>false</code> and exit the function. Next confirm if the users are already members of the site they are viewing. If the users are already members, there is no reason to add them again.</p>
+<p>The final step is to add the users to the site using the <code>add_user_to_blog()</code> function. You'll pass in the blog ID, the current user ID, and the role the users are assigned on the site, in this case subscriber. That's it! For this plugin to automatically work across your entire network, you'll need to either upload it to the <code>/mu‐plugins</code> directory or activate the plugin on the Network Admin ➪ Plugins page. That forces the plugin to run across all sites in your network.</p>
+<pre id="c13-code-0063"><code>&lt;?php</code>
+<code>/*</code>
+<code>Plugin Name: Multisite Auto-Add User to Site</code>
+<code>Plugin URI: https://example.com/wordpress-plugins/my-plugin</code>
+<code>Description: Plugin automatically adds the user to any site they visit</code>
+<code>Version: 1.0</code>
+<code>Author: Brad Williams</code>
+<code>Author URI: https://wrox.com</code>
+<code>License: GPLv2</code>
+<code>*/</code>
+<code>             <span epub:type="pagebreak" id="Page_346" role="doc-pagebreak" title="346"/></code>
+<code>add_action( 'init', 'pdev_multisite_add_user_to_site' );</code>
+<code>             </code>
+<code>function pdev_multisite_add_user_to_site() {</code>
+<code>             </code>
+<code>    //verify user is logged in before proceeding</code>
+<code>    if( !is_user_logged_in() ) {</code>
+<code>        return false;</code>
+<code>    }</code>
+<code>             </code>
+<code>    //load current blog ID and user data</code>
+<code>    global $current_user, $blog_id;</code>
+<code>    //verify user is not a member of this site</code>
+<code>    if( !is_user_member_of_blog() ) {</code>
+<code>             </code>
+<code>        //add user to this site as a subscriber</code>
+<code>        add_user_to_blog( $blog_id, $current_user-&gt;ID, 'subscriber' );</code>
+<code>             </code>
+<code>    }</code>
+<code>             </code>
+<code>}</code></pre>
+<p>As easily as you can add users, you can also remove users from a site using the <code>remove_user_from_blog()</code> function.</p>
+<pre id="c13-code-0064"><code>&lt;?php remove_user_from_blog( $user_id, $blog_id, $reassign ); ?&gt;</code></pre>
+<p>This function accepts three parameters.</p>
+<ul class="check" id="c13-list-0011">
+<li id="c13-li-0044">
+<code>$user_id</code>: The user ID you want to remove</li>
+<li id="c13-li-0045">
+<code>$site_id</code>: The blog ID to remove the user from</li>
+<li id="c13-li-0046">
+<code>$reassign</code>: The user ID to reassign posts to</li>
+</ul>
+<p>Look at the following working example:</p>
+<pre id="c13-code-0065"><code>&lt;?php</code>
+<code>$user_id = 4;</code>
+<code>$site_id = 18;</code>
+<code>$reassign = 1;</code>
+<code>             </code>
+<code>remove_user_from_blog( $user_id, $blog_id, $reassign );</code>
+<code>?&gt;</code></pre>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c13-para-0143"><b>NOTE</b> <i>Remember, adding and removing users from a site in Multisite is not actually creating or deleting the user in WordPress but instead adding or removing them as a member of that site.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p><span epub:type="pagebreak" id="Page_347" role="doc-pagebreak" title="347"/>Another useful function when working with Multisite users is <code>get_blogs_of_user()</code>. This function retrieves site information for all sites the specified users are a member of.</p>
+<pre id="c13-code-0066"><code>&lt;?php</code>
+<code>$user_id = 1;</code>
+<code>$user_sites = get_blogs_of_user( $user_id );</code>
+<code>print_r( $user_sites );</code>
+<code>?&gt;</code></pre>
+<p>Running this code example will result in an object array being returned, as shown here:</p>
+<pre id="c13-code-0067"><code>Array</code>
+<code>(</code>
+<code>    [1] =&gt; stdClass Object</code>
+<code>        (</code>
+<code>            [userblog_id] =&gt; 1</code>
+<code>            [blogname] =&gt; Main Site</code>
+<code>            [domain] =&gt; example.com</code>
+<code>            [path] =&gt; /</code>
+<code>            [site_id] =&gt; 1</code>
+<code>            [siteurl] =&gt; http://example.com</code>
+<code>        )</code>
+<code>             </code>
+<code>    [2] =&gt; stdClass Object</code>
+<code>        (</code>
+<code>            [userblog_id] =&gt; 2</code>
+<code>            [blogname] =&gt; Halloween Revenge</code>
+<code>            [domain] =&gt; example.com</code>
+<code>            [path] =&gt; /myers/</code>
+<code>            [site_id] =&gt; 1</code>
+<code>            [siteurl] =&gt; http://example.com/myers</code>
+<code>        )</code>
+<code>             </code>
+<code>    [8] =&gt; stdClass Object</code>
+<code>        (</code>
+<code>            [userblog_id] =&gt; 8</code>
+<code>            [blogname] =&gt; Freddy Lives</code>
+<code>            [domain] =&gt; example.com</code>
+<code>            [path] =&gt; /kruger/</code>
+<code>            [site_id] =&gt; 1</code>
+<code>            [siteurl] =&gt; http://example.com/kruger</code>
+<code>        )</code>
+<code>             </code>
+<code>)</code></pre>
+<p>You can also do a <code>foreach</code> loop to display specific data from the array.</p>
+<pre id="c13-code-0068"><code>&lt;?php</code>
+<code>$user_id = 1;</code>
+<code>$user_sites = get_blogs_of_user( $user_id );</code>
+<code>             </code>
+<code>foreach ( $user_sites as $user_site ) {</code>
+<code>             </code>
+<code>    echo '&lt;p&gt;' . $user_site-&gt;siteurl . '&lt;/p&gt;';</code>
+<code>             </code>
+<code>}</code>
+<code>?&gt;</code></pre>
+</section> <span epub:type="pagebreak" id="Page_348" role="doc-pagebreak" title="348"/>
+<section><span id="c13-sec-0018"/>
+<h3 id="head-3-215">Super Admin</h3>
+<p id="c13-para-0147">Multisite offers a pseudo‐user role: Super Administrator. Super admins have access to the administration areas of the entire WordPress installation, including one specific to the network. The network admin is where all network settings, themes, plugins, and so on, are managed. Super admins also have full control over every site in the network, whereas a regular admin can administer only their specific sites.</p>
+<p>In Multisite, you can easily assign an existing user to the super admin role by using the <code>grant_super_admin()</code> function. This function accepts only one parameter, which is the user ID to which you want to grant super admin privileges.</p>
+<pre id="c13-code-0069"><code>&lt;?php</code>
+<code>$user_id = 4;</code>
+<code>grant_super_admin( $user_id );</code>
+<code>?&gt;</code></pre>
+<p>As quickly as you can grant super admin privileges, you can just as easily revoke them using the <code>revoke_super_admin()</code> function. This function also accepts only one parameter, which is the user ID to revoke as super admin.</p>
+<pre id="c13-code-0070"><code>&lt;?php</code>
+<code>$user_id = 4;</code>
+<code>revoke_super_admin( $user_id );</code>
+<code>?&gt;</code></pre>
+<p id="c13-para-0150">Both of these functions are located in <code>wp‐admin/includes/ms.php</code>. This means these functions by default are not available on the public side of your site and can be used only on the admin side. For example, if you tried calling either of these functions with a shortcode, you would get a <code>Call to Undefined Function</code> PHP error.</p>
+<p>To list all super admins in Multisite, use the <code>get_super_admins()</code> function. This function returns an array of all super admin usernames in your network.</p>
+<pre id="c13-code-0071"><code>&lt;?php</code>
+<code>$all_admins = get_super_admins();</code>
+<code>print_r( $all_admins );</code>
+<code>?&gt;</code></pre>
+<p>This will return the following array of super admins:</p>
+<pre id="c13-code-0072"><code>Array</code>
+<code>(</code>
+<code>    [0] =&gt; admin</code>
+<code>    [1] =&gt; brad</code>
+<code>)</code></pre>
+<p>You can also easily check specific users' IDs to determine whether they are super admins in your network. To do so, use the <code>is_super_admin()</code> function.</p>
+<pre id="c13-code-0073"><code>&lt;?php</code>
+<code>$user_id = 1;</code>
+<code>             </code>
+<code>if ( is_super_admin( $user_id ) ) {</code>
+<code>    echo 'User is Super admin';</code>
+<code>}</code>
+<code>?&gt;</code></pre>
+</section> <span epub:type="pagebreak" id="Page_349" role="doc-pagebreak" title="349"/>
+<section><span id="c13-sec-0019"/>
+<h3 id="head-3-216">Checking the Site Owner</h3>
+<p id="c13-para-0154">Every site in your Multisite network has a site owner. This owner is defined by the admin email address stored in the site options and is set when a new site is created in your network. If you allow open site registration, the user who created the site will be set as the site owner. If you created the site in the dashboard, you can set the owner's email at time of creation.</p>
+<p>In some cases, you may want to retrieve a site owner and corresponding user data. The following is an example of how you can so:</p>
+<pre id="c13-code-0074"><code>&lt;?php</code>
+<code>$site_id = 3;</code>
+<code>$admin_email = get_blog_option( $blog_id, 'admin_email' );</code>
+<code>$user_info = get_user_by( 'email', $admin_email );</code>
+<code>print_r( $user_info );</code>
+<code>?&gt;</code></pre>
+<p>First, use the <code>get_blog_option()</code> function to retrieve the <code>admin_email</code> value for blog ID 3. Next use the <code>get_user_by()</code> function to retrieve the user data based on the admin email. This function enables you to retrieve user data by either user ID, slug, email, or login. In this case, use the admin email to load the user data. The results are shown here:</p>
+<pre id="c13-code-0075"><code>WP_User Object</code>
+<code>(</code>
+<code>    [ID] =&gt; 3</code>
+<code>    [user_login] =&gt; freddy</code>
+<code>    [user_pass] =&gt; $P$B0VRNh0UbN/4YqMFB8fl3OZM2FGKfg1</code>
+<code>    [user_nicename] =&gt; Freddy Krueger</code>
+<code>    [user_email] =&gt; freddy@example.com</code>
+<code>    [user_url] =&gt;</code>
+<code>    [user_registered] =&gt; 2019-10-31 19:00:00</code>
+<code>    [user_activation_key] =&gt;</code>
+<code>    [user_status] =&gt; 0</code>
+<code>    [display_name] =&gt; Freddy</code>
+<code>    [spam] =&gt; 0</code>
+<code>    [deleted] =&gt; 0</code>
+<code>    [first_name] =&gt; Freddy</code>
+<code>    [last_name] =&gt; Krueger</code>
+<code>    [nickname] =&gt; fredster</code>
+<code>    [description] =&gt;</code>
+<code>    [rich_editing] =&gt; true</code>
+<code>    [comment_shortcuts] =&gt; false</code>
+<code>    [admin_color] =&gt; fresh</code>
+<code>    [use_ssl] =&gt; 0</code>
+<code>    [aim] =&gt;</code>
+<code>    [yim] =&gt;</code>
+<code>    [jabber] =&gt;</code>
+<code>    [source_domain] =&gt; example.com</code>
+<code>    [primary_blog] =&gt; 3</code>
+<code>    [wp_3_capabilities] =&gt; Array</code>
+<code>        (</code>
+<code>            [administrator] =&gt; 1</code>
+<code>        )</code>
+<code>             <span epub:type="pagebreak" id="Page_350" role="doc-pagebreak" title="350"/></code>
+<code>    [wp_3_user_level] =&gt; 10</code>
+<code>    [user_firstname] =&gt; Freddy</code>
+<code>    [user_lastname] =&gt; Krueger</code>
+<code>    [user_description] =&gt;</code>
+<code>)</code></pre>
+<p id="c13-para-0157">As you can see, a lot of useful user information is returned for the site admin account.</p>
+</section>
+<section><span id="c13-sec-0020"/>
+<h3 id="head-3-217">Network Stats</h3>
+<p>Multisite features a few functions to generate stats about your network. The <code>get_user_count()</code> function returns the total number of users registered in WordPress. The <code>get_blog_count()</code> function returns the total number of sites in your network. You can also use the <code>get_sitestats()</code> function to retrieve both values at once in an array.</p>
+<pre id="c13-code-0076"><code>&lt;?php</code>
+<code>$user_count = get_user_count();</code>
+<code>echo '&lt;p&gt;Total users: ' .$user_count .'&lt;/p&gt;';</code>
+<code>             </code>
+<code>$blog_count = get_blog_count();</code>
+<code>echo '&lt;p&gt;Total sites: ' .$blog_count .'&lt;/p&gt;';</code>
+<code>             </code>
+<code>$network_stats = get_sitestats();</code>
+<code>print_r( $network_stats );</code>
+<code>?&gt;</code></pre>
+</section>
+</section>
+<section><span id="c13-sec-0021"/>
+<h2 id="head-2-104">DATABASE SCHEMA</h2>
+<p id="c13-para-0159">WordPress Multisite features a different database schema from standard WordPress. When updating or enabling Multisite, WordPress creates the necessary tables in your database to support Multisite functionality.</p>
+<section><span id="c13-sec-0022"/>
+<h3 id="head-3-218">Multisite‐Specific Tables</h3>
+<p>WordPress stores global Multisite settings in centralized tables. These tables are installed only when Multisite is activated and installed, excluding <code>wp_users</code> and <code>wp_usermeta</code>.</p>
+<ul class="check" id="c13-list-0012">
+<li id="c13-li-0047">
+<code>wp_blogs</code>: Stores each site created in Multisite</li>
+<li id="c13-li-0048">
+<code>wp_blogmeta</code>: Stores various metadata at the global level for any sites wanting to store data here</li>
+<li id="c13-li-0049">
+<code>wp_registration_log</code>: Keeps a log of all users registered and activated in WordPress</li>
+<li id="c13-li-0050">
+<code>wp_signups</code>: Stores users and sites registered using the WordPress registration process</li>
+<li id="c13-li-0051">
+<code>wp_site</code>: Stores the primary site's address information</li>
+<li id="c13-li-0052">
+<code>wp_sitemeta</code>: Stores various metadata for every network</li>
+<li id="c13-li-0053"><span epub:type="pagebreak" id="Page_351" role="doc-pagebreak" title="351"/>
+<code>wp_users</code>: Stores all users registered in WordPress</li>
+<li id="c13-li-0054">
+<code>wp_usermeta</code>: Stores all metadata for user accounts in WordPress</li>
+</ul>
+<p id="c13-para-0161">The rest of the tables created for Multisite are site‐specific tables.</p>
+</section>
+<section><span id="c13-sec-0023"/>
+<h3 id="head-3-219">Site‐Specific Tables</h3>
+<p>Each site in your network features site‐specific database tables. These tables hold the content and setting specific to that individual site. Remember, these tables are prefixed with the <code>$table_prefix</code> value defined in <code>wp‐config.php</code>, followed by <code>$blog_id</code> and then the table name.</p>
+<ul class="check" id="c13-list-0013">
+<li id="c13-li-0055">
+<code>wp_1_commentmeta</code></li>
+<li id="c13-li-0056">
+<code>wp_1_comments</code></li>
+<li id="c13-li-0057">
+<code>wp_1_options</code></li>
+<li id="c13-li-0058">
+<code>wp_1_postmeta</code></li>
+<li id="c13-li-0059">
+<code>wp_1_posts</code></li>
+<li id="c13-li-0060">
+<code>wp_1_terms</code></li>
+<li id="c13-li-0061">
+<code>wp_1_termmeta</code></li>
+<li id="c13-li-0062">
+<code>wp_1_term_relationships</code></li>
+<li id="c13-li-0063">
+<code>wp_1_term_taxonomy</code></li>
+</ul>
+<p id="c13-para-0163">As you can see, these tables can make your database quickly grow in size. That's why the only limitation to WordPress Multisite is the amount of server resources you have available to power your network of sites. If your network contains 1,000 sites, your database would have more than 9,000 tables. If you have plugins active that create their own database tables for each site, you would add those here as well.</p>
+<p id="c13-para-0164">Obviously, this wouldn't be ideal to host on a small shared hosting account. Shared web hosts literally share server resources for multiple websites and applications on single servers, and they are likely to have a low tolerance for customers who have thousands of database tables where there are usually only nine.</p>
+</section>
+</section>
+<section><span id="c13-sec-0024"/>
+<h2 id="head-2-105">QUERY CLASSES</h2>
+<p id="c13-para-0165">Multisite comes complete with query classes and matching single object classes to make querying for and interacting with these objects feel familiar. If you remember using <code>WP_Query</code>, covered in <a href="c05.xhtml">Chapter 5</a>, you will feel right at home.</p>
+<section><span id="c13-sec-0025"/>
+<h3 id="head-3-220">WP_Site_Query</h3>
+<p id="c13-para-0166">This is the class you will use when you need to query the <code>wp_blogs</code> database table for site data. Even the <code>get_blog_details()</code> function from earlier in this chapter uses it internally.</p>
+<p id="c13-para-0167"><span epub:type="pagebreak" id="Page_352" role="doc-pagebreak" title="352"/>This class is fully documented in a modern format in the official WordPress code documentation at <code><a href="http://developer.wordpress.org/reference/classes/wp_site_query">developer.wordpress.org/reference/classes/wp_site_query</a></code>.</p>
+</section>
+<section><span id="c13-sec-0026"/>
+<h3 id="head-3-221">WP_Network_Query</h3>
+<p id="c13-para-0168">This is the class you will use when you need to query the <code>wp_sites</code> database table for network data. Functions like <code>get_networks()</code> use this query class very early due to how WordPress is loaded to ensure that sites are queried for correctly.</p>
+<p id="c13-para-0169">This class is fully documented in a modern format in the official WordPress code documentation at <code><a href="http://developer.wordpress.org/reference/classes/wp_network_query">developer.wordpress.org/reference/classes/wp_network_query</a></code>.</p>
+</section>
+</section>
+<section><span id="c13-sec-0027"/>
+<h2 id="head-2-106">OBJECT CLASSES</h2>
+<p id="c13-para-0170">Similar to query classes, Multisite comes with single object classes for sites and networks to make interacting with these objects easy. If you remember using <code>WP_Post</code> in <a href="c05.xhtml">Chapter 5</a>, this will feel familiar.</p>
+<section><span id="c13-sec-0028"/>
+<h3 id="head-3-222">WP_Site</h3>
+<p id="c13-para-0171">This is the object class that is returned by <code>WP_Site_Query</code> and corresponds to a single row in the <code>wp_blogs</code> database table.</p>
+<p id="c13-para-0172">This class is fully documented in a modern format in the official WordPress code documentation at <code><a href="http://developer.wordpress.org/reference/classes/wp_site">developer.wordpress.org/reference/classes/wp_site</a></code>.</p>
+</section>
+<section><span id="c13-sec-0029"/>
+<h3 id="head-3-223">WP_Network</h3>
+<p id="c13-para-0173">This is the object class that is returned by <code>WP_Network_Query</code> and corresponds to a single row in the <code>wp_sites</code> database table.</p>
+<p id="c13-para-0174">This class is fully documented in a modern format in the official WordPress code documentation at <code><a href="http://developer.wordpress.org/reference/classes/wp_network">developer.wordpress.org/reference/classes/wp_network</a></code>.</p>
+</section>
+</section>
+<section><span id="c13-sec-0030"/>
+<h2 id="head-2-107">SUMMARY</h2>
+<p id="c13-para-0175">WordPress Multisite features limitless possibilities. Enabling Multisite opens the door to creating an amazing network of sites. This also opens up new doors for your plugins with the additional Multisite features and functions.</p>
+<p id="c13-para-0176">When developing plugins for WordPress, you need to test your plugins in a Multisite setup to verify that they are compatible. Multisite is included in every WordPress download, and many users convert their standard site installation to Multisite to take advantage of the rapid site deployment features and network capabilities. It will always be important to make sure your plugins work with Multisite, even if it is not a feature you use yourself.</p>
+</section>
+</section>
+</body>
+</html>

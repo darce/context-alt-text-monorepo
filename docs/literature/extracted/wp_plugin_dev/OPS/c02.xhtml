@@ -1,0 +1,594 @@
+<html xmlns="http://www.w3.org/1999/xhtml" xmlns:epub="http://www.idpf.org/2007/ops" xmlns:svg="http://www.w3.org/2000/svg" epub:prefix="index: http://www.index.com/" lang="en" xml:lang="en">
+<head>
+<title>2 Plugin Framework</title>
+<link href="WileyTemplate_v5.5.css" rel="stylesheet" type="text/css"/>
+<meta content="urn:uuid:e0000000-0000-0000-0000-000006210893" name="Adept.expected.resource"/>
+</head>
+<body epub:type="bodymatter">
+<section epub:type="chapter" role="doc-chapter">
+<header>
+<h1><span epub:type="pagebreak" id="Page_13" role="doc-pagebreak" title="13"/><a id="c02"/><span class="chapterNumber">2</span><br/><span class="chapterTitle">Plugin Framework</span></h1>
+</header>
+<section><span id="c02-sec-0001"/>
+<aside>
+<div class="top hr"><hr/></div>
+<section>
+<h3>WHAT'S IN THIS CHAPTER?</h3>
+<ul class="check1" id="c02-list-0001">
+<li id="c02-li-0001">Creating a solid plugin foundation</li>
+<li id="c02-li-0002">Determining directory and URL paths</li>
+<li id="c02-li-0003">Creating activation and deactivation functions</li>
+<li id="c02-li-0004">Cleaning up during the uninstall process</li>
+<li id="c02-li-0005">Writing code following coding standards</li>
+<li id="c02-li-0006">Properly documenting plugin code</li>
+</ul>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<aside>
+<div class="top hr"><hr/></div>
+<section><span id="c02-fea-1001"/>
+<h3 id="head-2-6">CODE DOWNLOADS FOR THIS CHAPTER</h3>
+<section><span id="c02-sec-0002"/>
+<p id="c02-para-0003">The code downloads for this chapter are found at <code><a href="http://www.wiley.com/go/prowordpressdev2e">www.wiley.com/go/prowordpressdev2e</a></code> on the Downloads tab.</p>
+<p id="c02-para-0004">When creating a plugin for WordPress, it's important to start with a solid foundation. This means getting your plugin folders and files organized and coming up with a naming scheme that you can use consistently throughout the plugin. The setup is the most essential piece of the puzzle. By nailing down these basics, you'll be well on your way to building your first WordPress plugin.</p>
+</section>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c02-sec-0003"/>
+<h2 id="head-2-7">REQUIREMENTS FOR PLUGINS</h2>
+<p id="c02-para-0005">The WordPress plugin system is flexible and allows for plugins to be either a single file or a folder with many files. In this section, you'll learn the basics of creating a plugin.</p> <span epub:type="pagebreak" id="Page_14" role="doc-pagebreak" title="14"/>
+<section><span id="c02-sec-0004"/>
+<h3 id="head-3-18">Naming Your Plugin</h3>
+<p id="c02-para-0006">The most important thing when naming your plugin is for it to be something unique. It's also good practice for the name to reflect what the plugin actually does. For example, you wouldn't want to name a forum plugin “Joe's Plugin” because that doesn't tell potential users anything about what your plugin does.</p>
+<p id="c02-para-0007">You also need to consider whether your plugin name is too generic. It's possible that the name has already been taken by another plugin developer. You can check existing plugins in the WordPress Plugin Directory (<code><a href="https://wordpress.org/plugins">https://wordpress.org/plugins</a></code>).</p>
+<p id="c02-para-0008">Because there are thousands of existing plugins, some developers prefix their plugin name with their business name. For example, if your business name is “Super Duper,” you might name a potential forum plugin “Super Duper Forums.” This allows you to better attach your brand to your plugin and keep the name unique.</p>
+</section>
+<section><span id="c02-sec-0005"/>
+<h3 id="head-3-19">Using a Folder</h3>
+<p id="c02-para-0009">While WordPress does allow plugins to be a single file, it is generally not good practice to use this method. Instead, it is standard practice to use a folder to contain your plugin. The vast majority of plugins will contain multiple files, such as PHP files, CSS and JavaScript assets, and other build files.</p>
+<p id="c02-para-0010">When creating a plugin, it should ideally match your plugin name. Plugin folder names should be hyphenated and lowercase. It should not contain spaces, underscores, uppercase letters, or nonalphanumeric characters. The plugin folder name must also match the plugin text domain when preparing your plugin for translations (see <a href="c11.xhtml">Chapter 11</a>, “Internationalization”) if you plan to submit it to the official plugin repository.</p>
+<p id="c02-para-0011">Using the previous “Super Duper Forums” plugin as an example, its folder name should be <code>super‐duper‐forums</code>.</p>
+</section>
+</section>
+<section><span id="c02-sec-0006"/>
+<h2 id="head-2-8">BEST PRACTICES</h2>
+<p id="c02-para-0012">With any code base, developers should follow a common set of best practices. This is no different with WordPress plugins. By strictly following the practices laid out in this section, you'll have a solid foundation for your plugin. You'll also learn how to organize your plugin files and subfolders.</p>
+<section><span id="c02-sec-0007"/>
+<h3 id="head-3-20">Namespace Everything</h3>
+<p id="c02-para-0013">If you have a function named <code>get_post()</code>, it will conflict with WordPress’ own <code>get_post()</code> function and result in a fatal error. That's not a good user experience. Writing good code means making sure that your code doesn't conflict with other developers' code. The best way to ensure that is to prefix or namespace all your classes, functions, and anything else within the global namespace.</p>
+<p id="c02-para-0014">Throughout most of WordPress’ existence, it has supported versions of PHP versions earlier than 5.3, which is the version of PHP that standardized namespaces. This meant that it was standard practice to use a <i>faux</i> namespace by prefixing classes and functions. Prefixes should be unique to the plugin. The WordPress coding standards recommend naming classes and functions using snake case. <span epub:type="pagebreak" id="Page_15" role="doc-pagebreak" title="15"/>Therefore, a function named <code>get_post()</code> would become <code>prefix_get_post()</code>, and a class named <code>Post</code> would become <code>Prefix_Post</code>.</p>
+<p id="c02-para-0015">WordPress 5.2 changed its minimum PHP requirements to PHP 5.6. This means that plugin authors who want to support the same PHP versions as WordPress are no longer tied to the old practice of using prefixes. For this reason, it's probably best to look at other standards for naming, such as those outlined in the PHP‐FIG standards (<code><a href="https://www.php-fig.org">https://www.php-fig.org</a></code>).</p>
+<p id="c02-para-0016">For the purposes of this book, the recommendation for namespacing your code will be to use the built‐in method of namespacing in PHP. Namespaces allow you to group your code under a unique name so that it doesn't conflict with other developers' code. Using the “Super Duper Forums” plugin example, your namespace would be called <code>SuperDuperForums</code>.</p>
+<p>Namespaces must be the first code, excluding the opening <code>&lt;?php</code> tag and inline comments, in a PHP file. In the following example, see how a custom class named <code>Setup</code> is handled. Because it is under the <code>SuperDuperForums</code> namespace, there's no need to prefix it.</p>
+<pre id="c02-code-0001"><code>&lt;?php</code>
+<code>namespace SuperDuperForums;</code>
+<code> </code>
+<code>class Setup {</code>
+<code>      public function boot() {}</code>
+<code>}</code></pre>
+<p id="c02-para-0018">Class and function names are not the only consideration when namespacing code. There are other times when you'll have things in the global namespace that might conflict with other plugins running in WordPress. Such cases may include storing options in the database (see <a href="c03.xhtml">Chapter 3</a>, “Dashboard and Settings”) or loading a JavaScript file (see <a href="c06.xhtml">Chapter 6</a>, “JavaScript”). In such cases, it's generally best practice to prefix option names with your plugin name, such as <code>super_duper_forums_</code><i>
+<code>option_name</code></i>, and prefix script handles similarly, such as <code>super‐duper‐forums‐</code><i>
+<code>script‐name</code></i>.</p>
+<p id="c02-para-0019">You may have noticed that the option name used snake case (underscores) and the script handled used kebab case (hyphenated) in the previous example. The difference in practice has arisen over the years and can be confusing to new plugin developers. In general, anything referred to as a <i>handle</i> is in kebab case, and everything else is in snake case. Often such differences are superficial and not overly important. When in doubt, stick with snake case, and you'll be alright.</p>
+</section>
+<section><span id="c02-sec-0008"/>
+<h3 id="head-3-21">File Organization</h3>
+<p id="c02-para-0020">When building your plugin, it's important to think about how your files should be organized. While you can change some things around later, getting started with a solid structure will make it easier to build out the plugin's features in the long run.</p>
+<p id="c02-para-0021">The most important and only required file for any plugin to have is its primary PHP file. This file can be named anything and must sit in the root of your plugin folder. If your primary file is named <code>plugin.php</code>, it will be located at <code>/super‐duper‐forums/plugin.php</code>.</p>
+<p id="c02-para-0022">There are two common practices for naming the primary plugin file. Many plugin authors name this file the same as the folder, such as <code>super‐duper‐forums.php</code>. The less‐common practice is to simply name this <code>plugin.php</code>. You may decide to choose something else entirely. Over time as you develop plugins, you'll likely want to have a standard naming scheme that best suits you or your team.</p>
+<p id="c02-para-0023"><span epub:type="pagebreak" id="Page_16" role="doc-pagebreak" title="16"/>In modern plugin development, you'll most likely have JavaScript build tools, config files, and all sorts of other files that take up space in the root of your plugin folder. Putting all your plugin files in the root will likely clutter things and make it hard to find things. It's best to only keep your primary plugin file in the root and all other plugin code within subfolders. The exception to this rule would be the <code>uninstall.php</code> file (see the “Uninstall.php” section later in this chapter).</p>
+</section>
+<section><span id="c02-sec-0009"/>
+<h3 id="head-3-22">Folder Structure</h3>
+<p id="c02-para-0024">In professional development, it's important to create a folder structure that is understandable at a glance and easy to maintain. Most plugin developers will create separate folders to house their PHP code apart from resources, assets, or other front‐end code in a folder with a name such as <code>/src</code>, <code>/inc</code>, <code>/includes</code>, or <code>/app</code>. Within the larger PHP development community, it is standard practice to name this folder <code>/src</code> because this is the folder where your “source” code lives.</p>
+<p id="c02-para-0025">The naming of the assets or resources folder is also varied with plugins. Often this folder is named <code>/assets</code>, <code>/dist</code>, or <code>/public</code>. Most likely, you'll want to have separate development and production folders if you use a build system such as webpack to bundle your final asset files.</p>
+<p>The following is an example of how a plugin folder structure may be organized. Some of the files in this list are covered later in this chapter.</p>
+<ul class="check" id="c02-list-0002">
+<li id="c02-li-0008">
+<code>plugin.php</code>: Primary plugin file</li>
+<li id="c02-li-0009">
+<code>uninstall.php</code>: Uninstall file</li>
+<li id="c02-li-0010">
+<code>/src</code>: PHP source code
+<ul class="check" id="c02-list-0003">
+<li id="c02-li-0011">
+<code>Activator.php</code>: Activation class</li>
+<li id="c02-li-0012">
+<code>Deactivator.php</code>: Deactivation class</li>
+<li id="c02-li-0013">
+<code>Plugin.php</code>: Primary plugin class</li>
+</ul>
+</li>
+<li id="c02-li-0014">
+<code>/resources</code>: Development asset files</li>
+<li id="c02-li-0015">
+<code>/css</code>: Development CSS
+<ul class="check" id="c02-list-0004">
+<li id="c02-li-0016">
+<code>/js</code>: Development JavaScript</li>
+</ul>
+</li>
+<li id="c02-li-0017">
+<code>/public</code>: Production asset files
+<ul class="check" id="c02-list-0005">
+<li id="c02-li-0018">
+<code>/css</code>: Production CSS</li>
+<li id="c02-li-0019">
+<code>/js</code>: Production JavaScript</li>
+</ul>
+</li>
+</ul>
+<p>This is a clean structure that will help you maintain your plugin code over time. You may choose a different structure for your own projects.</p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c02-para-0031"><b>NOTE</b> <i>The most important thing is consistency. In a professional environment, more than one developer will often be working on code, so it's important that your team understands where to find and edit code.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+<p id="c02-para-0030"><span epub:type="pagebreak" id="Page_17" role="doc-pagebreak" title="17"/></p>
+<p id="c02-para-0032">When using namespaces as described in the “Namespace Everything” section of this chapter, it is standard practice to have a folder structure that matches how your namespaces and subnamespaces are set up so that it is easy to autoload the files using a system that follows the PHP‐FIG autoloading standard (<code><a href="https://www.php-fig.org/psr/psr-4">https://www.php-fig.org/psr/psr-4</a></code>).</p>
+<p>With a fully qualified class name of <code>PDEV\Post\Edit</code>, you'd have the following structure within your <code>/src</code> folder:</p>
+<ul class="check" id="c02-list-0006">
+<li id="c02-li-0020">
+<code>/Post</code>: Subnamespace
+<ul class="check" id="c02-list-0007">
+<li id="c02-li-0021">
+<code>Edit.php</code>: Class file</li>
+</ul>
+</li>
+</ul>
+<p id="c02-para-0035">Following this structure will tie your code and namespace structure directly to your folder structure. It makes it simple for you and other developers to navigate your project's files and folders by just looking at the namespace and class name.</p>
+<p id="c02-para-0036">This is the standard used by the larger PHP community and has been for many years. Much of the WordPress community is still light‐years behind in following this standard, but it is beginning to catch on with more and more plugin developers.</p>
+</section>
+</section>
+<section><span id="c02-sec-0011"/>
+<h2 id="head-2-9">PLUGIN HEADER</h2>
+<p id="c02-para-0037">For WordPress to recognize a plugin, the plugin's primary PHP file must have what's called a <i>plugin header</i> at the top of the file. This tells WordPress that this particular file is the file that it must load to your plugin. WordPress plugins can be and do anything, but this is the only hard requirement for a plugin to function.</p>
+<section><span id="c02-sec-0012"/>
+<h3 id="head-3-23">Creating the Header</h3>
+<p>The plugin header is nothing more than a normal PHP inline code comment with some special formatting that WordPress can recognize. The following is an example of a plugin header:</p>
+<pre id="c02-code-0002"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Plugin Name:       My Plugin</code>
+<code> * Plugin URI:        https://example.com/plugins/pdev</code>
+<code> * Description:       A short description of the plugin.</code>
+<code> * Version:           1.0.0</code>
+<code> * Requires at least: 5.3</code>
+<code> * Requires PHP:      5.6</code>
+<code> * Author:            John Doe</code>
+<code> * Author URI:        https://example.com</code>
+<code> * License:           GPL v2 or later</code>
+<code> * License URI:       https://www.gnu.org/licenses/gpl-2.0.html</code>
+<code> * Text Domain:       pdev</code>
+<code> * Domain Path:       /public/lang</code>
+<code> */</code><span epub:type="pagebreak" id="Page_18" role="doc-pagebreak" title="18"/></pre>
+<p>Each line is called a <i>header file</i> and provides some info to WordPress about your plugin. The only required field for the plugin to work is the <code>Plugin Name</code> field. Each field should be straightforward to understand. The following is a brief description of what each field sets:</p>
+<ul class="check" id="c02-list-0008">
+<li id="c02-li-0022">
+<code>Plugin Name</code>: The name for your plugin</li>
+<li id="c02-li-0023">
+<code>Plugin URI</code>: A URI with more information about your plugin</li>
+<li id="c02-li-0024">
+<code>Description</code>: A brief summary that describes what your plugin does</li>
+<li id="c02-li-0025">
+<code>Version</code>: The current version of your plugin, which should be incremented with each update</li>
+<li id="c02-li-0026">
+<code>Requires at least</code>: The minimum version of WordPress required for your plugin to work</li>
+<li id="c02-li-0027">
+<code>Requires PHP</code>: The minimum version of PHP required for your plugin to work</li>
+<li id="c02-li-0028">
+<code>Author</code>: Your or your team/business name</li>
+<li id="c02-li-0029">
+<code>Author URI</code>: The link to your website</li>
+<li id="c02-li-0030">
+<code>License</code>: The license that the plugin is distributed under</li>
+<li id="c02-li-0031">
+<code>License URI</code>: A link to the full text of the license</li>
+<li id="c02-li-0032">
+<code>Text Domain</code>: The text domain used for internationalizing your plugin (see <a href="c11.xhtml">Chapter 11</a> for more information)</li>
+<li id="c02-li-0033">
+<code>Domain Path</code>: The relative path to where translation files are located in your plugin</li>
+<li id="c02-li-0034">
+<code>Network</code>: An optional field that can be set to <code>true</code> for plugins that can only be activated across the entire network on a multisite installation</li>
+</ul>
+</section>
+<section><span id="c02-sec-0013"/>
+<h3 id="head-3-24">Plugin License</h3>
+<p id="c02-para-0040">When distributing your plugin to others, it's important to have a clear license so that you both protect your own copyright and make sure anyone who receives your plugin has a clear understanding of what their rights are. WordPress is licensed under the GNU General Public License (GPL), version 2 or later. Any plugins distributed should use a license that is compatible with the GPL.</p>
+<p>The GPL recommends placing the following copyright notice in every source file for your plugin. However, most plugins only place this after the plugin header in the primary plugin file.</p>
+<pre id="c02-code-0003"><code>&lt;?php</code>
+<code>/*</code>
+<code>Copyright (C) &lt;year&gt; &lt;name of author&gt;</code>
+<code> </code>
+<code>This program is free software; you can redistribute it and/or modify</code>
+<code>it under the terms of the GNU General Public License as published by</code>
+<code>the Free Software Foundation; either version 2 of the License, or</code>
+<code>(at your option) any later version.</code>
+<code> </code>
+<code>This program is distributed in the hope that it will be useful,</code>
+<code>but WITHOUT ANY WARRANTY; without even the implied warranty of</code>
+<code>MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE. See the</code>
+<code>GNU General Public License for more details.</code>
+<code> <span epub:type="pagebreak" id="Page_19" role="doc-pagebreak" title="19"/></code>
+<code>You should have received a copy of the GNU General Public License along</code>
+<code>with this program; if not, write to the Free Software Foundation, Inc.,</code>
+<code>51 Franklin Street, Fifth Floor, Boston, MA 02110-1301 USA.</code>
+<code>*/</code></pre>
+<p id="c02-para-0042">You need to replace the <code>&lt;year&gt;</code> and <code>&lt;name of author&gt;</code> snippets in that notice with the year the code was created and your name. Once you add the notification to your plugin file(s), it will then be licensed under the GPL.</p>
+<p id="c02-para-0043">If working with a client or employer and not distributing the plugin to the public in any way, your plugin may not need a license. Copyright and/or license should be determined by your contract and what you and your client/employer agree to.</p>
+</section>
+</section>
+<section><span id="c02-sec-0014"/>
+<h2 id="head-2-10">DETERMINING PATHS</h2>
+<p id="c02-para-0044">Perhaps one of the toughest hurdles to jump when building WordPress plugins is simply figuring out the appropriate path when loading or referencing a file. Because you as a plugin developer do not control how the user chooses to set up their WordPress installation, you cannot rely on a specific pattern.</p>
+<section><span id="c02-sec-0015"/>
+<h3 id="head-3-25">Plugin Paths</h3>
+<p id="c02-para-0045">There are two types of paths that you might be concerned with when building WordPress plugins. The first is the local path to files on the server. The second is URL paths, which may be necessary for loading JavaScript files, CSS stylesheets, or other assets. You may also need to link to a specific URL within the WordPress installation itself.</p>
+<p id="c02-para-0046">Because WordPress provides the ability for users to move their <code>wp‐content</code> folder (where plugins are located) to any location on the server, it's important to use the standard WordPress functions for determining the correct path.</p>
+</section>
+<section><span id="c02-sec-0016"/>
+<h3 id="head-3-26">Local Paths</h3>
+<p>Local paths reference locations on the server. PHP provides easy methods for determining paths for almost every case needed. However, to be on the safe side, it's best to use WordPress functions where possible. The <code>plugin_dir_path()</code> function provides an easy way to get the filesystem directory path to your plugin.</p>
+<pre id="c02-code-0004"><code>&lt;?php $path = plugin_dir_path( $file ); ?&gt;</code></pre>
+<p>Parameters:</p>
+<ul class="check" id="c02-list-0009">
+<li id="c02-li-0035">
+<code>$file</code> (string, required): The filename in the current directory path</li>
+</ul>
+<p>The following example will print the path of the current directory of the file passed in with a trailing slash using PHP's <code>__FILE__</code> constant:</p>
+<pre id="c02-code-0005"><code>&lt;?php echo plugin_dir_path( __FILE__ ); ?&gt;</code><span epub:type="pagebreak" id="Page_20" role="doc-pagebreak" title="20"/></pre>
+<p>That code should output a path similar to the following:</p>
+<pre id="c02-code-0006"><code>/public_html/wp-content/plugins/pdev/</code></pre>
+<p id="c02-para-0051">Any file can be passed into the function. The resulting path will point to wherever the file lives in your plugin. If passing in <code>__FILE__</code> from the primary plugin file, it'll be the path to the root of your plugin. If passing it in from a subfolder in your plugin, it will return the path to the subfolder in your plugin.</p>
+<p>Assuming you needed to load a file named <code>/src/functions.php</code> from your plugin that houses some custom functions, use the following code:</p>
+<pre id="c02-code-0007"><code>&lt;?php include plugin_dir_path( __FILE__ ) . '/src/functions.php'; ?&gt;</code></pre>
+<p>It is common practice for plugin authors to store this path as a variable or constant in the plugin's primary file for quick access to the plugin's root folder path, as shown in the following example code:</p>
+<pre id="c02-code-0008"><code>&lt;?php define( 'PDEV_DIR', plugin_dir_path( __FILE__ ) ); ?&gt;</code></pre>
+<p id="c02-para-0054">This allows you to reference <code>PDEV_DIR</code> any time you need it from anywhere in the plugin without having to think about file paths.</p>
+</section>
+<section><span id="c02-sec-0017"/>
+<h3 id="head-3-27">URL Paths</h3>
+<p id="c02-para-0055">Referencing URL paths can be tougher than local paths because there's usually no good way to determine this via standard PHP functions or constants alone. You'll need to rely on WordPress to get the correct path.</p>
+<p>The primary use case for getting a URL path will be determining the path to an asset (e.g., JavaScript, CSS, or image files) within your plugin. WordPress provides the <code>plugin_dir_url()</code> function to handle this use case.</p>
+<pre id="c02-code-0009"><code>&lt;?php $url = plugin_dir_url( $file ); ?&gt;</code></pre>
+<p>Parameters:</p>
+<ul class="check" id="c02-list-0010">
+<li id="c02-li-0036">
+<code>$file</code> (string, required): The filename in the current directory path</li>
+</ul>
+<p>WordPress will automatically convert any filename passed in to an appropriate URL equivalent. See the following example of passing in the filename from within the primary plugin file:</p>
+<pre id="c02-code-0010"><code>&lt;?php echo plugin_dir_url( __FILE__ ); ?&gt;</code></pre>
+<p>That code will output something like the following URL with a trailing slash:</p>
+<pre id="c02-code-0011"><code>https://example.com/wp-content/plugins/pdev/</code></pre>
+<p>If you wanted to determine the path of a JavaScript file located at <code>/public/js/example.js</code> in your plugin, you'd use the following code:</p>
+<pre id="c02-code-0012"><code>&lt;?php $url = plugin_dir_url( __FILE__ ) . 'public/js/example.js'; ?&gt;</code></pre>
+<p id="c02-para-0061">You can use this to correctly get the URL path to any location in your plugin. Like its <code>plugin_dir_path()</code> counterpart, you can pass in any filename in your plugin to determine the appropriate URL for any location.</p>
+<p><span epub:type="pagebreak" id="Page_21" role="doc-pagebreak" title="21"/>WordPress also provides a <code>plugins_url()</code> function. <code>plugin_dir_url()</code> is a wrapper for this function. For most purposes, these two functions can almost be used interchangeably, but there are some important differences.</p>
+<pre id="c02-code-0013"><code>&lt;?php $url = plugins_url( $path = '', $plugin = '' ); ?&gt;</code></pre>
+<p>Parameters:</p>
+<ul class="check" id="c02-list-0011">
+<li id="c02-li-0037">
+<code>$path</code> (string, optional): A path to append to the end of the URL</li>
+<li id="c02-li-0038">
+<code>$plugin</code> (string, optional): The full path to a file within the plugin</li>
+</ul>
+<p id="c02-para-0064">If no parameters are provided, the function will return the URL to the plugin's directory for the WordPress installation. It also does not add a trailing slash to the end of the URL. For most cases, it's usually best to stick with <code>plugin_dir_url()</code>. However, this function is available if needed.</p>
+<p>Other than determining the URL path to files within your plugin, you may need to determine the URL for a particular page or directory within the WordPress installation. WordPress has a number of useful functions that return the necessary information.</p>
+<ul class="check" id="c02-list-0012">
+<li id="c02-li-0039">
+<code>site_url()</code>: URL path to where WordPress is installed</li>
+<li id="c02-li-0040">
+<code>home_url()</code>: URL path to the site's homepage</li>
+<li id="c02-li-0041">
+<code>admin_url()</code>: URL path to the WordPress admin</li>
+<li id="c02-li-0042">
+<code>rest_url()</code>: URL path the REST API endpoint</li>
+<li id="c02-li-0043">
+<code>includes_url()</code>: URL path to the WordPress includes directory</li>
+<li id="c02-li-0044">
+<code>content_url()</code>: URL path to the WordPress content directory</li>
+</ul>
+<p>All of these URL functions accept an optional first parameter of <code>$path</code>, which is appended to the end of the URL if provided. The following example shows how to retrieve the URL path to the General Settings page in the admin:</p>
+<pre id="c02-code-0014"><code>&lt;?php $url = admin_url( 'options-general.php' ); ?&gt;</code></pre>
+<p id="c02-para-0067">With the exception of the <code>content_url()</code> function, each of these functions also accepts an optional second parameter of <code>$scheme</code>, which allows you to manually set the protocol, such as <code>'http'</code> or <code>'https'</code>. In almost all cases, you should not set this parameter and should instead allow WordPress to automatically determine the appropriate URL scheme.</p>
+<p id="c02-para-0068">First‐time WordPress developers will also sometimes confuse <code>site_url()</code> and <code>home_url()</code>. WordPress can be installed in a subdirectory on the server while allowing the actual site to be located elsewhere. Unfortunately, the function names are part of a legacy code base and have stuck around. The trick is to remember that the “home” in <code>home_url()</code> refers to the URL of the site, and the “site” in <code>site_url()</code> refers to the URL of the WordPress installation.</p>
+<p id="c02-para-0069">If WordPress is installed in a subdirectory, <code>site_url()</code> might point to a URL like <code><a href="https://example.com/wordpress">https://example.com/wordpress</a></code>, while <code>home_url()</code> points to <code><a href="https://example.com">https://example.com</a></code>.</p>
+</section>
+</section> <span epub:type="pagebreak" id="Page_22" role="doc-pagebreak" title="22"/>
+<section><span id="c02-sec-0018"/>
+<h2 id="head-2-11">ACTIVATE/DEACTIVATE FUNCTIONS</h2>
+<p id="c02-para-0070">WordPress provides standard activation and deactivation hooks that allow any plugin to run code when it is activated or deactivated, respectively. This section walks through how to use both.</p>
+<section><span id="c02-sec-0019"/>
+<h3 id="head-3-28">Plugin Activation Function</h3>
+<p id="c02-para-0071">When building plugins, you'll often need to execute some code when the user first activates it. One common use case is adding custom capabilities to the administrator role (see <a href="c09.xhtml">Chapter 9</a>, “Users and User Data”) for something like a custom post type (see <a href="c08.xhtml">Chapter 8</a>, “Content”) that your plugin is registering. Or, you may need to set up a particular option for your plugin to perform.</p>
+<p>WordPress provides the <code>register_activation_hook()</code> function that allows you to pass in a callback for handling any activation code you need to run.</p>
+<pre id="c02-code-0015"><code>&lt;?php register_activation_hook( string $file, callable $function ); ?&gt;</code></pre>
+<p>Parameters:</p>
+<ul class="check" id="c02-list-0013">
+<li id="c02-li-0045">
+<code>$file</code> (string, required): Filesystem path to the primary plugin file</li>
+<li id="c02-li-0046">
+<code>$function</code> (callable, required): The PHP callable to be executed when the plugin is activated</li>
+</ul>
+<p>It's generally best to separate your activation code from the rest of your plugin code simply for organizational purposes. The following example shows how to register an activation hook that points to a class located at <code>src/Activation.php</code> in your plugin and executes its <code>activate()</code> method:</p>
+<pre id="c02-code-0016"><code>&lt;?php</code>
+<code> </code>
+<code>namespace PDEV;</code>
+<code> </code>
+<code>register_activation_hook( __FILE__, function() {</code>
+<code>       require_once plugin_dir_path( __FILE__ ) . 'src/Activation.php';</code>
+<code>       Activation::activate();</code>
+<code>} );</code></pre>
+<p>With the activation hook callback registered, you need to figure out what things you need to set upon activation. The following example gets the administrator role object and adds a custom capability to it:</p>
+<pre id="c02-code-0017"><code>&lt;?php</code>
+<code> </code>
+<code>namespace PDEV;</code>
+<code> </code>
+<code>class Activation {</code>
+<code> </code>
+<code>       public static function activate() {</code>
+<code> </code>
+<code>             $role = get_role( 'administrator' );</code>
+<code> </code>
+<code>             if ( ! empty( $role ) ) {</code>
+<code>                  $role-&gt;add_cap( 'pdev_manage' );</code>
+<code>            }</code>
+<code>       }</code>
+<code>}</code><span epub:type="pagebreak" id="Page_23" role="doc-pagebreak" title="23"/></pre>
+<p id="c02-para-0076">There is no limit to what code you can run upon activation. It's a great time to run anything that needs to be set only once or things that shouldn't be run on every page load. For example, if your plugin needs to create custom database tables, this would be the time to do it.</p>
+<p id="c02-para-0077">While it is common practice with some plugin authors, you usually shouldn't set plugin database options at this point. It's almost always better to use sane defaults for any options your plugin has and not clutter the database until the end user has explicitly decided to save on your plugin settings screen (see <a href="c03.xhtml">Chapter 3</a>).</p>
+</section>
+<section><span id="c02-sec-0020"/>
+<h3 id="head-3-29">Plugin Deactivation Function</h3>
+<p>Like the activation function, WordPress also allows you to execute code from a registered deactivation callback via the <code>register_deactivation_hook()</code> function. The following example includes the <code>src/Deactivation.php</code> class and executes its <code>deactivate()</code> method:</p>
+<pre id="c02-code-0018"><code>&lt;?php</code>
+<code> </code>
+<code>namespace PDEV;</code>
+<code> </code>
+<code>register_deactivation_hook( __FILE__, function() {</code>
+<code>       require_once plugin_dir_path( __FILE__ ) . 'src/Deactivation.php';</code>
+<code>       Deactivation::deactivate();</code>
+<code>} );</code></pre>
+<p>Once you've registered your deactivation callback, you need to run some code on deactivation. The following is an example of how to set up your <code>Deactivation</code> class:</p>
+<pre id="c02-code-0019"><code>&lt;?php</code>
+<code> </code>
+<code>namespace PDEV;</code>
+<code> </code>
+<code>class Deactivation {</code>
+<code> </code>
+<code>       public static function deactivate() {</code>
+<code>              // Run your deactivation code here.</code>
+<code>       }</code>
+<code>}</code></pre>
+<p id="c02-para-0080">Like with the activation hook, you have the freedom to run any code that you need when a user decides to deactivate your plugin.</p>
+</section>
+<section><span id="c02-sec-0021"/>
+<h3 id="head-3-30">Deactivate Is Not Uninstall</h3>
+<p id="c02-para-0081">Setting up a deactivation callback is often unnecessary because most of the things you might think you'd need to unset on deactivation should actually happen when a user uninstalls the plugin. Deactivation is not an appropriate time to delete plugin options, remove database tables, delete user content, or perform any other highly destructive actions.</p>
+<p id="c02-para-0082">Users and even WordPress itself may deactivate a plugin for any number of reasons. You don't want your plugin users to lose any important data when deactivating only to reactivate and find their settings or content gone. Use with extreme caution.</p>
+</section>
+</section> <span epub:type="pagebreak" id="Page_24" role="doc-pagebreak" title="24"/>
+<section><span id="c02-sec-0022"/>
+<h2 id="head-2-12">UNINSTALL METHODS</h2>
+<p id="c02-para-0083">Cleaning up anything left behind when a user uninstalls your plugin is an important aspect of developing plugins professionally. Running an uninstall procedure takes little work on your part but makes sure that users can trust that they can use your plugins without those plugins leaving unwanted data behind.</p>
+<section><span id="c02-sec-0023"/>
+<h3 id="head-3-31">Why Uninstall Is Necessary</h3>
+<p id="c02-para-0084">If you install an app on your mobile phone and decide at some point that you no longer want to use that app, you'll delete or “uninstall” it. You wouldn't want the app to leave behind all of its settings or any other data that is no longer useful. WordPress plugins are no different. Users should feel confident that their site doesn't have cruft left over from every plugin they've used or even just tested and decide it wasn't for them.</p>
+<p id="c02-para-0085">If there's an ultimate “no‐no” in plugin development, it's to not tidy up after yourself. When your plugin is uninstalled, make sure to delete any options or other data that your plugin has added.</p>
+<p id="c02-para-0086">However, there are times when you want to ignore this rule. In general, user‐created content, such as that created by custom post types or custom database tables, may need to be retained. In these situations, it's best to provide a setting that a user can opt into that allows you to delete that data on uninstall. The rule of thumb here is to always be respectful of their content. When in doubt, get the user's permission before deleting anything they might want to keep.</p>
+<p id="c02-para-0087">WordPress provides two different methods for uninstalling a plugin: the <code>uninstall.php</code> file and the uninstall hook.</p>
+</section>
+<section><span id="c02-sec-0024"/>
+<h3 id="head-3-32">Uninstall.php</h3>
+<p id="c02-para-0088">The first method of uninstalling a plugin is by creating an <code>uninstall.php</code> file in the root of your plugin folder. This is the method that you'll most likely be using and is the recommended route to take.</p>
+<p id="c02-para-0089">Using <code>uninstall.php</code> is the preferred method of uninstalling a plugin because it isolates your uninstall code from the rest of your plugin and doesn't allow arbitrary code to run from your other plugin files. Ideally, your plugin should be structured such that arbitrary code is never run. However, <code>uninstall.php</code> protects against this and makes sure only the code contained within the file is executed.</p>
+<p id="c02-para-0090">It's also important to check that <code>WP_UNINSTALL_PLUGIN</code> is set before executing your uninstall code. Otherwise, it's possible the file will be inadvertently called and your plugin will delete everything when it shouldn't.</p>
+<p>In the following example, you can see that the uninstall procedure checks the constant and removes the <code>pdev_manage</code> capability added in the “Plugin Activation Hook” section earlier in this chapter:</p>
+<pre id="c02-code-0020"><code>&lt;?php</code>
+
+<code> </code>
+<code>if ( ! defined( 'WP_UNINSTALL_PLUGIN' ) ) {</code>
+<code>       wp_die( sprintf(</code>
+<code>            __( '%s should only be called when uninstalling the plugin.', 'pdev' ),</code>
+<code>            __FILE__<span epub:type="pagebreak" id="Page_25" role="doc-pagebreak" title="25"/></code>
+<code>       ) );</code>
+<code>       exit;</code>
+<code>}</code>
+<code> </code>
+<code>$role = get_role( 'administrator' );</code>
+<code> </code>
+<code>if ( ! empty( $role ) ) {</code>
+<code>       $role-&gt;remove_cap( 'pdev_manage' );</code>
+<code>}</code></pre>
+</section>
+<section><span id="c02-sec-0025"/>
+<h3 id="head-3-33">Uninstall Hook</h3>
+<p>WordPress provides an uninstall hook similar to its activation and deactivation hooks outlined earlier in this chapter. If no <code>uninstall.php</code> file exists for the plugin, WordPress will look for a callback registered via the <code>register_uninstall_hook()</code> function.</p>
+<pre id="c02-code-0021"><code>&lt;?php register_uninstall_hook( $file, $callback ); ?&gt;</code></pre>
+<p>Parameters:</p>
+<ul class="check" id="c02-list-0014">
+<li id="c02-li-0047">
+<code>$file</code> (string, required): The primary plugin file</li>
+<li id="c02-li-0048">
+<code>$callback</code> (callable, required): A function to execute during the uninstall process</li>
+</ul>
+<p>Now look at the following example of how a plugin uninstall function works:</p>
+<pre id="c02-code-0022"><code>&lt;?php</code>
+<code> </code>
+<code>register_uninstall_hook( __FILE__, 'pdev_uninstall' );</code>
+<code> </code>
+<code>function pdev_uninstall() {</code>
+<code>       $role = get_role( 'administrator' );</code>
+<code> </code>
+<code>       if ( ! empty( $role ) ) {</code>
+<code>             $role-&gt;remove_cap( 'pdev_manage' );</code>
+<code>       }</code>
+<code>}</code></pre>
+<p id="c02-para-0095">That example performs the same action as the <code>uninstall.php</code> file from the previous section in this chapter. However, you may have noted an important difference. There's no need to check the <code>WP_UNINSTALL_PLUGIN</code> constant because it's not set in the uninstall callback and unnecessary.</p>
+<p id="c02-para-0096">It's also important to use <code>$this</code> or an object reference when registering an uninstall hook because this callback reference is stored in the database and is unique to the page load when it is stored.</p>
+</section>
+</section>
+<section><span id="c02-sec-0026"/>
+<h2 id="head-2-13">CODING STANDARDS</h2>
+<p id="c02-para-0097">Following a set of standards when developing plugins professionally is important because it makes long‐term maintenance of your code easier and also allows other developers to quickly learn from or contribute to your plugin. WordPress maintains a coding standard for the core source code. It is a good starting point when building plugins. You can view the WordPress coding standards at <code><a href="https://make.wordpress.org/core/handbook/best-practices/coding-standards">https://make.wordpress.org/core/handbook/best-practices/coding-standards</a></code>.</p>
+<p id="c02-para-0098"><span epub:type="pagebreak" id="Page_26" role="doc-pagebreak" title="26"/>WordPress has more than 15 years of legacy code, and sometimes its standards do not align with the standards of the larger PHP community. This can be off‐putting for some PHP developers new to the WordPress community. You may also want to follow PHP Recommended Standards (PSRs) created and maintained by the PHP Framework Interprop Group (PHP‐FIG) for the larger PHP community. You can find these standards at <code><a href="https://www.php-fig.org/psr">https://www.php-fig.org/psr</a></code>.</p>
+<p id="c02-para-0099">The most important thing is to maintain consistency in your code base, regardless of the coding standards that you follow.</p>
+<section><span id="c02-sec-0027"/>
+<h3 id="head-3-34">Document Your Code</h3>
+<p id="c02-para-0100">One of the worst things you can do as a developer is to never document your code. While you should always strive for your code to be self‐documenting by naming things in ways that make sense and limiting functions/classes to a single responsibility, documenting your code is just as important as the code itself.</p>
+<p id="c02-para-0101">Imagine writing a large plugin for a client today and not documenting what everything does. That same client calls you up in two years to make some big updates for them. Can you honestly say that you'll completely understand the code that you wrote two years ago? Even if you could, what about another developer? You may think that it's not your problem, but that could earn you a poor reputation in the WordPress developer community. You should be a “good citizen” and help your fellow developers.</p>
+<p id="c02-para-0102">Documentation is also important when building plugins for public release. For others to contribute code to your plugin through patches or pull requests, other developers should have enough documentation to understand any decisions that you made with the code.</p>
+<p>WordPress uses PHPDoc for adding documentation to code. PHPDoc is a standard for documenting files, functions, classes, and any other code written in PHP. The following is an example of using PHPDoc to document a function:</p>
+<pre id="c02-code-0023"><code>&lt;?php</code>
+<code>/**</code>
+<code> * Short Description.</code>
+<code> *</code>
+<code> * Longer and more detailed description.</code>
+<code> *</code>
+<code> * @param  type  $param_a  Description.</code>
+<code> * @param  type  $param_b  Description.</code>
+<code> * @return type            Description.</code>
+<code> */</code>
+<code>function pdev_function( $param_a, $param_b ) {</code>
+<code>       // Do stuff.</code>
+<code>}</code></pre>
+<p>As you can see, the inline PHPDoc describes what the function does, what parameters it accepts, and what it returns. Another developer wouldn't even have to read your code to understand what it does.<span epub:type="pagebreak" id="Page_27" role="doc-pagebreak" title="27"/></p>
+<aside>
+<div class="top hr"><hr/></div>
+<section class="feature1">
+<p id="c02-para-0105"><b>NOTE</b> <i>Good documentation helps when spotting bugs. If the function's code does something different from what is outlined by the documentation, you or another developer will know either the documentation or the code is incorrect.</i></p>
+<div class="bottom hr"><hr/></div>
+</section>
+</aside>
+</section>
+<section><span id="c02-sec-0029"/>
+<h3 id="head-3-35">Naming Variables and Functions</h3>
+<p>Variables and functions should always be written in snake case. All characters should be written in lowercase, and multiple words should be separated with an underscore. Functions and variables in the global namespace should also be preceded with a unique prefix for your plugin, such as <code>pdev_</code>. The following example is the correct way to write a function:</p>
+<pre id="c02-code-0024"><code>&lt;?php </code>
+<code>function pdev_function( $param_a ) {</code>
+<code>        // Do stuff.</code>
+<code>}</code></pre>
+<p id="c02-para-0107">
+<code>$param_a</code> isn't in the global scope there, so it doesn't need a prefix. While it's considered bad practice to use global variables, if you do use them, make sure to prefix.</p>
+</section>
+<section><span id="c02-sec-0030"/>
+<h3 id="head-3-36">Naming Classes and Methods</h3>
+<p id="c02-para-0108">Class and method naming is one area where the core WordPress coding standards don't align with the PHP community. The PHP standard is to write class names in PascalCase where the first character of each word is uppercase and there are no separators between words. The standard for class methods is to write words in camelCase where the difference is that the first character of the first word is lowercase.</p>
+<p>The following example shows what a basic class with a single method looks like using this method:</p>
+<pre id="c02-code-0025"><code>&lt;?php</code>
+<code> </code>
+<code>class PDEVSetup {</code>
+<code> </code>
+<code>        public function setupActions() {</code>
+<code>        }</code>
+<code>}</code></pre>
+<p>The WordPress coding standards follow a different set of rules. Look at the following example to spot the differences:</p>
+<pre id="c02-code-0026"><code>&lt;?php</code>
+<code> </code>
+<code>class PDEV_Setup {</code>
+<code> </code>
+<code>        public function setup_actions() {</code>
+<code>        }</code>
+<code>}</code><span epub:type="pagebreak" id="Page_28" role="doc-pagebreak" title="28"/></pre>
+<p id="c02-para-0111">As you can see, the WordPress method uses underscores to separate class names and uses snake case for method names. You'll need to decide the best direction for your own plugins. There's no one right answer, and developers have been arguing over naming schemes for as long as programming has existed. The most important thing is to be consistent in your own code.</p>
+</section>
+<section><span id="c02-sec-0031"/>
+<h3 id="head-3-37">Naming Files</h3>
+<p id="c02-para-0112">WordPress has a strict guideline on how it names files. The standard is to write each character in lowercase and separate multiple words with hyphens. For example, you might have a group of user‐related functions in your plugin. You'd want to name that file something like <code>functions‐users.php</code>.</p>
+<p id="c02-para-0113">WordPress also prefixes class filenames with <code>class‐</code>. The <code>PDEVSetup</code> or <code>PDEV_Setup</code> class from the previous section in this chapter would be named <code>class‐pdev‐setup.php</code> following the WordPress standard.</p>
+<p id="c02-para-0114">Again, this is where WordPress deviates from the standards within the PHP community. At some point, you'll likely want to use an autoloader, such as the one provided by Composer (<code><a href="https://getcomposer.org">https://getcomposer.org</a></code>). Once you do that, you'll quickly realize that the best method of naming class files is for the filename to match the class name exactly because it simplifies the autoloader code and keeps you from having to write a custom implementation. In this case, you should name the file for the <code>PDEVSetup</code> class as <code>PDEVSetup.php</code>.</p>
+</section>
+<section><span id="c02-sec-0032"/>
+<h3 id="head-3-38">Single and Double Quotes</h3>
+<p>PHP allows you to use single or double quotes when defining strings. With WordPress, it's recommended to always use single quotes when possible. This makes it easy to use double quotes within the string without escaping them. The following is an example of echoing a link that has double quotes within the single‐quoted string:</p>
+<pre id="c02-code-0027"><code>&lt;?php </code>
+<code>echo '&lt;a href="https://example.com"&gt;Visit Example.com&lt;/a&gt;';</code></pre>
+<p>You can also use double quotes when you need to insert a variable within the string. The following example grabs the current site's name and echoes a message with the variable:</p>
+<pre id="c02-code-0028"><code>&lt;?php</code>
+<code>$pdev_site_name = get_bloginfo( 'name', 'display' );</code>
+<code>echo "You are viewing {$pdev_site_name}.";</code></pre>
+</section>
+<section><span id="c02-sec-0033"/>
+<h3 id="head-3-39">Indentation</h3>
+<p id="c02-para-0117">Put 10 programmers in a room and pose the question, “Spaces or tabs?” This may be the closest you'll ever see to a programming discussion resulting in fisticuffs. Many a developer has lived and died on their personal space/tab hill. The one thing that most can agree on is that your code should follow some sort of standard indentation.</p>
+<p>The WordPress standard is to indent all code with tabs. Consider the following example of an if/else statement:</p>
+<pre id="c02-code-0029"><code>&lt;?php</code>
+<code>if ( $condition ) {</code><span epub:type="pagebreak" id="Page_29" role="doc-pagebreak" title="29"/>
+<code>echo 'Yes';</code>
+<code>} else {</code>
+<code>echo 'No';</code>
+<code>}</code></pre>
+<p>It's hard to follow the logical structure of the code with no indentation. Instead, you should indent each line within the brackets of the conditions, as shown in the following example:</p>
+<pre id="c02-code-0030"><code>&lt;?php</code>
+<code>if ( $condition ) {</code>
+<code>       echo 'Yes';</code>
+<code>} else {</code>
+<code>       echo 'No';</code>
+<code>}</code></pre>
+<p>The one exception that WordPress makes to its tab preference is when aligning multiple lines of similar items. Take note of the spacing usage in the following snippet:</p>
+<pre id="c02-code-0031"><code>&lt;?php</code>
+<code>$some_var        = 'ABC';</code>
+<code>$another_var     = 'JKL';</code>
+<code>$yet_another_var = 'XYZ';</code></pre>
+<p id="c02-para-0121">As you can see, the operators and values assigned to the variables are clearly lined up and easy to read.</p>
+</section>
+<section><span id="c02-sec-0034"/>
+<h3 id="head-3-40">Brace Style</h3>
+<p>Any multiline statement in PHP should use brackets to contain the entire code block. Following this brace style will keep your code clear and less prone to errors. See the next code snippet for the appropriate usage of braces:</p>
+<pre id="c02-code-0032"><code>&lt;?php</code>
+<code>if ( $condition_a ) {</code>
+<code>       action_a();</code>
+<code>} elseif ( $condition_b || $condition_c ) {</code>
+<code>       action_b();</code>
+<code>       action_c();</code>
+<code>}</code></pre>
+<p id="c02-para-0123">Even if there's only a single line within each block, make sure to enclose it too. Forgoing the braces for single‐line statements is usually a bad idea and may result in bugs when you add extra code in the future.</p>
+</section>
+<section><span id="c02-sec-0035"/>
+<h3 id="head-3-41">Space Usage</h3>
+<p>When building your plugin, you should always add spaces after commas and on each side of logical, comparison, and other operators. The following code snippet shows several basic PHP examples and how they should be spaced:</p>
+<pre id="c02-code-0033"><code>&lt;?php</code>
+<code>if ( $foo === 'bar' ) {</code>
+<code>        // Do something.</code>
+<code>} elseif ( ! $foo ) {<span epub:type="pagebreak" id="Page_30" role="doc-pagebreak" title="30"/></code>
+<code>        // Do something else.</code>
+<code>}</code>
+<code> </code>
+<code>foreach ( $foo as $bar ) {</code>
+<code>        // Do something.</code>
+<code>}</code>
+<code> </code>
+<code>function pdev_function( $param_a = 'foo', $param_b = 'bar' ) {</code>
+<code>        // Do something.</code>
+<code>}</code>
+<code> </code>
+<code>$foo = range( 10, 100, 10 );</code></pre>
+<p id="c02-para-0125">Using this spacing technique keeps your code clean and makes it easy to read. The rule of thumb is to always be judicious with spacing. Or, when in doubt, use a space.</p>
+</section>
+<section><span id="c02-sec-0036"/>
+<h3 id="head-3-42">Shorthand PHP</h3>
+<p id="c02-para-0126">You should never use shorthand PHP tags (
+<code>&lt;?</code> and <code>?&gt;</code>) when developing plugins. Shorthand tags must be enabled on the server to work. As a plugin developer, you typically won't have access to the server, so there's no guarantee they'll work for your users. Always use the full PHP opening and closing tags (
+<code>&lt;?php</code> and <code>?&gt;</code>).</p>
+<p>The one exception to this rule is for the short echo tag, as shown in the following example:</p>
+<pre id="c02-code-0034"><code>&lt;?= 'Hello, World!'; ?&gt;</code></pre>
+<p id="c02-para-0128">The short echo tag is always enabled as of PHP 5.4. This is uncommon usage and not standard for WordPress. It's typically used in templates, which is not the primary use case for plugins.</p>
+</section>
+<section><span id="c02-sec-0037"/>
+<h3 id="head-3-43">SQL Statements</h3>
+<p>When writing SQL statements in WordPress to make a direct database call, always capitalize the SQL part of the statement. Most statements should be written on a single line, but it's OK to break the statement into multiple lines if the statement is complex.</p>
+<pre id="c02-code-0035"><code>SELECT ID FROM wp_users WHERE user_login = 'example'</code></pre>
+<p id="c02-para-0130"><a href="c04.xhtml">Chapter 4</a>, “Security and Performance,” covers how to create proper SQL statements in more detail.</p>
+</section>
+</section>
+<section><span id="c02-sec-0038"/>
+<h2 id="head-2-14">SUMMARY</h2>
+<p id="c02-para-0131">This chapter covered how to properly set up your WordPress plugin. Following the methods and techniques outlined in this chapter will set you on the path to building plugins professionally. Starting from a solid foundation by following coding standards and documenting your code will make it easier to maintain your plugin in the long term. It will also help other developers understand your code. It's important to get the foundation right before moving on to more advanced topics.</p>
+</section>
+</section>
+</body>
+</html>

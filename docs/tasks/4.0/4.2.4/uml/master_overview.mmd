@@ -1,0 +1,87 @@
+graph TD
+    %% =======================================================================
+    %% RECOGNITION SERVICE V4.2.4 - MASTER OVERVIEW
+    %% =======================================================================
+
+    subgraph Orchestration["Orchestration Layer"]
+        ScanService[ScanService]
+        ClusterService[ClusterService]
+        JobService[JobService]
+    end
+
+    subgraph Infrastructure["Infrastructure Layer"]
+        EmbeddingProvider[EmbeddingProvider<br/>InsightFace]
+        DB[(PostgreSQL)]
+        ClusterRepo[ClusterRepository]
+    end
+
+    subgraph Discovery["Discovery Layer (Find Candidates using Face Embeddings)"]
+        RD[RepresentativeDiscovery]
+        CD[CentroidDiscovery]
+        GD[GraphDiscovery<br/>HDBSCAN/CW]
+    end
+
+    subgraph Assignment["Assignment Layer (Unified Gate)"]
+        Gate[AssignmentGate]
+        
+        subgraph Checks["Validation Checks"]
+            MC[MaturityCheck]
+            CLC[CompleteLinkCheck]
+            MDC[MemberDistributionCheck]
+            CC[ConfidenceCheck]
+        end
+        
+        Writer[AssignmentWriter]
+    end
+
+    subgraph Suggestions["Suggestion Layer"]
+        SuggService[SuggestionService]
+        Admin((Admin User))
+    end
+
+    subgraph Observability["Observability Layer"]
+        Logger[ClusteringLogger]
+        Visualizer[ClusterVisualizer]
+    end
+
+    %% Flow: Scanning
+    ScanService -->|1. Extract Embeddings| EmbeddingProvider
+    ScanService -->|2. Persist Identity| DB
+
+    %% Flow: Clustering
+    ClusterService -->|1. Get Unclustered| ClusterRepo
+    ClusterRepo --> DB
+    
+    ClusterService -->|2. Find Candidates| RD
+    ClusterService -->|2. Find Candidates| CD
+    ClusterService -->|2. Find Candidates| GD
+    
+    RD -->|Candidates| Gate
+    CD -->|Candidates| Gate
+    GD -->|Candidates| Gate
+    
+    %% Flow: Assignment Gate
+    Gate -->|Validate| Checks
+    Checks -->|Result| Gate
+    
+    Gate -->|ACCEPT| Writer
+    Gate -->|SUGGEST| SuggService
+    Gate -->|REJECT| Unclustered[Unclustered Pool]
+    
+    Writer -->|Persist| DB
+    SuggService -->|Persist| DB
+    
+    %% Flow: Suggestions
+    Admin -->|Review| SuggService
+    SuggService -->|Accept/Reject| DB
+
+    %% Flow: Observability
+    ClusterService -.->|Log Decisions| Logger
+    ClusterService -.->|Generate Charts| Visualizer
+    
+    %% Styling
+    style Gate fill:#fff3e0,stroke:#e65100,stroke-width:2px
+    style Checks fill:#fff9c4,stroke:#fbc02d
+    style Discovery fill:#e3f2fd,stroke:#1565c0
+    style Orchestration fill:#f3e5f5,stroke:#7b1fa2
+    style Observability fill:#e8f5e9,stroke:#2e7d32

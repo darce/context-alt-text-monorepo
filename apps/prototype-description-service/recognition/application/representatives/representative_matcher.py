@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import time
 from collections.abc import Awaitable, Callable
 from uuid import UUID
 
@@ -11,7 +12,11 @@ import numpy as np
 from db.models import MediaIdentity
 from recognition.application.clustering.centroid_utils import compute_similarity
 from recognition.application.clustering.cluster_validation import MemberValidationResult
-from recognition.application.clustering.clustering_logger import log_rep_match, log_threshold_adjusted
+from recognition.application.clustering.clustering_logger import (
+    log_complete_link_check,
+    log_rep_match,
+    log_threshold_adjusted,
+)
 from recognition.application.clustering.clustering_settings import ClusteringSettings
 from recognition.application.representatives.confidence_utils import (
     adaptive_threshold,
@@ -162,7 +167,7 @@ class RepresentativeMatcher:
         identity_vector: np.ndarray,
         cluster_id: UUID,
         representatives_by_cluster: dict[UUID, list[np.ndarray]],
-    ) -> tuple[bool, float, float]:
+    ) -> tuple[bool, float, float, float]:
         """Check complete-link validation against ALL representatives of a cluster.
 
         Instead of just checking if ONE rep is similar enough, we check that:
@@ -172,15 +177,18 @@ class RepresentativeMatcher:
         This catches lookalikes who match one photo (e.g., same angle) but not others.
 
         Returns:
-            (passed, min_similarity, avg_similarity)
+            (passed, min_similarity, avg_similarity, duration_ms)
         """
-        if not self._settings or not self._settings.complete_link_enabled:
-            return True, 1.0, 1.0  # Skip check if disabled
+        start = time.perf_counter()
+        if not self._settings:
+            duration_ms = (time.perf_counter() - start) * 1000
+            return True, 1.0, 1.0, duration_ms
 
         reps = representatives_by_cluster.get(cluster_id, [])
         if len(reps) < 2:
             # Not enough representatives for meaningful complete-link check
-            return True, 1.0, 1.0
+            duration_ms = (time.perf_counter() - start) * 1000
+            return True, 1.0, 1.0, duration_ms
 
         similarities = [compute_similarity(identity_vector, rep) for rep in reps]
         min_sim = min(similarities)
@@ -190,6 +198,7 @@ class RepresentativeMatcher:
         avg_passed = avg_sim >= self._settings.complete_link_avg_threshold
 
         passed = floor_passed and avg_passed
+        duration_ms = (time.perf_counter() - start) * 1000
 
         logger.debug(
             "Complete-link check: cluster=%s, num_reps=%d, min_sim=%.4f (floor=%.4f, %s), "
@@ -205,7 +214,7 @@ class RepresentativeMatcher:
             passed,
         )
 
-        return passed, min_sim, avg_sim
+        return passed, min_sim, avg_sim, duration_ms
 
     def best_match(
         self,
@@ -249,6 +258,7 @@ class RepresentativeMatcher:
                 identity_vector,
                 representatives_by_cluster,
             )
+            rep_count = len(representatives_by_cluster.get(best_cluster_id, [])) if best_cluster_id else 0
 
             # Use effective threshold (potentially adjusted by confidence weighting)
             effective_threshold = self._compute_effective_threshold(identity)
@@ -261,11 +271,22 @@ class RepresentativeMatcher:
                 # === Complete-Link Guard ===
                 # Check that new face matches ALL representatives, not just the nearest one.
                 # A lookalike might be 0.92 to one photo but 0.80 to another angle.
-                complete_link_passed, min_sim, avg_sim = self._check_complete_link(
+                complete_link_passed, min_sim, avg_sim, duration_ms = self._check_complete_link(
                     identity_vector,
                     best_cluster_id,
                     representatives_by_cluster,
                 )
+                if self._settings and rep_count >= 2:
+                    log_complete_link_check(
+                        tenant_id=identity.tenant_id,
+                        identity_id=identity.id,
+                        cluster_id=best_cluster_id,
+                        min_similarity=min_sim,
+                        avg_similarity=avg_sim,
+                        passed=complete_link_passed,
+                        num_reps=rep_count,
+                        duration_ms=duration_ms,
+                    )
 
                 if not complete_link_passed:
                     # Complete-link failed - create suggestion instead of auto-assigning
@@ -299,10 +320,33 @@ class RepresentativeMatcher:
                         still_unclustered.append(identity)
                         continue
 
-                # === Early Stage Suggestion Guard ===
-                # During early training, matches below high-confidence threshold create suggestions
-                # instead of auto-assigning, even if they pass the regular threshold.
-                # This prevents false positives when cluster representatives aren't stable yet.
+                # === Immature Cluster Guard ===
+                # Block ALL matches to immature clusters (single representative).
+                #
+                # Rationale: With only 1 representative, complete-link validation cannot run.
+                # A single face embedding can match 20+ different people at 88-92% similarity
+                # (the "Cam Grant domination" problem). Instead of creating wrong suggestions,
+                # we send these identities to Chinese Whispers to form their own clusters.
+                # Once clusters have ≥2 diverse representatives, the complete-link guard
+                # provides structural validation that catches lookalikes.
+                #
+                # The user must manually assign ≥2 faces to a person before the system
+                # will match new faces to that person. This is a cold-start requirement.
+                is_immature_cluster = rep_count < 2
+
+                if self._settings and self._settings.early_stage_suggestion_enabled and is_immature_cluster:
+                    logger.info(
+                        "Rep match IMMATURE_CLUSTER_BLOCKED: identity=%s, matched cluster=%s at %.4f "
+                        "but cluster has only %d rep(s) - sending to Chinese Whispers instead",
+                        identity.id,
+                        best_cluster_id,
+                        best_similarity,
+                        rep_count,
+                    )
+                    still_unclustered.append(identity)
+                    continue
+
+                # Early stage (few labeled clusters) requires high confidence for auto-assignment
                 if (
                     self._settings
                     and self._settings.early_stage_suggestion_enabled
@@ -312,22 +356,19 @@ class RepresentativeMatcher:
                 ):
                     logger.info(
                         "Rep match EARLY_STAGE_SUGGESTION: identity=%s -> cluster=%s, "
-                        "similarity=%.4f < high_confidence=%.4f (labeled_clusters=%d < maturity=%d)",
+                        "similarity=%.4f < high_confidence=%.4f (labeled_clusters=%d)",
                         identity.id,
                         best_cluster_id,
                         best_similarity,
                         self._settings.early_stage_high_confidence_threshold,
                         self._labeled_cluster_count,
-                        self._settings.adaptive_threshold_maturity_point,
                     )
                     await self._create_suggestion(
                         identity.id,
                         best_cluster_id,
                         best_similarity,
-                        best_similarity,  # Use rep similarity as avg_member for early-stage suggestions
+                        best_similarity,
                     )
-                    # Don't add to still_unclustered - identity has a pending suggestion
-                    # and should not be processed by Chinese Whispers
                     continue
 
                 # Use suggestion-aware validation if available

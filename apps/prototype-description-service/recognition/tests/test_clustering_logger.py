@@ -11,14 +11,17 @@ import pytest
 from recognition.application.clustering.clustering_logger import (
     ClusteringEvent,
     ClusteringLogEntry,
+    get_complete_link_stats,
     log_algorithm_selected,
     log_batch_complete,
     log_batch_start,
     log_cluster_created,
     log_cluster_merged,
+    log_complete_link_check,
     log_rep_match,
     log_threshold_adjusted,
     log_validation_result,
+    reset_complete_link_stats,
 )
 
 
@@ -243,6 +246,60 @@ class TestLogHelperFunctions:
         assert "confidence=0.92" in caplog.text
         assert "det_score=0.95" in caplog.text
         assert "bbox_area=40000" in caplog.text
+
+    def test_log_complete_link_check(self, caplog) -> None:
+        """log_complete_link_check should emit COMPLETE_LINK_CHECK event with details."""
+        tenant_id = uuid4()
+        identity_id = uuid4()
+        cluster_id = uuid4()
+
+        with caplog.at_level(logging.INFO):
+            log_complete_link_check(
+                tenant_id=tenant_id,
+                identity_id=identity_id,
+                cluster_id=cluster_id,
+                min_similarity=0.74,
+                avg_similarity=0.81,
+                passed=False,
+                num_reps=3,
+            )
+
+        assert "complete_link_check" in caplog.text
+        assert "min_similarity=0.74" in caplog.text
+        assert "avg_similarity=0.81" in caplog.text
+        assert "num_representatives=3" in caplog.text
+        assert "passed=False" in caplog.text
+
+    def test_complete_link_stats_accumulate(self) -> None:
+        """Complete-link stats should track pass/fail counts and samples."""
+        reset_complete_link_stats()
+
+        log_complete_link_check(
+            tenant_id=uuid4(),
+            identity_id=uuid4(),
+            cluster_id=uuid4(),
+            min_similarity=0.70,
+            avg_similarity=0.80,
+            passed=False,
+            num_reps=4,
+        )
+
+        log_complete_link_check(
+            tenant_id=uuid4(),
+            identity_id=uuid4(),
+            cluster_id=uuid4(),
+            min_similarity=0.90,
+            avg_similarity=0.93,
+            passed=True,
+            num_reps=5,
+        )
+
+        stats = get_complete_link_stats()
+        assert stats["checks"] == 2
+        assert stats["passes"] == 1
+        assert stats["fails"] == 1
+        assert stats["min_samples"] == [0.70, 0.90]
+        assert stats["avg_samples"] == [0.80, 0.93]
 
     def test_log_validation_result_pass(self, caplog) -> None:
         """log_validation_result should emit correct event for pass."""

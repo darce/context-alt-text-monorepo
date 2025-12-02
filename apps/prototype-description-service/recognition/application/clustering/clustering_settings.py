@@ -91,7 +91,6 @@ class ClusteringSettings:
     # === Complete-Link Guard ===
     # Structural validation: new faces must match ALL representatives, not just the nearest one.
     # A lookalike might be 0.92 to one photo but 0.80 to another angle—complete-link catches this.
-    complete_link_enabled: bool = True  # Enable complete-link validation against all representatives
     complete_link_min_floor: float = 0.75  # Every rep must have similarity >= this (even the worst match)
     complete_link_avg_threshold: float = 0.85  # Average similarity across all reps must be >= this
 
@@ -225,6 +224,9 @@ class ClusteringSettings:
             early_stage_high_confidence_threshold=getattr(
                 cfg, "early_stage_high_confidence_threshold", cls.early_stage_high_confidence_threshold
             ),
+            # Complete-link guard
+            complete_link_min_floor=getattr(cfg, "complete_link_min_floor", cls.complete_link_min_floor),
+            complete_link_avg_threshold=getattr(cfg, "complete_link_avg_threshold", cls.complete_link_avg_threshold),
             # Adaptive thresholds
             adaptive_threshold_strict=getattr(cfg, "adaptive_threshold_strict", cls.adaptive_threshold_strict),
             adaptive_threshold_maturity_point=getattr(

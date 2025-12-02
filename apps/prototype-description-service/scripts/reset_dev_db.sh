@@ -252,4 +252,8 @@ if __name__ == "__main__":
 PY
 fi
 
+# Log the reset to the application log file
+echo "[reset-dev-db] Logging reset to application log..." >&2
+PYTHONPATH="${PROJECT_ROOT}" python -c "from api.logging_config import log_db_reset; log_db_reset('Database reset via reset_dev_db.sh')" 2>/dev/null || true
+
 echo "[reset-dev-db] Done – database dropped, recreated, and migrated for development environment." >&2

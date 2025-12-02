@@ -1,0 +1,180 @@
+```mermaid
+sequenceDiagram
+    autonumber
+    
+    %% =======================================================================
+    %% RECOGNITION SERVICE V2 - COMPLETE WORKFLOW
+    %% From media selection to cluster labeling
+    %% =======================================================================
+    
+    actor Admin
+    participant UI as Workbench UI
+    participant WP as WordPress REST Proxy
+    participant API as Recognition Service API
+    participant Scan as ScanService
+    participant Cluster as ClusterService
+    participant Gate as AssignmentGate
+    participant Sugg as SuggestionService
+    participant Job as JobService
+    participant DB as Database
+    
+    %% ===== PHASE 1: SCAN MEDIA FOR IDENTITIES =====
+    Note over Admin,DB: Phase 1: Scan Media for Identities
+    
+    Admin->>UI: Select media rows
+    UI->>WP: POST /recognition/analyze {media_ids}
+    WP->>API: POST /recognition/analyze
+    
+    API->>Job: create_scan_job(media_ids)
+    Job->>DB: INSERT scan_job (status=pending)
+    Job-->>API: job_id
+    API-->>WP: {job_id}
+    WP-->>UI: {job_id}
+    
+    Note over Job,Scan: Background Task
+    Job->>Scan: scan_media(media_ids)
+    
+    loop For each media
+        Scan->>Scan: extract_faces(media)
+        Scan->>Scan: get_embeddings(faces)
+        Scan->>DB: INSERT media_identity (cluster_id=NULL)
+    end
+    
+    Scan->>Job: update_status(completed)
+    Job->>DB: UPDATE scan_job SET status=completed
+    
+    %% Polling
+    loop Every 1.5s
+        UI->>WP: GET /recognition/jobs/{job_id}
+        WP->>API: GET /recognition/jobs/{job_id}
+        API->>Job: get_status(job_id)
+        Job->>DB: SELECT status FROM scan_jobs
+        DB-->>Job: status
+        Job-->>API: JobStatus
+        API-->>WP: {status, progress}
+        WP-->>UI: status
+    end
+    
+    UI->>UI: Show "Scan complete"
+    
+    %% ===== PHASE 2: CLUSTER IDENTITIES =====
+    Note over Admin,DB: Phase 2: Cluster Identities
+    
+    Admin->>UI: Click "Cluster identities"
+    UI->>WP: POST /recognition/clustering/jobs
+    WP->>API: POST /recognition/clustering/jobs
+    
+    API->>Cluster: cluster_unclustered_identities(tenant_id)
+    
+    Cluster->>DB: SELECT * FROM identities WHERE cluster_id IS NULL
+    DB-->>Cluster: unclustered_identities[]
+    
+    Cluster->>DB: SELECT representatives BY cluster
+    DB-->>Cluster: representatives_by_cluster
+    
+    %% Discovery Phase
+    rect rgb(240, 248, 255)
+        Note over Cluster: Discovery Phase
+        Cluster->>Cluster: RepresentativeDiscovery.discover()
+        Cluster->>Cluster: CentroidDiscovery.discover()
+        Cluster->>Cluster: GraphDiscovery.discover()
+        Cluster->>Cluster: all_candidates = merge()
+    end
+    
+    %% Evaluation Phase
+    rect rgb(255, 248, 240)
+        Note over Cluster,Gate: Evaluation Phase (Unified Gate)
+        loop For each candidate
+            Cluster->>Gate: evaluate(candidate)
+            Gate->>Gate: run all checks
+            Gate-->>Cluster: AssignmentDecision
+            
+            alt ACCEPT
+                Cluster->>DB: UPDATE identity SET cluster_id
+                Cluster->>DB: INSERT representative (maybe)
+            else SUGGEST
+                Cluster->>Sugg: create(candidate)
+                Sugg->>DB: INSERT suggestion
+            else REJECT
+                Note over Cluster: Stays unclustered
+            end
+        end
+    end
+    
+    %% New cluster creation
+    Cluster->>Cluster: still_unclustered = filter(REJECT)
+    Cluster->>Cluster: run HDBSCAN (no anchors)
+    loop For each new cluster
+        Cluster->>DB: INSERT cluster
+        Cluster->>DB: UPDATE identities SET cluster_id
+        Cluster->>DB: INSERT representative
+    end
+    
+    Cluster-->>API: ClusteringResult
+    API-->>WP: {status: complete, stats}
+    WP-->>UI: response
+    UI->>UI: Refresh cluster list
+    
+    %% ===== PHASE 3: REVIEW CLUSTERS =====
+    Note over Admin,DB: Phase 3: Review Clusters & Suggestions
+    
+    UI->>WP: GET /recognition/clusters
+    WP->>API: GET /recognition/clusters
+    API->>DB: SELECT clusters with member counts
+    DB-->>API: clusters[]
+    API-->>WP: ClusterSummary[]
+    WP-->>UI: clusters
+    UI->>UI: Render IdentityClusterList
+    
+    Admin->>UI: Click cluster row
+    UI->>WP: GET /recognition/clusters/{id}/suggestions
+    WP->>API: GET /recognition/clusters/{id}/suggestions
+    API->>Sugg: get_suggestions(cluster_id)
+    Sugg->>DB: SELECT suggestions WHERE cluster_id
+    DB-->>Sugg: suggestions[]
+    Sugg-->>API: suggestions
+    API-->>WP: SuggestionMatch[]
+    WP-->>UI: suggestions
+    UI->>UI: Render SuggestionReviewPanel
+    
+    %% ===== PHASE 4: ACCEPT/REJECT SUGGESTIONS =====
+    Note over Admin,DB: Phase 4: Human-in-the-Loop Decisions
+    
+    alt Accept suggestion
+        Admin->>UI: Click "Accept"
+        UI->>WP: POST /recognition/suggestions/{id}/accept
+        WP->>API: accept suggestion
+        API->>Sugg: accept(suggestion_id)
+        Sugg->>DB: UPDATE identity SET cluster_id
+        Sugg->>DB: UPDATE suggestion SET status=accepted
+        Sugg->>DB: INSERT representative (maybe)
+        Sugg-->>API: success
+        API-->>WP: success
+        WP-->>UI: success
+        UI->>UI: Remove from pending, refresh cluster
+    else Reject suggestion
+        Admin->>UI: Click "Reject"
+        UI->>WP: POST /recognition/suggestions/{id}/reject
+        WP->>API: reject suggestion
+        API->>Sugg: reject(suggestion_id)
+        Sugg->>DB: UPDATE suggestion SET status=rejected
+        Sugg-->>API: success
+        API-->>WP: success
+        WP-->>UI: success
+        UI->>UI: Remove from pending
+    end
+    
+    %% ===== PHASE 5: LABEL CLUSTER =====
+    Note over Admin,DB: Phase 5: Label Cluster
+    
+    Admin->>UI: Enter name "John Smith"
+    UI->>WP: PATCH /recognition/clusters/{id} {label: "John Smith"}
+    WP->>API: PATCH cluster
+    API->>DB: UPDATE cluster SET label, is_labeled=true
+    DB-->>API: success
+    API-->>WP: success
+    WP-->>UI: success
+    UI->>UI: Update cluster display
+    
+    Note over Admin: Workflow Complete
+```

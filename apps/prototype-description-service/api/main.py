@@ -1,3 +1,5 @@
+import logging
+import subprocess
 from urllib.parse import urlparse
 
 from fastapi import FastAPI
@@ -17,10 +19,50 @@ from scene.interface_adapters.http.health_router import router as scene_router
 # Configure logging to show diagnostic output
 configure_logging("INFO")
 
+logger = logging.getLogger(__name__)
+
+
+def _get_git_info() -> tuple[str, str]:
+    """Get the current git commit hash and branch, or 'unknown' if not available."""
+    try:
+        commit_result = subprocess.run(
+            ["git", "rev-parse", "--short", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        commit = commit_result.stdout.strip() if commit_result.returncode == 0 else "unknown"
+
+        branch_result = subprocess.run(
+            ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        branch = branch_result.stdout.strip() if branch_result.returncode == 0 else "unknown"
+
+        return commit, branch
+    except Exception:
+        return "unknown", "unknown"
+
+
+def _log_startup_info() -> None:
+    """Log git commit and branch info at startup."""
+    # Use db.startup namespace to pass the RecognitionFilter
+    startup_logger = logging.getLogger("db.startup")
+    commit, branch = _get_git_info()
+
+    startup_logger.info("=== Application Startup ===")
+    startup_logger.info("Git: %s (%s)", commit, branch)
+
+
 configure_dev_cache()
 
 
 def create_app() -> FastAPI:
+    # Log version info at startup
+    _log_startup_info()
+
     app = FastAPI(
         title="Prototype Description Service",
         version="0.1.0",

@@ -1,0 +1,155 @@
+```mermaid
+sequenceDiagram
+    autonumber
+    
+    %% =======================================================================
+    %% RECOGNITION SERVICE V2 - UNIFIED ASSIGNMENT FLOW
+    %% Shows how ALL discovery methods route through AssignmentGate
+    %% =======================================================================
+    
+    participant UI as Workbench UI
+    participant API as FastAPI Router
+    participant CS as ClusterService
+    participant RD as RepresentativeDiscovery
+    participant CD as CentroidDiscovery
+    participant GD as GraphDiscovery
+    participant Gate as AssignmentGate
+    participant CLC as CompleteLinkCheck
+    participant MC as MaturityCheck
+    participant MDC as MemberDistributionCheck
+    participant Writer as AssignmentWriter
+    participant Sugg as SuggestionService
+    participant DB as Database
+    
+    %% Phase 1: Initiate Clustering
+    UI->>API: POST /recognition/clustering/jobs
+    API->>CS: cluster_unclustered_identities(tenant_id)
+    
+    CS->>DB: get_unclustered(tenant_id)
+    DB-->>CS: identities[]
+    CS->>DB: get_cluster_data(tenant_id)
+    DB-->>CS: {representatives, centroids}
+    
+    Note over CS: Phase 2: Discovery (find candidates, NO assignments)
+    
+    %% Representative Discovery
+    rect rgb(200, 230, 200)
+        Note over RD: Path 1: Representative Matching
+        CS->>RD: discover(identities, representatives)
+        loop For each identity
+            RD->>RD: find_best_rep_match(vector, reps)
+            alt similarity >= threshold
+                RD->>RD: create AssignmentCandidate(REPRESENTATIVE)
+            end
+        end
+        RD-->>CS: rep_candidates[]
+    end
+    
+    CS->>CS: remaining = identities - matched
+    
+    %% Centroid Discovery
+    rect rgb(200, 200, 230)
+        Note over CD: Path 2: Centroid Matching
+        CS->>CD: discover(remaining, centroids)
+        loop For each identity
+            CD->>CD: find_best_centroid_match(vector, centroids)
+            alt similarity >= threshold
+                CD->>CD: create AssignmentCandidate(CENTROID)
+            end
+        end
+        CD-->>CS: centroid_candidates[]
+    end
+    
+    CS->>CS: remaining = remaining - matched
+    
+    %% Graph Discovery (HDBSCAN/CW)
+    rect rgb(230, 200, 200)
+        Note over GD: Path 3: Graph Clustering
+        CS->>GD: discover(remaining, anchors)
+        GD->>GD: run_hdbscan(embeddings)
+        GD->>GD: match_clusters_to_anchors()
+        loop For each cluster-anchor match
+            GD->>GD: create AssignmentCandidate(GRAPH)
+        end
+        GD-->>CS: graph_candidates[]
+    end
+    
+    %% Phase 3: ALL candidates go through the gate
+    Note over CS,Gate: Phase 3: Unified Evaluation (ALL paths merge here)
+    
+    CS->>CS: all_candidates = rep + centroid + graph
+    
+    loop For each candidate in all_candidates
+        rect rgb(255, 240, 200)
+            Note over Gate: THE ONLY PATH TO ASSIGNMENT
+            CS->>Gate: evaluate(candidate)
+            
+            %% Maturity Check
+            Gate->>MC: evaluate(candidate)
+            MC->>DB: get_representative_count(cluster_id)
+            DB-->>MC: count
+            alt count < 2
+                MC-->>Gate: CheckResult(failed, should_suggest)
+                Gate-->>CS: AssignmentDecision(SUGGEST)
+            else count >= 2
+                MC-->>Gate: CheckResult(passed)
+                
+                %% Complete Link Check
+                Gate->>CLC: evaluate(candidate)
+                CLC->>DB: get_all_representatives(cluster_id)
+                DB-->>CLC: reps[]
+                CLC->>CLC: compute similarities to ALL reps
+                CLC->>CLC: min_sim, avg_sim = analyze
+                alt min_sim < floor OR avg_sim < threshold
+                    CLC-->>Gate: CheckResult(failed, should_suggest)
+                    Gate-->>CS: AssignmentDecision(SUGGEST)
+                else all checks pass
+                    CLC-->>Gate: CheckResult(passed)
+                    
+                    %% Member Distribution Check
+                    Gate->>MDC: evaluate(candidate)
+                    MDC->>DB: get_member_embeddings(cluster_id)
+                    DB-->>MDC: members[]
+                    MDC->>MDC: compute avg member similarity
+                    alt avg_member_sim < threshold
+                        MDC-->>Gate: CheckResult(failed, should_reject)
+                        Gate-->>CS: AssignmentDecision(REJECT)
+                    else passed
+                        MDC-->>Gate: CheckResult(passed)
+                        Gate-->>CS: AssignmentDecision(ACCEPT)
+                    end
+                end
+            end
+        end
+        
+        %% Route based on decision
+        alt decision.outcome == ACCEPT
+            CS->>Writer: assign(candidate)
+            Writer->>DB: update identity.cluster_id
+            Writer->>DB: insert representative (if criteria met)
+            Writer-->>CS: assigned
+        else decision.outcome == SUGGEST
+            CS->>Sugg: create(candidate, confidence)
+            Sugg->>DB: insert suggestion
+            Sugg-->>CS: suggestion_id
+        else decision.outcome == REJECT
+            CS->>CS: add to unclustered_pool
+        end
+    end
+    
+    %% Phase 4: Create new clusters for truly unclustered
+    Note over CS: Phase 4: New Cluster Creation
+    
+    CS->>GD: cluster_new(unclustered_pool)
+    GD->>GD: run_hdbscan(no anchors)
+    GD-->>CS: new_cluster_proposals[]
+    
+    loop For each proposal
+        CS->>Writer: create_cluster(members)
+        Writer->>DB: insert cluster, members, representative
+        Writer-->>CS: new_cluster
+    end
+    
+    CS-->>API: ClusteringResult
+    API-->>UI: {status: "complete", stats: {...}}
+```

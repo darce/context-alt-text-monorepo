@@ -169,6 +169,40 @@ class RepresentativeOnlyClustering:
                                     best_similarity,
                                     self.high_confidence_threshold,
                                 )
+                            else:
+                                # No add_to_cluster callback (cold start) - create suggestion
+                                # to let user confirm, rather than silently dropping
+                                if self._create_suggestion:
+                                    await self._create_suggestion(
+                                        identity.id,
+                                        best_cluster_id,
+                                        best_similarity,
+                                        best_similarity,
+                                    )
+                                    suggestions_created += 1
+                                    logger.info(
+                                        "%sNo add_to_cluster callback - created suggestion: "
+                                        "identity %s -> batch cluster %s (sim=%.4f)",
+                                        log_prefix,
+                                        identity.id,
+                                        best_cluster_id,
+                                        best_similarity,
+                                    )
+                                else:
+                                    # No suggestion callback either - create singleton
+                                    cluster, _ = await create_cluster([identity])
+                                    created_clusters.append(cluster)
+                                    batch_cluster_ids.add(cluster.id)
+                                    local_representatives[cluster.id] = [identity_embedding]
+                                    new_singletons += 1
+                                    logger.warning(
+                                        "%sNo callbacks available - created singleton for identity %s "
+                                        "(would have matched cluster %s at sim=%.4f)",
+                                        log_prefix,
+                                        identity.id,
+                                        best_cluster_id,
+                                        best_similarity,
+                                    )
                             break
                 else:
                     # Pre-existing cluster (from anchor_embeddings)

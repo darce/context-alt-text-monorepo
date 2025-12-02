@@ -9,6 +9,7 @@ See: docs/tasks/4.0/4.2.3/clustering-improvements-dev-plan.md (Section 1.2)
 from __future__ import annotations
 
 import logging
+from collections import deque
 from dataclasses import asdict, dataclass, field
 from datetime import datetime
 from enum import Enum
@@ -45,6 +46,9 @@ class ClusteringEvent(str, Enum):
 
     # Confidence weighting (Option C)
     THRESHOLD_ADJUSTED = "threshold_adjusted"
+
+    # Structural guards
+    COMPLETE_LINK_CHECK = "complete_link_check"
 
     # Algorithm selection
     ALGORITHM_SELECTED = "algorithm_selected"
@@ -204,6 +208,119 @@ def log_rep_match(
         effective_threshold=effective_threshold,
         confidence=confidence,
     ).log()
+
+
+def log_complete_link_check(
+    tenant_id: UUID,
+    identity_id: UUID,
+    cluster_id: UUID,
+    min_similarity: float,
+    avg_similarity: float,
+    passed: bool,
+    num_reps: int,
+    duration_ms: float | None = None,
+) -> None:
+    """Log complete-link validation against all representatives.
+
+    Args:
+        tenant_id: Tenant UUID.
+        identity_id: Identity being evaluated.
+        cluster_id: Target cluster UUID.
+        min_similarity: Minimum similarity to any representative.
+        avg_similarity: Average similarity across representatives.
+        passed: Whether both floor and average checks passed.
+        num_reps: Number of representative embeddings compared.
+        duration_ms: Optional duration of the complete-link computation.
+    """
+    _record_complete_link_metric(
+        min_similarity=min_similarity,
+        avg_similarity=avg_similarity,
+        passed=passed,
+        duration_ms=duration_ms,
+    )
+    ClusteringLogEntry(
+        event=ClusteringEvent.COMPLETE_LINK_CHECK,
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        similarity=avg_similarity,
+        extra={
+            "min_similarity": min_similarity,
+            "avg_similarity": avg_similarity,
+            "num_representatives": num_reps,
+            "passed": passed,
+            "duration_ms": duration_ms,
+        },
+    ).log()
+
+
+# =============================================================================
+# Complete-Link Metrics (in-memory for lightweight monitoring/testing)
+# =============================================================================
+
+
+@dataclass
+class CompleteLinkStats:
+    """In-memory counters for complete-link guard outcomes."""
+
+    checks: int = 0
+    passes: int = 0
+    fails: int = 0
+    min_samples: deque[float] = field(default_factory=lambda: deque(maxlen=500))
+    avg_samples: deque[float] = field(default_factory=lambda: deque(maxlen=500))
+    duration_ms_samples: deque[float] = field(default_factory=lambda: deque(maxlen=500))
+
+    def snapshot(self) -> dict[str, Any]:
+        """Return a serializable snapshot of current stats."""
+        return {
+            "checks": self.checks,
+            "passes": self.passes,
+            "fails": self.fails,
+            "min_samples": list(self.min_samples),
+            "avg_samples": list(self.avg_samples),
+            "duration_ms_samples": list(self.duration_ms_samples),
+        }
+
+    def reset(self) -> None:
+        """Reset counters and samples."""
+        self.checks = 0
+        self.passes = 0
+        self.fails = 0
+        self.min_samples.clear()
+        self.avg_samples.clear()
+        self.duration_ms_samples.clear()
+
+
+_complete_link_stats = CompleteLinkStats()
+
+
+def _record_complete_link_metric(
+    *,
+    min_similarity: float,
+    avg_similarity: float,
+    passed: bool,
+    duration_ms: float | None,
+) -> None:
+    """Update in-memory counters for complete-link pass/fail and distributions."""
+    _complete_link_stats.checks += 1
+    if passed:
+        _complete_link_stats.passes += 1
+    else:
+        _complete_link_stats.fails += 1
+    _complete_link_stats.min_samples.append(min_similarity)
+    _complete_link_stats.avg_samples.append(avg_similarity)
+    if duration_ms is not None:
+        _complete_link_stats.duration_ms_samples.append(duration_ms)
+
+
+def get_complete_link_stats() -> dict[str, Any]:
+    """Get a snapshot of complete-link pass/fail counts and sampled similarities."""
+    return _complete_link_stats.snapshot()
+
+
+def reset_complete_link_stats() -> None:
+    """Reset complete-link stats (used in tests)."""
+    _complete_link_stats.reset()
 
 
 def log_threshold_adjusted(

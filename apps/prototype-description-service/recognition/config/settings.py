@@ -72,6 +72,8 @@ class IdentityClusteringSettings(BaseSettings):
     normalization_atol: float = Field(default=1e-5, ge=0.0)
     ward_async_max_identities: int = Field(default=5000, ge=1)
     auto_merge_max_identities: int = Field(default=2000, ge=1)
+    complete_link_min_floor: float = Field(default=0.75, ge=0.0, le=1.0)
+    complete_link_avg_threshold: float = Field(default=0.85, ge=0.0, le=1.0)
 
     model_config = SettingsConfigDict(env_file=str(ENV_FILE), env_file_encoding="utf-8")
 

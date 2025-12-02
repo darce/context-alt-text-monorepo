@@ -29,6 +29,9 @@ from db.models import ClusterCentroid, IdentityCluster, IdentitySuggestion, Medi
 from db.session import get_session
 from db.settings import get_database_settings
 from db.tenant_context import set_tenant_context
+from recognition.application.clustering.identity_clustering_service import (
+    IdentityClusteringService,
+)
 from recognition.application.clustering.suggestion_service import SuggestionService
 
 logger = logging.getLogger(__name__)
@@ -375,10 +378,6 @@ async def accept_suggestion(
         )
 
     # Assign the identity to the cluster
-    from recognition.application.clustering.identity_clustering_service import (
-        IdentityClusteringService,
-    )
-
     clustering_service = IdentityClusteringService(session, tenant_id)
     await clustering_service.assign_identity_to_cluster(suggestion.identity_id, suggestion.suggested_cluster_id)
 

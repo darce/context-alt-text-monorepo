@@ -1,0 +1,83 @@
+%%{init: {"theme": "base", "themeVariables": {"primaryColor": "#1a1a2e", "primaryTextColor": "#fff", "primaryBorderColor": "#7c3aed", "lineColor": "#7c3aed", "secondaryColor": "#16213e", "tertiaryColor": "#0f3460"}}}%%
+classDiagram
+    direction TB
+    
+    %% Core Observability Classes
+    class ClusteringLogger {
+        -algorithm: str
+        -job_id: UUID | None
+        -logger: logging.Logger
+        +__init__(algorithm: str, job_id: UUID | None)
+        +log_decision(identity_id: UUID, cluster_id: UUID | None, decision: DecisionType, similarity: float, reason: str | None) void
+        +log_batch_start(identity_count: int, algorithm: str) void
+        +log_batch_complete(report: BatchJobReport) void
+        +log_check_result(check_name: str, passed: bool, details: dict) void
+        +log_candidate_generated(candidate: AssignmentCandidate) void
+    }
+    
+    class ClusterVisualizer {
+        -output_dir: Path
+        +__init__(output_dir: Path)
+        +generate_batch_report_chart(report: BatchJobReport, algorithm: str, timestamp: datetime | None) Path
+        +generate_similarity_heatmap(cluster_id: UUID, member_similarities: ndarray, algorithm: str) Path
+        +generate_cluster_size_histogram(cluster_sizes: list[int], algorithm: str) Path
+        -_create_decision_breakdown_subplot(ax: Axes, report: BatchJobReport) void
+        -_create_size_distribution_subplot(ax: Axes, report: BatchJobReport) void
+        -_save_figure(fig: Figure, filename: str) Path
+    }
+    
+    class BatchJobReport {
+        <<dataclass>>
+        +job_id: UUID
+        +algorithm: str
+        +started_at: datetime
+        +completed_at: datetime
+        +total_identities: int
+        +accept_count: int
+        +suggest_count: int
+        +reject_count: int
+        +clusters_created: int
+        +clusters_expanded: int
+        +avg_cluster_size: float
+        +max_cluster_size: int
+        +singleton_count: int
+        +avg_similarity: float
+        +min_similarity: float
+        +duration_ms() float
+        +success_rate() float
+        +to_log_dict() dict
+    }
+    
+    class DecisionLog {
+        <<dataclass>>
+        +timestamp: datetime
+        +identity_id: UUID
+        +cluster_id: UUID | None
+        +decision: DecisionType
+        +similarity: float
+        +algorithm: str
+        +checks_passed: list[str]
+        +checks_failed: list[str]
+        +rejection_reason: str | None
+    }
+    
+    class DecisionType {
+        <<enumeration>>
+        ACCEPT
+        SUGGEST
+        REJECT
+    }
+    
+    %% Relationships
+    ClusteringLogger --> BatchJobReport : logs
+    ClusteringLogger --> DecisionLog : creates
+    ClusteringLogger --> DecisionType : uses
+    ClusterVisualizer --> BatchJobReport : visualizes
+    DecisionLog --> DecisionType : uses
+    
+    %% Notes
+    note for ClusteringLogger "Extracts 100+ scattered logger calls\ninto centralized, structured logging.\nLogs algorithm name with every decision."
+    
+    note for ClusterVisualizer "Generates charts after EVERY batch job.\nChart title includes algorithm name.\nDecisions labeled: Accept/Suggest/Reject"
+    
+    note for BatchJobReport "Collects statistics during batch run.\nProvides data for logging and charts.\nLabels outcomes as accept/suggest/reject."

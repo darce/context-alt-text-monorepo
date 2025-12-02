@@ -8,6 +8,7 @@ import pytest
 from httpx import ASGITransport, AsyncClient
 
 from api.main import app
+from recognition.application.clustering.clustering_logger import reset_complete_link_stats
 
 
 @pytest.fixture
@@ -99,3 +100,43 @@ class TestGetClusteringMetricsSnapshot:
         if response.status_code == 200:
             data = response.json()
             assert data.get("label") == "before_confidence_weighting"
+
+
+class TestCompleteLinkMetrics:
+    """Tests for GET /recognition/metrics/complete-link endpoint."""
+
+    @pytest.mark.asyncio
+    async def test_complete_link_metrics_shape(self) -> None:
+        """Endpoint should return counters and sample arrays."""
+        reset_complete_link_stats()
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get("/recognition/metrics/complete-link", params={"reset": "true"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert data["checks"] == 0
+        assert data["passes"] == 0
+        assert data["fails"] == 0
+        assert isinstance(data["min_samples"], list)
+        assert isinstance(data["avg_samples"], list)
+        assert isinstance(data["duration_ms_samples"], list)
+
+    @pytest.mark.asyncio
+    async def test_complete_link_dashboard_rates(self) -> None:
+        """Dashboard endpoint should include derived rates."""
+        reset_complete_link_stats()
+        async with AsyncClient(
+            transport=ASGITransport(app=app),
+            base_url="http://test",
+        ) as client:
+            response = await client.get("/recognition/metrics/complete-link/dashboard", params={"reset": "true"})
+
+        assert response.status_code == 200
+        data = response.json()
+        assert "pass_rate" in data
+        assert "fail_rate" in data
+        assert isinstance(data["pass_rate"], float)
+        assert isinstance(data["fail_rate"], float)

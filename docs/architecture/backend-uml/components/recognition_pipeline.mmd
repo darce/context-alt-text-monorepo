@@ -24,6 +24,14 @@ flowchart LR
         jobs["ClusteringJobService\nsync vs async jobs"]
     end
 
+    note top of rep_matcher
+        Complete-Link Guard:
+        1. Query ALL cluster reps
+        2. min_sim >= 0.80 (Floor)
+        3. avg_sim >= 0.88 (Avg)
+        Prevents lookalike snowballing
+    end note
+
     subgraph algorithms["Graph/Density Algorithms"]
         rep_only["RepresentativeOnlyClustering\ncold-start chunk"]
         hdbscan["HDBSCANClustering\n<= hdbscan_max_batch_size"]

@@ -316,13 +316,12 @@ async def test_suggest_similar_clusters_returns_matches(async_client: AsyncClien
 
 class StubEmbeddingProvider:
     async def analyze(self, image):  # noqa: ARG002
+        # Return single identity for deterministic clustering behavior
+        # During cold start, similar faces create suggestions rather than auto-cluster
         detection = IdentityDetection(bbox=(0, 0, 10, 10), confidence=0.95)
         embedding = np.ones(1024, dtype=np.float32)
-        other_detection = IdentityDetection(bbox=(10, 10, 20, 20), confidence=0.9)
-        other_embedding = np.concatenate([np.ones(512, dtype=np.float32), np.full(512, 0.9, dtype=np.float32)])
         return [
             IdentityEmbedding(embedding=embedding, detection=detection),
-            IdentityEmbedding(embedding=other_embedding, detection=other_detection),
         ]
 
 

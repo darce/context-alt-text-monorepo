@@ -1,92 +1,40 @@
-# Recognition Service V2 Implementation Plan
+# Recognition Service v4.2.4 Implementation Plan
 
 **Date**: December 1st 2025  
 **Sprint**: 4.2.4  
-**Status**: **REVISED** — Critical bug discovered  
+**Status**: **GREENFIELD REWRITE** — Building correct implementation from the start  
 **Author**: Generated from architecture analysis
 
 ---
 
-## 🚨 CRITICAL UPDATE: Bug Persists After Service Restart + DB Reset
+## Why v4.2.4 is a Greenfield Rewrite
 
 **Date**: December 1, 2025  
-**Updated**: December 1, 2025 — **FIX DOES NOT WORK**
+**Decision**: Abandon old code, build correctly from the start.
 
-### The Problem
+The v4.2.3 recognition service had a critical bug causing **21+ different people to match a single cluster at 88-92% similarity** (the "Cam Grant domination" problem). Multiple fix attempts failed because the old codebase had **compounding architectural issues** that made targeted fixes unreliable.
 
-The "Cam Grant domination" problem **STILL OCCURS** even after:
-1. ✅ Service restart with latest code
-2. ✅ Database reset (fresh clustering)
-3. ✅ `compute_similarity()` fix deployed
+### Evidence of the Problem
 
-### 🚨 EVIDENCE: Bug Still Present (Post-Fix)
+| Media | Filename                   | Age Estimate | Similarity | Actual Person   |
+| ----- | -------------------------- | ------------ | ---------- | --------------- |
+| #2802 | IMG_1916                   | ~12y         | 92%        | Kelly (child)   |
+| #2796 | IMG_1888                   | ~22y         | 88%        | Adult woman     |
+| #2793 | IMG_1861                   | ~17y         | 90%        | Hillary & Kelly |
+| ...   | 18+ more images            | 8y-22y       | 88-92%     | Different people|
 
-After service restart and DB reset, the UI still shows **multiple different people** matched to "Cam Grant" at 88-92%:
+**Observation**: Ages ranging from 8 to 22 years — clearly different people — all matched the same cluster.
 
-| Media | Filename | Age Estimate | Similarity | Status |
-|-------|----------|--------------|------------|--------|
-| #2802 | IMG_1916 — kelly | ~12y | 92% | ❌ Matched to Cam Grant |
-| #2801 | IMG_1912 | ~9y | 91% | ❌ Matched to Cam Grant |
-| #2800 | IMG_1911 | ~9y | 91% | ❌ Matched to Cam Grant |
-| #2799 | IMG_1905 | ~10y | 89% | ❌ Matched to Cam Grant |
-| #2798 | IMG_1903 | ~8y | 92% | ❌ Matched to Cam Grant |
-| #2797 | IMG_1890 | ~9y | 92% | ❌ Matched to Cam Grant |
-| #2796 | IMG_1888 | ~22y | 88% | ❌ Matched to Cam Grant |
-| #2793 | IMG_1861 — hillary & kelly | ~17y | 90% | ❌ Matched to Cam Grant |
+### Why Debugging Failed
 
-**Observation**: Ages range from ~8y to ~22y — these are clearly **different people** yet all match at 88-92%.
+Attempted fixes to `compute_similarity()` (extracting face embedding only) did not resolve the issue because:
 
-### Root Cause: UNKNOWN
+1. **Multiple code paths** — Three separate assignment paths existed, each with different logic
+2. **Inconsistent guards** — Only one path had complete-link validation
+3. **Scattered thresholds** — 5+ files with different threshold values
+4. **No single point of control** — Impossible to ensure ALL assignments were validated
 
-The `compute_similarity()` fix that extracts face embedding (first 512D) is **NOT preventing false matches**. Possible causes:
-
-1. **Fix not being called**: Another code path bypasses `compute_similarity()`
-2. **Face embeddings are similar**: The face portion itself produces high similarity (unlikely for different people)
-3. **Model issue**: InsightFace model produces similar embeddings for different faces
-4. **Representative issue**: The cluster's representative embedding is generic/averaged
-
-### MUST INVESTIGATE
-
-- [ ] Add logging to `compute_similarity()` to confirm it's being called
-- [ ] Log the embedding dimensions being compared (confirm 512D vs 1024D)
-- [ ] Check if HDBSCAN anchor path bypasses the fix
-- [ ] Examine the representative embedding for the Cam Grant cluster
-- [ ] Test similarity between known-different faces directly
-
-### The Metadata Dilution Bug (Original Hypothesis)
-
-Our 1024D extended embeddings have this structure:
-
-- **Dims 0-511**: Face identity embedding (L2 normalized, ~2.2 norm)
-- **Dims 512-1023**: Metadata (pose, age, gender, detection score — ~15.2 norm)
-
-`compute_similarity()` was comparing the **full 1024D vector**, meaning:
-
-- **87% of similarity** came from metadata
-- **13% of similarity** came from actual face identity
-
-**Result**: Two completely different people with similar pose/age/detection scores showed 97%+ similarity!
-
-### Bug Fix Applied (BUT NOT WORKING)
-
-```python
-# recognition/application/clustering/centroid_utils.py
-def compute_similarity(embedding_a, embedding_b) -> float:
-    # Extract face embedding only - critical for correct similarity!
-    face_a = _to_face_embedding(vec_a)  # First 512D
-    face_b = _to_face_embedding(vec_b)  # First 512D
-    # ... normalize and dot product
-```
-
-**Expected Behavior**:
-
-```text
-Scenario: Different faces, identical metadata
-OLD similarity (buggy): 0.9775  ← False match!
-NEW similarity (fixed): 0.0000  ← Correct
-```
-
-**Actual Behavior**: Still seeing 88-92% similarity for different people.
+**Conclusion**: Rather than continue debugging a fundamentally flawed architecture, v4.2.4 will be a **greenfield rewrite** with correct design from the start.
 
 ---
 
@@ -98,15 +46,16 @@ The metadata dilution bug was the **immediate cause** of the 97%+ false similari
 
 Even with the metadata dilution bug fixed, code analysis reveals:
 
-| Issue | Paths Affected | Impact |
-|-------|----------------|--------|
-| **No complete-link check** | Centroid, HDBSCAN anchor | Assigns based on single-point similarity |
-| **No immature cluster guard** | Centroid, HDBSCAN anchor | Can assign to clusters with <2 reps |
-| **No suggestion tier** | Centroid, HDBSCAN anchor | Binary accept/reject, no human review |
-| **HDBSCAN anchor gap** | HDBSCAN | Matches cluster centroid to ONE rep, not all |
-| **Scattered thresholds** | All paths | 5+ files with different threshold logic |
+| Issue                         | Paths Affected           | Impact                                       |
+| ----------------------------- | ------------------------ | -------------------------------------------- |
+| **No complete-link check**    | Centroid, HDBSCAN anchor | Assigns based on single-point similarity     |
+| **No immature cluster guard** | Centroid, HDBSCAN anchor | Can assign to clusters with <2 reps          |
+| **No suggestion tier**        | Centroid, HDBSCAN anchor | Binary accept/reject, no human review        |
+| **HDBSCAN anchor gap**        | HDBSCAN                  | Matches cluster centroid to ONE rep, not all |
+| **Scattered thresholds**      | All paths                | 5+ files with different threshold logic      |
 
 **Critical HDBSCAN Gap** (`hdbscan_clustering.py` lines 180-210):
+
 ```python
 # Matches centroid against representatives - but only takes BEST match!
 for cluster_id, reps in anchor_embeddings.items():
@@ -123,42 +72,44 @@ if best_anchor_id and best_similarity >= effective_threshold:
 
 **Decision**: Proceed with unified `AssignmentGate` architecture.
 
-1. ❌ **Phase 0**: Fix metadata dilution bug (**NOT DONE** — bug still present in logs)
-2. ⏸️ **Phase 1**: Validate fix + reset corrupted data (BLOCKED)
-3. ✅ **Phase 2**: Implement unified AssignmentGate (CONFIRMED NEEDED)
-4. 📋 **Phase 3**: Migrate paths to use gate
+> **Greenfield Rewrite**: The `recognition/` directory is empty. Rather than debugging the old broken code, the v4.2.4 implementation will be built correctly from the start, incorporating all lessons learned from this bug analysis.
+
+1. [x] **Phase 0**: Document root cause analysis (COMPLETE — see below)
+2. [PLANNED] **Phase 0.5**: Scaffold new modules with correct design
+3. [PLANNED] **Phase 1**: Implement AssignmentGate with face-only similarity
+4. [PLANNED] **Phase 2**: Implement Discovery algorithms
+5. [PLANNED] **Phase 3**: Full integration + deterministic CW
 
 ---
 
-## Root Cause Analysis (Revised)
+## Root Cause Analysis
 
-### ✅ Actual Root Cause: Metadata Dilution Bug
+The v4.2.3 bugs stemmed from **two compounding issues**: a data bug and an architectural bug.
 
-```
-┌─────────────────────────────────────────────────────────────────────────────┐
-│  THE REAL PROBLEM: SIMILARITY COMPUTED ON WRONG DATA                        │
-│                                                                             │
-│  Extended Embedding (1024D):                                                │
-│    ├── Dims 0-511:   Face identity (norm ≈ 2.2, ~13% of energy)            │
-│    └── Dims 512-1023: Metadata (norm ≈ 15.2, ~87% of energy)               │
-│                                                                             │
-│  compute_similarity() was:                                                  │
-│    1. Normalizing FULL 1024D vector                                         │
-│    2. Computing dot product on normalized 1024D                             │
-│    3. Result: 87% metadata similarity + 13% face similarity                 │
-│                                                                             │
-│  CONSEQUENCE:                                                               │
-│    - Different people with same pose/age/detection → 97% similarity!       │
-│    - Same person with different pose → lower similarity than expected      │
-│    - ALL paths affected equally (bug was in shared utility function)       │
-│                                                                             │
-│  FIX APPLIED: Extract face embedding (first 512D) before similarity        │
-└─────────────────────────────────────────────────────────────────────────────┘
+### Issue 1: Metadata Dilution (Data Bug)
+
+Our 1024D extended embeddings have this structure:
+
+| Dimensions | Content                              | L2 Norm | Energy Share |
+|------------|--------------------------------------|---------|-------------|
+| 0-511      | Face identity embedding              | ~2.2    | ~13%        |
+| 512-1023   | Metadata (pose, age, gender, score)  | ~15.2   | ~87%        |
+
+The old `compute_similarity()` compared the **full 1024D vector**, meaning similarity was dominated by metadata:
+
+```text
+Scenario: Different faces, identical metadata
+→ 87% metadata similarity + 13% face similarity = 97% total (FALSE MATCH!)
+
+Scenario: Same face, different pose/lighting
+→ 87% metadata difference + 13% face similarity = lower than expected
 ```
 
-### Architectural Issues (Still Valid, **HIGH** Priority)
+**v4.2.4 Design**: `compute_similarity()` extracts face embedding (first 512D) ALWAYS.
 
-The three parallel paths are a **significant architectural problem** that should be addressed:
+### Issue 2: Three Unguarded Assignment Paths (Architecture Bug)
+
+Even with correct similarity computation, the architecture had **three parallel assignment paths** with inconsistent validation:
 
 ```text
 ┌─────────────────────────────────────────────────────────────────────────────┐
@@ -190,27 +141,29 @@ The three parallel paths are a **significant architectural problem** that should
 
 ### Guard Coverage Matrix
 
-| Guard | RepMatcher | Centroid | HDBSCAN Anchor |
-|-------|:----------:|:--------:|:--------------:|
-| Base Threshold | ✅ 0.75 | ✅ 0.85 | ✅ adaptive |
-| **Complete-Link (all reps)** | ✅ | ❌ | ❌ |
-| **Immature Cluster Block** | ✅ | ❌ | ❌ |
-| Member Validation (avg) | ✅ 0.85 | ✅ 0.85 | ❌ |
-| Member Validation (min floor) | ✅ 0.82 | ✅ 0.82 | ❌ |
-| Early Stage High-Conf Gate | ✅ 0.90 | ❌ | ❌ |
-| **Suggestion Tier** | ✅ | ❌ | ❌ |
-| Creates Suggestions | ✅ | ❌ | ❌ |
+| Guard                         |  RepMatcher  | Centroid | HDBSCAN Anchor |
+| ----------------------------- | :----------: | :------: | :------------: |
+| Base Threshold                |   [x] 0.75   | [x] 0.85 |  [x] adaptive  |
+| **Complete-Link (all reps)**  |     [x]      | [FAILED] |    [FAILED]    |
+| **Cluster Maturity Guard**    | [x] (v4.2.3) | [FAILED] |    [FAILED]    |
+| Member Validation (avg)       |   [x] 0.85   | [x] 0.85 |    [FAILED]    |
+| Member Validation (min floor) |   [x] 0.82   | [x] 0.82 |    [FAILED]    |
+| Early Stage High-Conf Gate    |   [x] 0.90   | [FAILED] |    [FAILED]    |
+| **Suggestion Tier**           |     [x]      | [FAILED] |    [FAILED]    |
+| Creates Suggestions           |     [x]      | [FAILED] |    [FAILED]    |
+
+**Note**: The **Cluster Maturity Guard** (treating single-rep clusters as immature) was implemented in v4.2.3 for `RepresentativeMatcher`. This logic must be migrated to `AssignmentGate` to protect ALL paths.
 
 **Conclusion**: 6 of 8 guards are missing from at least one path.
 
 ### Symptoms Explained by Bug
 
-| Symptom | Original Explanation | Actual Cause |
-|---------|---------------------|---------------|
-| 20+ people match one cluster at 88-92% | Guards bypassed | All had similar metadata |
-| Guards "ineffective" | Wrong path | Guards checked metadata similarity |
-| Snowball effect | Architecture | Correct — still a concern |
-| Non-deterministic | Processing order | Likely still true |
+| Symptom                                | Original Explanation | Actual Cause                       |
+| -------------------------------------- | -------------------- | ---------------------------------- |
+| 20+ people match one cluster at 88-92% | Guards bypassed      | All had similar metadata           |
+| Guards "ineffective"                   | Wrong path           | Guards checked metadata similarity |
+| Snowball effect                        | Architecture         | Correct — still a concern          |
+| Non-deterministic                      | Processing order     | Likely still true                  |
 
 ---
 
@@ -347,7 +300,7 @@ class AssignmentCandidate:
     cluster_id: UUID
     discovery_method: DiscoveryMethod  # REPRESENTATIVE | CENTROID | GRAPH
     discovery_similarity: float
-    
+
 @dataclass
 class AssignmentDecision:
     """The gate's verdict on a candidate."""
@@ -360,19 +313,19 @@ class AssignmentDecision:
 
 class AssignmentGate:
     """The ONLY path to cluster assignment."""
-    
+
     def __init__(
         self,
         settings: ClusteringSettings,
         cluster_repository: ClusterRepository,
     ):
         self.checks = [
-            MaturityCheck(settings),      # Cluster has ≥2 diverse reps
+            MaturityCheck(settings),      # Cluster has ≥2 diverse reps (Migrated from v4.2.3)
             CompleteLinkCheck(settings),  # Match ALL representatives
             MemberDistributionCheck(settings),
             ConfidenceCheck(settings),
         ]
-    
+
     async def evaluate(
         self,
         candidate: AssignmentCandidate,
@@ -380,7 +333,7 @@ class AssignmentGate:
         """Evaluate a candidate through all checks."""
         passed = []
         failed = []
-        
+
         for check in self.checks:
             if check.is_enabled():
                 result = await check.evaluate(candidate)
@@ -396,7 +349,7 @@ class AssignmentGate:
                             checks_failed=failed,
                             rejection_reason=result.reason,
                         )
-        
+
         return AssignmentDecision(
             outcome=ACCEPT,
             candidate=candidate,
@@ -416,7 +369,7 @@ The key insight is that **discovery algorithms find candidates but cannot assign
 ```python
 class RepresentativeDiscovery:
     """Find candidate assignments by matching against representatives."""
-    
+
     async def discover(
         self,
         identities: list[MediaIdentity],
@@ -424,11 +377,11 @@ class RepresentativeDiscovery:
     ) -> list[AssignmentCandidate]:
         """Returns candidates - does NOT assign."""
         candidates = []
-        
+
         for identity in identities:
             vec = prepare_embedding(identity.embedding)
             best_cluster, best_sim = self._find_best_match(vec, representatives_by_cluster)
-            
+
             if best_cluster and best_sim >= self.threshold:
                 candidates.append(AssignmentCandidate(
                     identity=identity,
@@ -437,7 +390,7 @@ class RepresentativeDiscovery:
                     discovery_method=DiscoveryMethod.REPRESENTATIVE,
                     discovery_similarity=best_sim,
                 ))
-        
+
         return candidates
 ```
 
@@ -446,20 +399,20 @@ class RepresentativeDiscovery:
 ```python
 class GraphDiscovery:
     """Find candidate assignments via graph clustering."""
-    
+
     async def discover(
         self,
         identities: list[MediaIdentity],
         anchor_embeddings: dict[UUID, list[np.ndarray]] | None = None,
     ) -> list[AssignmentCandidate]:
         """Returns candidates for existing clusters OR new cluster proposals."""
-        
+
         # Run clustering algorithm
         labels = self._run_hdbscan(identities)
-        
+
         # Group by label
         clusters_by_label = self._group_by_label(identities, labels)
-        
+
         candidates = []
         for label, members in clusters_by_label.items():
             if anchor_embeddings:
@@ -477,7 +430,7 @@ class GraphDiscovery:
             else:
                 # Propose new cluster creation
                 candidates.append(NewClusterProposal(members=members))
-        
+
         return candidates
 ```
 
@@ -488,7 +441,7 @@ class GraphDiscovery:
 ```python
 class ClusterService:
     """Orchestrates the clustering workflow."""
-    
+
     def __init__(
         self,
         gate: AssignmentGate,
@@ -499,40 +452,40 @@ class ClusterService:
         suggestion_service: SuggestionService,
     ):
         ...
-    
+
     async def cluster_unclustered_identities(
         self,
         tenant_id: UUID,
     ) -> ClusteringResult:
         """Main entry point for clustering."""
-        
+
         # 1. Load unclustered identities
         identities = await self.repository.get_unclustered(tenant_id)
-        
+
         # 2. Load cluster data (representatives, centroids)
         clusters_data = await self.repository.get_cluster_data(tenant_id)
-        
+
         # 3. Discovery phase: Find candidates (NO assignments yet)
         rep_candidates = await self.representative_discovery.discover(
             identities, clusters_data.representatives
         )
-        
+
         # Remove matched identities from pool
         matched_ids = {c.identity.id for c in rep_candidates}
         remaining = [i for i in identities if i.id not in matched_ids]
-        
+
         centroid_candidates = await self.centroid_discovery.discover(
             remaining, clusters_data.centroids
         )
-        
+
         # ... continue for graph discovery
-        
+
         # 4. Evaluation phase: ALL candidates go through the gate
         all_candidates = rep_candidates + centroid_candidates + graph_candidates
-        
+
         for candidate in all_candidates:
             decision = await self.gate.evaluate(candidate)
-            
+
             match decision.outcome:
                 case AssignmentOutcome.ACCEPT:
                     await self.assignment_writer.assign(candidate)
@@ -543,7 +496,7 @@ class ClusterService:
                 case AssignmentOutcome.REJECT:
                     # Stays in unclustered pool
                     pass
-        
+
         # 5. Create new clusters for truly unclustered identities
         still_unclustered = ...
         await self._create_new_clusters(still_unclustered)
@@ -551,93 +504,88 @@ class ClusterService:
 
 ---
 
-## Revised Implementation Strategy
+## Implementation Strategy
 
-### Phase 0: Bug Fix (❌ NOT COMPLETE — False positive claim)
+### v4.2.4 Design Principles (Lessons from Root Cause Analysis)
 
-**Status**: The "Cam Grant domination" bug is **STILL PRESENT** as of December 1, 2025.
+| Root Cause | v4.2.4 Design |
+|------------|---------------|
+| Metadata Dilution | `compute_similarity()` extracts face embedding (first 512D) ALWAYS |
+| Singleton Snowballing | `MaturityCheck` requires ≥2 diverse reps before accepting |
+| Single-Point Matching | `CompleteLinkCheck` requires match to ALL representatives |
+| No Suggestion Tier | `AssignmentGate` returns ACCEPT / SUGGEST / REJECT |
+| Non-Deterministic CW | Short ID-sorted order + quality-weighted votes + ID tie-breaking |
+| Scattered Thresholds | Single `ClusteringSettings` dataclass |
 
-**Evidence from logs** (job `1a4b2cbc-4deb-40fe-9330-571ac44ccd50`, 15:11:34):
-- Cluster `21beff5c-aa9e-4532-b159-f4261de679e8` is a SINGLETON (1 representative)
-- **21+ different identities** matched to this singleton at 88-92% similarity
-- This is the EXACT same "Cam Grant" pattern — one person's cluster absorbs everyone
-
-**False positive identities matching singleton cluster `21beff5c`**:
-| Identity | Similarity | Status |
-|----------|------------|--------|
-| 8d9bfc32-bc4a-468a... | 0.8964 | FALSE POSITIVE |
-| 49262511-0e82-4b5a... | 0.9240 | FALSE POSITIVE |
-| 00f2a2ef-1fe8-4827... | 0.9102 | FALSE POSITIVE |
-| 7e198c44-c0a9-4d03... | 0.9195 | FALSE POSITIVE |
-| 8e93c56f-dbbb-4e1f... | 0.8927 | FALSE POSITIVE |
-| 302049c5-11df-4679... | 0.9128 | FALSE POSITIVE |
-| 167fc908-3c41-43f2... | 0.9119 | FALSE POSITIVE |
-| bb395bc9-61ee-4577... | 0.9220 | FALSE POSITIVE |
-| df8e385a-cfd9-4d59... | 0.9003 | FALSE POSITIVE |
-| f56c3337-dcfb-4120... | 0.8829 | FALSE POSITIVE |
-| 6ff95848-c13e-4661... | 0.9187 | FALSE POSITIVE |
-| 93bcd0a7-f6fb-4009... | 0.8895 | FALSE POSITIVE |
-| e9732d76-a754-42ad... | 0.8972 | FALSE POSITIVE |
-| 0840ee44-b63a-48d7... | 0.8865 | FALSE POSITIVE |
-| a716456f-c930-489d... | 0.8991 | FALSE POSITIVE |
-| 13a4ab6f-0342-491b... | 0.9122 | FALSE POSITIVE |
-| 245ecde3-f86c-4994... | 0.9123 | FALSE POSITIVE |
-| e566b85d-f18c-484e... | 0.9157 | FALSE POSITIVE |
-| 1d1a655c-55f2-441a... | 0.9190 | FALSE POSITIVE |
-| 43859677-69c7-4e4e... | 0.8831 | FALSE POSITIVE |
-| + more via centroid matching | 0.85-0.91 | FALSE POSITIVE |
-
-**Previous work claimed to fix this**:
-1. ❌ Claimed: Identified metadata dilution bug in `compute_similarity()`
-2. ❌ Claimed: Fixed `centroid_utils.py` to extract face embedding (first 512D) before similarity
-3. ❌ Claimed: Verified fix with OLD similarity 97.75% → NEW similarity 0.00%
-
-**The fix was either not deployed, not complete, or the root cause diagnosis was wrong.**
-
-### Phase 0.5: Scaffolding (📋 MANDATORY — Before Any Implementation)
+### Phase 0.5: Scaffolding (MANDATORY — Before Any Implementation)
 
 **Per instructions.md**: All interfaces and contracts MUST be scaffolded before writing implementation or tests.
 
-#### Scaffolding Checklist
+> **Scaffolding First Policy**: Add function/method signatures with complete type hints, write comprehensive docstrings (Args, Returns, Raises, Examples), use `raise NotImplementedError("TODO: ...")` as initial body, commit after scaffolding each class/function.
 
-1. **AssignmentGate Module** — Create signatures with `raise NotImplementedError("TODO: ...")`
-   - `AssignmentCandidate` dataclass (complete)
-   - `AssignmentDecision` dataclass (complete)
-   - `AssignmentOutcome` enum (complete)
-   - `AssignmentGate.evaluate()` signature
-   - `BaseCheck` abstract class
-   - `CompleteLinkCheck`, `MaturityCheck`, `MemberDistributionCheck`, `ConfidenceCheck`
+#### Scaffolding Checklist with File Paths
 
-2. **Observability Module** — Extract logging and add visualization ✅ SCAFFOLDED
-   - ✅ `DecisionType` enum — `recognition/observability/decisions.py`
-   - ✅ `DecisionLog` dataclass — `recognition/observability/decisions.py`
-   - ✅ `ClusteringLogger` class — `recognition/observability/logging.py`
-   - ✅ `BatchJobReport` dataclass — `recognition/observability/reports.py`
-   - ✅ `ClusterVisualizer` class — `recognition/observability/visualization.py`
+##### 1. AssignmentGate Module
 
-3. **Discovery Module** — Interfaces for candidate generation
-   - `RepresentativeDiscovery.discover()` signature
-   - `CentroidDiscovery.discover()` signature
-   - `GraphDiscovery.discover()` signature
+| File                                                               | Classes/Functions                         | Status |
+| ------------------------------------------------------------------ | ----------------------------------------- | ------ |
+| `recognition/application/assignment/__init__.py`                   | Module exports                            | [ ]    |
+| `recognition/application/assignment/candidate.py`                  | `AssignmentCandidate`, `DiscoveryMethod`  | [ ]    |
+| `recognition/application/assignment/decision.py`                   | `AssignmentDecision`, `AssignmentOutcome` | [ ]    |
+| `recognition/application/assignment/gate.py`                       | `AssignmentGate.evaluate()`               | [ ]    |
+| `recognition/application/assignment/checks/__init__.py`            | Check exports                             | [ ]    |
+| `recognition/application/assignment/checks/base.py`                | `AssignmentCheck` (ABC), `CheckResult`    | [ ]    |
+| `recognition/application/assignment/checks/complete_link.py`       | `CompleteLinkCheck`                       | [ ]    |
+| `recognition/application/assignment/checks/maturity.py`            | `MaturityCheck`                           | [ ]    |
+| `recognition/application/assignment/checks/member_distribution.py` | `MemberDistributionCheck`                 | [ ]    |
+| `recognition/application/assignment/checks/confidence.py`          | `ConfidenceCheck`                         | [ ]    |
+| `recognition/application/assignment/writer.py`                     | `AssignmentWriter`                        | [ ]    |
 
-4. **Commit after scaffolding each class/function** (incremental commits)
+##### 2. Observability Module
+
+| File                                         | Classes/Functions             | Status |
+| -------------------------------------------- | ----------------------------- | ------ |
+| `recognition/observability/__init__.py`      | Module exports                | [ ]    |
+| `recognition/observability/decisions.py`     | `DecisionType`, `DecisionLog` | [ ]    |
+| `recognition/observability/logging.py`       | `ClusteringLogger`            | [ ]    |
+| `recognition/observability/reports.py`       | `BatchJobReport`              | [ ]    |
+| `recognition/observability/visualization.py` | `ClusterVisualizer`           | [ ]    |
+
+##### 3. Discovery Module
+
+| File                                                  | Classes/Functions                    | Status |
+| ----------------------------------------------------- | ------------------------------------ | ------ |
+| `recognition/application/discovery/__init__.py`       | Module exports                       | [ ]    |
+| `recognition/application/discovery/base.py`           | `DiscoveryAlgorithm` (ABC)           | [ ]    |
+| `recognition/application/discovery/representative.py` | `RepresentativeDiscovery.discover()` | [ ]    |
+| `recognition/application/discovery/centroid.py`       | `CentroidDiscovery.discover()`       | [ ]    |
+| `recognition/application/discovery/graph.py`          | `GraphDiscovery.discover()`          | [ ]    |
+
+##### 4. Commit Strategy
+
+```bash
+# Commit after each scaffolded module (NOT per file)
+git commit -m "scaffold(assignment): add AssignmentGate module signatures"
+git commit -m "scaffold(discovery): add Discovery algorithm interfaces"
+# Observability already committed
+```
 
 #### Scaffolding Template
 
 ```python
 def evaluate(self, candidate: AssignmentCandidate) -> AssignmentDecision:
     """Evaluate a candidate assignment through all validation checks.
-    
+
     Args:
         candidate: The proposed identity-to-cluster assignment.
-        
+
     Returns:
         AssignmentDecision with outcome (ACCEPT/SUGGEST/REJECT),
         passed/failed checks, and optional rejection reason.
-        
+
     Raises:
         ValueError: If candidate is missing required fields.
-        
+
     Example:
         >>> gate = AssignmentGate(settings, repo)
         >>> decision = await gate.evaluate(candidate)
@@ -647,315 +595,119 @@ def evaluate(self, candidate: AssignmentCandidate) -> AssignmentDecision:
     raise NotImplementedError("TODO: Implement check pipeline")
 ```
 
-### Phase 1: Data Reset & Validation (⏸️ BLOCKED on Phase 0)
+### Phase 1: Happy Path Implementation (Minimal Service)
 
-**Goal**: Reset corrupted data and verify the bug fix works in production.
+**Goal**: Implement the minimum service to arrive at a happy path implementation that returns correct results.
 
-1. **Reset corrupted cluster**:
+#### Step 1.1: TDD Implementation Order
 
-   ```sql
-   -- Dissolve the cluster with 16+ different people
-   UPDATE media_identities 
-   SET identity_cluster_id = NULL 
-   WHERE identity_cluster_id = '652d50db-...';
-   
-   DELETE FROM identity_clusters WHERE id = '652d50db-...';
-   ```
+**Per instructions.md**: Red -> Green -> Refactor for every meaningful change.
 
-2. **Re-run clustering** on affected tenant
-3. **Verify**: No single cluster matches 20+ identities
+| Step | Test File                      | Test Case                            | Implementation            |
+| ---- | ------------------------------ | ------------------------------------ | ------------------------- |
+| 1    | `test_assignment_candidate.py` | `test_candidate_requires_all_fields` | `candidate.py` dataclass  |
+| 2    | `test_assignment_decision.py`  | `test_outcome_enum_values`           | `decision.py` enums       |
+| 3    | `test_check_result.py`         | `test_check_result_defaults`         | `checks/base.py`          |
+| 4    | `test_complete_link_check.py`  | `test_rejects_low_min_similarity`    | `checks/complete_link.py` |
+| 5    | `test_complete_link_check.py`  | `test_passes_all_reps_similar`       | `checks/complete_link.py` |
+| 6    | `test_assignment_gate.py`      | `test_gate_runs_all_checks`          | `gate.py`                 |
+| 7    | `test_assignment_gate.py`      | `test_gate_accepts_all_checks_pass`  | `gate.py`                 |
 
-### Phase 1.5: Observability Module (📋 PLANNED)
+#### Step 1.2: Implement AssignmentGate (Basic)
 
-**Goal**: Extract logging functions from main app logic into dedicated observability module, including cluster visualization.
+Implement `AssignmentGate.evaluate()` with support for pluggable checks, but initially only enable the critical `CompleteLinkCheck`.
 
-#### Module Structure
+#### Step 1.2: Implement CompleteLinkCheck
 
-```text
-recognition/
-├── observability/                    # NEW: Dedicated observability module
-│   ├── __init__.py
-│   ├── logging.py                    # ClusteringLogger - structured decision logs
-│   ├── visualization.py              # ClusterVisualizer - cluster charts
-│   ├── reports.py                    # BatchJobReport - job summary reports
-│   └── decisions.py                  # DecisionLog dataclass
-```
+This is the critical guard required to stop the "Cam Grant" domination. It ensures that a candidate matches ALL representatives of a cluster, not just the best one (or metadata-heavy average).
 
-#### ClusteringLogger Design
+#### Step 1.3: Refactor RepresentativeMatcher
 
-```python
-class ClusteringLogger:
-    """Centralized logging for all cluster assignment decisions.
-    
-    Extracts 100+ scattered logger.info/debug/warning calls into
-    a single, structured logging interface.
-    """
-    
-    def __init__(self, algorithm: str, job_id: UUID | None = None):
-        """Initialize logger with algorithm context.
-        
-        Args:
-            algorithm: Name of clustering algorithm (HDBSCAN, ChineseWhispers, etc.)
-            job_id: Optional job ID for correlation
-        """
-        self.algorithm = algorithm
-        self.job_id = job_id
-        
-    def log_decision(
-        self,
-        identity_id: UUID,
-        cluster_id: UUID | None,
-        decision: DecisionType,  # ACCEPT | SUGGEST | REJECT
-        similarity: float,
-        reason: str | None = None,
-    ) -> None:
-        """Log an assignment decision with full context."""
-        raise NotImplementedError("TODO: Structured decision logging")
-    
-    def log_batch_start(self, identity_count: int, algorithm: str) -> None:
-        """Log start of a batch clustering job."""
-        raise NotImplementedError("TODO: Implement")
-    
-    def log_batch_complete(self, report: BatchJobReport) -> None:
-        """Log completion of a batch job with summary statistics."""
-        raise NotImplementedError("TODO: Implement")
-```
+Update `RepresentativeMatcher` to call `gate.evaluate()` instead of its inline logic. This connects the primary discovery path to the new validation logic.
 
-#### ClusterVisualizer Design
+#### Step 1.4: Verify Correct Results
+
+Run the "Cam Grant" test case. With `CompleteLinkCheck` active, the false positives should be rejected (or suggested), even if metadata dilution persists, because they won't match _all_ diverse representatives in the cluster.
+
+### Phase 2: Full Guard Implementation
+
+**Goal**: Add remaining validation checks to the gate.
+
+- **MaturityCheck**: Protect against immature clusters (singleton snowballing).
+- **MemberDistributionCheck**: Ensure candidate fits the member distribution.
+- **ConfidenceCheck**: Handle low-confidence matches.
+
+### Phase 3: Full Path Migration
+
+**Goal**: Ensure all discovery paths use the unified gate.
+
+- Refactor `CentroidDiscovery` to use gate.
+- Refactor `GraphDiscovery` (HDBSCAN) to use gate.
+- Make Chinese Whispers deterministic.
+
+#### Step 3.1: Deterministic Chinese Whispers
+
+**Reference**: [clustering-improvements-dev-plan.md § D.1](../4.2.3/clustering-improvements-dev-plan.md#d1-make-chinese-whispers-deterministic)
+
+The current Chinese Whispers implementation has **two sources of non-determinism**:
+
+1. `np.random.shuffle(nodes)` — random node processing order
+2. `max(label_weights.items())` — arbitrary tie-breaking when weights are equal
+
+**Solution**: Deterministic CW with quality-weighted votes
+
+| Change                 | Purpose                                                                            |
+| ---------------------- | ---------------------------------------------------------------------------------- |
+| UUID-sorted node order | Replace `random.shuffle` with `sorted(nodes, key=lambda i: str(identities[i].id))` |
+| Quality-weighted votes | Weight neighbor influence by `similarity * detection_quality`                      |
+| UUID tie-breaking      | When vote counts equal, pick label with smallest member UUID                       |
+
+**Key Code Changes**:
 
 ```python
-class ClusterVisualizer:
-    """Generate cluster distribution charts after batch jobs.
-    
-    Charts are saved to logs/ directory and include:
-    - Cluster size distribution
-    - Algorithm that generated the clustering
-    - Decision breakdown (accept/suggest/reject counts)
-    """
-    
-    def __init__(self, output_dir: Path = Path("logs")):
-        self.output_dir = output_dir
-        
-    def generate_batch_report_chart(
-        self,
-        report: BatchJobReport,
-        algorithm: str,
-        timestamp: datetime | None = None,
-    ) -> Path:
-        """Generate and save a cluster distribution chart.
-        
-        Args:
-            report: Batch job report with clustering statistics
-            algorithm: Name of algorithm (displayed in chart title)
-            timestamp: Optional timestamp for filename
-            
-        Returns:
-            Path to the generated chart image.
-            
-        Chart includes:
-        - Histogram of cluster sizes
-        - Bar chart of accept/suggest/reject decisions
-        - Algorithm name in title
-        - Timestamp for correlation with logs
-        """
-        raise NotImplementedError("TODO: matplotlib chart generation")
-    
-    def generate_similarity_heatmap(
-        self,
-        cluster_id: UUID,
-        member_similarities: np.ndarray,
-        algorithm: str,
-    ) -> Path:
-        """Generate similarity heatmap for a single cluster."""
-        raise NotImplementedError("TODO: heatmap for debugging")
+# Before (non-deterministic)
+np.random.shuffle(nodes)
+best_label = max(label_weights.items(), key=lambda x: x[1])[0]
+
+# After (deterministic)
+node_order = sorted(range(n), key=lambda i: str(identities[i].id))
+
+# Quality-weighted voting
+for j in neighbors:
+    weighted_vote = sim_matrix[i, j] * qualities[j]
+    votes[label] = votes.get(label, 0.0) + weighted_vote
+
+# UUID tie-breaking
+max_vote = max(votes.values())
+candidates = [lbl for lbl, v in votes.items() if v == max_vote]
+if len(candidates) == 1:
+    best_label = candidates[0]
+else:
+    # Pick label whose members have smallest UUID
+    best_label = min(candidates, key=lambda lbl: min(
+        str(identities[k].id) for k in range(n) if labels[k] == lbl
+    ))
 ```
 
-#### BatchJobReport Design
+**Important**: This does NOT fix the "Cam Grant" bug — it makes the bug _reproducible_. CW candidates must still flow through `AssignmentGate` with complete-link validation.
 
-```python
-@dataclass
-class BatchJobReport:
-    """Summary of a batch clustering job for logging and visualization."""
-    
-    job_id: UUID
-    algorithm: str                    # HDBSCAN | ChineseWhispers | RepresentativeMatcher
-    started_at: datetime
-    completed_at: datetime
-    
-    # Input
-    total_identities: int
-    
-    # Outcomes (labeled as accept/suggest/reject per user request)
-    accept_count: int                 # Assigned to cluster
-    suggest_count: int                # Sent to human review
-    reject_count: int                 # Stayed unclustered
-    
-    # Cluster statistics
-    clusters_created: int
-    clusters_expanded: int
-    avg_cluster_size: float
-    max_cluster_size: int
-    singleton_count: int
-    
-    # Quality metrics
-    avg_similarity: float             # Average intra-cluster similarity
-    min_similarity: float             # Minimum intra-cluster similarity
-    
-    @property
-    def duration_ms(self) -> float:
-        """Calculate job duration in milliseconds."""
-        return (self.completed_at - self.started_at).total_seconds() * 1000
-    
-    @property
-    def success_rate(self) -> float:
-        """Percentage of identities that were accepted or suggested."""
-        total = self.accept_count + self.suggest_count + self.reject_count
-        return (self.accept_count + self.suggest_count) / total if total > 0 else 0.0
-```
+**Files to modify**:
 
-#### Migration Strategy
+- `recognition/application/clustering/chinese_whispers.py`
 
-The observability module will extract logging from these files (100+ logger calls):
+**Tests**:
 
-| File | Logger Calls | Priority |
-|------|-------------|----------|
-| `representative_matcher.py` | 17+ | HIGH |
-| `cluster_validation.py` | 14+ | HIGH |
-| `identity_clustering_service.py` | 11+ | HIGH |
-| `representative_only_clustering.py` | 11+ | HIGH |
-| `cluster_management.py` | 9 | MEDIUM |
-| `suggestion_service.py` | 8 | MEDIUM |
-| `chinese_whispers.py` | 7 | MEDIUM |
-| `clustering_job_service.py` | 5 | MEDIUM |
-| `cluster_assignment.py` | 3 | LOW |
-| Other files | ~20 | LOW |
+- `test_deterministic_same_input_same_output`
+- `test_quality_weighting_affects_assignment`
+- `test_uuid_tiebreaking_consistent`
 
-#### Chart Generation Requirements
+### Phase 4: Observability & Cleanup
 
-**After EVERY batch job**, the `ClusterVisualizer` must:
+**Goal**: Add visibility and clean up legacy code.
 
-1. Generate a cluster distribution chart
-2. Include the algorithm name in the chart title (e.g., "HDBSCAN Batch - 2025-12-01")
-3. Label decision counts as "Accepted", "Suggested", "Rejected"
-4. Save to `logs/charts/batch_{job_id}_{timestamp}.png`
-
-Example chart title format:
-```
-[HDBSCAN] Batch Job Summary - Dec 1, 2025 14:32:15
-Identities: 150 | Accepted: 120 | Suggested: 18 | Rejected: 12
-```
-
-### Phase 2: Implement AssignmentGate (✅ CONFIRMED NEEDED)
-
-**Goal**: Create single validation point for all assignment paths.
-
-#### Step 2.1: Create AssignmentGate Module
-
-```
-recognition/application/assignment/
-├── __init__.py
-├── gate.py              # AssignmentGate class
-├── candidate.py         # AssignmentCandidate dataclass
-├── decision.py          # AssignmentDecision, AssignmentOutcome
-└── checks/
-    ├── __init__.py
-    ├── base.py          # BaseCheck abstract class
-    ├── complete_link.py # CompleteLinkCheck
-    ├── maturity.py      # MaturityCheck  
-    ├── member_dist.py   # MemberDistributionCheck
-    └── confidence.py    # ConfidenceCheck
-```
-
-#### Step 2.2: AssignmentGate Interface
-
-```python
-@dataclass
-class AssignmentCandidate:
-    identity: MediaIdentity
-    identity_vector: np.ndarray
-    cluster_id: UUID
-    discovery_method: DiscoveryMethod  # REPRESENTATIVE | CENTROID | GRAPH
-    discovery_similarity: float
-
-class AssignmentOutcome(Enum):
-    ACCEPT = "accept"      # Assign to cluster
-    SUGGEST = "suggest"    # Create suggestion for human review
-    REJECT = "reject"      # Do not assign
-
-@dataclass  
-class AssignmentDecision:
-    outcome: AssignmentOutcome
-    candidate: AssignmentCandidate
-    checks_passed: list[str]
-    checks_failed: list[str]
-    rejection_reason: str | None = None
-    suggestion_confidence: float | None = None
-
-class AssignmentGate:
-    """Single validation point for ALL cluster assignments."""
-    
-    async def evaluate(self, candidate: AssignmentCandidate) -> AssignmentDecision:
-        """Run all enabled checks and return decision."""
-```
-
-#### Step 2.3: Migrate Paths to Use Gate
-
-| Path | Current Code | Migration |
-|------|--------------|-----------|
-| RepresentativeMatcher | Inline guards | Extract to gate, call `gate.evaluate()` |
-| Centroid matching | `validate_centroid_match()` | Replace with `gate.evaluate()` |
-| HDBSCAN anchor | Direct assignment | Wrap each member in `gate.evaluate()` |
-
-### Phase 3: Simplify Orchestration (📋 AFTER PHASE 2)
-
-**Goal**: Reduce the three paths to: Discovery → Gate → Writer
-
-1. **Discovery phase**: All algorithms return `list[AssignmentCandidate]`
-2. **Evaluation phase**: All candidates go through `gate.evaluate()`
-3. **Write phase**: Accepted → assign, Suggested → create suggestion, Rejected → skip
-
-```python
-# Simplified orchestration
-async def cluster_identities(identities: list[MediaIdentity]) -> ClusteringResult:
-    # Discovery (no assignments)
-    candidates = []
-    candidates.extend(await rep_discovery.discover(identities))
-    candidates.extend(await centroid_discovery.discover(remaining))
-    candidates.extend(await graph_discovery.discover(still_remaining))
-    
-    # Evaluation (single gate)
-    for candidate in candidates:
-        decision = await gate.evaluate(candidate)
-        match decision.outcome:
-            case ACCEPT: await writer.assign(candidate)
-            case SUGGEST: await suggestions.create(candidate)
-            case REJECT: pass  # stays unclustered
-```
-
-### ~~Phase 2: Evaluate Architecture Needs~~ (REMOVED)
-
-The evaluation is complete. Consolidation is **confirmed needed** based on:
-- 6 of 8 guards missing from at least one path
-- HDBSCAN anchor matching has NO validation
-- Centroid path has no suggestion tier
-
-Based on Phase 2 evaluation:
-
-#### Option A: Minimal Changes (NOT RECOMMENDED)
-
-- Tune similarity thresholds
-- Add complete-link guard to centroid path
-- Monitor and adjust
-
-#### Option B: Unified Gate (RECOMMENDED)
-
-- Implement `AssignmentGate` as single validation point
-- Refactor paths to use gate
-- Full architectural cleanup
-
-### ~~Phase 1-4: Full Rewrite~~ (SUPERSEDED)
-
-The original four-phase rewrite plan is superseded by the streamlined Phase 1-3 above.
+- Implement `ClusteringLogger` and `ClusterVisualizer`.
+- Reset corrupted data and re-run clustering to clean up the mess.
+- Simplify orchestration to the final `Discovery -> Gate -> Writer` flow.
 
 ---
 
@@ -965,20 +717,20 @@ See [ALGORITHM_EVALUATION.md](./ALGORITHM_EVALUATION.md) for detailed analysis.
 
 ### Clustering Algorithms
 
-| Algorithm | Complexity | Deterministic | Outlier Handling | Recommendation |
-|-----------|------------|---------------|------------------|----------------|
-| Chinese Whispers | O(E) | No | Poor | Keep for >500 identities |
-| HDBSCAN | O(n²) | Yes | Excellent | Primary for ≤500 |
-| AHC (Ward) | O(n³) | Yes | None | Not recommended |
-| K-means | O(nkt) | Mostly | None | Not recommended |
-| Representative | O(n×r) | Yes | N/A | Keep for incremental |
+| Algorithm        | Complexity | Deterministic | Outlier Handling | Recommendation           |
+| ---------------- | ---------- | ------------- | ---------------- | ------------------------ |
+| Chinese Whispers | O(E)       | No            | Poor             | Keep for >500 identities |
+| HDBSCAN          | O(n²)      | Yes           | Excellent        | Primary for ≤500         |
+| AHC (Ward)       | O(n³)      | Yes           | None             | Not recommended          |
+| K-means          | O(nkt)     | Mostly        | None             | Not recommended          |
+| Representative   | O(n×r)     | Yes           | N/A              | Keep for incremental     |
 
 ### Embedding Models
 
-| Model | Accuracy | Speed | Notes |
-|-------|----------|-------|-------|
-| InsightFace (buffalo_l) | High | Fast | Current, works well |
-| ArcFace (sub-center) | Higher | Similar | Better noise handling |
+| Model                   | Accuracy | Speed   | Notes                 |
+| ----------------------- | -------- | ------- | --------------------- |
+| InsightFace (buffalo_l) | High     | Fast    | Current, works well   |
+| ArcFace (sub-center)    | Higher   | Similar | Better noise handling |
 
 **Recommendation**: Keep InsightFace for now. The clustering architecture is the primary issue, not embedding quality. Consider ArcFace for v3 if needed.
 
@@ -1000,7 +752,7 @@ No frontend changes required. All changes are internal refactoring.
 
 ---
 
-## Success Criteria (Revised)
+## Success Criteria
 
 ### Phase 1 Success (Bug Fix Validation)
 
@@ -1021,26 +773,25 @@ No frontend changes required. All changes are internal refactoring.
 
 ## Risk Assessment
 
-| Risk | Likelihood | Impact | Mitigation |
-|------|------------|--------|------------|
-| New bugs in rewrite | High | Medium | Extensive test suite, parallel operation |
-| Performance regression | Medium | Low | Benchmark critical paths |
-| API incompatibility | Low | High | Contract tests against frontend |
-| Delayed delivery | Medium | Medium | Phased approach, MVP first |
+| Risk                   | Likelihood | Impact | Mitigation                                       |
+| ---------------------- | ---------- | ------ | ------------------------------------------------ |
+| New bugs in rewrite    | High       | Medium | Extensive test suite, manual verification on dev |
+| Performance regression | Medium     | Low    | Benchmark critical paths                         |
+| API incompatibility    | Low        | High   | Contract tests against frontend                  |
+| Delayed delivery       | Medium     | Medium | Phased approach, MVP first                       |
 
 ---
 
-## Timeline Estimate (Revised)
+## Timeline Estimate
 
-| Phase | Duration | Deliverable | Status |
-|-------|----------|-------------|--------|
-| Phase 0: Bug fix | 0.5 day | Fixed `compute_similarity()` | ❌ **NOT DONE** — bug still present |
-| Phase 0.5: Scaffolding | 0.5 day | All function/class signatures with `NotImplementedError` | 📋 **MANDATORY** |
-| Phase 1: Data reset & validation | 0.5 day | Clean data, verified fix | ⏸️ BLOCKED on Phase 0 |
-| Phase 1.5: Observability module | 1 day | Logging extraction + cluster visualization | 📋 PLANNED |
-| Phase 2: AssignmentGate | 2-3 days | Single validation point | 📋 PLANNED |
-| Phase 3: Simplify orchestration | 1-2 days | Discovery → Gate → Writer | 📋 PLANNED |
-| **Total** | **5-7 days** | Unified assignment pipeline + observability | |
+| Phase                      | Duration     | Deliverable                                              | Status    |
+| -------------------------- | ------------ | -------------------------------------------------------- | --------- |
+| Phase 0.5: Scaffolding     | 0.5 day      | All function/class signatures with `NotImplementedError` | PLANNED   |
+| Phase 1: Happy Path        | 1-2 days     | Gate + CompleteLink + RepDiscovery (Correct Results)     | PLANNED   |
+| Phase 2: Full Guards       | 1 day        | Maturity + MemberDist + Confidence Checks                | PLANNED   |
+| Phase 3: Full Migration    | 1 day        | Centroid + Graph Discovery + Deterministic CW            | PLANNED   |
+| Phase 4: Observability     | 1 day        | Logging + Visualization + Reports                        | PLANNED   |
+| **Total**                  | **4-5 days** | Unified assignment pipeline + observability              |           |
 
 ---
 
@@ -1062,51 +813,180 @@ The following files will be archived to `recognition_4_2_3/`:
 
 ## Next Steps
 
-1. ✅ Create this implementation plan
-2. ❌ Identify root cause (metadata dilution bug) — **HYPOTHESIS UNVERIFIED**
-3. ❌ Fix `compute_similarity()` in `centroid_utils.py` — **NOT WORKING IN PRODUCTION**
-4. ❌ Add tests verifying the fix — **Tests pass but bug persists**
-5. ✅ Confirm architectural consolidation is needed (analysis complete)
-6. ✅ Create UML diagrams (class + sequence + component)
-
-### 🚨 IMMEDIATE: Fix Phase 0 Bug (MUST DO FIRST)
-
-- 🔲 **Investigate WHY the fix isn't working** — check if fix was deployed, check all code paths
-- 🔲 **Verify compute_similarity() is being called** on the actual matching path
-- 🔲 **Check if centroid matching bypasses the fix** — multiple code paths exist
-- 🔲 **Add logging to confirm which similarity function is used**
-- 🔲 **Re-verify with production logs showing 0% false positives**
+1. [x] Create this implementation plan
+2. [x] Document root cause analysis (metadata dilution + architectural gaps)
+3. [x] Confirm architectural consolidation is needed (analysis complete)
+4. [x] Create UML diagrams (class + sequence + component)
+5. [x] Design Short ID format (YYWWD-XXXXXXXX)
+6. [x] Design Deterministic CW algorithm
 
 ### Phase 0.5: Scaffolding (MANDATORY)
 
-7. 🔲 **Scaffold AssignmentGate module** — signatures only, `NotImplementedError` bodies
-8. 🔲 **Scaffold Observability module** — `ClusteringLogger`, `ClusterVisualizer`, `BatchJobReport`
-9. 🔲 **Scaffold Discovery module** — `RepresentativeDiscovery`, `CentroidDiscovery`, `GraphDiscovery`
-10. 🔲 **Commit scaffolding** before any implementation
+7. [ ] **Scaffold AssignmentGate module** — signatures only, `NotImplementedError` bodies
+8. [ ] **Scaffold Observability module** — `ClusteringLogger`, `ClusterVisualizer`, `BatchJobReport`
+9. [ ] **Scaffold Discovery module** — `RepresentativeDiscovery`, `CentroidDiscovery`, `GraphDiscovery`
+10. [ ] **Commit scaffolding** before any implementation
 
-### Phase 1: Data Reset
+### Phase 1: Happy Path Implementation (Minimal Service)
 
-11. 🔲 **Reset corrupted cluster** (SQL commands in Phase 1)
-12. 🔲 **Re-run clustering** on affected tenant
+**Goal**: Implement the minimum service to arrive at a happy path implementation that returns correct results.
 
-### Phase 1.5: Observability
+11. [ ] **Implement AssignmentGate.evaluate()** (Basic logic)
+12. [ ] **Implement CompleteLinkCheck** (Critical guard for "Cam Grant" issue)
+13. [ ] **Refactor RepresentativeMatcher** to use gate
+14. [ ] **Verify "Cam Grant" issue is resolved** for new matches (Happy Path)
 
-13. 🔲 **Implement ClusteringLogger** — extract 100+ scattered logger calls
-14. 🔲 **Implement ClusterVisualizer** — generate charts after each batch job
-15. 🔲 **Implement BatchJobReport** — collect accept/suggest/reject counts
-16. 🔲 **Add chart generation hook** to batch job completion
+### Phase 2: Full Guard Implementation
 
-### Phase 2: AssignmentGate
+**Goal**: Add remaining validation checks to the gate.
 
-17. 🔲 **Implement AssignmentGate.evaluate()** 
-18. 🔲 **Implement checks** (complete-link, maturity, member distribution)
-19. 🔲 **Migrate RepresentativeMatcher** to use gate
-20. 🔲 **Migrate Centroid matching** to use gate
-21. 🔲 **Migrate HDBSCAN anchor** to use gate
+15. [ ] **Implement MaturityCheck**
+16. [ ] **Implement MemberDistributionCheck**
+17. [ ] **Implement ConfidenceCheck**
+18. [ ] **Enable all checks in AssignmentGate**
 
-### Phase 3: Simplify
+### Phase 3: Full Path Migration
 
-22. 🔲 **Simplify orchestration** (Discovery → Gate → Writer)
+**Goal**: Ensure all discovery paths use the unified gate.
+
+19. [ ] **Refactor Centroid matching** to use gate
+20. [ ] **Refactor HDBSCAN anchor** to use gate
+
+### Phase 4: Observability & Cleanup
+
+**Goal**: Add visibility and clean up legacy code.
+
+21. [ ] **Implement ClusteringLogger**
+22. [ ] **Implement ClusterVisualizer**
+23. [ ] **Implement BatchJobReport**
+24. [ ] **Simplify orchestration** (Discovery → Gate → Writer)
+25. [ ] **Reset corrupted cluster** (SQL commands)
+26. [ ] **Re-run clustering** on affected tenant
+
+---
+
+## Appendix: Short ID Format (YYWWD)
+
+### Motivation
+
+Full UUIDs (36 characters) are overkill for a project with <100K identities per tenant. Shorter IDs improve:
+
+- **Readability**: `25497-Kp2mNx7Q` vs `652d50db-aa9e-4532-b159-f4261de679e8`
+- **Debugging**: Time prefix shows when record was created
+- **Determinism**: Natural chronological ordering for CW tie-breaking
+- **Logs**: Shorter IDs = more readable logs
+
+### Format Specification
+
+```text
+YYWWD-XXXXXXXX (14 characters)
+
+YY   = Year (24 = 2024, 25 = 2025)
+WW   = ISO week number (01-53)
+D    = Day of week (1 = Monday, 7 = Sunday)
+-    = Separator
+XXXXXXXX = 8 random base62 characters (62^8 ≈ 218 trillion combinations)
+
+Examples:
+  25491-a7Bx9kL2  → Monday of week 49, 2025
+  25493-mN3pQ8Yz  → Wednesday of week 49, 2025
+  25497-Kp2mNx7Q  → Sunday of week 49, 2025
+  26015-Xm9nPq3R  → Friday of week 01, 2026
+```
+
+### Implementation
+
+```python
+# File: recognition/shared/short_id.py
+
+import secrets
+from datetime import datetime
+
+ALPHABET = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz"
+
+def generate_short_id(prefix: str = "") -> str:
+    """Generate a short, time-prefixed ID with week and day resolution.
+    
+    Args:
+        prefix: Optional prefix (e.g., "id", "clust", "rep")
+        
+    Returns:
+        Short ID in format YYWWD-XXXXXXXX or prefix-YYWWD-XXXXXXXX
+        
+    Examples:
+        >>> generate_short_id()
+        '25497-Kp2mNx7Q'
+        >>> generate_short_id("id")
+        'id-25497-a7Bx9kL2'
+    """
+    now = datetime.now()
+    time_prefix = f"{now.strftime('%y%V')}{now.isoweekday()}"
+    random_part = ''.join(secrets.choice(ALPHABET) for _ in range(8))
+    
+    if prefix:
+        return f"{prefix}-{time_prefix}-{random_part}"
+    return f"{time_prefix}-{random_part}"
+
+
+def decode_short_id(short_id: str) -> dict:
+    """Decode a short ID to extract timestamp info.
+    
+    Args:
+        short_id: ID in format YYWWD-XXXXXXXX or prefix-YYWWD-XXXXXXXX
+        
+    Returns:
+        Dict with year, week, day (name), and random parts
+        
+    Examples:
+        >>> decode_short_id("25491-a7Bx9kL2")
+        {'year': 2025, 'week': 49, 'day': 'Monday', 'random': 'a7Bx9kL2'}
+    """
+    DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday", "Sunday"]
+    
+    parts = short_id.split("-")
+    if len(parts) == 3:
+        time_part, random_part = parts[1], parts[2]
+    else:
+        time_part, random_part = parts[0], parts[1]
+    
+    return {
+        "year": 2000 + int(time_part[:2]),
+        "week": int(time_part[2:4]),
+        "day": DAYS[int(time_part[4]) - 1],
+        "random": random_part,
+    }
+```
+
+### Database Schema Change
+
+```sql
+-- Before: UUID (36 chars)
+id UUID PRIMARY KEY DEFAULT gen_random_uuid()
+
+-- After: Short ID (14-20 chars)
+id VARCHAR(20) PRIMARY KEY
+```
+
+**Migration**: Per Greenfield Policy, no migration needed — reset tables.
+
+### Benefits for Deterministic CW
+
+The time prefix provides natural chronological ordering for UUID-based tie-breaking:
+
+```python
+# Older IDs sort first, providing stable tie-breaking
+node_order = sorted(range(n), key=lambda i: identities[i].id)
+# 25491-xxx sorts before 25493-xxx (Monday before Wednesday)
+```
+
+### Collision Analysis
+
+| Random Part | Combinations | Collision Risk |
+|-------------|--------------|----------------|
+| 8 chars base62 | 62^8 = 2.18 × 10^14 | ~1 in 218 trillion per day-slot |
+| Birthday paradox | ~14.7M IDs | 50% collision risk |
+
+For a project with <100K identities, collision risk is negligible.
 
 ---
 
@@ -1118,18 +998,19 @@ The following files will be archived to `recognition_4_2_3/`:
 
 The current schema (`001_identity_schema.py`) is fully compatible:
 
-| Table | Purpose | Compatibility |
-|-------|---------|---------------|
-| `media_identities` | Store detected identities | ✅ No changes |
-| `identity_clusters` | Store cluster metadata | ✅ No changes |
-| `identity_members` | Store identity-to-cluster assignments | ✅ No changes |
-| `identity_cluster_representatives` | Store representative embeddings | ✅ No changes |
-| `identity_suggestions` | Store suggestions for human review | ✅ No changes |
-| `mv_identity_cluster_centroids` | Materialized view for centroids | ✅ No changes |
+| Table                              | Purpose                               | Compatibility  |
+| ---------------------------------- | ------------------------------------- | -------------- |
+| `media_identities`                 | Store detected identities             | [x] No changes |
+| `identity_clusters`                | Store cluster metadata                | [x] No changes |
+| `identity_members`                 | Store identity-to-cluster assignments | [x] No changes |
+| `identity_cluster_representatives` | Store representative embeddings       | [x] No changes |
+| `identity_suggestions`             | Store suggestions for human review    | [x] No changes |
+| `mv_identity_cluster_centroids`    | Materialized view for centroids       | [x] No changes |
 
 The AssignmentGate is purely an **application layer refactor** that changes the decision logic, not the data model.
 
 **Optional future enhancement** (not required):
+
 ```sql
 ALTER TABLE identity_members ADD COLUMN discovery_method VARCHAR(20);
 -- Values: 'representative', 'centroid', 'graph'
@@ -1152,13 +1033,13 @@ ALTER TABLE identity_members ADD COLUMN discovery_method VARCHAR(20);
 
 ### UML Diagrams Created
 
-| Diagram | Path | Description |
-|---------|------|-------------|
-| Sequence: Assignment Gate Flow | `docs/architecture/backend-uml/workflows/cluster_assignment_gate.mmd` | Shows Discovery → Gate → Writer flow |
-| Class: AssignmentGate Module | `docs/architecture/backend-uml/components/assignment_gate.mmd` | Classes and relationships |
-| Component: Pipeline V2 | `docs/architecture/backend-uml/components/recognition_pipeline_v2.mmd` | High-level component diagram |
-| Class: Observability Module | `docs/architecture/backend-uml/components/observability_module.mmd` | ClusteringLogger, ClusterVisualizer, BatchJobReport |
-| Sequence: Batch Job Observability | `docs/architecture/backend-uml/workflows/batch_job_observability.mmd` | Shows logging and chart generation during batch jobs |
+| Diagram                           | Path                                                                   | Description                                          |
+| --------------------------------- | ---------------------------------------------------------------------- | ---------------------------------------------------- |
+| Sequence: Assignment Gate Flow    | `docs/architecture/backend-uml/workflows/cluster_assignment_gate.mmd`  | Shows Discovery → Gate → Writer flow                 |
+| Class: AssignmentGate Module      | `docs/architecture/backend-uml/components/assignment_gate.mmd`         | Classes and relationships                            |
+| Component: Pipeline V2            | `docs/architecture/backend-uml/components/recognition_pipeline_v2.mmd` | High-level component diagram                         |
+| Class: Observability Module       | `docs/architecture/backend-uml/components/observability_module.mmd`    | ClusteringLogger, ClusterVisualizer, BatchJobReport  |
+| Sequence: Batch Job Observability | `docs/architecture/backend-uml/workflows/batch_job_observability.mmd`  | Shows logging and chart generation during batch jobs |
 
 ### Verification Script
 

@@ -1,4 +1,3 @@
-```mermaid
 sequenceDiagram
     autonumber
     
@@ -37,7 +36,8 @@ sequenceDiagram
         Note over RD: Path 1: Representative Matching
         CS->>RD: discover(identities, representatives)
         loop For each identity
-            RD->>RD: find_best_rep_match(vector, reps)
+            RD->>RD: face_vec = extract_face_embedding(vector)
+            RD->>RD: find_best_rep_match(face_vec, reps)
             alt similarity >= threshold
                 RD->>RD: create AssignmentCandidate(REPRESENTATIVE)
             end
@@ -52,7 +52,8 @@ sequenceDiagram
         Note over CD: Path 2: Centroid Matching
         CS->>CD: discover(remaining, centroids)
         loop For each identity
-            CD->>CD: find_best_centroid_match(vector, centroids)
+            CD->>CD: face_vec = extract_face_embedding(vector)
+            CD->>CD: find_best_centroid_match(face_vec, centroids)
             alt similarity >= threshold
                 CD->>CD: create AssignmentCandidate(CENTROID)
             end
@@ -98,7 +99,8 @@ sequenceDiagram
                 Gate->>CLC: evaluate(candidate)
                 CLC->>DB: get_all_representatives(cluster_id)
                 DB-->>CLC: reps[]
-                CLC->>CLC: compute similarities to ALL reps
+                CLC->>CLC: face_vec = extract_face_embedding(candidate.vector)
+                CLC->>CLC: compute similarities to ALL reps (using face_vec)
                 CLC->>CLC: min_sim, avg_sim = analyze
                 alt min_sim < floor OR avg_sim < threshold
                     CLC-->>Gate: CheckResult(failed, should_suggest)
@@ -152,4 +154,3 @@ sequenceDiagram
     
     CS-->>API: ClusteringResult
     API-->>UI: {status: "complete", stats: {...}}
-```

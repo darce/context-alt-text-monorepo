@@ -1,4 +1,3 @@
-```mermaid
 sequenceDiagram
     autonumber
     
@@ -74,7 +73,7 @@ sequenceDiagram
     
     %% Discovery Phase
     rect rgb(240, 248, 255)
-        Note over Cluster: Discovery Phase
+        Note over Cluster: Discovery Phase (Uses Face-Only Embeddings)
         Cluster->>Cluster: RepresentativeDiscovery.discover()
         Cluster->>Cluster: CentroidDiscovery.discover()
         Cluster->>Cluster: GraphDiscovery.discover()
@@ -177,4 +176,3 @@ sequenceDiagram
     UI->>UI: Update cluster display
     
     Note over Admin: Workflow Complete
-```

@@ -1,4 +1,3 @@
-```mermaid
 classDiagram
     %% =======================================================================
     %% RECOGNITION SERVICE V2 - CLASS DIAGRAM
@@ -18,7 +17,7 @@ classDiagram
         +int bbox_width
         +int bbox_height
         +UUID cluster_id
-        +prepare_embedding() ndarray
+        +extract_face_embedding() ndarray
     }
     
     class IdentityCluster {
@@ -189,7 +188,7 @@ classDiagram
     class ChineseWhispersClustering {
         -float threshold
         -int max_iterations
-        +cluster(embeddings) list~int~
+        +cluster(embeddings, identities) list~int~
     }
 
     DiscoveryAlgorithm <|.. RepresentativeDiscovery : implements
@@ -260,6 +259,61 @@ classDiagram
     SuggestionService --> AssignmentSuggestion : manages
 
     %% ---------------------------------------------------------------------------
+    %% OBSERVABILITY LAYER - Logging and visualization
+    %% ---------------------------------------------------------------------------
+    
+    class DecisionType {
+        <<enumeration>>
+        ACCEPT
+        SUGGEST
+        REJECT
+    }
+    
+    class DecisionLog {
+        +UUID identity_id
+        +UUID cluster_id
+        +DecisionType decision
+        +float similarity
+        +str reason
+        +datetime timestamp
+    }
+    
+    class BatchJobReport {
+        +UUID job_id
+        +str algorithm
+        +datetime started_at
+        +datetime completed_at
+        +int total_identities
+        +int accept_count
+        +int suggest_count
+        +int reject_count
+        +int clusters_created
+        +float avg_similarity
+        +duration_ms() float
+        +success_rate() float
+    }
+    
+    class ClusteringLogger {
+        -str algorithm
+        -UUID job_id
+        +log_decision(identity_id, cluster_id, decision, similarity, reason)
+        +log_batch_start(identity_count, algorithm)
+        +log_batch_complete(report)
+    }
+    
+    class ClusterVisualizer {
+        -Path output_dir
+        +generate_batch_report_chart(report, algorithm, timestamp) Path
+        +generate_similarity_heatmap(cluster_id, similarities, algorithm) Path
+    }
+
+    ClusteringLogger --> DecisionLog : creates
+    ClusteringLogger --> BatchJobReport : uses
+    ClusterVisualizer --> BatchJobReport : visualizes
+    ClusterService --> ClusteringLogger : logs to
+    ClusterService --> ClusterVisualizer : generates charts via
+
+    %% ---------------------------------------------------------------------------
     %% INFRASTRUCTURE LAYER - External dependencies
     %% ---------------------------------------------------------------------------
     
@@ -283,6 +337,9 @@ classDiagram
         +get_unclustered(tenant_id) list~MediaIdentity~
         +get_clusters_with_centroids(tenant_id) list~ClusterSearchEntry~
         +get_clusters_with_representatives(tenant_id) dict
+        +get_all_representatives(cluster_id) list~ndarray~
+        +get_member_embeddings(cluster_id) list~ndarray~
+        +get_representative_count(cluster_id) int
         +save_cluster(cluster) void
     }
     
@@ -292,7 +349,10 @@ classDiagram
         +float complete_link_avg_threshold
         +int min_representatives_for_maturity
         +float member_validation_min_floor
+        +float member_validation_avg_threshold
         +bool early_stage_suggestion_enabled
+        +float early_stage_high_confidence_threshold
+        +int adaptive_threshold_maturity_point
         +int hdbscan_max_batch_size
     }
 
@@ -302,6 +362,7 @@ classDiagram
     ScanService --> EmbeddingProvider : uses
     ClusterService --> ClusterRepository : uses
     AssignmentGate --> ClusteringSettings : configured by
+    AssignmentGate --> ClusterRepository : queries
 
     %% ---------------------------------------------------------------------------
     %% API LAYER - FastAPI routers
@@ -309,23 +370,22 @@ classDiagram
     
     class AnalyzeRouter {
         +POST /recognition/analyze
-        +GET /recognition/jobs/{id}
+        +GET /recognition/jobs/id
     }
     
     class ClusterRouter {
         +POST /recognition/clustering/jobs
         +GET /recognition/clusters
-        +PATCH /recognition/clusters/{id}
+        +PATCH /recognition/clusters/id
     }
     
     class SuggestionRouter {
-        +GET /recognition/identities/{id}/suggestions
-        +POST /recognition/suggestions/{id}/accept
-        +POST /recognition/suggestions/{id}/reject
+        +GET /recognition/identities/id/suggestions
+        +POST /recognition/suggestions/id/accept
+        +POST /recognition/suggestions/id/reject
     }
 
     AnalyzeRouter --> ScanService : uses
     AnalyzeRouter --> JobService : uses
     ClusterRouter --> ClusterService : uses
     SuggestionRouter --> SuggestionService : uses
-```

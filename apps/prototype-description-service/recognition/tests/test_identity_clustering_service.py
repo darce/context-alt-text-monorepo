@@ -221,17 +221,19 @@ def test_cluster_identities_assigns_via_representatives():
         tenant_id=tenant_id,
         label="cluster-with-rep",
         representative_identity_id=None,
-        identity_count=1,
+        identity_count=2,  # Mature cluster (2+ identities)
         similarity_threshold=0.6,
         clustering_algorithm="test",
     )
     cluster.id = uuid4()
-    rep_vector = np.array([0.99, 0.01, 0.0], dtype=np.float32)
+    # Use 2 similar representatives to avoid IMMATURE_CLUSTER_SUGGESTION guard
+    rep_vector1 = np.array([0.99, 0.01, 0.0], dtype=np.float32)
+    rep_vector2 = np.array([0.98, 0.02, 0.0], dtype=np.float32)  # Slightly different but similar
     identity = make_stub_identity([0.99, 0.0, 0.01])
     service = ClusterServiceHarness(
         unclustered=[identity],
-        existing_entries=[ClusterSearchEntry(cluster=cluster, centroid=rep_vector, member_count=1)],
-        representatives={cluster.id: [rep_vector]},
+        existing_entries=[ClusterSearchEntry(cluster=cluster, centroid=rep_vector1, member_count=2)],
+        representatives={cluster.id: [rep_vector1, rep_vector2]},  # 2 reps = mature cluster
     )
 
     result = asyncio.run(service.cluster_unclustered_identities())

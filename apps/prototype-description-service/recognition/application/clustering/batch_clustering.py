@@ -274,6 +274,8 @@ class BatchClusteringProcessor:
                 if (self.settings.borderline_validation_enabled or self.settings.member_validation_enabled)
                 else None,
                 settings=self.settings,
+                create_suggestion=self._create_suggestion,
+                labeled_cluster_count=self._cluster_count,
             )
 
             _assigned_count, remaining, representatives_by_cluster = await rep_matcher.match(

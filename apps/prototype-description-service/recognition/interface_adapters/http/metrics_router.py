@@ -14,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityCluster, MediaIdentity
 from db.session import get_session
 from db.tenant_context import set_tenant_context
+from recognition.application.clustering.clustering_logger import get_complete_link_stats, reset_complete_link_stats
 
 logger = logging.getLogger(__name__)
 
@@ -52,6 +53,24 @@ class ClusteringMetricsSnapshotResponse(ClusteringMetricsResponse):
         default=None,
         description="ID for persisted snapshots (if saved to database)",
     )
+
+
+class CompleteLinkMetricsResponse(BaseModel):
+    """Response model for complete-link guard metrics."""
+
+    checks: int
+    passes: int
+    fails: int
+    min_samples: list[float]
+    avg_samples: list[float]
+    duration_ms_samples: list[float]
+
+
+class CompleteLinkDashboardResponse(CompleteLinkMetricsResponse):
+    """Response model for complete-link guard metrics with derived ratios."""
+
+    pass_rate: float
+    fail_rate: float
 
 
 @router.get("/metrics", response_model=ClusteringMetricsResponse)
@@ -137,3 +156,35 @@ async def get_clustering_metrics_snapshot(
         label=label,
         snapshot_id=None,  # Not persisted yet
     )
+
+
+@router.get("/metrics/complete-link", response_model=CompleteLinkMetricsResponse)
+async def get_complete_link_metrics(
+    reset: bool = Query(False, description="Reset counters after reading"),
+) -> CompleteLinkMetricsResponse:
+    """
+    Get in-memory metrics for the complete-link guard.
+
+    This endpoint surfaces pass/fail counts and sampled min/avg similarities
+    for lightweight monitoring and debugging.
+    """
+    stats = get_complete_link_stats()
+    if reset:
+        reset_complete_link_stats()
+    return CompleteLinkMetricsResponse(**stats)
+
+
+@router.get("/metrics/complete-link/dashboard", response_model=CompleteLinkDashboardResponse)
+async def get_complete_link_dashboard(
+    reset: bool = Query(False, description="Reset counters after reading"),
+) -> CompleteLinkDashboardResponse:
+    """
+    Get complete-link guard metrics with derived pass/fail rates.
+    """
+    stats = get_complete_link_stats()
+    checks = stats["checks"] or 1
+    pass_rate = round(stats["passes"] / checks, 4)
+    fail_rate = round(stats["fails"] / checks, 4)
+    if reset:
+        reset_complete_link_stats()
+    return CompleteLinkDashboardResponse(pass_rate=pass_rate, fail_rate=fail_rate, **stats)

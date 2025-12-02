@@ -1,0 +1,331 @@
+```mermaid
+classDiagram
+    %% =======================================================================
+    %% RECOGNITION SERVICE V2 - CLASS DIAGRAM
+    %% Core Architecture: Unified Assignment Pipeline
+    %% =======================================================================
+
+    %% ---------------------------------------------------------------------------
+    %% DOMAIN LAYER - Core business objects
+    %% ---------------------------------------------------------------------------
+    
+    class MediaIdentity {
+        +UUID id
+        +UUID tenant_id
+        +UUID media_id
+        +ndarray embedding
+        +float confidence
+        +int bbox_width
+        +int bbox_height
+        +UUID cluster_id
+        +prepare_embedding() ndarray
+    }
+    
+    class IdentityCluster {
+        +UUID id
+        +UUID tenant_id
+        +str label
+        +bool is_labeled
+        +int member_count
+        +datetime created_at
+        +get_representatives() list~ClusterRepresentative~
+        +compute_centroid() ndarray
+    }
+    
+    class ClusterRepresentative {
+        +UUID id
+        +UUID cluster_id
+        +UUID identity_id
+        +ndarray embedding
+        +datetime created_at
+    }
+    
+    class AssignmentSuggestion {
+        +UUID id
+        +UUID identity_id
+        +UUID cluster_id
+        +float representative_similarity
+        +float member_similarity
+        +SuggestionStatus status
+        +accept()
+        +reject()
+    }
+
+    MediaIdentity "1" --> "0..1" IdentityCluster : belongs to
+    IdentityCluster "1" --> "*" ClusterRepresentative : has
+    MediaIdentity "1" --> "*" AssignmentSuggestion : pending for
+
+    %% ---------------------------------------------------------------------------
+    %% ASSIGNMENT LAYER - The core innovation
+    %% ---------------------------------------------------------------------------
+    
+    class AssignmentCandidate {
+        +MediaIdentity identity
+        +ndarray identity_vector
+        +UUID cluster_id
+        +DiscoveryMethod discovery_method
+        +float discovery_similarity
+    }
+    
+    class AssignmentDecision {
+        +AssignmentOutcome outcome
+        +AssignmentCandidate candidate
+        +list~str~ checks_passed
+        +list~str~ checks_failed
+        +str rejection_reason
+        +float suggestion_confidence
+    }
+    
+    class AssignmentOutcome {
+        <<enumeration>>
+        ACCEPT
+        SUGGEST
+        REJECT
+    }
+    
+    class DiscoveryMethod {
+        <<enumeration>>
+        REPRESENTATIVE
+        CENTROID
+        GRAPH
+    }
+    
+    class AssignmentGate {
+        -list~AssignmentCheck~ checks
+        -ClusteringSettings settings
+        -ClusterRepository repository
+        +evaluate(candidate: AssignmentCandidate) AssignmentDecision
+        +add_check(check: AssignmentCheck)
+    }
+    
+    class AssignmentCheck {
+        <<interface>>
+        +str name
+        +is_enabled() bool
+        +evaluate(candidate: AssignmentCandidate) CheckResult
+    }
+    
+    class CheckResult {
+        +bool passed
+        +bool is_fatal
+        +bool should_reject
+        +str reason
+        +dict metadata
+    }
+    
+    class CompleteLinkCheck {
+        -float min_floor
+        -float avg_threshold
+        +evaluate(candidate) CheckResult
+    }
+    
+    class MaturityCheck {
+        -int min_representatives
+        +evaluate(candidate) CheckResult
+    }
+    
+    class MemberDistributionCheck {
+        -float min_floor
+        -float avg_threshold
+        +evaluate(candidate) CheckResult
+    }
+    
+    class ConfidenceCheck {
+        -float high_confidence_threshold
+        -int maturity_point
+        +evaluate(candidate) CheckResult
+    }
+
+    AssignmentGate --> "*" AssignmentCheck : uses
+    AssignmentGate --> AssignmentDecision : produces
+    AssignmentCandidate --> AssignmentDecision : evaluated into
+    
+    AssignmentCheck <|.. CompleteLinkCheck : implements
+    AssignmentCheck <|.. MaturityCheck : implements
+    AssignmentCheck <|.. MemberDistributionCheck : implements
+    AssignmentCheck <|.. ConfidenceCheck : implements
+    
+    CheckResult --> AssignmentOutcome : determines
+
+    %% ---------------------------------------------------------------------------
+    %% DISCOVERY LAYER - Find candidates, don't assign
+    %% ---------------------------------------------------------------------------
+    
+    class DiscoveryAlgorithm {
+        <<interface>>
+        +discover(identities, cluster_data) list~AssignmentCandidate~
+    }
+    
+    class RepresentativeDiscovery {
+        -float threshold
+        +discover(identities, reps_by_cluster) list~AssignmentCandidate~
+        -find_best_match(vector, reps) tuple
+    }
+    
+    class CentroidDiscovery {
+        -float threshold
+        +discover(identities, centroids) list~AssignmentCandidate~
+    }
+    
+    class GraphDiscovery {
+        -float threshold
+        -GraphAlgorithm algorithm
+        +discover(identities, anchors) list~AssignmentCandidate~
+        +set_algorithm(algorithm)
+    }
+    
+    class GraphAlgorithm {
+        <<interface>>
+        +cluster(embeddings) list~int~
+    }
+    
+    class HDBSCANClustering {
+        -int min_cluster_size
+        -int min_samples
+        -float epsilon
+        +cluster(embeddings) list~int~
+    }
+    
+    class ChineseWhispersClustering {
+        -float threshold
+        -int max_iterations
+        +cluster(embeddings) list~int~
+    }
+
+    DiscoveryAlgorithm <|.. RepresentativeDiscovery : implements
+    DiscoveryAlgorithm <|.. CentroidDiscovery : implements
+    DiscoveryAlgorithm <|.. GraphDiscovery : implements
+    
+    GraphDiscovery --> GraphAlgorithm : uses
+    GraphAlgorithm <|.. HDBSCANClustering : implements
+    GraphAlgorithm <|.. ChineseWhispersClustering : implements
+    
+    DiscoveryAlgorithm --> AssignmentCandidate : produces
+
+    %% ---------------------------------------------------------------------------
+    %% ORCHESTRATION LAYER - Workflow coordination
+    %% ---------------------------------------------------------------------------
+    
+    class ClusterService {
+        -AssignmentGate gate
+        -RepresentativeDiscovery repDiscovery
+        -CentroidDiscovery centroidDiscovery
+        -GraphDiscovery graphDiscovery
+        -AssignmentWriter writer
+        -SuggestionService suggestions
+        -ClusterRepository repository
+        +cluster_unclustered_identities(tenant_id) ClusteringResult
+        +process_batch(identities, chunk_size) list~IdentityCluster~
+    }
+    
+    class ScanService {
+        -EmbeddingProvider embeddings
+        -IdentityRepository repository
+        +scan_media(media_ids) ScanResult
+        +extract_identities(media) list~MediaIdentity~
+    }
+    
+    class JobService {
+        -BackgroundTasks tasks
+        -JobRepository repository
+        +create_scan_job(media_ids) UUID
+        +create_cluster_job(tenant_id) UUID
+        +get_job_status(job_id) JobStatus
+    }
+    
+    class AssignmentWriter {
+        -AsyncSession session
+        -ClusterRepository repository
+        -RepresentativeService representatives
+        +assign(candidate: AssignmentCandidate) void
+        +create_cluster(members) IdentityCluster
+    }
+    
+    class SuggestionService {
+        -AsyncSession session
+        -SuggestionRepository repository
+        +create(candidate, confidence) AssignmentSuggestion
+        +accept(suggestion_id) void
+        +reject(suggestion_id) void
+    }
+
+    ClusterService --> AssignmentGate : uses
+    ClusterService --> RepresentativeDiscovery : uses
+    ClusterService --> CentroidDiscovery : uses
+    ClusterService --> GraphDiscovery : uses
+    ClusterService --> AssignmentWriter : uses
+    ClusterService --> SuggestionService : uses
+    
+    AssignmentWriter --> IdentityCluster : creates
+    SuggestionService --> AssignmentSuggestion : manages
+
+    %% ---------------------------------------------------------------------------
+    %% INFRASTRUCTURE LAYER - External dependencies
+    %% ---------------------------------------------------------------------------
+    
+    class EmbeddingProvider {
+        <<interface>>
+        +get_embeddings(images) list~ndarray~
+    }
+    
+    class InsightFaceProvider {
+        -FaceAnalysis app
+        +get_embeddings(images) list~ndarray~
+    }
+    
+    class ArcFaceProvider {
+        -ArcFaceModel model
+        +get_embeddings(images) list~ndarray~
+    }
+    
+    class ClusterRepository {
+        -AsyncSession session
+        +get_unclustered(tenant_id) list~MediaIdentity~
+        +get_clusters_with_centroids(tenant_id) list~ClusterSearchEntry~
+        +get_clusters_with_representatives(tenant_id) dict
+        +save_cluster(cluster) void
+    }
+    
+    class ClusteringSettings {
+        +float similarity_threshold
+        +float complete_link_min_floor
+        +float complete_link_avg_threshold
+        +int min_representatives_for_maturity
+        +float member_validation_min_floor
+        +bool early_stage_suggestion_enabled
+        +int hdbscan_max_batch_size
+    }
+
+    EmbeddingProvider <|.. InsightFaceProvider : implements
+    EmbeddingProvider <|.. ArcFaceProvider : implements
+    
+    ScanService --> EmbeddingProvider : uses
+    ClusterService --> ClusterRepository : uses
+    AssignmentGate --> ClusteringSettings : configured by
+
+    %% ---------------------------------------------------------------------------
+    %% API LAYER - FastAPI routers
+    %% ---------------------------------------------------------------------------
+    
+    class AnalyzeRouter {
+        +POST /recognition/analyze
+        +GET /recognition/jobs/{id}
+    }
+    
+    class ClusterRouter {
+        +POST /recognition/clustering/jobs
+        +GET /recognition/clusters
+        +PATCH /recognition/clusters/{id}
+    }
+    
+    class SuggestionRouter {
+        +GET /recognition/identities/{id}/suggestions
+        +POST /recognition/suggestions/{id}/accept
+        +POST /recognition/suggestions/{id}/reject
+    }
+
+    AnalyzeRouter --> ScanService : uses
+    AnalyzeRouter --> JobService : uses
+    ClusterRouter --> ClusterService : uses
+    SuggestionRouter --> SuggestionService : uses
+```

@@ -207,6 +207,34 @@ class IdentityClusteringService:
 
         return new_threshold
 
+    def _log_clustering_thresholds(self, job_id: UUID, cluster_count: int) -> None:
+        """Log all clustering thresholds at the start of a batch job.
+
+        This provides a snapshot of configuration for debugging and allows
+        correlating clustering decisions with the thresholds in effect.
+        """
+        s = self.settings
+        adaptive_threshold = s.compute_adaptive_threshold(cluster_count)
+
+        logger.info(
+            "[job=%s] Clustering thresholds: "
+            "similarity=%.4f (adaptive=%.4f), "
+            "complete_link_min=%.4f, complete_link_avg=%.4f, "
+            "member_validation=%.4f (floor=%.4f), "
+            "early_stage_high_conf=%.4f, "
+            "cluster_count=%d, maturity_point=%d",
+            job_id,
+            s.similarity_threshold,
+            adaptive_threshold,
+            s.complete_link_min_floor,
+            s.complete_link_avg_threshold,
+            s.member_validation_threshold,
+            s.member_validation_min_floor,
+            s.early_stage_high_confidence_threshold,
+            cluster_count,
+            s.adaptive_threshold_maturity_point,
+        )
+
     # =========================================================================
     # Main clustering entry point
     # =========================================================================
@@ -240,6 +268,7 @@ class IdentityClusteringService:
         if unclustered_count <= self.settings.ward_sync_batch_limit:
             # Sync path - generate a job_id for log correlation
             job_id = uuid4()
+            self._log_clustering_thresholds(job_id, len(existing_clusters))
             logger.info("[job=%s] Starting sync clustering for %d identities", job_id, unclustered_count)
             unclustered = await self.repository.get_unclustered_identities()
             clusters = await self._batch_processor.process_clustering_batch(unclustered, job_id=job_id)
@@ -259,8 +288,10 @@ class IdentityClusteringService:
             }
 
         # Async path
+        job_id = uuid4()
+        self._log_clustering_thresholds(job_id, len(existing_clusters))
         unclustered = await self.repository.get_unclustered_identities()
-        logger.info("Routing %d identities to async clustering path", len(unclustered))
+        logger.info("[job=%s] Routing %d identities to async clustering path", job_id, len(unclustered))
         job = await self._job_service.enqueue_clustering_job(unclustered)
         self._log_telemetry(
             {

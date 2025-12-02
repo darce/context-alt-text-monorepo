@@ -94,11 +94,34 @@ No existing install base means full latitude to delete experimental features. Pr
 - Refactor while keeping tests green
 - Do NOT write tests just to verify you wrote the code you wrote
 
-### 2. Small Vertical Slices
+### 2. Scaffolding First (MANDATORY)
+
+**Before writing any implementation or tests, scaffold all interfaces and contracts.**
+
+- Add function/method signatures with complete type hints
+- Write comprehensive docstrings (Args, Returns, Raises, Examples)
+- Use `raise NotImplementedError("TODO: ...")` as initial body
+- Commit after scaffolding each class/function
+
+**This applies to ALL new code**:
+- Backend: Python functions, classes, methods
+- Frontend: TypeScript functions, React components, hooks
+- Tests: Test function signatures and fixtures
+
+**Why scaffolding first?**
+- Defines clear contracts before implementation details
+- Enables test-writing without implementation dependencies
+- Creates reviewable architecture (review signatures before logic)
+- Supports parallel development (multiple devs working on different functions)
+- Provides early feedback on API design
+
+**Enforcement**: Task checklists MUST include a "Phase 0: Scaffolding" section that is completed before implementation phases.
+
+### 3. Small Vertical Slices
 
 Implement only the minimum needed to make the current test pass. Avoid speculative features.
 
-### 3. Explicit Interfaces
+### 4. Explicit Interfaces
 
 Introduce abstractions (providers, services, interfaces) before integrating remote or hard-to-mock concerns:
 
@@ -116,17 +139,29 @@ interface RecognitionService {
 }
 ```
 
-### 4. Deterministic Tests
+### 5. Deterministic Tests
 
 No network calls, randomness, or time-based logic without controlled seams/mocks. Tests must produce identical results on every run.
 
-### 5. User Consent for Remote Operations
+### 6. User Consent for Remote Operations
 
 Never call remote recognition services or sync operations without explicit user action. Provide immediate feedback on success/failure.
 
-### 6. No Fabricated Data
+### No Fabricated Data
 
 Never fabricate benchmark numbers, latency claims, or metrics. If data is unavailable, return an explicit empty state or error. Document measurement methods and timestamps.
+
+### No False Claims of Bug Fixes
+
+**Never claim a bug is fixed without verifying in production/staging logs.**
+
+- A unit test passing does NOT prove a bug is fixed in production
+- A synthetic verification script does NOT prove real-world behavior changed
+- If asked to verify a fix, check ACTUAL logs from the running system
+- If the bug is still present in logs, the fix is NOT complete — period
+- Do not mark tasks as "✅ COMPLETE" based on theoretical analysis
+
+**The "Cam Grant domination" bug (December 2025) was falsely claimed as fixed when 21+ false positives were still appearing in production logs. This is unacceptable.**
 
 ---
 
@@ -135,15 +170,29 @@ Never fabricate benchmark numbers, latency claims, or metrics. If data is unavai
 ### Slice Checklist
 
 1. Identify the roadmap epic you are advancing
-2. **Write failing tests first** (PHPUnit, Vitest, or integration)
-3. If remote dependencies exist, add a provider interface + mock
-4. Implement minimal production code to pass tests
-5. Refactor for clarity while tests stay green
-6. Update UML diagrams if architecture changed
-7. Security pass: nonce/capability checks, escape/sanitize
-8. Accessibility pass: keyboard navigation, ARIA labels
-9. Run full test suite locally before committing
-10. Commit with Conventional Commits format
+2. **Scaffold first**: Create class/function signatures with type hints and docstrings BEFORE implementation
+3. **Write failing tests first** (PHPUnit, Vitest, or integration) - **TDD is mandatory, not optional**
+4. If remote dependencies exist, add a provider interface + mock
+5. Implement minimal production code to pass tests (Red → Green → Refactor)
+6. Refactor for clarity while tests stay green
+7. Update UML diagrams if architecture changed
+8. Security pass: nonce/capability checks, escape/sanitize
+9. Accessibility pass: keyboard navigation, ARIA labels
+10. Run full test suite locally before committing
+11. Commit with Conventional Commits format
+
+**Development Approach: Gradual Layering**
+
+- **DO NOT** implement top-to-bottom (entire feature at once)
+- **DO** scaffold interfaces, classes, and function signatures first
+- **DO** implement in thin layers: signature → tests → minimal implementation → refactor
+- **DO** commit frequently (per-layer, not per-feature)
+
+This ensures:
+- Clear contracts before implementation details
+- Testable interfaces from the start
+- Incremental progress with working checkpoints
+- Easier code review (smaller, focused diffs)
 
 ### Conventional Commits
 

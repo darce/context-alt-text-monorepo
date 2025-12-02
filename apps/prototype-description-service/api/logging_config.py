@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
+import os
 import sys
 from pathlib import Path
 from typing import Any
@@ -11,6 +12,12 @@ from typing import Any
 LOG_DIR = Path(__file__).resolve().parents[1] / "logs"
 LOG_DIR.mkdir(exist_ok=True)
 LOG_FILE = LOG_DIR / "recognition.log"
+
+
+def _is_test_environment() -> bool:
+    """Check if we're running in a test environment."""
+    # pytest sets this when running tests
+    return "pytest" in sys.modules or os.environ.get("PYTEST_CURRENT_TEST") is not None
 
 
 class ContextualFormatter(logging.Formatter):
@@ -67,7 +74,12 @@ def configure_logging(level: str = "INFO") -> None:
 
     Args:
         level: Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)
+
+    Note:
+        File logging is automatically disabled during tests to prevent
+        test output from polluting production log files.
     """
+    is_test = _is_test_environment()
 
     root = logging.getLogger()
     root.setLevel(getattr(logging, level.upper()))
@@ -82,17 +94,44 @@ def configure_logging(level: str = "INFO") -> None:
     console_handler.addFilter(recognition_filter)
     root.addHandler(console_handler)
 
-    # File handler: detailed context with timestamps
-    file_handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3)
-    file_handler.setLevel(getattr(logging, level.upper()))
-    file_handler.setFormatter(ContextualFormatter("%(asctime)s %(levelname)s %(name)s - %(message)s"))
-    file_handler.addFilter(recognition_filter)
-    root.addHandler(file_handler)
+    # File handler: detailed context with timestamps (skip during tests)
+    if not is_test:
+        file_handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3)
+        file_handler.setLevel(getattr(logging, level.upper()))
+        file_handler.setFormatter(ContextualFormatter("%(asctime)s %(levelname)s %(name)s - %(message)s"))
+        file_handler.addFilter(recognition_filter)
+        root.addHandler(file_handler)
 
     # Set specific loggers to INFO to see diagnostic output
     logging.getLogger("recognition.application").setLevel(logging.INFO)
     logging.getLogger("recognition.infrastructure").setLevel(logging.INFO)
     logging.getLogger("db").setLevel(logging.INFO)
+
+
+def log_db_reset(message: str = "Database reset via reset_dev_db.sh") -> None:
+    """Log a database reset event directly to the log file.
+
+    This can be called from shell scripts via:
+        python -c "from api.logging_config import log_db_reset; log_db_reset()"
+
+    Args:
+        message: Custom message to log (optional)
+    """
+    LOG_DIR.mkdir(exist_ok=True)
+
+    # Create a dedicated handler that bypasses test detection
+    # since this is explicitly called from a shell script
+    handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3)
+    handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s"))
+
+    db_logger = logging.getLogger("db.reset")
+    db_logger.setLevel(logging.INFO)
+    db_logger.addHandler(handler)
+
+    db_logger.info("=== %s ===", message)
+
+    handler.close()
+    db_logger.removeHandler(handler)
 
 
 def enable_debug_logging() -> None:

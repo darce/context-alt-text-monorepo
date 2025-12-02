@@ -151,7 +151,7 @@ async def analyze_media(
 
 class ClusterSummaryResponse(BaseModel):
     id: str
-    label: str
+    label: str | None = None
     is_auto_label: bool = False
     identity_count: int
     member_ids: list[str]

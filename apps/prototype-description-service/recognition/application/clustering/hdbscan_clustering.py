@@ -106,6 +106,9 @@ class HDBSCANClustering:
         similarity_matrix = np.dot(embeddings, embeddings.T)
         distance_matrix = 1.0 - similarity_matrix
 
+        # HDBSCAN requires float64 - convert from float32
+        distance_matrix = distance_matrix.astype(np.float64)
+
         # Clip distances and ensure valid values for HDBSCAN
         # Also add small epsilon to diagonal to avoid numerical issues
         distance_matrix = np.clip(distance_matrix, 0.0, 2.0)

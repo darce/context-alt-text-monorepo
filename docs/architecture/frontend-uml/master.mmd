@@ -1,92 +1,82 @@
----
-title: Frontend Master Architecture
----
-flowchart TB
-    %% Styles for WCAG Contrast
-    classDef external fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
-    classDef page fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
-    classDef component fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
-    classDef hook fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
-    classDef api fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
-    classDef type fill:#eceff1,stroke:#263238,stroke-width:2px,color:#000
 
-    subgraph Config["Configuration"]
-        window["window.AltContextAdmin"]:::external
-        api_config["ApiConfig\n(nonce, endpoints)"]:::external
+graph TB
+    %% =======================================================================
+    %% WORDPRESS PLUGIN FRONTEND V4.2.4 - MASTER OVERVIEW
+    %% Updated: December 6, 2025
+    %% Status: Core implementation complete
+    %% =======================================================================
+
+    subgraph Pages["React Pages ✅"]
+        Dashboard["DashboardPage<br/>Overview & Stats"]
+        Workbench["WorkbenchPage<br/>Media Selection & Clustering"]
+        Roster["RosterPage<br/>Identity Management"]
     end
 
-    subgraph Pages["Admin Pages"]
-        workbench["WorkbenchPage\n(Scan, Batch, Confirm)"]:::page
-        roster["RosterPage\n(Entries, Clusters)"]:::page
+    subgraph WorkbenchComponents["Workbench Components ✅"]
+        MediaSelection["MediaSelection<br/>Grid view, multi-select"]
+        IdentityClusterList["IdentityClusterList<br/>Cluster cards with faces"]
+        TrainingBanner["TrainingStageBanner<br/>Adaptive threshold display"]
+        Panels["Panels<br/>Collapsible sections"]
     end
 
-    subgraph WorkbenchUI["Workbench Components"]
-        media_sel["MediaSelection"]:::component
-        scan_panel["ScanActionPanel"]:::component
-        cluster_list["IdentityClusterList"]:::component
-        cluster_item["IdentityClusterItem"]:::component
-        suggestion["SuggestionReviewPanel"]:::component
-        training["TrainingStageBanner"]:::component
-        batch["BatchPanel"]:::component
-        confirm["ConfirmPanel"]:::component
+    subgraph APILayer["API Layer ✅"]
+        ScanApi["scanApi<br/>POST /analyze<br/>GET /jobs/{id}"]
+        ClusterApi["clusterApi<br/>POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}"]
+        IdentityApi["identityApi<br/>GET /media/identities<br/>GET /suggestions"]
+        RosterApi["rosterApi<br/>Roster CRUD operations"]
     end
 
-    subgraph RosterUI["Roster Components"]
-        grid["ClusterGrid"]:::component
-        drawer["ClusterDrawerPanel"]:::component
+    subgraph Hooks["React Hooks ✅"]
+        UseRecognition["useRecognitionHooks<br/>Scan & cluster mutations"]
+        UseJobHistory["useRecognitionJobHistory<br/>Job polling & progress"]
+        UseMediaIdentities["useMediaIdentities<br/>Identity fetching"]
+        UseWorkbenchMedia["useWorkbenchMedia<br/>Media grid state"]
+        UseFilters["useWorkbenchFilters<br/>Filter state management"]
+        UseSelection["useMediaSelectionState<br/>Multi-select state"]
     end
 
-    subgraph Hooks["React Hooks"]
-        rec_hooks["useRecognitionHooks\n(scan, cluster, status)"]:::hook
-        job_hooks["useRecognitionJobHistory"]:::hook
-        media_hooks["useWorkbenchMedia"]:::hook
-        filter_hooks["useWorkbenchFilters"]:::hook
-        cluster_hooks["useClusterMutations\n(merge, split, label)"]:::hook
-        roster_hooks["useRosterEntries"]:::hook
+    subgraph PHPProxy["WordPress PHP Proxy ✅"]
+        RecognitionController["RecognitionController<br/>REST route registration"]
+        ProxyController["RecognitionProxyController<br/>Forward to backend"]
+        ApiClass["Api Class<br/>Auth & headers"]
     end
 
-    subgraph API["API Layer"]
-        http["HttpClient"]:::api
-        rec_api["RecognitionApi"]:::api
-        roster_api["RosterApi"]:::api
-        scan_api["ScanApi"]:::api
+    subgraph Backend["Recognition Service Backend"]
+        BackendAPI[("FastAPI<br/>/recognition/*")]
     end
 
-    %% Configuration Flow
-    window --> api_config
-    api_config --> http
+    %% Page to Component connections
+    Workbench --> MediaSelection
+    Workbench --> IdentityClusterList
+    Workbench --> TrainingBanner
+    Workbench --> Panels
 
-    %% Page Composition
-    workbench --> media_sel
-    workbench --> scan_panel
-    workbench --> training
-    workbench --> suggestion
-    workbench --> batch
-    workbench --> confirm
-    
-    confirm --> cluster_list
-    cluster_list --> cluster_item
+    %% Component to Hook connections
+    MediaSelection --> UseWorkbenchMedia
+    MediaSelection --> UseSelection
+    IdentityClusterList --> UseMediaIdentities
+    TrainingBanner --> UseRecognition
 
-    roster --> grid
-    roster --> drawer
+    %% Hook to API connections
+    UseRecognition --> ScanApi
+    UseRecognition --> ClusterApi
+    UseJobHistory --> ScanApi
+    UseMediaIdentities --> IdentityApi
 
-    %% Hook Usage
-    workbench --> rec_hooks
-    workbench --> job_hooks
-    workbench --> media_hooks
-    workbench --> filter_hooks
-    
-    cluster_item --> cluster_hooks
-    suggestion --> cluster_hooks
-    
-    roster --> roster_hooks
+    %% API to Proxy connections
+    ScanApi --> RecognitionController
+    ClusterApi --> RecognitionController
+    IdentityApi --> RecognitionController
+    RecognitionController --> ProxyController
+    ProxyController --> ApiClass
 
-    %% API Integration
-    rec_hooks --> rec_api
-    rec_hooks --> scan_api
-    cluster_hooks --> rec_api
-    roster_hooks --> roster_api
-    
-    rec_api --> http
-    roster_api --> http
-    scan_api --> http
+    %% Proxy to Backend
+    ApiClass --> BackendAPI
+
+    %% Styling
+    style Pages fill:#e3f2fd,stroke:#0d47a1,color:#0d47a1
+    style WorkbenchComponents fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style APILayer fill:#fff3e0,stroke:#f57c00,color:#e65100
+    style Hooks fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    style PHPProxy fill:#fce4ec,stroke:#ad1457,color:#880e4f
+    style Backend fill:#e0e0e0,stroke:#616161,color:#424242

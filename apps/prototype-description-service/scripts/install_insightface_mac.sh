@@ -1,15 +1,19 @@
 #!/usr/bin/env bash
+# Install InsightFace on macOS Apple Silicon with correct SDK paths.
+# onnxruntime is installed via pyproject.toml dependencies.
 
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PROJECT_ROOT="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PYTHON_BIN="${PYTHON_BIN:-python}"
-INSIGHTFACE_SPEC="${INSIGHTFACE_SPEC:-insightface==0.7.3}"
+
+# Extract insightface version from pyproject.toml (e.g., "insightface>=0.7.3,<1.0.0" -> "insightface>=0.7.3")
+INSIGHTFACE_SPEC="${INSIGHTFACE_SPEC:-$(grep -o '"insightface[^"]*"' "${PROJECT_ROOT}/pyproject.toml" | head -1 | tr -d '"' | sed 's/,<.*//')}"
 
 if [[ $(uname -s) != "Darwin" || $(uname -m) != "arm64" ]]; then
-  echo "[prototype-install-insightface] Apple Silicon macOS not detected; skipping specialized build." >&2
-  echo "[prototype-install-insightface] Run '${PYTHON_BIN} -m pip install ${INSIGHTFACE_SPEC}' directly instead." >&2
+  echo "[install-insightface] Apple Silicon macOS not detected; skipping specialized build." >&2
+  echo "[install-insightface] Run '${PYTHON_BIN} -m pip install ${INSIGHTFACE_SPEC}' directly instead." >&2
   exit 0
 fi
 
@@ -29,12 +33,13 @@ if [[ -z "${SDKROOT}" || ! -d "${SDKROOT}" ]]; then
   exit 1
 fi
 
-echo "[prototype-install-insightface] Using SDK at ${SDKROOT}" >&2
+echo "[install-insightface] Using SDK at ${SDKROOT}" >&2
 
 EXTRA_CFLAGS="-isysroot ${SDKROOT} -I${SDKROOT}/usr/include -I${SDKROOT}/usr/include/c++/v1"
 EXTRA_CXXFLAGS="${EXTRA_CFLAGS} -stdlib=libc++"
 EXTRA_LDFLAGS="-isysroot ${SDKROOT} -L${SDKROOT}/usr/lib"
 
+echo "[install-insightface] Installing ${INSIGHTFACE_SPEC} with SDK flags..." >&2
 env \
   SDKROOT="${SDKROOT}" \
   CFLAGS="${EXTRA_CFLAGS} ${CFLAGS:-}" \
@@ -42,4 +47,4 @@ env \
   LDFLAGS="${EXTRA_LDFLAGS} ${LDFLAGS:-}" \
   "${PYTHON_BIN}" -m pip install --no-cache-dir "${INSIGHTFACE_SPEC}"
 
-echo "[prototype-install-insightface] insightface installation complete." >&2
+echo "[install-insightface] InsightFace installation complete." >&2

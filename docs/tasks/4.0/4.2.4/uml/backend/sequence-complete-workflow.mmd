@@ -2,8 +2,9 @@ sequenceDiagram
     autonumber
     
     %% =======================================================================
-    %% RECOGNITION SERVICE V2 - COMPLETE WORKFLOW
+    %% RECOGNITION SERVICE V4.2.4 - COMPLETE WORKFLOW
     %% From media selection to cluster labeling
+    %% See also: ../frontend/sequence-workflow.mmd for WordPress client flows
     %% =======================================================================
     
     actor Admin
@@ -72,7 +73,7 @@ sequenceDiagram
     DB-->>Cluster: representatives_by_cluster
     
     %% Discovery Phase
-    rect rgb(240, 248, 255)
+    rect rgb(220, 235, 250)
         Note over Cluster: Discovery Phase (Uses Face-Only Embeddings)
         Cluster->>Cluster: RepresentativeDiscovery.discover()
         Cluster->>Cluster: CentroidDiscovery.discover()
@@ -81,7 +82,7 @@ sequenceDiagram
     end
     
     %% Evaluation Phase
-    rect rgb(255, 248, 240)
+    rect rgb(255, 235, 215)
         Note over Cluster,Gate: Evaluation Phase (Unified Gate)
         loop For each candidate
             Cluster->>Gate: evaluate(candidate)

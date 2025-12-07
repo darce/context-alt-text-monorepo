@@ -216,27 +216,27 @@ async def get_optional_session(
 ) -> AsyncIterator[AsyncSession | None]:
     """Best-effort session provider; returns None when the database is unavailable."""
     async for session in _get_session():
+        # Set tenant context inside the generator scope
         if tenant_id:
             await set_tenant_context(session, uuid.UUID(str(tenant_id)))
-    try:
-        await session.execute(text("SELECT 1"))
-    except Exception:
-        yield None
-        return
-    try:
-        yield session
-        commit = getattr(session, "commit", None)
-        if callable(commit):
-            await commit()
-    except Exception:
-        rollback = getattr(session, "rollback", None)
-        if callable(rollback):
-            await rollback()
-        raise
-    finally:
-        if tenant_id:
-            await clear_tenant_context(session)
-    return
+        try:
+            await session.execute(text("SELECT 1"))
+        except Exception:
+            yield None
+            return
+        try:
+            yield session
+            commit = getattr(session, "commit", None)
+            if callable(commit):
+                await commit()
+        except Exception:
+            rollback = getattr(session, "rollback", None)
+            if callable(rollback):
+                await rollback()
+            raise
+        finally:
+            if tenant_id:
+                await clear_tenant_context(session)
 
 
 async def require_auth(

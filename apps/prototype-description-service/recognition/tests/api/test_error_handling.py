@@ -57,9 +57,12 @@ def test_unhandled_exceptions_return_structured_error(monkeypatch) -> None:
     async def _no_session():
         yield FakeSession()
 
+    async def _exploding_job_service():
+        return ExplodingJobService()
+
     app.dependency_overrides[dependencies.get_session] = _no_session
     app.dependency_overrides[dependencies.get_optional_session] = _no_session
-    app.dependency_overrides[dependencies.get_job_service_dependency] = lambda: ExplodingJobService()
+    app.dependency_overrides[dependencies.get_job_service_dependency] = _exploding_job_service
 
     client = TestClient(app, raise_server_exceptions=False)
     resp = client.get("/recognition/jobs/job-xyz", headers={"X-Tenant-ID": str(uuid.uuid4())})

@@ -48,6 +48,10 @@ class FakeSession:
     async def rollback(self) -> None:
         return None
 
+    async def get(self, model_class, pk):  # noqa: ANN001
+        """Stub get method for repository compatibility."""
+        return None
+
 
 class FakeScanService:
     """Fake ScanService that returns completed jobs without persistence."""

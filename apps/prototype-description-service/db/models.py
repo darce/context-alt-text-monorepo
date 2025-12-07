@@ -7,6 +7,7 @@ from datetime import datetime
 
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    JSON,
     Boolean,
     CheckConstraint,
     Float,
@@ -44,6 +45,27 @@ class Tenant(Base):
     )
     identity_suggestions: Mapped[list[IdentitySuggestion]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
+    )
+    api_keys: Mapped[list[ApiKey]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
+
+
+class ApiKey(Base):
+    __tablename__ = "api_keys"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    api_key_hash: Mapped[str] = mapped_column(String(128), nullable=False, unique=True)
+    rate_limit_tier: Mapped[str | None] = mapped_column(String(50))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    last_used_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    tenant: Mapped[Tenant] = relationship(back_populates="api_keys")
+
+    __table_args__ = (
+        Index("idx_api_keys_tenant", "tenant_id"),
+        Index("idx_api_keys_hash", "api_key_hash"),
     )
 
 
@@ -220,7 +242,7 @@ class IdentityScanJob(Base):
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
-    media_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), nullable=False)
+    media_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer).with_variant(JSON(), "sqlite"), nullable=False)
     total_media: Mapped[int] = mapped_column(Integer, nullable=False)
     processed_media: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     identities_detected: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
@@ -253,12 +275,66 @@ class IdentityClusteringJob(Base):
             "status IN ('pending', 'running', 'completed', 'failed')",
             name="valid_status",
         ),
-        Index("idx_scan_jobs_tenant", "tenant_id"),
+        Index("idx_clustering_jobs_tenant", "tenant_id"),
         Index(
-            "idx_scan_jobs_status",
+            "idx_clustering_jobs_status",
             "status",
             postgresql_where=text("status IN ('pending', 'running')"),
         ),
+    )
+
+
+class ClusteringJobReport(Base):
+    __tablename__ = "clustering_job_reports"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    job_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    algorithm: Mapped[str] = mapped_column(String(50), nullable=False)
+    started_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    total_identities: Mapped[int] = mapped_column(Integer, nullable=False)
+    accept_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    suggest_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    reject_count: Mapped[int] = mapped_column(Integer, nullable=False)
+    clusters_created: Mapped[int] = mapped_column(Integer, nullable=False)
+    avg_similarity: Mapped[float | None] = mapped_column(Float)
+    success_rate: Mapped[float] = mapped_column(Float, nullable=False)
+    duration_ms: Mapped[float] = mapped_column(Float, nullable=False)
+    payload: Mapped[dict[str, object]] = mapped_column(JSON, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped[Tenant | None] = relationship()
+
+    __table_args__ = (
+        Index("idx_clustering_reports_tenant", "tenant_id"),
+        Index("idx_clustering_reports_job", "job_id"),
+    )
+
+
+class AssignmentDecision(Base):
+    __tablename__ = "assignment_decisions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), ForeignKey("tenants.id"), nullable=True)
+    identity_id: Mapped[str] = mapped_column(String(64), nullable=False)
+    cluster_id: Mapped[str | None] = mapped_column(String(64))
+    decision: Mapped[str] = mapped_column(String(10), nullable=False)
+    similarity: Mapped[float | None] = mapped_column(Float)
+    reason: Mapped[str | None] = mapped_column(Text)
+    algorithm: Mapped[str | None] = mapped_column(String(50))
+    job_id: Mapped[str | None] = mapped_column(String(64))
+    metadata_json: Mapped[dict[str, object] | None] = mapped_column(JSON)
+    timestamp: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped[Tenant | None] = relationship()
+
+    __table_args__ = (
+        Index("idx_assignment_decisions_tenant", "tenant_id"),
+        Index("idx_assignment_decisions_cluster", "cluster_id"),
+        Index("idx_assignment_decisions_decision", "decision"),
+        Index("idx_assignment_decisions_timestamp", "timestamp"),
     )
 
 
@@ -353,4 +429,6 @@ __all__ = [
     "IdentityMember",
     "IdentityScanJob",
     "IdentitySuggestion",
+    "ClusteringJobReport",
+    "AssignmentDecision",
 ]

@@ -74,6 +74,16 @@ Python FastAPI service providing face recognition using InsightFace models.
 - **Deployment:** Hugging Face Spaces, Docker, or local development
 - **Documentation:** [`apps/recognition-service/README.md`](../apps/recognition-service/README.md)
 
+**Architecture Note:** The recognition service uses a **Face → Identity nomenclature boundary**:
+
+| Layer          | Nomenclature            | Purpose                              |
+| -------------- | ----------------------- | ------------------------------------ |
+| Infrastructure | `Face*`                 | InsightFace-specific detection code  |
+| Domain         | `*Identity`             | Technology-agnostic clustering logic |
+| Seam           | `to_media_identities()` | Transformation point                 |
+
+This allows swapping detection providers (InsightFace → ArcFace, MediaPipe) without changing domain logic. See [ADR-001](architecture/ADR-001-face-identity-nomenclature.md) for details.
+
 #### `wp-context-alt-text/`
 
 WordPress plugin for managing alternative text with AI assistance.
@@ -179,6 +189,7 @@ The monorepo uses a **two-level documentation structure**:
 **Purpose:** Cross-cutting concerns, architecture, system design
 
 **What belongs here:**
+
 - ✅ System architecture (UML diagrams, component diagrams)
 - ✅ API contracts between services
 - ✅ Monorepo-level scripts and tools
@@ -187,6 +198,7 @@ The monorepo uses a **two-level documentation structure**:
 - ✅ Contributor onboarding (this file!)
 
 **What doesn't belong here:**
+
 - ❌ Project-specific how-to guides
 - ❌ API endpoint documentation (belongs in project docs)
 - ❌ Troubleshooting for specific projects
@@ -214,12 +226,14 @@ The monorepo uses a **two-level documentation structure**:
 This organization follows **industry-standard patterns**:
 
 **Similar to:**
+
 - **Express.js** - README (~300 lines) + detailed docs in /docs/
 - **React Router** - README (~200 lines) + API docs, guides, examples
 - **Vue.js** - README (quick start) + comprehensive /docs/ directory
 - **Next.js** - README (overview) + /docs/ with deep-dive guides
 
 **Best Practices:**
+
 - ✅ README is a **doorway** (quick start, links to detailed docs)
 - ✅ Detailed docs live in `/docs/` directory
 - ✅ Related topics consolidated (configuration, development, API, troubleshooting)
@@ -262,6 +276,7 @@ The Context Alt Text system consists of three main components that work together
 **📖 Detailed architecture diagrams:** [`docs/architecture/`](architecture/)
 
 **Key Interactions:**
+
 - WordPress admin UI calls REST API endpoints
 - REST API communicates with recognition service
 - Recognition service analyzes images, returns observations
@@ -308,11 +323,13 @@ All projects include comprehensive test suites. See project-specific documentati
 ### Deploying Changes
 
 **WordPress Plugin:**
+
 - Build assets: `npm run build`
 - Deploy to WordPress hosting
 - Update version number
 
 **Recognition Service:**
+
 - Deploy to Hugging Face Space
 - Update environment variables
 - Test health endpoint
@@ -331,13 +348,16 @@ All projects include comprehensive test suites. See project-specific documentati
 ## Next Steps
 
 **For WordPress Plugin Development:**
+
 - 📖 Read [`apps/wp-context-alt-text/README.md`](../apps/wp-context-alt-text/README.md)
 - 📖 Review [`apps/wp-context-alt-text/docs/development.md`](../apps/wp-context-alt-text/docs/development.md)
 
 **For Recognition Service Development:**
+
 - 📖 Read [`apps/recognition-service/README.md`](../apps/recognition-service/README.md)
 
 **For Architecture/Design:**
+
 - 📖 Explore [`docs/architecture/`](architecture/)
 - 📖 Review [`docs/PROMPTS_INDEX.md`](PROMPTS_INDEX.md) for agentic development
 

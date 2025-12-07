@@ -301,12 +301,13 @@ class RecognitionProxyController {
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$query = array(
+		$body = array(
 			'tenant_id' => $this->get_tenant_id(),
+			'mode'      => 'sync',
 		);
 
 		// Use the hybrid clustering endpoint which runs Chinese Whispers for unmatched identities
-		return $this->proxy_request( 'POST', '/recognition/clustering/jobs', array(), $query );
+		return $this->proxy_request( 'POST', '/recognition/clustering/jobs', $body );
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -378,7 +379,27 @@ class RecognitionProxyController {
 			$query['include_debug'] = 'true';
 		}
 
-		return $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query );
+		$response = $this->proxy_request( 'GET', '/recognition/media/identities', array(), $query );
+
+		// Transform flat array response into identities_by_media format expected by frontend
+		if ( $response instanceof WP_REST_Response && $response->get_status() === 200 ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$grouped = array();
+				foreach ( $data as $identity ) {
+					if ( isset( $identity['media_id'] ) ) {
+						$media_key = (string) $identity['media_id'];
+						if ( ! isset( $grouped[ $media_key ] ) ) {
+							$grouped[ $media_key ] = array();
+						}
+						$grouped[ $media_key ][] = $identity;
+					}
+				}
+				return new WP_REST_Response( array( 'identities_by_media' => $grouped ), 200 );
+			}
+		}
+
+		return $response;
 	}
 
 	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {

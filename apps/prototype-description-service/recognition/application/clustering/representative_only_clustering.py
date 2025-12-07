@@ -27,9 +27,9 @@ from collections.abc import Awaitable, Callable, Sequence
 from uuid import UUID
 
 import numpy as np
+from recognition.application.clustering.clustering_settings import ClusteringSettings
 
 from db.models import IdentityCluster, MediaIdentity
-from recognition.application.clustering.clustering_settings import ClusteringSettings
 
 logger = logging.getLogger(__name__)
 

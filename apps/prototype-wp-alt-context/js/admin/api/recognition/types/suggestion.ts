@@ -44,6 +44,7 @@ export interface SuggestionActionResponse {
  * Thresholds start strict (early stage) and relax as more identities are labeled.
  */
 export interface TrainingStageResponse {
+  tenant_id: string;
   stage: 'early' | 'developing' | 'mature';
   stage_label: string;
   cluster_count: number;

@@ -56,6 +56,7 @@ export interface DetectedIdentity {
   similarity: number | null;
   detected_at?: string;
   thumbnail_url?: string | null;
+  media_url?: string | null;
   debug_metrics?: DebugMetrics | null;
 }
 

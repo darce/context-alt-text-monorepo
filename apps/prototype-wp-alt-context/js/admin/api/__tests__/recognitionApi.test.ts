@@ -94,16 +94,20 @@ describe('recognitionApi', () => {
     });
   });
 
-  it('normalizes job_id from job_ids array', async () => {
-    fetchApiMock.mockResolvedValue({
-      job_id: null,
-      job_ids: ['job-1', 'job-2'],
-      status: 'queued',
-      total_media: 20,
-    });
+  it('returns job response from backend', async () => {
+    const mockResponse = {
+      id: 'job-1',
+      type: 'analyze',
+      status: 'pending',
+      progress: { completed: 0, total: 20 },
+      started_at: '2025-01-01T00:00:00Z',
+      finished_at: null,
+    };
+    fetchApiMock.mockResolvedValue(mockResponse);
 
     const result = await scanFaces({ mediaIds: [1, 2] });
-    expect(result.job_id).toBe('job-1');
-    expect(result.job_ids).toEqual(['job-1', 'job-2']);
+    expect(result.id).toBe('job-1');
+    expect(result.status).toBe('pending');
+    expect(result.progress?.total).toBe(20);
   });
 });

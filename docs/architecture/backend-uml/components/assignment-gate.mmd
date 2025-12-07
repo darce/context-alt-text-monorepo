@@ -1,0 +1,55 @@
+flowchart TD
+    subgraph Discovery["Discovery Phase (Find Candidates)"]
+        RD[RepresentativeDiscovery]
+        CD[CentroidDiscovery]
+        GD[GraphDiscovery<br/>HDBSCAN/CW]
+    end
+    
+    RD --> Candidates
+    CD --> Candidates
+    GD --> Candidates
+    
+    Candidates[AssignmentCandidate<br/>identity, cluster, similarity]
+    
+    Candidates --> Gate
+    
+    subgraph Gate["AssignmentGate (Single Path)"]
+        direction TB
+        
+        MC{MaturityCheck<br/>cluster has ≥2 reps?}
+        CLC{CompleteLinkCheck<br/>min_sim ≥ 0.80?<br/>avg_sim ≥ 0.85?}
+        MDC{MemberDistribution<br/>avg_member_sim OK?}
+        CC{ConfidenceCheck<br/>early stage + low confidence?}
+        
+        MC -->|No: 1 rep only| SuggestM[SUGGEST<br/>Immature cluster]
+        MC -->|Yes: ≥2 reps| CLC
+        
+        CLC -->|Fail: min too low| SuggestCL[SUGGEST<br/>Complete-link failed]
+        CLC -->|Pass| MDC
+        
+        MDC -->|Fail: poor fit| Reject[REJECT<br/>Doesn't fit cluster]
+        MDC -->|Pass| CC
+        
+        CC -->|Early stage + borderline| SuggestCC[SUGGEST<br/>Early stage caution]
+        CC -->|Mature or high confidence| Accept[ACCEPT]
+    end
+    
+    Accept --> Writer[AssignmentWriter<br/>Persist to DB]
+    SuggestM --> Sugg[SuggestionService<br/>Create pending]
+    SuggestCL --> Sugg
+    SuggestCC --> Sugg
+    Reject --> Pool[Unclustered Pool<br/>Form new clusters]
+    
+    Writer --> DB[(Database)]
+    Sugg --> DB
+    Pool --> NewClusters[Create New Clusters<br/>via HDBSCAN]
+    NewClusters --> DB
+    
+    %% Styling (WCAG AA compliant - 4.5:1 text contrast, 3:1 graphical contrast)
+    style Gate fill:#fff3e0,stroke:#bf360c,color:#bf360c
+    style Accept fill:#c8e6c9,stroke:#1b5e20,color:#1b5e20
+    style Reject fill:#ffcdd2,stroke:#b71c1c,color:#b71c1c
+    style SuggestM fill:#fff8e1,stroke:#f57f17,color:#e65100
+    style SuggestCL fill:#fff8e1,stroke:#f57f17,color:#e65100
+    style SuggestCC fill:#fff8e1,stroke:#f57f17,color:#e65100
+    style Discovery fill:#e3f2fd,stroke:#0d47a1,color:#0d47a1

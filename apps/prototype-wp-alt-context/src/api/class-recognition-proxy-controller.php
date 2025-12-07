@@ -18,6 +18,7 @@ use function get_site_url;
 use function is_array;
 use function is_wp_error;
 use function md5;
+use function min;
 use function sanitize_text_field;
 use function untrailingslashit;
 use function wp_get_attachment_url;
@@ -311,9 +312,12 @@ class RecognitionProxyController {
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$limit = absint( $request->get_param( 'limit' ) ?? 50 );
+		$limit = min( $limit, 500 ); // Cap to reasonable maximum
+
 		$query = array(
 			'tenant_id' => $this->get_tenant_id(),
-			'limit'     => absint( $request->get_param( 'limit' ) ?? 50 ),
+			'limit'     => $limit,
 			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
 		);
 

@@ -1,5 +1,6 @@
 # syntax=docker/dockerfile:1
 FROM nvidia/cuda:12.8.1-cudnn-devel-ubuntu22.04 as base
+#FROM nvidia/cuda:13.0.2-cudnn-devel-ubuntu24.04 as base
 
 # Set environment variables for non-interactive apt-get
 ENV DEBIAN_FRONTEND=noninteractive

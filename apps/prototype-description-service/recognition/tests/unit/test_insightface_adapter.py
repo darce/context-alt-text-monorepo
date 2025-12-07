@@ -1,0 +1,180 @@
+"""Unit tests for InsightFaceAdapter infrastructure component.
+
+These tests verify the adapter's behavior using mocks, without requiring
+the actual InsightFace model to be installed.
+
+Note: Some tests are skipped if cv2/insightface are not properly installed.
+"""
+
+from __future__ import annotations
+
+from unittest.mock import MagicMock
+
+import numpy as np
+import pytest
+
+# Try to import - skip tests if dependencies are broken
+try:
+    from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
+
+    HAS_ADAPTER = True
+except (ImportError, AttributeError) as e:
+    HAS_ADAPTER = False
+    SKIP_REASON = f"InsightFace adapter dependencies not available: {e}"
+
+
+@pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
+class TestInsightFaceAdapterInit:
+    """Tests for adapter initialization and configuration."""
+
+    def test_adapter_initializes_without_loading_model(self) -> None:
+        """Adapter should not load the model on init (lazy loading)."""
+        adapter = InsightFaceAdapter()
+
+        assert adapter._model_loaded is False
+        assert adapter._app is None
+
+    def test_model_info_returns_settings(self) -> None:
+        """model_info should return configuration without loading model."""
+        adapter = InsightFaceAdapter()
+        info = adapter.model_info()
+
+        assert "model_name" in info
+        assert "device" in info
+        assert "det_thresh" in info
+        assert info["model_loaded"] is False
+
+
+@pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
+class TestInsightFaceAdapterProviders:
+    """Tests for execution provider selection."""
+
+    def test_auto_device_returns_all_providers(self) -> None:
+        """Auto device should return CUDA, CoreML, and CPU providers."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "auto"
+        adapter.settings.insightface.providers = []
+
+        providers = adapter._get_providers()
+
+        assert "CUDAExecutionProvider" in providers
+        assert "CoreMLExecutionProvider" in providers
+        assert "CPUExecutionProvider" in providers
+
+    def test_cuda_device_returns_cuda_and_cpu(self) -> None:
+        """CUDA device should return CUDA and CPU providers."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "cuda"
+        adapter.settings.insightface.providers = []
+
+        providers = adapter._get_providers()
+
+        assert providers == ["CUDAExecutionProvider", "CPUExecutionProvider"]
+
+    def test_mps_device_returns_coreml_and_cpu(self) -> None:
+        """MPS device should return CoreML and CPU providers."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "mps"
+        adapter.settings.insightface.providers = []
+
+        providers = adapter._get_providers()
+
+        assert providers == ["CoreMLExecutionProvider", "CPUExecutionProvider"]
+
+    def test_cpu_device_returns_cpu_only(self) -> None:
+        """CPU device should return only CPU provider."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "cpu"
+        adapter.settings.insightface.providers = []
+
+        providers = adapter._get_providers()
+
+        assert providers == ["CPUExecutionProvider"]
+
+    def test_explicit_providers_override_device(self) -> None:
+        """Explicit providers list should override device setting."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.providers = ["CustomProvider"]
+
+        providers = adapter._get_providers()
+
+        assert providers == ["CustomProvider"]
+
+
+@pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
+class TestInsightFaceAdapterContextId:
+    """Tests for context ID (GPU index) selection."""
+
+    def test_cuda_device_returns_gpu_context(self) -> None:
+        """CUDA device should return ctx_id=0 for GPU."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "cuda"
+
+        ctx_id = adapter._get_ctx_id()
+
+        assert ctx_id == 0
+
+    def test_auto_device_returns_gpu_context(self) -> None:
+        """Auto device should return ctx_id=0 (prefer GPU)."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "auto"
+
+        ctx_id = adapter._get_ctx_id()
+
+        assert ctx_id == 0
+
+    def test_cpu_device_returns_cpu_context(self) -> None:
+        """CPU device should return ctx_id=-1."""
+        adapter = InsightFaceAdapter()
+        adapter.settings.insightface.device = "cpu"
+
+        ctx_id = adapter._get_ctx_id()
+
+        assert ctx_id == -1
+
+
+@pytest.mark.skipif(not HAS_ADAPTER, reason="InsightFace adapter dependencies not available")
+class TestDetectedFaceDataclass:
+    """Tests for the DetectedFace dataclass."""
+
+    def test_detected_face_holds_all_fields(self) -> None:
+        """DetectedFace should store all detection metadata."""
+        embedding = np.random.randn(512).astype(np.float32)
+        landmarks = np.random.randn(5, 2).astype(np.float32)
+
+        face = DetectedFace(
+            bbox=(10, 20, 100, 150),
+            confidence=0.95,
+            embedding_512=embedding,
+            pose=(5.0, -10.0, 2.0),
+            age=35,
+            gender=1,
+            landmarks=landmarks,
+        )
+
+        assert face.bbox == (10, 20, 100, 150)
+        assert face.confidence == 0.95
+        np.testing.assert_array_equal(face.embedding_512, embedding)
+        assert face.pose == (5.0, -10.0, 2.0)
+        assert face.age == 35
+        assert face.gender == 1
+        np.testing.assert_array_equal(face.landmarks, landmarks)
+
+    def test_optional_fields_can_be_none(self) -> None:
+        """Optional fields (pose, age, gender, landmarks) can be None."""
+        embedding = np.random.randn(512).astype(np.float32)
+
+        face = DetectedFace(
+            bbox=(10, 20, 100, 150),
+            confidence=0.95,
+            embedding_512=embedding,
+            pose=None,
+            age=None,
+            gender=None,
+            landmarks=None,
+        )
+
+        assert face.pose is None
+        assert face.age is None
+        assert face.gender is None
+        assert face.landmarks is None

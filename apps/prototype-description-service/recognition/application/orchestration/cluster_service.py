@@ -5,6 +5,7 @@ ClusterService orchestrates discovery, gate evaluation, and assignment writes.
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
@@ -23,6 +24,8 @@ from recognition.application.discovery.graph import GraphDiscoveryResult
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
+
+logger = logging.getLogger(__name__)
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.observability import ClusteringLogger, DecisionType
 from recognition.observability.reports import BatchJobReport
@@ -216,10 +219,12 @@ class ClusterService:
 
     async def cluster_unclustered_identities(self, tenant_id: str):
         """Cluster any identities not yet assigned to a cluster."""
+        logger.info("[clustering] cluster_unclustered_identities called with tenant_id=%s", tenant_id)
         job_id = str(generate_id())
         started_at = datetime.now(tz=UTC)
 
         if self._session is None:
+            logger.warning("[clustering] No session available, returning early")
             finished_at = started_at
             return type(
                 "ClusterJobResult",
@@ -245,7 +250,8 @@ class ClusterService:
                 tenant_uuid = uuid.UUID(formatted)
             else:
                 tenant_uuid = uuid.UUID(str(tenant_id))
-        except ValueError:
+        except ValueError as e:
+            logger.error("[clustering] Invalid tenant_id format: %s, error=%s", tenant_id, e)
             finished_at = started_at
             return type(
                 "ClusterJobResult",
@@ -316,12 +322,138 @@ class ClusterService:
             for row in unclustered
         ]
 
-        await self.assignment_writer.persist_new_cluster(
-            tenant_id=tenant_id,
-            identities=domain_identities,
-            similarities=[1.0] * len(domain_identities),
-            algorithm="graph",
+        logger.info(
+            "[clustering] Starting clustering for %d unclustered identities, tenant=%s",
+            len(domain_identities),
+            tenant_id,
         )
+
+        # ============================================================
+        # PHASE 1: Try to match identities to existing cluster representatives
+        # ============================================================
+        from recognition.infrastructure.clustering import DeterministicChineseWhispers
+
+        # Settings for clustering
+        rep_match_threshold = 0.60  # Threshold for representative matching
+        cw_threshold = 0.68  # Threshold for Chinese Whispers clustering
+
+        # Get existing clusters with their representatives
+        existing_clusters = await self.assignment_writer._clusters.get_by_tenant(str(tenant_id), limit=1000, offset=0)
+        logger.info("[clustering] Found %d existing clusters", len(existing_clusters))
+
+        # Build representative embeddings map: cluster_id -> list of representative embeddings
+        rep_embeddings_by_cluster: dict[str, list[np.ndarray]] = {}
+        for cluster in existing_clusters:
+            if cluster.id is None:
+                continue
+            reps = getattr(cluster, "representatives", []) or []
+            if reps:
+                rep_embeddings_by_cluster[cluster.id] = [
+                    np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
+                ]
+
+        # Try to match each identity to existing representatives
+        matched_identities: list[tuple[MediaIdentity, str, float]] = []  # (identity, cluster_id, similarity)
+        remaining_identities: list[MediaIdentity] = []
+
+        for identity in domain_identities:
+            identity_embedding = np.array(identity.embedding, dtype=np.float32)
+            # Normalize for cosine similarity
+            norm = np.linalg.norm(identity_embedding)
+            if norm > 0:
+                identity_embedding = identity_embedding / norm
+
+            best_cluster_id: str | None = None
+            best_similarity = 0.0
+
+            # Compare against all representatives
+            for cluster_id, rep_list in rep_embeddings_by_cluster.items():
+                for rep_emb in rep_list:
+                    rep_norm = np.linalg.norm(rep_emb)
+                    if rep_norm > 0:
+                        rep_emb_normalized = rep_emb / rep_norm
+                    else:
+                        rep_emb_normalized = rep_emb
+                    similarity = float(np.dot(identity_embedding, rep_emb_normalized))
+                    if similarity > best_similarity:
+                        best_similarity = similarity
+                        best_cluster_id = cluster_id
+
+            if best_cluster_id and best_similarity >= rep_match_threshold:
+                matched_identities.append((identity, best_cluster_id, best_similarity))
+            else:
+                remaining_identities.append(identity)
+
+        logger.info(
+            "[clustering] Phase 1 complete: %d matched to existing clusters, %d remaining",
+            len(matched_identities),
+            len(remaining_identities),
+        )
+
+        # Assign matched identities to their clusters
+        assigned_count = 0
+        for identity, cluster_id, similarity in matched_identities:
+            await self.assignment_writer.assign_to_existing_cluster(
+                identity=identity,
+                cluster_id=cluster_id,
+                similarity=similarity,
+            )
+            assigned_count += 1
+            logger.info(
+                "[clustering] Assigned identity %s to cluster %s (similarity=%.4f)",
+                identity.id,
+                cluster_id,
+                similarity,
+            )
+
+        # ============================================================
+        # PHASE 2: Run Chinese Whispers on remaining unmatched identities
+        # ============================================================
+        clusters_created = 0
+        if remaining_identities:
+            logger.info(
+                "[clustering] Phase 2: Running Chinese Whispers on %d remaining identities (threshold=%.2f)",
+                len(remaining_identities),
+                cw_threshold,
+            )
+            embeddings = [i.embedding for i in remaining_identities]
+            cw = DeterministicChineseWhispers(threshold=cw_threshold, max_iterations=20)
+            labels = cw.cluster(embeddings, remaining_identities)
+
+            # Group identities by cluster label
+            cluster_groups: dict[int, list[MediaIdentity]] = {}
+            for identity, label in zip(remaining_identities, labels, strict=False):
+                cluster_groups.setdefault(label, []).append(identity)
+
+            logger.info(
+                "[clustering] Chinese Whispers produced %d clusters from %d identities",
+                len(cluster_groups),
+                len(remaining_identities),
+            )
+
+            # Persist each new cluster
+            for label, members in cluster_groups.items():
+                if members:
+                    logger.info(
+                        "[clustering] Creating cluster for label %d with %d members: %s",
+                        label,
+                        len(members),
+                        [m.id for m in members],
+                    )
+                    await self.assignment_writer.persist_new_cluster(
+                        tenant_id=tenant_id,
+                        identities=members,
+                        similarities=[1.0] * len(members),
+                        algorithm="chinese_whispers",
+                    )
+                    clusters_created += 1
+
+        logger.info(
+            "[clustering] Complete: %d assigned to existing, %d new clusters created",
+            assigned_count,
+            clusters_created,
+        )
+
         clustering_job.total_identities = len(domain_identities)
         clustering_job.processed_identities = len(domain_identities)
         clustering_job.progress = 1.0
@@ -340,7 +472,8 @@ class ClusterService:
                 "finished_at": finished_at,
                 "completed": len(domain_identities),
                 "total": len(domain_identities),
-                "clusters_created": 1,
+                "clusters_created": clusters_created,
+                "assigned_to_existing": assigned_count,
             },
         )()
 

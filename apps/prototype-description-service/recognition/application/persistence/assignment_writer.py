@@ -183,6 +183,53 @@ class AssignmentWriter:
 
         return await self._clusters.update(cluster)
 
+    async def assign_to_existing_cluster(
+        self,
+        identity: MediaIdentity,
+        cluster_id: str,
+        similarity: float,
+    ) -> None:
+        """Assign an identity to an existing cluster via representative match."""
+        cluster = await self._clusters.get_by_id(cluster_id)
+        if not cluster:
+            raise ClusterNotFoundError(cluster_id)
+
+        # Add as member
+        await self._members.add_member(
+            cluster_id=cluster_id,
+            identity_id=identity.id,
+            similarity=similarity,
+        )
+
+        # Optionally add as representative if diverse enough
+        existing_reps = await self._clusters.get_all_representatives(cluster_id)
+        current_count = len(existing_reps) if existing_reps else 0
+
+        if current_count < self._settings.max_representatives_per_cluster:
+            is_diverse = True
+            if existing_reps:
+                identity_vec = np.array(identity.embedding, dtype=np.float32)
+                for rep_embedding in existing_reps:
+                    rep_sim = compute_face_similarity(identity_vec, rep_embedding)
+                    if rep_sim > self._settings.representative_diversity_threshold:
+                        is_diverse = False
+                        break
+
+            if is_diverse:
+                rep = ClusterRepresentative(
+                    id=str(uuid.uuid4()),
+                    cluster_id=cluster_id,
+                    identity_id=identity.id,
+                    embedding=identity.embedding,
+                    created_at=datetime.now(tz=UTC),
+                    tenant_id=identity.tenant_id,
+                )
+                await self._clusters.add_representative(rep)
+
+        # Update member count
+        cluster.member_count += 1
+        await self._clusters.update(cluster)
+
 
 class ClusterNotFoundError(Exception):
     """Raised when a cluster lookup fails."""

@@ -1,81 +1,100 @@
 ---
-title: Prototype Description Service Containers
+title: Prototype Description Service Containers (v4.2.4)
 ---
 flowchart TB
     subgraph api["FastAPI Surface (api/main.py)"]
-        app_factory["create_app()\nlogging + cache bootstrap\nStaticFiles /thumbnails"]
-        recognition_router["recognition/interface_adapters/http\nrecognition_router + suggestion_router"]
-        metrics_router["metrics_router\n/recognition/metrics*"]
-        health_routers["/health + subsystem health\nrecognition / roster / scene"]
+        app_factory["create_app()<br/>logging + middleware"]
+        analyze_router["AnalyzeRouter<br/>/recognition/analyze"]
+        cluster_router["ClusterRouter<br/>/recognition/clusters"]
+        suggestion_router["SuggestionRouter<br/>/recognition/suggestions"]
+        media_router["MediaRouter<br/>/recognition/media"]
+        health_routers["/health + subsystem health"]
     end
 
-    subgraph services["Application Services"]
-        scan_service["IdentityScanService\nchunked scans + persistence"]
-        clustering_service["IdentityClusteringService\nsync/async orchestration"]
-        suggestion_service["SuggestionService\nborderline match queue"]
+    subgraph orchestration["Orchestration Layer"]
+        scan_service["ScanService<br/>face detection + embedding"]
+        cluster_service["ClusterService<br/>cluster_unclustered_identities()<br/>merge_cluster()"]
+        job_service["JobService<br/>scan + clustering jobs"]
     end
 
-    subgraph clustering["Clustering Orchestration"]
-        context_mgr["TenantContextManager\nRLS + centroid refresh"]
-        repository["ClusterRepository\nqueries + job records"]
-        factory["ClusterFactory\ncreate clusters + centroids"]
-        assigner["ClusterAssigner\nmembership + centroid updates"]
-        rep_manager["RepresentativeManager\nstore representative embeddings"]
-        matcher["RepresentativeMatcher\nrep matching + complete-link"]
-        validator["ClusterValidator\nborderline + member checks"]
-        batch_processor["BatchClusteringProcessor\nrep match + graph/HDBSCAN"]
-        job_service["ClusteringJobService\npending jobs + processing"]
+    subgraph discovery["Discovery Layer"]
+        rep_discovery["RepresentativeDiscovery<br/>match against reps"]
+        centroid_discovery["CentroidDiscovery<br/>match against centroids"]
+        graph_discovery["GraphDiscovery<br/>HDBSCAN / Chinese Whispers"]
     end
 
-    subgraph infra["Adapters & Infrastructure"]
-        embedding_provider["FaceEmbeddingProvider\nInsightFace wrapper"]
-        thumbnail_service["ThumbnailService\nbbox crops to filesystem"]
-        async_session["AsyncSession (db/session.py)\nget_session dependency"]
-        postgres["PostgreSQL + pgvector\nRLS policies"]
-        settings["recognition.config.get_settings()\nPydantic settings + YAML/.env"]
+    subgraph assignment["Assignment Layer"]
+        gate["AssignmentGate<br/>evaluate candidates"]
+        checks["Checks: CompleteLinkCheck<br/>MaturityCheck, ConfidenceCheck"]
+        writer["AssignmentWriter<br/>persist assignments"]
+        suggestion_service["SuggestionService<br/>manage suggestions"]
     end
 
-    app_factory --> recognition_router
-    app_factory --> metrics_router
+    subgraph infra["Infrastructure & Adapters"]
+        embedding_service["EmbeddingService<br/>to_media_identities() seam"]
+        insightface["InsightFaceAdapter<br/>FaceDetector + Generator"]
+        cluster_repo["SqlAlchemyClusterRepository"]
+        member_repo["SqlAlchemyMemberRepository"]
+        suggestion_repo["SqlAlchemySuggestionRepository"]
+        async_session["AsyncSession"]
+        postgres["PostgreSQL + pgvector<br/>RLS policies"]
+        settings["ClusteringSettings<br/>thresholds + config"]
+    end
+
+    %% API connections
+    app_factory --> analyze_router
+    app_factory --> cluster_router
+    app_factory --> suggestion_router
+    app_factory --> media_router
     app_factory --> health_routers
 
-    recognition_router --> async_session
-    metrics_router --> async_session
-    recognition_router --> scan_service
-    recognition_router --> clustering_service
-    recognition_router --> suggestion_service
+    %% Router to service
+    analyze_router --> scan_service
+    analyze_router --> job_service
+    cluster_router --> cluster_service
+    cluster_router --> job_service
+    suggestion_router --> suggestion_service
+    media_router --> cluster_service
 
-    scan_service --> embedding_provider
-    scan_service --> thumbnail_service
+    %% Scan flow
+    scan_service --> embedding_service
+    embedding_service --> insightface
     scan_service --> async_session
 
-    clustering_service --> context_mgr
-    clustering_service --> repository
-    clustering_service --> factory
-    clustering_service --> assigner
-    clustering_service --> rep_manager
-    clustering_service --> validator
-    clustering_service --> batch_processor
-    clustering_service --> job_service
-    clustering_service --> suggestion_service
+    %% Cluster service orchestration
+    cluster_service --> rep_discovery
+    cluster_service --> centroid_discovery
+    cluster_service --> graph_discovery
+    cluster_service --> gate
+    cluster_service --> writer
+    cluster_service --> suggestion_service
 
-    batch_processor --> repository
-    batch_processor --> assigner
-    batch_processor --> factory
-    batch_processor --> validator
-    batch_processor --> matcher
+    %% Discovery produces candidates for gate
+    rep_discovery --> gate
+    centroid_discovery --> gate
+    graph_discovery --> gate
 
-    matcher --> validator
-    matcher --> assigner
-    matcher --> rep_manager
+    %% Gate validation and outcomes
+    gate --> checks
+    gate --> writer
+    gate --> suggestion_service
+    gate --> cluster_repo
+    gate -.-> settings
 
-    job_service --> repository
-    repository --> async_session
-    context_mgr --> async_session
-    suggestion_service --> async_session
+    %% Writer persistence
+    writer --> cluster_repo
+    writer --> member_repo
 
+    %% Suggestion persistence
+    suggestion_service --> suggestion_repo
+
+    %% Repository to database
+    cluster_repo --> async_session
+    member_repo --> async_session
+    suggestion_repo --> async_session
     async_session --> postgres
-    settings --> embedding_provider
-    settings --> scan_service
-    settings --> clustering_service
-    settings --> thumbnail_service
+
+    %% Settings injection
+    settings --> gate
+    settings --> cluster_service
+    settings --> writer

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass
-from datetime import UTC, datetime
+from datetime import datetime, timezone
 from typing import Any
 
 
@@ -15,7 +15,7 @@ class HealthReport:
 
     @classmethod
     def ok(cls, service: str) -> HealthReport:
-        return cls(service=service, status="ok", timestamp=datetime.now(UTC))
+        return cls(service=service, status="ok", timestamp=datetime.now(timezone.utc))  # noqa: UP017
 
     def to_dict(self) -> dict[str, Any]:
         """Convert the report into a serializable dictionary."""

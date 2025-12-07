@@ -1,0 +1,30 @@
+"""
+Cluster domain model that groups related media identities.
+"""
+
+from __future__ import annotations
+
+from collections.abc import Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from recognition.domain.representative import ClusterRepresentative
+
+
+@dataclass
+class IdentityCluster:
+    """Represents a cluster of identities that belong to the same subject."""
+
+    tenant_id: str
+    is_labeled: bool
+    member_count: int
+    label: str | None = None
+    id: str | None = None
+    representative_identity_id: str | None = None
+    created_at: datetime | None = None
+    clustering_algorithm: str = "graph"
+    user_confirmed: bool = False
+    representatives: Sequence[ClusterRepresentative] | None = None
+    centroid: Any | None = None

@@ -1,9 +1,14 @@
 graph TD
     %% =======================================================================
-    %% RECOGNITION SERVICE V4.2.4 - MASTER OVERVIEW
+    %% RECOGNITION SERVICE V4.2.4 - BACKEND MASTER OVERVIEW
     %% Updated: December 6, 2025
     %% Status: Core implementation complete (Phases 1-6, Tasks 72-74)
+    %% See also: ../frontend/master_overview.mmd for WordPress plugin architecture
     %% =======================================================================
+
+    subgraph Frontend["WordPress Plugin Frontend"]
+        WPProxy["PHP Proxy<br/>RecognitionProxyController"]
+    end
 
     subgraph API["API Layer (FastAPI) ✅"]
         AnalyzeRouter["AnalyzeRouter<br/>POST /analyze<br/>GET /jobs/{id}<br/>POST /jobs/{id}/cancel"]
@@ -13,6 +18,8 @@ graph TD
         TrainingRouter["TrainingRouter<br/>GET /training-stage"]
         DiagnosticsRouter["DiagnosticsRouter<br/>GET /diagnostics/decisions"]
     end
+
+    WPProxy -->|"HTTP + API Key"| API
 
     subgraph Security["Security Layer ✅"]
         Auth["require_auth<br/>API Key validation"]

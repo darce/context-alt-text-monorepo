@@ -104,11 +104,13 @@ No existing install base means full latitude to delete experimental features. Pr
 - Commit after scaffolding each class/function
 
 **This applies to ALL new code**:
+
 - Backend: Python functions, classes, methods
 - Frontend: TypeScript functions, React components, hooks
 - Tests: Test function signatures and fixtures
 
 **Why scaffolding first?**
+
 - Defines clear contracts before implementation details
 - Enables test-writing without implementation dependencies
 - Creates reviewable architecture (review signatures before logic)
@@ -189,6 +191,7 @@ Never fabricate benchmark numbers, latency claims, or metrics. If data is unavai
 - **DO** commit frequently (per-layer, not per-feature)
 
 This ensures:
+
 - Clear contracts before implementation details
 - Testable interfaces from the start
 - Incremental progress with working checkpoints
@@ -329,25 +332,106 @@ const { data, isLoading, error, refetch } = useQuery({
 
 ### Recognition Service (Python/FastAPI)
 
+**Environment Setup:**
+
+```bash
+# Use pyenv for Python version + virtualenv management
+pyenv shell description-service
+
+# Install dependencies
+cd apps/prototype-description-service
+pip install -e ".[dev,local]"  # dev tools + local ONNX runtime
+```
+
 **Architecture:**
 
 - Hexagonal boundaries: adapters separate from domain logic
-- Adapters in `recognition_core/adapters/`
-- Domain logic in `recognition_core/domain/`
-- Services orchestrate adapters
+- Domain logic in `recognition/domain/`
+- Application layer in `recognition/application/`
+- Infrastructure adapters in `recognition/infrastructure/`
+- Interface adapters (HTTP) in `recognition/interface_adapters/`
+- Services orchestrate domain operations
 
 **Standards:**
 
-- Type hints on all functions
-- Google-style docstrings describing side effects
+- Python 3.11+ required
+- Type hints on all functions (gradual strictness via mypy overrides)
+- Google-style docstrings describing Args, Returns, Raises, side effects
 - Target < 40 lines per function
-- `mypy` and `flake8` must pass
+- 120 character line length
+- `ruff check` and `mypy` must pass
+
+**Tooling (Ruff replaces flake8/black/isort):**
+
+```bash
+ruff check .              # Lint (pycodestyle, pyflakes, isort, bugbear, etc.)
+ruff format .             # Format (replaces black)
+ruff check --fix .        # Auto-fix safe issues
+mypy .                    # Type checking
+```
+
+**Async Patterns:**
+
+```python
+# All database and I/O operations must be async
+async def get_cluster(self, cluster_id: str) -> IdentityCluster | None:
+    result = await self.session.execute(select(ClusterModel).where(...))
+    return result.scalar_one_or_none()
+
+# Use asyncio.gather for parallel operations
+results = await asyncio.gather(
+    self.get_cluster(id1),
+    self.get_cluster(id2),
+)
+```
+
+**Pydantic Patterns:**
+
+```python
+# Settings via pydantic-settings (environment variables)
+from pydantic_settings import BaseSettings
+
+class ClusteringSettings(BaseSettings):
+    similarity_threshold: float = 0.88
+    min_cluster_size: int = 2
+
+    model_config = ConfigDict(env_prefix="CLUSTERING_")
+
+# Request/Response models with validation
+class ClusterResponse(BaseModel):
+    id: str  # Short ID format
+    label: str | None
+    member_count: int = Field(ge=0)
+```
+
+**FastAPI Patterns:**
+
+```python
+# Dependency injection for services
+from fastapi import Depends
+
+def get_cluster_service(
+    repo: ClusterRepository = Depends(get_repository),
+) -> ClusterService:
+    return ClusterService(repo)
+
+@router.get("/clusters/{cluster_id}")
+async def get_cluster(
+    cluster_id: str,
+    service: ClusterService = Depends(get_cluster_service),
+) -> ClusterResponse:
+    cluster = await service.get(cluster_id)
+    if not cluster:
+        raise HTTPException(status_code=404, detail="Cluster not found")
+    return ClusterResponse.model_validate(cluster)
+```
 
 **Configuration:**
 
 - All settings via pydantic Settings backed by environment variables
 - No hard-coded paths or hostnames
 - Fail fast on missing required configuration
+- Use `Field(default=...)` for optional settings with defaults
 
 **Coverage:**
 
@@ -369,6 +453,153 @@ const { data, isLoading, error, refetch } = useQuery({
     /------------\
    /    Unit      \  <- Many, fast, isolated
   /________________\
+```
+
+### Hierarchical TDD: Fake vs Real Resources
+
+**Principle**: Use the fastest feedback loop that validates the behavior you care about.
+
+```text
+┌─────────────────────────────────────────────────────────────────────────┐
+│ Layer 4: E2E Tests (Real browser, real WP, real backend)                │
+│   - Use when: Final validation of user flows                            │
+│   - Resources: Real database, real network, real browser                │
+│   - Speed: Slow (seconds per test)                                      │
+│   - Count: < 20 critical path tests                                     │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Layer 3: Integration Tests (Real database, mocked externals)            │
+│   - Use when: Testing repository patterns, SQL queries, RLS policies    │
+│   - Resources: Real PostgreSQL (test DB), mocked HTTP services          │
+│   - Speed: Medium (100-500ms per test)                                  │
+│   - Count: 50-100 tests                                                 │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Layer 2: Service Tests (Fake repositories, real domain logic)           │
+│   - Use when: Testing business rules, orchestration, edge cases         │
+│   - Resources: In-memory fakes, no I/O                                  │
+│   - Speed: Fast (< 50ms per test)                                       │
+│   - Count: 100-300 tests                                                │
+├─────────────────────────────────────────────────────────────────────────┤
+│ Layer 1: Unit Tests (Pure functions, no dependencies)                   │
+│   - Use when: Testing algorithms, calculations, transformations         │
+│   - Resources: None                                                     │
+│   - Speed: Instant (< 5ms per test)                                     │
+│   - Count: 200+ tests                                                   │
+└─────────────────────────────────────────────────────────────────────────┘
+```
+
+**Decision Matrix: When to Use Real vs Fake**
+
+| Resource      | Unit Test          | Service Test       | Integration Test     | E2E Test   |
+| ------------- | ------------------ | ------------------ | -------------------- | ---------- |
+| Database      | ❌ Fake repository | ❌ Fake repository | ✅ Real test DB      | ✅ Real DB |
+| HTTP/Network  | ❌ Never           | ❌ Fake client     | ❌ Mock server (MSW) | ✅ Real    |
+| File System   | ❌ Never           | ❌ In-memory       | ⚠️ Temp directory    | ✅ Real    |
+| Time/Clock    | ❌ Injected clock  | ❌ Injected clock  | ❌ Injected clock    | ✅ Real    |
+| Random/UUID   | ❌ Seeded/fixed    | ❌ Seeded/fixed    | ❌ Seeded/fixed      | ✅ Real    |
+| External APIs | ❌ Never           | ❌ Fake client     | ❌ Mock server       | ⚠️ Sandbox |
+
+**Python Fake Pattern (Backend)**
+
+```python
+# Domain interface (in domain/repositories.py)
+class ClusterRepository(Protocol):
+    async def get(self, cluster_id: UUID) -> IdentityCluster | None: ...
+    async def save(self, cluster: IdentityCluster) -> None: ...
+
+# Fake for service tests (in tests/fakes.py)
+class FakeClusterRepository:
+    def __init__(self) -> None:
+        self._clusters: dict[UUID, IdentityCluster] = {}
+
+    async def get(self, cluster_id: UUID) -> IdentityCluster | None:
+        return self._clusters.get(cluster_id)
+
+    async def save(self, cluster: IdentityCluster) -> None:
+        self._clusters[cluster.id] = cluster
+
+# Real for integration tests (in infrastructure/repositories.py)
+class SqlAlchemyClusterRepository:
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def get(self, cluster_id: UUID) -> IdentityCluster | None:
+        result = await self._session.execute(
+            select(ClusterModel).where(ClusterModel.id == cluster_id)
+        )
+        return result.scalar_one_or_none()
+```
+
+**TypeScript Fake Pattern (Frontend)**
+
+```typescript
+// Interface (in types/services.ts)
+interface RecognitionApi {
+  getClusters(tenantId: string): Promise<Cluster[]>;
+  updateLabel(clusterId: string, label: string): Promise<void>;
+}
+
+// Fake for unit tests (in tests/fakes.ts)
+export const createFakeRecognitionApi = (
+  initialClusters: Cluster[] = []
+): RecognitionApi => {
+  const clusters = new Map(initialClusters.map((c) => [c.id, c]));
+  return {
+    getClusters: async () => Array.from(clusters.values()),
+    updateLabel: async (id, label) => {
+      const cluster = clusters.get(id);
+      if (cluster) clusters.set(id, { ...cluster, label });
+    },
+  };
+};
+
+// MSW handler for integration tests (in tests/mocks/handlers.ts)
+export const handlers = [
+  http.get("/api/clusters", () => {
+    return HttpResponse.json({ clusters: mockClusters });
+  }),
+];
+```
+
+**Test File Organization**
+
+```text
+recognition/
+  tests/
+    unit/           # Layer 1: Pure functions, no I/O
+      test_similarity.py
+      test_clustering_algorithm.py
+    service/        # Layer 2: Fake repositories
+      test_cluster_service.py
+      test_assignment_gate.py
+    integration/    # Layer 3: Real database
+      test_cluster_repository.py
+      test_rls_policies.py
+    api/            # Layer 3: HTTP endpoints with test client
+      test_clusters_router.py
+    e2e/            # Layer 4: Full stack (if applicable)
+      test_clustering_flow.py
+```
+
+**RLS Testing Strategy**
+
+Row Level Security requires real database tests:
+
+```python
+# integration/test_rls_policies.py
+@pytest.mark.integration
+async def test_tenant_isolation(db_session):
+    """Tenant A cannot see Tenant B's clusters."""
+    # Create clusters for two tenants
+    await create_cluster(db_session, tenant_id=TENANT_A, label="Alice")
+    await create_cluster(db_session, tenant_id=TENANT_B, label="Bob")
+
+    # Query as Tenant A
+    await set_tenant_context(db_session, TENANT_A)
+    clusters = await list_clusters(db_session)
+
+    # Should only see Tenant A's cluster
+    assert len(clusters) == 1
+    assert clusters[0].label == "Alice"
 ```
 
 ### Unit Tests
@@ -474,8 +705,11 @@ $clean_array = array_map('absint', $_POST['ids']);
 
 - Type hints on all functions
 - Google-style docstrings
-- `black` for formatting
-- `isort` for import ordering
+- 120 character line length
+- `ruff format` for formatting (replaces black)
+- `ruff check` for linting with `I` rule (replaces isort)
+- Double quotes for strings
+- 4-space indentation
 
 ### Pre-commit Checks
 
@@ -501,8 +735,8 @@ $clean_array = array_map('absint', $_POST['ids']);
 
 ### Mermaid Diagrams
 
-- `.mmd` files: raw Mermaid syntax only (no code fences)
-- `.md` files: use fenced code blocks
+- **`.mmd` files: raw Mermaid syntax only — NO code fences (` ```mermaid `)** — fencing breaks rendering
+- `.md` files: use fenced code blocks (these render correctly when embedded)
 - Maximum 12 classes per diagram
 - Use language-agnostic types: `string`, `int`, `bool`, `array<T>`
 
@@ -536,10 +770,13 @@ npm run build        # Production build
 npm run test         # Run Vitest
 npm run lint         # ESLint + type check
 
-# Backend (Python)
-pytest               # Run tests
-mypy .               # Type checking
-flake8               # Linting
+# Backend (Python) - run from apps/prototype-description-service/
+pyenv shell description-service  # Activate virtualenv
+pytest                           # Run tests
+mypy .                           # Type checking
+ruff check .                     # Linting (replaces flake8)
+ruff format .                    # Formatting (replaces black)
+ruff check --fix .               # Auto-fix linting issues
 
 # PHP
 composer test        # PHPUnit

@@ -1,0 +1,55 @@
+flowchart TB
+    %% =======================================================================
+    %% RECOGNITION SERVICE V4.2.4 - REMAINING IMPLEMENTATION
+    %% Updated: December 6, 2025
+    %% Tracks Phase 7.9+ and outstanding items
+    %% See also: ../frontend/ for WordPress plugin diagrams
+    %% =======================================================================
+
+    subgraph Completed["✅ Completed Work (Phases 1-7.8)"]
+        direction LR
+        P1["Phase 1-2<br/>AssignmentGate + Checks"]
+        P3["Phase 3<br/>HDBSCAN + Deterministic CW"]
+        P4["Phase 4<br/>Observability"]
+        P5["Phase 5<br/>Database Persistence"]
+        P6["Phase 6<br/>API Integration"]
+        P7["Phase 7.1-7.8<br/>Pipeline Wiring<br/>Session/Tenant<br/>Suggestions<br/>Jobs<br/>Embeddings<br/>Security"]
+    end
+
+    subgraph Phase79["⏳ Phase 7.9: Domain Completeness"]
+        Task75["Task 75: Representative Lifecycle Tests<br/>- test_representative_lifecycle.py<br/>- Test ACCEPT evaluates rep candidacy<br/>- Test rep changes trigger centroid recompute"]
+        Task76["Task 76: Wire Representative Persistence<br/>- After ACCEPT, evaluate if identity → rep<br/>- Persist via RepresentativeRepository<br/>- Trigger centroid recomputation"]
+        Task77["Task 77: Centroid Recomputation Hooks<br/>- Recompute on member additions<br/>- Recompute on merges<br/>- Refresh materialized view"]
+    end
+
+    subgraph Phase710["⏳ Phase 7.10: End-to-End Integration"]
+        Task78["Task 78: E2E Integration Tests<br/>- Full analyze → persist → cluster flow<br/>- Tenant isolation verification<br/>- Merge operations<br/>- Job polling workflows"]
+    end
+
+    subgraph Outstanding["⏳ Outstanding Tasks"]
+        Task14["Task 14: Cam Grant Verification<br/>- Regression test with real data<br/>- Verify no 20+ person clusters<br/>- Validate complete-link guard"]
+    end
+
+    subgraph Future["🔮 Future Enhancements (Post-Sprint)"]
+        RBAC["Role-Based Access Control<br/>Fine-grained permissions"]
+        RateLimit["Rate Limiting<br/>Per-tenant throttling"]
+        Audit["Audit Logging<br/>Sensitive operation tracking"]
+        KeyRotation["API Key Rotation<br/>Expiration policies"]
+    end
+
+    %% Dependencies
+    Completed --> Phase79
+    Phase79 --> Phase710
+    Task75 --> Task76
+    Task76 --> Task77
+    Phase710 --> Outstanding
+    Outstanding --> Future
+
+    %% Styling
+    style Completed fill:#c8e6c9,stroke:#2e7d32,color:#1b5e20
+    style Phase79 fill:#fff3e0,stroke:#f57c00,color:#e65100
+    style Phase710 fill:#fff3e0,stroke:#f57c00,color:#e65100
+    style Outstanding fill:#ffcdd2,stroke:#c62828,color:#b71c1c
+    style Future fill:#e3f2fd,stroke:#0d47a1,color:#0d47a1
+
+

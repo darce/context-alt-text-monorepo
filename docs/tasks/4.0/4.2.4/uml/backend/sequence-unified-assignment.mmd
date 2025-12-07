@@ -2,7 +2,7 @@ sequenceDiagram
     autonumber
     
     %% =======================================================================
-    %% RECOGNITION SERVICE V2 - UNIFIED ASSIGNMENT FLOW
+    %% RECOGNITION SERVICE V4.2.4 - UNIFIED ASSIGNMENT FLOW
     %% Shows how ALL discovery methods route through AssignmentGate
     %% =======================================================================
     
@@ -32,7 +32,7 @@ sequenceDiagram
     Note over CS: Phase 2: Discovery (find candidates, NO assignments)
     
     %% Representative Discovery
-    rect rgb(200, 230, 200)
+    rect rgb(180, 220, 180)
         Note over RD: Path 1: Representative Matching
         CS->>RD: discover(identities, representatives)
         loop For each identity
@@ -48,7 +48,7 @@ sequenceDiagram
     CS->>CS: remaining = identities - matched
     
     %% Centroid Discovery
-    rect rgb(200, 200, 230)
+    rect rgb(180, 180, 220)
         Note over CD: Path 2: Centroid Matching
         CS->>CD: discover(remaining, centroids)
         loop For each identity
@@ -64,7 +64,7 @@ sequenceDiagram
     CS->>CS: remaining = remaining - matched
     
     %% Graph Discovery (HDBSCAN/CW)
-    rect rgb(230, 200, 200)
+    rect rgb(220, 180, 180)
         Note over GD: Path 3: Graph Clustering
         CS->>GD: discover(remaining, anchors)
         GD->>GD: run_hdbscan(embeddings)
@@ -81,7 +81,7 @@ sequenceDiagram
     CS->>CS: all_candidates = rep + centroid + graph
     
     loop For each candidate in all_candidates
-        rect rgb(255, 240, 200)
+        rect rgb(255, 230, 180)
             Note over Gate: THE ONLY PATH TO ASSIGNMENT
             CS->>Gate: evaluate(candidate)
             

@@ -1,0 +1,144 @@
+
+sequenceDiagram
+    autonumber
+    
+    %% =======================================================================
+    %% WORDPRESS PLUGIN - COMPLETE WORKFLOW
+    %% From media selection to cluster labeling (Frontend perspective)
+    %% Updated: December 6, 2025
+    %% =======================================================================
+    
+    actor Admin
+    participant WB as WorkbenchPage
+    participant MS as MediaSelection
+    participant Hook as useRecognitionHooks
+    participant API as scanApi/clusterApi
+    participant PHP as RecognitionProxyController
+    participant Backend as Recognition Service
+    
+    %% ===== PHASE 1: SELECT MEDIA =====
+    Note over Admin,Backend: Phase 1: Select Media for Analysis
+    
+    Admin->>WB: Navigate to Workbench
+    WB->>MS: Render media grid
+    MS->>MS: useWorkbenchMedia() fetch media
+    MS-->>Admin: Display media grid
+    
+    Admin->>MS: Click media items
+    MS->>MS: useMediaSelectionState.select(id)
+    MS-->>Admin: Highlight selected items
+    
+    Admin->>MS: Click "Select All"
+    MS->>MS: useMediaSelectionState.selectAll()
+    MS-->>Admin: All items highlighted
+    
+    %% ===== PHASE 2: SCAN MEDIA =====
+    Note over Admin,Backend: Phase 2: Scan Media for Faces
+    
+    Admin->>WB: Click "Scan for Faces"
+    WB->>Hook: scanMedia.mutate(mediaIds)
+    Hook->>API: analyzeMedia(mediaIds, tenantId)
+    API->>PHP: POST /wp-json/alt-context/v1/recognition/analyze
+    PHP->>Backend: POST /recognition/analyze
+    Backend-->>PHP: {job_id, status: "running"}
+    PHP-->>API: Response
+    API-->>Hook: Job object
+    Hook-->>WB: Update UI (scanning...)
+    
+    %% Polling loop
+    rect rgb(220, 235, 250)
+        Note over Hook,Backend: Polling for Job Completion
+        loop Every 1.5 seconds
+            Hook->>API: getJobStatus(jobId)
+            API->>PHP: GET /wp-json/.../recognition/jobs/{id}
+            PHP->>Backend: GET /recognition/jobs/{id}
+            Backend-->>PHP: {status, progress}
+            PHP-->>API: Response
+            API-->>Hook: JobStatus
+            Hook-->>WB: Update progress bar
+        end
+    end
+    
+    Hook-->>WB: Job completed
+    WB-->>Admin: Show "Scan complete" toast
+    
+    %% ===== PHASE 3: CLUSTER IDENTITIES =====
+    Note over Admin,Backend: Phase 3: Cluster Discovered Identities
+    
+    Admin->>WB: Click "Cluster Identities"
+    WB->>Hook: createClusteringJob.mutate()
+    Hook->>API: createClusteringJob(tenantId)
+    API->>PHP: POST /wp-json/.../recognition/clustering/jobs
+    PHP->>Backend: POST /recognition/clustering/jobs
+    Backend-->>PHP: {job_id, status: "running"}
+    PHP-->>API: Response
+    
+    rect rgb(255, 235, 215)
+        Note over Hook,Backend: Polling for Clustering Completion
+        loop Every 2 seconds
+            Hook->>API: getJobStatus(jobId)
+            API->>PHP: GET /recognition/jobs/{id}
+            PHP->>Backend: GET /recognition/jobs/{id}
+            Backend-->>PHP: {status, progress, clusters_created}
+            PHP-->>API: Response
+            Hook-->>WB: Update progress
+        end
+    end
+    
+    Hook-->>WB: Clustering completed
+    WB->>WB: Refetch clusters
+    WB-->>Admin: Display IdentityClusterList
+    
+    %% ===== PHASE 4: REVIEW CLUSTERS =====
+    Note over Admin,Backend: Phase 4: Review & Label Clusters
+    
+    WB->>API: getClusters(tenantId)
+    API->>PHP: GET /wp-json/.../recognition/clusters
+    PHP->>Backend: GET /recognition/clusters
+    Backend-->>PHP: Cluster[]
+    PHP-->>API: Response
+    API-->>WB: clusters
+    WB-->>Admin: Render cluster cards
+    
+    Admin->>WB: Click cluster card
+    WB->>WB: Expand cluster details
+    WB-->>Admin: Show face thumbnails
+    
+    Admin->>WB: Enter label "John Smith"
+    WB->>API: updateCluster(clusterId, {label})
+    API->>PHP: PATCH /recognition/clusters/{id}
+    PHP->>Backend: PATCH /recognition/clusters/{id}
+    Backend-->>PHP: Updated cluster
+    PHP-->>API: Response
+    API-->>WB: Updated cluster
+    WB-->>Admin: Show success, update card
+    
+    %% ===== PHASE 5: HANDLE SUGGESTIONS =====
+    Note over Admin,Backend: Phase 5: Review Suggestions (Optional)
+    
+    WB->>API: getSuggestions(tenantId)
+    API->>PHP: GET /recognition/suggestions
+    PHP->>Backend: GET /recognition/suggestions
+    Backend-->>PHP: Suggestion[]
+    PHP-->>API: Response
+    WB-->>Admin: Display suggestion panel
+    
+    alt Accept Suggestion
+        Admin->>WB: Click "Accept"
+        WB->>API: acceptSuggestion(suggestionId)
+        API->>PHP: POST /recognition/suggestions/{id}/accept
+        PHP->>Backend: POST /recognition/suggestions/{id}/accept
+        Backend-->>PHP: Updated suggestion
+        PHP-->>API: Response
+        WB-->>Admin: Move to cluster, update counts
+    else Reject Suggestion
+        Admin->>WB: Click "Reject"
+        WB->>API: rejectSuggestion(suggestionId)
+        API->>PHP: POST /recognition/suggestions/{id}/reject
+        PHP->>Backend: POST /recognition/suggestions/{id}/reject
+        Backend-->>PHP: Updated suggestion
+        PHP-->>API: Response
+        WB-->>Admin: Remove from pending list
+    end
+    
+    Note over Admin: Workflow Complete ✅

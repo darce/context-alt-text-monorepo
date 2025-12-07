@@ -1,4 +1,5 @@
 import logging
+import os
 import subprocess
 from urllib.parse import urlparse
 
@@ -11,6 +12,9 @@ from recognition.application.health import check_health as recognition_health
 from recognition.config import get_settings
 from recognition.config.cache import configure_dev_cache
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
+from recognition.interface_adapters.http.router import router as recognition_api_router
+from recognition.interface_adapters.http.routers import analyze, clusters, diagnostics, suggestions
 from roster.application.health import check_health as roster_health
 from roster.interface_adapters.http.health_router import router as roster_router
 from scene.application.health import check_health as scene_health
@@ -52,11 +56,15 @@ def _log_startup_info() -> None:
     startup_logger = logging.getLogger("db.startup")
     commit, branch = _get_git_info()
 
+    # Get port from environment (set by start script, defaults to 8000)
+    port = os.environ.get("PORT", "8000")
+    host = os.environ.get("HOST", "127.0.0.1")
+
     startup_logger.info("=== Application Startup ===")
     startup_logger.info("Git: %s (%s)", commit, branch)
+    startup_logger.info("Listening on http://%s:%s", host, port)
 
-
-configure_dev_cache()
+    configure_dev_cache()
 
 
 def create_app() -> FastAPI:
@@ -85,9 +93,16 @@ def create_app() -> FastAPI:
         thumbnails_dir.mkdir(parents=True, exist_ok=True)
         app.mount(normalized_path, StaticFiles(directory=thumbnails_dir), name="thumbnails")
 
+    # Legacy minimal router (health) plus new API routes
     app.include_router(recognition_router, prefix="/recognition")
+    app.include_router(recognition_api_router, prefix="/recognition")
+    app.include_router(analyze.router, prefix="/recognition")
+    app.include_router(clusters.router, prefix="/recognition")
+    app.include_router(suggestions.router, prefix="/recognition")
+    app.include_router(diagnostics.router, prefix="/recognition")
     app.include_router(roster_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
+    register_exception_handlers(app)
 
     @app.get(
         "/health",

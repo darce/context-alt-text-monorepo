@@ -9,7 +9,7 @@ import uuid
 from datetime import UTC, datetime
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import ProgrammingError
 
 from db.settings import get_database_settings
@@ -84,23 +84,38 @@ async def analyze_media(
 @router.get("/jobs/{job_id}", response_model=JobStatusResponse)
 async def get_job_status(
     job_id: str,
+    tenant_id: str = Query(default=None),
     job_service=Depends(get_job_service_dependency),
     session=Depends(get_optional_session),
 ) -> JobStatusResponse:
     """Poll job status by ID."""
-    # First try the in-memory job service (for tests and recently created jobs)
+    # First check in-memory job service (for tests and in-memory mode)
     job = await job_service.get_job_status(job_id)
+    if job and hasattr(job, "status") and hasattr(job, "id"):
+        if isinstance(job, JobStatusResponse):
+            return job
+        return _job_to_response(job)
 
-    # If not found and we have a session, look up from database
-    if not job and session is not None:
+    # Look up from database if we have a session
+
+    if session is not None:
+        # Set tenant context for RLS
+        if tenant_id and _is_postgres_session(session):
+            try:
+                tenant_uuid = uuid.UUID(str(tenant_id))
+                await ensure_tenant_exists(session, tenant_uuid)
+                await set_tenant_context(session, tenant_uuid)
+            except Exception:
+                pass  # Continue without RLS if context fails
+
         from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 
         repo = SqlAlchemyJobRepository(session)
-        job = await repo.get(job_id)
+        domain_job = await repo.get(job_id)
+        if domain_job:
+            return _job_to_response(domain_job)
 
-    if not job:
-        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
-    return _job_to_response(job)
+    raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobStatusResponse)

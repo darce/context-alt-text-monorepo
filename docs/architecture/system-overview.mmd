@@ -1,0 +1,112 @@
+---
+title: Context Alt Text - System Architecture Overview
+---
+flowchart TB
+    %% =======================================================================
+    %% HIGH-LEVEL SYSTEM ARCHITECTURE
+    %% Shows interaction between WordPress Plugin and Recognition Service
+    %% Updated: December 2025 (v4.2.4)
+    %% =======================================================================
+
+    subgraph WordPress["WordPress Plugin (prototype-wp-alt-context)"]
+        subgraph ReactUI["React Admin UI"]
+            Dashboard["DashboardPage"]
+            Workbench["WorkbenchPage<br/>Media + Clustering"]
+            Roster["RosterPage<br/>Identity Management"]
+        end
+        
+        subgraph Hooks["React Hooks"]
+            useRecognition["useRecognitionHooks"]
+            useJobHistory["useRecognitionJobHistory"]
+            useMediaIdentities["useMediaIdentities"]
+        end
+        
+        subgraph ApiClient["TypeScript API Client"]
+            scanApi["scanApi"]
+            clusterApi["clusterApi"]
+            identityApi["identityApi"]
+        end
+        
+        subgraph PHPLayer["PHP REST Layer"]
+            RecognitionController["RecognitionController<br/>Route Registration"]
+            ProxyController["RecognitionProxyController<br/>Backend Forwarding"]
+            AuthHandler["Api Class<br/>Nonce + Headers"]
+        end
+    end
+
+    subgraph Backend["Recognition Service (prototype-description-service)"]
+        subgraph API["FastAPI Routers"]
+            AnalyzeRouter["POST /analyze<br/>GET /jobs/{id}"]
+            ClusterRouter["POST /clustering/jobs<br/>GET /clusters<br/>POST /merge"]
+            SuggestionRouter["GET /suggestions<br/>POST accept/reject"]
+        end
+        
+        subgraph Orchestration["Orchestration"]
+            ScanService["ScanService<br/>Detection + Embedding"]
+            ClusterService["ClusterService<br/>Clustering Workflow"]
+            JobService["JobService<br/>Job Tracking"]
+        end
+        
+        subgraph Discovery["Discovery Layer"]
+            RepDiscovery["RepresentativeDiscovery"]
+            CentroidDiscovery["CentroidDiscovery"]
+            GraphDiscovery["GraphDiscovery"]
+        end
+        
+        subgraph Assignment["Assignment Layer"]
+            Gate["AssignmentGate<br/>Quality Checks"]
+            Writer["AssignmentWriter<br/>Persistence"]
+            Suggestions["SuggestionService"]
+        end
+        
+        subgraph Infra["Infrastructure"]
+            EmbeddingService["EmbeddingService<br/>InsightFace Wrapper"]
+            ClusterRepo["ClusterRepository"]
+            MemberRepo["MemberRepository"]
+        end
+    end
+
+    subgraph Database["PostgreSQL + pgvector"]
+        IdentityTables["MediaIdentity<br/>IdentityCluster<br/>IdentityMember"]
+        RepTable["ClusterRepresentative"]
+        SuggestionTable["IdentitySuggestion"]
+        JobTables["ScanJob<br/>ClusteringJob"]
+        CentroidMV["mv_identity_cluster_centroids"]
+    end
+
+    %% WordPress internal flow
+    ReactUI --> Hooks
+    Hooks --> ApiClient
+    ApiClient --> RecognitionController
+    RecognitionController --> ProxyController
+    ProxyController --> AuthHandler
+
+    %% Cross-boundary call
+    AuthHandler -->|"HTTP + API Key<br/>X-Tenant-ID"| API
+
+    %% Backend flow
+    API --> Orchestration
+    Orchestration --> Discovery
+    Discovery --> Gate
+    Gate --> Writer
+    Gate --> Suggestions
+    
+    Orchestration --> Infra
+    Writer --> ClusterRepo
+    Writer --> MemberRepo
+    Suggestions --> ClusterRepo
+
+    %% Database connections
+    ClusterRepo --> IdentityTables
+    ClusterRepo --> RepTable
+    ClusterRepo --> CentroidMV
+    MemberRepo --> IdentityTables
+    Suggestions --> SuggestionTable
+    JobService --> JobTables
+
+    %% Styling (WCAG AA compliant)
+    style WordPress fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#0d47a1
+    style Backend fill:#e8f5e9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    style Database fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
+    style Discovery fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    style Assignment fill:#fce4ec,stroke:#ad1457,color:#880e4f

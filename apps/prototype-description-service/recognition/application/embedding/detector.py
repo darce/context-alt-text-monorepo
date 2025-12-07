@@ -1,0 +1,120 @@
+"""
+Face detection adapter interface.
+
+This module provides the FaceDetector interface and implementations:
+- StubFaceDetector: Deterministic stub for tests (hash-based)
+- InsightFaceFaceDetector: Real detection using InsightFace
+
+The ScanService depends on this interface for face detection.
+"""
+
+from __future__ import annotations
+
+import hashlib
+import logging
+from abc import ABC, abstractmethod
+from collections.abc import Iterable
+from typing import TYPE_CHECKING
+
+from recognition.application.embedding.service import FaceDetection
+
+if TYPE_CHECKING:
+    from recognition.infrastructure.embeddings import InsightFaceAdapter
+
+logger = logging.getLogger(__name__)
+
+
+class FaceDetectorProtocol(ABC):
+    """Protocol for face detection adapters."""
+
+    @abstractmethod
+    async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
+        """Detect faces in the provided media sources.
+
+        Args:
+            sources: Iterable of media byte payloads or URLs to fetch.
+
+        Returns:
+            List of detected faces with bounding boxes and confidence.
+        """
+        ...
+
+
+class StubFaceDetector(FaceDetectorProtocol):
+    """Deterministic stub detector for tests - generates fake detections from hashes."""
+
+    async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
+        """Return deterministic fake detections based on input hashes."""
+        detections: list[FaceDetection] = []
+        for source in sources:
+            if not source:
+                continue
+            media_ref = source if isinstance(source, str) else hashlib.sha256(source).hexdigest()
+            # Use hash-derived bytes to build a deterministic bbox and confidence
+            digest = hashlib.sha256(str(media_ref).encode()).digest()
+            x1 = digest[0] % 100
+            y1 = digest[1] % 100
+            width = max(1, digest[2] % 100)
+            height = max(1, digest[3] % 100)
+            confidence = (digest[4] / 255.0) if digest[4] else 0.99
+            detections.append(
+                FaceDetection(
+                    media_id=str(media_ref),
+                    bbox=(x1, y1, x1 + width, y1 + height),
+                    confidence=float(confidence),
+                )
+            )
+        return detections
+
+
+class InsightFaceFaceDetector(FaceDetectorProtocol):
+    """Real face detector using InsightFace."""
+
+    def __init__(self, adapter: InsightFaceAdapter) -> None:
+        self._adapter = adapter
+
+    async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
+        """Detect real faces using InsightFace."""
+        detections: list[FaceDetection] = []
+
+        for source in sources:
+            if not source:
+                continue
+
+            # Determine media_id and get image bytes
+            if isinstance(source, str):
+                media_id = source
+                # For URLs, we'd need to fetch - for now skip non-bytes
+                logger.warning("URL sources not yet supported: %s", source[:50])
+                continue
+            else:
+                media_id = hashlib.sha256(source).hexdigest()
+                image_bytes = source
+
+            # Detect faces
+            try:
+                faces = await self._adapter.detect_faces(image_bytes)
+                for face in faces:
+                    detections.append(
+                        FaceDetection(
+                            media_id=media_id,
+                            bbox=face.bbox,
+                            confidence=face.confidence,
+                        )
+                    )
+            except Exception as e:
+                logger.error("Face detection failed for %s: %s", media_id[:20], e)
+
+        return detections
+
+
+# Backwards compatibility alias - defaults to stub
+FaceDetector = StubFaceDetector
+
+
+__all__ = [
+    "FaceDetectorProtocol",
+    "StubFaceDetector",
+    "InsightFaceFaceDetector",
+    "FaceDetector",
+]

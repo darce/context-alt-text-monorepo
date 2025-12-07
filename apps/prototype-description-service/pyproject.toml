@@ -2,24 +2,26 @@
 name = "prototype-description-service"
 version = "0.1.0"
 description = "Prototype rewrite of the description service with hexagonal architecture scaffolding."
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dependencies = [
-    "fastapi>=0.115.0,<0.116.0",
-    "uvicorn>=0.30.0,<0.31.0",
-    "pydantic>=2.9.0,<3.0.0",
+    "fastapi>=0.124.0,<0.130.0",
+    "uvicorn>=0.38.0,<0.40.0",
+    "pydantic>=2.12.0,<3.0.0",
     "typing-extensions>=4.12.0,<5.0.0",
-    "sqlalchemy[asyncio]>=2.0.34,<3.0.0",
-    "asyncpg>=0.29.0,<0.30.0",
-    "pgvector>=0.2.5,<0.3.0",
-    "alembic>=1.13.2,<2.0.0",
-    "numpy>=1.26.0,<2.0.0",
-    "matplotlib>=3.8.0,<4.0.0",  # Cluster visualization charts
-    "pillow>=10.0.0,<11.0.0",
-    "opencv-python>=4.9.0.72,<=4.9.0.80",
-    "pydantic-settings>=2.0.4,<3.0.0",
+    "sqlalchemy[asyncio]>=2.0.44,<3.0.0",
+    "greenlet>=3.3.0,<4.0.0",
+    "asyncpg>=0.31.0,<0.33.0",
+    "pgvector>=0.4.0,<0.5.0",
+    "alembic>=1.17.0,<2.0.0",
+    "numpy>=2.0.0,<3.0.0",
+    "pillow>=12.0.0,<13.0.0",
+    "opencv-python>=4.12.0,<4.15.0",
+    "pydantic-settings>=2.12.0,<3.0.0",
     "PyYAML>=6.0.3,<7.0",
-    "httpx>=0.24.0,<0.32.0",
-    "networkx>=3.0,<4.0",
+    "httpx>=0.28.0,<0.35.0",
+    "networkx>=3.6,<4.0",
+    "uuid7>=0.1.0,<1.0.0",
+    "uuid-extensions>=1.0.0,<2.0.0",
 ]
 
 [tool.setuptools]
@@ -39,9 +41,11 @@ include = [
 dev = [
     "ruff>=0.7.0,<1.0.0",
     "mypy>=1.7.0,<2.0.0",
-    "pytest>=8.3.0,<9.0.0",
-    "pytest-asyncio>=0.21.0,<0.23.0",
+    "matplotlib>=3.8.0,<4.0.0",  # Cluster visualization charts
+    "pytest>=8.3.0,<10.0.0",
+    "pytest-asyncio>=0.21.0,<2.0.0",
     "scikit-learn>=1.4.0,<2.0.0",  # Test-only: clustering accuracy metrics
+    "aiosqlite>=0.19.0,<1.0.0",  # Test-only: in-memory SQLite for async tests
     # Type stubs for mypy
     "types-PyYAML",
     "types-Pillow",
@@ -51,10 +55,12 @@ clustering = [
     "hdbscan>=0.8.33,<1.0.0",  # Optional: better clustering for small batches
 ]
 local = [
+    "insightface>=0.7.3,<1.0.0",  # Face detection and embedding
     "onnxruntime-silicon>=1.16.3 ; platform_system == \"Darwin\" and platform_machine == \"arm64\"",
     "onnxruntime>=1.16.0 ; platform_system != \"Darwin\" or platform_machine != \"arm64\"",
 ]
 remote = [
+    "insightface>=0.7.3,<1.0.0",  # Face detection and embedding
     "onnxruntime-gpu>=1.16.0 ; platform_system == \"Linux\"",
 ]
 
@@ -64,7 +70,7 @@ build-backend = "setuptools.build_meta"
 
 [tool.ruff]
 line-length = 120
-target-version = "py311"
+target-version = "py312"
 
 [tool.ruff.lint]
 select = [
@@ -134,5 +140,30 @@ module = [
     "pgvector.*",
     "asyncpg.*",
     "sklearn.*",
+    "hdbscan.*",
+    "uuid_extensions.*",
 ]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = [
+    "recognition.application.clustering.*",
+    "recognition.application.representatives.*",
+    "recognition.domain.embeddings.*",
+    "recognition.application.health",
+    "recognition.config.*",
+    "recognition.interface_adapters.http.*",
+]
+ignore_missing_imports = true
+ignore_errors = true
+
+[tool.pytest.ini_options]
+norecursedirs = [
+    "apps/archived-recognition-service",
+    "apps/prototype-description-service/archived-recognition.4.2.3",
+    "scripts",
+]
+testpaths = [
+    "recognition/tests",
+    "apps/prototype-description-service/recognition/tests",
+]

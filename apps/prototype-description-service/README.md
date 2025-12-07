@@ -7,12 +7,32 @@ It uses a hexagonal-inspired layout with explicit application layers and HTTP in
 
 ```bash
 cd apps/prototype-description-service
-pyenv install 3.11.9  # if you don't have it yet
-pyenv virtualenv 3.11.9 description-service
-pyenv shell description-service
-pip install -e .
+pyenv install 3.12.7  # if you don't have it yet
+pyenv virtualenv 3.12.7 description-service
+pyenv activate description-service
+pip install -e ".[dev]"
 uvicorn api.main:app --reload
 ```
+
+### Face Detection (InsightFace)
+
+Face detection requires InsightFace which has platform-specific installation:
+
+**Linux x86_64** (including Hugging Face Spaces):
+```bash
+pip install -e ".[face]"      # CPU
+pip install -e ".[gpu]"       # GPU (CUDA)
+```
+
+**macOS Apple Silicon**:
+```bash
+# InsightFace requires compilation with correct SDK paths
+./scripts/install_insightface_mac.sh
+pip install -e ".[dev]"
+```
+
+Without InsightFace installed, the service falls back to stub detectors that generate synthetic embeddings (useful for testing, not production).
+
 
 ### Database (Dockerized Postgres + pgvector)
 
@@ -46,17 +66,8 @@ The script mirrors the recognition service helper (installs the editable
 package with dev extras, sources `.env`, enforces the cache paths, and
 manages the uvicorn lifecycle).
 
-Need the real InsightFace weights on macOS/Apple Silicon? Run:
-
-```bash
-cd apps/prototype-description-service
-scripts/install_insightface_mac.sh
-```
-
-It ensures Command Line Tools are configured and installs `insightface` with
-the proper compiler flags before caching the models under `CACHE_BASE`.
-
 ## Cache Configuration
+
 
 The recognition pipeline downloads sizable model assets (InsightFace, HuggingFace,
 Torch, YOLO, etc.). To avoid polluting your primary disk we keep all caches on an

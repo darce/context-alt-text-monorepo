@@ -1,5 +1,7 @@
 /**
  * Scan/Analyze API Types
+ *
+ * These types match the backend JobStatusResponse schema exactly.
  */
 
 export interface AnalyzeRequest {
@@ -8,31 +10,54 @@ export interface AnalyzeRequest {
   clusterId?: string;
 }
 
-export interface AnalyzeResponse {
-  job_id: string | null;
-  job_ids?: string[];
-  status: string;
-  total_media: number;
+/**
+ * Progress tracking for a job.
+ */
+export interface JobProgress {
+  completed: number;
+  total: number;
 }
 
-export interface ScanStatus {
-  job_id: string;
+/**
+ * Response from POST /recognition/analyze
+ * Matches backend JobStatusResponse schema.
+ */
+export interface AnalyzeResponse {
+  id: string;
+  type: 'analyze' | 'clustering';
   status: 'pending' | 'running' | 'completed' | 'failed';
-  total_media: number;
-  processed_media: number;
-  identities_detected: number;
-  faces_detected?: number;
-  error_message?: string;
-  created_at?: string;
-  completed_at?: string;
+  progress: JobProgress | null;
+  started_at: string;
+  finished_at: string | null;
+}
+
+/**
+ * Response from GET /recognition/jobs/{job_id}
+ * Same structure as AnalyzeResponse.
+ */
+export type JobStatusResponse = AnalyzeResponse;
+
+/**
+ * Legacy ScanStatus - prefer JobStatusResponse for new code.
+ * @deprecated Use JobStatusResponse instead
+ */
+export interface ScanStatus {
+  id: string;
+  status: 'pending' | 'running' | 'completed' | 'failed';
+  progress: JobProgress | null;
+  started_at: string;
+  finished_at: string | null;
 }
 
 export interface ClusterRequest {
   similarity_threshold?: number;
 }
 
-export interface ClusterResponse {
+/**
+ * Response from POST /recognition/clustering/jobs
+ * Extends JobStatusResponse with clustering-specific fields.
+ */
+export interface ClusterResponse extends AnalyzeResponse {
   clusters_created: number;
   total_identities_clustered: number;
-  total_faces_clustered?: number;
 }

@@ -1,100 +1,156 @@
----
-title: Backend Master Architecture
----
-flowchart TB
-    %% Styles for WCAG Contrast
-    %% Light backgrounds with dark text for readability
-    classDef external fill:#f9f9f9,stroke:#333,stroke-width:2px,color:#000
-    classDef api fill:#e1f5fe,stroke:#01579b,stroke-width:2px,color:#000
-    classDef service fill:#e8f5e9,stroke:#1b5e20,stroke-width:2px,color:#000
-    classDef core fill:#fff3e0,stroke:#e65100,stroke-width:2px,color:#000
-    classDef infra fill:#f3e5f5,stroke:#4a148c,stroke-width:2px,color:#000
-    classDef db fill:#eceff1,stroke:#263238,stroke-width:2px,color:#000
+graph TD
+    %% =======================================================================
+    %% RECOGNITION SERVICE V4.2.4 - BACKEND MASTER OVERVIEW
+    %% Updated: December 6, 2025
+    %% Status: Core implementation complete (Phases 1-6, Tasks 72-74)
+    %% See also: ../frontend/master_overview.mmd for WordPress plugin architecture
+    %% =======================================================================
 
-    subgraph External["External Systems"]
-        wp["WordPress Plugin\n(Context Alt Text)"]:::external
+    subgraph Frontend["WordPress Plugin Frontend"]
+        WPProxy["PHP Proxy<br/>RecognitionProxyController"]
     end
 
-    subgraph Backend["Prototype Description Service"]
+    subgraph API["API Layer (FastAPI) ✅"]
+        AnalyzeRouter["AnalyzeRouter<br/>POST /analyze<br/>GET /jobs/{id}<br/>POST /jobs/{id}/cancel"]
+        ClusterRouter["ClusterRouter<br/>POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}<br/>POST /merge, /assign"]
+        SuggestionRouter["SuggestionRouter<br/>GET /suggestions<br/>POST accept/reject"]
+        MediaRouter["MediaRouter<br/>GET /media/identities"]
+        TrainingRouter["TrainingRouter<br/>GET /training-stage"]
+        DiagnosticsRouter["DiagnosticsRouter<br/>GET /diagnostics/decisions"]
+    end
+
+    WPProxy -->|"HTTP + API Key"| API
+
+    subgraph Security["Security Layer ✅"]
+        Auth["require_auth<br/>API Key validation"]
+        WriteAccess["require_write_access<br/>Mutate protection"]
+        TenantIso["Tenant Isolation<br/>X-Tenant-ID validation"]
+    end
+
+    subgraph Orchestration["Orchestration Layer ✅"]
+        ScanService[ScanService]
+        ClusterService[ClusterService]
+        JobService[JobService]
+    end
+
+    subgraph Discovery["Discovery Layer ✅"]
+        RD[RepresentativeDiscovery]
+        CD[CentroidDiscovery]
+        GD[GraphDiscovery]
+    end
+
+    subgraph Clustering["Clustering Algorithms ✅"]
+        HDBSCAN["HDBSCANClustering<br/>≤500 identities"]
+        CW["ChineseWhispersClustering<br/>>500 identities<br/>Deterministic"]
+    end
+
+    subgraph Assignment["Assignment Layer ✅"]
+        Gate[AssignmentGate]
         
-        subgraph API["API Layer"]
-            main["FastAPI App\n(api/main.py)"]:::api
-            rec_router["Recognition Router\n(/recognition)"]:::api
-            metrics_router["Metrics Router\n(/metrics)"]:::api
-            health_router["Health Router\n(/health)"]:::api
-            other_routers["Roster & Scene Routers"]:::api
+        subgraph Checks["Validation Checks"]
+            MC[MaturityCheck]
+            CLC[CompleteLinkCheck]
+            MDC[MemberDistributionCheck]
+            CC[ConfidenceCheck]
         end
-
-        subgraph Application["Application Services"]
-            scan_svc["IdentityScanService"]:::service
-            cluster_svc["IdentityClusteringService"]:::service
-            suggest_svc["SuggestionService"]:::service
-            job_svc["ClusteringJobService"]:::service
-        end
-
-        subgraph Domain["Clustering Core"]
-            context["TenantContextManager"]:::core
-            repo["ClusterRepository"]:::core
-            factory["ClusterFactory"]:::core
-            assigner["ClusterAssigner"]:::core
-            validator["ClusterValidator"]:::core
-            matcher["RepresentativeMatcher"]:::core
-            batch["BatchClusteringProcessor"]:::core
-            rep_manager["RepresentativeManager"]:::core
-        end
-
-        subgraph Infra["Infrastructure & Adapters"]
-            embed["FaceEmbeddingProvider\n(InsightFace)"]:::infra
-            thumb["ThumbnailService"]:::infra
-            db_sess["AsyncSession"]:::infra
-        end
+        
+        Writer[AssignmentWriter]
     end
 
-    subgraph Data["Persistence"]
-        pg[("PostgreSQL\n(pgvector)")]:::db
-        fs[("File System\n(Thumbnails)")]:::db
+    subgraph Suggestions["Suggestion Layer ✅"]
+        SuggService[SuggestionService]
+        SuggRepo[SuggestionRepository]
+        Admin((Admin User))
     end
 
-    %% Connections
-    wp -->|REST| main
-    main --> rec_router
-    main --> metrics_router
-    main --> health_router
-    main --> other_routers
+    subgraph Observability["Observability Layer ✅"]
+        Logger[ClusteringLogger]
+        Report[BatchJobReport]
+        Visualizer[ClusterVisualizer]
+        ObsRepo[ObservabilityRepository]
+    end
 
-    rec_router --> scan_svc
-    rec_router --> cluster_svc
-    rec_router --> suggest_svc
+    subgraph Infrastructure["Infrastructure Layer ✅"]
+        EmbeddingService["EmbeddingService<br/>to_media_identities()"]
+        InsightFace["InsightFaceAdapter<br/>FaceDetector + EmbeddingGenerator"]
+        DB[(PostgreSQL)]
+        ClusterRepo[ClusterRepository]
+        MemberRepo[MemberRepository]
+        Settings[ClusteringSettings]
+    end
 
-    %% Scanning Flow
-    scan_svc --> embed
-    scan_svc --> thumb
-    scan_svc --> db_sess
+    %% Flow: API Security
+    API --> Security
+    Security --> Auth
+    Security --> WriteAccess
+    Security --> TenantIso
 
-    %% Clustering Flow
-    cluster_svc --> context
-    cluster_svc --> repo
-    cluster_svc --> factory
-    cluster_svc --> assigner
-    cluster_svc --> validator
-    cluster_svc --> batch
-    cluster_svc --> job_svc
-    cluster_svc --> suggest_svc
+    %% Flow: API to Services
+    AnalyzeRouter --> ScanService
+    AnalyzeRouter --> JobService
+    ClusterRouter --> ClusterService
+    ClusterRouter --> JobService
+    SuggestionRouter --> SuggService
+    MediaRouter --> ClusterService
+    TrainingRouter --> ClusterService
+    DiagnosticsRouter --> ObsRepo
 
-    %% Core Dependencies
-    batch --> matcher
-    batch --> repo
-    batch --> factory
-    batch --> assigner
-    batch --> validator
+    %% Flow: Scanning
+    ScanService -->|1. Detect Faces| EmbeddingService
+    EmbeddingService --> InsightFace
+    ScanService -->|2. Persist Identity| DB
+
+    %% Flow: Clustering
+    ClusterService -->|1. Get Unclustered| ClusterRepo
+    ClusterRepo --> DB
+    MemberRepo --> DB
     
-    matcher --> validator
-    matcher --> assigner
-    matcher --> rep_manager
+    ClusterService -->|2. Find Candidates| RD
+    ClusterService -->|2. Find Candidates| CD
+    ClusterService -->|2. Find Candidates| GD
     
-    %% Infra Dependencies
-    repo --> db_sess
-    context --> db_sess
-    suggest_svc --> db_sess
-    db_sess --> pg
-    thumb --> fs
+    %% GraphDiscovery algorithm selection
+    GD -->|≤500 identities| HDBSCAN
+    GD -->|>500 identities| CW
+    
+    RD -->|Candidates| Gate
+    CD -->|Candidates| Gate
+    GD -->|Candidates| Gate
+    
+    %% Flow: Assignment Gate
+    Gate -->|Validate| Checks
+    Checks -->|Result| Gate
+    Gate -->|Query| ClusterRepo
+    Gate -.->|Configured by| Settings
+    
+    Gate -->|ACCEPT| Writer
+    Gate -->|SUGGEST| SuggService
+    Gate -->|REJECT| Unclustered[Unclustered Pool]
+    
+    Writer -->|Persist| DB
+    SuggService --> SuggRepo
+    SuggRepo -->|Persist| DB
+    
+    %% Flow: Suggestions
+    Admin -->|Review| SuggService
+    SuggService -->|Accept/Reject| DB
+
+    %% Flow: Observability
+    ClusterService -.->|Log Decisions| Logger
+    Logger -.->|Accumulate| Report
+    Logger --> ObsRepo
+    ClusterService -.->|Generate Charts| Visualizer
+    Visualizer -.->|Visualize| Report
+    ObsRepo --> DB
+    
+    %% Styling (WCAG AA compliant - 4.5:1 text contrast, 3:1 graphical contrast)
+    style API fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
+    style Security fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#0d47a1
+    style Gate fill:#fff3e0,stroke:#bf360c,stroke-width:2px,color:#bf360c
+    style Checks fill:#fff8e1,stroke:#f57f17,color:#e65100
+    style Discovery fill:#e3f2fd,stroke:#0d47a1,color:#0d47a1
+    style Clustering fill:#f1f8e9,stroke:#33691e,color:#33691e
+    style Orchestration fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
+    style Suggestions fill:#fff3e0,stroke:#f57c00,color:#e65100
+    style Observability fill:#e8f5e9,stroke:#1b5e20,color:#1b5e20
+    style Infrastructure fill:#fce4ec,stroke:#ad1457,color:#880e4f

@@ -261,6 +261,69 @@ WordPress                          Backend Service
 }
 ```
 
+---
+
+## Recognition API (WordPress Proxy)
+
+The WordPress plugin calls the recognition service via the `/recognition` prefix. All requests **must** include `X-Tenant-ID` (UUID). These endpoints are faked in tests (API contract) and backed by services/DB in integration tests.
+
+### Analyze Media (WordPress format)
+
+- **Endpoint:** `POST /recognition/analyze`
+- **Body:** 
+  ```json
+  {
+    "tenant_id": "e761e2dc-0d2b-4d4d-8a16-3b72f2e4a652",
+    "media_items": [
+      {"media_id": 123, "media_url": "https://wp.test/uploads/img.jpg"}
+    ]
+  }
+  ```
+- **Response (202):**
+  ```json
+  {"id": "job-abc123", "type": "analyze", "status": "running", "progress": {"completed":0,"total":1}, "started_at": "...", "finished_at": null}
+  ```
+- Backward compatibility: `media_ids: [string]` still accepted.
+
+### Poll Job Status
+
+- **Endpoint:** `GET /recognition/jobs/{job_id}`
+- **Response (200/404):** `JobStatusResponse` payload (type, status, progress, timestamps).
+
+### Training Stage
+
+- **Endpoint:** `GET /recognition/training-stage`
+- **Headers:** `X-Tenant-ID`
+- **Response (200):**
+  ```json
+  {"tenant_id": "...", "cluster_count": 0, "member_count": 0, "stage": "cold_start"}
+  ```
+
+### Pending Suggestions (top-level)
+
+- **Endpoint:** `GET /recognition/suggestions`
+- **Headers:** `X-Tenant-ID`
+- **Query:** `limit` (default 50), `offset` (default 0)
+- **Response (200):** List of `SuggestionResponse` objects.
+
+### Media Identities Lookup
+
+- **Endpoint:** `GET /recognition/media/identities`
+- **Headers:** `X-Tenant-ID`
+- **Query:** `media_ids[]` (repeatable)
+- **Response (200):**
+  ```json
+  [
+    {
+      "identity_id": "uuid-or-short-id",
+      "media_id": 123,
+      "cluster_id": "optional-cluster-id",
+      "bbox": {"w": 1, "h": 1, "x": 0, "y": 0},
+      "confidence": 0.99
+    }
+  ]
+  ```
+
 **Headers:**
 
 - `ETag: "def456"` (new ETag value)
@@ -578,6 +641,36 @@ Backend logs include structured fields for correlation:
 ```
 
 WordPress should include correlation IDs in requests for distributed tracing.
+
+---
+
+## Recognition Service Endpoints
+
+### Analyze Media
+
+- **Endpoint**: `POST /recognition/analyze`
+- **Request**: `{"tenant_id": "...", "media_items": [{"media_id": 123, "media_url": "..."}]}`
+- **Response**: `{"id": "job_xxx", "type": "analyze", "status": "pending", ...}`
+
+### Job Polling
+
+- **Endpoint**: `GET /recognition/jobs/{job_id}?tenant_id=...`
+- **Response**: `{"id": "...", "status": "running", "progress": {"completed": 5, "total": 10}}`
+
+### Training Stage
+
+- **Endpoint**: `GET /recognition/training-stage?tenant_id=...`
+- **Response**: `{"cluster_count": 12, "stage": "growing", "suggested_threshold": 0.85}`
+
+### Suggestions Queue
+
+- **Endpoint**: `GET /recognition/suggestions?tenant_id=...&limit=10&offset=0`
+- **Response**: `[{"id": "...", "identity_id": "...", "cluster_id": "...", "status": "pending"}]`
+
+### Media Identities
+
+- **Endpoint**: `GET /recognition/media/identities?tenant_id=...&media_ids[]=123&media_ids[]=456`
+- **Response**: `{"123": [{"id": "...", "bbox": {...}, "cluster_id": "..."}], "456": [...]}`
 
 ---
 

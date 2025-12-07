@@ -56,7 +56,7 @@ def test_paging_limit_above_max_returns_400() -> None:
     resp = client.get(
         "/recognition/suggestions",
         headers={"X-Tenant-ID": tenant_id},
-        params={"limit": 500},
+        params={"limit": 501},  # max_page_size is 500
     )
 
     assert resp.status_code == 400

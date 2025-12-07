@@ -48,7 +48,7 @@ async def test_full_clustering_flow(
 
     first_cluster = clusters[0]
     assert first_cluster.member_count > 0
-    assert first_cluster.clustering_algorithm == "graph"
+    assert first_cluster.clustering_algorithm == "chinese_whispers"
 
     # Verify members
     members = await member_repository.get_by_cluster(first_cluster.id)

@@ -63,6 +63,7 @@ class RecognitionFilter(logging.Filter):
         allowed = (
             name.startswith("recognition.application")
             or name.startswith("recognition.infrastructure")
+            or name.startswith("recognition.interface_adapters")
             or name.startswith("db")
         )
         return allowed

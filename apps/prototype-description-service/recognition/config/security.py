@@ -30,7 +30,7 @@ class SecuritySettings(BaseModel):
         default_factory=lambda: int(os.getenv("RECOGNITION_RATE_LIMIT_RPM", "60"))
     )
     rate_limit_burst: int = Field(default_factory=lambda: int(os.getenv("RECOGNITION_RATE_LIMIT_BURST", "10")))
-    max_page_size: int = Field(default_factory=lambda: int(os.getenv("RECOGNITION_MAX_PAGE_SIZE", "200")))
+    max_page_size: int = Field(default_factory=lambda: int(os.getenv("RECOGNITION_MAX_PAGE_SIZE", "500")))
 
 
 def get_security_settings() -> SecuritySettings:

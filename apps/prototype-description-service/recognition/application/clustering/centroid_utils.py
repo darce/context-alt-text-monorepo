@@ -6,8 +6,12 @@ from collections.abc import Sequence
 
 import numpy as np
 
-from recognition.domain.embeddings import extract_face_embedding
-from recognition.domain.embeddings.layout import EXTENDED_EMBEDDING_DIM, FACE_EMBEDDING_DIM
+from recognition.shared.similarity import (
+    EXTENDED_EMBEDDING_DIM,
+    FACE_EMBEDDING_DIM,
+    compute_face_similarity,
+    extract_face_embedding,
+)
 
 
 def _to_face_embedding(vec: np.ndarray) -> np.ndarray:
@@ -20,13 +24,10 @@ def _to_face_embedding(vec: np.ndarray) -> np.ndarray:
     This ensures similarity calculations use only the face identity vector,
     not the metadata portion which can cause false matches.
     """
-    if len(vec) == EXTENDED_EMBEDDING_DIM:
+    if len(vec) in (EXTENDED_EMBEDDING_DIM, FACE_EMBEDDING_DIM):
         return extract_face_embedding(vec)
-    elif len(vec) == FACE_EMBEDDING_DIM:
-        return vec
-    else:
-        # Unknown dimension - return as-is and let caller handle
-        return vec
+    # Unknown dimension - return as-is and let caller handle
+    return vec
 
 
 def compute_centroid(embeddings: Sequence[Sequence[float] | np.ndarray]) -> np.ndarray:
@@ -86,14 +87,7 @@ def compute_similarity(
     vec_a = np.array(embedding_a, dtype=np.float32)
     vec_b = np.array(embedding_b, dtype=np.float32)
 
-    # Extract face embedding only - critical for correct similarity!
-    face_a = _to_face_embedding(vec_a)
-    face_b = _to_face_embedding(vec_b)
-
-    face_a = _normalize_vector(face_a)
-    face_b = _normalize_vector(face_b)
-
-    similarity = float(np.dot(face_a, face_b))
+    similarity = compute_face_similarity(_to_face_embedding(vec_a), _to_face_embedding(vec_b))
     # Floating point drift may produce values slightly outside the range.
     return max(0.0, min(1.0, similarity))
 

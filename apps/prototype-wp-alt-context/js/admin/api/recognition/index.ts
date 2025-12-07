@@ -9,6 +9,8 @@
 export type {
   AnalyzeRequest,
   AnalyzeResponse,
+  JobProgress,
+  JobStatusResponse,
   ScanStatus,
   ClusterRequest,
   ClusterResponse,

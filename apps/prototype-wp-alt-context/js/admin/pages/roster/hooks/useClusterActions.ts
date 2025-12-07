@@ -57,8 +57,8 @@ export const useClusterActions = ({
 
   const statusMessage = useMemo(() => {
     if (rescanMutation.isSuccess && rescanMutation.data) {
-      return rescanMutation.data.job_id
-        ? `Started sensitive rescan (job ${rescanMutation.data.job_id}).`
+      return rescanMutation.data.id
+        ? `Started sensitive rescan (job ${rescanMutation.data.id}).`
         : 'Started sensitive rescan.';
     }
     if (commitMutation.isSuccess) {

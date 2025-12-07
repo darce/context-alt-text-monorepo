@@ -117,12 +117,11 @@ export const WorkbenchPage = (): React.JSX.Element => {
       setIsWaitingForScanCompletion(false);
     },
     onSuccess: (data) => {
-      if (data.job_id) {
-        rememberJob(data.job_id);
+      // Backend returns { id, type, status, progress, started_at, finished_at }
+      if (data.id) {
+        rememberJob(data.id);
+        setActiveJobIds([data.id]);
       }
-
-      const jobIds = data.job_ids ?? (data.job_id ? [data.job_id] : []);
-      setActiveJobIds(jobIds);
       setIsWaitingForScanCompletion(true);
 
       setClusterMessage(null);

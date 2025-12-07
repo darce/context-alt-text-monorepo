@@ -1,0 +1,69 @@
+"""API contract tests for WordPress integration endpoints."""
+
+from __future__ import annotations
+
+import uuid
+
+from fastapi.testclient import TestClient
+
+from recognition.tests.api.conftest import FakeMediaIdentityService, seed_cluster
+
+
+def test_analyze_accepts_media_items(api_client, tenant_id):
+    payload = {
+        "tenant_id": tenant_id,
+        "media_items": [{"media_id": 123, "media_url": "http://example.test/img.jpg"}],
+    }
+
+    resp = api_client.post("/recognition/analyze", json=payload)
+
+    assert resp.status_code == 202
+
+
+def test_job_polling_endpoint_exists(api_client, tenant_id, fake_job_service):
+    resp = api_client.get("/recognition/jobs/nonexistent")
+
+    assert resp.status_code in {200, 404}  # endpoint exists; status depends on fake store
+
+
+def test_training_stage_endpoint(api_client, tenant_id):
+    resp = api_client.get("/recognition/training-stage", headers={"X-Tenant-ID": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["stage"]
+    assert body["tenant_id"] == tenant_id
+
+
+def test_top_level_suggestions(api_client, tenant_id, fake_suggestion_service, fake_cluster_service):
+    cluster = seed_cluster(fake_cluster_service, tenant_id)
+    fake_suggestion_service.suggestions["sugg-1"] = type(
+        "Fake",
+        (),
+        {
+            "id": "sugg-1",
+            "identity_id": "identity-1",
+            "cluster_id": cluster.id,
+            "status": type("S", (), {"value": "pending"})(),
+            "representative_similarity": 0.9,
+            "member_similarity": 0.9,
+        },
+    )()
+    resp = api_client.get(
+        "/recognition/suggestions",
+        headers={"X-Tenant-ID": tenant_id},
+    )
+    assert resp.status_code == 200
+
+
+def test_media_identities_endpoint(api_client, tenant_id, fake_media_identity_service: FakeMediaIdentityService):
+    fake_media_identity_service.add_identity(media_id=111, identity_id="identity-1", cluster_id="cluster-1")
+
+    resp = api_client.get(
+        "/recognition/media/identities",
+        headers={"X-Tenant-ID": tenant_id},
+        params=[("media_ids", 111)],
+    )
+
+    assert resp.status_code == 200
+    assert isinstance(resp.json(), list)

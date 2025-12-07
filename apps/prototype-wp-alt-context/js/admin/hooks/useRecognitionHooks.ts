@@ -16,7 +16,7 @@ import {
   type ClusterListParams,
   type ClusterResponse,
   type ClusterSummary,
-  type ScanStatus,
+  type JobStatusResponse,
 } from '../api/recognition';
 import { fetchTrainingStage } from '../api/recognition/identityApi';
 import type { TrainingStageResponse } from '../api/recognition/types';
@@ -28,7 +28,7 @@ export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse, 
   });
 
 export const useScanStatus = (jobId: string | null, enabled = true) =>
-  useQuery<ScanStatus>({
+  useQuery<JobStatusResponse>({
     queryKey: ['recognition-status', jobId],
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId!),
@@ -39,7 +39,7 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
 export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
   useQueries({
     queries: jobIds.map(
-      (jobId): UseQueryOptions<ScanStatus, Error> => ({
+      (jobId): UseQueryOptions<JobStatusResponse, Error> => ({
         queryKey: ['recognition-status', jobId],
         queryFn: () => fetchScanStatus(jobId),
         enabled: Boolean(jobId) && enabled,

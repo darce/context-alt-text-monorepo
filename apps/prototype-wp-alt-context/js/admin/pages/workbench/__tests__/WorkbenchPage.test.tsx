@@ -81,7 +81,14 @@ describe('WorkbenchPage', () => {
           options?.onMutate?.(mediaIds, mockContext);
           if (outcome === 'success') {
             options?.onSuccess?.(
-              { job_id: 'job-123', status: 'queued', total_media: mediaIds.length },
+              {
+                id: 'job-123',
+                type: 'analyze' as const,
+                status: 'pending' as const,
+                progress: { completed: 0, total: mediaIds.length },
+                started_at: new Date().toISOString(),
+                finished_at: null,
+              },
               mediaIds,
               undefined,
               mockContext,
@@ -166,11 +173,12 @@ describe('WorkbenchPage', () => {
 
     mockUseScanStatus.mockReturnValue({
       data: {
-        job_id: 'job-initial',
-        status: 'pending',
-        total_media: 1,
-        processed_media: 0,
-        identities_detected: 0,
+        id: 'job-initial',
+        type: 'analyze' as const,
+        status: 'pending' as const,
+        progress: { completed: 0, total: 1 },
+        started_at: new Date().toISOString(),
+        finished_at: null,
       },
       isFetching: false,
       refetch: vi.fn(),
@@ -210,11 +218,12 @@ describe('WorkbenchPage', () => {
     setupScanMutation('success');
     mockUseScanStatus.mockReturnValue({
       data: {
-        job_id: 'job-initial',
-        status: 'completed',
-        total_media: 1,
-        processed_media: 1,
-        identities_detected: 1,
+        id: 'job-initial',
+        type: 'analyze' as const,
+        status: 'completed' as const,
+        progress: { completed: 1, total: 1 },
+        started_at: new Date().toISOString(),
+        finished_at: new Date().toISOString(),
       },
       isFetching: false,
       refetch: vi.fn(),

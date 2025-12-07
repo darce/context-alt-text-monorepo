@@ -21,11 +21,12 @@ describe('useRecognitionJobHistory', () => {
 
   it('records jobs and fetches their statuses', async () => {
     fetchScanStatusMock.mockResolvedValue({
-      job_id: 'job-1',
+      id: 'job-1',
+      type: 'analyze',
       status: 'completed',
-      total_media: 1,
-      processed_media: 1,
-      identities_detected: 1,
+      progress: { completed: 1, total: 1 },
+      started_at: '2025-01-01T00:00:00Z',
+      finished_at: '2025-01-01T00:00:01Z',
     });
     const { result } = renderHook(() => useRecognitionJobHistory());
 

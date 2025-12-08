@@ -13,7 +13,6 @@ from fastapi.testclient import TestClient
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
-from recognition.interface_adapters.http.routers import analyze as analyze_router
 from recognition.interface_adapters.http.routers import clusters as clusters_router
 from recognition.interface_adapters.http.routers import suggestions as suggestions_router
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
@@ -60,7 +59,7 @@ class FakeScanService:
         self.calls: list[tuple[str, list[str]]] = []
         self.session: object | None = None
 
-    async def analyze_media(self, tenant_id: str, media_ids: list[str]):
+    async def analyze_media(self, tenant_id: str, media_ids: list[str], media_sources: list[str] | None = None):
         self.calls.append((tenant_id, list(media_ids)))
         now = datetime.now(tz=UTC)
         return SimpleNamespace(
@@ -217,6 +216,15 @@ def api_client(
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[get_tenant_id] = lambda: tenant_id
 
+    def scan_service_builder():
+        def _builder(tenant_id: str):  # noqa: ANN001
+            fake_scan_service.session = None
+            return fake_scan_service
+
+        return _builder
+
+    app.dependency_overrides[dependencies.get_scan_service_builder] = scan_service_builder
+
     # Monkeypatch router helpers to point at fakes
     async def _fake_build_cluster_service(session, tenant_id, settings=None):  # noqa: ANN001
         return fake_cluster_service
@@ -229,12 +237,6 @@ def api_client(
 
     monkeypatch.setattr(dependencies, "get_job_service", _fake_get_job_service)
     monkeypatch.setattr(clusters_router, "get_job_service", _fake_get_job_service)
-
-    def _fake_scan_service_factory(session=None, *_args, **_kwargs):
-        fake_scan_service.session = session
-        return fake_scan_service
-
-    monkeypatch.setattr(analyze_router, "ScanService", _fake_scan_service_factory)
 
     async def _fake_suggestion_service(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_service

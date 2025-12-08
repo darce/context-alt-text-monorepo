@@ -86,6 +86,14 @@ class MediaIdentity(Base):
     confidence: Mapped[float] = mapped_column(Float, nullable=False)
 
     embedding: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension), nullable=False)
+
+    # InsightFace metadata
+    pose_pitch: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pose_yaw: Mapped[float | None] = mapped_column(Float, nullable=True)
+    pose_roll: Mapped[float | None] = mapped_column(Float, nullable=True)
+    age: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
+
     thumbnail_url: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(

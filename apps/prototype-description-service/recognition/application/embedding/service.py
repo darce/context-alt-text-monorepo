@@ -42,11 +42,18 @@ from recognition.shared.ids import generate_id
 
 @dataclass
 class FaceDetection:
-    """Detected face bounding box and confidence for a media asset."""
+    """Detected face bounding box, confidence, and optional embedding for a media asset."""
 
     media_id: str
     bbox: tuple[int, int, int, int]
     confidence: float
+    embedding: np.ndarray | None = None  # 512D face embedding (unit normalized)
+    # InsightFace metadata
+    pose_pitch: float | None = None
+    pose_yaw: float | None = None
+    pose_roll: float | None = None
+    age: int | None = None
+    gender: int | None = None  # 0=female, 1=male
 
 
 @dataclass
@@ -61,7 +68,7 @@ class EmbeddingResult:
 class EmbeddingService:
     """Deterministic embedding pipeline placeholder for integration tests."""
 
-    def __init__(self, embedding_dim: int = 1024) -> None:
+    def __init__(self, embedding_dim: int = 512) -> None:
         self.embedding_dim = embedding_dim
 
     def detect_faces(self, media_ids: Iterable[str]) -> list[FaceDetection]:
@@ -72,7 +79,7 @@ class EmbeddingService:
         return detections
 
     def generate_embeddings(self, detections: Iterable[FaceDetection]) -> list[EmbeddingResult]:
-        """Return deterministic 1024D embeddings for each detection."""
+        """Return deterministic 512D embeddings for each detection."""
         results: list[EmbeddingResult] = []
         for detection in detections:
             seed = hashlib.sha256(detection.media_id.encode()).digest()

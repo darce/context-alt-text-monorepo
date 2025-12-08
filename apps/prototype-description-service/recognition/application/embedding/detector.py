@@ -16,6 +16,8 @@ from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
+import httpx
+
 from recognition.application.embedding.service import FaceDetection
 
 if TYPE_CHECKING:
@@ -70,8 +72,20 @@ class StubFaceDetector(FaceDetectorProtocol):
 class InsightFaceFaceDetector(FaceDetectorProtocol):
     """Real face detector using InsightFace."""
 
-    def __init__(self, adapter: InsightFaceAdapter) -> None:
+    def __init__(self, adapter: InsightFaceAdapter, timeout: float = 30.0) -> None:
         self._adapter = adapter
+        self._timeout = timeout
+
+    async def _fetch_image(self, url: str) -> bytes | None:
+        """Fetch image bytes from a URL."""
+        try:
+            async with httpx.AsyncClient(timeout=self._timeout) as client:
+                response = await client.get(url)
+                response.raise_for_status()
+                return response.content
+        except httpx.HTTPError as e:
+            logger.error("Failed to fetch image from %s: %s", url[:100], e)
+            return None
 
     async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
         """Detect real faces using InsightFace."""
@@ -84,22 +98,36 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             # Determine media_id and get image bytes
             if isinstance(source, str):
                 media_id = source
-                # For URLs, we'd need to fetch - for now skip non-bytes
-                logger.warning("URL sources not yet supported: %s", source[:50])
-                continue
+                # Check if it looks like a URL
+                if source.startswith(("http://", "https://")):
+                    image_bytes = await self._fetch_image(source)
+                    if image_bytes is None:
+                        continue
+                else:
+                    # Not a URL and not bytes - skip with warning
+                    logger.warning("Non-URL string source not supported: %s", source[:50])
+                    continue
             else:
                 media_id = hashlib.sha256(source).hexdigest()
                 image_bytes = source
 
-            # Detect faces
+            # Detect faces and get embeddings in one pass
             try:
                 faces = await self._adapter.detect_faces(image_bytes)
                 for face in faces:
+                    # Use the 512D face embedding directly (already unit normalized)
                     detections.append(
                         FaceDetection(
                             media_id=media_id,
                             bbox=face.bbox,
                             confidence=face.confidence,
+                            embedding=face.embedding_512,
+                            # InsightFace metadata
+                            pose_pitch=face.pose[0] if face.pose else None,
+                            pose_yaw=face.pose[1] if face.pose else None,
+                            pose_roll=face.pose[2] if face.pose else None,
+                            age=face.age,
+                            gender=face.gender,
                         )
                     )
             except Exception as e:

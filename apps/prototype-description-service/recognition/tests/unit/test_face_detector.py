@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from unittest.mock import AsyncMock, MagicMock
 
+import numpy as np
 import pytest
 
 from recognition.application.embedding.detector import (
@@ -97,6 +98,10 @@ class TestInsightFaceFaceDetector:
         mock_face = MagicMock()
         mock_face.bbox = (10, 20, 100, 150)
         mock_face.confidence = 0.95
+        mock_face.embedding_512 = np.random.randn(512).astype(np.float32)
+        mock_face.pose = (5.0, -3.0, 1.0)
+        mock_face.age = 30
+        mock_face.gender = 1
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         detector = InsightFaceFaceDetector(mock_adapter)
@@ -106,26 +111,69 @@ class TestInsightFaceFaceDetector:
         assert len(detections) == 1
         assert detections[0].bbox == (10, 20, 100, 150)
         assert detections[0].confidence == 0.95
+        assert detections[0].embedding is not None
+        assert detections[0].pose_pitch == 5.0
+        assert detections[0].age == 30
+        assert detections[0].gender == 1
 
     @pytest.mark.asyncio
-    async def test_skips_url_sources_with_warning(self) -> None:
-        """URL sources should be skipped (not yet supported)."""
+    async def test_fetches_url_sources(self) -> None:
+        """URL sources should be fetched and processed."""
         mock_adapter = MagicMock()
-        mock_adapter.detect_faces = AsyncMock(return_value=[])
+        mock_face = MagicMock(
+            bbox=(10, 20, 100, 150),
+            confidence=0.95,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=None,
+            age=None,
+            gender=None,
+        )
+        mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         detector = InsightFaceFaceDetector(mock_adapter)
-        detections = await detector.detect(["http://example.com/image.jpg"])
 
-        # Should not call adapter for URL
-        mock_adapter.detect_faces.assert_not_called()
-        assert detections == []
+        # Mock httpx to return fake image bytes
+        with pytest.MonkeyPatch.context() as mp:
+            import httpx
+
+            async def mock_get(*args, **kwargs):
+                response = MagicMock()
+                response.content = b"\xff\xd8fake-jpeg-bytes"
+                response.raise_for_status = MagicMock()
+                return response
+
+            mock_client = MagicMock()
+            mock_client.__aenter__ = AsyncMock(return_value=MagicMock(get=mock_get))
+            mock_client.__aexit__ = AsyncMock(return_value=None)
+            mp.setattr(httpx, "AsyncClient", lambda **kwargs: mock_client)
+
+            detections = await detector.detect(["http://example.com/image.jpg"])
+
+        # Should call adapter for fetched URL
+        mock_adapter.detect_faces.assert_called_once()
+        assert len(detections) == 1
+        assert detections[0].media_id == "http://example.com/image.jpg"
 
     @pytest.mark.asyncio
     async def test_handles_multiple_faces_per_image(self) -> None:
         """Should return multiple detections if adapter finds multiple faces."""
         mock_adapter = MagicMock()
-        mock_face1 = MagicMock(bbox=(10, 10, 50, 50), confidence=0.9)
-        mock_face2 = MagicMock(bbox=(100, 100, 150, 150), confidence=0.85)
+        mock_face1 = MagicMock(
+            bbox=(10, 10, 50, 50),
+            confidence=0.9,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=(1.0, 2.0, 3.0),
+            age=25,
+            gender=0,
+        )
+        mock_face2 = MagicMock(
+            bbox=(100, 100, 150, 150),
+            confidence=0.85,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=(-1.0, -2.0, -3.0),
+            age=35,
+            gender=1,
+        )
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face1, mock_face2])
 
         detector = InsightFaceFaceDetector(mock_adapter)

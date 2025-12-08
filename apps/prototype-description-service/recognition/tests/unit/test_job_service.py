@@ -32,7 +32,7 @@ class StubClusterService:
 
 
 class StubScanService:
-    async def analyze_media(self, tenant_id: str, media_ids: list[str]):
+    async def analyze_media(self, tenant_id: str, media_ids: list[str], media_sources: list[str] | None = None):
         return None
 
 

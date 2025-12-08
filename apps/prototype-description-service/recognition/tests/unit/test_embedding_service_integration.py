@@ -22,8 +22,8 @@ def test_detect_faces_returns_detections() -> None:
         assert det.bbox == (0, 0, 1, 1)
 
 
-def test_generate_embeddings_returns_1024d_vectors() -> None:
-    service = EmbeddingService(embedding_dim=1024)
+def test_generate_embeddings_returns_512d_vectors() -> None:
+    service = EmbeddingService(embedding_dim=512)
     detections = service.detect_faces([str(uuid.uuid4())])
 
     results = service.generate_embeddings(detections)
@@ -31,7 +31,7 @@ def test_generate_embeddings_returns_1024d_vectors() -> None:
     assert len(results) == 1
     vec = results[0].embedding
     assert isinstance(vec, np.ndarray)
-    assert vec.shape[0] == 1024
+    assert vec.shape[0] == 512
     assert abs(np.linalg.norm(vec) - 1.0) < 1e-6
 
 
@@ -43,5 +43,5 @@ def test_end_to_end_detection_to_identity() -> None:
     identities = service.to_media_identities("tenant-1", embeddings)
 
     assert len(identities) == len(detections)
-    assert all(identity.embedding.shape[0] == 1024 for identity in identities)
+    assert all(identity.embedding.shape[0] == 512 for identity in identities)
     assert all(identity.tenant_id == "tenant-1" for identity in identities)

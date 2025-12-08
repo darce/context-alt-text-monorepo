@@ -60,6 +60,12 @@ class HdbscanGraphAlgorithm(GraphAlgorithm):
         if data.size == 0:
             return []
 
+        # HDBSCAN requires at least min_cluster_size samples to form a cluster
+        # and will fail if k (min_samples) exceeds the number of points
+        if len(data) < self.min_cluster_size:
+            # With fewer samples than min_cluster_size, all points are noise
+            return [-1] * len(data)
+
         clusterer = hdbscan.HDBSCAN(
             min_cluster_size=self.min_cluster_size,
             min_samples=self.min_samples,

@@ -1,8 +1,10 @@
-.PHONY: help test lint format check clean install typecheck
+.PHONY: help test lint format check clean install typecheck serve stop
 
 # Default target
 help:
 	@echo "Available commands:"
+	@echo "  make serve      - Start the development server"
+	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
 	@echo "  make lint       - Run code linting checks"
 	@echo "  make typecheck  - Run type checking with mypy"
@@ -11,6 +13,20 @@ help:
 	@echo "  make ci         - Format code and run all checks"
 	@echo "  make install    - Install dependencies"
 	@echo "  make clean      - Remove cache and build files"
+	@echo "  make reset      - Drop and recreate the local database"
+
+# Start development server
+serve:
+	@./scripts/start_prototype_local.sh start &
+
+# Stop development server
+stop:
+	@./scripts/start_prototype_local.sh stop
+
+# Reset local database
+reset:
+	@./scripts/reset_dev_db.sh
+	@echo "✓ Local database reset"
 
 # Run all checks and tests
 check: lint typecheck test

@@ -10,20 +10,34 @@ from fastapi.testclient import TestClient
 from sqlalchemy import select
 
 from db.models import IdentityCluster, IdentityClusteringJob, IdentityMember, IdentityScanJob, MediaIdentity, Tenant
+from recognition.application.embedding.detector import StubFaceDetector
+from recognition.application.embedding.generator import StubEmbeddingGenerator
+from recognition.application.scan.service import ScanService
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 
 
 def _make_client(session, tenant: Tenant) -> TestClient:
-    """Create a test client with session override."""
+    """Create a test client with session override using stub detector/generator."""
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
 
     async def _session_override():
         yield session
 
+    def _scan_service_builder():
+        def _builder(tenant_id: str) -> ScanService:
+            return ScanService(
+                session=session,
+                detector=StubFaceDetector(),
+                generator=StubEmbeddingGenerator(),
+            )
+
+        return _builder
+
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
+    app.dependency_overrides[dependencies.get_scan_service_builder] = _scan_service_builder
     return TestClient(app)
 
 

@@ -5,6 +5,7 @@ Analyze routes: scan media and poll job status.
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -14,16 +15,18 @@ from sqlalchemy.exc import ProgrammingError
 
 from db.settings import get_database_settings
 from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
-from recognition.application.scan.service import ScanService
 from recognition.domain.job import Job, JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_service_dependency,
     get_optional_session,
+    get_scan_service_builder,
     require_auth,
     require_write_access,
 )
 from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest, _validate_uuid
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
+
+logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth)])
 
@@ -36,14 +39,22 @@ async def analyze_media(
     background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
+    scan_service_builder=Depends(get_scan_service_builder),
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
     tenant_uuid: uuid.UUID | None = None
     try:
-        scan_service = ScanService(session=session)
+        scan_service = scan_service_builder(str(request.tenant_id))
+        # Extract media IDs and URLs
         media_ids = request.media_ids
-        if not media_ids and request.media_items:
+        media_sources: list[str] = []  # URLs or IDs to pass to detector
+        if request.media_items:
+            # Use URLs for detection (InsightFaceFaceDetector will fetch them)
+            media_sources = [item.media_url for item in request.media_items]
             media_ids = [str(item.media_id) for item in request.media_items]
+        elif media_ids:
+            # No URLs available, pass IDs (will work with StubFaceDetector)
+            media_sources = list(media_ids)
         if not media_ids:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="media_ids are required")
         media_ids = [_validate_uuid(mid) for mid in media_ids]
@@ -57,7 +68,8 @@ async def analyze_media(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
         if auth and auth.tenant_claim and auth.tenant_claim != str(request.tenant_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
-        scan_job = await scan_service.analyze_media(request.tenant_id, media_ids)
+        # Pass media_sources (URLs) to detector, but use media_ids for tracking
+        scan_job = await scan_service.analyze_media(request.tenant_id, media_ids, media_sources=media_sources)
         progress = JobProgressResponse(completed=scan_job.processed_media or 0, total=scan_job.total_media or 0)
         return JobStatusResponse(
             id=str(scan_job.id),
@@ -74,6 +86,7 @@ async def analyze_media(
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover - stub fallback
+        logger.exception("Unexpected error in analyze_media: %s", exc)
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
     finally:
         if session is not None and hasattr(session, "execute") and tenant_uuid and _is_postgres_session(session):

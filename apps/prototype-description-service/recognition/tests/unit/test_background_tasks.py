@@ -32,7 +32,7 @@ class SpyScanService:
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[str]]] = []
 
-    async def analyze_media(self, tenant_id: str, media_ids: list[str]):
+    async def analyze_media(self, tenant_id: str, media_ids: list[str], media_sources: list[str] | None = None):
         self.calls.append((tenant_id, media_ids))
         # Return a dummy object with scan stats
         dt = __import__("datetime")

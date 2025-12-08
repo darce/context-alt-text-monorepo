@@ -1,6 +1,6 @@
 [project]
 name = "prototype-description-service"
-version = "0.1.0"
+version = "0.4.2.4"
 description = "Prototype rewrite of the description service with hexagonal architecture scaffolding."
 requires-python = ">=3.12"
 dependencies = [

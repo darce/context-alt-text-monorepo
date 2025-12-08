@@ -92,7 +92,7 @@ def get_database_settings() -> DatabaseSettings:
     _load_env_file()
     async_dsn = os.getenv("POSTGRES_DSN") or _render_default_async_dsn()
     sync_dsn = os.getenv("POSTGRES_SYNC_DSN") or _infer_sync_dsn(async_dsn)
-    pgvector_dim = int(os.getenv("PGVECTOR_DIM", "1024"))
+    pgvector_dim = int(os.getenv("PGVECTOR_DIM", "512"))
 
     return DatabaseSettings(
         postgres_dsn=async_dsn,

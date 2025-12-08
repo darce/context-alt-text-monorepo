@@ -11,7 +11,7 @@ down_revision = None
 branch_labels = None
 depends_on = None
 
-EMBEDDING_DIMENSION = 1024
+EMBEDDING_DIMENSION = 512
 SAFE_TENANT_EXPR = "NULLIF(current_setting('app.current_tenant', true), '')::uuid"
 BYPASS_RLS_EXPR = "COALESCE(NULLIF(current_setting('app.bypass_rls', true), ''), 'false')::boolean"
 
@@ -69,6 +69,12 @@ def upgrade() -> None:
         sa.Column("bbox_height", sa.Integer(), nullable=False),
         sa.Column("confidence", sa.Float(), nullable=False),
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
+        # InsightFace metadata
+        sa.Column("pose_pitch", sa.Float(), nullable=True),
+        sa.Column("pose_yaw", sa.Float(), nullable=True),
+        sa.Column("pose_roll", sa.Float(), nullable=True),
+        sa.Column("age", sa.Integer(), nullable=True),
+        sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
         sa.Column("thumbnail_url", sa.String(length=500)),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(

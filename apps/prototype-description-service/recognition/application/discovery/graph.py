@@ -98,6 +98,13 @@ class GraphDiscovery(DiscoveryAlgorithm):
 
         grouped = self._group_by_label(identities, face_vectors, labels)
 
+        # Collect noise points (label == -1) for special handling
+        noise_identities = [
+            (identity, face_vec)
+            for identity, face_vec, label in zip(identities, face_vectors, labels, strict=False)
+            if label == -1
+        ]
+
         candidates: list[AssignmentCandidate] = []
         new_clusters: list[tuple[list[MediaIdentity], list[float]]] = []
         for items in grouped.values():
@@ -118,6 +125,12 @@ class GraphDiscovery(DiscoveryAlgorithm):
                 members = [member for member, _ in items]
                 member_sims = self._compute_member_similarities(member_vectors)
                 new_clusters.append((members, member_sims))
+
+        # Handle noise points: when no anchors are provided (new cluster formation mode),
+        # create singleton clusters for each noise identity
+        if not anchor_embeddings and noise_identities:
+            for identity, _face_vec in noise_identities:
+                new_clusters.append(([identity], [1.0]))
 
         return GraphDiscoveryResult(candidates, new_clusters)
 

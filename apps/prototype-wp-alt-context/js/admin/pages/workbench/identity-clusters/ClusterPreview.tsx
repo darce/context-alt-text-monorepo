@@ -6,6 +6,7 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 
 import type { DetectedIdentity } from '../../../api/recognition';
+import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 
 interface ClusterPreviewProps {
   /** First member to show as representative thumbnail */
@@ -18,11 +19,15 @@ interface ClusterPreviewProps {
  * Displays the cluster's representative thumbnail with an optional count badge.
  */
 export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewProps): React.JSX.Element => {
+  const hasValidThumbnail = representative?.media_url && representative?.bbox;
+
   return (
     <div className="acx-identity-cluster__preview">
-      {representative?.thumbnail_url ? (
-        <img
-          src={representative.thumbnail_url}
+      {hasValidThumbnail ? (
+        <FaceThumbnail
+          mediaUrl={representative.media_url!}
+          bbox={representative.bbox}
+          size="md"
           alt={__('Detected identity thumbnail', 'alt-context')}
           className="acx-identity-cluster__thumb"
         />

@@ -1,0 +1,129 @@
+/**
+ * FaceThumbnail - CSS-based face cropping from source image.
+ *
+ * Uses CSS transform to crop and scale a face region from a full image,
+ * avoiding the need for server-side thumbnail generation.
+ *
+ * @see docs/tasks/4.0/4.2.5/OFFLINE_FIRST_THUMBNAILS.md
+ */
+
+import * as React from 'react';
+import { __ } from '@wordpress/i18n';
+
+import type { BoundingBox } from '../../admin/api/recognition/types/identity';
+
+export type FaceThumbnailSize = 'sm' | 'md' | 'lg';
+
+const sizeMap: Record<FaceThumbnailSize, number> = {
+  sm: 32,
+  md: 48,
+  lg: 64,
+};
+
+export interface FaceThumbnailProps {
+  /** URL of the source image (WordPress media URL) */
+  mediaUrl: string;
+  /** Bounding box coordinates of the face in the source image */
+  bbox: BoundingBox;
+  /** Display size variant */
+  size?: FaceThumbnailSize;
+  /** Accessible alt text */
+  alt?: string;
+  /** Additional CSS class */
+  className?: string;
+}
+
+type LoadingState = 'loading' | 'loaded' | 'error';
+
+/**
+ * Renders a face thumbnail by CSS-cropping a region from the source image.
+ *
+ * Uses GPU-accelerated CSS transforms for performance.
+ * Works offline with browser-cached images.
+ */
+export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps>(
+  ({ mediaUrl, bbox, size = 'md', alt = __('Detected face', 'alt-context'), className = '' }, ref) => {
+    const [loadState, setLoadState] = React.useState<LoadingState>('loading');
+    const displaySize = sizeMap[size];
+
+    // Calculate scale to fit bbox into display size
+    // Use the larger dimension to ensure the face fills the container
+    const scale = displaySize / Math.max(bbox.width, bbox.height);
+
+    // For non-square bounding boxes, center the smaller dimension
+    const scaledWidth = bbox.width * scale;
+    const scaledHeight = bbox.height * scale;
+    const offsetX = (displaySize - scaledWidth) / 2;
+    const offsetY = (displaySize - scaledHeight) / 2;
+
+    const handleLoad = React.useCallback(() => {
+      setLoadState('loaded');
+    }, []);
+
+    const handleError = React.useCallback(() => {
+      setLoadState('error');
+    }, []);
+
+    const baseClass = 'acx-face-thumbnail';
+    const sizeClass = `${baseClass}--${size}`;
+    const stateClass = loadState !== 'loaded' ? `${baseClass}--${loadState}` : '';
+    const classes = [baseClass, sizeClass, stateClass, className].filter(Boolean).join(' ');
+
+    // Show placeholder on error
+    if (loadState === 'error') {
+      return (
+        <div
+          ref={ref}
+          className={classes}
+          role="img"
+          aria-label={__('Face image unavailable', 'alt-context')}
+          style={{ width: displaySize, height: displaySize }}
+        />
+      );
+    }
+
+    return (
+      <div
+        ref={ref}
+        className={classes}
+        style={{
+          width: displaySize,
+          height: displaySize,
+          overflow: 'hidden',
+          borderRadius: '50%',
+          position: 'relative',
+        }}
+      >
+        {loadState === 'loading' && (
+          <span
+            className={`${baseClass}__placeholder`}
+            aria-hidden="true"
+            style={{
+              position: 'absolute',
+              inset: 0,
+              backgroundColor: 'var(--acx-color-gray-200, #e5e7eb)',
+              borderRadius: '50%',
+            }}
+          />
+        )}
+        <img
+          src={mediaUrl}
+          alt={alt}
+          onLoad={handleLoad}
+          onError={handleError}
+          style={{
+            // Position the image so the bbox is centered in the container
+            transform: `translate(${offsetX - bbox.x * scale}px, ${offsetY - bbox.y * scale}px) scale(${scale})`,
+            transformOrigin: 'top left',
+            maxWidth: 'none',
+            // Hide while loading to prevent flash
+            opacity: loadState === 'loaded' ? 1 : 0,
+            transition: 'opacity 150ms ease-in',
+          }}
+        />
+      </div>
+    );
+  },
+);
+
+FaceThumbnail.displayName = 'FaceThumbnail';

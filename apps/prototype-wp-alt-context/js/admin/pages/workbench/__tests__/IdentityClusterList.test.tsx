@@ -48,7 +48,7 @@ const renderWithClient = (ui: React.ReactElement) => {
 };
 
 const baseIdentity = {
-  id: 'identity-1',
+  identity_id: 'identity-1',
   media_id: 1,
   cluster_id: 'cluster-1',
   cluster_label: 'Cluster 1',
@@ -168,7 +168,7 @@ describe('IdentityClusterList', () => {
     await user.type(input, 'Existing Label');
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'Existing Label'));
+    await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label'));
   });
 
   it('shows undo when merge completes and reverts on request', async () => {
@@ -208,7 +208,7 @@ describe('IdentityClusterList', () => {
     await user.type(input, 'Existing Label');
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'Existing Label'));
+    await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label'));
 
     const undoButton = await screen.findByRole('button', { name: /Undo merge/i });
     await user.click(undoButton);
@@ -222,15 +222,15 @@ describe('IdentityClusterList', () => {
     );
   });
 
-  it('renders persisted thumbnails when provided', () => {
-    const identityWithThumb = {
+  it('renders face thumbnail when media_url is provided', () => {
+    const identityWithMediaUrl = {
       ...baseIdentity,
-      thumbnail_url: 'https://example.com/thumb.jpg',
+      media_url: 'https://example.com/photo.jpg',
     };
 
-    renderWithClient(<IdentityClusterList identities={[identityWithThumb]} mediaId={1} />);
+    renderWithClient(<IdentityClusterList identities={[identityWithMediaUrl]} mediaId={1} />);
     const image = screen.getByRole('img', { name: /detected identity thumbnail/i });
-    expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg');
+    expect(image).toHaveAttribute('src', 'https://example.com/photo.jpg');
   });
 
   it('allows clicking the unlabeled text to start editing', async () => {

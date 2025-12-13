@@ -46,7 +46,7 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
   const groups = new Map<string, ClusterGroup>();
 
   identities.forEach((identity) => {
-    const clusterKey = identity.cluster_id ?? `identity-${identity.id}`;
+    const clusterKey = identity.cluster_id ?? `identity-${identity.identity_id}`;
 
     if (!groups.has(clusterKey)) {
       groups.set(clusterKey, {

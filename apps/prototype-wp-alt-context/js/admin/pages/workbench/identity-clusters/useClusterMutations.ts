@@ -119,11 +119,11 @@ export const useClusterMutations = ({
 
   // Merge mutation
   const mergeMutation = useMutation({
-    mutationFn: (label: string) => {
+    mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel?: string }) => {
       if (!clusterId) {
         return Promise.reject(new Error(__('Cannot merge: no cluster ID', 'alt-context')));
       }
-      return mergeCluster(clusterId, label);
+      return mergeCluster(clusterId, targetClusterId, targetLabel);
     },
     onSuccess: (result) => {
       if (clusterId) {
@@ -225,7 +225,7 @@ export const useClusterMutations = ({
   return {
     // Mutations
     rename: renameMutation.mutate,
-    merge: mergeMutation.mutate,
+    merge: (targetClusterId: string, targetLabel?: string) => mergeMutation.mutate({ targetClusterId, targetLabel }),
     revertMerge: revertMergeMutation.mutate,
     reassign: reassignMutation.mutate,
     assignToCluster: (identityId: string, targetClusterId: string) =>

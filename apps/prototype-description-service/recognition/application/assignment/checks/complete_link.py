@@ -50,6 +50,18 @@ class CompleteLinkCheck(AssignmentCheck):
         Returns:
             CheckResult: Pass/fail outcome with similarity metadata.
         """
+        # Bypass complete-link check for very high-confidence representative matches.
+        # If the discovery similarity is extremely high (>=0.95), the identity almost
+        # certainly belongs to this cluster and we don't need to verify against ALL reps.
+        if candidate.discovery_similarity >= 0.95:
+            return CheckResult(
+                passed=True,
+                metadata={
+                    "bypass_reason": "high_confidence_representative_match",
+                    "discovery_similarity": candidate.discovery_similarity,
+                },
+            )
+
         representatives = await self.cluster_repository.get_all_representatives(candidate.cluster_id)
         rep_count = len(representatives)
         if rep_count < 2:

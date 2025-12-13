@@ -67,12 +67,20 @@ class ClusterRepository(Protocol):
 
     async def add_representative(self, representative: ClusterRepresentative) -> None: ...
 
+    async def count_labeled(self) -> int:
+        """Count clusters with user-provided labels (not auto-generated)."""
+        ...
+
 
 class MemberRepository(Protocol):
     """Abstract interface for cluster member persistence."""
 
     async def get_by_cluster(self, cluster_id: str) -> list[IdentityMember]:
         """Fetch all members belonging to a cluster."""
+        ...
+
+    async def get_by_identity_id(self, identity_id: str) -> list[IdentityMember]:
+        """Fetch all member records for an identity (usually 0 or 1)."""
         ...
 
     async def add_member(self, cluster_id: str, identity_id: str, similarity: float) -> IdentityMember:
@@ -89,6 +97,10 @@ class MemberRepository(Protocol):
 
     async def remove_member(self, member_id: str) -> None:
         """Remove a member from a cluster."""
+        ...
+
+    async def remove_by_identity_id(self, identity_id: str) -> bool:
+        """Remove member record(s) for an identity. Returns True if any were removed."""
         ...
 
 

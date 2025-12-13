@@ -21,6 +21,15 @@ from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 _DB_SETTINGS = get_database_settings()
 
 
+def _clamp_similarity(value: float) -> float:
+    """Clamp similarity to [0.0, 1.0] range to satisfy DB constraint.
+
+    Floating-point operations can produce values slightly outside this range
+    (e.g., 1.0000001 from cosine similarity), which violates the DB check constraint.
+    """
+    return max(0.0, min(1.0, value))
+
+
 class SqlAlchemySuggestionRepository(SuggestionRepository):
     """Persist assignment suggestions using an async SQLAlchemy session."""
 
@@ -45,9 +54,9 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             tenant_id=tenant_uuid,
             identity_id=identity_uuid,
             suggested_cluster_id=cluster_uuid,
-            representative_similarity=payload.representative_similarity,
-            avg_member_similarity=payload.member_similarity,
-            confidence_score=payload.confidence_score,
+            representative_similarity=_clamp_similarity(payload.representative_similarity),
+            avg_member_similarity=_clamp_similarity(payload.member_similarity),
+            confidence_score=_clamp_similarity(payload.confidence_score),
             resolution=SuggestionStatus.PENDING.value,
         )
         self._session.add(model)

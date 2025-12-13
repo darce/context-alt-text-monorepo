@@ -48,6 +48,18 @@ class MemberDistributionCheck(AssignmentCheck):
         Returns:
             CheckResult: Pass/fail outcome with distribution metadata.
         """
+        # Bypass member distribution check for very high-confidence representative matches.
+        # If the discovery similarity is extremely high (>=0.95), the identity almost
+        # certainly belongs to this cluster and we don't need to verify against ALL members.
+        if candidate.discovery_similarity >= 0.95:
+            return CheckResult(
+                passed=True,
+                metadata={
+                    "bypass_reason": "high_confidence_representative_match",
+                    "discovery_similarity": candidate.discovery_similarity,
+                },
+            )
+
         members = await self.cluster_repository.get_member_embeddings(candidate.cluster_id)
         member_count = len(members)
 

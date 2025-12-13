@@ -554,7 +554,8 @@ class ClusterService:
     async def update_cluster(self, cluster_id: str, tenant_id: str, label: str | None) -> IdentityCluster | None:
         """Update cluster label and confirmation state."""
         cluster = await self.assignment_writer._clusters.get_by_id(cluster_id)
-        if not cluster or cluster.tenant_id != tenant_id:
+        # Normalize UUIDs to lowercase for comparison (db stores lowercase)
+        if not cluster or cluster.tenant_id.lower() != tenant_id.lower():
             return None
 
         cluster.label = label
@@ -588,7 +589,8 @@ class ClusterService:
             target = await cluster_repo.get_by_id(target_cluster_id)
             if not source or not target:
                 return None
-            if source.tenant_id != tenant_id or target.tenant_id != tenant_id:
+            # Normalize UUIDs to lowercase for comparison (db stores lowercase)
+            if source.tenant_id.lower() != tenant_id.lower() or target.tenant_id.lower() != tenant_id.lower():
                 return None
 
             # If source and target are identical, treat as a label/confirmation update.
@@ -623,9 +625,8 @@ class ClusterService:
             updated.member_count = len(await member_repo.get_by_cluster(target_cluster_id))
             return updated
 
-        if self._session is not None:
-            async with self._session.begin():
-                return await _merge()
+        # Session is already managed by the caller (FastAPI dependency)
+        # so we don't need to start a new transaction here
         return await _merge()
 
     async def log_merge_audit(self, source_id: str, target_id: str) -> None:  # pragma: no cover - override hook
@@ -721,3 +722,169 @@ class ClusterService:
             await recompute_centroid(target_cluster_id)
 
         return cluster
+
+    async def get_identity_cluster_id(self, identity_id: str) -> str | None:
+        """Get the cluster ID that an identity currently belongs to."""
+        member_repo: MemberRepository = self.assignment_writer._members
+        members = await member_repo.get_by_identity_id(identity_id)
+        if members:
+            return members[0].cluster_id
+        return None
+
+    async def remove_identity_from_cluster(self, identity_id: str) -> bool:
+        """Remove an identity from its current cluster (make it an orphan)."""
+        member_repo: MemberRepository = self.assignment_writer._members
+        cluster_repo: ClusterRepository = self.assignment_writer._clusters
+
+        members = await member_repo.get_by_identity_id(identity_id)
+        if not members:
+            return True  # Already not in any cluster
+
+        cluster_id = members[0].cluster_id
+        removed = await member_repo.remove_by_identity_id(identity_id)
+
+        if removed:
+            # Update cluster member count
+            cluster = await cluster_repo.get_by_id(cluster_id)
+            if cluster and cluster.member_count > 0:
+                cluster.member_count -= 1
+                await cluster_repo.update(cluster)
+
+        return True
+
+    async def split_cluster(
+        self,
+        cluster_id: str,
+        n_clusters: int = 0,
+    ) -> tuple[list[str], list[int]]:
+        """
+        Split a mixed cluster using hierarchical clustering.
+
+        If n_clusters=0 (default), automatically determines the optimal split
+        based on face similarity. If n_clusters>=2, forces exactly that many groups.
+        The largest group stays in the original cluster; others become new clusters.
+
+        Args:
+            cluster_id: The cluster to split
+            n_clusters: Number of clusters to split into.
+                       0 = auto-detect based on similarity threshold (default)
+                       2+ = force exactly this many clusters
+
+        Returns:
+            Tuple of (new_cluster_ids, moved_counts) for each new cluster created.
+        """
+        from recognition.application.clustering.hierarchical_clustering import HierarchicalClustering
+
+        session = self._session
+        if not session:
+            raise RuntimeError("No session available for split_cluster")
+
+        cluster_repo: ClusterRepository = self.assignment_writer._clusters
+        member_repo: MemberRepository = self.assignment_writer._members
+
+        # 1. Fetch all identities in the cluster
+        members = await member_repo.get_by_cluster(cluster_id)
+        if not members or len(members) < 2:
+            logger.info(
+                "Split cluster %s: only %d identities, need at least 2 to split",
+                cluster_id,
+                len(members) if members else 0,
+            )
+            return [], []
+
+        # Load identity embeddings
+        identity_ids = [m.identity_id for m in members]
+        stmt = select(MediaIdentityModel).where(MediaIdentityModel.id.in_(identity_ids))
+        result = await session.execute(stmt)
+        identities = list(result.scalars().all())
+
+        if len(identities) < 2:
+            return [], []
+
+        # 2. Use HierarchicalClustering to split identities
+        hierarchical = HierarchicalClustering(distance_threshold=0.30)
+        clusters_by_label = hierarchical.split_identities(identities, n_clusters)
+
+        # Check if we found multiple groups
+        if len(clusters_by_label) <= 1:
+            logger.info("Split cluster %s: All faces similar enough to stay together, nothing to split", cluster_id)
+            return [], []
+
+        # Build label array for compatibility with existing code
+        identity_to_label: dict[str, int] = {}
+        for label, group_members in clusters_by_label.items():
+            for member in group_members:
+                identity_to_label[str(member.id)] = label
+
+        labels = [identity_to_label[str(id.id)] for id in identities]
+        ids = [str(id.id) for id in identities]
+
+        logger.info("Split cluster %s: Hierarchical clustering labels=%s", cluster_id, labels)
+
+        # 3. Count members per group
+        label_counts: dict[int, int] = {}
+        for label in labels:
+            label_counts[label] = label_counts.get(label, 0) + 1
+
+        # Sort by count descending, keep largest in original cluster
+        sorted_labels = sorted(label_counts.items(), key=lambda x: x[1], reverse=True)
+        largest_label = sorted_labels[0][0]
+
+        # Get the original cluster for updates
+        original_cluster = await cluster_repo.get_by_id(cluster_id)
+        if not original_cluster:
+            logger.error("Split cluster %s: Original cluster not found", cluster_id)
+            return [], []
+
+        # Mark original as user-confirmed
+        original_cluster.user_confirmed = True
+        await cluster_repo.update(original_cluster)
+
+        new_cluster_ids: list[str] = []
+        moved_counts: list[int] = []
+
+        # 4. Create new clusters for each non-largest group
+        for label, count in sorted_labels[1:]:  # Skip largest (index 0)
+            identity_ids_for_group = [ids[i] for i, lbl in enumerate(labels) if lbl == label]
+
+            new_cluster_id = str(generate_id())
+            new_cluster = IdentityCluster(
+                id=new_cluster_id,
+                tenant_id=original_cluster.tenant_id,
+                label=f"Split from {cluster_id[:8]}",
+                member_count=count,
+                is_labeled=False,
+                user_confirmed=True,
+            )
+            await cluster_repo.save(new_cluster)
+
+            # Move members
+            for identity_id in identity_ids_for_group:
+                await member_repo.remove_by_identity_id(identity_id)
+                await member_repo.add_member(new_cluster_id, identity_id=identity_id, similarity=1.0)
+
+            new_cluster_ids.append(new_cluster_id)
+            moved_counts.append(count)
+
+            logger.info(
+                "Split cluster %s: Created new cluster %s with %d identities",
+                cluster_id,
+                new_cluster_id,
+                count,
+            )
+
+        # 5. Update original cluster count
+        remaining_count = label_counts[largest_label]
+        original_cluster.member_count = remaining_count
+        await cluster_repo.update(original_cluster)
+
+        total_moved = sum(moved_counts)
+        logger.info(
+            "Split cluster %s complete: created %d new clusters, moved %d identities, %d remain",
+            cluster_id,
+            len(new_cluster_ids),
+            total_moved,
+            remaining_count,
+        )
+
+        return new_cluster_ids, moved_counts

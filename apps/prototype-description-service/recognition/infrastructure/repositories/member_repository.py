@@ -20,6 +20,15 @@ from recognition.domain.repositories import IdentityMember, MemberRepository
 _DB_SETTINGS = get_database_settings()
 
 
+def _clamp_similarity(value: float) -> float:
+    """Clamp similarity to [0.0, 1.0] range to satisfy DB constraint.
+
+    Floating-point operations can produce values slightly outside this range
+    (e.g., 1.0000001 from cosine similarity), which violates the DB check constraint.
+    """
+    return max(0.0, min(1.0, value))
+
+
 class SqlAlchemyMemberRepository(MemberRepository):
     """Persist cluster members using an async SQLAlchemy session."""
 
@@ -51,7 +60,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
             tenant_id=tenant_uuid,
             cluster_id=cluster_uuid,
             identity_id=identity_uuid,
-            similarity=similarity,
+            similarity=_clamp_similarity(similarity),
         )
         self._session.add(model)
         await self._session.flush()
@@ -79,7 +88,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
                 tenant_id=tenant_uuid,
                 cluster_id=cluster_uuid,
                 identity_id=_coerce_uuid(member.identity_id),
-                similarity=member.similarity,
+                similarity=_clamp_similarity(member.similarity),
             )
             for member in members
         ]
@@ -118,6 +127,43 @@ class SqlAlchemyMemberRepository(MemberRepository):
         if model:
             await self._session.delete(model)
             await self._session.flush()
+
+    async def get_by_identity_id(self, identity_id: str) -> list[IdentityMember]:
+        """Fetch all member records for an identity (usually 0 or 1)."""
+        tenant_uuid = _coerce_uuid(self._tenant_id)
+        identity_uuid = _coerce_uuid(identity_id)
+        if tenant_uuid is None or identity_uuid is None:
+            return []
+
+        stmt: Select[tuple[MemberModel]] = (
+            select(MemberModel)
+            .where(MemberModel.identity_id == identity_uuid)
+            .where(MemberModel.tenant_id == tenant_uuid)
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain(m) for m in result.scalars().all()]
+
+    async def remove_by_identity_id(self, identity_id: str) -> bool:
+        """Remove member record(s) for an identity. Returns True if any were removed."""
+        tenant_uuid = _coerce_uuid(self._tenant_id)
+        identity_uuid = _coerce_uuid(identity_id)
+        if tenant_uuid is None or identity_uuid is None:
+            return False
+
+        stmt: Select[tuple[MemberModel]] = (
+            select(MemberModel)
+            .where(MemberModel.identity_id == identity_uuid)
+            .where(MemberModel.tenant_id == tenant_uuid)
+        )
+        result = await self._session.execute(stmt)
+        models = result.scalars().all()
+        removed = False
+        for model in models:
+            await self._session.delete(model)
+            removed = True
+        if removed:
+            await self._session.flush()
+        return removed
 
     def _to_domain(self, model: MemberModel) -> IdentityMember:
         return IdentityMember(

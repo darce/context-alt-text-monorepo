@@ -23,7 +23,7 @@ describe('useClusterMediaMap', () => {
         representative_identity: { media_id: 1, bbox: { x: 0, y: 0, width: 10, height: 10 } },
         sample_identities: [
           {
-            id: 'identity-1',
+            identity_id: 'identity-1',
             media_id: 1,
             similarity: 0.9,
             confidence: 0.8,

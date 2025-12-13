@@ -13,6 +13,7 @@ import {
   useScanStatus,
   useClusterIdentities,
   useMultiScanStatus,
+  useCombinedScanStatus,
 } from '../../../hooks/useRecognitionHooks';
 
 vi.mock('../../../hooks/useWorkbenchMedia', () => ({
@@ -36,6 +37,7 @@ vi.mock('../../../hooks/useRecognitionHooks', () => ({
   useScanStatus: vi.fn(),
   useClusterIdentities: vi.fn(),
   useMultiScanStatus: vi.fn(),
+  useCombinedScanStatus: vi.fn(),
   useTrainingStage: vi.fn(() => ({
     data: null,
     isLoading: false,
@@ -71,6 +73,7 @@ describe('WorkbenchPage', () => {
   const mockUseScanStatus = vi.mocked(useScanStatus);
   const mockUseClusterIdentities = vi.mocked(useClusterIdentities);
   const mockUseMultiScanStatus = vi.mocked(useMultiScanStatus);
+  const mockUseCombinedScanStatus = vi.mocked(useCombinedScanStatus);
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
@@ -186,6 +189,22 @@ describe('WorkbenchPage', () => {
 
     mockUseMultiScanStatus.mockReturnValue([]);
 
+    mockUseCombinedScanStatus.mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'job-initial',
+          type: 'analyze' as const,
+          status: 'pending' as const,
+          progress: { completed: 0, total: 1 },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+        },
+        isFetching: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useScanStatus>,
+      multiScanStatus: [],
+    });
+
     mockUseClusterIdentities.mockReturnValue({
       mutate: vi.fn(),
       isPending: false,
@@ -216,18 +235,21 @@ describe('WorkbenchPage', () => {
 
   it('refreshes identities automatically when a job completes', () => {
     setupScanMutation('success');
-    mockUseScanStatus.mockReturnValue({
-      data: {
-        id: 'job-initial',
-        type: 'analyze' as const,
-        status: 'completed' as const,
-        progress: { completed: 1, total: 1 },
-        started_at: new Date().toISOString(),
-        finished_at: new Date().toISOString(),
-      },
-      isFetching: false,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useScanStatus>);
+    mockUseCombinedScanStatus.mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'job-initial',
+          type: 'analyze' as const,
+          status: 'completed' as const,
+          progress: { completed: 1, total: 1 },
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+        },
+        isFetching: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useScanStatus>,
+      multiScanStatus: [],
+    });
 
     const queryClient = new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');

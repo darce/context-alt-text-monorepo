@@ -129,11 +129,11 @@ export const ClusterGrid = ({
             ) : (
               cluster.sample_identities.slice(0, 4).map((identity) => (
                 <figure
-                  key={identity.id}
+                  key={identity.identity_id}
                   className="acx-cluster-card__face"
                   draggable
                   aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
-                  onDragStart={handleIdentityDragStart(cluster.id, identity.id)}
+                  onDragStart={handleIdentityDragStart(cluster.id, identity.identity_id)}
                   onDragEnd={onFaceDragEnd}
                 >
                   <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} />

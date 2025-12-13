@@ -77,7 +77,7 @@ describe('ClusterGallery', () => {
     const clusterA = makeCluster({
       sample_identities: [
         {
-          id: 'identity-1',
+          identity_id: 'identity-1',
           media_id: 10,
           similarity: 0.9,
           confidence: 0.9,

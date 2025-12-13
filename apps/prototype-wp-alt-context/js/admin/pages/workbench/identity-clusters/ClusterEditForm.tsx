@@ -39,7 +39,7 @@ const renderSuggestionOption = (option: ComboboxOption): React.JSX.Element => {
           {similarity !== undefined && (
             <span
               className={`acx-identity-cluster__match-score ${
-                similarity > 0.8
+                similarity >= 0.7
                   ? 'acx-identity-cluster__match-score--high'
                   : 'acx-identity-cluster__match-score--medium'
               }`}

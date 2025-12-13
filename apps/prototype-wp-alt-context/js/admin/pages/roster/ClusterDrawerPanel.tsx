@@ -142,11 +142,11 @@ export const ClusterDrawerPanel = ({
           ) : (
             identitiesToDisplay.map((identity) => (
               <figure
-                key={identity.id}
+                key={identity.identity_id}
                 className="acx-cluster-drawer__face"
                 draggable
                 aria-label={sprintf(__('Move identity from media %d', 'alt-context'), identity.media_id)}
-                onDragStart={createFaceDragStart(identity.id)}
+                onDragStart={createFaceDragStart(identity.identity_id)}
                 onDragEnd={onFaceDragEnd}
               >
                 <a

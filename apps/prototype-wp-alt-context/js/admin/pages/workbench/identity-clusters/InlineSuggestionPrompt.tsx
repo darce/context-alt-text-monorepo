@@ -22,11 +22,11 @@ interface InlineSuggestionPromptProps {
   isPending: boolean;
 }
 
-/** Minimum similarity threshold to show inline prompt (85%) */
-const INLINE_SUGGESTION_THRESHOLD = 0.85;
-
 /**
  * Inline confirmation prompt for high-confidence suggestions.
+ *
+ * The backend controls all threshold decisions - if a suggestion exists,
+ * it means the backend determined it's worth showing to the user.
  */
 export const InlineSuggestionPrompt = ({
   identityId,
@@ -42,12 +42,12 @@ export const InlineSuggestionPrompt = ({
     enabled: Boolean(identityId),
   });
 
-  // Get the top suggestion if it meets threshold
+  // Get the top suggestion - backend already filtered for threshold
   const topMatch: ClusterSuggestion | undefined = suggestions?.matches?.[0];
-  const hasHighConfidenceSuggestion = topMatch && topMatch.similarity >= INLINE_SUGGESTION_THRESHOLD && topMatch.label;
+  const hasSuggestion = topMatch?.label;
 
-  // Don't render if loading or no high-confidence suggestion
-  if (isLoading || !hasHighConfidenceSuggestion || !topMatch) {
+  // Don't render if loading or no suggestion with a label
+  if (isLoading || !hasSuggestion || !topMatch) {
     return null;
   }
 

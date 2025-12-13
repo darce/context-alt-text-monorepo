@@ -87,7 +87,7 @@ describe('useWorkbenchMedia', () => {
       identities_by_media: {
         '11': [
           {
-            id: 'face-1',
+            identity_id: 'face-1',
             media_id: 11,
             cluster_id: 'cluster-1',
             cluster_label: 'Riley',

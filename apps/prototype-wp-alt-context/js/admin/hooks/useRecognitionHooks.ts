@@ -4,6 +4,7 @@ import {
   useQuery,
   type UseMutationOptions,
   type UseQueryOptions,
+  type UseQueryResult,
 } from '@tanstack/react-query';
 
 import {
@@ -48,6 +49,23 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
       }),
     ),
   });
+
+/**
+ * Combined hook for tracking both single and multi-scan status.
+ * Reduces hook count in components that need both status trackers.
+ */
+export interface CombinedScanStatus {
+  /** Status query for the primary/selected job */
+  scanStatusQuery: UseQueryResult<JobStatusResponse, Error>;
+  /** Status queries for all active batch jobs */
+  multiScanStatus: UseQueryResult<JobStatusResponse, Error>[];
+}
+
+export const useCombinedScanStatus = (jobId: string | null, activeJobIds: string[]): CombinedScanStatus => {
+  const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));
+  const multiScanStatus = useMultiScanStatus(activeJobIds, activeJobIds.length > 0);
+  return { scanStatusQuery, multiScanStatus };
+};
 
 export const useClusterIdentities = (options?: UseMutationOptions<ClusterResponse, Error, void, unknown>) =>
   useMutation<ClusterResponse, Error, void>({

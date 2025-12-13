@@ -3,12 +3,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import {
-  useClusterIdentities,
-  useScanIdentities,
-  useScanStatus,
-  useMultiScanStatus,
-} from '../hooks/useRecognitionHooks';
+import { useClusterIdentities, useScanIdentities, useCombinedScanStatus } from '../hooks/useRecognitionHooks';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
@@ -152,8 +147,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
     },
   });
 
-  const scanStatusQuery = useScanStatus(jobId, Boolean(jobId));
-  const multiScanStatus = useMultiScanStatus(activeJobIds, activeJobIds.length > 0);
+  const { scanStatusQuery, multiScanStatus } = useCombinedScanStatus(jobId, activeJobIds);
 
   const scanStatusText = useMemo(() => {
     if (clusterMutation.isPending) {

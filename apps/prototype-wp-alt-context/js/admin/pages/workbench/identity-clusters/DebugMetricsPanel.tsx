@@ -64,13 +64,6 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
   const [isExpanded, setIsExpanded] = React.useState(false);
   const devMode = isDevMode();
 
-  // Debug log to help diagnose visibility issues
-  React.useEffect(() => {
-    if (process.env.NODE_ENV === 'development') {
-      console.log('[DebugMetricsPanel]', { devMode, hasMetrics: !!metrics, metrics });
-    }
-  }, [devMode, metrics]);
-
   // Only show in development mode
   if (!devMode || !metrics) {
     return null;

@@ -6,7 +6,7 @@ import { IdentityThumbnail } from '../IdentityThumbnail';
 import type { ClusterIdentity } from '../../../api/recognition';
 
 const identity: ClusterIdentity = {
-  id: 'identity-1',
+  identity_id: 'identity-1',
   media_id: 100,
   similarity: 0.5,
   confidence: 0.8,

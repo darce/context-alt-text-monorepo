@@ -45,7 +45,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   const canSearchForMatch = isSingleton;
   const labelText = derivedLabel ?? __('Unlabeled identity', 'alt-context');
   const representative = cluster.members[0];
-  const anchorIdentityId = representative?.id;
+  const anchorIdentityId = representative?.identity_id;
 
   // State management
   const {
@@ -64,6 +64,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     options,
     isLoading: suggestionsLoading,
     ensureLabels,
+    findClusterIdByLabel,
   } = useClusterSuggestions({
     identityId: anchorIdentityId,
     enabled: editState.isEditing,
@@ -80,6 +81,16 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     onError: setError,
   });
 
+  // Callback for accepting inline suggestion prompt
+  const handleSuggestionConfirm = React.useCallback(
+    (clusterId: string) => {
+      if (anchorIdentityId) {
+        mutations.assignToCluster(anchorIdentityId, clusterId);
+      }
+    },
+    [anchorIdentityId, mutations],
+  );
+
   // Handle save (rename or merge)
   const handleSave = async () => {
     // Allow save for regular clusters with canEdit, or for singletons searching for matches
@@ -92,9 +103,6 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       setError(__('Provide a label before saving.', 'alt-context'));
       return;
     }
-
-    // Find matching option to get cluster ID (for singletons assigning to existing cluster)
-    const matchingOption = options.find((opt) => opt.label.toLowerCase() === trimmed.toLowerCase());
 
     // Ensure we have existing labels for merge detection
     const labels = await ensureLabels();
@@ -112,19 +120,25 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
           : __('Merge this cluster into existing "' + targetLabel + '"?', 'alt-context');
 
         if (window.confirm(confirmMessage)) {
+          // Look up the target cluster ID by label
+          const targetClusterId = await findClusterIdByLabel(targetLabel);
+
+          if (!targetClusterId) {
+            setError(__('Could not find cluster to assign to.', 'alt-context'));
+            return;
+          }
+
           // If we have a cluster ID, merge normally
           // Otherwise, assign identities to the target cluster
           if (editableClusterId) {
-            // Regular cluster: merge by label
-            mutations.merge(targetLabel);
-          } else if (matchingOption?.value) {
+            // Regular cluster: merge by cluster ID
+            mutations.merge(targetClusterId, targetLabel);
+          } else {
             // No cluster ID: assign all members to target cluster
             // This handles both singletons and unclustered groups
             for (const member of cluster.members) {
-              mutations.assignToCluster(member.id, matchingOption.value);
+              mutations.assignToCluster(member.identity_id, targetClusterId);
             }
-          } else {
-            setError(__('Could not find cluster to assign to.', 'alt-context'));
           }
         }
       } else {
@@ -156,7 +170,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         ),
       )
     ) {
-      mutations.reassign(cluster.members.map((m) => m.id));
+      mutations.reassign(cluster.members.map((m) => m.identity_id));
     }
   };
 
@@ -207,14 +221,8 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
             {!cluster.label && anchorIdentityId && (
               <InlineSuggestionPrompt
                 identityId={anchorIdentityId}
-                onConfirm={(clusterId) => {
-                  // Assign identity to the suggested cluster
-                  mutations.assignToCluster(anchorIdentityId, clusterId);
-                }}
-                onReject={() => {
-                  // Open edit mode so user can search/create
-                  startEditing();
-                }}
+                onConfirm={handleSuggestionConfirm}
+                onReject={startEditing}
                 isPending={mutations.isPending}
               />
             )}

@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
 
 import { fetchScanStatus } from '../../api/recognition';
@@ -14,12 +16,23 @@ vi.mock('../../api/recognition', () => ({
 describe('useRecognitionJobHistory', () => {
   const fetchScanStatusMock = vi.mocked(fetchScanStatus);
 
+  const createWrapper = () => {
+    const queryClient = new QueryClient({
+      defaultOptions: { queries: { retry: false } },
+    });
+    const wrapper = ({ children }: { children: ReactNode }) => (
+      <QueryClientProvider client={queryClient}>{children}</QueryClientProvider>
+    );
+    return { wrapper, queryClient };
+  };
+
   beforeEach(() => {
     window.localStorage.clear();
     fetchScanStatusMock.mockReset();
   });
 
   it('records jobs and fetches their statuses', async () => {
+    const { wrapper, queryClient } = createWrapper();
     fetchScanStatusMock.mockResolvedValue({
       id: 'job-1',
       type: 'analyze',
@@ -28,7 +41,7 @@ describe('useRecognitionJobHistory', () => {
       started_at: '2025-01-01T00:00:00Z',
       finished_at: '2025-01-01T00:00:01Z',
     });
-    const { result } = renderHook(() => useRecognitionJobHistory());
+    const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
 
     act(() => {
       result.current.rememberJob('job-1');
@@ -40,11 +53,14 @@ describe('useRecognitionJobHistory', () => {
     await waitFor(() => {
       expect(result.current.jobStatuses['job-1']).toBe('completed');
     });
+
+    queryClient.clear();
   });
 
   it('hydrates from stored history and supports job selection', async () => {
+    const { wrapper, queryClient } = createWrapper();
     window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
-    const { result } = renderHook(() => useRecognitionJobHistory());
+    const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
 
     await waitFor(() => {
       expect(result.current.jobHistory).toEqual(['stored-job']);
@@ -56,5 +72,7 @@ describe('useRecognitionJobHistory', () => {
     });
 
     expect(result.current.jobId).toBe('another-job');
+
+    queryClient.clear();
   });
 });

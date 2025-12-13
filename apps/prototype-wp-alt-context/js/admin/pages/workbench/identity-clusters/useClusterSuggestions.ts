@@ -31,6 +31,8 @@ interface UseClusterSuggestionsReturn {
   existingLabels: string[];
   /** Fetch labels if not cached */
   ensureLabels: () => Promise<string[]>;
+  /** Find cluster ID by label (case-insensitive) */
+  findClusterIdByLabel: (label: string) => Promise<string | null>;
 }
 
 /**
@@ -146,10 +148,37 @@ export const useClusterSuggestions = ({
     }
   }, [existingClusters, queryClient]);
 
+  // Find cluster ID by label (case-insensitive) - checks options first, then fetches if needed
+  const findClusterIdByLabel = React.useCallback(
+    async (label: string): Promise<string | null> => {
+      const normalizedLabel = label.toLowerCase();
+
+      // First check the options array (includes suggestions and existing clusters)
+      const fromOptions = options.find((opt) => opt.label.toLowerCase() === normalizedLabel);
+      if (fromOptions?.value) {
+        return fromOptions.value;
+      }
+
+      // If not in options, fetch clusters and search
+      try {
+        const clusters = await queryClient.fetchQuery({
+          queryKey: ['clusters'],
+          queryFn: () => listRecognitionClusters({ limit: 500 }),
+        });
+        const match = clusters.find((c: ClusterSummary) => c.label?.toLowerCase() === normalizedLabel);
+        return match?.id ?? null;
+      } catch {
+        return null;
+      }
+    },
+    [options, queryClient],
+  );
+
   return {
     options,
     isLoading: suggestionsLoading,
     existingLabels: existingLabels ?? [],
     ensureLabels,
+    findClusterIdByLabel,
   };
 };

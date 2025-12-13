@@ -25,12 +25,16 @@ from recognition.interface_adapters.http.schemas.requests import (
     ClusteringJobRequest,
     MergeClusterRequest,
     PatchClusterRequest,
+    ReassignIdentityRequest,
+    SplitClusterRequest,
 )
 from recognition.interface_adapters.http.schemas.responses import (
     ClusteringJobStatusResponse,
     ClusterResponse,
     JobProgressResponse,
     JobStatusResponse,
+    ReassignIdentityResponse,
+    SplitClusterResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_label, validate_paging
 from recognition.shared.ids import generate_id
@@ -140,6 +144,98 @@ async def merge_cluster(
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
     return cluster
+
+
+@router.post("/clusters/{cluster_id}/split", response_model=SplitClusterResponse)
+async def split_cluster(
+    cluster_id: str,
+    request: SplitClusterRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+) -> SplitClusterResponse:
+    """
+    Split a cluster using hierarchical clustering.
+
+    If n_clusters=0 (default), automatically determines the optimal split
+    based on face similarity. If n_clusters>=2, forces exactly that many groups.
+    The largest group stays in the original cluster; others become new clusters.
+    """
+    validate_entity_id(cluster_id, field_name="cluster_id")
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    new_ids, counts = await cluster_service.split_cluster(cluster_id, n_clusters=request.n_clusters)
+
+    # Build response with both new list format and legacy single-cluster fields
+    return SplitClusterResponse(
+        new_cluster_ids=new_ids,
+        moved_counts=counts,
+        # Legacy fields: use first new cluster if any
+        new_cluster_id=new_ids[0] if new_ids else None,
+        moved_count=counts[0] if counts else 0,
+    )
+
+
+@router.post("/clusters/reassign", response_model=ReassignIdentityResponse)
+async def reassign_identity(
+    request: ReassignIdentityRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+) -> ReassignIdentityResponse:
+    """Reassign an identity to a different cluster.
+
+    This endpoint is used for:
+    - Accepting inline suggestions (moving singleton to labeled cluster)
+    - Correcting misassigned identities
+    - Removing from cluster (set target_cluster_id to null)
+
+    When reassigning to a cluster, any pending suggestion for that identity+cluster
+    is automatically marked as accepted.
+    """
+    from recognition.interface_adapters.http.dependencies import get_suggestion_service
+
+    validate_entity_id(request.identity_id, field_name="identity_id")
+    if request.target_cluster_id:
+        validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+
+    # Get identity's current cluster (if any)
+    source_cluster_id = await cluster_service.get_identity_cluster_id(request.identity_id)
+
+    if request.target_cluster_id:
+        # Assign to target cluster
+        result = await cluster_service.assign_outlier_to_cluster(
+            identity_id=request.identity_id,
+            target_cluster_id=request.target_cluster_id,
+            tenant_id=request.tenant_id,
+            similarity=0.0,  # Not known at this point
+        )
+        if not result:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Identity or target cluster not found",
+            )
+
+        # Resolve any pending suggestion for this identity+cluster as accepted
+        suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
+        await suggestion_service.resolve_for_identity(
+            identity_id=request.identity_id,
+            cluster_id=request.target_cluster_id,
+            resolution="accepted",
+        )
+    else:
+        # Remove from current cluster (make orphan)
+        await cluster_service.remove_identity_from_cluster(request.identity_id)
+
+    return ReassignIdentityResponse(
+        identity_id=request.identity_id,
+        source_cluster_id=source_cluster_id,
+        target_cluster_id=request.target_cluster_id,
+        success=True,
+    )
 
 
 @router.post("/clusters/{cluster_id}/assign", response_model=ClusterResponse)

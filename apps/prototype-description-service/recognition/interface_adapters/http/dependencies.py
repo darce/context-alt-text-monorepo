@@ -20,7 +20,7 @@ from fastapi import Depends, Header, HTTPException, status
 from sqlalchemy import select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityMember, MediaIdentity
+from db.models import IdentityCluster, IdentityMember, MediaIdentity
 from db.session import get_session as _get_session
 from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
 from recognition.application.assignment import AssignmentGate
@@ -51,16 +51,25 @@ from recognition.shared.ids import generate_id
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings; defaults are required fields."""
+    """Provide clustering settings; defaults are required fields.
+
+    Threshold tuning notes (2024):
+    - InsightFace buffalo_l produces cosine similarities of 0.65-0.77 for same-person
+      photos with varying pose/lighting/expression
+    - HDBSCAN uses transitive clustering (A↔B, B↔C → A,B,C together even if A↔C is low)
+    - Representative matching requires direct similarity, so threshold must be lower
+    - 0.68 threshold balances same-person variance vs false positive risk
+    - 0.90 high confidence threshold prevents false positives like Kelly/Ryann (0.80 sim)
+    """
     return ClusteringSettings(
-        similarity_threshold=0.8,
-        complete_link_min_floor=0.75,
-        complete_link_avg_threshold=0.85,
+        similarity_threshold=0.68,
+        complete_link_min_floor=0.60,
+        complete_link_avg_threshold=0.70,
         min_representatives_for_maturity=2,
-        member_validation_min_floor=0.8,
-        member_validation_avg_threshold=0.85,
+        member_validation_min_floor=0.65,
+        member_validation_avg_threshold=0.70,
         early_stage_suggestion_enabled=True,
-        early_stage_high_confidence_threshold=0.9,
+        early_stage_high_confidence_threshold=0.90,  # Raised from 0.85 to prevent false positives
         adaptive_threshold_maturity_point=5,
         hdbscan_max_batch_size=None,
     )
@@ -336,6 +345,13 @@ async def get_suggestion_service(
     return SuggestionService(repo, tenant_id=tenant)
 
 
+async def get_cluster_repository(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAlchemyClusterRepository:
+    """Return a cluster repository backed by the current session."""
+    return SqlAlchemyClusterRepository(session)
+
+
 class DecisionStore:
     """In-memory store for decision logs exposed via diagnostics."""
 
@@ -419,10 +435,16 @@ class MediaIdentityService:
     async def list_by_media_ids(self, tenant_id: str, media_ids: list[int]):
         if not media_ids:
             return []
-        # Left outer join with IdentityMember to get cluster_id if the identity is assigned
+        # Left outer join with IdentityMember and IdentityCluster to get cluster info
         stmt = (
-            select(MediaIdentity, IdentityMember.cluster_id)
+            select(
+                MediaIdentity,
+                IdentityMember.cluster_id,
+                IdentityCluster.label.label("cluster_label"),
+                IdentityCluster.user_confirmed.label("user_confirmed"),
+            )
             .outerjoin(IdentityMember, MediaIdentity.id == IdentityMember.identity_id)
+            .outerjoin(IdentityCluster, IdentityMember.cluster_id == IdentityCluster.id)
             .where(MediaIdentity.tenant_id == uuid.UUID(str(tenant_id)))
             .where(MediaIdentity.media_id.in_(media_ids))
         )
@@ -432,9 +454,11 @@ class MediaIdentityService:
                 "identity_id": str(row.MediaIdentity.id),
                 "media_id": row.MediaIdentity.media_id,
                 "cluster_id": str(row.cluster_id) if row.cluster_id else None,
+                "cluster_label": row.cluster_label,
+                "is_auto_label": not row.user_confirmed if row.user_confirmed is not None else None,
                 "bbox": {
-                    "w": row.MediaIdentity.bbox_width,
-                    "h": row.MediaIdentity.bbox_height,
+                    "width": row.MediaIdentity.bbox_width,
+                    "height": row.MediaIdentity.bbox_height,
                     "x": row.MediaIdentity.bbox_x,
                     "y": row.MediaIdentity.bbox_y,
                 },

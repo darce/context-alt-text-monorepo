@@ -9,6 +9,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, status
 from recognition.config.security import get_security_settings
 from recognition.domain.suggestion import AssignmentSuggestion
 from recognition.interface_adapters.http.dependencies import (
+    get_cluster_repository,
     get_session,
     get_suggestion_service,
     require_auth,
@@ -16,7 +17,11 @@ from recognition.interface_adapters.http.dependencies import (
 )
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.schemas.requests import SuggestionActionRequest
-from recognition.interface_adapters.http.schemas.responses import SuggestionResponse
+from recognition.interface_adapters.http.schemas.responses import (
+    ClusterSuggestionMatch,
+    IdentitySuggestionsResponse,
+    SuggestionResponse,
+)
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth)])
@@ -36,16 +41,40 @@ async def list_pending_suggestions(
     return [_to_response(s) for s in suggestions]
 
 
-@router.get("/identities/{identity_id}/suggestions", response_model=list[SuggestionResponse])
+@router.get("/identities/{identity_id}/suggestions", response_model=IdentitySuggestionsResponse)
 async def list_suggestions(
     identity_id: str,
     tenant_id: str = Depends(get_tenant_id),
     suggestion_service=Depends(get_suggestion_service),
-) -> list[SuggestionResponse]:
-    """List pending suggestions for an identity."""
+    cluster_repo=Depends(get_cluster_repository),
+) -> IdentitySuggestionsResponse:
+    """List pending suggestions for an identity with enriched cluster data.
+
+    Returns suggestions in frontend-compatible format with cluster labels
+    and member counts.
+    """
     validate_entity_id(identity_id, field_name="identity_id")
     suggestions = await suggestion_service.list_for_identity(identity_id)
-    return [_to_response(s) for s in suggestions]
+
+    # Enrich suggestions with cluster details
+    matches: list[ClusterSuggestionMatch] = []
+    for suggestion in suggestions:
+        # Fetch cluster to get label and member count
+        cluster = await cluster_repo.get_by_id(suggestion.cluster_id)
+        if cluster:
+            matches.append(
+                ClusterSuggestionMatch(
+                    cluster_id=suggestion.cluster_id,
+                    label=cluster.label or f"cluster-{suggestion.cluster_id[:8]}",
+                    similarity=suggestion.representative_similarity,
+                    identity_count=cluster.member_count or 0,
+                )
+            )
+
+    # Sort by similarity descending
+    matches.sort(key=lambda m: m.similarity, reverse=True)
+
+    return IdentitySuggestionsResponse(matches=matches)
 
 
 @router.post("/suggestions/{suggestion_id}/accept", response_model=SuggestionResponse)

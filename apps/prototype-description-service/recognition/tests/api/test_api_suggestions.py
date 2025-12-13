@@ -14,7 +14,7 @@ def test_list_suggestions_empty_by_default(api_client, tenant_id) -> None:
     )
 
     assert resp.status_code == 200
-    assert resp.json() == []
+    assert resp.json() == {"matches": []}
 
 
 @pytest.mark.asyncio

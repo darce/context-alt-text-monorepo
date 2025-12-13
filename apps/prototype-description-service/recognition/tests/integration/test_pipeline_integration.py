@@ -71,7 +71,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
             bbox_width=1,
             bbox_height=1,
             confidence=0.99,
-            embedding=[0.0] * 1024,
+            embedding=[0.0] * 512,
         ),
         MediaIdentity(
             tenant_id=tenant.id,
@@ -82,7 +82,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
             bbox_width=1,
             bbox_height=1,
             confidence=0.98,
-            embedding=[0.1] * 1024,
+            embedding=[0.1] * 512,
         ),
     ]
     db_session.add_all(identities)
@@ -135,7 +135,7 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
             bbox_width=1,
             bbox_height=1,
             confidence=0.97,
-            embedding=[0.2] * 1024,
+            embedding=[0.2] * 512,
         ),
         MediaIdentity(
             tenant_id=tenant.id,
@@ -146,7 +146,7 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
             bbox_width=1,
             bbox_height=1,
             confidence=0.96,
-            embedding=[0.3] * 1024,
+            embedding=[0.3] * 512,
         ),
     ]
     db_session.add_all(identities)

@@ -144,9 +144,36 @@ class FakeMediaIdentityService:
         return [mi for mi in self.identities if mi.media_id in media_ids]
 
 
+class FakeClusterForRepo:
+    """Minimal cluster object returned by FakeClusterRepository."""
+
+    def __init__(self, cluster_id: str, label: str | None = None, member_count: int = 1) -> None:
+        self.id = cluster_id
+        self.label = label
+        self.member_count = member_count
+
+
+class FakeClusterRepository:
+    """In-memory cluster repository for API tests."""
+
+    def __init__(self) -> None:
+        self.clusters: dict[str, FakeClusterForRepo] = {}
+
+    def seed(self, cluster_id: str, label: str | None = None, member_count: int = 1) -> None:
+        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, label, member_count)
+
+    async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
+        return self.clusters.get(cluster_id)
+
+
 @pytest.fixture
 def fake_cluster_service() -> FakeClusterService:
     return FakeClusterService()
+
+
+@pytest.fixture
+def fake_cluster_repository() -> FakeClusterRepository:
+    return FakeClusterRepository()
 
 
 @pytest.fixture
@@ -180,6 +207,7 @@ def api_client(
     monkeypatch,
     tenant_id: str,
     fake_cluster_service: FakeClusterService,
+    fake_cluster_repository: FakeClusterRepository,
     fake_job_service: FakeJobService,
     fake_suggestion_service: FakeSuggestionService,
     fake_scan_service: FakeScanService,
@@ -202,6 +230,9 @@ def api_client(
     async def job_service_dep():
         return fake_job_service
 
+    async def cluster_repo_dep(session=None):  # noqa: ANN001
+        return fake_cluster_repository
+
     async def suggestion_service_dep(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_service
 
@@ -211,6 +242,7 @@ def api_client(
     app.dependency_overrides[dependencies.get_session] = _no_session
     app.dependency_overrides[dependencies.get_optional_session] = _no_session
     app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+    app.dependency_overrides[dependencies.get_cluster_repository] = cluster_repo_dep
     app.dependency_overrides[dependencies.get_job_service_dependency] = job_service_dep
     app.dependency_overrides[dependencies.get_suggestion_service] = suggestion_service_dep
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo

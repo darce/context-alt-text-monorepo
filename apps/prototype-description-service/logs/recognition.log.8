@@ -1,0 +1,951 @@
+2025-12-08 21:01:09,458 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-08 21:01:32,703 INFO db.startup - === Application Startup ===
+2025-12-08 21:01:32,704 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 21:01:32,704 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 21:02:32,483 INFO db.startup - === Application Startup ===
+2025-12-08 21:02:32,483 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 21:02:32,483 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 21:02:57,756 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 21:03:06,781 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 21:03:09,099 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:03:09,101 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:03:09,118 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:03:09,120 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-08 21:03:09,120 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-08 21:03:09,120 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.80
+2025-12-08 21:03:09,121 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
+2025-12-08 21:03:09,121 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
+2025-12-08 21:03:09,121 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
+2025-12-08 21:03:10,032 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
+2025-12-08 21:03:10,032 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 21:03:10,032 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 21:03:10,084 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
+2025-12-08 21:03:10,090 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:03:10,098 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:03:10,102 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:03:10,105 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:03:10,108 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:03:10,111 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:03:10,114 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:03:10,117 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:03:10,117 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
+2025-12-08 21:04:21,493 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 21:04:31,007 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 21:04:36,055 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:04:36,058 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:04:36,088 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 76 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:04:36,098 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
+2025-12-08 21:04:36,098 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 8 clusters with representatives, 0 with centroids
+2025-12-08 21:04:36,098 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 76 identities, 8 clusters, 15 total reps, threshold=0.80
+2025-12-08 21:04:36,103 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 76 identities
+2025-12-08 21:04:36,103 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 76 remaining
+2025-12-08 21:04:36,104 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 76 remaining
+2025-12-08 21:04:36,121 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 16 new cluster proposals
+2025-12-08 21:04:36,121 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 21:04:36,121 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 6 (no candidates: 6, rejected: 0)
+2025-12-08 21:04:36,147 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,153 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,158 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:04:36,162 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:04:36,172 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 21:04:36,184 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 6 members
+2025-12-08 21:04:36,190 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,214 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 23 members
+2025-12-08 21:04:36,224 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 4 members
+2025-12-08 21:04:36,237 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 8 members
+2025-12-08 21:04:36,244 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:04:36,250 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,255 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,261 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,268 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:04:36,274 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,280 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,286 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,291 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,295 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:04:36,295 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=20
+2025-12-08 21:08:22,442 INFO db.startup - === Application Startup ===
+2025-12-08 21:08:22,442 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 21:08:22,442 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 21:08:51,891 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:08:51,900 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:08:51,988 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 10 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:08:52,020 INFO recognition.application.orchestration.cluster_service - [clustering] Found 28 existing clusters for discovery
+2025-12-08 21:08:52,021 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 28 clusters with representatives, 0 with centroids
+2025-12-08 21:08:52,021 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 10 identities, 28 clusters, 69 total reps, threshold=0.80
+2025-12-08 21:08:52,021 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 92690484-eaba-42fc-b3ab-d29d949540c2 -> cluster e0caf763-74a9-4035-800b-a6f6b38c29a4 with similarity 1.0000
+2025-12-08 21:08:52,021 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 97cdd704-d504-4622-8326-9a5284a0ffe1 -> cluster e0caf763-74a9-4035-800b-a6f6b38c29a4 with similarity 1.0000
+2025-12-08 21:08:52,022 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 777219bc-f8e0-4fb5-ba44-d0f0c01e8a80 -> cluster ecba5c3f-29c9-4c01-9450-069f7eba8ff0 with similarity 1.0000
+2025-12-08 21:08:52,022 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity e8e16a52-747e-40e5-b1d2-6bca41c08c56 -> cluster ecba5c3f-29c9-4c01-9450-069f7eba8ff0 with similarity 1.0000
+2025-12-08 21:08:52,022 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ab0b0960-3d5c-4686-aa88-3deb95b2b5a8 -> cluster a399594b-51c0-41af-9b6a-02762cbcfe74 with similarity 1.0000
+2025-12-08 21:08:52,023 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity c8676585-f2cf-4167-b94c-73e6a7b90d48 -> cluster a399594b-51c0-41af-9b6a-02762cbcfe74 with similarity 1.0000
+2025-12-08 21:08:52,023 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ffecd727-9778-4be3-8aee-733803214acd -> cluster 0fdf1be8-96a9-49c8-9a35-e486b8b87ce0 with similarity 1.0000
+2025-12-08 21:08:52,023 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity fbc611e3-07c6-4698-9be4-1ae9a48bf0b2 -> cluster 0fdf1be8-96a9-49c8-9a35-e486b8b87ce0 with similarity 1.0000
+2025-12-08 21:08:52,023 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 9904ea24-b621-47a4-9118-9f7822ab4638 -> cluster 25128d2b-7b5f-49ff-afc9-64bd01e8ba4d with similarity 1.0000
+2025-12-08 21:08:52,024 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity d3dd8908-ab70-4865-aa96-6daf31138ca2 -> cluster 25128d2b-7b5f-49ff-afc9-64bd01e8ba4d with similarity 1.0000
+2025-12-08 21:08:52,024 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 10 candidates from 10 identities
+2025-12-08 21:08:52,024 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 10 candidates, 0 remaining
+2025-12-08 21:08:52,024 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 0 remaining
+2025-12-08 21:08:52,024 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 0 new cluster proposals
+2025-12-08 21:08:52,024 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 10
+2025-12-08 21:08:52,027 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 92690484-eaba-42fc-b3ab-d29d949540c2 -> cluster e0caf763-74a9-4035-800b-a6f6b38c29a4: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,033 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 92690484-eaba-42fc-b3ab-d29d949540c2 for cluster e0caf763-74a9-4035-800b-a6f6b38c29a4 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,036 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 97cdd704-d504-4622-8326-9a5284a0ffe1 -> cluster e0caf763-74a9-4035-800b-a6f6b38c29a4: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,039 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 97cdd704-d504-4622-8326-9a5284a0ffe1 for cluster e0caf763-74a9-4035-800b-a6f6b38c29a4 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,041 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 777219bc-f8e0-4fb5-ba44-d0f0c01e8a80 -> cluster ecba5c3f-29c9-4c01-9450-069f7eba8ff0: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,043 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 777219bc-f8e0-4fb5-ba44-d0f0c01e8a80 for cluster ecba5c3f-29c9-4c01-9450-069f7eba8ff0 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,045 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity e8e16a52-747e-40e5-b1d2-6bca41c08c56 -> cluster ecba5c3f-29c9-4c01-9450-069f7eba8ff0: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,046 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity e8e16a52-747e-40e5-b1d2-6bca41c08c56 for cluster ecba5c3f-29c9-4c01-9450-069f7eba8ff0 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,048 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ab0b0960-3d5c-4686-aa88-3deb95b2b5a8 -> cluster a399594b-51c0-41af-9b6a-02762cbcfe74: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,050 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity ab0b0960-3d5c-4686-aa88-3deb95b2b5a8 for cluster a399594b-51c0-41af-9b6a-02762cbcfe74 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,051 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity c8676585-f2cf-4167-b94c-73e6a7b90d48 -> cluster a399594b-51c0-41af-9b6a-02762cbcfe74: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,053 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity c8676585-f2cf-4167-b94c-73e6a7b90d48 for cluster a399594b-51c0-41af-9b6a-02762cbcfe74 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,054 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ffecd727-9778-4be3-8aee-733803214acd -> cluster 0fdf1be8-96a9-49c8-9a35-e486b8b87ce0: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,056 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity ffecd727-9778-4be3-8aee-733803214acd for cluster 0fdf1be8-96a9-49c8-9a35-e486b8b87ce0 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,057 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity fbc611e3-07c6-4698-9be4-1ae9a48bf0b2 -> cluster 0fdf1be8-96a9-49c8-9a35-e486b8b87ce0: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,059 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity fbc611e3-07c6-4698-9be4-1ae9a48bf0b2 for cluster 0fdf1be8-96a9-49c8-9a35-e486b8b87ce0 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,060 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 9904ea24-b621-47a4-9118-9f7822ab4638 -> cluster 25128d2b-7b5f-49ff-afc9-64bd01e8ba4d: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,061 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 9904ea24-b621-47a4-9118-9f7822ab4638 for cluster 25128d2b-7b5f-49ff-afc9-64bd01e8ba4d (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,067 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity d3dd8908-ab70-4865-aa96-6daf31138ca2 -> cluster 25128d2b-7b5f-49ff-afc9-64bd01e8ba4d: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:08:52,070 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity d3dd8908-ab70-4865-aa96-6daf31138ca2 for cluster 25128d2b-7b5f-49ff-afc9-64bd01e8ba4d (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:08:52,070 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 21:08:52,070 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=10, rejected=0, new_clusters=0
+2025-12-08 21:13:58,609 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:13:58,615 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:13:58,668 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 104 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:13:58,670 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-08 21:13:58,671 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-08 21:13:58,671 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 104 identities, 0 clusters, 0 total reps, threshold=0.80
+2025-12-08 21:13:58,675 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity b4672713-2487-48c3-86a5-3243a07f043e best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:13:58,675 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity a917730b-243f-4da9-983e-c5d6b22a15c3 best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:13:58,675 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity c85d8455-5c68-4d56-be94-1d9544ba8773 best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:13:58,675 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity edd995a1-2462-42b8-8dfe-2c130fed4a6e best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:13:58,676 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity d6a206dc-d2c3-45af-9de4-c3969cc0baf2 best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:13:58,676 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 104 identities
+2025-12-08 21:13:58,676 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 104 remaining
+2025-12-08 21:13:58,676 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 104 remaining
+2025-12-08 21:13:59,723 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 31 new cluster proposals
+2025-12-08 21:13:59,723 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 21:13:59,723 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 21:13:59,776 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 39 members
+2025-12-08 21:13:59,783 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:13:59,789 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,801 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 8 members
+2025-12-08 21:13:59,819 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 6 members
+2025-12-08 21:13:59,827 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 4 members
+2025-12-08 21:13:59,832 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,837 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,842 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,846 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,850 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,855 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,863 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:13:59,873 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 21:13:59,878 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,883 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,890 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:13:59,894 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:13:59,899 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,902 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,904 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,908 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,911 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,914 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,917 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,921 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,924 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,927 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,931 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,934 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,937 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:13:59,937 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=31
+2025-12-08 21:15:24,938 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:15:24,947 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:15:25,004 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 20 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:15:25,033 INFO recognition.application.orchestration.cluster_service - [clustering] Found 31 existing clusters for discovery
+2025-12-08 21:15:25,033 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 31 clusters with representatives, 0 with centroids
+2025-12-08 21:15:25,034 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 20 identities, 31 clusters, 66 total reps, threshold=0.80
+2025-12-08 21:15:25,034 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:15:25,036 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:15:25,037 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:15:25,039 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:15:25,039 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 4 candidates from 20 identities
+2025-12-08 21:15:25,039 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 4 candidates, 16 remaining
+2025-12-08 21:15:25,040 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 16 remaining
+2025-12-08 21:15:25,047 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 3 new cluster proposals
+2025-12-08 21:15:25,047 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
+2025-12-08 21:15:25,050 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:15:25,052 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity a917730b-243f-4da9-983e-c5d6b22a15c3 for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:15:25,054 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:15:25,055 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity ed2b348b-c0d0-4a73-9511-277c650f9052 for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:15:25,056 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:15:25,058 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:15:25,059 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 21:15:25,060 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 4b8e7ce9-39d8-47c1-b043-a7198089327d for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 21:15:25,060 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 7 (no candidates: 7, rejected: 0)
+2025-12-08 21:15:25,067 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,071 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,074 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,078 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,081 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,084 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,087 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:15:25,093 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:15:25,104 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 21:15:25,110 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:15:25,110 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=4, rejected=0, new_clusters=10
+2025-12-08 21:17:47,244 INFO db.startup - === Application Startup ===
+2025-12-08 21:17:47,244 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 21:17:47,244 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 21:18:55,629 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:18:55,638 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:18:55,726 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 15 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:18:55,754 INFO recognition.application.orchestration.cluster_service - [clustering] Found 41 existing clusters for discovery
+2025-12-08 21:18:55,754 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 41 clusters with representatives, 0 with centroids
+2025-12-08 21:18:55,754 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 15 identities, 41 clusters, 82 total reps, threshold=0.80
+2025-12-08 21:18:55,754 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:18:55,755 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 8f941774-6290-42b1-98c0-e71c19d69775 -> cluster b1dbd9df-aa1d-4c2b-9b88-d27604522e7e with similarity 1.0000
+2025-12-08 21:18:55,755 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:18:55,755 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 40b56901-6898-4491-99a2-bb006537f5cc -> cluster 65813d3a-5f50-43c5-824d-d00a88029424 with similarity 1.0000
+2025-12-08 21:18:55,756 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c -> cluster 65813d3a-5f50-43c5-824d-d00a88029424 with similarity 1.0000
+2025-12-08 21:18:55,756 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:18:55,756 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f -> cluster 65813d3a-5f50-43c5-824d-d00a88029424 with similarity 1.0000
+2025-12-08 21:18:55,756 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 40d116aa-688b-448b-a685-02daa9c6a33b -> cluster 65813d3a-5f50-43c5-824d-d00a88029424 with similarity 1.0000
+2025-12-08 21:18:55,757 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 4b48c6e4-af81-4a80-8f69-ec01ae2d8252 -> cluster c36651e4-ee70-43ad-8a50-30621139175a with similarity 1.0000
+2025-12-08 21:18:55,757 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 5a3f510b-7800-4823-86e9-31c8aad2d16d -> cluster c36651e4-ee70-43ad-8a50-30621139175a with similarity 1.0000
+2025-12-08 21:18:55,757 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf -> cluster 65813d3a-5f50-43c5-824d-d00a88029424 with similarity 1.0000
+2025-12-08 21:18:55,758 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 -> cluster 19249d33-94e5-4cce-960f-92af1b5dfa24 with similarity 1.0000
+2025-12-08 21:18:55,758 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 -> cluster 72551bbf-8837-4386-8a2f-f11535f23337 with similarity 1.0000
+2025-12-08 21:18:55,758 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 with similarity 1.0000
+2025-12-08 21:18:55,759 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a80474c8-6104-47bd-a9bd-e2838213c543 -> cluster b1dbd9df-aa1d-4c2b-9b88-d27604522e7e with similarity 1.0000
+2025-12-08 21:18:55,759 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 15 candidates from 15 identities
+2025-12-08 21:18:55,759 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 15 candidates, 0 remaining
+2025-12-08 21:18:55,759 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 0 remaining
+2025-12-08 21:18:55,759 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 0 new cluster proposals
+2025-12-08 21:18:55,759 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 15
+2025-12-08 21:18:55,765 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,765 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity a917730b-243f-4da9-983e-c5d6b22a15c3 for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,770 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 8f941774-6290-42b1-98c0-e71c19d69775 -> cluster b1dbd9df-aa1d-4c2b-9b88-d27604522e7e: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:18:55,787 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 8f941774-6290-42b1-98c0-e71c19d69775 assigned to cluster b1dbd9df-aa1d-4c2b-9b88-d27604522e7e
+2025-12-08 21:18:55,791 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,791 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity ed2b348b-c0d0-4a73-9511-277c650f9052 for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,793 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 40b56901-6898-4491-99a2-bb006537f5cc -> cluster 65813d3a-5f50-43c5-824d-d00a88029424: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:18:55,799 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 40b56901-6898-4491-99a2-bb006537f5cc assigned to cluster 65813d3a-5f50-43c5-824d-d00a88029424
+2025-12-08 21:18:55,801 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c -> cluster 65813d3a-5f50-43c5-824d-d00a88029424: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,801 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c for cluster 65813d3a-5f50-43c5-824d-d00a88029424 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,805 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,805 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,806 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f -> cluster 65813d3a-5f50-43c5-824d-d00a88029424: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,806 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f for cluster 65813d3a-5f50-43c5-824d-d00a88029424 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,807 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 40d116aa-688b-448b-a685-02daa9c6a33b -> cluster 65813d3a-5f50-43c5-824d-d00a88029424: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,807 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity 40d116aa-688b-448b-a685-02daa9c6a33b for cluster 65813d3a-5f50-43c5-824d-d00a88029424 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,808 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 4b48c6e4-af81-4a80-8f69-ec01ae2d8252 -> cluster c36651e4-ee70-43ad-8a50-30621139175a: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:18:55,814 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 4b48c6e4-af81-4a80-8f69-ec01ae2d8252 assigned to cluster c36651e4-ee70-43ad-8a50-30621139175a
+2025-12-08 21:18:55,816 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 5a3f510b-7800-4823-86e9-31c8aad2d16d -> cluster c36651e4-ee70-43ad-8a50-30621139175a: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,816 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity 5a3f510b-7800-4823-86e9-31c8aad2d16d for cluster c36651e4-ee70-43ad-8a50-30621139175a (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,817 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf -> cluster 65813d3a-5f50-43c5-824d-d00a88029424: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,817 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf for cluster 65813d3a-5f50-43c5-824d-d00a88029424 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,818 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 -> cluster 19249d33-94e5-4cce-960f-92af1b5dfa24: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:18:55,822 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 for cluster 19249d33-94e5-4cce-960f-92af1b5dfa24 (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:18:55,822 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 -> cluster 72551bbf-8837-4386-8a2f-f11535f23337: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:18:55,824 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 for cluster 72551bbf-8837-4386-8a2f-f11535f23337 (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:18:55,827 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster 483a8e15-d34a-48e1-ba09-2def4842ae45: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,827 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity 4b8e7ce9-39d8-47c1-b043-a7198089327d for cluster 483a8e15-d34a-48e1-ba09-2def4842ae45 (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,829 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity a80474c8-6104-47bd-a9bd-e2838213c543 -> cluster b1dbd9df-aa1d-4c2b-9b88-d27604522e7e: reject (checks passed: ['maturity', 'complete_link'], failed: ['member_distribution'])
+2025-12-08 21:18:55,829 INFO recognition.application.orchestration.cluster_service - [clustering] REJECTED: identity a80474c8-6104-47bd-a9bd-e2838213c543 for cluster b1dbd9df-aa1d-4c2b-9b88-d27604522e7e (reason=candidate does not fit member distribution)
+2025-12-08 21:18:55,829 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 10 (no candidates: 0, rejected: 10)
+2025-12-08 21:18:56,884 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 21:18:56,893 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:18:56,897 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:18:56,900 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:18:56,905 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:18:56,905 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=3, suggested=2, rejected=10, new_clusters=5
+2025-12-08 21:19:44,064 INFO db.startup - === Application Startup ===
+2025-12-08 21:19:44,064 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 21:19:44,064 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 21:20:42,296 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:20:42,309 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:20:42,393 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 12 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:20:42,425 INFO recognition.application.orchestration.cluster_service - [clustering] Found 46 existing clusters for discovery
+2025-12-08 21:20:42,425 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 46 clusters with representatives, 0 with centroids
+2025-12-08 21:20:42,425 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 12 identities, 46 clusters, 92 total reps, threshold=0.80
+2025-12-08 21:20:42,426 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 63b98340-b609-46c8-81a5-7f42c8e369cf with similarity 1.0000
+2025-12-08 21:20:42,426 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 3c23091a-beed-4bdd-9add-fe6f6c537bfe with similarity 1.0000
+2025-12-08 21:20:42,427 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c -> cluster 2e3e4580-d983-407e-b1a0-d9f5ca0db537 with similarity 1.0000
+2025-12-08 21:20:42,427 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:20:42,428 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:20:42,428 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 40d116aa-688b-448b-a685-02daa9c6a33b -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:20:42,429 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 5a3f510b-7800-4823-86e9-31c8aad2d16d -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:20:42,429 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:20:42,429 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 -> cluster 19249d33-94e5-4cce-960f-92af1b5dfa24 with similarity 1.0000
+2025-12-08 21:20:42,430 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 -> cluster 72551bbf-8837-4386-8a2f-f11535f23337 with similarity 1.0000
+2025-12-08 21:20:42,430 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster e4333a41-7608-4f22-a194-852dcb65017e with similarity 1.0000
+2025-12-08 21:20:42,431 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a80474c8-6104-47bd-a9bd-e2838213c543 -> cluster e4333a41-7608-4f22-a194-852dcb65017e with similarity 1.0000
+2025-12-08 21:20:42,431 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 12 candidates from 12 identities
+2025-12-08 21:20:42,431 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 12 candidates, 0 remaining
+2025-12-08 21:20:42,431 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 0 remaining
+2025-12-08 21:20:42,431 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 0 new cluster proposals
+2025-12-08 21:20:42,431 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 12
+2025-12-08 21:20:42,441 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 63b98340-b609-46c8-81a5-7f42c8e369cf: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:20:42,445 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity a917730b-243f-4da9-983e-c5d6b22a15c3 for cluster 63b98340-b609-46c8-81a5-7f42c8e369cf (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:20:42,446 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 3c23091a-beed-4bdd-9add-fe6f6c537bfe: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:20:42,447 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity ed2b348b-c0d0-4a73-9511-277c650f9052 for cluster 3c23091a-beed-4bdd-9add-fe6f6c537bfe (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:20:42,448 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c -> cluster 2e3e4580-d983-407e-b1a0-d9f5ca0db537: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:20:42,450 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c for cluster 2e3e4580-d983-407e-b1a0-d9f5ca0db537 (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:20:42,450 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:20:42,465 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:20:42,466 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:20:42,472 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:20:42,473 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 40d116aa-688b-448b-a685-02daa9c6a33b -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:20:42,478 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 40d116aa-688b-448b-a685-02daa9c6a33b assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:20:42,479 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 5a3f510b-7800-4823-86e9-31c8aad2d16d -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:20:42,485 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 5a3f510b-7800-4823-86e9-31c8aad2d16d assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:20:42,486 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:20:42,490 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:20:42,490 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 -> cluster 19249d33-94e5-4cce-960f-92af1b5dfa24: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:21:23,564 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:21:23,573 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:21:23,652 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 12 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:21:23,686 INFO recognition.application.orchestration.cluster_service - [clustering] Found 46 existing clusters for discovery
+2025-12-08 21:21:23,686 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 46 clusters with representatives, 0 with centroids
+2025-12-08 21:21:23,686 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 12 identities, 46 clusters, 92 total reps, threshold=0.80
+2025-12-08 21:21:23,686 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 63b98340-b609-46c8-81a5-7f42c8e369cf with similarity 1.0000
+2025-12-08 21:21:23,687 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 3c23091a-beed-4bdd-9add-fe6f6c537bfe with similarity 1.0000
+2025-12-08 21:21:23,687 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c -> cluster 2e3e4580-d983-407e-b1a0-d9f5ca0db537 with similarity 1.0000
+2025-12-08 21:21:23,688 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:21:23,688 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:21:23,688 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 40d116aa-688b-448b-a685-02daa9c6a33b -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:21:23,689 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 5a3f510b-7800-4823-86e9-31c8aad2d16d -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:21:23,689 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006 with similarity 1.0000
+2025-12-08 21:21:23,690 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 -> cluster 19249d33-94e5-4cce-960f-92af1b5dfa24 with similarity 1.0000
+2025-12-08 21:21:23,690 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 -> cluster 72551bbf-8837-4386-8a2f-f11535f23337 with similarity 1.0000
+2025-12-08 21:21:23,691 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster e4333a41-7608-4f22-a194-852dcb65017e with similarity 1.0000
+2025-12-08 21:21:23,691 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a80474c8-6104-47bd-a9bd-e2838213c543 -> cluster e4333a41-7608-4f22-a194-852dcb65017e with similarity 1.0000
+2025-12-08 21:21:23,691 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 12 candidates from 12 identities
+2025-12-08 21:21:23,691 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 12 candidates, 0 remaining
+2025-12-08 21:21:23,691 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 0 remaining
+2025-12-08 21:21:23,691 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 0 new cluster proposals
+2025-12-08 21:21:23,691 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 12
+2025-12-08 21:21:23,694 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity a917730b-243f-4da9-983e-c5d6b22a15c3 -> cluster 63b98340-b609-46c8-81a5-7f42c8e369cf: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:21:23,698 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity a917730b-243f-4da9-983e-c5d6b22a15c3 for cluster 63b98340-b609-46c8-81a5-7f42c8e369cf (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:21:23,699 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ed2b348b-c0d0-4a73-9511-277c650f9052 -> cluster 3c23091a-beed-4bdd-9add-fe6f6c537bfe: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:21:23,701 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity ed2b348b-c0d0-4a73-9511-277c650f9052 for cluster 3c23091a-beed-4bdd-9add-fe6f6c537bfe (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:21:23,701 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c -> cluster 2e3e4580-d983-407e-b1a0-d9f5ca0db537: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:21:23,703 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 6e2cb5b9-720f-4fda-a974-ac9b7e0ceb7c for cluster 2e3e4580-d983-407e-b1a0-d9f5ca0db537 (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:21:23,703 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,713 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity ff5dc2c5-a41d-4772-947f-ac423f6e50cd assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:21:23,714 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,718 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 7d331dcd-6ea4-48f3-b160-f278e9117b8f assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:21:23,719 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 40d116aa-688b-448b-a685-02daa9c6a33b -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,723 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 40d116aa-688b-448b-a685-02daa9c6a33b assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:21:23,723 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 5a3f510b-7800-4823-86e9-31c8aad2d16d -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,728 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 5a3f510b-7800-4823-86e9-31c8aad2d16d assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:21:23,728 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf -> cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,734 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 29852d96-0207-49a2-85a2-fcefdb9bf9cf assigned to cluster 6aa6da46-b9ae-4c5c-9b83-f8c01f7e0006
+2025-12-08 21:21:23,735 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 -> cluster 19249d33-94e5-4cce-960f-92af1b5dfa24: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:21:23,737 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 5d6d60cf-42ec-440c-9b4d-fe224fb026b0 for cluster 19249d33-94e5-4cce-960f-92af1b5dfa24 (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:21:23,737 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 -> cluster 72551bbf-8837-4386-8a2f-f11535f23337: suggest (checks passed: [], failed: ['maturity'])
+2025-12-08 21:21:23,739 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 69d7cbf7-b3db-4000-ae17-96a07c25e211 for cluster 72551bbf-8837-4386-8a2f-f11535f23337 (confidence=0.00, reason=cluster not mature)
+2025-12-08 21:21:23,740 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 4b8e7ce9-39d8-47c1-b043-a7198089327d -> cluster e4333a41-7608-4f22-a194-852dcb65017e: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,751 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity 4b8e7ce9-39d8-47c1-b043-a7198089327d assigned to cluster e4333a41-7608-4f22-a194-852dcb65017e
+2025-12-08 21:21:23,751 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity a80474c8-6104-47bd-a9bd-e2838213c543 -> cluster e4333a41-7608-4f22-a194-852dcb65017e: accept (checks passed: ['maturity', 'complete_link', 'member_distribution', 'confidence'], failed: [])
+2025-12-08 21:21:23,758 INFO recognition.application.orchestration.cluster_service - [clustering] ACCEPTED: identity a80474c8-6104-47bd-a9bd-e2838213c543 assigned to cluster e4333a41-7608-4f22-a194-852dcb65017e
+2025-12-08 21:21:23,758 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 21:21:23,758 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=7, suggested=5, rejected=0, new_clusters=0
+2025-12-08 21:22:24,669 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-08 21:22:51,442 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 21:23:00,371 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 21:23:02,690 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:23:02,692 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:23:02,704 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:23:02,705 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-08 21:23:02,705 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.80
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 30683c2c-fc4b-4a22-a244-08f5d4d47842 best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 31cd86ad-3bce-4226-a1fb-1f43e0c9ea64 best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 44d67d50-afe0-48dd-9f11-5946bdf09f4c best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 478df081-090e-4de8-89ac-9c439794da6e best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 497131ec-9339-410f-9a4f-171896f16f79 best_cluster=None best_sim=0.0000 (threshold=0.80)
+2025-12-08 21:23:02,706 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
+2025-12-08 21:23:02,706 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
+2025-12-08 21:23:02,706 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
+2025-12-08 21:23:03,573 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
+2025-12-08 21:23:03,573 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 21:23:03,573 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 21:23:03,633 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
+2025-12-08 21:23:03,644 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:23:03,651 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:23:03,656 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:23:03,660 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:23:03,664 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:23:03,668 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:23:03,671 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:23:03,675 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:23:03,675 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
+2025-12-08 21:24:07,185 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 21:24:15,889 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 21:24:21,169 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 21:24:21,172 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:24:21,197 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 76 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 21:24:21,208 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
+2025-12-08 21:24:21,208 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 8 clusters with representatives, 0 with centroids
+2025-12-08 21:24:21,208 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 76 identities, 8 clusters, 15 total reps, threshold=0.80
+2025-12-08 21:24:21,214 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 00c11b4c-66c4-4ebf-98f3-df4b02f0387e best_cluster=04a28bf0-263e-4aac-8be9-e44f2f8e88b9 best_sim=0.0722 (threshold=0.80)
+2025-12-08 21:24:21,214 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0275ce25-3598-4bcc-b311-aed5f3924322 best_cluster=b8ceed75-d0f9-4326-9dd9-fe0e404b367b best_sim=0.0699 (threshold=0.80)
+2025-12-08 21:24:21,214 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 03181214-aee2-40d5-8299-08301a49ec58 best_cluster=7c12e2bc-ff10-498f-a901-13ff6a0f3ba5 best_sim=0.6391 (threshold=0.80)
+2025-12-08 21:24:21,214 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 06950f9c-f536-4938-975b-677c8b8753fb best_cluster=864ecfa6-0189-4d23-9ee0-8218c9aa78a3 best_sim=0.0866 (threshold=0.80)
+2025-12-08 21:24:21,214 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0dfbe1cf-37fa-4595-b305-39dcef93a268 best_cluster=c91e7e7d-d83c-4f64-9d80-cac8b350ce1b best_sim=0.1158 (threshold=0.80)
+2025-12-08 21:24:21,214 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 76 identities
+2025-12-08 21:24:21,214 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 76 remaining
+2025-12-08 21:24:21,215 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 76 remaining
+2025-12-08 21:24:21,237 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 16 new cluster proposals
+2025-12-08 21:24:21,237 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 21:24:21,237 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 6 (no candidates: 6, rejected: 0)
+2025-12-08 21:24:21,261 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,268 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,272 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:24:21,276 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 21:24:21,285 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 4 members
+2025-12-08 21:24:21,292 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:24:21,315 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 23 members
+2025-12-08 21:24:21,322 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,337 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 21:24:21,354 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 8 members
+2025-12-08 21:24:21,359 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,368 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 21:24:21,373 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,386 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 6 members
+2025-12-08 21:24:21,392 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,399 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,404 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,410 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,415 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,421 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 21:24:21,421 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=20
+2025-12-08 21:51:51,840 INFO db.startup - === Application Startup ===
+2025-12-08 21:51:51,840 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 21:51:51,840 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 22:25:47,320 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-08 22:27:19,434 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 22:27:28,249 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 22:27:30,174 ERROR recognition.interface_adapters.http.exception_handlers - Unhandled exception
+Traceback (most recent call last):
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/routing.py", line 714, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/routing.py", line 734, in app
+    await route.handle(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
+    await self.app(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 120, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 106, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 430, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 316, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py", line 127, in get_job_status
+    domain_job = await repo.get(job_id)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py", line 62, in get
+    scan = await self._session.get(IdentityScanJob, job_uuid)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 592, in get
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 190, in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3680, in get
+    return self._get_impl(
+           ^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3859, in _get_impl
+    return db_load_fn(
+           ^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/loading.py", line 695, in load_on_pk_identity
+    session.execute(
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 101, in _go
+    self._raise_for_prerequisite_state(fn.__name__, current_state)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 971, in _raise_for_prerequisite_state
+    raise sa_exc.PendingRollbackError(
+sqlalchemy.exc.PendingRollbackError: This Session's transaction has been rolled back due to a previous exception during flush. To begin a new transaction with this Session, first issue Session.rollback(). Original exception was: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "tenants_pkey"
+DETAIL:  Key (id)=(cc42f496-c7e1-5631-b3b5-cfa270c763f8) already exists.
+[SQL: INSERT INTO tenants (id, site_url) VALUES ($1::UUID, $2::VARCHAR) RETURNING tenants.created_at, tenants.updated_at]
+[parameters: (UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 'auto-provisioned-cc42f496')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj) (Background on this error at: https://sqlalche.me/e/20/7s2a)
+2025-12-08 22:27:30,404 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 22:27:30,406 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:27:30,421 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:27:30,423 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-08 22:27:30,423 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.68
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 17d9d29d-8aab-4307-8654-4e0def617f16 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 2220974f-61a6-4038-bf9f-d7acf245b32e best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 2313057b-c110-42c3-8dde-a4122c91983d best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 280d5de6-f780-4fb5-baa7-d9a89a1cf2a2 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 2bdd478f-86e4-4a6d-8395-83cc6177f16e best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:27:30,423 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
+2025-12-08 22:27:30,423 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
+2025-12-08 22:27:30,424 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
+2025-12-08 22:27:31,338 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
+2025-12-08 22:27:31,338 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 22:27:31,338 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 22:27:31,374 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 22:27:31,393 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
+2025-12-08 22:27:31,401 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:27:31,405 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:27:31,409 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:27:31,412 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:27:31,416 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:27:31,419 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:27:31,422 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:27:31,422 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
+2025-12-08 22:28:37,176 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 22:28:45,868 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 22:28:50,729 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 22:28:50,732 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:28:50,762 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 76 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:28:50,772 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
+2025-12-08 22:28:50,772 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 8 clusters with representatives, 0 with centroids
+2025-12-08 22:28:50,772 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 76 identities, 8 clusters, 15 total reps, threshold=0.68
+2025-12-08 22:28:50,772 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 16a9f3cf-2305-412b-be8a-b13ba503929f -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 with similarity 0.6953
+2025-12-08 22:28:50,774 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 2e7072c8-7086-4dc3-b053-8c638da1102c -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 with similarity 0.7129
+2025-12-08 22:28:50,776 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 774f0ef7-868f-4d2a-93fa-cd950662f0cb -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 with similarity 0.6819
+2025-12-08 22:28:50,779 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity f58cd66d-5945-4c60-bfb5-4093a42a127e -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 with similarity 0.7420
+2025-12-08 22:28:50,779 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 4 candidates from 76 identities
+2025-12-08 22:28:50,779 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 4 candidates, 72 remaining
+2025-12-08 22:28:50,779 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 72 remaining
+2025-12-08 22:28:50,798 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 16 new cluster proposals
+2025-12-08 22:28:50,798 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
+2025-12-08 22:28:50,802 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 16a9f3cf-2305-412b-be8a-b13ba503929f -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:28:50,809 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 16a9f3cf-2305-412b-be8a-b13ba503929f for cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:28:50,810 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 2e7072c8-7086-4dc3-b053-8c638da1102c -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:28:50,812 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 2e7072c8-7086-4dc3-b053-8c638da1102c for cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:28:50,814 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 774f0ef7-868f-4d2a-93fa-cd950662f0cb -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:28:50,815 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 774f0ef7-868f-4d2a-93fa-cd950662f0cb for cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:28:50,817 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity f58cd66d-5945-4c60-bfb5-4093a42a127e -> cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:28:50,819 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity f58cd66d-5945-4c60-bfb5-4093a42a127e for cluster 7f002d4e-62cb-4289-8a92-6d90b657c4f9 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:28:50,819 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 6 (no candidates: 6, rejected: 0)
+2025-12-08 22:28:50,909 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:50,919 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:50,926 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:28:50,934 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:28:50,961 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 19 members
+2025-12-08 22:28:50,973 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 4 members
+2025-12-08 22:28:50,982 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 22:28:50,988 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:50,993 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,009 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 8 members
+2025-12-08 22:28:51,016 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,028 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 22:28:51,041 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 6 members
+2025-12-08 22:28:51,048 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,054 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,063 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 22:28:51,068 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,074 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,080 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,086 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:28:51,086 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=4, rejected=0, new_clusters=20
+2025-12-08 22:52:23,490 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-08 22:52:31,038 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 22:52:39,892 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 22:52:41,816 ERROR recognition.interface_adapters.http.exception_handlers - Unhandled exception
+Traceback (most recent call last):
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/middleware/errors.py", line 165, in __call__
+    await self.app(scope, receive, _send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/middleware/exceptions.py", line 62, in __call__
+    await wrap_app_handling_exceptions(self.app, conn)(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/middleware/asyncexitstack.py", line 18, in __call__
+    await self.app(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/routing.py", line 714, in __call__
+    await self.middleware_stack(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/routing.py", line 734, in app
+    await route.handle(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/routing.py", line 288, in handle
+    await self.app(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 120, in app
+    await wrap_app_handling_exceptions(app, request)(scope, receive, send)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 53, in wrapped_app
+    raise exc
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/starlette/_exception_handler.py", line 42, in wrapped_app
+    await app(scope, receive, sender)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 106, in app
+    response = await f(request)
+               ^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 430, in app
+    raw_response = await run_endpoint_function(
+                   ^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/fastapi/routing.py", line 316, in run_endpoint_function
+    return await dependant.call(**values)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py", line 127, in get_job_status
+    domain_job = await repo.get(job_id)
+                 ^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py", line 62, in get
+    scan = await self._session.get(IdentityScanJob, job_uuid)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 592, in get
+    return await greenlet_spawn(
+           ^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 190, in greenlet_spawn
+    result = context.switch(*args, **kwargs)
+             ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3680, in get
+    return self._get_impl(
+           ^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 3859, in _get_impl
+    return db_load_fn(
+           ^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/loading.py", line 695, in load_on_pk_identity
+    session.execute(
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2351, in execute
+    return self._execute_internal(
+           ^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2239, in _execute_internal
+    conn = self._connection_for_bind(bind)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2108, in _connection_for_bind
+    return trans._connection_for_bind(engine, execution_options)
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+  File "<string>", line 2, in _connection_for_bind
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 101, in _go
+    self._raise_for_prerequisite_state(fn.__name__, current_state)
+  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 971, in _raise_for_prerequisite_state
+    raise sa_exc.PendingRollbackError(
+sqlalchemy.exc.PendingRollbackError: This Session's transaction has been rolled back due to a previous exception during flush. To begin a new transaction with this Session, first issue Session.rollback(). Original exception was: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.UniqueViolationError'>: duplicate key value violates unique constraint "tenants_pkey"
+DETAIL:  Key (id)=(cc42f496-c7e1-5631-b3b5-cfa270c763f8) already exists.
+[SQL: INSERT INTO tenants (id, site_url) VALUES ($1::UUID, $2::VARCHAR) RETURNING tenants.created_at, tenants.updated_at]
+[parameters: (UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 'auto-provisioned-cc42f496')]
+(Background on this error at: https://sqlalche.me/e/20/gkpj) (Background on this error at: https://sqlalche.me/e/20/7s2a)
+2025-12-08 22:52:42,113 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 22:52:42,116 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:52:42,144 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:52:42,145 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-08 22:52:42,145 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.68
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 046fda26-f6b9-4193-ac6d-e4397bb5ac83 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 05b88841-9a1a-4321-817b-284ca041566f best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0853fb9a-ee2a-450c-ac46-0512aa19a48c best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1594c7a2-6bd8-4af1-abf1-d40db3453703 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1921e232-efe3-4ff7-8f0d-a466472bb7d5 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-08 22:52:42,145 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
+2025-12-08 22:52:42,145 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
+2025-12-08 22:52:42,146 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
+2025-12-08 22:52:42,164 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
+2025-12-08 22:52:42,164 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-08 22:52:42,164 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-08 22:52:42,210 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
+2025-12-08 22:52:42,221 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 22:52:42,229 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:52:42,235 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:52:42,239 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:52:42,244 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:52:42,249 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:52:42,253 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:52:42,258 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:52:42,258 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
+2025-12-08 22:53:45,839 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-08 22:53:54,530 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-08 22:54:00,321 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-08 22:54:00,324 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:54:00,346 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 76 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-08 22:54:00,354 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
+2025-12-08 22:54:00,354 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 8 clusters with representatives, 0 with centroids
+2025-12-08 22:54:00,354 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 76 identities, 8 clusters, 15 total reps, threshold=0.68
+2025-12-08 22:54:00,357 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 90b60bf0-8e62-4854-be65-a5f114f1e644 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed with similarity 0.7129
+2025-12-08 22:54:00,358 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity b3835bb8-5f26-44e2-a677-40750a5c1ea2 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed with similarity 0.6819
+2025-12-08 22:54:00,358 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity c0b8edd0-7e00-4718-b70b-0f693655f136 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed with similarity 0.7420
+2025-12-08 22:54:00,359 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity d60457a0-db3a-449d-92a8-ea10f8279014 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed with similarity 0.6953
+2025-12-08 22:54:00,360 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 4 candidates from 76 identities
+2025-12-08 22:54:00,360 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 4 candidates, 72 remaining
+2025-12-08 22:54:00,361 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 72 remaining
+2025-12-08 22:54:00,382 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 16 new cluster proposals
+2025-12-08 22:54:00,382 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
+2025-12-08 22:54:00,386 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 90b60bf0-8e62-4854-be65-a5f114f1e644 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:54:00,392 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 90b60bf0-8e62-4854-be65-a5f114f1e644 for cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:54:00,393 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity b3835bb8-5f26-44e2-a677-40750a5c1ea2 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:54:00,395 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity b3835bb8-5f26-44e2-a677-40750a5c1ea2 for cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:54:00,396 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity c0b8edd0-7e00-4718-b70b-0f693655f136 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:54:00,397 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity c0b8edd0-7e00-4718-b70b-0f693655f136 for cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:54:00,399 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity d60457a0-db3a-449d-92a8-ea10f8279014 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-08 22:54:00,401 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity d60457a0-db3a-449d-92a8-ea10f8279014 for cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-08 22:54:00,401 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 6 (no candidates: 6, rejected: 0)
+2025-12-08 22:54:00,410 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,416 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,419 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:54:00,423 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-08 22:54:00,430 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 22:54:00,450 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 19 members
+2025-12-08 22:54:00,470 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,494 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 6 members
+2025-12-08 22:54:00,502 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,566 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 8 members
+2025-12-08 22:54:00,571 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,577 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,583 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,589 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,600 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 4 members
+2025-12-08 22:54:00,608 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,631 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-08 22:54:00,637 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,644 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-08 22:54:00,651 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-08 22:54:00,651 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=4, rejected=0, new_clusters=20
+2025-12-08 23:02:06,580 INFO db.startup - === Application Startup ===
+2025-12-08 23:02:06,580 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:02:06,580 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:03:22,923 INFO db.startup - === Application Startup ===
+2025-12-08 23:03:22,924 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:03:22,924 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:04:39,395 INFO db.startup - === Application Startup ===
+2025-12-08 23:04:39,396 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:04:39,396 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:04:52,158 INFO db.startup - === Application Startup ===
+2025-12-08 23:04:52,158 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:04:52,158 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:05:12,651 INFO db.startup - === Application Startup ===
+2025-12-08 23:05:12,651 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:05:12,651 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:05:34,518 INFO db.startup - === Application Startup ===
+2025-12-08 23:05:34,518 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:05:34,518 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:05:54,283 INFO db.startup - === Application Startup ===
+2025-12-08 23:05:54,283 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:05:54,283 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:44:01,631 INFO db.startup - === Application Startup ===
+2025-12-08 23:44:01,631 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:44:01,631 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:44:04,655 INFO db.startup - === Application Startup ===
+2025-12-08 23:44:04,655 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:44:04,655 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:45:26,656 INFO db.startup - === Application Startup ===
+2025-12-08 23:45:26,657 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:45:26,657 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:56:24,068 INFO db.startup - === Application Startup ===
+2025-12-08 23:56:24,068 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:56:24,069 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:56:56,743 INFO db.startup - === Application Startup ===
+2025-12-08 23:56:56,743 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:56:56,744 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:57:24,061 INFO db.startup - === Application Startup ===
+2025-12-08 23:57:24,061 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:57:24,061 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:57:44,997 INFO db.startup - === Application Startup ===
+2025-12-08 23:57:44,997 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:57:44,997 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:58:10,244 INFO db.startup - === Application Startup ===
+2025-12-08 23:58:10,244 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:58:10,244 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:58:28,228 INFO db.startup - === Application Startup ===
+2025-12-08 23:58:28,228 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:58:28,228 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-08 23:58:45,962 INFO db.startup - === Application Startup ===
+2025-12-08 23:58:45,962 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-08 23:58:45,962 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:02:04,282 INFO db.startup - === Application Startup ===
+2025-12-09 00:02:04,282 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:02:04,282 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:02:45,426 INFO db.startup - === Application Startup ===
+2025-12-09 00:02:45,426 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:02:45,426 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:11:35,719 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-09 00:11:46,248 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-09 00:12:08,415 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-09 00:12:08,419 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:12:08,507 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 305 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:12:08,525 INFO recognition.application.orchestration.cluster_service - [clustering] Found 21 existing clusters for discovery
+2025-12-09 00:12:08,525 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 21 clusters with representatives, 0 with centroids
+2025-12-09 00:12:08,525 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 305 identities, 21 clusters, 50 total reps, threshold=0.68
+2025-12-09 00:12:08,526 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity b3835bb8-5f26-44e2-a677-40750a5c1ea2 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed with similarity 0.6819
+2025-12-09 00:12:08,577 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity a1f3c298-b8ed-4f41-85e9-e284509d4e0e -> cluster de4d0446-7646-4ad6-b1ca-2e435825f102 with similarity 0.7902
+2025-12-09 00:12:08,577 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 2 candidates from 305 identities
+2025-12-09 00:12:08,577 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 2 candidates, 303 remaining
+2025-12-09 00:12:08,578 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 303 remaining
+2025-12-09 00:12:09,698 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 2 candidates, 79 new cluster proposals
+2025-12-09 00:12:09,698 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
+2025-12-09 00:12:09,702 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity b3835bb8-5f26-44e2-a677-40750a5c1ea2 -> cluster 9dd8a704-bd2d-4ca5-a32d-102d9436d7ed: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-09 00:12:22,252 INFO db.startup - === Application Startup ===
+2025-12-09 00:12:22,252 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:12:22,252 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:13:11,061 INFO db.startup - === Application Startup ===
+2025-12-09 00:13:11,062 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:13:11,062 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:13:40,744 INFO db.startup - === Application Startup ===
+2025-12-09 00:13:40,745 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:13:40,745 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:13:58,971 INFO db.startup - === Application Startup ===
+2025-12-09 00:13:58,972 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:13:58,972 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:14:14,174 INFO db.startup - === Application Startup ===
+2025-12-09 00:14:14,174 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:14:14,174 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:14:41,660 INFO db.startup - === Application Startup ===
+2025-12-09 00:14:41,660 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:14:41,660 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:15:31,086 INFO db.startup - === Application Startup ===
+2025-12-09 00:15:31,086 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:15:31,086 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:17:18,243 INFO db.startup - === Application Startup ===
+2025-12-09 00:17:18,243 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:17:18,243 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:17:35,146 INFO db.startup - === Application Startup ===
+2025-12-09 00:17:35,146 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:17:35,146 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:24:43,792 INFO db.startup - === Application Startup ===
+2025-12-09 00:24:43,792 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:24:43,792 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:27:25,186 INFO db.startup - === Application Startup ===
+2025-12-09 00:27:25,186 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:27:25,186 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:27:39,899 INFO db.startup - === Application Startup ===
+2025-12-09 00:27:39,900 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:27:39,900 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:28:01,471 INFO db.startup - === Application Startup ===
+2025-12-09 00:28:01,471 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:28:01,471 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:28:14,982 INFO db.startup - === Application Startup ===
+2025-12-09 00:28:14,982 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:28:14,982 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:29:13,708 INFO db.startup - === Application Startup ===
+2025-12-09 00:29:13,708 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:29:13,708 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:29:54,643 INFO db.startup - === Application Startup ===
+2025-12-09 00:29:54,643 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:29:54,643 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:30:13,408 INFO db.startup - === Application Startup ===
+2025-12-09 00:30:13,409 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:30:13,409 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:30:28,240 INFO db.startup - === Application Startup ===
+2025-12-09 00:30:28,240 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:30:28,240 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:30:56,515 INFO db.startup - === Application Startup ===
+2025-12-09 00:30:56,515 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:30:56,515 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:32:32,111 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-09 00:32:42,071 INFO db.startup - === Application Startup ===
+2025-12-09 00:32:42,072 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-09 00:32:42,072 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-09 00:37:17,260 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-09 00:37:26,082 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-09 00:37:28,693 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-09 00:37:28,698 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:37:28,790 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:37:28,792 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-09 00:37:28,792 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.68
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 08bd1713-6561-42a0-a2ea-a7c1f4b31aaf best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1e0b1aff-7950-419b-b583-b3cef2eb832d best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 31e41c4d-5a7e-425c-ba70-2f27f486784a best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 37dda5a3-8ff9-4dea-9d61-cfb50d4f0a49 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 4b95c179-3e55-4508-a533-1ee6c2f07ae3 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-09 00:37:28,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
+2025-12-09 00:37:28,792 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
+2025-12-09 00:37:28,793 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
+2025-12-09 00:37:29,776 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
+2025-12-09 00:37:29,776 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-09 00:37:29,776 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-09 00:37:29,813 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-09 00:37:29,837 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
+2025-12-09 00:37:29,847 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-09 00:37:29,851 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:37:29,855 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:37:29,858 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:37:29,861 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:37:29,864 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:37:29,867 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:37:29,867 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
+2025-12-09 00:40:05,560 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-09 00:40:17,708 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-09 00:40:19,322 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-09 00:40:19,324 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:40:19,341 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 12 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:40:19,348 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
+2025-12-09 00:40:19,348 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 7 clusters with representatives, 0 with centroids
+2025-12-09 00:40:19,348 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 12 identities, 7 clusters, 11 total reps, threshold=0.68
+2025-12-09 00:40:19,349 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 03a699a0-602b-408f-93ec-155e669175dc best_cluster=daf02be6-6263-4b28-8cbc-bf789f8740c0 best_sim=0.6364 (threshold=0.68)
+2025-12-09 00:40:19,349 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 124fde13-69ee-49ee-9768-9e971fe0c94a best_cluster=daf02be6-6263-4b28-8cbc-bf789f8740c0 best_sim=0.6211 (threshold=0.68)
+2025-12-09 00:40:19,349 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 33821c56-66b3-47d7-9551-a40e67de3cfa best_cluster=daf02be6-6263-4b28-8cbc-bf789f8740c0 best_sim=0.2937 (threshold=0.68)
+2025-12-09 00:40:19,349 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 40e7e45c-bcb8-437b-83e5-7ffea4c8c14d best_cluster=daf02be6-6263-4b28-8cbc-bf789f8740c0 best_sim=0.6727 (threshold=0.68)
+2025-12-09 00:40:19,349 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 46ad95a2-8008-49cc-b23b-e38d9a8dcdaf best_cluster=daf02be6-6263-4b28-8cbc-bf789f8740c0 best_sim=0.6096 (threshold=0.68)
+2025-12-09 00:40:19,349 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 12 identities
+2025-12-09 00:40:19,349 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 12 remaining
+2025-12-09 00:40:19,349 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 12 remaining
+2025-12-09 00:40:19,368 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 0 new cluster proposals
+2025-12-09 00:40:19,368 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-09 00:40:19,368 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 12 (no candidates: 12, rejected: 0)
+2025-12-09 00:40:19,452 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,457 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,462 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,485 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,505 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,516 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,525 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,534 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,545 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,552 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,560 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,567 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-09 00:40:19,567 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=12
+2025-12-09 00:42:13,863 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-09 00:42:23,200 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-09 00:42:24,627 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-09 00:42:24,630 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:42:24,709 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 14 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-09 00:42:24,746 INFO recognition.application.orchestration.cluster_service - [clustering] Found 13 existing clusters for discovery
+2025-12-09 00:42:24,747 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 12 clusters with representatives, 0 with centroids
+2025-12-09 00:42:24,747 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 14 identities, 12 clusters, 16 total reps, threshold=0.68
+2025-12-09 00:42:24,747 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 9cf1f3d4-73b6-4201-b4a3-b54ab16928cb -> cluster 9d90c5ff-f240-48b7-9a0c-7d4a17e3adfa with similarity 0.7961
+2025-12-09 00:42:24,747 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity e549979e-bb4f-497f-b7f7-594bb109ce44 -> cluster 9a818ef3-8c8d-4307-9c39-274378243600 with similarity 0.6934
+2025-12-09 00:42:24,749 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 68a31f6d-d9bb-48cd-a29b-42510cf6ac2a -> cluster daf02be6-6263-4b28-8cbc-bf789f8740c0 with similarity 0.7420
+2025-12-09 00:42:24,749 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 9a015b9d-7446-4243-bc03-cbfc3e9a377f -> cluster 9d90c5ff-f240-48b7-9a0c-7d4a17e3adfa with similarity 0.7462
+2025-12-09 00:42:24,750 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 4 candidates from 14 identities
+2025-12-09 00:42:24,750 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 4 candidates, 10 remaining
+2025-12-09 00:42:24,750 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 10 remaining
+2025-12-09 00:42:24,767 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 4 new cluster proposals
+2025-12-09 00:42:24,767 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
+2025-12-09 00:42:24,812 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 9cf1f3d4-73b6-4201-b4a3-b54ab16928cb -> cluster 9d90c5ff-f240-48b7-9a0c-7d4a17e3adfa: suggest (checks passed: [], failed: ['maturity'])
+2025-12-09 00:42:25,039 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 9cf1f3d4-73b6-4201-b4a3-b54ab16928cb for cluster 9d90c5ff-f240-48b7-9a0c-7d4a17e3adfa (confidence=0.00, reason=cluster not mature)
+2025-12-09 00:42:25,043 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity e549979e-bb4f-497f-b7f7-594bb109ce44 -> cluster 9a818ef3-8c8d-4307-9c39-274378243600: suggest (checks passed: [], failed: ['maturity'])
+2025-12-09 00:42:25,051 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity e549979e-bb4f-497f-b7f7-594bb109ce44 for cluster 9a818ef3-8c8d-4307-9c39-274378243600 (confidence=0.00, reason=cluster not mature)
+2025-12-09 00:42:25,056 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 68a31f6d-d9bb-48cd-a29b-42510cf6ac2a -> cluster daf02be6-6263-4b28-8cbc-bf789f8740c0: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-09 00:42:25,061 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 68a31f6d-d9bb-48cd-a29b-42510cf6ac2a for cluster daf02be6-6263-4b28-8cbc-bf789f8740c0 (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-09 00:42:25,063 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 9a015b9d-7446-4243-bc03-cbfc3e9a377f -> cluster 9d90c5ff-f240-48b7-9a0c-7d4a17e3adfa: suggest (checks passed: [], failed: ['maturity'])
+2025-12-09 00:42:25,066 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 9a015b9d-7446-4243-bc03-cbfc3e9a377f for cluster 9d90c5ff-f240-48b7-9a0c-7d4a17e3adfa (confidence=0.00, reason=cluster not mature)
+2025-12-09 00:42:25,067 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-09 00:42:25,119 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-09 00:42:25,127 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-09 00:42:25,141 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 4 members
+2025-12-09 00:42:25,150 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-09 00:42:25,150 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=4, rejected=0, new_clusters=4

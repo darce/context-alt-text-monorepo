@@ -54,5 +54,20 @@ class SuggestionService:
         """List pending suggestions for the service tenant."""
         return await self._repository.list_pending(self._tenant_id, limit, offset)
 
+    async def resolve_for_identity(self, identity_id: str, cluster_id: str, resolution: str = "accepted") -> int:
+        """Resolve pending suggestions for an identity+cluster combination.
+
+        Used when user confirms a suggestion via reassignment (not via suggestion accept).
+        Returns the number of suggestions resolved.
+        """
+        suggestions = await self._repository.get_by_identity(self._tenant_id, identity_id)
+        resolved_count = 0
+        for suggestion in suggestions:
+            if suggestion.cluster_id == cluster_id and suggestion.status == SuggestionStatus.PENDING:
+                status = SuggestionStatus.ACCEPTED if resolution == "accepted" else SuggestionStatus.REJECTED
+                await self._repository.update_status(self._tenant_id, suggestion.id, status)
+                resolved_count += 1
+        return resolved_count
+
 
 __all__ = ["SuggestionService"]

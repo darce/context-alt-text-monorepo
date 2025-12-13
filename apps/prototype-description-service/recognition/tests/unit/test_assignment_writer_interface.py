@@ -51,6 +51,9 @@ class NullClusterRepo(ClusterRepository):
     async def add_representative(self, representative) -> None:
         return None
 
+    async def count_labeled(self) -> int:
+        return 0
+
 
 class NullMemberRepo(MemberRepository):
     async def get_by_cluster(self, cluster_id: str) -> list[IdentityMember]:
@@ -80,6 +83,12 @@ class NullMemberRepo(MemberRepository):
 
     async def remove_member(self, member_id: str) -> None:
         return None
+
+    async def get_by_identity_id(self, identity_id: str) -> list[IdentityMember]:
+        return []
+
+    async def remove_by_identity_id(self, identity_id: str) -> bool:
+        return False
 
 
 def _make_decision(outcome: AssignmentOutcome = AssignmentOutcome.ACCEPT) -> AssignmentDecision:

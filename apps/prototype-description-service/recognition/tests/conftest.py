@@ -309,7 +309,7 @@ class FakeDetector:
 class FakeEmbeddingGenerator:
     """Deterministic fake embedding generator."""
 
-    def __init__(self, embedding_dim: int = 1024) -> None:
+    def __init__(self, embedding_dim: int = 512) -> None:
         self.embedding_dim = embedding_dim
 
     async def generate(self, face_images: list[bytes]) -> list[EmbeddingResult]:
@@ -365,7 +365,7 @@ def scan_service(db_session: AsyncSession) -> ScanService:
     return ScanService(
         session=db_session,
         detector=FakeDetector(),
-        generator=FakeEmbeddingGenerator(embedding_dim=1024),
+        generator=FakeEmbeddingGenerator(embedding_dim=512),
     )
 
 

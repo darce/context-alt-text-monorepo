@@ -15,12 +15,13 @@ export interface RepresentativeBounds {
 }
 
 export interface ClusterIdentity {
-  id: string;
+  identity_id: string;
   media_id: number;
   similarity: number;
   confidence: number;
   bbox: BoundingBox;
   thumbnail_url?: string | null;
+  media_url?: string | null;
 }
 
 /**
@@ -46,7 +47,7 @@ export interface DebugMetrics {
 }
 
 export interface DetectedIdentity {
-  id: string;
+  identity_id: string;
   media_id: number;
   cluster_id: string | null;
   cluster_label: string | null;

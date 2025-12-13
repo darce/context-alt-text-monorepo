@@ -1,426 +1,113 @@
-2025-12-07 17:25:17,254 INFO db.startup - === Application Startup ===
-2025-12-07 17:25:17,254 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:25:17,254 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:27:02,551 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 17:27:43,767 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496c7e15631b3b5cfa270c763f8, mode=sync
-2025-12-07 17:27:43,775 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496c7e15631b3b5cfa270c763f8
-2025-12-07 17:27:43,790 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 10 unclustered identities, tenant=cc42f496c7e15631b3b5cfa270c763f8
-2025-12-07 17:27:43,793 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
-2025-12-07 17:27:43,793 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
-2025-12-07 17:27:43,794 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 10 remaining
-2025-12-07 17:27:43,794 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 10 remaining
-2025-12-07 17:27:45,138 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 8 new cluster proposals
-2025-12-07 17:27:45,139 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
-2025-12-07 17:27:45,139 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
-2025-12-07 17:27:45,167 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-07 17:27:45,179 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-07 17:27:45,184 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 17:27:45,191 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 17:27:45,195 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 17:27:45,199 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 17:27:45,202 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 17:27:45,206 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 17:27:45,206 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=8
-2025-12-07 17:38:50,035 INFO db.startup - === Application Startup ===
-2025-12-07 17:38:50,035 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:38:50,035 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:38:59,688 INFO db.startup - === Application Startup ===
-2025-12-07 17:38:59,688 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:38:59,688 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:39:10,401 INFO db.startup - === Application Startup ===
-2025-12-07 17:39:10,401 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:39:10,401 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:42:14,123 INFO db.startup - === Application Startup ===
-2025-12-07 17:42:14,123 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:42:14,123 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:42:29,086 INFO db.startup - === Application Startup ===
-2025-12-07 17:42:29,087 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:42:29,087 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:42:41,277 INFO db.startup - === Application Startup ===
-2025-12-07 17:42:41,277 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:42:41,277 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:46:16,259 INFO db.startup - === Application Startup ===
-2025-12-07 17:46:16,259 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:46:16,259 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:46:31,467 INFO db.startup - === Application Startup ===
-2025-12-07 17:46:31,468 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:46:31,468 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:48:12,542 INFO db.startup - === Application Startup ===
-2025-12-07 17:48:12,542 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:48:12,542 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:49:54,775 INFO db.startup - === Application Startup ===
-2025-12-07 17:49:54,775 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:49:54,775 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:50:13,132 INFO db.startup - === Application Startup ===
-2025-12-07 17:50:13,133 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:50:13,133 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:50:17,909 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 17:50:50,465 INFO db.startup - === Application Startup ===
-2025-12-07 17:50:50,466 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:50:50,466 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:51:01,570 INFO db.startup - === Application Startup ===
-2025-12-07 17:51:01,571 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:51:01,571 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:51:12,713 INFO db.startup - === Application Startup ===
-2025-12-07 17:51:12,713 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:51:12,713 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:51:31,605 INFO db.startup - === Application Startup ===
-2025-12-07 17:51:31,606 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:51:31,606 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:51:51,506 INFO db.startup - === Application Startup ===
-2025-12-07 17:51:51,506 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:51:51,506 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:54:03,907 INFO db.startup - === Application Startup ===
-2025-12-07 17:54:03,907 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:54:03,908 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 17:59:10,683 INFO db.startup - === Application Startup ===
-2025-12-07 17:59:10,683 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 17:59:10,683 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:02:18,274 INFO db.startup - === Application Startup ===
-2025-12-07 18:02:18,274 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:02:18,274 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:02:55,122 INFO db.startup - === Application Startup ===
-2025-12-07 18:02:55,122 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:02:55,122 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:06:40,720 INFO db.startup - === Application Startup ===
-2025-12-07 18:06:40,720 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:06:40,720 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:07:55,928 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 18:09:01,107 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-07 18:09:13,270 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-07 18:09:14,514 ERROR recognition.application.embedding.generator - Embedding generation failed for bf4766f856891abed100: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,514 ERROR recognition.application.embedding.generator - Embedding generation failed for 9fe8ef4525fdd9e40615: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,514 ERROR recognition.application.embedding.generator - Embedding generation failed for 82bc715896cb80ae54af: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,514 ERROR recognition.application.embedding.generator - Embedding generation failed for 82bc715896cb80ae54af: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,514 ERROR recognition.application.embedding.generator - Embedding generation failed for 82bc715896cb80ae54af: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,514 ERROR recognition.application.embedding.generator - Embedding generation failed for 82bc715896cb80ae54af: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for f6fba0ee98c12c445d3b: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for f6fba0ee98c12c445d3b: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for f6fba0ee98c12c445d3b: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 1590a2a1410fad0073ef: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 80a74a7e0c9f56e29a37: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 884309f49436fd272638: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 05234623fa8571e0ab7f: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 2b378e5da226e893c11e: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 0c07b3e2fbdabfaf6bd9: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:14,515 ERROR recognition.application.embedding.generator - Embedding generation failed for 0c07b3e2fbdabfaf6bd9: cannot identify image file <_io.BytesIO object at 0x13558df30>
-2025-12-07 18:09:15,269 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496c7e15631b3b5cfa270c763f8, mode=sync
-2025-12-07 18:09:15,271 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496c7e15631b3b5cfa270c763f8
-2025-12-07 18:10:17,296 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 18:11:41,026 INFO db.startup - === Application Startup ===
-2025-12-07 18:11:41,027 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:11:41,027 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:11:53,972 INFO db.startup - === Application Startup ===
-2025-12-07 18:11:53,972 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:11:53,972 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:12:16,962 INFO db.startup - === Application Startup ===
-2025-12-07 18:12:16,962 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:12:16,962 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:12:42,263 INFO db.startup - === Application Startup ===
-2025-12-07 18:12:42,264 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:12:42,264 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:12:59,145 INFO db.startup - === Application Startup ===
-2025-12-07 18:12:59,145 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:12:59,145 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:13:15,318 INFO db.startup - === Application Startup ===
-2025-12-07 18:13:15,318 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:13:15,318 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:15:58,102 INFO db.startup - === Application Startup ===
-2025-12-07 18:15:58,103 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:15:58,103 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:25:35,136 INFO db.startup - === Application Startup ===
-2025-12-07 18:25:35,136 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:25:35,136 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:26:53,302 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-07 18:27:05,799 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-07 18:28:52,092 INFO db.startup - === Application Startup ===
-2025-12-07 18:28:52,092 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:28:52,092 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:28:59,519 INFO db.startup - === Application Startup ===
-2025-12-07 18:28:59,519 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:28:59,519 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:32:57,613 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 18:33:07,584 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-07 18:33:20,140 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-07 18:33:21,407 ERROR recognition.interface_adapters.http.routers.analyze - Unexpected error in analyze_media: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "media_identities" violates check constraint "media_identity_embedding_unit_norm"
-[SQL: INSERT INTO media_identities (id, tenant_id, media_id, media_url, bbox_x, bbox_y, bbox_width, bbox_height, confidence, embedding, thumbnail_url, created_by_user_id) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::VARCHAR, $5::INTEGER, $6::INTEGER, $7::I ... 2440 characters truncated ... 92::INTEGER) RETURNING media_identities.created_at, media_identities.updated_at, media_identities.id]
-[parameters: (UUID('6b96b22e-5455-4aaf-9cdc-d78016115dbd'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2863, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_333977710_766250521583623_4728508655382008345_n.jpg', 745, 1088, 82, 74, 0.5097808837890625, '[-0.05226867273449898,-0.052174557000398636,0.02501927688717842,0.0059640128165483475,0.022834884002804756,0.01803276687860489,0.01629752852022648,-0 ... (12593 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('8f49782f-4563-41a7-b05d-480c18639174'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2864, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_334182842_893615348577721_8971599508174781790_n.jpg', 507, 77, 163, 254, 0.8041871190071106, '[0.024775974452495575,0.030573459342122078,0.0208339411765337,0.03241502121090889,0.038405872881412506,-0.044420719146728516,-0.029693100601434708,-0 ... (12635 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('52b2fe79-2943-4ccc-8317-81e8613c8962'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2865, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_345851441_258319913423080_1202300637622742034_n.jpg', 654, 119, 163, 249, 0.9060039520263672, '[0.03653129190206528,0.003287963103502989,-0.019363243132829666,-0.00898722093552351,-0.012078051455318928,-0.04760421812534332,-0.005797147750854492 ... (12624 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('c59ad29e-85ea-499d-9242-4050b0b571fb'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2865, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_345851441_258319913423080_1202300637622742034_n.jpg', 348, 181, 159, 177, 0.8191336393356323, '[-0.004076172132045031,-0.02898596040904522,0.07880263030529022,-0.020315736532211304,-0.012504719197750092,0.016623763367533684,-0.06945813447237015 ... (12625 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('7b9c51a9-3c31-46bd-83d6-56c20269ca00'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8') ... 92 parameters truncated ... None, None, UUID('4c776d8a-ca3a-42ab-abff-f60e5aacd8d9'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2870, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3140607548272752853.jpg', 207, 432, 175, 252, 0.777357816696167, '[0.024284429848194122,0.056521013379096985,-0.0052398391999304295,-0.012503915466368198,-0.05563811957836151,-0.08374076336622238,-0.0193748846650123 ... (12611 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('b9468da6-254d-406c-93bf-cf1864c5ca19'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2871, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3140440471033948071.jpg', 191, 353, 175, 204, 0.8826524019241333, '[0.024627743288874626,0.025447091087698936,-0.04056672751903534,-0.008021147921681404,-0.014192825183272362,0.0014581338036805391,-0.0240968596190214 ... (12622 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('164d2890-9fbf-4320-b2a0-3346c841df10'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2872, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3142808782673037201.jpg', 27, 419, 283, 448, 0.76191645860672, '[0.05583960935473442,0.04739993065595627,0.026681294664740562,0.019757447764277458,0.00023928433074615896,0.0790727287530899,-0.05994788184762001,-0. ... (12585 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('b5ddcdb8-0313-49eb-b8ec-407d45771fd8'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2872, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3142808782673037201.jpg', 370, 445, 319, 407, 0.7442266941070557, '[0.0651249960064888,0.017357105389237404,0.00411147391423583,0.04525104537606239,-0.07960247248411179,-0.05345894768834114,-0.04200875386595726,-0.07 ... (12575 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None)]
-(Background on this error at: https://sqlalche.me/e/20/gkpj)
-Traceback (most recent call last):
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 550, in _prepare_and_execute
-    self._rows = deque(await prepared_stmt.fetch(*parameters))
-                       ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 177, in fetch
-    data = await self.__bind_execute(args, 0, timeout)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 268, in __bind_execute
-    data, status, _ = await self.__do_execute(
-                      ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/asyncpg/prepared_stmt.py", line 257, in __do_execute
-    return await executor(protocol)
-           ^^^^^^^^^^^^^^^^^^^^^^^^
-  File "asyncpg/protocol/protocol.pyx", line 205, in bind_execute
-asyncpg.exceptions.CheckViolationError: new row for relation "media_identities" violates check constraint "media_identity_embedding_unit_norm"
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2118, in _exec_insertmany_context
-    dialect.do_execute(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 951, in do_execute
-    cursor.execute(statement, parameters)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
-    self._adapt_connection.await_(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
-    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
-    value = await result
-            ^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
-    self._handle_exception(error)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
-    self._adapt_connection._handle_exception(error)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
-    raise translated_error from error
-sqlalchemy.dialects.postgresql.asyncpg.AsyncAdapt_asyncpg_dbapi.IntegrityError: <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "media_identities" violates check constraint "media_identity_embedding_unit_norm"
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py", line 72, in analyze_media
-    scan_job = await scan_service.analyze_media(request.tenant_id, media_ids, media_sources=media_sources)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/scan/service.py", line 127, in analyze_media
-    await self._session.commit()
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 1000, in commit
-    await greenlet_spawn(self.sync_session.commit)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
-    result = context.switch(value)
-             ^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2030, in commit
-    trans.commit(_to_root=True)
-  File "<string>", line 2, in commit
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1311, in commit
-    self._prepare_impl()
-  File "<string>", line 2, in _prepare_impl
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1286, in _prepare_impl
-    self.session.flush()
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
-    self._flush(objects)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
-    with util.safe_reraise():
-         ^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
-    raise exc_value.with_traceback(exc_tb)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
-    flush_context.execute()
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
-    rec.execute(self)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
-    util.preloaded.orm_persistence.save_obj(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
-    _emit_insert_statements(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 1143, in _emit_insert_statements
-    result = connection.execute(
-             ^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
-    return meth(
-           ^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 526, in _execute_on_connection
-    return connection._execute_clauseelement(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
-    ret = self._execute_context(
-          ^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1844, in _execute_context
-    return self._exec_insertmany_context(dialect, context)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2126, in _exec_insertmany_context
-    self._handle_dbapi_exception(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2355, in _handle_dbapi_exception
-    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2118, in _exec_insertmany_context
-    dialect.do_execute(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 951, in do_execute
-    cursor.execute(statement, parameters)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 585, in execute
-    self._adapt_connection.await_(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 132, in await_only
-    return current.parent.switch(awaitable)  # type: ignore[no-any-return,attr-defined] # noqa: E501
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 196, in greenlet_spawn
-    value = await result
-            ^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 563, in _prepare_and_execute
-    self._handle_exception(error)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 513, in _handle_exception
-    self._adapt_connection._handle_exception(error)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/dialects/postgresql/asyncpg.py", line 797, in _handle_exception
-    raise translated_error from error
-sqlalchemy.exc.IntegrityError: (sqlalchemy.dialects.postgresql.asyncpg.IntegrityError) <class 'asyncpg.exceptions.CheckViolationError'>: new row for relation "media_identities" violates check constraint "media_identity_embedding_unit_norm"
-[SQL: INSERT INTO media_identities (id, tenant_id, media_id, media_url, bbox_x, bbox_y, bbox_width, bbox_height, confidence, embedding, thumbnail_url, created_by_user_id) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::VARCHAR, $5::INTEGER, $6::INTEGER, $7::I ... 2440 characters truncated ... 92::INTEGER) RETURNING media_identities.created_at, media_identities.updated_at, media_identities.id]
-[parameters: (UUID('6b96b22e-5455-4aaf-9cdc-d78016115dbd'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2863, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_333977710_766250521583623_4728508655382008345_n.jpg', 745, 1088, 82, 74, 0.5097808837890625, '[-0.05226867273449898,-0.052174557000398636,0.02501927688717842,0.0059640128165483475,0.022834884002804756,0.01803276687860489,0.01629752852022648,-0 ... (12593 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('8f49782f-4563-41a7-b05d-480c18639174'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2864, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_334182842_893615348577721_8971599508174781790_n.jpg', 507, 77, 163, 254, 0.8041871190071106, '[0.024775974452495575,0.030573459342122078,0.0208339411765337,0.03241502121090889,0.038405872881412506,-0.044420719146728516,-0.029693100601434708,-0 ... (12635 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('52b2fe79-2943-4ccc-8317-81e8613c8962'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2865, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_345851441_258319913423080_1202300637622742034_n.jpg', 654, 119, 163, 249, 0.9060039520263672, '[0.03653129190206528,0.003287963103502989,-0.019363243132829666,-0.00898722093552351,-0.012078051455318928,-0.04760421812534332,-0.005797147750854492 ... (12624 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('c59ad29e-85ea-499d-9242-4050b0b571fb'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2865, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_345851441_258319913423080_1202300637622742034_n.jpg', 348, 181, 159, 177, 0.8191336393356323, '[-0.004076172132045031,-0.02898596040904522,0.07880263030529022,-0.020315736532211304,-0.012504719197750092,0.016623763367533684,-0.06945813447237015 ... (12625 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('7b9c51a9-3c31-46bd-83d6-56c20269ca00'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8') ... 92 parameters truncated ... None, None, UUID('4c776d8a-ca3a-42ab-abff-f60e5aacd8d9'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2870, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3140607548272752853.jpg', 207, 432, 175, 252, 0.777357816696167, '[0.024284429848194122,0.056521013379096985,-0.0052398391999304295,-0.012503915466368198,-0.05563811957836151,-0.08374076336622238,-0.0193748846650123 ... (12611 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('b9468da6-254d-406c-93bf-cf1864c5ca19'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2871, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3140440471033948071.jpg', 191, 353, 175, 204, 0.8826524019241333, '[0.024627743288874626,0.025447091087698936,-0.04056672751903534,-0.008021147921681404,-0.014192825183272362,0.0014581338036805391,-0.0240968596190214 ... (12622 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('164d2890-9fbf-4320-b2a0-3346c841df10'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2872, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3142808782673037201.jpg', 27, 419, 283, 448, 0.76191645860672, '[0.05583960935473442,0.04739993065595627,0.026681294664740562,0.019757447764277458,0.00023928433074615896,0.0790727287530899,-0.05994788184762001,-0. ... (12585 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None, UUID('b5ddcdb8-0313-49eb-b8ec-407d45771fd8'), UUID('cc42f496-c7e1-5631-b3b5-cfa270c763f8'), 2872, 'http://localhost:10010/wp-content/uploads/2025/11/ryannalexandria_3142808782673037201.jpg', 370, 445, 319, 407, 0.7442266941070557, '[0.0651249960064888,0.017357105389237404,0.00411147391423583,0.04525104537606239,-0.07960247248411179,-0.05345894768834114,-0.04200875386595726,-0.07 ... (12575 characters truncated) ... ,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0,0.0]', None, None)]
-(Background on this error at: https://sqlalche.me/e/20/gkpj)
-2025-12-07 18:35:06,211 INFO db.startup - === Application Startup ===
-2025-12-07 18:35:06,211 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:35:06,211 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:35:19,087 INFO db.startup - === Application Startup ===
-2025-12-07 18:35:19,087 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:35:19,088 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:35:28,685 INFO db.startup - === Application Startup ===
-2025-12-07 18:35:28,686 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:35:28,686 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:46:06,913 INFO db.startup - === Application Startup ===
-2025-12-07 18:46:06,913 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:46:06,913 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:46:21,567 INFO db.startup - === Application Startup ===
-2025-12-07 18:46:21,567 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:46:21,567 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:46:35,996 INFO db.startup - === Application Startup ===
-2025-12-07 18:46:35,996 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:46:35,996 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:46:58,345 INFO db.startup - === Application Startup ===
-2025-12-07 18:46:58,345 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:46:58,345 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:47:10,125 INFO db.startup - === Application Startup ===
-2025-12-07 18:47:10,125 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:47:10,125 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:47:30,902 INFO db.startup - === Application Startup ===
-2025-12-07 18:47:30,902 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:47:30,902 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:47:54,677 INFO db.startup - === Application Startup ===
-2025-12-07 18:47:54,678 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:47:54,678 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:48:05,511 INFO db.startup - === Application Startup ===
-2025-12-07 18:48:05,512 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:48:05,512 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:48:42,211 INFO db.startup - === Application Startup ===
-2025-12-07 18:48:42,211 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:48:42,211 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:49:19,748 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 18:50:16,964 INFO db.startup - === Application Startup ===
-2025-12-07 18:50:16,965 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:50:16,965 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:51:02,460 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-07 18:51:14,054 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-07 18:51:15,287 ERROR recognition.interface_adapters.http.routers.analyze - Unexpected error in analyze_media: (builtins.ValueError) expected 1024 dimensions, not 512
-[SQL: INSERT INTO media_identities (id, tenant_id, media_id, media_url, bbox_x, bbox_y, bbox_width, bbox_height, confidence, embedding, pose_pitch, pose_yaw, pose_roll, age, gender, thumbnail_url, created_by_user_id) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::VARCHAR, $5::INTEGER, $6::INTEGER, $7::INTEGER, $8::INTEGER, $9::FLOAT, $10, $11::FLOAT, $12::FLOAT, $13::FLOAT, $14::INTEGER, $15::INTEGER, $16::VARCHAR, $17::INTEGER) RETURNING media_identities.created_at, media_identities.updated_at, media_identities.id]
-[parameters: [{'pose_roll': -60.407596588134766, 'age': 52, 'pose_yaw': 10.161722183227539, 'bbox_width': 82, 'media_url': 'http://localhost:10010/wp-content/upload ... (11448 characters truncated) ... 74246597, -0.02798878401517868, 0.010033557191491127, -0.08789770305156708, -0.014109046198427677], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 15.868160247802734, 'age': 37, 'pose_yaw': -44.759521484375, 'bbox_width': 163, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11497 characters truncated) ... 6222172, -0.03145565092563629, 0.023243624716997147, -0.018631404265761375, -0.008219432085752487], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -3.8045568466186523, 'age': 40, 'pose_yaw': -19.49242401123047, 'bbox_width': 163, 'media_url': 'http://localhost:10010/wp-content/uploa ... (11479 characters truncated) ... 614135324955, 0.03684503957629204, 0.0332193560898304, -0.010854451917111874, 0.03835378959774971], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -15.440414428710938, 'age': 30, 'pose_yaw': 38.67962646484375, 'bbox_width': 159, 'media_url': 'http://localhost:10010/wp-content/upload ... (11482 characters truncated) ... 838125229, 0.04161854088306427, -0.0111150611191988, -0.059415072202682495, -0.018702471628785133], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -12.271939277648926, 'age': 34, 'pose_yaw': 2.330040454864502, 'bbox_width': 13, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11447 characters truncated) ... 42828083, -0.026198070496320724, -0.009060979820787907, -0.05579443275928497, 0.06182469055056572], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -22.86765480041504, 'age': 42, 'pose_yaw': -19.21767234802246, 'bbox_width': 15, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11458 characters truncated) ... 5569505692, -0.007426837924867868, 0.01532370038330555, -0.03707888349890709, 0.07806023210287094], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 8.57736587524414, 'age': 25, 'pose_yaw': -18.13826560974121, 'bbox_width': 114, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11476 characters truncated) ... 6284256, -0.012716199271380901, -0.045786671340465546, 0.03402542695403099, -0.019331831485033035], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -2.884908437728882, 'age': 37, 'pose_yaw': 30.91297149658203, 'bbox_width': 122, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11462 characters truncated) ... 196041, 0.0017643858445808291, 0.04442550241947174, -0.011183901689946651, -0.0012460352154448628], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 75.39703369140625, 'age': 38, 'pose_yaw': 77.30003356933594, 'bbox_width': 57, 'media_url': 'http://localhost:10010/wp-content/uploads/2 ... (11470 characters truncated) ... 13373184, -0.015737926587462425, -0.09884477406740189, 0.027523355558514595, 0.009600212797522545], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -1.1035513877868652, 'age': 35, 'pose_yaw': -16.37544059753418, 'bbox_width': 368, 'media_url': 'http://localhost:10010/wp-content/uploa ... (11478 characters truncated) ... 64052081108, 0.004677648190408945, 0.04844193533062935, 0.03713362291455269, 0.053402069956064224], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 14.579972267150879, 'age': 31, 'pose_yaw': -20.187685012817383, 'bbox_width': 297, 'media_url': 'http://localhost:10010/wp-content/uploa ... (11472 characters truncated) ... 8336610794, 0.01760774664580822, -0.0029879750218242407, -0.02684704028069973, 0.0083241518586874], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 3.2979016304016113, 'age': 34, 'pose_yaw': -26.1258487701416, 'bbox_width': 291, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11471 characters truncated) ... 93681192398, 0.010689366608858109, 0.022394252941012383, 0.015176963061094284, 0.0186754297465086], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 7.535898208618164, 'age': 26, 'pose_yaw': 43.55521011352539, 'bbox_width': 175, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11437 characters truncated) ... 320337296, 0.05470692366361618, 0.019551897421479225, -0.027439622208476067, 0.021188007667660713], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 7.564518928527832, 'age': 59, 'pose_yaw': 21.98325538635254, 'bbox_width': 175, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11447 characters truncated) ... 941246, -0.015939896926283836, 0.016151582822203636, -0.0026022661477327347, 0.017682289704680443], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 7.924975872039795, 'age': 27, 'pose_yaw': -11.148476600646973, 'bbox_width': 283, 'media_url': 'http://localhost:10010/wp-content/upload ... (11423 characters truncated) ... 60129166, 0.009389988146722317, -0.004042869433760643, -0.011346021667122841, 0.04733819141983986], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 30.25733757019043, 'age': 32, 'pose_yaw': -36.22999572753906, 'bbox_width': 319, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11410 characters truncated) ... 95698559284, 0.03866133466362953, 0.053018730133771896, 0.00315878982655704, 0.031019359827041626], 'thumbnail_url': None, 'created_by_user_id': None}]]
-Traceback (most recent call last):
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1815, in _execute_context
-    context = constructor(
-              ^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 1493, in _init_compiled
-    flattened_processors[key](compiled_params[key])
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/pgvector/sqlalchemy/vector.py", line 21, in process
-    return Vector._to_db(value, self.dim)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/pgvector/vector.py", line 57, in _to_db
-    raise ValueError('expected %d dimensions, not %d' % (dim, value.dimensions()))
-ValueError: expected 1024 dimensions, not 512
-
-The above exception was the direct cause of the following exception:
-
-Traceback (most recent call last):
-  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py", line 72, in analyze_media
-    scan_job = await scan_service.analyze_media(request.tenant_id, media_ids, media_sources=media_sources)
-               ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/scan/service.py", line 133, in analyze_media
-    await self._session.commit()
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/ext/asyncio/session.py", line 1000, in commit
-    await greenlet_spawn(self.sync_session.commit)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/_concurrency_py3k.py", line 203, in greenlet_spawn
-    result = context.switch(value)
-             ^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 2030, in commit
-    trans.commit(_to_root=True)
-  File "<string>", line 2, in commit
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1311, in commit
-    self._prepare_impl()
-  File "<string>", line 2, in _prepare_impl
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/state_changes.py", line 137, in _go
-    ret_value = fn(self, *arg, **kw)
-                ^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 1286, in _prepare_impl
-    self.session.flush()
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4331, in flush
-    self._flush(objects)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4466, in _flush
-    with util.safe_reraise():
-         ^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/util/langhelpers.py", line 224, in __exit__
-    raise exc_value.with_traceback(exc_tb)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/session.py", line 4427, in _flush
-    flush_context.execute()
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 466, in execute
-    rec.execute(self)
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/unitofwork.py", line 642, in execute
-    util.preloaded.orm_persistence.save_obj(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 93, in save_obj
-    _emit_insert_statements(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/orm/persistence.py", line 1143, in _emit_insert_statements
-    result = connection.execute(
-             ^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1419, in execute
-    return meth(
-           ^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/sql/elements.py", line 526, in _execute_on_connection
-    return connection._execute_clauseelement(
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1641, in _execute_clauseelement
-    ret = self._execute_context(
-          ^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1821, in _execute_context
-    self._handle_dbapi_exception(
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 2355, in _handle_dbapi_exception
-    raise sqlalchemy_exception.with_traceback(exc_info[2]) from e
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/base.py", line 1815, in _execute_context
-    context = constructor(
-              ^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/sqlalchemy/engine/default.py", line 1493, in _init_compiled
-    flattened_processors[key](compiled_params[key])
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/pgvector/sqlalchemy/vector.py", line 21, in process
-    return Vector._to_db(value, self.dim)
-           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
-  File "/Users/daniel/.pyenv/versions/description-service/lib/python3.12/site-packages/pgvector/vector.py", line 57, in _to_db
-    raise ValueError('expected %d dimensions, not %d' % (dim, value.dimensions()))
-sqlalchemy.exc.StatementError: (builtins.ValueError) expected 1024 dimensions, not 512
-[SQL: INSERT INTO media_identities (id, tenant_id, media_id, media_url, bbox_x, bbox_y, bbox_width, bbox_height, confidence, embedding, pose_pitch, pose_yaw, pose_roll, age, gender, thumbnail_url, created_by_user_id) VALUES ($1::UUID, $2::UUID, $3::INTEGER, $4::VARCHAR, $5::INTEGER, $6::INTEGER, $7::INTEGER, $8::INTEGER, $9::FLOAT, $10, $11::FLOAT, $12::FLOAT, $13::FLOAT, $14::INTEGER, $15::INTEGER, $16::VARCHAR, $17::INTEGER) RETURNING media_identities.created_at, media_identities.updated_at, media_identities.id]
-[parameters: [{'pose_roll': -60.407596588134766, 'age': 52, 'pose_yaw': 10.161722183227539, 'bbox_width': 82, 'media_url': 'http://localhost:10010/wp-content/upload ... (11448 characters truncated) ... 74246597, -0.02798878401517868, 0.010033557191491127, -0.08789770305156708, -0.014109046198427677], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 15.868160247802734, 'age': 37, 'pose_yaw': -44.759521484375, 'bbox_width': 163, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11497 characters truncated) ... 6222172, -0.03145565092563629, 0.023243624716997147, -0.018631404265761375, -0.008219432085752487], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -3.8045568466186523, 'age': 40, 'pose_yaw': -19.49242401123047, 'bbox_width': 163, 'media_url': 'http://localhost:10010/wp-content/uploa ... (11479 characters truncated) ... 614135324955, 0.03684503957629204, 0.0332193560898304, -0.010854451917111874, 0.03835378959774971], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -15.440414428710938, 'age': 30, 'pose_yaw': 38.67962646484375, 'bbox_width': 159, 'media_url': 'http://localhost:10010/wp-content/upload ... (11482 characters truncated) ... 838125229, 0.04161854088306427, -0.0111150611191988, -0.059415072202682495, -0.018702471628785133], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -12.271939277648926, 'age': 34, 'pose_yaw': 2.330040454864502, 'bbox_width': 13, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11447 characters truncated) ... 42828083, -0.026198070496320724, -0.009060979820787907, -0.05579443275928497, 0.06182469055056572], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -22.86765480041504, 'age': 42, 'pose_yaw': -19.21767234802246, 'bbox_width': 15, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11458 characters truncated) ... 5569505692, -0.007426837924867868, 0.01532370038330555, -0.03707888349890709, 0.07806023210287094], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 8.57736587524414, 'age': 25, 'pose_yaw': -18.13826560974121, 'bbox_width': 114, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11476 characters truncated) ... 6284256, -0.012716199271380901, -0.045786671340465546, 0.03402542695403099, -0.019331831485033035], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -2.884908437728882, 'age': 37, 'pose_yaw': 30.91297149658203, 'bbox_width': 122, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11462 characters truncated) ... 196041, 0.0017643858445808291, 0.04442550241947174, -0.011183901689946651, -0.0012460352154448628], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 75.39703369140625, 'age': 38, 'pose_yaw': 77.30003356933594, 'bbox_width': 57, 'media_url': 'http://localhost:10010/wp-content/uploads/2 ... (11470 characters truncated) ... 13373184, -0.015737926587462425, -0.09884477406740189, 0.027523355558514595, 0.009600212797522545], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': -1.1035513877868652, 'age': 35, 'pose_yaw': -16.37544059753418, 'bbox_width': 368, 'media_url': 'http://localhost:10010/wp-content/uploa ... (11478 characters truncated) ... 64052081108, 0.004677648190408945, 0.04844193533062935, 0.03713362291455269, 0.053402069956064224], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 14.579972267150879, 'age': 31, 'pose_yaw': -20.187685012817383, 'bbox_width': 297, 'media_url': 'http://localhost:10010/wp-content/uploa ... (11472 characters truncated) ... 8336610794, 0.01760774664580822, -0.0029879750218242407, -0.02684704028069973, 0.0083241518586874], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 3.2979016304016113, 'age': 34, 'pose_yaw': -26.1258487701416, 'bbox_width': 291, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11471 characters truncated) ... 93681192398, 0.010689366608858109, 0.022394252941012383, 0.015176963061094284, 0.0186754297465086], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 7.535898208618164, 'age': 26, 'pose_yaw': 43.55521011352539, 'bbox_width': 175, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11437 characters truncated) ... 320337296, 0.05470692366361618, 0.019551897421479225, -0.027439622208476067, 0.021188007667660713], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 7.564518928527832, 'age': 59, 'pose_yaw': 21.98325538635254, 'bbox_width': 175, 'media_url': 'http://localhost:10010/wp-content/uploads/ ... (11447 characters truncated) ... 941246, -0.015939896926283836, 0.016151582822203636, -0.0026022661477327347, 0.017682289704680443], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 7.924975872039795, 'age': 27, 'pose_yaw': -11.148476600646973, 'bbox_width': 283, 'media_url': 'http://localhost:10010/wp-content/upload ... (11423 characters truncated) ... 60129166, 0.009389988146722317, -0.004042869433760643, -0.011346021667122841, 0.04733819141983986], 'thumbnail_url': None, 'created_by_user_id': None}, {'pose_roll': 30.25733757019043, 'age': 32, 'pose_yaw': -36.22999572753906, 'bbox_width': 319, 'media_url': 'http://localhost:10010/wp-content/uploads ... (11410 characters truncated) ... 95698559284, 0.03866133466362953, 0.053018730133771896, 0.00315878982655704, 0.031019359827041626], 'thumbnail_url': None, 'created_by_user_id': None}]]
-2025-12-07 18:58:11,623 INFO db.startup - === Application Startup ===
-2025-12-07 18:58:11,624 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 18:58:11,624 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 18:59:47,446 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-07 19:00:07,480 INFO db.startup - === Application Startup ===
-2025-12-07 19:00:07,480 INFO db.startup - Git: d70b5ba (rewrite/4.2.4-single-pipeline)
-2025-12-07 19:00:07,480 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-07 19:00:25,698 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-07 19:00:37,205 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-07 19:00:40,527 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496c7e15631b3b5cfa270c763f8, mode=sync
-2025-12-07 19:00:40,530 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496c7e15631b3b5cfa270c763f8
-2025-12-07 19:00:40,554 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 16 unclustered identities, tenant=cc42f496c7e15631b3b5cfa270c763f8
-2025-12-07 19:00:40,555 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
-2025-12-07 19:00:40,555 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
-2025-12-07 19:00:40,556 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 16 remaining
-2025-12-07 19:00:40,556 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 16 remaining
-2025-12-07 19:00:41,545 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 7 new cluster proposals
-2025-12-07 19:00:41,545 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
-2025-12-07 19:00:41,545 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
-2025-12-07 19:00:41,594 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-07 19:00:41,618 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 8 members
-2025-12-07 19:00:41,625 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-07 19:00:41,629 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 19:00:41,635 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 19:00:41,640 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 19:00:41,645 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-07 19:00:41,645 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=7
+2025-12-13 13:05:08,557 INFO db.startup - === Application Startup ===
+2025-12-13 13:05:08,558 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
+2025-12-13 13:05:08,558 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-13 13:13:30,861 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-13 13:14:02,014 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 13:14:14,012 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 13:14:19,976 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 13:14:19,980 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 13:14:20,056 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 75 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 13:14:20,057 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-13 13:14:20,057 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-13 13:14:20,057 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 75 identities, 0 clusters, 0 total reps, threshold=0.68
+2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 078eedfa-68af-4b41-af8c-b1e989e02369 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0f28e3ad-152f-43d4-a51f-6ac200cb9acf best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 115558fe-e07c-4d1a-a597-217023ba6c2b best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1ba9d6dd-6bca-41ef-9e87-2b2f0c8eb964 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 2640c677-5248-4702-9634-46664eb58e92 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 75 identities
+2025-12-13 13:14:20,058 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 75 remaining
+2025-12-13 13:14:20,059 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 75 remaining
+2025-12-13 13:14:21,095 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 20 new cluster proposals
+2025-12-13 13:14:21,095 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-13 13:14:21,095 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-13 13:14:21,156 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 39 members
+2025-12-13 13:14:21,169 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-13 13:14:21,180 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:14:21,187 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:14:21,194 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:14:21,203 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:14:21,208 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:14:21,214 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:14:21,220 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:14:21,229 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:14:21,237 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:14:21,242 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,247 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,259 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,263 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,268 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,272 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,277 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,281 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,285 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:14:21,285 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=20
+2025-12-13 13:18:47,969 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-13 13:18:59,107 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 13:19:10,452 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 13:19:13,740 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 13:19:13,745 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 13:19:13,789 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 13:19:13,791 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-13 13:19:13,791 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-13 13:19:13,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.68
+2025-12-13 13:19:13,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0c60e1dd-8344-47f9-923e-0d19148ad69f best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 10a51632-983b-4e08-b2ee-a0727fa5847e best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 16daa550-8c71-4c10-9860-c29e29a3ef39 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 180df385-336c-4f43-9242-f01aaac2e8af best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1902326b-ec32-4732-b4e9-e4ebe1c19dc2 best_cluster=None best_sim=0.0000 (threshold=0.68)
+2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
+2025-12-13 13:19:13,793 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
+2025-12-13 13:19:13,794 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
+2025-12-13 13:19:13,815 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
+2025-12-13 13:19:13,815 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-13 13:19:13,816 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-13 13:19:13,901 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:19:13,925 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
+2025-12-13 13:19:13,935 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:19:13,943 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:19:13,951 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:19:13,959 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:19:13,964 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:19:13,969 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:19:13,975 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:19:13,976 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
+2025-12-13 13:20:26,976 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 13:20:37,209 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 13:20:40,610 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 13:20:40,613 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 13:20:40,634 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 47 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 13:20:40,642 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
+2025-12-13 13:20:40,642 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 8 clusters with representatives, 0 with centroids
+2025-12-13 13:20:40,642 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 47 identities, 8 clusters, 15 total reps, threshold=0.68
+2025-12-13 13:20:40,642 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 2132161e-c85e-41eb-b83c-522d207efbed -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.7129
+2025-12-13 13:20:40,644 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 73015aea-5f31-46b7-b0df-c3f307645fe8 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.6953
+2025-12-13 13:20:40,647 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity f320d919-0704-48fe-854e-b2f081bdbd0a -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.7420
+2025-12-13 13:20:40,647 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity f3b03359-a808-4d28-8b41-7e3d1f947db1 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.6819
+2025-12-13 13:20:40,648 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 4 candidates from 47 identities
+2025-12-13 13:20:40,648 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 4 candidates, 43 remaining
+2025-12-13 13:20:40,648 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 43 remaining
+2025-12-13 13:20:40,666 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 8 new cluster proposals
+2025-12-13 13:20:40,668 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
+2025-12-13 13:20:40,671 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 2132161e-c85e-41eb-b83c-522d207efbed -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-13 13:20:40,679 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 2132161e-c85e-41eb-b83c-522d207efbed for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-13 13:20:40,681 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 73015aea-5f31-46b7-b0df-c3f307645fe8 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-13 13:20:40,683 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 73015aea-5f31-46b7-b0df-c3f307645fe8 for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-13 13:20:40,685 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity f320d919-0704-48fe-854e-b2f081bdbd0a -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-13 13:20:40,687 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity f320d919-0704-48fe-854e-b2f081bdbd0a for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-13 13:20:40,688 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity f3b03359-a808-4d28-8b41-7e3d1f947db1 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
+2025-12-13 13:20:40,690 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity f3b03359-a808-4d28-8b41-7e3d1f947db1 for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
+2025-12-13 13:20:40,690 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 4 (no candidates: 4, rejected: 0)
+2025-12-13 13:20:40,719 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:20:40,724 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:20:40,729 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:20:40,736 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
+2025-12-13 13:20:40,749 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:20:40,775 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 19 members
+2025-12-13 13:20:40,787 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
+2025-12-13 13:20:40,795 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:20:40,802 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
+2025-12-13 13:20:40,808 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:20:40,815 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:20:40,821 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
+2025-12-13 13:20:40,821 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=4, rejected=0, new_clusters=12

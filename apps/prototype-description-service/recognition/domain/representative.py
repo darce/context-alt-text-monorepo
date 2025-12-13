@@ -22,3 +22,4 @@ class ClusterRepresentative:
     tenant_id: str | None = None
     quality_score: float = 1.0
     diversity_score: float | None = None
+    media_id: int | None = None  # For HTTP response serialization

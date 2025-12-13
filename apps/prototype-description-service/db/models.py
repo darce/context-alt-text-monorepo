@@ -151,6 +151,9 @@ class IdentityCluster(Base):
         "MediaIdentity", foreign_keys=[representative_identity_id]
     )
     members: Mapped[list[IdentityMember]] = relationship(back_populates="cluster", cascade="all, delete-orphan")
+    representatives: Mapped[list[IdentityClusterRepresentative]] = relationship(
+        back_populates="cluster", cascade="all, delete-orphan"
+    )
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "label", name="unique_tenant_identity_label"),
@@ -203,7 +206,7 @@ class IdentityClusterRepresentative(Base):
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     tenant: Mapped[Tenant] = relationship()
-    cluster: Mapped[IdentityCluster] = relationship()
+    cluster: Mapped[IdentityCluster] = relationship(back_populates="representatives")
     identity: Mapped[MediaIdentity] = relationship()
 
     __table_args__ = (

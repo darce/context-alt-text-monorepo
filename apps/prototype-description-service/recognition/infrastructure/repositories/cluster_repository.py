@@ -15,6 +15,7 @@ import numpy as np
 from sqlalchemy import Select, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
+from sqlalchemy.orm.attributes import instance_state
 
 from db.models import IdentityCluster as ClusterModel
 from db.models import IdentityClusterRepresentative, IdentityMember, MediaIdentity
@@ -22,6 +23,7 @@ from db.settings import get_database_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
 
 _DB_SETTINGS = get_database_settings()
 
@@ -44,10 +46,11 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         return self._to_domain(model) if model else None
 
     async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0):
-        """Fetch clusters for a tenant."""
+        """Fetch clusters for a tenant, with representatives eagerly loaded for discovery."""
         stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
             .where(ClusterModel.tenant_id == _coerce_uuid(tenant_id))
+            .options(selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity))
             .order_by(ClusterModel.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -178,8 +181,47 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         self._session.add(rep)
         await self._session.flush()
 
+    async def count_labeled(self) -> int:
+        """Count clusters with user-provided labels (not auto-generated like 'cluster-xxx').
+
+        Uses RLS (Row Level Security) to filter by current tenant context.
+        """
+        stmt = select(func.count(ClusterModel.id)).where(
+            ClusterModel.label.is_not(None),
+            ~ClusterModel.label.startswith("cluster-"),
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar_one() or 0)
+
     def _to_domain(self, model: ClusterModel) -> IdentityCluster:
         """Convert a SQLAlchemy model into the domain object."""
+        # Convert representatives only if eagerly loaded (via selectinload)
+        # Check if the relationship has been loaded to avoid triggering lazy load
+        domain_reps: list[ClusterRepresentative] = []
+        state = instance_state(model)
+        if "representatives" in state.dict:
+            # Relationship was eagerly loaded, safe to access
+            model_reps = model.representatives
+            for rep in model_reps:
+                # Extract media_id from identity if loaded, otherwise None
+                rep_state = instance_state(rep)
+                media_id = None
+                if "identity" in rep_state.dict and rep.identity:
+                    media_id = rep.identity.media_id
+                domain_reps.append(
+                    ClusterRepresentative(
+                        id=str(rep.id),
+                        cluster_id=str(rep.cluster_id),
+                        identity_id=str(rep.identity_id),
+                        embedding=np.array(rep.embedding, dtype=np.float32),
+                        created_at=rep.created_at,
+                        tenant_id=str(rep.tenant_id) if rep.tenant_id else None,
+                        quality_score=float(rep.quality_score),
+                        diversity_score=float(rep.diversity_score) if rep.diversity_score else None,
+                        media_id=media_id,
+                    )
+                )
+
         return IdentityCluster(
             id=str(model.id) if model.id else None,
             tenant_id=str(model.tenant_id),
@@ -192,7 +234,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             else None,
             clustering_algorithm=model.clustering_algorithm,
             user_confirmed=model.user_confirmed,
-            representatives=[],
+            representatives=domain_reps,
         )
 
     def _to_domain_identity(self, model: MediaIdentity) -> DomainIdentity:

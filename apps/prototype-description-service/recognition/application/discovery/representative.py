@@ -4,6 +4,7 @@ Representative-based discovery for identity-to-cluster candidates.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Sequence
 
 import numpy as np
@@ -13,6 +14,8 @@ from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 from recognition.shared.similarity import extract_face_embedding
+
+logger = logging.getLogger(__name__)
 
 
 class RepresentativeDiscovery(DiscoveryAlgorithm):
@@ -46,12 +49,28 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
             NotImplementedError: Always, until discovery logic is implemented.
         """
         if not isinstance(representatives_by_cluster, dict):
+            logger.warning(
+                "[RepresentativeDiscovery] representatives_by_cluster is not a dict: %s",
+                type(representatives_by_cluster),
+            )
             return []
 
+        total_reps = sum(len(reps) for reps in representatives_by_cluster.values())
+        logger.info(
+            "[RepresentativeDiscovery] Starting discovery: %d identities, %d clusters, %d total reps, threshold=%.2f",
+            len(identities),
+            len(representatives_by_cluster),
+            total_reps,
+            self.settings.similarity_threshold,
+        )
+
         candidates: list[AssignmentCandidate] = []
+        # Track best similarities for debugging
+        best_similarities: list[tuple[str, str | None, float]] = []
         for identity in identities:
             face_vec = self._normalize_face(np.asarray(identity.embedding, dtype=np.float32))
             best_cluster, best_sim = self._find_best_match(face_vec, representatives_by_cluster)
+            best_similarities.append((identity.id, best_cluster, best_sim))
             if best_cluster and best_sim >= self.settings.similarity_threshold:
                 candidates.append(
                     AssignmentCandidate(
@@ -62,7 +81,28 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
                         discovery_similarity=best_sim,
                     )
                 )
+                logger.info(
+                    "[RepresentativeDiscovery] MATCHED identity %s -> cluster %s with similarity %.4f",
+                    identity.id,
+                    best_cluster,
+                    best_sim,
+                )
 
+        # Log sample of best similarities when no candidates found
+        if not candidates and best_similarities:
+            sample = best_similarities[:5]
+            for identity_id, cluster_id, sim in sample:
+                logger.info(
+                    "[RepresentativeDiscovery] NO MATCH: identity %s best_cluster=%s best_sim=%.4f (threshold=%.2f)",
+                    identity_id,
+                    cluster_id,
+                    sim,
+                    self.settings.similarity_threshold,
+                )
+
+        logger.info(
+            "[RepresentativeDiscovery] Completed: %d candidates from %d identities", len(candidates), len(identities)
+        )
         return candidates
 
     def _find_best_match(

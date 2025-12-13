@@ -45,7 +45,7 @@ class EmbeddingGeneratorProtocol(ABC):
 class StubEmbeddingGenerator(EmbeddingGeneratorProtocol):
     """Deterministic stub generator for tests - generates fake embeddings from hashes."""
 
-    def __init__(self, embedding_dim: int = 1024) -> None:
+    def __init__(self, embedding_dim: int = 512) -> None:
         self.embedding_dim = embedding_dim
 
     async def generate(self, face_images: Iterable[bytes]) -> list[EmbeddingResult]:
@@ -72,7 +72,7 @@ class StubEmbeddingGenerator(EmbeddingGeneratorProtocol):
 class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
     """Real embedding generator using InsightFace."""
 
-    def __init__(self, adapter: InsightFaceAdapter, embedding_dim: int = 1024) -> None:
+    def __init__(self, adapter: InsightFaceAdapter, embedding_dim: int = 512) -> None:
         self._adapter = adapter
         self.embedding_dim = embedding_dim
 

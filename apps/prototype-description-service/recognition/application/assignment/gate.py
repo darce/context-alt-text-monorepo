@@ -42,7 +42,7 @@ class AssignmentGate:
                 MaturityCheck(settings, cluster_repository),
                 CompleteLinkCheck(settings, cluster_repository),
                 MemberDistributionCheck(settings, cluster_repository),
-                ConfidenceCheck(settings),
+                ConfidenceCheck(settings, cluster_repository),
             ]
         else:
             self.checks = list(checks)

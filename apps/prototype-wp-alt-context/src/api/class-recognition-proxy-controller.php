@@ -444,21 +444,26 @@ class RecognitionProxyController {
 	}
 
 	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$source_id    = sanitize_text_field( (string) $request->get_param( 'source_id' ) );
-		$target_label = sanitize_text_field( (string) $request->get_param( 'target_label' ) );
+		$source_id         = sanitize_text_field( (string) $request->get_param( 'source_id' ) );
+		$target_cluster_id = sanitize_text_field( (string) $request->get_param( 'target_cluster_id' ) );
+		$target_label      = sanitize_text_field( (string) $request->get_param( 'target_label' ) );
 
 		if ( '' === $source_id ) {
 			return new WP_Error( 'missing_source_id', 'Source cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		if ( '' === $target_label ) {
-			return new WP_Error( 'missing_target_label', 'Target label is required.', array( 'status' => 400 ) );
+		if ( '' === $target_cluster_id ) {
+			return new WP_Error( 'missing_target_cluster_id', 'Target cluster ID is required.', array( 'status' => 400 ) );
 		}
 
 		$payload = array(
-			'tenant_id'    => $this->get_tenant_id(),
-			'target_label' => $target_label,
+			'tenant_id'         => $this->get_tenant_id(),
+			'target_cluster_id' => $target_cluster_id,
 		);
+
+		if ( '' !== $target_label ) {
+			$payload['target_label'] = $target_label;
+		}
 
 		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/merge', $source_id ), $payload );
 	}

@@ -37,7 +37,8 @@ export interface UpdateClusterLabelRequest {
 }
 
 export interface MergeClusterRequest {
-  target_label: string;
+  target_cluster_id: string;
+  target_label?: string;
 }
 
 export interface MergeClusterResponse {

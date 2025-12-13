@@ -28,11 +28,15 @@ export const updateClusterLabel = async (clusterId: string, label: string): Prom
   });
 };
 
-export const mergeCluster = async (sourceId: string, targetLabel: string): Promise<MergeClusterResponse> => {
+export const mergeCluster = async (
+  sourceId: string,
+  targetClusterId: string,
+  targetLabel?: string,
+): Promise<MergeClusterResponse> => {
   const url = `${stripTrailingSlash(getEndpoint('workbenchRecognitionClusters'))}/${sourceId}/merge`;
   return fetchApi<MergeClusterResponse>(url, {
     method: 'POST',
-    body: { target_label: targetLabel },
+    body: { target_cluster_id: targetClusterId, target_label: targetLabel },
     restNonce: getConfig().nonce,
   });
 };

@@ -36,16 +36,17 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
   });
 };
 
-export const fetchIdentitySuggestions = async (
-  identityId: string,
-  topK = 5,
-  threshold = 0.6,
-): Promise<IdentitySuggestionsResponse> => {
+/**
+ * Fetch cluster suggestions for an identity.
+ *
+ * Note: Threshold filtering is handled by the backend - all pending suggestions
+ * returned have already passed the backend's similarity threshold.
+ */
+export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Promise<IdentitySuggestionsResponse> => {
   const base = getEndpoint('workbenchRecognitionIdentitySuggestions', 'recognitionIdentitySuggestions');
   const normalized = stripTrailingSlash(base);
   const url = new URL(`${normalized}/${identityId}/suggestions`, window.location.origin);
   url.searchParams.set('top_k', String(topK));
-  url.searchParams.set('threshold', String(threshold));
 
   return fetchApi<IdentitySuggestionsResponse>(url.toString(), {
     method: 'GET',

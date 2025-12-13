@@ -60,6 +60,9 @@ class GateRepoStub(ClusterRepository):
     async def add_representative(self, representative):
         raise NotImplementedError
 
+    async def count_labeled(self) -> int:
+        return 10  # Return a mature count so adaptive threshold is relaxed
+
 
 def make_settings() -> ClusteringSettings:
     """Create clustering settings enabling all default checks."""

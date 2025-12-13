@@ -18,10 +18,9 @@ from recognition.infrastructure.repositories import SqlAlchemyClusterRepository,
 
 
 def make_identity(tenant_id: str) -> MediaIdentity:
-    """Create a synthetic identity with a deterministic 1024D embedding."""
-    # Extended embedding: 512 face + 512 metadata
-    embedding = np.zeros(1024, dtype=np.float32)
-    embedding[0] = 1.0  # Face component
+    """Create a synthetic identity with a deterministic 512D embedding."""
+    embedding = np.zeros(512, dtype=np.float32)
+    embedding[0] = 1.0
     return MediaIdentity(
         id=str(uuid.uuid4()),
         tenant_id=tenant_id,
@@ -134,6 +133,38 @@ async def test_persist_new_cluster_creates_members(db_session, tenant) -> None:
     members = await member_repo.get_by_cluster(cluster.id)
     assert len(members) == 2
     assert {m.identity_id for m in members} == {i.id for i in identities}
+
+
+@pytest.mark.asyncio
+async def test_persist_new_cluster_creates_representatives(db_session, tenant) -> None:
+    """persist_new_cluster should create representatives from highest-confidence identities."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    settings = ClusteringSettings()
+    writer = AssignmentWriter(settings, cluster_repo, member_repo)
+
+    # Create identities with varying confidence
+    identities = [make_identity(str(tenant.id)) for _ in range(3)]
+    identities[0].confidence = 0.99  # Highest
+    identities[1].confidence = 0.95
+    identities[2].confidence = 0.90  # Lowest
+    similarities = [0.93, 0.94, 0.91]
+
+    cluster = await writer.persist_new_cluster(
+        tenant_id=str(tenant.id),
+        identities=identities,
+        similarities=similarities,
+        algorithm="graph",
+    )
+
+    assert cluster.id is not None
+
+    # Verify representatives were created
+    reps = await cluster_repo.get_all_representatives(cluster.id)
+    assert len(reps) > 0, "No representatives created for new cluster"
+    # Should have up to max_representatives_per_cluster reps
+    expected_num_reps = min(settings.max_representatives_per_cluster, len(identities))
+    assert len(reps) == expected_num_reps
 
 
 @pytest.mark.asyncio

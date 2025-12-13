@@ -60,6 +60,9 @@ class NoopRepository(ClusterRepository):
     async def add_representative(self, representative):
         raise NotImplementedError
 
+    async def count_labeled(self) -> int:
+        return 10  # Return a mature count so adaptive threshold is relaxed
+
 
 def make_candidate() -> AssignmentCandidate:
     """Create a minimal candidate for gate tests."""

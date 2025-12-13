@@ -99,7 +99,7 @@ async def test_suggestions_are_tenant_scoped(db_session, tenant) -> None:
         headers={"X-Tenant-ID": tenant_b},
     )
     assert resp_list.status_code == 200
-    assert resp_list.json() == []
+    assert resp_list.json() == {"matches": []}
 
     resp_accept = client.post(
         f"/recognition/suggestions/{suggestion.id}/accept",

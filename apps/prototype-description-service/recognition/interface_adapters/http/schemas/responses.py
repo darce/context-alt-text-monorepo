@@ -48,13 +48,19 @@ class RepresentativeResponse(BaseModel):
     """Cluster representative details."""
 
     id: str
-    media_id: str
+    media_id: str | int
     thumb_url: str | None = None
 
-    @field_validator("id", "media_id")
+    @field_validator("id")
     @classmethod
-    def validate_ids(cls, v: str) -> str:
+    def validate_id(cls, v: str) -> str:
         return _validate_uuid(v)
+
+    @field_validator("media_id", mode="before")
+    @classmethod
+    def coerce_media_id(cls, v: str | int) -> str:
+        """Accept integer or string media_id, return as string."""
+        return str(v) if v is not None else ""
 
 
 class ClusterResponse(BaseModel):
@@ -87,6 +93,26 @@ class SuggestionResponse(BaseModel):
     @classmethod
     def validate_ids(cls, v: str) -> str:
         return _validate_uuid(v)
+
+
+class ClusterSuggestionMatch(BaseModel):
+    """A suggested cluster match for an identity (frontend-compatible format)."""
+
+    cluster_id: str
+    label: str
+    similarity: float
+    identity_count: int
+
+    @field_validator("cluster_id")
+    @classmethod
+    def validate_cluster_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class IdentitySuggestionsResponse(BaseModel):
+    """Response for identity suggestions endpoint (frontend-compatible format)."""
+
+    matches: list[ClusterSuggestionMatch]
 
 
 class JobProgressResponse(BaseModel):
@@ -127,14 +153,43 @@ class HealthResponse(BaseModel):
     version: str | None = None
 
 
+class ReassignIdentityResponse(BaseModel):
+    """Response after reassigning an identity to a cluster."""
+
+    identity_id: str
+    source_cluster_id: str | None = None
+    target_cluster_id: str | None = None
+    success: bool = True
+
+    @field_validator("identity_id")
+    @classmethod
+    def validate_identity_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class SplitClusterResponse(BaseModel):
+    """Response after splitting a cluster using hierarchical clustering."""
+
+    # New format: lists of all new clusters
+    new_cluster_ids: list[str] = Field(default_factory=list, description="IDs of newly created clusters")
+    moved_counts: list[int] = Field(default_factory=list, description="Number of identities moved to each new cluster")
+
+    # Legacy fields for backward compatibility
+    new_cluster_id: str | None = Field(default=None, description="Legacy: first new cluster ID")
+    moved_count: int = Field(default=0, description="Legacy: first moved count")
+
+
 __all__ = [
     "BboxResponse",
     "ClusterResponse",
     "ClusteringJobStatusResponse",
     "HealthResponse",
     "IdentityResponse",
+    "IdentitySuggestionsResponse",
     "JobProgressResponse",
     "JobStatusResponse",
+    "ReassignIdentityResponse",
     "RepresentativeResponse",
+    "SplitClusterResponse",
     "SuggestionResponse",
 ]

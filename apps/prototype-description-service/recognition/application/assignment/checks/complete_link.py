@@ -62,6 +62,19 @@ class CompleteLinkCheck(AssignmentCheck):
                 },
             )
 
+        # Bypass complete-link check for anchor-linked candidates from GraphDiscovery.
+        # Transitivity has already established the connection via the graph algorithm
+        # (Chinese Whispers/HDBSCAN grouped them with known cluster anchors).
+        # This is the key fix for batch consistency: trusting graph transitivity.
+        if candidate.anchor_linked:
+            return CheckResult(
+                passed=True,
+                metadata={
+                    "bypass_reason": "anchor_linked_transitivity",
+                    "discovery_similarity": candidate.discovery_similarity,
+                },
+            )
+
         # Fetch cluster metadata to determine if it is user-labeled
         cluster = await self.cluster_repository.get_by_id(candidate.cluster_id)
         is_unlabeled = False

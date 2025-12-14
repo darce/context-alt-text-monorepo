@@ -29,3 +29,4 @@ class AssignmentCandidate:
     cluster_id: str
     discovery_method: DiscoveryMethod
     discovery_similarity: float
+    anchor_linked: bool = False  # True if matched via graph transitivity (anchor injection)

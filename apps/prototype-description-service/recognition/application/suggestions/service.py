@@ -4,9 +4,13 @@ Suggestion service backed by SuggestionRepository.
 
 from __future__ import annotations
 
+import logging
+
 from recognition.application.assignment import AssignmentCandidate
 from recognition.domain.repositories import SuggestionCreateData, SuggestionRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+
+logger = logging.getLogger(__name__)
 
 
 class SuggestionService:
@@ -36,18 +40,39 @@ class SuggestionService:
         """Return suggestions for a cluster, scoped to the service tenant."""
         return await self._repository.get_by_cluster(self._tenant_id, cluster_id)
 
+
     async def accept(self, suggestion_id: str) -> AssignmentSuggestion | None:
         """Mark a suggestion as accepted."""
         try:
-            return await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.ACCEPTED)
+            suggestion = await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.ACCEPTED)
+            if suggestion:
+                logger.info(
+                    "[curation] ACCEPTED suggestion_id=%s identity=%s cluster=%s similarity=%.4f user_action=manual_accept",
+                    suggestion.id,
+                    suggestion.identity_id,
+                    suggestion.cluster_id,
+                    suggestion.representative_similarity,
+                )
+            return suggestion
         except ValueError:
+            logger.warning("[curation] Failed to accept suggestion_id=%s: Not found", suggestion_id)
             return None  # Not found
 
     async def reject(self, suggestion_id: str) -> AssignmentSuggestion | None:
         """Mark a suggestion as rejected."""
         try:
-            return await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.REJECTED)
+            suggestion = await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.REJECTED)
+            if suggestion:
+                logger.info(
+                    "[curation] REJECTED suggestion_id=%s identity=%s cluster=%s similarity=%.4f user_action=manual_reject",
+                    suggestion.id,
+                    suggestion.identity_id,
+                    suggestion.cluster_id,
+                    suggestion.representative_similarity,
+                )
+            return suggestion
         except ValueError:
+            logger.warning("[curation] Failed to reject suggestion_id=%s: Not found", suggestion_id)
             return None  # Not found
 
     async def list_pending(self, limit: int = 50, offset: int = 0) -> list[AssignmentSuggestion]:
@@ -67,6 +92,13 @@ class SuggestionService:
                 status = SuggestionStatus.ACCEPTED if resolution == "accepted" else SuggestionStatus.REJECTED
                 await self._repository.update_status(self._tenant_id, suggestion.id, status)
                 resolved_count += 1
+                logger.info(
+                    "[curation] RESOLVED suggestion_id=%s identity=%s cluster=%s action=%s source=implicit_assignment",
+                    suggestion.id,
+                    identity_id,
+                    cluster_id,
+                    resolution,
+                )
         return resolved_count
 
 

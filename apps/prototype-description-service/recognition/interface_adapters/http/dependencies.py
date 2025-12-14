@@ -51,28 +51,8 @@ from recognition.shared.ids import generate_id
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings; defaults are required fields.
-
-    Threshold tuning notes (2024):
-    - InsightFace buffalo_l produces cosine similarities of 0.65-0.77 for same-person
-      photos with varying pose/lighting/expression
-    - HDBSCAN uses transitive clustering (A↔B, B↔C → A,B,C together even if A↔C is low)
-    - Representative matching requires direct similarity, so threshold must be lower
-    - 0.68 threshold balances same-person variance vs false positive risk
-    - 0.90 high confidence threshold prevents false positives like Kelly/Ryann (0.80 sim)
-    """
-    return ClusteringSettings(
-        similarity_threshold=0.68,
-        complete_link_min_floor=0.60,
-        complete_link_avg_threshold=0.70,
-        min_representatives_for_maturity=2,
-        member_validation_min_floor=0.65,
-        member_validation_avg_threshold=0.70,
-        early_stage_suggestion_enabled=True,
-        early_stage_high_confidence_threshold=0.90,  # Raised from 0.85 to prevent false positives
-        adaptive_threshold_maturity_point=5,
-        hdbscan_max_batch_size=None,
-    )
+    """Provide clustering settings; loads from environment variables."""
+    return ClusteringSettings()
 
 
 class InMemoryJobService:

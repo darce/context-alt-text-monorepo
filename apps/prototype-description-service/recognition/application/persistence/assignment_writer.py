@@ -116,6 +116,8 @@ class AssignmentWriter:
 
         return cast(np.ndarray, mean_vector)
 
+
+
     async def persist_new_cluster(
         self,
         tenant_id: str,
@@ -162,6 +164,13 @@ class AssignmentWriter:
                     tenant_id=tenant_id,
                 )
                 await self._clusters.add_representative(rep)
+
+            # Recompute and persist the centroid immediately.
+            # Without this, CentroidDiscovery cannot find this cluster in subsequent batches.
+            new_centroid = await self.recompute_centroid(cluster.id)
+            if new_centroid is not None:
+                cluster.centroid = new_centroid
+                await self._clusters.update(cluster)
 
         return cluster
 

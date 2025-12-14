@@ -40,7 +40,6 @@ class SuggestionService:
         """Return suggestions for a cluster, scoped to the service tenant."""
         return await self._repository.get_by_cluster(self._tenant_id, cluster_id)
 
-
     async def accept(self, suggestion_id: str) -> AssignmentSuggestion | None:
         """Mark a suggestion as accepted."""
         try:

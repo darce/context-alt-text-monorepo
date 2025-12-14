@@ -16,7 +16,71 @@ from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberData, MemberRepository
 from recognition.domain.representative import ClusterRepresentative
-from recognition.shared.similarity import compute_face_similarity
+from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
+
+
+def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
+    """Normalize a face embedding to unit length.
+
+    Args:
+        embedding: Raw embedding vector (512D or 1024D).
+
+    Returns:
+        Normalized 512D face embedding.
+    """
+    face_vec = extract_face_embedding(embedding)
+    norm = float(np.linalg.norm(face_vec))
+    if norm == 0:
+        return face_vec.astype(np.float32)
+    return face_vec.astype(np.float32) / norm
+
+
+def _select_diverse_representatives(
+    identities: list[MediaIdentity],
+    max_reps: int,
+) -> list[MediaIdentity]:
+    """Select representatives via Farthest-Point Sampling for diversity.
+
+    This algorithm ensures geometric diversity by selecting representatives
+    that maximize minimum distance from already-chosen representatives,
+    preventing the loss of "bridge" faces that connect different pose angles.
+
+    Args:
+        identities: Pool of candidate identities.
+        max_reps: Maximum number of representatives to select.
+
+    Returns:
+        Selected representatives in insertion order (first is highest confidence).
+    """
+    if not identities:
+        return []
+    k = min(max_reps, len(identities))
+
+    # Seed with highest-confidence face
+    sorted_by_conf = sorted(identities, key=lambda i: i.confidence, reverse=True)
+    selected: list[MediaIdentity] = [sorted_by_conf[0]]
+    selected_vecs: list[np.ndarray] = [_normalize_embedding(np.asarray(sorted_by_conf[0].embedding, dtype=np.float32))]
+    remaining = set(range(1, len(sorted_by_conf)))
+
+    for _ in range(k - 1):
+        if not remaining:
+            break
+        best_idx: int | None = None
+        best_min_dist = -1.0
+        for idx in remaining:
+            vec = _normalize_embedding(np.asarray(sorted_by_conf[idx].embedding, dtype=np.float32))
+            # Distance = 1 - cosine_similarity (since embeddings are normalized)
+            min_dist = min(float(1 - np.dot(vec, sv)) for sv in selected_vecs)
+            if min_dist > best_min_dist:
+                best_min_dist = min_dist
+                best_idx = idx
+        if best_idx is None:
+            break
+        selected.append(sorted_by_conf[best_idx])
+        selected_vecs.append(_normalize_embedding(np.asarray(sorted_by_conf[best_idx].embedding, dtype=np.float32)))
+        remaining.remove(best_idx)
+
+    return selected
 
 
 class AssignmentWriter:
@@ -116,8 +180,6 @@ class AssignmentWriter:
 
         return cast(np.ndarray, mean_vector)
 
-
-
     async def persist_new_cluster(
         self,
         tenant_id: str,
@@ -148,13 +210,14 @@ class AssignmentWriter:
             raise ClusterNotFoundError("new cluster id missing after save")
         await self._members.bulk_add_members(cluster.id, member_data)
 
-        # Create initial representative(s) from the highest-confidence identities
+        # Create initial representative(s) using diversity-aware sampling (FPS)
+        # to preserve "bridge" faces that connect different pose angles
         if identities:
-            # Sort by confidence descending and pick top few as representatives
-            sorted_identities = sorted(identities, key=lambda i: i.confidence, reverse=True)
-            num_reps = min(self._settings.max_representatives_per_cluster, len(sorted_identities))
-            for i in range(num_reps):
-                identity = sorted_identities[i]
+            diverse_reps = _select_diverse_representatives(
+                identities,
+                self._settings.max_representatives_per_cluster,
+            )
+            for identity in diverse_reps:
                 rep = ClusterRepresentative(
                     id=str(uuid.uuid4()),
                     cluster_id=cluster.id,

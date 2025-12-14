@@ -37,7 +37,7 @@ class ClusteringSettings(BaseModel):
         description="Optional upper bound for HDBSCAN batch size.",
     )
     max_representatives_per_cluster: int = Field(
-        default=5, description="Maximum number of representatives to maintain per cluster."
+        default=10, description="Maximum number of representatives to maintain per cluster."
     )
     representative_diversity_threshold: float = Field(
         default=0.90, description="Maximum similarity allowed between representatives (lower adds diversity)."

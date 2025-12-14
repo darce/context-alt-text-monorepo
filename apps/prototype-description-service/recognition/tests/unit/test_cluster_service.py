@@ -121,6 +121,7 @@ class LoggerStub(ClusteringLogger):
         algorithm=None,
         job_id=None,
         timestamp=None,
+        media_id=None,
     ):
         self.logged.append((identity_id, cluster_id, decision, similarity, reason, metadata, algorithm, job_id))
         return super().log_decision(
@@ -133,6 +134,7 @@ class LoggerStub(ClusteringLogger):
             algorithm=algorithm,
             job_id=job_id,
             timestamp=timestamp,
+            media_id=media_id,
         )
 
     def log_batch_start(self, identity_count, algorithm, tenant_id=None):

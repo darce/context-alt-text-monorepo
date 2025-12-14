@@ -60,6 +60,19 @@ class MemberDistributionCheck(AssignmentCheck):
                 },
             )
 
+        # Bypass member distribution check for anchor-linked candidates from GraphDiscovery.
+        # Transitivity has already established the connection via the graph algorithm
+        # (Chinese Whispers/HDBSCAN grouped them with known cluster anchors).
+        # This is the key fix for batch consistency: trusting graph transitivity.
+        if candidate.anchor_linked:
+            return CheckResult(
+                passed=True,
+                metadata={
+                    "bypass_reason": "anchor_linked_transitivity",
+                    "discovery_similarity": candidate.discovery_similarity,
+                },
+            )
+
         members = await self.cluster_repository.get_member_embeddings(candidate.cluster_id)
         member_count = len(members)
 

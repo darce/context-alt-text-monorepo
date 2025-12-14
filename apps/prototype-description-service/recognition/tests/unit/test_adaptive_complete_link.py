@@ -54,11 +54,17 @@ async def test_adaptive_relaxation_applied_when_mature(settings, repository):
 
     # 5 identical reps for simplicity
     repository.get_all_representatives.return_value = [rep_vec] * 5
+    # Mock labeled cluster (so adaptive logic is used, not unlabeled logic)
+    cluster_mock = Mock()
+    cluster_mock.user_confirmed = True
+    cluster_mock.label = "Test Person"
+    repository.get_by_id.return_value = cluster_mock
 
     candidate = Mock(spec=AssignmentCandidate)
     candidate.cluster_id = "test-cluster"
     candidate.identity_vector = candidate_vec
     candidate.discovery_similarity = 0.82
+    candidate.anchor_linked = False  # Not anchor-linked, test adaptive logic
 
     result = await check.evaluate(candidate)
 
@@ -82,11 +88,17 @@ async def test_adaptive_relaxation_not_applied_when_immature(settings, repositor
     rep_vec = np.array([0.78, 0.62], dtype=np.float32)
 
     repository.get_all_representatives.return_value = [rep_vec] * 4  # Only 4 reps
+    # Mock labeled cluster
+    cluster_mock = Mock()
+    cluster_mock.user_confirmed = True
+    cluster_mock.label = "Test Person"
+    repository.get_by_id.return_value = cluster_mock
 
     candidate = Mock(spec=AssignmentCandidate)
     candidate.cluster_id = "test-cluster"
     candidate.identity_vector = candidate_vec
     candidate.discovery_similarity = 0.78
+    candidate.anchor_linked = False  # Not anchor-linked, test normal flow
 
     result = await check.evaluate(candidate)
 

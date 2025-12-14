@@ -46,6 +46,22 @@ class MaturityCheck(AssignmentCheck):
         Returns:
             CheckResult: Pass/fail outcome with maturity metadata.
         """
+        # For anchor-linked candidates, check if the target cluster is labeled.
+        # Labeled clusters have explicit human validation, so we trust them even
+        # with fewer representatives. Unlabeled clusters still need maturity protection
+        # to prevent singleton snowballing from incorrect anchor matches.
+        if candidate.anchor_linked:
+            cluster = await self.cluster_repository.get_by_id(candidate.cluster_id)
+            if cluster and cluster.label:
+                return CheckResult(
+                    passed=True,
+                    metadata={
+                        "bypass_reason": "anchor_linked_to_labeled_cluster",
+                        "cluster_label": cluster.label,
+                        "discovery_similarity": candidate.discovery_similarity,
+                    },
+                )
+
         rep_count = await self.cluster_repository.get_representative_count(candidate.cluster_id)
         metadata = {"representative_count": rep_count}
 

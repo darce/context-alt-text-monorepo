@@ -13,15 +13,17 @@ sequenceDiagram
     participant CD as CentroidDiscovery
     participant GD as GraphDiscovery
     participant Gate as AssignmentGate
-    participant CLC as CompleteLinkCheck
     participant MC as MaturityCheck
+    participant CLC as CompleteLinkCheck
     participant MDC as MemberDistributionCheck
+    participant CC as ConfidenceCheck
     participant Writer as AssignmentWriter
     participant Sugg as SuggestionService
     participant DB as Database
     
     %% Phase 1: Initiate Clustering
     UI->>API: POST /recognition/clustering/jobs
+
     API->>CS: cluster_unclustered_identities(tenant_id)
     
     CS->>DB: get_unclustered(tenant_id)
@@ -85,44 +87,62 @@ sequenceDiagram
             Note over Gate: THE ONLY PATH TO ASSIGNMENT
             CS->>Gate: evaluate(candidate)
             
-            %% Maturity Check
-            Gate->>MC: evaluate(candidate)
-            MC->>DB: get_representative_count(cluster_id)
-            DB-->>MC: count
-            alt count < 2
-                MC-->>Gate: CheckResult(failed, should_suggest)
-                Gate-->>CS: AssignmentDecision(SUGGEST)
-            else count >= 2
-                MC-->>Gate: CheckResult(passed)
-                
-                %% Complete Link Check
-                Gate->>CLC: evaluate(candidate)
-                CLC->>DB: get_all_representatives(cluster_id)
-                DB-->>CLC: reps[]
-                CLC->>CLC: face_vec = extract_face_embedding(candidate.vector)
-                CLC->>CLC: compute similarities to ALL reps (using face_vec)
-                CLC->>CLC: min_sim, avg_sim = analyze
-                alt min_sim < floor OR avg_sim < threshold
-                    CLC-->>Gate: CheckResult(failed, should_suggest)
+            %% Anchor-Linked Bypass (for batch consistency)
+            alt candidate.anchor_linked == true
+                Note over Gate: Graph transitivity established
+                Gate-->>CS: AssignmentDecision(ACCEPT)
+            else normal evaluation
+                %% Maturity Check
+                Gate->>MC: evaluate(candidate)
+                MC->>DB: get_representative_count(cluster_id)
+                DB-->>MC: count
+                alt count < 2
+                    MC-->>Gate: CheckResult(failed, should_suggest)
                     Gate-->>CS: AssignmentDecision(SUGGEST)
-                else all checks pass
-                    CLC-->>Gate: CheckResult(passed)
+                else count >= 2
+                    MC-->>Gate: CheckResult(passed)
                     
-                    %% Member Distribution Check
-                    Gate->>MDC: evaluate(candidate)
-                    MDC->>DB: get_member_embeddings(cluster_id)
-                    DB-->>MDC: members[]
-                    MDC->>MDC: compute avg member similarity
-                    alt avg_member_sim < threshold
-                        MDC-->>Gate: CheckResult(failed, should_reject)
-                        Gate-->>CS: AssignmentDecision(REJECT)
+                    %% Complete Link Check
+                    Gate->>CLC: evaluate(candidate)
+                    CLC->>DB: get_all_representatives(cluster_id)
+                    DB-->>CLC: reps[]
+                    CLC->>CLC: compute similarities to ALL reps
+                    CLC->>CLC: min_sim, avg_sim = analyze
+                    alt min_sim < floor OR avg_sim < threshold
+                        CLC-->>Gate: CheckResult(failed, should_suggest)
+                        Gate-->>CS: AssignmentDecision(SUGGEST)
                     else passed
-                        MDC-->>Gate: CheckResult(passed)
-                        Gate-->>CS: AssignmentDecision(ACCEPT)
+                        CLC-->>Gate: CheckResult(passed)
+                        
+                        %% Member Distribution Check
+                        Gate->>MDC: evaluate(candidate)
+                        MDC->>DB: get_member_embeddings(cluster_id)
+                        DB-->>MDC: members[]
+                        MDC->>MDC: compute avg member similarity
+                        alt avg_member_sim < threshold
+                            MDC-->>Gate: CheckResult(failed, should_reject)
+                            Gate-->>CS: AssignmentDecision(REJECT)
+                        else passed
+                            MDC-->>Gate: CheckResult(passed)
+                            
+                            %% Confidence Check (adaptive threshold)
+                            Gate->>CC: evaluate(candidate)
+                            CC->>DB: count_labeled_clusters()
+                            DB-->>CC: labeled_count
+                            CC->>CC: compute_adaptive_threshold()
+                            alt similarity < adaptive_threshold
+                                CC-->>Gate: CheckResult(failed, should_suggest)
+                                Gate-->>CS: AssignmentDecision(SUGGEST)
+                            else passed
+                                CC-->>Gate: CheckResult(passed)
+                                Gate-->>CS: AssignmentDecision(ACCEPT)
+                            end
+                        end
                     end
                 end
             end
         end
+
         
         %% Route based on decision
         alt decision.outcome == ACCEPT

@@ -81,6 +81,19 @@ class ConfidenceCheck(AssignmentCheck):
         Returns:
             CheckResult: Pass/fail outcome indicating confidence disposition.
         """
+        # Bypass confidence check for anchor-linked candidates from GraphDiscovery.
+        # Transitivity has already established the connection via the graph algorithm
+        # (Chinese Whispers/HDBSCAN grouped them with known cluster anchors).
+        # This is the key fix for batch consistency: trusting graph transitivity.
+        if candidate.anchor_linked:
+            return CheckResult(
+                passed=True,
+                metadata={
+                    "bypass_reason": "anchor_linked_transitivity",
+                    "discovery_similarity": candidate.discovery_similarity,
+                },
+            )
+
         similarity = candidate.discovery_similarity
 
         # Compute adaptive threshold based on labeled cluster count

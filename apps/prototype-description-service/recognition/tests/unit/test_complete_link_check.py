@@ -40,6 +40,9 @@ class FakeClusterRepository:
     async def add_representative(self, representative):  # pragma: no cover - not used
         raise NotImplementedError
 
+    async def get_by_id(self, cluster_id: str):  # pragma: no cover - required by protocol
+        return None
+
 
 def make_candidate(vector: np.ndarray, cluster_id: str | None = None) -> AssignmentCandidate:
     """Create a candidate with the provided vector and cluster."""

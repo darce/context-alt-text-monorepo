@@ -2,240 +2,166 @@
 
 **Date:** 2025-12-13  
 **Version:** 4.2.6  
-**Status:** Proposed  
+**Status:** In Progress  
 **Parent Document:** [batch_consistency_analysis.md](./batch_consistency_analysis.md)
 
 ---
 
-## 1. Solution Evaluation Summary
+## 1. Solution Overview
 
-The analysis document correctly identifies the **root cause**: when persisting a new cluster, representatives are selected by **image confidence only** (line 154 of `assignment_writer.py`), discarding "bridge" faces that would link to future batches.
+The root cause of batch inconsistency is **broken transitivity** across batches.
+- **Single Batch:** Graph algorithms see all faces (A, B, C) and connect them: `A (frontal) ↔ B (side) ↔ C (profile)`.
+- **Split Batch:**
+    1. Batch 1 processes `A` and `B`. Cluster created.
+    2. Batch 2 processes `C`.
+    3. `C` fails to match `A` or `B` directly via `RepresentativeDiscovery` (threshold 0.85 is too high for A↔C).
+    4. `GraphDiscovery` runs on `C` *in isolation*. It never sees `A` or `B`, so it cannot form the transitive link.
 
-| Proposed Approach | Correctness | Complexity | Recommendation |
-|-------------------|-------------|------------|----------------|
-| **Diversified Representative Selection** | ✅ Correct | Low | 👍 Implement **first** |
-| **Sparse Coding for RepresentativeDiscovery** | ✅ Sound | Medium-High | Defer to future phase |
-| **Anchor Injection into GraphDiscovery** | ✅ Sound | Medium | Implement after diversity fix |
+**Fix: Anchor Injection**. Inject representatives from existing clusters into the `GraphDiscovery` process as "anchor nodes". This restores the A↔B↔C link within the graph algorithm.
 
-> [!IMPORTANT]
-> **Recommended Phased Approach**
-> 1. **Phase A (this task):** Fix representative selection with diversity-aware sampling
-> 2. **Phase B:** Add anchor injection to `GraphDiscovery` for cross-batch transitivity
-> 3. **Phase C (optional):** Sparse Coding if diversity + anchors prove insufficient
-
----
-
-## 2. Phase A — Diversity-Aware Representative Selection
-
-### 2.1 Problem Recap
-
-```python
-# Current logic (assignment_writer.py:154)
-sorted_identities = sorted(identities, key=lambda i: i.confidence, reverse=True)
-```
-
-This discards geometrically important bridge faces if they have lower detection confidence. The result:
-- Faces from challenging angles (side profiles, occlusions) are systematically excluded
-- Future batches cannot find transitive links through saved representatives
-
-### 2.2 Proposed Algorithm: Farthest-Point Sampling (FPS)
-
-Replace pure confidence sort with a hybrid:
-
-1. **Seed**: Select the single highest-confidence face as the first representative
-2. **Iterate**: For remaining slots, select the face that **maximizes minimum distance** from all already-chosen representatives
-3. **Tie-break**: Among equidistant candidates, prefer higher confidence
-
-This is computationally O(n·k) for k representatives and naturally preserves geometric extremes (bridge candidates).
-
-### 2.3 Code Changes
-
-#### [MODIFY] [assignment_writer.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/persistence/assignment_writer.py)
-
-Add a helper function and update `persist_new_cluster`:
-
-```python
-def _select_diverse_representatives(
-    identities: list[MediaIdentity],
-    max_reps: int,
-    extract_embedding: Callable[[MediaIdentity], np.ndarray],
-) -> list[MediaIdentity]:
-    """Select representatives via Farthest-Point Sampling for diversity.
-
-    Args:
-        identities: Pool of candidate identities.
-        max_reps: Maximum number of representatives to select.
-        extract_embedding: Function to extract normalized face vector.
-
-    Returns:
-        Selected representatives in insertion order.
-    """
-    if not identities:
-        return []
-    k = min(max_reps, len(identities))
-
-    # Seed with highest-confidence face
-    sorted_by_conf = sorted(identities, key=lambda i: i.confidence, reverse=True)
-    selected: list[MediaIdentity] = [sorted_by_conf[0]]
-    selected_vecs: list[np.ndarray] = [extract_embedding(sorted_by_conf[0])]
-    remaining = set(range(1, len(sorted_by_conf)))
-
-    for _ in range(k - 1):
-        if not remaining:
-            break
-        best_idx: int | None = None
-        best_min_dist = -1.0
-        for idx in remaining:
-            vec = extract_embedding(sorted_by_conf[idx])
-            min_dist = min(float(1 - np.dot(vec, sv)) for sv in selected_vecs)
-            if min_dist > best_min_dist:
-                best_min_dist = min_dist
-                best_idx = idx
-        if best_idx is None:
-            break
-        selected.append(sorted_by_conf[best_idx])
-        selected_vecs.append(extract_embedding(sorted_by_conf[best_idx]))
-        remaining.remove(best_idx)
-
-    return selected
-```
-
-Then in `persist_new_cluster` (lines 151-166), replace:
-
-```diff
--        # Create initial representative(s) from the highest-confidence identities
--        if identities:
--            # Sort by confidence descending and pick top few as representatives
--            sorted_identities = sorted(identities, key=lambda i: i.confidence, reverse=True)
--            num_reps = min(self._settings.max_representatives_per_cluster, len(sorted_identities))
--            for i in range(num_reps):
--                identity = sorted_identities[i]
-+        # Create initial representative(s) using diversity-aware sampling
-+        if identities:
-+            diverse_reps = _select_diverse_representatives(
-+                identities,
-+                self._settings.max_representatives_per_cluster,
-+                lambda i: self._normalize_face(np.asarray(i.embedding, dtype=np.float32)),
-+            )
-+            for identity in diverse_reps:
-```
-
-Add the normalize helper if not already present (it exists in discovery classes):
-
-```python
-def _normalize_face(self, embedding: np.ndarray) -> np.ndarray:
-    """Extract the 512D face embedding and normalize to unit length."""
-    from recognition.shared.similarity import extract_face_embedding
-    vec = extract_face_embedding(embedding)
-    norm = float(np.linalg.norm(vec))
-    if norm == 0:
-        return vec.astype(np.float32)
-    return vec.astype(np.float32) / norm
-```
-
-#### [MODIFY] [clustering.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/settings/clustering.py)
-
-Increase default representative count (optional but recommended):
-
-```diff
-     max_representatives_per_cluster: int = Field(
--        default=5, description="Maximum number of representatives to maintain per cluster."
-+        default=10, description="Maximum number of representatives to maintain per cluster."
-     )
-```
+| Phase | Feature | Status |
+|-------|---------|--------|
+| **Phase A** | **FPS Diversity Selection** | ✅ **Completed** |
+| **Phase B** | **Anchor Injection** | 🚧 **Primary Focus** |
 
 ---
 
-## 3. Phase B — Anchor Injection into GraphDiscovery
+## 2. Phase A — Diversity-Aware Representative Selection (Completed)
 
-### 3.1 Concept
+*Implemented Farthest-Point Sampling (FPS) to ensure representatives cover the geometric hull of the cluster. This is now live in `assignment_writer.py`.*
 
-Inject pre-existing cluster representatives as **fixed anchor nodes** into the batch graph so Chinese Whispers can discover transitive links:
+---
 
-```
-New_A <--> New_B <--> Anchor_Rep (existing cluster)
-```
+## 3. Phase B — Anchor Injection (Graph Retrospection)
+
+### 3.1 Design
+
+Modify `GraphDiscovery` to include existing cluster representatives (anchors) in the graph clustering process.
+
+1. **Input**: `identities` (new faces) + `anchor_embeddings` (existing reps).
+2. **Flatten**: Convert `anchor_embeddings` into a list of synthetic `AnchorIdentity` objects.
+3. **Cluster**: Run CW/HDBSCAN on the combined list (`identities` + `anchors`).
+4. **Resolve**:
+    - Iterate through resulting groups.
+    - If a group contains **Anchor(ClusterX)**, assign all new faces in that group to **ClusterX**.
+    - If a group contains multiple anchors, resolve (prioritize majority or best fit).
+    - If a group contains no anchors, it becomes a **New Cluster**.
 
 ### 3.2 Code Changes
 
 #### [MODIFY] [graph.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/discovery/graph.py)
 
-1. Add a parameter `inject_anchors: bool = False` to `discover()`
-2. When `inject_anchors=True`:
-   - Add anchor reps as special nodes (flagged as anchors)
-   - Compute edges: `new↔new` and `new↔anchor` only (skip `anchor↔anchor`)
-   - During label resolution, if a component contains anchors, assign all new faces to that anchor's cluster
+Update `discover` method:
+
+```python
+@dataclass
+class AnchorIdentity:
+    """Lightweight wrapper for anchor nodes."""
+    id: str
+    cluster_id: str
+    confidence: float = 1.0  # Anchors have high authority
+```
+
+Logic flow:
+```python
+async def discover(self, identities, anchor_embeddings):
+    # 1. Flatten anchors
+    anchors: list[AnchorIdentity] = []
+    anchor_vecs: list[np.ndarray] = []
+    for cluster_id, reps in anchor_embeddings.items():
+        for rep in reps:
+            anchors.append(AnchorIdentity(id=f"anchor-{uuid4()}", cluster_id=cluster_id))
+            anchor_vecs.append(self._normalize(rep))
+    
+    # 2. Combine inputs
+    combined_identities = list(identities) + anchors
+    combined_vectors = face_vectors + anchor_vecs
+    
+    # 3. Cluster
+    labels = algorithm.cluster(combined_vectors, combined_identities)
+    
+    # 4. Group & Resolve
+    grouped = self._group_by_label(combined_identities, combined_vectors, labels)
+    
+    for label, items in grouped.items():
+        # Check for anchors in this group
+        group_anchors = [item for item, _ in items if isinstance(item, AnchorIdentity)]
+        new_members = [item for item, vec in items if isinstance(item, MediaIdentity)]
+        
+        if not new_members:
+            continue
+            
+        if group_anchors:
+            # Matched to existing cluster via anchor transitivity!
+            # Pick best anchor cluster (majority vote or first)
+            target_cluster = self._resolve_anchor_conflict(group_anchors)
+            sim = self._compute_avg_similarity(new_members, group_anchors)
+            
+            for member in new_members:
+                candidates.append(AssignmentCandidate(..., cluster_id=target_cluster, ...))
+        else:
+            # No anchors found -> New Cluster Proposal
+            new_clusters.append((new_members, ...))
+```
 
 #### [MODIFY] [cluster_service.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/orchestration/cluster_service.py)
 
-In `cluster_unclustered_identities`:
-- Before calling `graph_discovery.discover()`, load anchors for clusters with centroids meeting a relaxed threshold (e.g., 0.60)
-- Pass `inject_anchors=True`
+Ensure `GraphDiscovery` receives the anchors. (Existing code already passes `anchor_embeddings=representatives_by_cluster`, so minimal changes needed here, just verify it's passing *all* relevant representatives).
 
-#### [MODIFY] [chinese_whispers.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/infrastructure/clustering/chinese_whispers.py)
-
-Add anchor-aware mode:
-- Anchor nodes keep their original labels during propagation
-- Track which component each anchor belongs to for final resolution
+> [!NOTE] 
+> No changes required for `chinese_whispers.py` or `hdbscan_adapter.py`. They operate on the generic sequence and will naturally process the injected anchors.
 
 ---
 
 ## 4. Verification Plan
 
-### 4.1 Unit Tests
+### 4.1 New Unit Test
 
-| Test File | Test Name | Purpose |
-|-----------|-----------|---------|
-| `test_assignment_writer.py` | `test_persist_new_cluster_selects_diverse_representatives` | Verify FPS selects geometrically diverse faces, not just highest confidence |
-| `test_assignment_writer.py` | `test_diverse_selection_preserves_bridge_face` | Create identities where a low-confidence face bridges two sub-clusters; verify it's selected |
+Add `test_graph_discovery_matches_via_anchor_injection` to `test_graph_discovery.py`.
 
-**Commands:**
-```bash
-cd /Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service
-make test-unit  # runs pytest recognition/tests/unit/
+```python
+@pytest.mark.asyncio
+async def test_graph_discovery_matches_via_anchor_injection() -> None:
+    """Should match new identity to anchor cluster if they end up in same graph component."""
+    # Setup: Anchor and Identity are far apart directly, but linked via a bridge (if we had one)
+    # OR simpler: FakeAlgorithm returns same label for Identity and Anchor
+    
+    cluster_id = "existing-cluster-1"
+    identity = make_identity(...)
+    anchor_vec = ...
+    
+    # Fake algo forces them into label "0"
+    discovery = GraphDiscovery(..., algorithm=FakeGraphAlgorithm([0, 0])) 
+    
+    result = await discovery.discover([identity], {cluster_id: [anchor_vec]})
+    
+    # Expect: Candidate pointing to "existing-cluster-1"
+    assert len(result.candidates) == 1
+    assert result.candidates[0].cluster_id == cluster_id
 ```
 
-### 4.2 Integration Tests
+### 4.2 Integration Scenario (Manual)
 
-| Test | Purpose |
-|------|---------|
-| `test_batch_split_produces_consistent_clusters` | Send 100 images in two batches of 50; verify final cluster count matches single-batch |
+1. **Reset DB**: Start fresh.
+2. **Batch 1 (50 images)**: Process and verify clusters.
+   - Example: `Ryann Wiseman` -> Cluster A (frontal reps).
+3. **Batch 2 (60 images)**: Process remaining 106 images (including difficult angles).
+   - Without Fix: `RepresentativeDiscovery` fails (sim < 0.85). `GraphDiscovery` creates new Cluster B.
+   - With Fix: `GraphDiscovery` includes Cluster A reps. CW links `Profile Face` <-> `Frontal Rep`.
+   - **Result**: `Profile Face` is assigned to Cluster A.
 
-**Commands:**
-```bash
-cd /Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service
-make test-integration  # runs pytest recognition/tests/integration/
-```
+### 4.3 Automated Integration Test
 
-### 4.3 Manual Verification (User)
-
-1. Reset dev database: `./scripts/reset_dev_db.sh`
-2. Start service: `make run`
-3. Cluster 75 images in first batch (POST `/clustering/jobs`)
-4. Add labels to a few clusters via UI
-5. Cluster remaining 106 images in second batch
-6. **Expected**: Faces from Batch 2 that belong to Batch 1 persons are assigned to the correct clusters, not forming new clusters
-7. Verify in logs: `RepresentativeDiscovery MATCHED` entries should appear for cross-batch matches
+Create `tests/integration/test_batch_consistency.py`:
+- Split a known dataset (e.g. LFW subset) into 2 batches.
+- Run Batch 1. Count clusters.
+- Run Batch 2. Count *new* clusters.
+- Assert Total Clusters == Expected Unique Identities.
 
 ---
 
-## 5. Appendix: Embedding & Similarity Reference
+## 5. Rollback Plan
 
-| Term | Value | Location |
-|------|-------|----------|
-| `similarity_threshold` | 0.85 | `ClusteringSettings` |
-| `complete_link_min_floor` | 0.80 | `ClusteringSettings` |
-| `max_representatives_per_cluster` | 5 → 10 | `ClusteringSettings` |
-| `representative_diversity_threshold` | 0.90 | `ClusteringSettings` |
-| Face embedding dimensions | 512 | First half of 1024D vector |
-
----
-
-## 6. Related Files
-
-- [assignment_writer.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/persistence/assignment_writer.py)
-- [representative.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/discovery/representative.py)
-- [graph.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/discovery/graph.py)
-- [cluster_service.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/orchestration/cluster_service.py)
-- [clustering.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/application/settings/clustering.py)
-- [test_assignment_writer.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/recognition/tests/integration/test_assignment_writer.py)
+If Anchor Injection causes excessive false positives (merging distinct people due to weak links):
+1. Revert `graph.py` changes.
+2. Fallback to **Phase C (Two-Tier Threshold)** which is safer but less effective at handling transitivity.

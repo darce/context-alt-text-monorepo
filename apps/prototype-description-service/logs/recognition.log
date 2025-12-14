@@ -1,113 +1,338 @@
-2025-12-13 13:05:08,557 INFO db.startup - === Application Startup ===
-2025-12-13 13:05:08,558 INFO db.startup - Git: 1e533c6 (fix/4.2.5-avatar-thumbnails)
-2025-12-13 13:05:08,558 INFO db.startup - Listening on http://127.0.0.1:8000
-2025-12-13 13:13:30,861 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-13 13:14:02,014 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-13 13:14:14,012 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-13 13:14:19,976 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
-2025-12-13 13:14:19,980 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
-2025-12-13 13:14:20,056 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 75 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
-2025-12-13 13:14:20,057 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
-2025-12-13 13:14:20,057 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
-2025-12-13 13:14:20,057 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 75 identities, 0 clusters, 0 total reps, threshold=0.68
-2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 078eedfa-68af-4b41-af8c-b1e989e02369 best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0f28e3ad-152f-43d4-a51f-6ac200cb9acf best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 115558fe-e07c-4d1a-a597-217023ba6c2b best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1ba9d6dd-6bca-41ef-9e87-2b2f0c8eb964 best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 2640c677-5248-4702-9634-46664eb58e92 best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:14:20,058 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 75 identities
-2025-12-13 13:14:20,058 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 75 remaining
-2025-12-13 13:14:20,059 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 75 remaining
-2025-12-13 13:14:21,095 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 20 new cluster proposals
-2025-12-13 13:14:21,095 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
-2025-12-13 13:14:21,095 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
-2025-12-13 13:14:21,156 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 39 members
-2025-12-13 13:14:21,169 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
-2025-12-13 13:14:21,180 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:14:21,187 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:14:21,194 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:14:21,203 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:14:21,208 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:14:21,214 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:14:21,220 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:14:21,229 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:14:21,237 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:14:21,242 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,247 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,259 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,263 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,268 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,272 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,277 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,281 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,285 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:14:21,285 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=20
-2025-12-13 13:18:47,969 INFO db.reset - === Database reset via reset_dev_db.sh ===
-2025-12-13 13:18:59,107 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-13 13:19:10,452 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-13 13:19:13,740 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
-2025-12-13 13:19:13,745 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
-2025-12-13 13:19:13,789 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 28 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
-2025-12-13 13:19:13,791 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
-2025-12-13 13:19:13,791 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
-2025-12-13 13:19:13,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 28 identities, 0 clusters, 0 total reps, threshold=0.68
-2025-12-13 13:19:13,792 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0c60e1dd-8344-47f9-923e-0d19148ad69f best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 10a51632-983b-4e08-b2ee-a0727fa5847e best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 16daa550-8c71-4c10-9860-c29e29a3ef39 best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 180df385-336c-4f43-9242-f01aaac2e8af best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 1902326b-ec32-4732-b4e9-e4ebe1c19dc2 best_cluster=None best_sim=0.0000 (threshold=0.68)
-2025-12-13 13:19:13,793 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 28 identities
-2025-12-13 13:19:13,793 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 28 remaining
-2025-12-13 13:19:13,794 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 28 remaining
-2025-12-13 13:19:13,815 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 9 new cluster proposals
-2025-12-13 13:19:13,815 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
-2025-12-13 13:19:13,816 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
-2025-12-13 13:19:13,901 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:19:13,925 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 17 members
-2025-12-13 13:19:13,935 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:19:13,943 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:19:13,951 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:19:13,959 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:19:13,964 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:19:13,969 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:19:13,975 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:19:13,976 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=0, rejected=0, new_clusters=9
-2025-12-13 13:20:26,976 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
-2025-12-13 13:20:37,209 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
-2025-12-13 13:20:40,610 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
-2025-12-13 13:20:40,613 INFO recognition.application.orchestration.cluster_service - [clustering] cluster_unclustered_identities called with tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
-2025-12-13 13:20:40,634 INFO recognition.application.orchestration.cluster_service - [clustering] Starting clustering for 47 unclustered identities, tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8
-2025-12-13 13:20:40,642 INFO recognition.application.orchestration.cluster_service - [clustering] Found 8 existing clusters for discovery
-2025-12-13 13:20:40,642 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 8 clusters with representatives, 0 with centroids
-2025-12-13 13:20:40,642 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 47 identities, 8 clusters, 15 total reps, threshold=0.68
-2025-12-13 13:20:40,642 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 2132161e-c85e-41eb-b83c-522d207efbed -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.7129
-2025-12-13 13:20:40,644 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity 73015aea-5f31-46b7-b0df-c3f307645fe8 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.6953
-2025-12-13 13:20:40,647 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity f320d919-0704-48fe-854e-b2f081bdbd0a -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.7420
-2025-12-13 13:20:40,647 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] MATCHED identity f3b03359-a808-4d28-8b41-7e3d1f947db1 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a with similarity 0.6819
-2025-12-13 13:20:40,648 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 4 candidates from 47 identities
-2025-12-13 13:20:40,648 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 4 candidates, 43 remaining
-2025-12-13 13:20:40,648 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 43 remaining
-2025-12-13 13:20:40,666 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 8 new cluster proposals
-2025-12-13 13:20:40,668 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 4
-2025-12-13 13:20:40,671 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 2132161e-c85e-41eb-b83c-522d207efbed -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
-2025-12-13 13:20:40,679 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 2132161e-c85e-41eb-b83c-522d207efbed for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
-2025-12-13 13:20:40,681 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity 73015aea-5f31-46b7-b0df-c3f307645fe8 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
-2025-12-13 13:20:40,683 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity 73015aea-5f31-46b7-b0df-c3f307645fe8 for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
-2025-12-13 13:20:40,685 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity f320d919-0704-48fe-854e-b2f081bdbd0a -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
-2025-12-13 13:20:40,687 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity f320d919-0704-48fe-854e-b2f081bdbd0a for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
-2025-12-13 13:20:40,688 INFO recognition.application.orchestration.cluster_service - [clustering] Gate decision for identity f3b03359-a808-4d28-8b41-7e3d1f947db1 -> cluster c96e2677-2012-437e-99fd-15b0b5f6a84a: suggest (checks passed: ['maturity'], failed: ['complete_link'])
-2025-12-13 13:20:40,690 INFO recognition.application.orchestration.cluster_service - [clustering] SUGGESTED: identity f3b03359-a808-4d28-8b41-7e3d1f947db1 for cluster c96e2677-2012-437e-99fd-15b0b5f6a84a (confidence=0.00, reason=complete-link similarity below threshold)
-2025-12-13 13:20:40,690 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 4 (no candidates: 4, rejected: 0)
-2025-12-13 13:20:40,719 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:20:40,724 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:20:40,729 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:20:40,736 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 1 members
-2025-12-13 13:20:40,749 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:20:40,775 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 19 members
-2025-12-13 13:20:40,787 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 5 members
-2025-12-13 13:20:40,795 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:20:40,802 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 3 members
-2025-12-13 13:20:40,808 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:20:40,815 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:20:40,821 INFO recognition.application.orchestration.cluster_service - [clustering] Created new cluster with 2 members
-2025-12-13 13:20:40,821 INFO recognition.application.orchestration.cluster_service - [clustering] COMPLETE: accepted=0, suggested=4, rejected=0, new_clusters=12
+2025-12-13 18:43:30,185 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-13 18:46:54,700 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-13 18:47:55,327 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 18:48:06,676 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 18:48:17,031 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 18:48:17,036 INFO recognition.application.orchestration.cluster_service - [clustering] batch_start job_id=0693dfb4-1094-75d8-8000-e40f2766a246 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 18:48:17,133 INFO recognition.application.orchestration.cluster_service - [clustering] batch_processing job_id=0693dfb4-1094-75d8-8000-e40f2766a246 count=224 media_ids=['689', '691', '691', '693', '693', '697', '698', '699', '699', '699', '699', '699', '699', '701', '701', '702', '702', '702', '702', '702']
+2025-12-13 18:48:17,135 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-13 18:48:17,135 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters (0 labeled)
+2025-12-13 18:48:17,135 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-13 18:48:17,135 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 224 identities, 0 clusters (0 labeled), 0 total reps, threshold=0.55
+2025-12-13 18:48:17,136 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 139947b2-7b26-4b0c-a96b-eb01989f3fcd best_cluster=None best_sim=0.0000 (threshold=0.55)
+2025-12-13 18:48:17,137 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity b5e579a2-fffe-4ab3-8f20-0310fee22c46 best_cluster=None best_sim=0.0000 (threshold=0.55)
+2025-12-13 18:48:17,137 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 9936edbb-6cbe-4106-b708-0b847ce02e65 best_cluster=None best_sim=0.0000 (threshold=0.55)
+2025-12-13 18:48:17,137 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 3dbe3df9-6320-4473-83ed-257671ddba90 best_cluster=None best_sim=0.0000 (threshold=0.55)
+2025-12-13 18:48:17,137 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 296bb6e4-6e64-4d8c-93fd-30d0c80945e6 best_cluster=None best_sim=0.0000 (threshold=0.55)
+2025-12-13 18:48:17,137 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 224 identities
+2025-12-13 18:48:17,137 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 224 remaining
+2025-12-13 18:48:17,138 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 224 remaining
+2025-12-13 18:48:18,117 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 133 new cluster proposals
+2025-12-13 18:48:18,117 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-13 18:48:18,118 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-13 18:48:18,168 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=12 media_ids=['691', '701', '748', '890', '898', '899', '901', '905', '968', '1051', '1084', '1183']
+2025-12-13 18:48:18,193 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=7 media_ids=['691', '727', '1029', '1337', '1343', '1392', '1396']
+2025-12-13 18:48:18,216 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=11 media_ids=['699', '739', '739', '739', '739', '1134', '1138', '1140', '1231', '1285', '1308']
+2025-12-13 18:48:18,226 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=3 media_ids=['699', '757', '1064']
+2025-12-13 18:48:18,235 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['701', '719']
+2025-12-13 18:48:18,249 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=7 media_ids=['702', '725', '907', '1256', '2856', '2866', '2871']
+2025-12-13 18:48:18,262 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=3 media_ids=['702', '757', '1308']
+2025-12-13 18:48:18,275 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=7 media_ids=['719', '738', '748', '890', '945', '1064', '1178']
+2025-12-13 18:48:18,287 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=4 media_ids=['719', '757', '1008', '1019']
+2025-12-13 18:48:18,303 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=4 media_ids=['725', '739', '1183', '1256']
+2025-12-13 18:48:18,310 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['738', '775']
+2025-12-13 18:48:18,317 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['739', '887']
+2025-12-13 18:48:18,333 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=3 media_ids=['748', '775', '2863']
+2025-12-13 18:48:18,339 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['756', '945']
+2025-12-13 18:48:18,347 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['757', '757']
+2025-12-13 18:48:18,354 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['775', '792']
+2025-12-13 18:48:18,363 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=3 media_ids=['775', '775', '2859']
+2025-12-13 18:48:18,370 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['791', '806']
+2025-12-13 18:48:18,387 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=3 media_ids=['822', '887', '1718']
+2025-12-13 18:48:18,394 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['890', '968']
+2025-12-13 18:48:18,401 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['905', '1231']
+2025-12-13 18:48:18,409 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['1007', '1032']
+2025-12-13 18:48:18,417 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['1008', '1019']
+2025-12-13 18:48:18,426 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['1008', '1019']
+2025-12-13 18:48:18,452 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=13 media_ids=['1029', '1029', '1029', '1029', '1096', '1096', '1096', '1096', '1096', '1096', '1096', '1096', '1096']
+2025-12-13 18:48:18,464 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=4 media_ids=['1110', '1246', '1284', '2872']
+2025-12-13 18:48:18,473 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['1112', '1236']
+2025-12-13 18:48:18,481 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['1466', '1472']
+2025-12-13 18:48:18,489 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['2844', '2845']
+2025-12-13 18:48:18,498 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['2844', '2845']
+2025-12-13 18:48:18,511 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=4 media_ids=['2847', '2848', '2849', '2850']
+2025-12-13 18:48:18,519 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['2865', '2865']
+2025-12-13 18:48:18,534 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=2 media_ids=['2868', '2869']
+2025-12-13 18:48:18,540 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['689']
+2025-12-13 18:48:18,544 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['693']
+2025-12-13 18:48:18,549 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['693']
+2025-12-13 18:48:18,553 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['697']
+2025-12-13 18:48:18,558 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['698']
+2025-12-13 18:48:18,562 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['699']
+2025-12-13 18:48:18,566 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['699']
+2025-12-13 18:48:18,570 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['699']
+2025-12-13 18:48:18,584 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['699']
+2025-12-13 18:48:18,589 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['702']
+2025-12-13 18:48:18,594 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['702']
+2025-12-13 18:48:18,600 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['702']
+2025-12-13 18:48:18,604 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['702']
+2025-12-13 18:48:18,609 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['702']
+2025-12-13 18:48:18,614 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['719']
+2025-12-13 18:48:18,618 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['719']
+2025-12-13 18:48:18,623 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['719']
+2025-12-13 18:48:18,627 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['719']
+2025-12-13 18:48:18,632 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['722']
+2025-12-13 18:48:18,637 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['738']
+2025-12-13 18:48:18,648 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['739']
+2025-12-13 18:48:18,652 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['739']
+2025-12-13 18:48:18,657 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['748']
+2025-12-13 18:48:18,662 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['748']
+2025-12-13 18:48:18,667 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['748']
+2025-12-13 18:48:18,672 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['748']
+2025-12-13 18:48:18,677 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['748']
+2025-12-13 18:48:18,681 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['748']
+2025-12-13 18:48:18,686 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['756']
+2025-12-13 18:48:18,698 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,704 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,708 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,714 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,720 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,730 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,735 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,741 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['757']
+2025-12-13 18:48:18,746 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['764']
+2025-12-13 18:48:18,752 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['764']
+2025-12-13 18:48:18,757 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['775']
+2025-12-13 18:48:18,763 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['775']
+2025-12-13 18:48:18,769 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['792']
+2025-12-13 18:48:18,776 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['822']
+2025-12-13 18:48:18,781 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['822']
+2025-12-13 18:48:18,786 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['845']
+2025-12-13 18:48:18,792 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['898']
+2025-12-13 18:48:18,798 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['901']
+2025-12-13 18:48:18,803 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['901']
+2025-12-13 18:48:18,817 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['905']
+2025-12-13 18:48:18,822 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['906']
+2025-12-13 18:48:18,826 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['907']
+2025-12-13 18:48:18,830 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['920']
+2025-12-13 18:48:18,834 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['945']
+2025-12-13 18:48:18,839 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1051']
+2025-12-13 18:48:18,843 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1051']
+2025-12-13 18:48:18,848 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1051']
+2025-12-13 18:48:18,852 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1051']
+2025-12-13 18:48:18,856 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1060']
+2025-12-13 18:48:18,860 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1064']
+2025-12-13 18:48:18,865 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1084']
+2025-12-13 18:48:18,869 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1096']
+2025-12-13 18:48:18,874 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1096']
+2025-12-13 18:48:18,878 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1110']
+2025-12-13 18:48:18,883 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1126']
+2025-12-13 18:48:18,887 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1134']
+2025-12-13 18:48:18,900 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1138']
+2025-12-13 18:48:18,905 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1140']
+2025-12-13 18:48:18,910 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1156']
+2025-12-13 18:48:18,915 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1178']
+2025-12-13 18:48:18,920 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1231']
+2025-12-13 18:48:18,930 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1246']
+2025-12-13 18:48:18,934 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1284']
+2025-12-13 18:48:18,939 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1285']
+2025-12-13 18:48:18,944 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1285']
+2025-12-13 18:48:18,948 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1285']
+2025-12-13 18:48:18,953 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1285']
+2025-12-13 18:48:18,958 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1287']
+2025-12-13 18:48:18,962 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['1476']
+2025-12-13 18:48:18,967 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2843']
+2025-12-13 18:48:18,971 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2846']
+2025-12-13 18:48:18,976 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2851']
+2025-12-13 18:48:18,981 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2852']
+2025-12-13 18:48:18,986 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2853']
+2025-12-13 18:48:18,991 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2854']
+2025-12-13 18:48:18,996 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2855']
+2025-12-13 18:48:19,001 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2856']
+2025-12-13 18:48:19,010 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2857']
+2025-12-13 18:48:19,015 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2857']
+2025-12-13 18:48:19,020 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2858']
+2025-12-13 18:48:19,024 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2860']
+2025-12-13 18:48:19,029 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2861']
+2025-12-13 18:48:19,034 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2862']
+2025-12-13 18:48:19,049 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2864']
+2025-12-13 18:48:19,054 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2865']
+2025-12-13 18:48:19,060 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2865']
+2025-12-13 18:48:19,065 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2866']
+2025-12-13 18:48:19,070 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2866']
+2025-12-13 18:48:19,075 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2867']
+2025-12-13 18:48:19,081 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2870']
+2025-12-13 18:48:19,086 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfb4-1094-75d8-8000-e40f2766a246 member_count=1 media_ids=['2872']
+2025-12-13 18:48:19,086 INFO recognition.application.orchestration.cluster_service - [clustering] batch_complete job_id=0693dfb4-1094-75d8-8000-e40f2766a246 accepted=0 suggested=0 rejected=0 new_clusters=133
+2025-12-13 18:54:16,947 INFO db.startup - === Application Startup ===
+2025-12-13 18:54:16,947 INFO db.startup - Git: 9003fb7 (refactor/4.2.6-clustering-persist-centroid)
+2025-12-13 18:54:16,947 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-13 18:56:48,863 INFO db.startup - === Application Startup ===
+2025-12-13 18:56:48,863 INFO db.startup - Git: 9003fb7 (refactor/4.2.6-clustering-persist-centroid)
+2025-12-13 18:56:48,863 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-13 18:57:30,123 INFO db.startup - === Application Startup ===
+2025-12-13 18:57:30,123 INFO db.startup - Git: 9003fb7 (refactor/4.2.6-clustering-persist-centroid)
+2025-12-13 18:57:30,123 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-13 18:58:23,954 INFO db.startup - === Application Startup ===
+2025-12-13 18:58:23,955 INFO db.startup - Git: 9003fb7 (refactor/4.2.6-clustering-persist-centroid)
+2025-12-13 18:58:23,955 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-13 19:00:17,785 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-13 19:01:07,517 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 19:01:19,518 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 19:01:31,446 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 19:01:31,448 INFO recognition.application.orchestration.cluster_service - [clustering] batch_start job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 19:01:31,489 INFO recognition.application.orchestration.cluster_service - [clustering] batch_processing job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 count=181 media_ids=['1156', '2865', '2856', '1096', '1029', '1096', '1007', '1138', '1287', '890', '2844', '1029', '906', '2825', '1096', '899', '2854', '2858', '1126', '2838']
+2025-12-13 19:01:31,491 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-13 19:01:31,491 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters (0 labeled)
+2025-12-13 19:01:31,491 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-13 19:01:31,491 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 181 identities, 0 clusters (0 labeled), 0 total reps, threshold=0.85
+2025-12-13 19:01:31,492 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 00c1b622-7080-4bfa-a226-cc15f13330f1 best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:01:31,492 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0176d795-cf8a-476e-8fc2-c01136173661 best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:01:31,492 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 023b088f-f608-413f-b843-c2b9a1dda506 best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:01:31,492 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 02f6671f-4ab1-4a01-9d97-6bfb7727ac89 best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:01:31,492 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0377ddc8-442e-4f4c-a4f7-68a75e185f2e best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:01:31,492 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 181 identities
+2025-12-13 19:01:31,493 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 181 remaining
+2025-12-13 19:01:31,493 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 181 remaining
+2025-12-13 19:01:32,489 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 41 new cluster proposals
+2025-12-13 19:01:32,490 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-13 19:01:32,490 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-13 19:01:32,782 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=85 media_ids=['1156', '2856', '1029', '1007', '1287', '890', '906', '2854', '2858', '1126', '2838', '1008', '2868', '1236', '1256', '822', '2833', '1112', '1096', '1183', '2839', '1396', '2851', '907', '920', '1110', '845', '2848', '1284', '901', '806', '2836', '968', '1285', '2850', '1343', '2855', '2866', '792', '2837', '1060', '2843', '2864', '2841', '2870', '2830', '1472', '2835', '2832', '2853', '1051', '2831', '2849', '2840', '887', '898', '1246', '2867', '1231', '1476', '2869', '2872', '2847', '2842', '2834', '1392', '2861', '1064', '1337', '1134', '2844', '2846', '2865', '2860', '1178', '2845', '1140', '1032', '905', '1019', '2852', '1138', '2862', '1466', '945']
+2025-12-13 19:01:32,817 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=13 media_ids=['1096', '1096', '1029', '1096', '1029', '1096', '1096', '1096', '1096', '1029', '1096', '1096', '1029']
+2025-12-13 19:01:32,869 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=6 media_ids=['1138', '1308', '1140', '1285', '1134', '1231']
+2025-12-13 19:01:32,921 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2844', '2845']
+2025-12-13 19:01:32,928 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2825', '2824']
+2025-12-13 19:01:32,945 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=11 media_ids=['899', '1051', '968', '890', '1183', '2857', '901', '905', '898', '1084', '792']
+2025-12-13 19:01:32,955 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=3 media_ids=['2825', '2825', '2824']
+2025-12-13 19:01:32,962 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2865', '2865']
+2025-12-13 19:01:32,974 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=4 media_ids=['2872', '1110', '1246', '1284']
+2025-12-13 19:01:32,980 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2824', '2825']
+2025-12-13 19:01:32,990 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['1008', '1019']
+2025-12-13 19:01:33,003 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=5 media_ids=['2871', '1256', '2866', '2856', '907']
+2025-12-13 19:01:33,013 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=4 media_ids=['1178', '945', '1064', '890']
+2025-12-13 19:01:33,019 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['1008', '1019']
+2025-12-13 19:01:33,029 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['1308', '2825']
+2025-12-13 19:01:33,036 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=3 media_ids=['1231', '2824', '905']
+2025-12-13 19:01:33,043 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2863', '2826']
+2025-12-13 19:01:33,048 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2828', '2829']
+2025-12-13 19:01:33,056 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=3 media_ids=['822', '1718', '887']
+2025-12-13 19:01:33,073 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=4 media_ids=['2841', '2839', '2842', '945']
+2025-12-13 19:01:33,101 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=2 media_ids=['2825', '2825']
+2025-12-13 19:01:33,128 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2865']
+2025-12-13 19:01:33,133 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1285']
+2025-12-13 19:01:33,138 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2824']
+2025-12-13 19:01:33,143 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2824']
+2025-12-13 19:01:33,147 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1285']
+2025-12-13 19:01:33,151 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1051']
+2025-12-13 19:01:33,158 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1051']
+2025-12-13 19:01:33,163 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2857']
+2025-12-13 19:01:33,167 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1064']
+2025-12-13 19:01:33,172 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['822']
+2025-12-13 19:01:33,177 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1051']
+2025-12-13 19:01:33,182 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2824']
+2025-12-13 19:01:33,189 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1285']
+2025-12-13 19:01:33,193 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2825']
+2025-12-13 19:01:33,198 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2866']
+2025-12-13 19:01:33,202 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2859']
+2025-12-13 19:01:33,206 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1084']
+2025-12-13 19:01:33,211 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['901']
+2025-12-13 19:01:33,215 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['2825']
+2025-12-13 19:01:33,220 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 member_count=1 media_ids=['1096']
+2025-12-13 19:01:33,220 INFO recognition.application.orchestration.cluster_service - [clustering] batch_complete job_id=0693dfe5-b72e-7c39-8000-2cda52c92f62 accepted=0 suggested=0 rejected=0 new_clusters=41
+2025-12-13 19:02:40,016 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=200dcb09-089f-4e3d-8ddc-abc1be0c03ad old_label='None' new_label='Ryann Wiseman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:02:48,264 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=940d4d07-0589-4468-a49d-ac796d9fb5f5 old_label='None' new_label='Cam Grant' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:03:12,167 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=56cd111f-cbcd-496f-a61d-71497f152a96 old_label='None' new_label='Lisa Wiseman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:03:27,264 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=8b75f0a5-0e75-4168-8117-aaf301e12555 target_cluster=200dcb09-089f-4e3d-8ddc-abc1be0c03ad moved_count=1 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:03:45,187 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=3f63cb9e-0fe8-417a-8e21-ad44c7068f8d target_cluster=200dcb09-089f-4e3d-8ddc-abc1be0c03ad moved_count=1 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:03:53,146 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=374fef3b-adef-49c8-b20a-dec6d8c0b2ca old_label='None' new_label='Krista Fisher' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:04:13,959 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=320b1f49-a8a7-4420-9965-7f6d70721207 target_cluster=200dcb09-089f-4e3d-8ddc-abc1be0c03ad moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:04:22,563 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=c2f82ceb-6b20-49bf-b1a0-ac7d848b2812 target_cluster=200dcb09-089f-4e3d-8ddc-abc1be0c03ad moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:04:38,255 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=a6a0ff9b-2b5c-4062-a286-a612f6a5f978 target_cluster=200dcb09-089f-4e3d-8ddc-abc1be0c03ad moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:04:56,315 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=3031a47a-a170-4de9-a477-202e71a118b8 target_cluster=200dcb09-089f-4e3d-8ddc-abc1be0c03ad moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:05:14,745 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=4772a2ac-821c-4383-898d-f37c4590c0ac old_label='None' new_label='Frieda Nolan' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:07:00,765 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=7f53ba8d-cdda-4576-a278-347e0f9f1c51 old_label='None' new_label='Mairin Taylor' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:08:09,077 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=1941f1cd-eb64-45e2-bc20-b4392ba0aa5b old_label='None' new_label='Kay Bertrand' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:08:47,724 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=6391ed0a-a302-4544-a2b3-d90055781273 old_label='None' new_label='Emilie Shierman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:10:16,641 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2025-12-13 19:10:37,351 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 19:10:49,288 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 19:10:55,731 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 19:10:55,789 INFO recognition.application.orchestration.cluster_service - [clustering] batch_start job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 19:10:55,840 INFO recognition.application.orchestration.cluster_service - [clustering] batch_processing job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e count=75 media_ids=['2847', '2851', '2840', '2862', '2841', '2856', '2837', '2825', '2871', '2836', '2825', '2872', '2842', '2853', '2860', '2848', '2861', '2866', '2828', '2824']
+2025-12-13 19:10:55,841 INFO recognition.application.orchestration.cluster_service - [clustering] Found 0 existing clusters for discovery
+2025-12-13 19:10:55,841 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters (0 labeled)
+2025-12-13 19:10:55,842 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 0 clusters with representatives, 0 with centroids
+2025-12-13 19:10:55,842 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 75 identities, 0 clusters (0 labeled), 0 total reps, threshold=0.85
+2025-12-13 19:10:55,842 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 02105646-3807-4486-8c05-0576b650389a best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:10:55,842 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0473b881-d366-412f-8571-e4344aadd58e best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:10:55,842 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0c61a2b1-3e7e-4bbb-a0ad-6c49da429722 best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:10:55,843 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0e1c1614-595a-4b46-8044-0766ede193fa best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:10:55,843 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 0ee21314-cb8f-4494-8e3c-f93bdee81206 best_cluster=None best_sim=0.0000 (threshold=0.85)
+2025-12-13 19:10:55,843 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 75 identities
+2025-12-13 19:10:55,843 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 75 remaining
+2025-12-13 19:10:55,843 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 75 remaining
+2025-12-13 19:10:55,873 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 20 new cluster proposals
+2025-12-13 19:10:55,873 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-13 19:10:55,873 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 0 (no candidates: 0, rejected: 0)
+2025-12-13 19:10:55,941 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=39 media_ids=['2847', '2851', '2840', '2862', '2837', '2836', '2842', '2853', '2860', '2848', '2861', '2841', '2844', '2835', '2866', '2855', '2838', '2832', '2830', '2846', '2864', '2845', '2865', '2843', '2833', '2869', '2870', '2867', '2849', '2831', '2868', '2852', '2856', '2834', '2850', '2872', '2854', '2839', '2858']
+2025-12-13 19:10:55,952 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=3 media_ids=['2841', '2842', '2839']
+2025-12-13 19:10:55,964 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=3 media_ids=['2856', '2871', '2866']
+2025-12-13 19:10:55,979 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=3 media_ids=['2825', '2824', '2824']
+2025-12-13 19:10:55,995 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=5 media_ids=['2825', '2825', '2824', '2825', '2824']
+2025-12-13 19:10:56,005 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=2 media_ids=['2828', '2829']
+2025-12-13 19:10:56,017 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=3 media_ids=['2825', '2825', '2825']
+2025-12-13 19:10:56,026 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=2 media_ids=['2844', '2845']
+2025-12-13 19:10:56,034 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=2 media_ids=['2826', '2863']
+2025-12-13 19:10:56,042 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=2 media_ids=['2865', '2865']
+2025-12-13 19:10:56,051 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=2 media_ids=['2824', '2825']
+2025-12-13 19:10:56,059 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2872']
+2025-12-13 19:10:56,066 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2824']
+2025-12-13 19:10:56,072 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2866']
+2025-12-13 19:10:56,078 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2825']
+2025-12-13 19:10:56,085 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2857']
+2025-12-13 19:10:56,098 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2859']
+2025-12-13 19:10:56,104 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2857']
+2025-12-13 19:10:56,109 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2865']
+2025-12-13 19:10:56,114 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e member_count=1 media_ids=['2824']
+2025-12-13 19:10:56,114 INFO recognition.application.orchestration.cluster_service - [clustering] batch_complete job_id=0693e008-fc9f-7e43-8000-0bfc53662e2e accepted=0 suggested=0 rejected=0 new_clusters=20
+2025-12-13 19:16:47,603 INFO db.startup - === Application Startup ===
+2025-12-13 19:16:47,604 INFO db.startup - Git: 9003fb7 (refactor/4.2.6-clustering-persist-centroid)
+2025-12-13 19:16:47,604 INFO db.startup - Listening on http://127.0.0.1:8000
+2025-12-13 19:21:00,368 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 old_label='None' new_label='Ryann Wiseman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:21:17,089 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=dcd4a73e-2405-4d7f-8499-12fb39134af8 old_label='None' new_label='Luisa Wiseman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:21:40,368 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=bce48619-5bbe-4fe4-a811-9d2dff8a4ae2 target_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 moved_count=1 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:21:51,226 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=2eea7b3d-85bb-48cf-9910-6546bcd01570 old_label='None' new_label='Cam Grant' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 19:22:13,103 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=f076936c-cf08-45da-ac1a-91c07164d57d target_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:22:22,137 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=ca419e90-edc7-4ef5-9183-de9705704dd8 target_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:22:58,951 INFO recognition.infrastructure.embeddings - Loading InsightFace model buffalo_l with providers ['CUDAExecutionProvider', 'CoreMLExecutionProvider', 'CPUExecutionProvider']
+2025-12-13 19:23:10,407 INFO recognition.infrastructure.embeddings - InsightFace model buffalo_l loaded successfully
+2025-12-13 19:23:16,054 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=sync
+2025-12-13 19:23:16,060 INFO recognition.application.orchestration.cluster_service - [clustering] batch_start job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2025-12-13 19:23:16,126 INFO recognition.application.orchestration.cluster_service - [clustering] batch_processing job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 count=106 media_ids=['792', '792', '806', '822', '822', '822', '845', '887', '887', '890', '890', '890', '898', '898', '899', '901', '901', '901', '905', '905']
+2025-12-13 19:23:16,151 INFO recognition.application.orchestration.cluster_service - [clustering] Found 17 existing clusters for discovery
+2025-12-13 19:23:16,152 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 17 clusters (3 labeled)
+2025-12-13 19:23:16,152 INFO recognition.application.orchestration.cluster_service - [clustering] Discovery inputs: 17 clusters with representatives, 17 with centroids
+2025-12-13 19:23:16,152 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Starting discovery: 106 identities, 17 clusters (3 labeled), 36 total reps, threshold=0.85
+2025-12-13 19:23:16,170 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 18b9d472-0416-4cd5-aeac-63e299df65a9 best_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 best_sim=0.6225 (threshold=0.85)
+2025-12-13 19:23:16,171 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 27452332-e21d-4d2a-acc4-d953ee380dbd best_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 best_sim=0.1064 (threshold=0.85)
+2025-12-13 19:23:16,171 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 4dc6d8c8-a6df-4855-8712-707dd206984c best_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 best_sim=0.6443 (threshold=0.85)
+2025-12-13 19:23:16,171 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity 8498f73f-5d90-4c04-809a-19888bff705e best_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 best_sim=0.6260 (threshold=0.85)
+2025-12-13 19:23:16,171 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] NO MATCH: identity dec313b7-39cd-4e7f-aec0-44ad7e8a42c7 best_cluster=2eea7b3d-85bb-48cf-9910-6546bcd01570 best_sim=0.0695 (threshold=0.85)
+2025-12-13 19:23:16,171 INFO recognition.application.discovery.representative - [RepresentativeDiscovery] Completed: 0 candidates from 106 identities
+2025-12-13 19:23:16,171 INFO recognition.application.orchestration.cluster_service - [clustering] RepresentativeDiscovery: 0 candidates, 106 remaining
+2025-12-13 19:23:16,179 INFO recognition.application.orchestration.cluster_service - [clustering] CentroidDiscovery: 0 candidates, 106 remaining
+2025-12-13 19:23:17,212 INFO recognition.application.orchestration.cluster_service - [clustering] GraphDiscovery: 0 candidates, 12 new cluster proposals
+2025-12-13 19:23:17,212 INFO recognition.application.orchestration.cluster_service - [clustering] Total candidates to evaluate through gate: 0
+2025-12-13 19:23:17,212 INFO recognition.application.orchestration.cluster_service - [clustering] Identities needing new clusters: 11 (no candidates: 11, rejected: 0)
+2025-12-13 19:23:17,251 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=4 media_ids=['901', '1064', '1096', '1285']
+2025-12-13 19:23:17,260 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=2 media_ids=['945', '1051']
+2025-12-13 19:23:17,270 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=3 media_ids=['1084', '1285', '1308']
+2025-12-13 19:23:17,278 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=1 media_ids=['1051']
+2025-12-13 19:23:17,284 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=1 media_ids=['1285']
+2025-12-13 19:23:17,320 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=46 media_ids=['792', '806', '822', '845', '887', '890', '898', '901', '905', '906', '907', '920', '945', '968', '1007', '1008', '1019', '1029', '1032', '1051', '1060', '1064', '1096', '1110', '1112', '1126', '1134', '1138', '1140', '1156', '1178', '1183', '1231', '1236', '1246', '1256', '1284', '1285', '1287', '1337', '1343', '1392', '1396', '1466', '1472', '1476']
+2025-12-13 19:23:17,337 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=10 media_ids=['792', '890', '898', '899', '901', '905', '968', '1051', '1084', '1183']
+2025-12-13 19:23:17,345 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=3 media_ids=['822', '887', '1718']
+2025-12-13 19:23:17,353 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=2 media_ids=['822', '1051']
+2025-12-13 19:23:17,367 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=4 media_ids=['890', '945', '1064', '1178']
+2025-12-13 19:23:17,374 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=2 media_ids=['905', '1231']
+2025-12-13 19:23:17,380 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=2 media_ids=['907', '1256']
+2025-12-13 19:23:17,388 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=2 media_ids=['1008', '1019']
+2025-12-13 19:23:17,395 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=2 media_ids=['1008', '1019']
+2025-12-13 19:23:17,417 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=13 media_ids=['1029', '1029', '1029', '1029', '1096', '1096', '1096', '1096', '1096', '1096', '1096', '1096', '1096']
+2025-12-13 19:23:17,428 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=3 media_ids=['1110', '1246', '1284']
+2025-12-13 19:23:17,447 INFO recognition.application.orchestration.cluster_service - [clustering] new_cluster job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 member_count=6 media_ids=['1134', '1138', '1140', '1231', '1285', '1308']
+2025-12-13 19:23:17,447 INFO recognition.application.orchestration.cluster_service - [clustering] batch_complete job_id=0693e037-40f6-774d-8000-aa6ee8cb53a6 accepted=0 suggested=0 rejected=0 new_clusters=17
+2025-12-13 19:23:48,492 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=a8539898-b1a1-402e-a5db-df3a68e430b7 target_cluster=3f9ae909-5feb-4f7b-8c41-6d29b4dba957 moved_count=46 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:24:04,032 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=16553a7e-6d99-4451-a273-5ecfef0aed4a target_cluster=dcd4a73e-2405-4d7f-8499-12fb39134af8 moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:24:11,212 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=a19d0127-824f-4c3d-a2fb-3dac1d753e4e target_cluster=2eea7b3d-85bb-48cf-9910-6546bcd01570 moved_count=3 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
+2025-12-13 19:24:52,352 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=19d9e8f9-3234-4d0d-a49f-6d27f84c697c old_label='None' new_label='Krista Fisher' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename

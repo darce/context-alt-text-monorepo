@@ -388,14 +388,16 @@ results = await asyncio.gather(
 **Pydantic Patterns:**
 
 ```python
-# Settings via pydantic-settings (environment variables)
-from pydantic_settings import BaseSettings
+# Settings via pydantic BaseModel (hardcoded defaults, override in code)
+from pydantic import BaseModel, ConfigDict, Field
 
-class ClusteringSettings(BaseSettings):
-    similarity_threshold: float = 0.88
-    min_cluster_size: int = 2
+class ClusteringSettings(BaseModel):
+    """Threshold configuration with type-safe defaults."""
 
-    model_config = ConfigDict(env_prefix="CLUSTERING_")
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    similarity_threshold: float = Field(default=0.85, description="Base threshold for matching.")
+    min_cluster_size: int = Field(default=2, description="Minimum cluster members.")
 
 # Request/Response models with validation
 class ClusterResponse(BaseModel):
@@ -403,6 +405,8 @@ class ClusterResponse(BaseModel):
     label: str | None
     member_count: int = Field(ge=0)
 ```
+
+> **Note:** Use `pydantic.BaseModel` for settings, NOT `pydantic-settings.BaseSettings`. Avoid `.env` files for algorithm thresholds—keep them in code for type safety and version control.
 
 **FastAPI Patterns:**
 
@@ -428,10 +432,11 @@ async def get_cluster(
 
 **Configuration:**
 
-- All settings via pydantic Settings backed by environment variables
-- No hard-coded paths or hostnames
-- Fail fast on missing required configuration
-- Use `Field(default=...)` for optional settings with defaults
+- All settings via `pydantic.BaseModel` with hardcoded defaults
+- Override settings by instantiating with explicit values in code
+- No `.env` files for algorithm thresholds (version control + type safety)
+- Use `Field(default=..., description="...")` for self-documenting settings
+- Fail fast on invalid configuration at startup
 
 **Coverage:**
 
@@ -445,14 +450,15 @@ async def get_cluster(
 ### Test Pyramid
 
 ```text
-         /\
-        /E2E\        <- Few, slow, high confidence
-       /------\
-      /Integr-\      <- Some, medium speed
+          ^
+         / \
+        /E2E\       <- Few, slow, high confidence
+       /-----\
+      /Integr-\     <- Some, medium speed
      /--ation--\
-    /------------\
-   /    Unit      \  <- Many, fast, isolated
-  /________________\
+    /-----------\
+   /    Unit     \  <- Many, fast, isolated
+  /_______________\
 ```
 
 ### Hierarchical TDD: Fake vs Real Resources

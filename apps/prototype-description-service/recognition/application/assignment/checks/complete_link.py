@@ -66,22 +66,15 @@ class CompleteLinkCheck(AssignmentCheck):
         cluster = await self.cluster_repository.get_by_id(candidate.cluster_id)
         is_unlabeled = False
         if cluster:
-            is_unlabeled = (
-                not cluster.user_confirmed
-                and (not cluster.label or cluster.label.startswith("cluster-"))
-            )
+            is_unlabeled = not cluster.user_confirmed and (not cluster.label or cluster.label.startswith("cluster-"))
 
         # For Unlabeled clusters, we use the discovery threshold as the floor.
         # This ensures that "Split Batches" behave like "Single Batches" (where graph clustering
         # groups items at the lower threshold).
-        target_min_floor = (
-            self.settings.similarity_threshold if is_unlabeled 
-            else self.settings.complete_link_min_floor
-        )
+        target_min_floor = self.settings.similarity_threshold if is_unlabeled else self.settings.complete_link_min_floor
         # Average threshold also relaxed for unlabeled targets to encourage merging
         target_avg_threshold = (
-            self.settings.similarity_threshold if is_unlabeled
-            else self.settings.complete_link_avg_threshold
+            self.settings.similarity_threshold if is_unlabeled else self.settings.complete_link_avg_threshold
         )
 
         representatives = await self.cluster_repository.get_all_representatives(candidate.cluster_id)
@@ -134,8 +127,8 @@ class CompleteLinkCheck(AssignmentCheck):
             # FAIL:
             # If Unlabeled: REJECT (don't suggest garbage matching to garbage).
             # If Labeled: SUGGEST (ask user to confirm).
-            should_reject = True if is_unlabeled else False
-            
+            should_reject = bool(is_unlabeled)
+
             return CheckResult(
                 passed=False,
                 is_fatal=True,

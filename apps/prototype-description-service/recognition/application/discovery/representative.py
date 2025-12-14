@@ -134,21 +134,20 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
             for rep in representatives:
                 rep_vec = self._normalize_face(np.asarray(rep, dtype=np.float32))
                 similarity = float(np.dot(face_vector, rep_vec))
-                
+
                 # Update global best
                 if similarity > best_similarity:
                     best_similarity = similarity
                     best_cluster = cluster_id
-                
+
                 # Update labeled best
-                if cluster_id in labeled_cluster_ids:
-                    if similarity > best_labeled_similarity:
-                        best_labeled_similarity = similarity
-                        best_labeled_cluster = cluster_id
+                if cluster_id in labeled_cluster_ids and similarity > best_labeled_similarity:
+                    best_labeled_similarity = similarity
+                    best_labeled_cluster = cluster_id
 
         # Decision Logic
         high_confidence_threshold = self.settings.complete_link_min_floor
-        
+
         # 1. High Confidence -> Auto-Assign (Label doesn't matter)
         if best_similarity >= high_confidence_threshold:
             return best_cluster, best_similarity

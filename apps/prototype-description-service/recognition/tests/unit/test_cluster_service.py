@@ -310,7 +310,7 @@ async def test_cluster_service_persists_new_graph_clusters() -> None:
         def __init__(self) -> None:
             super().__init__(settings=settings, algorithm=None)
 
-        async def discover(self, identities, anchor_embeddings):
+        async def discover(self, identities, anchor_embeddings, inject_anchors: bool = True):
             return GraphDiscoveryResult(
                 candidates=[],
                 new_clusters=[(list(identities), [0.95 for _ in identities])],

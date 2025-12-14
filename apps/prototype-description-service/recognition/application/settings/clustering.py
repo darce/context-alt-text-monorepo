@@ -42,3 +42,6 @@ class ClusteringSettings(BaseModel):
     representative_diversity_threshold: float = Field(
         default=0.90, description="Maximum similarity allowed between representatives (lower adds diversity)."
     )
+    anchor_discovery_threshold: float = Field(
+        default=0.60, description="Relaxed threshold for anchor-linked graph components (transitivity established)."
+    )

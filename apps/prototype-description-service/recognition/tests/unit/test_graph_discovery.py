@@ -30,7 +30,9 @@ class FakeGraphAlgorithm(GraphAlgorithm):
         return self._labels
 
 
-def make_settings(threshold: float = 0.8, hdbscan_max_batch_size: int | None = None) -> ClusteringSettings:
+def make_settings(
+    threshold: float = 0.8, hdbscan_max_batch_size: int | None = None, anchor_discovery_threshold: float = 0.6
+) -> ClusteringSettings:
     return ClusteringSettings(
         similarity_threshold=threshold,
         complete_link_min_floor=0.75,
@@ -42,6 +44,7 @@ def make_settings(threshold: float = 0.8, hdbscan_max_batch_size: int | None = N
         early_stage_high_confidence_threshold=0.9,
         adaptive_threshold_maturity_point=5,
         hdbscan_max_batch_size=hdbscan_max_batch_size,
+        anchor_discovery_threshold=anchor_discovery_threshold,
     )
 
 
@@ -79,7 +82,7 @@ async def test_graph_discovery_matches_to_anchor_clusters() -> None:
     }
 
     discovery = GraphDiscovery(settings=make_settings(threshold=0.8), algorithm=FakeGraphAlgorithm(labels))
-    result = await discovery.discover(identities, anchor_embeddings)
+    result = await discovery.discover(identities, anchor_embeddings, inject_anchors=False)
     candidates = result.candidates
 
     assert len(candidates) == 3
@@ -103,7 +106,7 @@ async def test_graph_discovery_uses_face_embeddings() -> None:
     anchor_embeddings: dict[str, list[np.ndarray]] = {"anchor": [face]}
 
     discovery = GraphDiscovery(settings=make_settings(threshold=0.8), algorithm=algo)
-    result = await discovery.discover(identities, anchor_embeddings)
+    result = await discovery.discover(identities, anchor_embeddings, inject_anchors=False)
     candidates = result.candidates
 
     assert algo.seen_embeddings is not None
@@ -137,8 +140,8 @@ async def test_graph_discovery_selects_algorithm(monkeypatch) -> None:
     small_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(3)]
     large_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(4)]
 
-    await discovery.discover(small_batch, anchor_embeddings)
-    await discovery.discover(large_batch, anchor_embeddings)
+    await discovery.discover(small_batch, anchor_embeddings, inject_anchors=False)
+    await discovery.discover(large_batch, anchor_embeddings, inject_anchors=False)
 
     assert calls == ["hdbscan", "cw"]
 
@@ -153,7 +156,7 @@ async def test_graph_discovery_returns_new_clusters_when_no_anchor_match() -> No
     labels = [0, 0]
     discovery = GraphDiscovery(settings=make_settings(threshold=0.8), algorithm=FakeGraphAlgorithm(labels))
 
-    result = await discovery.discover(identities, anchor_embeddings={})
+    result = await discovery.discover(identities, anchor_embeddings={}, inject_anchors=False)
 
     assert result.candidates == []
     assert len(result.new_clusters) == 1
@@ -161,3 +164,87 @@ async def test_graph_discovery_returns_new_clusters_when_no_anchor_match() -> No
     assert members == identities
     assert len(sims) == len(members)
     assert all(sim > 0 for sim in sims)
+
+
+@pytest.mark.asyncio
+async def test_graph_discovery_matches_via_anchor_injection() -> None:
+    """Should match new identity to anchor cluster if they end up in same graph component."""
+    # Setup: Anchor and Identity are linked in the graph
+    cluster_id = "existing-cluster-1"
+
+    # New identity to cluster
+    identity = make_identity(normalize(np.array([1.0, 0.0, 0.0])))
+
+    # Existing anchor for the cluster
+    # Must be similar enough to pass the threshold check in the end
+    anchor_vec = normalize(np.array([0.9, 0.1, 0.0]))
+    anchor_embeddings = {cluster_id: [anchor_vec]}
+
+    # Fake algo: returns label 0 for both nodes (identity and anchor)
+    # The discovery order is [identity, anchor], so we return [0, 0]
+    discovery = GraphDiscovery(settings=make_settings(threshold=0.8), algorithm=FakeGraphAlgorithm([0, 0]))
+
+    # Act: Discover with anchor injection (default)
+    result = await discovery.discover([identity], anchor_embeddings, inject_anchors=True)
+
+    # Assert: Candidate generated for the new identity pointing to the existing cluster
+    assert len(result.candidates) == 1
+    candidate = result.candidates[0]
+    assert candidate.identity.id == identity.id
+    assert candidate.cluster_id == cluster_id
+    assert candidate.discovery_method is DiscoveryMethod.GRAPH
+    assert candidate.discovery_similarity > 0.8
+
+
+@pytest.mark.asyncio
+async def test_graph_discovery_uses_relaxed_threshold_for_anchor_groups() -> None:
+    """Anchor-linked groups should use anchor_discovery_threshold (0.60) not similarity_threshold (0.85)."""
+    cluster_id = "existing-cluster"
+
+    # New identity with only ~0.65 similarity to anchor (would fail 0.85 threshold)
+    # Dot product of normalized [0.85, 0.55, 0] and [1.0, 0, 0] ≈ 0.84
+    identity_vec = normalize(np.array([0.85, 0.55, 0.0]))
+    identity = make_identity(identity_vec)
+
+    # Anchor embedding
+    anchor_vec = normalize(np.array([1.0, 0.0, 0.0]))
+    anchor_embeddings = {cluster_id: [anchor_vec]}
+
+    # Algo forces them into same label (simulating graph transitivity working)
+    # The avg similarity between identity and anchor = 0.84 ≈ ~0.84
+    # With strict threshold 0.85 this would fail. With anchor threshold 0.60 it passes.
+    settings = make_settings(threshold=0.85, anchor_discovery_threshold=0.60)
+
+    # [0, 0] means identity (index 0) and anchor (index 1) are in same component
+    discovery = GraphDiscovery(settings=settings, algorithm=FakeGraphAlgorithm([0, 0]))
+    result = await discovery.discover([identity], anchor_embeddings, inject_anchors=True)
+
+    # Should emit candidate because anchor threshold (0.60) is used, not 0.85
+    assert len(result.candidates) == 1
+    assert result.candidates[0].cluster_id == cluster_id
+    assert result.candidates[0].discovery_similarity >= 0.60
+
+
+@pytest.mark.asyncio
+async def test_graph_discovery_uses_strict_threshold_without_anchors() -> None:
+    """Non-anchor groups should still use the strict similarity_threshold (0.85)."""
+    cluster_id = "existing-cluster"
+
+    # Two identities that cluster together but anchor doesn't link with them
+    identity1 = make_identity(normalize(np.array([1.0, 0.0, 0.0])))
+    identity2 = make_identity(normalize(np.array([0.95, 0.31, 0.0])))  # High sim to identity1
+
+    # Anchor is in a different direction (won't end up in same component with threshold logic)
+    anchor_vec = normalize(np.array([0.0, 0.0, 1.0]))
+    anchor_embeddings = {cluster_id: [anchor_vec]}
+
+    # Labels: identity1=0, identity2=0, anchor=1 (anchor in different component)
+    settings = make_settings(threshold=0.85, anchor_discovery_threshold=0.60)
+    discovery = GraphDiscovery(settings=settings, algorithm=FakeGraphAlgorithm([0, 0, 1]))
+    result = await discovery.discover([identity1, identity2], anchor_embeddings, inject_anchors=True)
+
+    # No anchor in component 0, so fallback matching uses strict threshold
+    # Identities form new cluster since they don't match anchor at 0.85
+    assert len(result.candidates) == 0
+    assert len(result.new_clusters) == 1
+    assert len(result.new_clusters[0][0]) == 2  # Both identities in new cluster

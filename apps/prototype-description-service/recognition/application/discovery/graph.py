@@ -5,8 +5,11 @@ Graph-based discovery (HDBSCAN/Chinese Whispers) for assignment candidates.
 from __future__ import annotations
 
 import importlib.util
+import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
+from dataclasses import dataclass
+from typing import cast
 
 import numpy as np
 
@@ -15,6 +18,15 @@ from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 from recognition.shared.similarity import extract_face_embedding
+
+
+@dataclass
+class AnchorIdentity:
+    """Lightweight wrapper for anchor nodes."""
+
+    id: str
+    cluster_id: str
+    confidence: float = 1.0
 
 
 class GraphDiscoveryResult:
@@ -73,12 +85,14 @@ class GraphDiscovery(DiscoveryAlgorithm):
         self,
         identities: Sequence[MediaIdentity],
         anchor_embeddings: object,
+        inject_anchors: bool = True,
     ) -> GraphDiscoveryResult:
         """Generate candidates and new-cluster groups via graph algorithms.
 
         Args:
             identities: Identities to cluster using graph algorithms.
             anchor_embeddings: Optional representative embeddings keyed by cluster.
+            inject_anchors: If True, inject representatives as anchor nodes into the graph.
 
         Returns:
             GraphDiscoveryResult: Matched candidates and unmatched cluster groups.
@@ -88,60 +102,180 @@ class GraphDiscovery(DiscoveryAlgorithm):
         if not isinstance(anchor_embeddings, dict):
             anchor_embeddings = {}
 
-        algorithm = self._select_algorithm(len(identities))
+        # 1. Prepare Inputs
+        anchors: list[AnchorIdentity] = []
+        anchor_vecs: list[np.ndarray] = []
+
+        if inject_anchors:
+            for cluster_id, reps in anchor_embeddings.items():
+                for rep in reps:
+                    # Create a unique ID for the anchor node to ensure stability
+                    # We use a deterministic namespace if possible, or just random
+                    anchor = AnchorIdentity(
+                        id=f"anchor-{uuid.uuid4()}",
+                        cluster_id=cluster_id,
+                    )
+                    anchors.append(anchor)
+                    anchor_vecs.append(self._normalize_face(np.asarray(rep, dtype=np.float32)))
+
+        # Combine new identities with anchors
         face_vectors = [
             self._normalize_face(np.asarray(identity.embedding, dtype=np.float32)) for identity in identities
         ]
-        labels = algorithm.cluster(face_vectors, identities)
-        if len(labels) != len(identities):
+
+        # Combined lists for the algorithm
+        # Note: We must cast AnchorIdentity to Any or a compatible Protocol if strictly typed,
+        # but Python is dynamic. AnchorIdentity has .id and .confidence, satisfying CW/HDBSCAN usage.
+        combined_identities = list(identities) + anchors
+        combined_vectors = face_vectors + anchor_vecs
+
+        # 2. Run Clustering
+        algorithm = self._select_algorithm(len(combined_identities))
+        labels = algorithm.cluster(combined_vectors, cast(list[MediaIdentity], combined_identities))
+
+        if len(labels) != len(combined_identities):
             raise ValueError("Graph algorithm returned mismatched labels")
 
-        grouped = self._group_by_label(identities, face_vectors, labels)
-
-        # Collect noise points (label == -1) for special handling
-        noise_identities = [
-            (identity, face_vec)
-            for identity, face_vec, label in zip(identities, face_vectors, labels, strict=False)
-            if label == -1
-        ]
+        # 3. Group and Resolve
+        grouped = self._group_by_label(combined_identities, combined_vectors, labels)
 
         candidates: list[AssignmentCandidate] = []
         new_clusters: list[tuple[list[MediaIdentity], list[float]]] = []
-        for items in grouped.values():
-            member_vectors = [vec for _, vec in items]
-            anchor_cluster, similarity = self._match_to_anchor(member_vectors, anchor_embeddings)
-            if anchor_cluster and similarity >= self.settings.similarity_threshold:
-                for member, member_vec in items:
+
+        for _label, items in grouped.items():
+            # Separate anchors and new members
+            group_anchors = [item for item, _ in items if isinstance(item, AnchorIdentity)]
+            # Use type check or list comprehension to filter MediaIdentity
+            new_members_with_vecs = [(item, vec) for item, vec in items if isinstance(item, MediaIdentity)]
+
+            if not new_members_with_vecs:
+                continue
+
+            new_members = [m for m, _ in new_members_with_vecs]
+            member_vectors_group = [v for _, v in new_members_with_vecs]
+
+            target_cluster_id: str | None = None
+            similarity = 0.0
+
+            if group_anchors:
+                # Connected to existing cluster(s) via anchors
+                target_cluster_id = self._resolve_anchor_conflict(group_anchors)
+                # Compute avg similarity to the matched anchors for the score
+                # OR compute similarity to the specific matched cluster's anchors in the group
+                matched_anchor_vecs = [
+                    v for item, v in items if isinstance(item, AnchorIdentity) and item.cluster_id == target_cluster_id
+                ]
+                similarity = self._compute_avg_similarity(member_vectors_group, matched_anchor_vecs)
+            else:
+                # Fallback: Try centroid matching for components with NO anchors
+                # This covers cases where inject_anchors=False OR no anchors ended up in this component
+                # (though with inject_anchors=True, if they were close enough, they should have merged)
+                if not inject_anchors and anchor_embeddings:
+                    target_cluster_id, similarity = self._match_to_anchor(member_vectors_group, anchor_embeddings)
+
+            # 4. Generate Output
+            # Use lower threshold for anchor-linked groups (transitivity already established the link)
+            threshold = (
+                self.settings.anchor_discovery_threshold if group_anchors else self.settings.similarity_threshold
+            )
+            if target_cluster_id and similarity >= threshold:
+                for member, member_vec in new_members_with_vecs:
                     candidates.append(
                         AssignmentCandidate(
                             identity=member,
                             identity_vector=member_vec,
-                            cluster_id=anchor_cluster,
+                            cluster_id=target_cluster_id,
                             discovery_method=self.discovery_method,
                             discovery_similarity=similarity,
+                            anchor_linked=bool(group_anchors),  # Trust transitivity
                         )
                     )
-            else:
-                members = [member for member, _ in items]
-                member_sims = self._compute_member_similarities(member_vectors)
-                new_clusters.append((members, member_sims))
 
-        # Handle noise points: when no anchors are provided (new cluster formation mode),
+            else:
+                # New Cluster
+                member_sims = self._compute_member_similarities(member_vectors_group)
+                new_clusters.append((new_members, member_sims))
+
+        # Handle noise points: when no anchors matched (new cluster formation mode),
         # create singleton clusters for each noise identity
-        if not anchor_embeddings and noise_identities:
-            for identity, _face_vec in noise_identities:
+        # NOTE: HDBSCAN labels noise as -1. Our _group_by_label skips -1.
+        # We need to look for identities that got label -1.
+
+        # Re-scan labels for noise
+        # Since _group_by_label skips -1, we can just find them in the original lists
+        # or rely on _group_by_label to NOT skip them?
+        # The existing code skipped -1. Let's keep that logic but handle singletons.
+
+        # Actually, let's look at how _group_by_label was implemented.
+        # It skipped -1.
+        # If we have noise, we likely want to propose them as singletons OR ignore them?
+        # Existing logic: "if not anchor_embeddings and noise_identities: create singleton"
+
+        noise_identities = [
+            (identity, face_vec)
+            for identity, face_vec, label in zip(combined_identities, combined_vectors, labels, strict=False)
+            if label == -1 and isinstance(identity, MediaIdentity)
+        ]
+
+        if noise_identities and anchor_embeddings:
+            # Try to match noise points to existing anchors before creating singletons.
+            # This reduces false negatives when HDBSCAN marks points as noise.
+            for identity, face_vec in noise_identities:
+                best_cluster, best_sim = self._match_single_to_anchors(face_vec, anchor_embeddings)
+                if best_cluster and best_sim >= self.settings.anchor_discovery_threshold:
+                    # Matched to existing cluster via anchor
+                    candidates.append(
+                        AssignmentCandidate(
+                            identity=identity,
+                            identity_vector=face_vec,
+                            cluster_id=best_cluster,
+                            discovery_method=self.discovery_method,
+                            discovery_similarity=best_sim,
+                            anchor_linked=True,  # Trust anchor transitivity
+                        )
+                    )
+                else:
+                    # No anchor match - create singleton
+                    new_clusters.append(([identity], [1.0]))
+        elif noise_identities:
+            # No anchors available - all noise becomes singletons
+            for identity, _ in noise_identities:
                 new_clusters.append(([identity], [1.0]))
 
         return GraphDiscoveryResult(candidates, new_clusters)
 
+    def _resolve_anchor_conflict(self, anchors: list[AnchorIdentity]) -> str:
+        """Resolve which cluster to assign when multiple anchors are present.
+
+        Strategy: Majority vote.
+        """
+        counts: dict[str, int] = {}
+        for anchor in anchors:
+            counts[anchor.cluster_id] = counts.get(anchor.cluster_id, 0) + 1
+
+        # Return cluster with most anchors in this component
+        return max(counts, key=lambda k: counts.get(k, 0))
+
+    def _compute_avg_similarity(self, members: list[np.ndarray], anchors: list[np.ndarray]) -> float:
+        """Compute average similarity between members and anchors."""
+        if not members or not anchors:
+            return 0.0
+
+        # Centroid of members
+        member_centroid = self._normalize(np.mean(np.stack(members), axis=0))
+        # Centroid of anchors
+        anchor_centroid = self._normalize(np.mean(np.stack(anchors), axis=0))
+
+        return float(np.dot(member_centroid, anchor_centroid))
+
     def _group_by_label(
         self,
-        identities: Sequence[MediaIdentity],
+        identities: Sequence[MediaIdentity | AnchorIdentity],
         face_vectors: Sequence[np.ndarray],
         labels: Sequence[int],
-    ) -> dict[int, list[tuple[MediaIdentity, np.ndarray]]]:
+    ) -> dict[int, list[tuple[MediaIdentity | AnchorIdentity, np.ndarray]]]:
         """Group identities and face embeddings by cluster label, skipping noise."""
-        grouped: dict[int, list[tuple[MediaIdentity, np.ndarray]]] = {}
+        grouped: dict[int, list[tuple[MediaIdentity | AnchorIdentity, np.ndarray]]] = {}
         for identity, face_vec, label in zip(identities, face_vectors, labels, strict=False):
             if label == -1:
                 continue
@@ -155,9 +289,15 @@ class GraphDiscovery(DiscoveryAlgorithm):
 
         hdbscan_limit = self.settings.hdbscan_max_batch_size or 500
         if identities_count <= hdbscan_limit and self._hdbscan_available():
+            # Convert cosine similarity threshold to euclidean distance for normalized vectors.
+            # For unit vectors: euclidean_distance = sqrt(2 * (1 - cosine_similarity))
+            # This ensures HDBSCAN clusters faces that would pass our similarity threshold.
+            import math
+
             from recognition.infrastructure.clustering import HdbscanGraphAlgorithm
 
-            epsilon = max(0.0, 1.0 - float(self.settings.similarity_threshold))
+            target_cosine = float(self.settings.similarity_threshold)
+            epsilon = math.sqrt(2.0 * (1.0 - target_cosine))
             return HdbscanGraphAlgorithm(
                 min_cluster_size=2,
                 min_samples=1,
@@ -203,6 +343,36 @@ class GraphDiscovery(DiscoveryAlgorithm):
             if avg_sim > best_similarity:
                 best_similarity = avg_sim
                 best_anchor = anchor_id
+
+        return best_anchor, best_similarity
+
+    def _match_single_to_anchors(
+        self,
+        face_vec: np.ndarray,
+        anchor_embeddings: dict[str, list[np.ndarray]],
+    ) -> tuple[str | None, float]:
+        """Match a single noise point to existing anchor clusters.
+
+        Args:
+            face_vec: Face embedding for the noise point.
+            anchor_embeddings: Representative embeddings keyed by cluster identifier.
+
+        Returns:
+            tuple[str | None, float]: Best anchor cluster and similarity score.
+        """
+        best_anchor: str | None = None
+        best_similarity = 0.0
+
+        for anchor_id, reps in anchor_embeddings.items():
+            if not reps:
+                continue
+            # Find best match among this cluster's representatives
+            for rep in reps:
+                rep_vec = self._normalize_face(np.asarray(rep, dtype=np.float32))
+                sim = float(np.dot(face_vec, rep_vec))
+                if sim > best_similarity:
+                    best_similarity = sim
+                    best_anchor = anchor_id
 
         return best_anchor, best_similarity
 

@@ -56,7 +56,7 @@ class SpyClusterService:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
-    async def cluster_unclustered_identities(self, tenant_id: str):
+    async def cluster_unclustered_identities(self, tenant_id: str, job_id: str | None = None):
         self.calls.append(tenant_id)
         return type("Result", (), {"completed": 0, "total": 0})()
 

@@ -75,6 +75,21 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("tenants", Base.metadata),
         ]
         await conn.run_sync(Base.metadata.create_all, tables=tables)
+        # Create mv_identity_cluster_centroids as a regular table for SQLite
+        # (PostgreSQL uses a materialized view, but SQLite doesn't support those)
+        await conn.execute(
+            text(
+                """
+                CREATE TABLE IF NOT EXISTS mv_identity_cluster_centroids (
+                    cluster_id TEXT PRIMARY KEY,
+                    tenant_id TEXT NOT NULL,
+                    member_count INTEGER NOT NULL DEFAULT 0,
+                    centroid BLOB,
+                    refreshed_at TIMESTAMP
+                )
+                """
+            )
+        )
 
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
     async with session_factory() as session:

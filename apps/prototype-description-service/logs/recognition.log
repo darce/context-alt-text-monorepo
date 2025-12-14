@@ -336,3 +336,6 @@
 2025-12-13 19:24:04,032 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=16553a7e-6d99-4451-a273-5ecfef0aed4a target_cluster=dcd4a73e-2405-4d7f-8499-12fb39134af8 moved_count=2 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
 2025-12-13 19:24:11,212 INFO recognition.application.orchestration.cluster_service - [curation] MERGED source_cluster=a19d0127-824f-4c3d-a2fb-3dac1d753e4e target_cluster=2eea7b3d-85bb-48cf-9910-6546bcd01570 moved_count=3 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_merge
 2025-12-13 19:24:52,352 INFO recognition.application.orchestration.cluster_service - [curation] RENAMED cluster_id=19d9e8f9-3234-4d0d-a49f-6d27f84c697c old_label='None' new_label='Krista Fisher' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename
+2025-12-13 20:41:05,528 INFO db.startup - === Application Startup ===
+2025-12-13 20:41:05,529 INFO db.startup - Git: d86f60f (main)
+2025-12-13 20:41:05,529 INFO db.startup - Listening on http://127.0.0.1:8000

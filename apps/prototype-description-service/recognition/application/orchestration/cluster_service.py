@@ -350,12 +350,9 @@ class ClusterService:
         for cluster in existing_clusters:
             if cluster.id is None:
                 continue
-            
+
             # Identify user-labeled clusters for suggestion prioritization
-            is_user_labeled = (
-                cluster.user_confirmed
-                or (cluster.label and not cluster.label.startswith("cluster-"))
-            )
+            is_user_labeled = cluster.user_confirmed or (cluster.label and not cluster.label.startswith("cluster-"))
             if is_user_labeled:
                 labeled_cluster_ids.add(cluster.id)
 
@@ -364,7 +361,7 @@ class ClusterService:
                 representatives_by_cluster[cluster.id] = [
                     np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
                 ]
-        
+
         logger.info(
             "[clustering] Discovery inputs: %d clusters (%d labeled)",
             len(representatives_by_cluster),
@@ -843,7 +840,9 @@ class ClusterService:
             "[curation] REMOVED identity=%s from cluster=%s tenant_id=%s user_action=manual_remove",
             identity_id,
             cluster_id,
-            self.assignment_writer._members.tenant_id if hasattr(self.assignment_writer._members, "tenant_id") else "unknown",
+            self.assignment_writer._members.tenant_id
+            if hasattr(self.assignment_writer._members, "tenant_id")
+            else "unknown",
         )
 
         return True

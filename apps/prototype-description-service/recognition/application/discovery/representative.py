@@ -35,12 +35,15 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
         self,
         identities: Sequence[MediaIdentity],
         representatives_by_cluster: object,
+        labeled_cluster_ids: set[str] | None = None,
     ) -> list[AssignmentCandidate]:
         """Generate candidates by matching against cluster representatives.
 
         Args:
             identities: Identities to evaluate against representatives.
             representatives_by_cluster: Representative embeddings keyed by cluster.
+            labeled_cluster_ids: Set of cluster IDs that have user-provided labels.
+                               Used to prioritize labeled clusters for suggestions.
 
         Returns:
             list[AssignmentCandidate]: Candidates suitable for gate evaluation.
@@ -55,11 +58,13 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
             )
             return []
 
+        labeled_ids = labeled_cluster_ids or set()
         total_reps = sum(len(reps) for reps in representatives_by_cluster.values())
         logger.info(
-            "[RepresentativeDiscovery] Starting discovery: %d identities, %d clusters, %d total reps, threshold=%.2f",
+            "[RepresentativeDiscovery] Starting discovery: %d identities, %d clusters (%d labeled), %d total reps, threshold=%.2f",
             len(identities),
             len(representatives_by_cluster),
+            len(labeled_ids),
             total_reps,
             self.settings.similarity_threshold,
         )
@@ -69,7 +74,7 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
         best_similarities: list[tuple[str, str | None, float]] = []
         for identity in identities:
             face_vec = self._normalize_face(np.asarray(identity.embedding, dtype=np.float32))
-            best_cluster, best_sim = self._find_best_match(face_vec, representatives_by_cluster)
+            best_cluster, best_sim = self._find_best_match(face_vec, representatives_by_cluster, labeled_ids)
             best_similarities.append((identity.id, best_cluster, best_sim))
             if best_cluster and best_sim >= self.settings.similarity_threshold:
                 candidates.append(
@@ -109,28 +114,52 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
         self,
         face_vector: np.ndarray,
         representatives_by_cluster: dict[str, list[np.ndarray]],
+        labeled_cluster_ids: set[str],
     ) -> tuple[str | None, float]:
         """Identify the best matching cluster for a face embedding.
 
-        Args:
-            face_vector: Face embedding prepared for similarity calculations.
-            representatives_by_cluster: Representative embeddings grouped by cluster.
-
-        Returns:
-            tuple[UUID | None, float]: Best cluster identifier and similarity score.
-
+        Logic:
+        1. Find global best match (highest similarity).
+        2. Find best labeled match (highest similarity among labeled clusters).
+        3. If global best is HIGH CONFIDENCE (>= complete_link_min_floor): Use it (Auto-Accept).
+        4. Else (Suggestion Range): Prefer best LABELED match if available.
         """
         best_cluster: str | None = None
         best_similarity = 0.0
+
+        best_labeled_cluster: str | None = None
+        best_labeled_similarity = 0.0
 
         for cluster_id, representatives in representatives_by_cluster.items():
             for rep in representatives:
                 rep_vec = self._normalize_face(np.asarray(rep, dtype=np.float32))
                 similarity = float(np.dot(face_vector, rep_vec))
+                
+                # Update global best
                 if similarity > best_similarity:
                     best_similarity = similarity
                     best_cluster = cluster_id
+                
+                # Update labeled best
+                if cluster_id in labeled_cluster_ids:
+                    if similarity > best_labeled_similarity:
+                        best_labeled_similarity = similarity
+                        best_labeled_cluster = cluster_id
 
+        # Decision Logic
+        high_confidence_threshold = self.settings.complete_link_min_floor
+        
+        # 1. High Confidence -> Auto-Assign (Label doesn't matter)
+        if best_similarity >= high_confidence_threshold:
+            return best_cluster, best_similarity
+
+        # 2. Low Confidence (Suggestion) -> Prefer Labeled Cluster
+        if best_labeled_cluster and best_labeled_similarity > 0:
+            # If we have a labeled match, use it instead of the unlabeled one
+            # even if the unlabeled one score is higher (within suggestion range)
+            return best_labeled_cluster, best_labeled_similarity
+
+        # 3. No Labeled Match -> Return Unlabeled (or None if below threshold)
         return best_cluster, best_similarity
 
     def _normalize_face(self, embedding: np.ndarray) -> np.ndarray:

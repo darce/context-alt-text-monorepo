@@ -50,6 +50,19 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
 
         await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
+        # Check for existing pending suggestion to avoid unique constraint violations
+        existing_stmt = (
+            select(SuggestionModel)
+            .where(SuggestionModel.tenant_id == tenant_uuid)
+            .where(SuggestionModel.identity_id == identity_uuid)
+            .where(SuggestionModel.suggested_cluster_id == cluster_uuid)
+        )
+        existing_result = await self._session.execute(existing_stmt)
+        existing_suggestion = existing_result.scalar_one_or_none()
+
+        if existing_suggestion:
+            return self._to_domain(existing_suggestion)
+
         model = SuggestionModel(
             tenant_id=tenant_uuid,
             identity_id=identity_uuid,

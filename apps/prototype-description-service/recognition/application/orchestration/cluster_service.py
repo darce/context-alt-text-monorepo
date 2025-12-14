@@ -169,6 +169,7 @@ class ClusterService:
             metadata=decision.metadata,
             algorithm="hybrid",
             job_id=None,
+            media_id=getattr(decision.candidate.identity, "media_id", None),
         )
         if self.decision_store:
             with contextlib.suppress(Exception):
@@ -212,10 +213,15 @@ class ClusterService:
                 algorithm=algorithm_label,
             )
 
-    async def cluster_unclustered_identities(self, tenant_id: str):
+    async def cluster_unclustered_identities(self, tenant_id: str, job_id: str | None = None):
         """Cluster any identities not yet assigned to a cluster."""
-        logger.info("[clustering] cluster_unclustered_identities called with tenant_id=%s", tenant_id)
-        job_id = str(generate_id())
+        if job_id is None:
+            job_id = str(generate_id())
+        logger.info(
+            "[clustering] batch_start job_id=%s tenant_id=%s",
+            job_id,
+            tenant_id,
+        )
         started_at = datetime.now(tz=UTC)
 
         if self._session is None:
@@ -317,10 +323,13 @@ class ClusterService:
             for row in unclustered
         ]
 
+        # Log all media IDs in this batch
+        media_ids = [i.media_id for i in domain_identities]
         logger.info(
-            "[clustering] Starting clustering for %d unclustered identities, tenant=%s",
+            "[clustering] batch_processing job_id=%s count=%d media_ids=%s",
+            job_id,
             len(domain_identities),
-            tenant_id,
+            media_ids[:20] if len(media_ids) > 20 else media_ids,  # Limit to first 20 for log readability
         )
 
         # ============================================================
@@ -332,15 +341,35 @@ class ClusterService:
         logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
 
         # Build representatives_by_cluster: cluster_id -> list of representative embeddings
+        # We include ALL clusters (labeled and unlabeled) to ensure:
+        # 1. High-confidence matches to unlabeled clusters are Auto-Accepted (preventing duplicates).
+        # 2. Low-confidence matches to unlabeled clusters can be bypassed in favor of labeled suggestions.
         representatives_by_cluster: dict[str, list[np.ndarray]] = {}
+        labeled_cluster_ids: set[str] = set()
+
         for cluster in existing_clusters:
             if cluster.id is None:
                 continue
+            
+            # Identify user-labeled clusters for suggestion prioritization
+            is_user_labeled = (
+                cluster.user_confirmed
+                or (cluster.label and not cluster.label.startswith("cluster-"))
+            )
+            if is_user_labeled:
+                labeled_cluster_ids.add(cluster.id)
+
             reps = getattr(cluster, "representatives", []) or []
             if reps:
                 representatives_by_cluster[cluster.id] = [
                     np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
                 ]
+        
+        logger.info(
+            "[clustering] Discovery inputs: %d clusters (%d labeled)",
+            len(representatives_by_cluster),
+            len(labeled_cluster_ids),
+        )
 
         # Build centroids_by_cluster for CentroidDiscovery
         centroids_by_cluster: dict[str, np.ndarray] = {}
@@ -366,7 +395,11 @@ class ClusterService:
         # ============================================================
 
         # Phase 1: RepresentativeDiscovery - find candidates via representative matching
-        rep_candidates = await self.representative_discovery.discover(domain_identities, representatives_by_cluster)
+        rep_candidates = await self.representative_discovery.discover(
+            domain_identities,
+            representatives_by_cluster,
+            labeled_cluster_ids=labeled_cluster_ids,
+        )
         matched_ids = {c.identity.id for c in rep_candidates}
         remaining = [i for i in domain_identities if i.id not in matched_ids]
         logger.info(
@@ -426,8 +459,10 @@ class ClusterService:
                 accept_count += 1
                 accepted_ids.add(candidate.identity.id)
                 logger.info(
-                    "[clustering] ACCEPTED: identity %s assigned to cluster %s",
+                    "[clustering] ACCEPTED job_id=%s identity=%s media_id=%s cluster=%s",
+                    job_id,
                     candidate.identity.id,
+                    candidate.identity.media_id,
                     candidate.cluster_id,
                 )
             elif decision.outcome == AssignmentOutcome.SUGGEST:
@@ -435,8 +470,10 @@ class ClusterService:
                 suggest_count += 1
                 suggested_ids.add(candidate.identity.id)
                 logger.info(
-                    "[clustering] SUGGESTED: identity %s for cluster %s (confidence=%.2f, reason=%s)",
+                    "[clustering] SUGGESTED job_id=%s identity=%s media_id=%s cluster=%s confidence=%.2f reason=%s",
+                    job_id,
                     candidate.identity.id,
+                    candidate.identity.media_id,
                     candidate.cluster_id,
                     decision.suggestion_confidence or 0.0,
                     decision.rejection_reason,
@@ -445,8 +482,10 @@ class ClusterService:
                 reject_count += 1
                 rejected_ids.add(candidate.identity.id)
                 logger.info(
-                    "[clustering] REJECTED: identity %s for cluster %s (reason=%s)",
+                    "[clustering] REJECTED job_id=%s identity=%s media_id=%s cluster=%s reason=%s",
+                    job_id,
                     candidate.identity.id,
+                    candidate.identity.media_id,
                     candidate.cluster_id,
                     decision.rejection_reason,
                 )
@@ -486,8 +525,10 @@ class ClusterService:
                     )
                     clusters_created += 1
                     logger.info(
-                        "[clustering] Created new cluster with %d members",
+                        "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
+                        job_id,
                         len(members),
+                        [m.media_id for m in members],
                     )
 
         # Also persist new clusters from the initial GraphDiscovery pass
@@ -501,12 +542,15 @@ class ClusterService:
                 )
                 clusters_created += 1
                 logger.info(
-                    "[clustering] Created new cluster with %d members",
+                    "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
+                    job_id,
                     len(members),
+                    [m.media_id for m in members],
                 )
 
         logger.info(
-            "[clustering] COMPLETE: accepted=%d, suggested=%d, rejected=%d, new_clusters=%d",
+            "[clustering] batch_complete job_id=%s accepted=%d suggested=%d rejected=%d new_clusters=%d",
+            job_id,
             accept_count,
             suggest_count,
             reject_count,
@@ -522,6 +566,21 @@ class ClusterService:
         await self._session.commit()
         job_label = str(clustering_job.id)
         finished_at = clustering_job.completed_at or datetime.now(tz=UTC)
+        if self.logger:
+            clustering_job_report = BatchJobReport(
+                job_id=job_label,
+                algorithm="graph",  # or "incremental"
+                started_at=started_at,
+                completed_at=finished_at,
+                total_identities=len(domain_identities),
+                accept_count=accept_count,
+                suggest_count=suggest_count,
+                reject_count=reject_count,
+                clusters_created=clusters_created,
+                avg_similarity=None,
+            )
+            self.logger.log_batch_complete(clustering_job_report)
+
         return type(
             "ClusterJobResult",
             (),
@@ -558,10 +617,29 @@ class ClusterService:
         if not cluster or cluster.tenant_id.lower() != tenant_id.lower():
             return None
 
+        old_label = cluster.label
         cluster.label = label
         cluster.is_labeled = bool(label)
         cluster.user_confirmed = bool(label)
         updated = await self.assignment_writer._clusters.update(cluster)
+
+        # Log the rename event
+        if self.logger and old_label != label:
+            with contextlib.suppress(Exception):
+                self.logger.log_cluster_renamed(
+                    cluster_id=cluster_id,
+                    old_label=old_label,
+                    new_label=label,
+                    tenant_id=tenant_id,
+                )
+
+        logger.info(
+            "[curation] RENAMED cluster_id=%s old_label='%s' new_label='%s' tenant_id=%s user_action=manual_rename",
+            cluster_id,
+            old_label,
+            label,
+            tenant_id,
+        )
 
         # Recompute representatives/centroid if hooks exist (label changes can affect reps)
         recompute_reps = getattr(self.assignment_writer, "recompute_representatives", None)
@@ -617,9 +695,23 @@ class ClusterService:
             if callable(refresh_view):
                 await refresh_view()
 
-            if hasattr(self, "log_merge_audit"):
+            # Log the merge event
+            if self.logger:
                 with contextlib.suppress(Exception):
-                    await self.log_merge_audit(source_cluster_id, target_cluster_id)
+                    self.logger.log_cluster_merged(
+                        source_cluster_id=source_cluster_id,
+                        target_cluster_id=target_cluster_id,
+                        moved_count=moved,
+                        tenant_id=tenant_id,
+                    )
+
+            logger.info(
+                "[curation] MERGED source_cluster=%s target_cluster=%s moved_count=%d tenant_id=%s user_action=manual_merge",
+                source_cluster_id,
+                target_cluster_id,
+                moved,
+                tenant_id,
+            )
 
             # Ensure member_count reflects reassignment
             updated.member_count = len(await member_repo.get_by_cluster(target_cluster_id))
@@ -628,17 +720,6 @@ class ClusterService:
         # Session is already managed by the caller (FastAPI dependency)
         # so we don't need to start a new transaction here
         return await _merge()
-
-    async def log_merge_audit(self, source_id: str, target_id: str) -> None:  # pragma: no cover - override hook
-        """Optional audit hook; can be overridden or monkeypatched in tests."""
-        if self.logger:
-            self.logger.log_decision(
-                identity_id="merge",
-                cluster_id=target_id,
-                decision=DecisionType.ACCEPT,
-                reason=f"merge {source_id}->{target_id}",
-                metadata={"source_cluster_id": source_id, "target_cluster_id": target_id},
-            )
 
     @staticmethod
     def _is_outlier_cluster(cluster) -> bool:
@@ -714,6 +795,14 @@ class ClusterService:
         cluster.member_count += 1
         cluster = await cluster_repo.update(cluster)
 
+        logger.info(
+            "[curation] ASSIGNED identity=%s target_cluster=%s similarity=%.4f tenant_id=%s user_action=manual_assign",
+            identity_model.id,
+            target_cluster_id,
+            similarity,
+            tenant_id,
+        )
+
         recompute_reps = getattr(self.assignment_writer, "recompute_representatives", None)
         if callable(recompute_reps):
             await recompute_reps(target_cluster_id)
@@ -749,6 +838,13 @@ class ClusterService:
             if cluster and cluster.member_count > 0:
                 cluster.member_count -= 1
                 await cluster_repo.update(cluster)
+
+        logger.info(
+            "[curation] REMOVED identity=%s from cluster=%s tenant_id=%s user_action=manual_remove",
+            identity_id,
+            cluster_id,
+            self.assignment_writer._members.tenant_id if hasattr(self.assignment_writer._members, "tenant_id") else "unknown",
+        )
 
         return True
 
@@ -885,6 +981,26 @@ class ClusterService:
             len(new_cluster_ids),
             total_moved,
             remaining_count,
+        )
+
+        # Log the split event
+        if self.logger and new_cluster_ids:
+            with contextlib.suppress(Exception):
+                self.logger.log_cluster_split(
+                    original_cluster_id=cluster_id,
+                    new_cluster_ids=new_cluster_ids,
+                    moved_counts=moved_counts,
+                    tenant_id=original_cluster.tenant_id,
+                )
+
+        logger.info(
+            "[curation] SPLIT original_cluster=%s new_clusters=%s moved_counts=%s tenant_id=%s user_action=manual_split",
+            cluster_id,
+            new_cluster_ids,
+            moved_counts,
+            new_cluster_ids,
+            moved_counts,
+            original_cluster.tenant_id,
         )
 
         return new_cluster_ids, moved_counts

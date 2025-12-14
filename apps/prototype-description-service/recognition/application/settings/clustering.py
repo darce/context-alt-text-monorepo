@@ -10,12 +10,13 @@ from pydantic import BaseModel, ConfigDict, Field
 class ClusteringSettings(BaseModel):
     """Threshold configuration for discovery and assignment flows.
 
-    All fields are required in the final implementation; defaults here serve only
-    as scaffolding for early wiring. Implement environment-backed loading in the
-    next phase per instructions.
+    All thresholds are hardcoded defaults. Override by instantiating
+    with explicit values in code or config loaders.
     """
 
-    similarity_threshold: float = Field(default=0.85, description="Base similarity threshold for matching.")
+    model_config = ConfigDict(arbitrary_types_allowed=True)
+
+    similarity_threshold: float = Field(default=0.85, description="Discovery threshold for candidate matching.")
     complete_link_min_floor: float = Field(default=0.80, description="Minimum similarity any representative must meet.")
     complete_link_avg_threshold: float = Field(default=0.85, description="Average similarity across representatives.")
     min_representatives_for_maturity: int = Field(default=2, description="Minimum reps before auto-assignment.")
@@ -28,6 +29,9 @@ class ClusteringSettings(BaseModel):
         default=0.90, description="Confidence threshold for early-stage auto-assign."
     )
     adaptive_threshold_maturity_point: int = Field(default=5, description="Cluster count at which thresholds tighten.")
+    adaptive_relaxation_amount: float = Field(
+        default=0.05, description="Amount to relax thresholds when cluster is mature."
+    )
     hdbscan_max_batch_size: int | None = Field(
         default=None,
         description="Optional upper bound for HDBSCAN batch size.",
@@ -38,5 +42,3 @@ class ClusteringSettings(BaseModel):
     representative_diversity_threshold: float = Field(
         default=0.90, description="Maximum similarity allowed between representatives (lower adds diversity)."
     )
-
-    model_config = ConfigDict(arbitrary_types_allowed=True)

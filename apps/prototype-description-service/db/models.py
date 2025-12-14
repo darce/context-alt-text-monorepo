@@ -154,6 +154,15 @@ class IdentityCluster(Base):
     representatives: Mapped[list[IdentityClusterRepresentative]] = relationship(
         back_populates="cluster", cascade="all, delete-orphan"
     )
+    # Relationship to materialized view for centroid loading
+    centroid_data: Mapped[ClusterCentroid | None] = relationship(
+        "ClusterCentroid",
+        primaryjoin="IdentityCluster.id == ClusterCentroid.cluster_id",
+        foreign_keys="ClusterCentroid.cluster_id",
+        uselist=False,
+        viewonly=True,
+        lazy="joined",
+    )
 
     __table_args__ = (
         UniqueConstraint("tenant_id", "label", name="unique_tenant_identity_label"),

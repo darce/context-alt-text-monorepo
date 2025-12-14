@@ -222,6 +222,11 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     )
                 )
 
+        # Extract centroid from materialized view relationship if available
+        centroid = None
+        if hasattr(model, "centroid_data") and model.centroid_data is not None:
+            centroid = np.array(model.centroid_data.centroid, dtype=np.float32)
+
         return IdentityCluster(
             id=str(model.id) if model.id else None,
             tenant_id=str(model.tenant_id),
@@ -235,6 +240,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             clustering_algorithm=model.clustering_algorithm,
             user_confirmed=model.user_confirmed,
             representatives=domain_reps,
+            centroid=centroid,
         )
 
     def _to_domain_identity(self, model: MediaIdentity) -> DomainIdentity:

@@ -69,7 +69,7 @@ class JobService:
         """Queue clustering job."""
         job = await self.create_job(JobType.CLUSTERING, tenant_id=tenant_id)
         await self.start_job(job.id)
-        await self.cluster_service.cluster_unclustered_identities(tenant_id)
+        await self.cluster_service.cluster_unclustered_identities(tenant_id, job_id=job.id)
         await self.update_progress(job.id, completed=1, total=1)
         return await self.complete_job(job.id)
 
@@ -107,7 +107,7 @@ class JobService:
         try:
             if is_canceled(job.id):
                 return await self.fail_job(job.id, "canceled")
-            result = await self.cluster_service.cluster_unclustered_identities(tenant_id)
+            result = await self.cluster_service.cluster_unclustered_identities(tenant_id, job_id=job_id)
             completed = getattr(result, "completed", 1) or 1
             total = getattr(result, "total", completed) or completed
             job = await self.update_progress(job.id, completed=completed, total=total)

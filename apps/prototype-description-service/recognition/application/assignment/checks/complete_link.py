@@ -62,15 +62,41 @@ class CompleteLinkCheck(AssignmentCheck):
                 },
             )
 
+        # Fetch cluster metadata to determine if it is user-labeled
+        cluster = await self.cluster_repository.get_by_id(candidate.cluster_id)
+        is_unlabeled = False
+        if cluster:
+            is_unlabeled = (
+                not cluster.user_confirmed
+                and (not cluster.label or cluster.label.startswith("cluster-"))
+            )
+
+        # For Unlabeled clusters, we use the discovery threshold as the floor.
+        # This ensures that "Split Batches" behave like "Single Batches" (where graph clustering
+        # groups items at the lower threshold).
+        target_min_floor = (
+            self.settings.similarity_threshold if is_unlabeled 
+            else self.settings.complete_link_min_floor
+        )
+        # Average threshold also relaxed for unlabeled targets to encourage merging
+        target_avg_threshold = (
+            self.settings.similarity_threshold if is_unlabeled
+            else self.settings.complete_link_avg_threshold
+        )
+
         representatives = await self.cluster_repository.get_all_representatives(candidate.cluster_id)
         rep_count = len(representatives)
         if rep_count < 2:
+            # Singleton target: verify against the single representative
+            # For Unlabeled, simply passing discovery (limit) is enough
+            # For Labeled, we might want stricter check? But standard logic covers it.
             return CheckResult(
                 passed=True,
                 metadata={
                     "min_similarity": 1.0,
                     "avg_similarity": 1.0,
                     "representative_count": rep_count,
+                    "target_is_unlabeled": is_unlabeled,
                 },
             )
 
@@ -86,14 +112,35 @@ class CompleteLinkCheck(AssignmentCheck):
             "min_similarity": min_sim,
             "avg_similarity": avg_sim,
             "representative_count": rep_count,
+            "target_is_unlabeled": is_unlabeled,
+            "target_min_floor": target_min_floor,
         }
 
-        if min_sim < self.settings.complete_link_min_floor or avg_sim < self.settings.complete_link_avg_threshold:
+        if min_sim < target_min_floor or avg_sim < target_avg_threshold:
+            # ADAPTIVE LOGIC: If cluster is mature, relax thresholds (only applies to Labeled/Standard logic)
+            # Unlabeled logic is already floored to base threshold, so no relaxation needed
+            if not is_unlabeled:
+                is_mature = rep_count >= self.settings.adaptive_threshold_maturity_point
+                relaxation = self.settings.adaptive_relaxation_amount if is_mature else 0.0
+
+                adaptive_min = target_min_floor - relaxation
+                adaptive_avg = target_avg_threshold - relaxation
+
+                if min_sim >= adaptive_min and avg_sim >= adaptive_avg:
+                    metadata["adaptive_relaxation_applied"] = True
+                    metadata["relaxation_amount"] = relaxation
+                    return CheckResult(passed=True, metadata=metadata)
+
+            # FAIL:
+            # If Unlabeled: REJECT (don't suggest garbage matching to garbage).
+            # If Labeled: SUGGEST (ask user to confirm).
+            should_reject = True if is_unlabeled else False
+            
             return CheckResult(
                 passed=False,
                 is_fatal=True,
-                should_reject=False,
-                reason="complete-link similarity below threshold",
+                should_reject=should_reject,
+                reason=f"complete-link similarity below threshold (unlabeled={is_unlabeled})",
                 metadata=metadata,
             )
 

@@ -416,7 +416,19 @@ class ClusterService:
         )
 
         # Phase 3: GraphDiscovery - cluster remaining identities
-        graph_result = await self.graph_discovery.discover(remaining, anchor_embeddings)
+        # AUGMENT ANCHORS: Inject matched candidates from previous phases as additional anchors
+        # This ensures that "bridge" faces matched early can still link "hard" faces in the graph
+        augmented_anchors = (
+            {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
+        )
+
+        for candidate in rep_candidates + centroid_candidates:
+            if candidate.cluster_id and candidate.identity.embedding is not None:
+                augmented_anchors.setdefault(candidate.cluster_id, []).append(
+                    np.asarray(candidate.identity.embedding, dtype=np.float32)
+                )
+
+        graph_result = await self.graph_discovery.discover(remaining, augmented_anchors)
         graph_candidates = graph_result.candidates
         new_cluster_proposals = graph_result.new_clusters
         logger.info(

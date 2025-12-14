@@ -3,7 +3,7 @@
 
 **Date:** 2025-12-13
 **Version:** 4.2.6
-**Status:** Findings Captured
+**Status:** Updated 2025-12-13 21:40 — New Root Cause Identified
 
 ## Problem Description
 The user observed a non-deterministic behavior where clustering results differ based on batch size:
@@ -12,7 +12,77 @@ The user observed a non-deterministic behavior where clustering results differ b
 
 The goal is for the system to be deterministic regardless of batch splitting.
 
-## Root Cause Analysis
+---
+
+## Updated Root Cause Analysis (2025-12-13 21:44)
+
+> [!CAUTION]
+> **The original "Discarded Bridge" thesis was correct but FPS alone is insufficient.** The problem is the 0.85 discovery threshold — it's too strict for incremental matching even with diverse representatives.
+
+### Test Scenarios Compared
+
+| Scenario | Batch 1 | Batch 2 | Ryann Wiseman Cluster |
+|----------|---------|---------|----------------------|
+| **Single Batch** (19:16) | 75 + 106 identities in sequence | — | 39 + 46 = **85 members** (via Graph transitivity + manual merges) |
+| **Split Batch w/ FPS** (21:16) | 75 identities → 20 clusters | 162 identities → **0 matched**, 49 new clusters | Batch 2 identities NOT discovered as candidates |
+
+### Critical Evidence from Post-FPS Test
+
+After batch 1 created 20 clusters with FPS-diverse representatives:
+
+```log
+# Batch 2: RepresentativeDiscovery found 0 matches despite 16 clusters with 39 reps
+[RepresentativeDiscovery] NO MATCH: best_sim=0.5648 (threshold=0.85)
+[RepresentativeDiscovery] NO MATCH: best_sim=0.6557 (threshold=0.85)
+[RepresentativeDiscovery] NO MATCH: best_sim=0.2664 (threshold=0.85)
+[RepresentativeDiscovery] Completed: 0 candidates from 162 identities
+```
+
+### The Real Problem: Discovery Threshold ≠ Graph Threshold
+
+**Why single-batch works:**
+- GraphDiscovery sees ALL 181 identities simultaneously
+- Builds transitive chains: `Face_A (0.85) ↔ Face_B (0.85) ↔ Face_C`
+- Even if `Sim(A,C) = 0.55`, they cluster together via transitivity
+
+**Why split-batch fails:**
+- Batch 2 identities have 0.55-0.65 similarity to Batch 1 representatives
+- RepresentativeDiscovery requires **direct** 0.85 match
+- **No transitivity** — the batch 2 faces that would bridge are not yet in the graph
+- Result: 0 candidates discovered, 49 new clusters created
+
+### Why FPS Didn't Fix It
+
+FPS ensures diverse representatives are selected, but:
+- The **best-matching representative** still only scores 0.65
+- This is a pose/angle issue, not a representative diversity issue
+- Even the most "bridge-like" face from batch 1 is too different from batch 2 faces to hit 0.85
+
+---
+
+## Revised Remediation Strategy
+
+### Phase A: FPS Diversity Selection ✅ DONE
+*Confirmed: correctly selecting diverse representatives. Not sufficient alone.*
+
+### Phase B: Two-Tier Discovery Threshold (RECOMMENDED)
+Separate the discovery threshold from the assignment threshold:
+
+1. **Discovery Threshold**: 0.60 — Find potential candidates
+2. **Gate Threshold**: 0.85 — Require high avg similarity to existing members
+
+This allows profile views to "discover" a cluster, then be validated by member-level checks.
+
+### Phase C: Anchor Injection (Graph Retrospection)
+Inject existing representatives into the batch graph so transitivity works across batches:
+`New_Face_ProfileView` ↔ `New_Face_Intermediate` ↔ `Anchor_Rep_Frontal`
+
+### Phase D: Adaptive Threshold by Pose
+Lower similarity threshold for high-pose-angle faces based on InsightFace pose metadata.
+
+---
+
+## Original Root Cause Analysis (Preserved)
 
 ### 1. The Discarded Bridge (The Core Issue)
 The inconsistency in the 50x2 split batch scenario is caused by the **loss of critical "bridge" faces** during the persistence of the first batch.

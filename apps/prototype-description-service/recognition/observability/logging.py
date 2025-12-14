@@ -8,7 +8,12 @@ import logging
 from datetime import UTC, datetime
 from typing import Any
 
-from recognition.observability.decisions import DecisionLog, DecisionType
+from recognition.observability.decisions import (
+    CurationEventLog,
+    CurationEventType,
+    DecisionLog,
+    DecisionType,
+)
 from recognition.observability.reports import BatchJobReport
 
 
@@ -34,6 +39,7 @@ class ClusteringLogger:
         algorithm: str | None = None,
         job_id: str | None = None,
         timestamp: datetime | None = None,
+        media_id: str | None = None,
     ) -> DecisionLog:
         """Record a single assignment decision for observability."""
         ts = timestamp or datetime.now(tz=UTC)
@@ -49,6 +55,7 @@ class ClusteringLogger:
             "decision",
             extra={
                 "identity_id": str(identity_id),
+                "media_id": str(media_id) if media_id else None,
                 "cluster_id": str(cluster_id) if cluster_id else None,
                 "decision": decision.value,
                 "similarity": similarity,
@@ -103,3 +110,137 @@ class ClusteringLogger:
                 "payload": report.to_json(),
             },
         )
+
+    # ========================================================================
+    # USER CURATION EVENT LOGGING
+    # ========================================================================
+
+    def log_cluster_renamed(
+        self,
+        cluster_id: str,
+        old_label: str | None,
+        new_label: str | None,
+        tenant_id: str,
+    ) -> CurationEventLog:
+        """Record a cluster label change.
+
+        Args:
+            cluster_id: The cluster being renamed.
+            old_label: Previous label (None if unlabeled).
+            new_label: New label (None if cleared).
+            tenant_id: Tenant performing the action.
+
+        Returns:
+            CurationEventLog: Structured log record.
+        """
+        ts = datetime.now(tz=UTC)
+        details = {"old_label": old_label, "new_label": new_label}
+        event_log = CurationEventLog(
+            event_type=CurationEventType.RENAME,
+            cluster_id=cluster_id,
+            tenant_id=tenant_id,
+            timestamp=ts,
+            details=details,
+        )
+        self.logger.info(
+            "curation_event",
+            extra={
+                "event_type": CurationEventType.RENAME.value,
+                "cluster_id": cluster_id,
+                "tenant_id": tenant_id,
+                "old_label": old_label,
+                "new_label": new_label,
+                "timestamp": ts.isoformat(),
+            },
+        )
+        return event_log
+
+    def log_cluster_merged(
+        self,
+        source_cluster_id: str,
+        target_cluster_id: str,
+        moved_count: int,
+        tenant_id: str,
+    ) -> CurationEventLog:
+        """Record a cluster merge operation.
+
+        Args:
+            source_cluster_id: The cluster being merged (will be deleted).
+            target_cluster_id: The cluster receiving members.
+            moved_count: Number of members moved.
+            tenant_id: Tenant performing the action.
+
+        Returns:
+            CurationEventLog: Structured log record.
+        """
+        ts = datetime.now(tz=UTC)
+        details = {
+            "source_cluster_id": source_cluster_id,
+            "target_cluster_id": target_cluster_id,
+            "moved_count": moved_count,
+        }
+        event_log = CurationEventLog(
+            event_type=CurationEventType.MERGE,
+            cluster_id=target_cluster_id,
+            tenant_id=tenant_id,
+            timestamp=ts,
+            details=details,
+        )
+        self.logger.info(
+            "curation_event",
+            extra={
+                "event_type": CurationEventType.MERGE.value,
+                "source_cluster_id": source_cluster_id,
+                "target_cluster_id": target_cluster_id,
+                "moved_count": moved_count,
+                "tenant_id": tenant_id,
+                "timestamp": ts.isoformat(),
+            },
+        )
+        return event_log
+
+    def log_cluster_split(
+        self,
+        original_cluster_id: str,
+        new_cluster_ids: list[str],
+        moved_counts: list[int],
+        tenant_id: str,
+    ) -> CurationEventLog:
+        """Record a cluster split operation.
+
+        Args:
+            original_cluster_id: The cluster being split.
+            new_cluster_ids: IDs of newly created clusters.
+            moved_counts: Number of members moved to each new cluster.
+            tenant_id: Tenant performing the action.
+
+        Returns:
+            CurationEventLog: Structured log record.
+        """
+        ts = datetime.now(tz=UTC)
+        details = {
+            "original_cluster_id": original_cluster_id,
+            "new_cluster_ids": new_cluster_ids,
+            "moved_counts": moved_counts,
+            "total_moved": sum(moved_counts),
+        }
+        event_log = CurationEventLog(
+            event_type=CurationEventType.SPLIT,
+            cluster_id=original_cluster_id,
+            tenant_id=tenant_id,
+            timestamp=ts,
+            details=details,
+        )
+        self.logger.info(
+            "curation_event",
+            extra={
+                "event_type": CurationEventType.SPLIT.value,
+                "original_cluster_id": original_cluster_id,
+                "new_cluster_ids": new_cluster_ids,
+                "moved_counts": moved_counts,
+                "total_moved": sum(moved_counts),
+                "tenant_id": tenant_id,
+                "timestamp": ts.isoformat(),
+            },
+        )
+        return event_log

@@ -18,10 +18,9 @@ from sqlalchemy import func, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, MediaIdentity
-from db.session import get_session
-from db.tenant_context import ensure_tenant_exists, set_tenant_context
+from db.tenant_context import ensure_tenant_exists
 from recognition.application.settings import ClusteringSettings
-from recognition.interface_adapters.http.dependencies import get_settings, require_auth
+from recognition.interface_adapters.http.dependencies import get_session, get_settings, require_auth
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 
 router = APIRouter(tags=["training"], dependencies=[Depends(require_auth)])
@@ -83,7 +82,6 @@ async def get_training_stage(
     """
     tenant_uuid = uuid.UUID(tenant_id)
     await ensure_tenant_exists(session, tenant_uuid)
-    await set_tenant_context(session, tenant_uuid)
 
     # Count labeled clusters (excluding auto-generated labels like "cluster-xxx")
     labeled_stmt = select(func.count(IdentityCluster.id)).where(

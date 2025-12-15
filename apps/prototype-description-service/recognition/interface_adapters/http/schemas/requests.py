@@ -102,6 +102,19 @@ class AssignOutlierRequest(BaseModel):
         return _validate_uuid(v)
 
 
+class CreateClusterForIdentityRequest(BaseModel):
+    """Request to create a new labeled cluster containing a single identity."""
+
+    tenant_id: str
+    identity_id: str
+    label: str
+
+    @field_validator("tenant_id", "identity_id")
+    @classmethod
+    def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class SuggestionActionRequest(BaseModel):
     """Request to act on a suggestion."""
 
@@ -162,6 +175,7 @@ __all__ = [
     "AnalyzeRequest",
     "ClusteringJobRequest",
     "AssignOutlierRequest",
+    "CreateClusterForIdentityRequest",
     "MergeClusterRequest",
     "PatchClusterRequest",
     "ReassignIdentityRequest",

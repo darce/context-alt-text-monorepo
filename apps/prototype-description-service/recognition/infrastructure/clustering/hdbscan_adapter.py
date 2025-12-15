@@ -20,7 +20,7 @@ class HdbscanGraphAlgorithm(GraphAlgorithm):
         min_cluster_size: int = 2,
         min_samples: int = 1,
         metric: str = "euclidean",
-        cluster_selection_epsilon: float = 0.12,
+        cluster_selection_epsilon: float = 0.55,  # sqrt(2*(1-0.85))
     ) -> None:
         """Initialize the HDBSCAN algorithm parameters.
 

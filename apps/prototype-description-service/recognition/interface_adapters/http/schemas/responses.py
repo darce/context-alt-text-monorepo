@@ -145,6 +145,20 @@ class ClusteringJobStatusResponse(JobStatusResponse):
     total_identities_clustered: int
 
 
+class CreateClusterForIdentityResponse(BaseModel):
+    """Response after creating a new cluster for a single identity."""
+
+    cluster_id: str
+    label: str
+    identity_id: str
+    message: str
+
+    @field_validator("cluster_id", "identity_id")
+    @classmethod
+    def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class HealthResponse(BaseModel):
     """Recognition service health response."""
 
@@ -183,6 +197,7 @@ __all__ = [
     "BboxResponse",
     "ClusterResponse",
     "ClusteringJobStatusResponse",
+    "CreateClusterForIdentityResponse",
     "HealthResponse",
     "IdentityResponse",
     "IdentitySuggestionsResponse",

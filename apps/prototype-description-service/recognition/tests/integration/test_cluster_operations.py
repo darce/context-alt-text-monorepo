@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from db.models import MediaIdentity as MediaIdentityModel
 from recognition.domain.cluster import IdentityCluster
 from recognition.interface_adapters.http import dependencies
 
@@ -138,3 +139,47 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
 
     assert recompute_calls["reps"] >= 1
     assert recompute_calls["centroid"] >= 1
+
+
+@pytest.mark.asyncio
+async def test_create_cluster_for_identity_creates_labeled_cluster_with_member_and_representative(
+    db_session, tenant
+) -> None:
+    """Manual create should produce a labeled, confirmed singleton cluster with membership and representatives."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer._clusters
+    member_repo = cluster_service.assignment_writer._members
+
+    embedding = [0.0] * 512
+    embedding[0] = 1.0
+    identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=201,
+        media_url="http://example.test/201.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    db_session.add(identity)
+    await db_session.flush()
+
+    cluster = await cluster_service.create_cluster_for_identity(
+        identity_id=str(identity.id),
+        label="Manual Person",
+        tenant_id=str(tenant.id),
+    )
+
+    assert cluster.id is not None
+    assert cluster.label == "Manual Person"
+    assert cluster.is_labeled is True
+    assert cluster.user_confirmed is True
+    assert cluster.representative_identity_id == str(identity.id)
+
+    members = await member_repo.get_by_cluster(cluster.id)
+    assert len(members) == 1
+    assert members[0].identity_id == str(identity.id)
+
+    assert await cluster_repo.get_representative_count(cluster.id) >= 1

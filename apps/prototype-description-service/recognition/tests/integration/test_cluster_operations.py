@@ -183,3 +183,44 @@ async def test_create_cluster_for_identity_creates_labeled_cluster_with_member_a
     assert members[0].identity_id == str(identity.id)
 
     assert await cluster_repo.get_representative_count(cluster.id) >= 1
+
+
+@pytest.mark.asyncio
+async def test_cluster_unclustered_identities_refreshes_centroids_between_chunks(
+    db_session, tenant, monkeypatch
+) -> None:
+    """Chunked clustering should refresh centroids view so later chunks can use centroid discovery."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    assignment_writer = cluster_service.assignment_writer
+
+    refresh_calls = {"count": 0}
+
+    async def fake_refresh() -> None:
+        refresh_calls["count"] += 1
+
+    monkeypatch.setattr(assignment_writer, "refresh_centroids_view", fake_refresh, raising=True)
+
+    identities: list[MediaIdentityModel] = []
+    for idx in range(6):  # 2 chunks at cold start: 5 + 1
+        embedding = [0.0] * 512
+        embedding[idx % 512] = 1.0
+        identities.append(
+            MediaIdentityModel(
+                tenant_id=tenant.id,
+                media_id=300 + idx,
+                media_url=f"http://example.test/{300 + idx}.jpg",
+                bbox_x=0,
+                bbox_y=0,
+                bbox_width=1,
+                bbox_height=1,
+                confidence=0.99,
+                embedding=embedding,
+            )
+        )
+    db_session.add_all(identities)
+    await db_session.commit()
+
+    await cluster_service.cluster_unclustered_identities(str(tenant.id))
+
+    # At least once between chunks + once at the end.
+    assert refresh_calls["count"] >= 2

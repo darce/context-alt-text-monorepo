@@ -112,6 +112,8 @@ sequenceDiagram
             Cluster->>DB: UPDATE identities SET cluster_id
             Cluster->>DB: INSERT representatives + centroid
         end
+
+        Cluster->>DB: REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids
     end
     
     Cluster-->>API: ClusteringResult

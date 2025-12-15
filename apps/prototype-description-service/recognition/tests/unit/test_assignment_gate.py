@@ -51,6 +51,9 @@ class NoopRepository(ClusterRepository):
     async def get_member_embeddings(self, cluster_id):
         raise NotImplementedError
 
+    async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
+        raise NotImplementedError
+
     async def save_cluster(self, cluster):
         raise NotImplementedError
 
@@ -58,6 +61,9 @@ class NoopRepository(ClusterRepository):
         raise NotImplementedError
 
     async def add_representative(self, representative):
+        raise NotImplementedError
+
+    async def clear_representatives(self, cluster_id: str) -> None:
         raise NotImplementedError
 
     async def count_labeled(self) -> int:

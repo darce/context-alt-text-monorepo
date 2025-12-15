@@ -63,9 +63,17 @@ class ClusterRepository(Protocol):
 
     async def get_member_embeddings(self, cluster_id: str) -> Sequence[Any]: ...
 
+    async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:
+        """Fetch identities that are members of a cluster."""
+        ...
+
     async def assign_identity_to_cluster(self, identity: MediaIdentity, cluster_id: str) -> None: ...
 
     async def add_representative(self, representative: ClusterRepresentative) -> None: ...
+
+    async def clear_representatives(self, cluster_id: str) -> None:
+        """Remove all stored representatives for a cluster."""
+        ...
 
     async def count_labeled(self) -> int:
         """Count clusters with user-provided labels (not auto-generated)."""

@@ -7,11 +7,13 @@ import uuid
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
+import numpy as np
 import pytest
 
 from db.models import Tenant
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
     SqlAlchemyMemberRepository,
@@ -186,3 +188,37 @@ async def test_get_by_tenant_filters_other_tenants(db_session, tenant) -> None:
     clusters = await repo.get_by_tenant(str(tenant.id), limit=10, offset=0)
 
     assert [c.label for c in clusters] == ["Mine"]
+
+
+@pytest.mark.asyncio
+async def test_clear_representatives_removes_all(db_session, tenant) -> None:
+    """clear_representatives should remove all representative rows for the cluster."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="With reps",
+            is_labeled=False,
+            member_count=1,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+    identity_id = str(uuid.uuid4())
+    await member_repo.add_member(cluster.id, identity_id=identity_id, similarity=0.92)
+
+    rep = ClusterRepresentative(
+        id=str(uuid.uuid4()),
+        cluster_id=cluster.id,
+        identity_id=identity_id,
+        embedding=np.ones(512, dtype=np.float32),
+        created_at=datetime.now(tz=UTC),
+        tenant_id=str(tenant.id),
+    )
+    await cluster_repo.add_representative(rep)
+    assert await cluster_repo.get_representative_count(cluster.id) == 1
+
+    await cluster_repo.clear_representatives(cluster.id)
+    assert await cluster_repo.get_representative_count(cluster.id) == 0

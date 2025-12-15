@@ -180,6 +180,42 @@ class AssignmentWriter:
 
         return cast(np.ndarray, mean_vector)
 
+    async def recompute_representatives(self, cluster_id: str) -> None:
+        """Recompute cluster representatives using FPS for diversity."""
+        cluster = await self._clusters.get_by_id(cluster_id)
+        if not cluster:
+            raise ClusterNotFoundError(cluster_id)
+
+        # Clear all stored representatives first to avoid stale/incremental drift.
+        await self._clusters.clear_representatives(cluster_id)
+
+        identities = list(await self._clusters.get_member_identities(cluster_id))
+        identities = [identity for identity in identities if identity.embedding is not None]
+        if not identities:
+            cluster.representative_identity_id = None
+            await self._clusters.update(cluster)
+            return
+
+        selected = _select_diverse_representatives(
+            identities,
+            self._settings.max_representatives_per_cluster,
+        )
+
+        # Promote the first selected rep as the cluster "primary" representative.
+        cluster.representative_identity_id = selected[0].id
+        await self._clusters.update(cluster)
+
+        for identity in selected:
+            rep = ClusterRepresentative(
+                id=str(uuid.uuid4()),
+                cluster_id=cluster_id,
+                identity_id=identity.id,
+                embedding=identity.embedding,
+                created_at=datetime.now(tz=UTC),
+                tenant_id=identity.tenant_id,
+            )
+            await self._clusters.add_representative(rep)
+
     async def persist_new_cluster(
         self,
         tenant_id: str,

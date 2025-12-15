@@ -23,6 +23,7 @@ from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.schemas.requests import (
     AssignOutlierRequest,
     ClusteringJobRequest,
+    CreateClusterForIdentityRequest,
     MergeClusterRequest,
     PatchClusterRequest,
     ReassignIdentityRequest,
@@ -31,6 +32,7 @@ from recognition.interface_adapters.http.schemas.requests import (
 from recognition.interface_adapters.http.schemas.responses import (
     ClusteringJobStatusResponse,
     ClusterResponse,
+    CreateClusterForIdentityResponse,
     JobProgressResponse,
     JobStatusResponse,
     ReassignIdentityResponse,
@@ -120,6 +122,39 @@ async def update_cluster(
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
     return cluster
+
+
+@router.post("/clusters/create-for-identity", response_model=CreateClusterForIdentityResponse)
+async def create_cluster_for_identity(
+    request: CreateClusterForIdentityRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+) -> CreateClusterForIdentityResponse:
+    """Create a new labeled cluster for a single identity."""
+    validate_entity_id(request.identity_id, field_name="identity_id")
+    label = validate_label(request.label)
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    try:
+        cluster = await cluster_service.create_cluster_for_identity(
+            identity_id=request.identity_id,
+            label=label,
+            tenant_id=request.tenant_id,
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc
+
+    if not cluster or not cluster.id:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Cluster creation failed")
+
+    return CreateClusterForIdentityResponse(
+        cluster_id=cluster.id,
+        label=cluster.label or label,
+        identity_id=request.identity_id,
+        message="Cluster created",
+    )
 
 
 @router.post("/clusters/{cluster_id}/merge", response_model=ClusterResponse)

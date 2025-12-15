@@ -332,199 +332,199 @@ class ClusterService:
             media_ids[:20] if len(media_ids) > 20 else media_ids,  # Limit to first 20 for log readability
         )
 
-        # ============================================================
-        # Gather cluster data for discovery algorithms
-        # ============================================================
+        total_identities = len(domain_identities)
+        clustering_job.total_identities = total_identities
+        clustering_job.processed_identities = 0
+        clustering_job.progress = 0.0
+        await self._session.flush()
 
-        # Get existing clusters with their representatives for RepresentativeDiscovery
-        existing_clusters = await self.assignment_writer._clusters.get_by_tenant(str(tenant_id), limit=1000, offset=0)
-        logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
+        # Process higher-confidence faces first to seed good representatives early.
+        domain_identities.sort(key=lambda identity: identity.confidence, reverse=True)
 
-        # Build representatives_by_cluster: cluster_id -> list of representative embeddings
-        # We include ALL clusters (labeled and unlabeled) to ensure:
-        # 1. High-confidence matches to unlabeled clusters are Auto-Accepted (preventing duplicates).
-        # 2. Low-confidence matches to unlabeled clusters can be bypassed in favor of labeled suggestions.
-        representatives_by_cluster: dict[str, list[np.ndarray]] = {}
-        labeled_cluster_ids: set[str] = set()
-
-        for cluster in existing_clusters:
-            if cluster.id is None:
-                continue
-
-            # Identify user-labeled clusters for suggestion prioritization
-            is_user_labeled = cluster.user_confirmed or (cluster.label and not cluster.label.startswith("cluster-"))
-            if is_user_labeled:
-                labeled_cluster_ids.add(cluster.id)
-
-            reps = getattr(cluster, "representatives", []) or []
-            if reps:
-                representatives_by_cluster[cluster.id] = [
-                    np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
-                ]
-
-        logger.info(
-            "[clustering] Discovery inputs: %d clusters (%d labeled)",
-            len(representatives_by_cluster),
-            len(labeled_cluster_ids),
-        )
-
-        # Build centroids_by_cluster for CentroidDiscovery
-        centroids_by_cluster: dict[str, np.ndarray] = {}
-        for cluster in existing_clusters:
-            if cluster.id is None:
-                continue
-            centroid = getattr(cluster, "centroid", None)
-            if centroid is not None:
-                centroids_by_cluster[cluster.id] = np.array(centroid, dtype=np.float32)
-
-        # For GraphDiscovery, we can use representatives as anchors
-        anchor_embeddings = representatives_by_cluster
-
-        logger.info(
-            "[clustering] Discovery inputs: %d clusters with representatives, %d with centroids",
-            len(representatives_by_cluster),
-            len(centroids_by_cluster),
-        )
-
-        # ============================================================
-        # UNIFIED PIPELINE: Discovery -> Gate -> Writer
-        # All candidates flow through AssignmentGate for consistent validation
-        # ============================================================
-
-        # Phase 1: RepresentativeDiscovery - find candidates via representative matching
-        rep_candidates = await self.representative_discovery.discover(
-            domain_identities,
-            representatives_by_cluster,
-            labeled_cluster_ids=labeled_cluster_ids,
-        )
-        matched_ids = {c.identity.id for c in rep_candidates}
-        remaining = [i for i in domain_identities if i.id not in matched_ids]
-        logger.info(
-            "[clustering] RepresentativeDiscovery: %d candidates, %d remaining",
-            len(rep_candidates),
-            len(remaining),
-        )
-
-        # Phase 2: CentroidDiscovery - find candidates via centroid matching
-        centroid_candidates = await self.centroid_discovery.discover(remaining, centroids_by_cluster)
-        centroid_matched_ids = {c.identity.id for c in centroid_candidates}
-        remaining = [i for i in remaining if i.id not in centroid_matched_ids]
-        logger.info(
-            "[clustering] CentroidDiscovery: %d candidates, %d remaining",
-            len(centroid_candidates),
-            len(remaining),
-        )
-
-        # Phase 3: GraphDiscovery - cluster remaining identities
-        # AUGMENT ANCHORS: Inject matched candidates from previous phases as additional anchors
-        # This ensures that "bridge" faces matched early can still link "hard" faces in the graph
-        augmented_anchors = (
-            {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
-        )
-
-        for candidate in rep_candidates + centroid_candidates:
-            if candidate.cluster_id and candidate.identity.embedding is not None:
-                augmented_anchors.setdefault(candidate.cluster_id, []).append(
-                    np.asarray(candidate.identity.embedding, dtype=np.float32)
-                )
-
-        graph_result = await self.graph_discovery.discover(remaining, augmented_anchors)
-        graph_candidates = graph_result.candidates
-        new_cluster_proposals = graph_result.new_clusters
-        logger.info(
-            "[clustering] GraphDiscovery: %d candidates, %d new cluster proposals",
-            len(graph_candidates),
-            len(new_cluster_proposals),
-        )
-
-        # Combine ALL candidates from all discovery methods
-        all_candidates = rep_candidates + centroid_candidates + graph_candidates
-        logger.info("[clustering] Total candidates to evaluate through gate: %d", len(all_candidates))
-
-        # ============================================================
-        # GATE EVALUATION: Every candidate goes through AssignmentGate
-        # This is THE ONLY PATH to assignment - ensures consistent validation
-        # ============================================================
         accept_count = 0
         suggest_count = 0
         reject_count = 0
-        accepted_ids = set()
-        suggested_ids = set()
-        rejected_ids = set()
+        clusters_created = 0
+        processed = 0
+        remaining_identities = list(domain_identities)
 
-        for candidate in all_candidates:
-            decision = await self.gate.evaluate(candidate)
+        while remaining_identities:
+            chunk_size = self._get_chunk_size(processed)
+            chunk = remaining_identities[:chunk_size]
+            remaining_identities = remaining_identities[chunk_size:]
+
             logger.info(
-                "[clustering] Gate decision for identity %s -> cluster %s: %s (checks passed: %s, failed: %s)",
-                candidate.identity.id,
-                candidate.cluster_id,
-                decision.outcome.value,
-                decision.checks_passed,
-                decision.checks_failed,
+                "[clustering] chunk_processing job_id=%s processed=%d/%d chunk_size=%d",
+                job_id,
+                processed,
+                total_identities,
+                len(chunk),
             )
 
-            if decision.outcome == AssignmentOutcome.ACCEPT:
-                await self.assignment_writer.persist_assignment(decision)
-                accept_count += 1
-                accepted_ids.add(candidate.identity.id)
+            # ============================================================
+            # Gather cluster data for discovery algorithms (refresh each chunk)
+            # ============================================================
+            existing_clusters = await self.assignment_writer._clusters.get_by_tenant(
+                str(tenant_id), limit=1000, offset=0
+            )
+            logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
+
+            representatives_by_cluster: dict[str, list[np.ndarray]] = {}
+            labeled_cluster_ids: set[str] = set()
+
+            for cluster in existing_clusters:
+                if cluster.id is None:
+                    continue
+
+                is_user_labeled = cluster.user_confirmed or (cluster.label and not cluster.label.startswith("cluster-"))
+                if is_user_labeled:
+                    labeled_cluster_ids.add(cluster.id)
+
+                reps = getattr(cluster, "representatives", []) or []
+                if reps:
+                    representatives_by_cluster[cluster.id] = [
+                        np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
+                    ]
+
+            centroids_by_cluster: dict[str, np.ndarray] = {}
+            for cluster in existing_clusters:
+                if cluster.id is None:
+                    continue
+                centroid = getattr(cluster, "centroid", None)
+                if centroid is not None:
+                    centroids_by_cluster[cluster.id] = np.array(centroid, dtype=np.float32)
+
+            anchor_embeddings = representatives_by_cluster
+
+            # ============================================================
+            # UNIFIED PIPELINE (chunked): Discovery -> Gate -> Writer
+            # ============================================================
+            rep_candidates = await self.representative_discovery.discover(
+                chunk,
+                representatives_by_cluster,
+                labeled_cluster_ids=labeled_cluster_ids,
+            )
+            matched_ids = {c.identity.id for c in rep_candidates}
+            chunk_remaining = [i for i in chunk if i.id not in matched_ids]
+            logger.info(
+                "[clustering] RepresentativeDiscovery: %d candidates, %d remaining",
+                len(rep_candidates),
+                len(chunk_remaining),
+            )
+
+            centroid_candidates = await self.centroid_discovery.discover(chunk_remaining, centroids_by_cluster)
+            centroid_matched_ids = {c.identity.id for c in centroid_candidates}
+            chunk_remaining = [i for i in chunk_remaining if i.id not in centroid_matched_ids]
+            logger.info(
+                "[clustering] CentroidDiscovery: %d candidates, %d remaining",
+                len(centroid_candidates),
+                len(chunk_remaining),
+            )
+
+            augmented_anchors = (
+                {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
+            )
+            for candidate in rep_candidates + centroid_candidates:
+                if candidate.cluster_id and candidate.identity.embedding is not None:
+                    augmented_anchors.setdefault(candidate.cluster_id, []).append(
+                        np.asarray(candidate.identity.embedding, dtype=np.float32)
+                    )
+
+            graph_result = await self.graph_discovery.discover(chunk_remaining, augmented_anchors)
+            graph_candidates = graph_result.candidates
+            new_cluster_proposals = graph_result.new_clusters
+            logger.info(
+                "[clustering] GraphDiscovery: %d candidates, %d new cluster proposals",
+                len(graph_candidates),
+                len(new_cluster_proposals),
+            )
+
+            all_candidates = rep_candidates + centroid_candidates + graph_candidates
+            logger.info("[clustering] Total candidates to evaluate through gate: %d", len(all_candidates))
+
+            accepted_ids: set[str] = set()
+            suggested_ids: set[str] = set()
+            rejected_ids: set[str] = set()
+
+            for candidate in all_candidates:
+                decision = await self.gate.evaluate(candidate)
                 logger.info(
-                    "[clustering] ACCEPTED job_id=%s identity=%s media_id=%s cluster=%s",
-                    job_id,
+                    "[clustering] Gate decision for identity %s -> cluster %s: %s (checks passed: %s, failed: %s)",
                     candidate.identity.id,
-                    candidate.identity.media_id,
                     candidate.cluster_id,
-                )
-            elif decision.outcome == AssignmentOutcome.SUGGEST:
-                await self.suggestion_service.create(candidate, decision.suggestion_confidence)
-                suggest_count += 1
-                suggested_ids.add(candidate.identity.id)
-                logger.info(
-                    "[clustering] SUGGESTED job_id=%s identity=%s media_id=%s cluster=%s confidence=%.2f reason=%s",
-                    job_id,
-                    candidate.identity.id,
-                    candidate.identity.media_id,
-                    candidate.cluster_id,
-                    decision.suggestion_confidence or 0.0,
-                    decision.rejection_reason,
-                )
-            else:  # REJECT
-                reject_count += 1
-                rejected_ids.add(candidate.identity.id)
-                logger.info(
-                    "[clustering] REJECTED job_id=%s identity=%s media_id=%s cluster=%s reason=%s",
-                    job_id,
-                    candidate.identity.id,
-                    candidate.identity.media_id,
-                    candidate.cluster_id,
-                    decision.rejection_reason,
+                    decision.outcome.value,
+                    decision.checks_passed,
+                    decision.checks_failed,
                 )
 
-        # ============================================================
-        # NEW CLUSTER CREATION: Form clusters from unassigned identities
-        # ============================================================
-        # Collect identities that need new clusters:
-        # 1. Identities that had no candidates (not in any discovery result)
-        # 2. Identities that were rejected by the gate
-        # BUT exclude identities already in new_cluster_proposals from initial graph discovery
-        already_in_new_clusters = {member.id for members, _ in new_cluster_proposals for member in members}
-        all_processed_ids = accepted_ids | suggested_ids | rejected_ids | already_in_new_clusters
-        no_candidates = [i for i in domain_identities if i.id not in all_processed_ids]
-        rejected_identities = [i for i in domain_identities if i.id in rejected_ids]
-        still_unclustered = no_candidates + rejected_identities
+                if decision.outcome == AssignmentOutcome.ACCEPT:
+                    await self.assignment_writer.persist_assignment(decision)
+                    accept_count += 1
+                    accepted_ids.add(candidate.identity.id)
+                    logger.info(
+                        "[clustering] ACCEPTED job_id=%s identity=%s media_id=%s cluster=%s",
+                        job_id,
+                        candidate.identity.id,
+                        candidate.identity.media_id,
+                        candidate.cluster_id,
+                    )
+                elif decision.outcome == AssignmentOutcome.SUGGEST:
+                    await self.suggestion_service.create(candidate, decision.suggestion_confidence)
+                    suggest_count += 1
+                    suggested_ids.add(candidate.identity.id)
+                    logger.info(
+                        "[clustering] SUGGESTED job_id=%s identity=%s media_id=%s cluster=%s confidence=%.2f reason=%s",
+                        job_id,
+                        candidate.identity.id,
+                        candidate.identity.media_id,
+                        candidate.cluster_id,
+                        decision.suggestion_confidence or 0.0,
+                        decision.rejection_reason,
+                    )
+                else:  # REJECT
+                    reject_count += 1
+                    rejected_ids.add(candidate.identity.id)
+                    logger.info(
+                        "[clustering] REJECTED job_id=%s identity=%s media_id=%s cluster=%s reason=%s",
+                        job_id,
+                        candidate.identity.id,
+                        candidate.identity.media_id,
+                        candidate.cluster_id,
+                        decision.rejection_reason,
+                    )
 
-        logger.info(
-            "[clustering] Identities needing new clusters: %d (no candidates: %d, rejected: %d)",
-            len(still_unclustered),
-            len(no_candidates),
-            len(rejected_identities),
-        )
+            already_in_new_clusters = {member.id for members, _ in new_cluster_proposals for member in members}
+            all_processed_ids = accepted_ids | suggested_ids | rejected_ids | already_in_new_clusters
+            no_candidates = [i for i in chunk if i.id not in all_processed_ids]
+            rejected_identities = [i for i in chunk if i.id in rejected_ids]
+            still_unclustered = no_candidates + rejected_identities
 
-        # Create new clusters using GraphDiscovery (with no anchors)
-        clusters_created = 0
-        if still_unclustered:
-            final_result = await self.graph_discovery.discover(still_unclustered, {})
-            # Persist new cluster proposals from GraphDiscovery
-            for members, similarities in final_result.new_clusters:
+            logger.info(
+                "[clustering] Identities needing new clusters: %d (no candidates: %d, rejected: %d)",
+                len(still_unclustered),
+                len(no_candidates),
+                len(rejected_identities),
+            )
+
+            if still_unclustered:
+                final_result = await self.graph_discovery.discover(still_unclustered, {})
+                for members, similarities in final_result.new_clusters:
+                    if members:
+                        await self.assignment_writer.persist_new_cluster(
+                            tenant_id=tenant_id,
+                            identities=members,
+                            similarities=similarities,
+                            algorithm="graph",
+                        )
+                        clusters_created += 1
+                        logger.info(
+                            "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
+                            job_id,
+                            len(members),
+                            [m.media_id for m in members],
+                        )
+
+            for members, similarities in new_cluster_proposals:
                 if members:
                     await self.assignment_writer.persist_new_cluster(
                         tenant_id=tenant_id,
@@ -540,22 +540,15 @@ class ClusterService:
                         [m.media_id for m in members],
                     )
 
-        # Also persist new clusters from the initial GraphDiscovery pass
-        for members, similarities in new_cluster_proposals:
-            if members:
-                await self.assignment_writer.persist_new_cluster(
-                    tenant_id=tenant_id,
-                    identities=members,
-                    similarities=similarities,
-                    algorithm="graph",
-                )
-                clusters_created += 1
-                logger.info(
-                    "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
-                    job_id,
-                    len(members),
-                    [m.media_id for m in members],
-                )
+            processed += len(chunk)
+            clustering_job.processed_identities = processed
+            clustering_job.progress = (processed / total_identities) if total_identities else 1.0
+            await self._session.flush()
+
+        # Refresh centroids view if possible (keeps centroid discovery inputs current in future batches)
+        refresh = getattr(self.assignment_writer, "refresh_centroids_view", None)
+        if callable(refresh):
+            await refresh()
 
         logger.info(
             "[clustering] batch_complete job_id=%s accepted=%d suggested=%d rejected=%d new_clusters=%d",
@@ -605,6 +598,17 @@ class ClusterService:
                 "rejected": reject_count,
             },
         )()
+
+    @staticmethod
+    def _get_chunk_size(total_processed: int) -> int:
+        """Return adaptive chunk size for incremental cold-start clustering."""
+        if total_processed < 20:
+            return 5
+        if total_processed < 50:
+            return 10
+        if total_processed < 200:
+            return 25
+        return 50
 
     async def list_clusters(self, tenant_id: str, limit: int = 100, offset: int = 0, include_outliers: bool = False):
         """Return clusters for a tenant using the persistence layer."""
@@ -657,6 +661,82 @@ class ClusterService:
         recompute_centroid = getattr(self.assignment_writer, "recompute_centroid", None)
         if callable(recompute_centroid):
             await recompute_centroid(cluster_id)
+
+        return updated
+
+    async def create_cluster_for_identity(self, identity_id: str, label: str, tenant_id: str) -> IdentityCluster:
+        """Create a new user-labeled cluster containing a single identity.
+
+        Args:
+            identity_id: Media identity UUID to place into the new cluster.
+            label: Human-readable label for the cluster.
+            tenant_id: Tenant that owns the identity and new cluster.
+
+        Returns:
+            The newly created cluster.
+
+        Raises:
+            ValueError: If the identity is missing or tenant-scoped validation fails.
+            RuntimeError: If no database session is available.
+        """
+        if self._session is None:
+            raise RuntimeError("Database session is required for create_cluster_for_identity")
+
+        try:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            identity_uuid = uuid.UUID(str(identity_id))
+        except ValueError as exc:
+            raise ValueError("Invalid tenant_id or identity_id") from exc
+
+        identity_model = await self._session.get(MediaIdentityModel, identity_uuid)
+        if not identity_model or identity_model.tenant_id != tenant_uuid:
+            raise ValueError("Identity not found")
+
+        # If the identity is already assigned, detach it first so the new cluster is consistent.
+        existing_cluster_id = await self.get_identity_cluster_id(identity_id)
+        if existing_cluster_id:
+            await self.remove_identity_from_cluster(identity_id)
+
+        identity = MediaIdentity(
+            id=str(identity_model.id),
+            tenant_id=str(identity_model.tenant_id),
+            media_id=str(identity_model.media_id),
+            embedding=np.asarray(identity_model.embedding, dtype=np.float32),
+            confidence=float(identity_model.confidence),
+            bbox_width=int(identity_model.bbox_width),
+            bbox_height=int(identity_model.bbox_height),
+        )
+
+        cluster = await self.assignment_writer.persist_new_cluster(
+            tenant_id=tenant_id,
+            identities=[identity],
+            similarities=[1.0],
+            algorithm="manual",
+        )
+
+        if cluster.id is None:
+            raise ValueError("Cluster creation failed")
+
+        updated = await self.assignment_writer.update_cluster_metadata(
+            cluster_id=cluster.id,
+            label=label,
+            representative_id=identity_id,
+        )
+
+        updated.user_confirmed = True
+        updated = await self.assignment_writer._clusters.update(updated)
+
+        refresh_view = getattr(self.assignment_writer, "refresh_centroids_view", None)
+        if callable(refresh_view):
+            await refresh_view()
+
+        logger.info(
+            "[curation] CREATED cluster_id=%s label='%s' identity=%s tenant_id=%s user_action=manual_create",
+            updated.id,
+            updated.label,
+            identity_id,
+            tenant_id,
+        )
 
         return updated
 

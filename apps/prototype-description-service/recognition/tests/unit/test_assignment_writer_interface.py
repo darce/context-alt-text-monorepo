@@ -45,10 +45,16 @@ class NullClusterRepo(ClusterRepository):
     async def get_member_embeddings(self, cluster_id: str):
         return []
 
+    async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
+        return []
+
     async def assign_identity_to_cluster(self, identity: MediaIdentity, cluster_id: str) -> None:
         return None
 
     async def add_representative(self, representative) -> None:
+        return None
+
+    async def clear_representatives(self, cluster_id: str) -> None:
         return None
 
     async def count_labeled(self) -> int:

@@ -12,7 +12,7 @@ from datetime import datetime
 from typing import Any
 
 import numpy as np
-from sqlalchemy import Select, exists, func, select, text
+from sqlalchemy import Select, delete, exists, func, select, text
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
@@ -87,10 +87,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         model.label = cluster.label
         model.user_confirmed = cluster.user_confirmed
         model.identity_count = cluster.member_count
-        if cluster.representative_identity_id:
-            rep_uuid = _coerce_uuid(cluster.representative_identity_id)
+        rep_uuid = _coerce_uuid(cluster.representative_identity_id) if cluster.representative_identity_id else None
+        if rep_uuid is not None:
             await _ensure_media_identity(self._session, model.tenant_id, rep_uuid)
-            model.representative_identity_id = rep_uuid
+        model.representative_identity_id = rep_uuid
         if cluster.clustering_algorithm:
             model.clustering_algorithm = cluster.clustering_algorithm
 
@@ -157,6 +157,16 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
 
+    async def get_member_identities(self, cluster_id: str) -> list[DomainIdentity]:
+        """Return identity records for all members of a cluster."""
+        stmt: Select[tuple[MediaIdentity]] = (
+            select(MediaIdentity)
+            .join(IdentityMember, IdentityMember.identity_id == MediaIdentity.id)
+            .where(IdentityMember.cluster_id == _coerce_uuid(cluster_id))
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain_identity(model) for model in result.scalars().all()]
+
     async def assign_identity_to_cluster(self, identity: DomainIdentity, cluster_id: str) -> None:
         """Persist a membership between an identity and cluster."""
         member = IdentityMember(
@@ -179,6 +189,14 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             diversity_score=getattr(representative, "diversity_score", None),
         )
         self._session.add(rep)
+        await self._session.flush()
+
+    async def clear_representatives(self, cluster_id: str) -> None:
+        """Remove all stored representatives for a cluster."""
+        stmt = delete(IdentityClusterRepresentative).where(
+            IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
+        )
+        await self._session.execute(stmt)
         await self._session.flush()
 
     async def count_labeled(self) -> int:

@@ -69,45 +69,49 @@ sequenceDiagram
     Cluster->>DB: SELECT * FROM identities WHERE cluster_id IS NULL
     DB-->>Cluster: unclustered_identities[]
     
-    Cluster->>DB: SELECT representatives BY cluster
-    DB-->>Cluster: representatives_by_cluster
+    Cluster->>Cluster: sort_by_confidence(unclustered_identities)
     
-    %% Discovery Phase
-    rect rgb(220, 235, 250)
-        Note over Cluster: Discovery Phase (Uses Face-Only Embeddings)
-        Cluster->>Cluster: RepresentativeDiscovery.discover()
-        Cluster->>Cluster: CentroidDiscovery.discover()
-        Cluster->>Cluster: GraphDiscovery.discover()
-        Cluster->>Cluster: all_candidates = merge()
-    end
+    loop Adaptive chunks (5 -> 10 -> 25 -> 50)
+        Cluster->>DB: SELECT clusters (representatives + centroids)
+        DB-->>Cluster: discovery_inputs
     
-    %% Evaluation Phase
-    rect rgb(255, 235, 215)
-        Note over Cluster,Gate: Evaluation Phase (Unified Gate)
-        loop For each candidate
-            Cluster->>Gate: evaluate(candidate)
-            Gate->>Gate: run all checks
-            Gate-->>Cluster: AssignmentDecision
-            
-            alt ACCEPT
-                Cluster->>DB: UPDATE identity SET cluster_id
-                Cluster->>DB: INSERT representative (maybe)
-            else SUGGEST
-                Cluster->>Sugg: create(candidate)
-                Sugg->>DB: INSERT suggestion
-            else REJECT
-                Note over Cluster: Stays unclustered
+        %% Discovery Phase
+        rect rgb(220, 235, 250)
+            Note over Cluster: Discovery Phase (Uses Face-Only Embeddings)
+            Cluster->>Cluster: RepresentativeDiscovery.discover(chunk)
+            Cluster->>Cluster: CentroidDiscovery.discover(remaining)
+            Cluster->>Cluster: GraphDiscovery.discover(remaining, anchors)
+            Cluster->>Cluster: all_candidates = merge()
+        end
+    
+        %% Evaluation Phase
+        rect rgb(255, 235, 215)
+            Note over Cluster,Gate: Evaluation Phase (Unified Gate)
+            loop For each candidate
+                Cluster->>Gate: evaluate(candidate)
+                Gate->>Gate: run all checks
+                Gate-->>Cluster: AssignmentDecision
+                
+                alt ACCEPT
+                    Cluster->>DB: UPDATE identity SET cluster_id
+                    Cluster->>DB: INSERT representative (maybe)
+                else SUGGEST
+                    Cluster->>Sugg: create(candidate)
+                    Sugg->>DB: INSERT suggestion
+                else REJECT
+                    Note over Cluster: Stays unclustered (in this chunk)
+                end
             end
         end
-    end
     
-    %% New cluster creation
-    Cluster->>Cluster: still_unclustered = filter(REJECT)
-    Cluster->>Cluster: run HDBSCAN (no anchors)
-    loop For each new cluster
-        Cluster->>DB: INSERT cluster
-        Cluster->>DB: UPDATE identities SET cluster_id
-        Cluster->>DB: INSERT representative
+        %% New cluster creation (chunk-level)
+        Cluster->>Cluster: still_unclustered = filter(REJECT + no candidates)
+        Cluster->>Cluster: run HDBSCAN (no anchors)
+        loop For each new cluster
+            Cluster->>DB: INSERT cluster
+            Cluster->>DB: UPDATE identities SET cluster_id
+            Cluster->>DB: INSERT representatives + centroid
+        end
     end
     
     Cluster-->>API: ClusteringResult

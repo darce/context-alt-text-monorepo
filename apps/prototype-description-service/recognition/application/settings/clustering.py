@@ -19,7 +19,9 @@ class ClusteringSettings(BaseModel):
     similarity_threshold: float = Field(default=0.85, description="Discovery threshold for candidate matching.")
     complete_link_min_floor: float = Field(default=0.80, description="Minimum similarity any representative must meet.")
     complete_link_avg_threshold: float = Field(default=0.85, description="Average similarity across representatives.")
-    min_representatives_for_maturity: int = Field(default=2, description="Minimum reps before auto-assignment.")
+    min_representatives_for_maturity: int = Field(
+        default=0, description="Minimum reps before auto-assignment. 0 = disabled."
+    )
     member_validation_min_floor: float = Field(default=0.75, description="Minimum similarity to any member.")
     member_validation_avg_threshold: float = Field(default=0.85, description="Average similarity to cluster members.")
     early_stage_suggestion_enabled: bool = Field(

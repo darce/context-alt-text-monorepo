@@ -322,7 +322,8 @@ async def get_suggestion_service(
     """Repository-backed suggestion service scoped to the tenant."""
     tenant = tenant_id or ""
     repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
-    return SuggestionService(repo, tenant_id=tenant)
+    cluster_repo = SqlAlchemyClusterRepository(session)
+    return SuggestionService(repo, tenant_id=tenant, cluster_repository=cluster_repo)
 
 
 async def get_cluster_repository(
@@ -477,7 +478,7 @@ async def build_cluster_service(
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo)
 
     suggestion_repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant_id)
-    suggestion_service = SuggestionService(suggestion_repo, tenant_id=tenant_id)
+    suggestion_service = SuggestionService(suggestion_repo, tenant_id=tenant_id, cluster_repository=cluster_repo)
 
     charts_dir = Path("logs") / "charts"
 

@@ -7,7 +7,7 @@ from __future__ import annotations
 import logging
 
 from recognition.application.assignment import AssignmentCandidate
-from recognition.domain.repositories import SuggestionCreateData, SuggestionRepository
+from recognition.domain.repositories import ClusterRepository, SuggestionCreateData, SuggestionRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 
 logger = logging.getLogger(__name__)
@@ -16,12 +16,39 @@ logger = logging.getLogger(__name__)
 class SuggestionService:
     """Coordinate suggestion persistence and expose simple operations."""
 
-    def __init__(self, repository: SuggestionRepository, tenant_id: str) -> None:
+    def __init__(
+        self,
+        repository: SuggestionRepository,
+        tenant_id: str,
+        cluster_repository: ClusterRepository | None = None,
+    ) -> None:
         self._repository = repository
         self._tenant_id = tenant_id
+        self._cluster_repository = cluster_repository
 
-    async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> AssignmentSuggestion:
-        """Persist a suggestion derived from an assignment candidate."""
+    async def create(
+        self, candidate: AssignmentCandidate, confidence: float | None = None
+    ) -> AssignmentSuggestion | None:
+        """Persist a suggestion derived from an assignment candidate.
+
+        Suggestions are only created for user-labeled clusters to avoid presenting
+        confusing UUID/unlabeled targets in the UI.
+        """
+        if self._cluster_repository is not None:
+            cluster = await self._cluster_repository.get_by_id(candidate.cluster_id)
+            if not cluster:
+                logger.info("[suggestions] Skipping suggestion: cluster not found cluster_id=%s", candidate.cluster_id)
+                return None
+            if self._tenant_id and cluster.tenant_id.lower() != self._tenant_id.lower():
+                logger.info("[suggestions] Skipping suggestion: tenant mismatch cluster_id=%s", candidate.cluster_id)
+                return None
+            if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
+                logger.info(
+                    "[suggestions] Skipping suggestion: cluster not user-labeled cluster_id=%s",
+                    candidate.cluster_id,
+                )
+                return None
+
         similarity = candidate.discovery_similarity
         payload = SuggestionCreateData(
             identity_id=candidate.identity.id,

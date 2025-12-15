@@ -268,6 +268,26 @@ class FakeClusterService:
         self._replace_cluster(updated)
         return updated
 
+    async def create_cluster_for_identity(self, identity_id: str, label: str, tenant_id: str) -> ClusterResponse:
+        self.calls.append(
+            {
+                "method": "create_cluster_for_identity",
+                "tenant_id": tenant_id,
+                "identity_id": identity_id,
+                "label": label,
+            }
+        )
+        cluster = ClusterResponse(
+            id=str(uuid.uuid4()),
+            tenant_id=str(tenant_id),
+            label=label,
+            is_labeled=True,
+            member_count=1,
+            representatives=[],
+        )
+        self.clusters.append(cluster)
+        return cluster
+
     async def merge_cluster(
         self, source_cluster_id: str, tenant_id: str, target_cluster_id: str, target_label: str | None
     ) -> ClusterResponse | None:
@@ -408,7 +428,9 @@ def cluster_service(
     rep_discovery = RepresentativeDiscovery(settings)
     centroid_discovery = CentroidDiscovery(settings)
     graph_discovery = GraphDiscovery(settings, HdbscanGraphAlgorithm())
-    suggestions = SuggestionService(suggestion_repository, tenant_id=tenant.id)
+    suggestions = SuggestionService(
+        suggestion_repository, tenant_id=str(tenant.id), cluster_repository=cluster_repository
+    )
 
     return ClusterService(
         gate=gate,

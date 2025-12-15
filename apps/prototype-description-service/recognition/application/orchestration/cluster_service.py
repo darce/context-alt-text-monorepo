@@ -267,9 +267,6 @@ class ClusterService:
                 },
             )()
 
-        # Fetch existing clusters for discovery inputs (representatives/centroids)
-        await self.assignment_writer._clusters.get_by_tenant(str(tenant_id), limit=1000, offset=0)
-
         clustering_job = IdentityClusteringJob(
             tenant_id=tenant_uuid,
             status="running",
@@ -352,6 +349,7 @@ class ClusterService:
             chunk_size = self._get_chunk_size(processed)
             chunk = remaining_identities[:chunk_size]
             remaining_identities = remaining_identities[chunk_size:]
+            centroids_dirty = False
 
             logger.info(
                 "[clustering] chunk_processing job_id=%s processed=%d/%d chunk_size=%d",
@@ -459,6 +457,7 @@ class ClusterService:
 
                 if decision.outcome == AssignmentOutcome.ACCEPT:
                     await self.assignment_writer.persist_assignment(decision)
+                    centroids_dirty = True
                     accept_count += 1
                     accepted_ids.add(candidate.identity.id)
                     logger.info(
@@ -516,6 +515,7 @@ class ClusterService:
                             similarities=similarities,
                             algorithm="graph",
                         )
+                        centroids_dirty = True
                         clusters_created += 1
                         logger.info(
                             "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
@@ -532,6 +532,7 @@ class ClusterService:
                         similarities=similarities,
                         algorithm="graph",
                     )
+                    centroids_dirty = True
                     clusters_created += 1
                     logger.info(
                         "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
@@ -544,6 +545,12 @@ class ClusterService:
             clustering_job.processed_identities = processed
             clustering_job.progress = (processed / total_identities) if total_identities else 1.0
             await self._session.flush()
+
+            # Refresh between chunks so CentroidDiscovery can see centroids for clusters created/updated earlier.
+            if remaining_identities and centroids_dirty:
+                refresh = getattr(self.assignment_writer, "refresh_centroids_view", None)
+                if callable(refresh):
+                    await refresh()
 
         # Refresh centroids view if possible (keeps centroid discovery inputs current in future batches)
         refresh = getattr(self.assignment_writer, "refresh_centroids_view", None)

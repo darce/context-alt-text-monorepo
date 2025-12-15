@@ -194,8 +194,8 @@ class SessionStub:
 
 
 @pytest.mark.asyncio
-async def test_cluster_unclustered_identities_fetches_existing_clusters(monkeypatch) -> None:
-    """cluster_unclustered_identities should fetch existing clusters for discovery inputs."""
+async def test_cluster_unclustered_identities_skips_existing_cluster_fetch_when_empty() -> None:
+    """cluster_unclustered_identities should not fetch existing clusters when there is nothing to process."""
     settings = make_settings()
     gate = GateStub([AssignmentOutcome.ACCEPT])
     writer = WriterStub()
@@ -229,8 +229,7 @@ async def test_cluster_unclustered_identities_fetches_existing_clusters(monkeypa
 
     assert result.total == 0
     assert result.clusters_created == 0  # No unclustered identities means no clusters created
-    # Verify that existing clusters were fetched for discovery inputs
-    assert cluster_repo.called_with == tenant_id
+    assert cluster_repo.called_with is None
     assert session.execute_called  # Session was used to query for unclustered identities
 
 

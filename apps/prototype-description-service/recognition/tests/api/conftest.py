@@ -26,6 +26,16 @@ class FakeSession:
     def __init__(self) -> None:
         self.added: list[object] = []
 
+    async def execute(self, _statement, _params=None):  # noqa: ANN001
+        class _Result:
+            def scalar_one_or_none(self):  # noqa: ANN001
+                return None
+
+            def scalar(self):  # noqa: ANN001
+                return 0
+
+        return _Result()
+
     def add(self, obj) -> None:  # noqa: ANN001
         if getattr(obj, "id", None) is None:
             obj.id = uuid.uuid4()

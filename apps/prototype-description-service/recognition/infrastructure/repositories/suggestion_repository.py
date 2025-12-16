@@ -61,6 +61,13 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         existing_suggestion = existing_result.scalar_one_or_none()
 
         if existing_suggestion:
+            # Upsert scoring fields for pending suggestions to keep UI similarity fresh.
+            if existing_suggestion.resolution == SuggestionStatus.PENDING.value:
+                existing_suggestion.representative_similarity = _clamp_similarity(payload.representative_similarity)
+                existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
+                existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
+                await self._session.flush()
+                await self._session.refresh(existing_suggestion)
             return self._to_domain(existing_suggestion)
 
         model = SuggestionModel(
@@ -73,6 +80,45 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             resolution=SuggestionStatus.PENDING.value,
         )
         self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return self._to_domain(model)
+
+    async def update_scores(
+        self,
+        tenant_id: str,
+        suggestion_id: str,
+        *,
+        representative_similarity: float,
+        member_similarity: float,
+        confidence_score: float,
+    ) -> AssignmentSuggestion:
+        """Update similarity/confidence scores for an existing suggestion row."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        suggestion_uuid = _coerce_uuid(suggestion_id)
+        if not tenant_uuid or not suggestion_uuid:
+            raise ValueError("tenant_id and suggestion_id must be valid UUID-compatible strings")
+
+        # Type narrowing for mypy
+        assert tenant_uuid is not None and suggestion_uuid is not None
+
+        stmt = (
+            select(SuggestionModel)
+            .where(SuggestionModel.tenant_id == tenant_uuid)
+            .where(SuggestionModel.id == suggestion_uuid)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if model is None:
+            raise ValueError(f"Suggestion not found: {suggestion_id}")
+
+        # Only update pending suggestions to preserve historical resolved scores.
+        if model.resolution != SuggestionStatus.PENDING.value:
+            return self._to_domain(model)
+
+        model.representative_similarity = _clamp_similarity(representative_similarity)
+        model.avg_member_similarity = _clamp_similarity(member_similarity)
+        model.confidence_score = _clamp_similarity(confidence_score)
         await self._session.flush()
         await self._session.refresh(model)
         return self._to_domain(model)

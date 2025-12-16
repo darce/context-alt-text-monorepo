@@ -130,6 +130,18 @@ class SuggestionRepository(Protocol):
         """Persist a new suggestion."""
         ...
 
+    async def update_scores(
+        self,
+        tenant_id: str,
+        suggestion_id: str,
+        *,
+        representative_similarity: float,
+        member_similarity: float,
+        confidence_score: float,
+    ) -> AssignmentSuggestion:
+        """Update similarity/confidence scores for an existing suggestion."""
+        ...
+
     async def get_by_identity(self, tenant_id: str, identity_id: str) -> list[AssignmentSuggestion]:
         """List suggestions for an identity within a tenant."""
         ...

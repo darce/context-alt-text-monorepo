@@ -16,6 +16,7 @@ from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberData, MemberRepository
 from recognition.domain.representative import ClusterRepresentative
+from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 
@@ -91,10 +92,59 @@ class AssignmentWriter:
         settings: ClusteringSettings,
         cluster_repository: ClusterRepository,
         member_repository: MemberRepository,
+        *,
+        run_context: RecognitionRunContext | None = None,
     ) -> None:
         self._settings = settings
         self._clusters = cluster_repository
         self._members = member_repository
+        self._run_context = run_context
+
+    def bind_run_context(self, context: RecognitionRunContext | None) -> None:
+        """Attach or clear the active recognition run context.
+
+        Args:
+            context: Run context for emitting `recognition_events`, or None to disable event emission.
+        """
+        raise NotImplementedError("TODO: implement AssignmentWriter.bind_run_context")
+
+    def _emit_cluster_created_event(
+        self,
+        *,
+        cluster_id: str,
+        identities: list[MediaIdentity],
+        similarities: list[float],
+        algorithm: str,
+    ) -> None:
+        """Emit a `cluster_created` event when a run context is available.
+
+        Args:
+            cluster_id: Newly created cluster UUID (string form).
+            identities: Initial member identities for the cluster.
+            similarities: Similarity scores aligned with `identities`.
+            algorithm: Cluster creation algorithm label (e.g. "graph").
+        """
+        raise NotImplementedError("TODO: emit cluster_created recognition event")
+
+    def _emit_representative_selected_event(
+        self,
+        *,
+        cluster_id: str,
+        identity: MediaIdentity,
+        reason: str,
+        quality_score: float | None = None,
+        diversity_score: float | None = None,
+    ) -> None:
+        """Emit a `representative_selected` event when a run context is available.
+
+        Args:
+            cluster_id: Cluster UUID (string form).
+            identity: Selected representative identity.
+            reason: Selection reason (e.g. "fps_seed", "diverse_addition").
+            quality_score: Optional quality score for the representative.
+            diversity_score: Optional diversity score for the representative.
+        """
+        raise NotImplementedError("TODO: emit representative_selected recognition event")
 
     async def persist_assignment(self, decision: AssignmentDecision) -> None:
         """Persist an accepted assignment decision."""

@@ -17,6 +17,7 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
+from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import extract_face_embedding
 
 
@@ -63,15 +64,31 @@ class GraphDiscovery(DiscoveryAlgorithm):
         self,
         settings: ClusteringSettings,
         algorithm: GraphAlgorithm | None = None,
+        *,
+        run_context: RecognitionRunContext | None = None,
     ) -> None:
         """Initialize the graph discovery algorithm.
 
         Args:
             settings: Threshold configuration for graph-based discovery.
             algorithm: Optional graph clustering algorithm implementation.
+            run_context: Optional recognition run context for emitting `recognition_events`.
         """
         self.settings = settings
         self.algorithm = algorithm
+        self._run_context = run_context
+
+    def bind_run_context(self, context: RecognitionRunContext | None) -> None:
+        """Attach or clear the active recognition run context.
+
+        Args:
+            context: Run context for emitting `recognition_events`, or None to disable event emission.
+        """
+        raise NotImplementedError("TODO: implement GraphDiscovery.bind_run_context")
+
+    def _emit_graph_run_event(self, payload: dict[str, object]) -> None:
+        """Emit a `graph_run` event when a run context is available."""
+        raise NotImplementedError("TODO: emit graph_run recognition event")
 
     def set_algorithm(self, algorithm: GraphAlgorithm) -> None:
         """Set the clustering algorithm implementation to use.

@@ -34,7 +34,14 @@ class IdentityLocator:
 
     def to_dict(self) -> dict[str, object]:
         """Serialize the locator to a JSON-friendly dict."""
-        raise NotImplementedError("TODO: implement IdentityLocator.to_dict")
+        return {
+            "media_id": self.media_id,
+            "bbox_x": self.bbox_x,
+            "bbox_y": self.bbox_y,
+            "bbox_width": self.bbox_width,
+            "bbox_height": self.bbox_height,
+            "crop_hash": self.crop_hash,
+        }
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> IdentityLocator:
@@ -47,7 +54,31 @@ class IdentityLocator:
         Returns:
             IdentityLocator: Parsed locator.
         """
-        raise NotImplementedError("TODO: implement IdentityLocator.from_dict")
+        required_fields = ("media_id", "bbox_x", "bbox_y", "bbox_width", "bbox_height")
+        missing = [field for field in required_fields if field not in payload]
+        if missing:
+            raise ValueError(f"Missing identity locator fields: {', '.join(missing)}")
+
+        try:
+            media_id = int(payload["media_id"])
+            bbox_x = int(payload["bbox_x"])
+            bbox_y = int(payload["bbox_y"])
+            bbox_width = int(payload["bbox_width"])
+            bbox_height = int(payload["bbox_height"])
+        except (TypeError, ValueError) as exc:
+            raise ValueError("Invalid identity locator field types") from exc
+
+        crop_hash_value = payload.get("crop_hash")
+        crop_hash = str(crop_hash_value) if crop_hash_value is not None else None
+
+        return cls(
+            media_id=media_id,
+            bbox_x=bbox_x,
+            bbox_y=bbox_y,
+            bbox_width=bbox_width,
+            bbox_height=bbox_height,
+            crop_hash=crop_hash,
+        )
 
     def matches(self, other: IdentityLocator, *, tolerance: int = 5) -> bool:
         """Return True if two locators refer to the same face, allowing bbox drift.
@@ -63,4 +94,16 @@ class IdentityLocator:
         Returns:
             bool: True when the two locators are considered a match.
         """
-        raise NotImplementedError("TODO: implement IdentityLocator.matches")
+        if tolerance < 0:
+            raise ValueError("tolerance must be >= 0")
+
+        if self.crop_hash and other.crop_hash:
+            return self.crop_hash == other.crop_hash
+
+        return (
+            self.media_id == other.media_id
+            and abs(self.bbox_x - other.bbox_x) <= tolerance
+            and abs(self.bbox_y - other.bbox_y) <= tolerance
+            and abs(self.bbox_width - other.bbox_width) <= tolerance
+            and abs(self.bbox_height - other.bbox_height) <= tolerance
+        )

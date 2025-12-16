@@ -23,6 +23,8 @@ TENANT_TABLES = [
     "identity_cluster_representatives",
     "identity_clustering_jobs",
     "identity_suggestions",
+    "recognition_runs",
+    "recognition_events",
 ]
 
 
@@ -338,6 +340,94 @@ def upgrade() -> None:
         ),
     )
 
+    # Canonical evaluation + regression harness (Phase 1 "runs + events")
+    op.create_table(
+        "recognition_runs",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'running'")),
+        sa.Column("source", sa.String(length=50)),
+        sa.Column(
+            "scan_job_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_scan_jobs.id", ondelete="SET NULL"),
+        ),
+        sa.Column(
+            "clustering_job_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL"),
+        ),
+        sa.Column("git_sha", sa.String(length=64)),
+        sa.Column(
+            "settings_snapshot",
+            sa.dialects.postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column(
+            "dataset_selector",
+            sa.dialects.postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+        sa.Column("error_message", sa.Text()),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_by_user_id", sa.Integer()),
+        sa.CheckConstraint(
+            "status IN ('running', 'completed', 'failed')",
+            name="valid_recognition_run_status",
+        ),
+    )
+
+    op.create_table(
+        "recognition_events",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "run_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("recognition_runs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("event_type", sa.String(length=50), nullable=False),
+        sa.Column(
+            "timestamp",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="SET NULL"),
+        ),
+        sa.Column(
+            "cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="SET NULL"),
+        ),
+        sa.Column("source_cluster_id", sa.dialects.postgresql.UUID(as_uuid=True)),
+        sa.Column("target_cluster_id", sa.dialects.postgresql.UUID(as_uuid=True)),
+        sa.Column(
+            "payload",
+            sa.dialects.postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+    )
+
     op.create_index(
         "idx_media_identities_tenant",
         "media_identities",
@@ -457,6 +547,17 @@ def upgrade() -> None:
         "identity_suggestions",
         ["tenant_id", "id"],
     )
+
+    op.create_index("idx_recognition_runs_tenant", "recognition_runs", ["tenant_id"])
+    op.create_index("idx_recognition_runs_status", "recognition_runs", ["status"])
+    op.create_index("idx_recognition_runs_scan_job", "recognition_runs", ["scan_job_id"])
+    op.create_index("idx_recognition_runs_clustering_job", "recognition_runs", ["clustering_job_id"])
+
+    op.create_index("idx_recognition_events_tenant", "recognition_events", ["tenant_id"])
+    op.create_index("idx_recognition_events_run_time", "recognition_events", ["run_id", "timestamp"])
+    op.create_index("idx_recognition_events_type", "recognition_events", ["event_type"])
+    op.create_index("idx_recognition_events_identity", "recognition_events", ["identity_id"])
+    op.create_index("idx_recognition_events_cluster", "recognition_events", ["cluster_id"])
 
     for table in TENANT_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
@@ -676,10 +777,21 @@ def downgrade() -> None:
     op.drop_index("idx_identity_suggestions_cluster", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_identity", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_tenant", table_name="identity_suggestions")
+    op.drop_index("idx_recognition_events_cluster", table_name="recognition_events")
+    op.drop_index("idx_recognition_events_identity", table_name="recognition_events")
+    op.drop_index("idx_recognition_events_type", table_name="recognition_events")
+    op.drop_index("idx_recognition_events_run_time", table_name="recognition_events")
+    op.drop_index("idx_recognition_events_tenant", table_name="recognition_events")
+    op.drop_index("idx_recognition_runs_clustering_job", table_name="recognition_runs")
+    op.drop_index("idx_recognition_runs_scan_job", table_name="recognition_runs")
+    op.drop_index("idx_recognition_runs_status", table_name="recognition_runs")
+    op.drop_index("idx_recognition_runs_tenant", table_name="recognition_runs")
     for table in TENANT_TABLES:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    op.drop_table("recognition_events")
+    op.drop_table("recognition_runs")
     op.drop_table("identity_suggestions")
     op.drop_table("identity_scan_jobs")
     op.drop_table("identity_cluster_representatives")

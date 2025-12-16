@@ -59,6 +59,29 @@ class SuggestionService:
         )
         return await self._repository.create(self._tenant_id, payload)
 
+    async def update_scores(
+        self,
+        suggestion_id: str,
+        *,
+        representative_similarity: float,
+        member_similarity: float | None = None,
+        confidence_score: float | None = None,
+    ) -> AssignmentSuggestion | None:
+        """Update similarity/confidence metrics for an existing pending suggestion."""
+        member_similarity = representative_similarity if member_similarity is None else member_similarity
+        confidence_score = representative_similarity if confidence_score is None else confidence_score
+        try:
+            return await self._repository.update_scores(
+                self._tenant_id,
+                suggestion_id,
+                representative_similarity=representative_similarity,
+                member_similarity=member_similarity,
+                confidence_score=confidence_score,
+            )
+        except ValueError:
+            logger.warning("[suggestions] Failed to update scores: suggestion_id=%s not found", suggestion_id)
+            return None
+
     async def list_for_identity(self, identity_id: str) -> list[AssignmentSuggestion]:
         """Return suggestions for an identity, scoped to the service tenant."""
         return await self._repository.get_by_identity(self._tenant_id, identity_id)

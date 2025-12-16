@@ -20,7 +20,7 @@ from sqlalchemy import (
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, TIMESTAMP, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, TIMESTAMP, UUID
 from sqlalchemy.orm import Mapped, mapped_column, relationship
 
 from db.base import Base
@@ -304,6 +304,88 @@ class IdentityClusteringJob(Base):
     )
 
 
+class RecognitionRun(Base):
+    __tablename__ = "recognition_runs"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'running'"))
+    source: Mapped[str | None] = mapped_column(String(50))
+    scan_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_scan_jobs.id", ondelete="SET NULL")
+    )
+    clustering_job_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clustering_jobs.id", ondelete="SET NULL")
+    )
+    git_sha: Mapped[str | None] = mapped_column(String(64))
+    settings_snapshot: Mapped[dict[str, object]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+    )
+    dataset_selector: Mapped[dict[str, object]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+    )
+    started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    error_message: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+
+    tenant: Mapped[Tenant] = relationship()
+    events: Mapped[list[RecognitionEvent]] = relationship(back_populates="run", cascade="all, delete-orphan")
+
+    __table_args__ = (
+        CheckConstraint("status IN ('running', 'completed', 'failed')", name="valid_recognition_run_status"),
+        Index("idx_recognition_runs_tenant", "tenant_id"),
+        Index("idx_recognition_runs_status", "status"),
+        Index("idx_recognition_runs_scan_job", "scan_job_id"),
+        Index("idx_recognition_runs_clustering_job", "clustering_job_id"),
+    )
+
+
+class RecognitionEvent(Base):
+    __tablename__ = "recognition_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    run_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("recognition_runs.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    timestamp: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    identity_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="SET NULL")
+    )
+    cluster_id: Mapped[uuid.UUID | None] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="SET NULL")
+    )
+    source_cluster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    target_cluster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+    )
+
+    tenant: Mapped[Tenant] = relationship()
+    run: Mapped[RecognitionRun] = relationship(back_populates="events")
+
+    __table_args__ = (
+        Index("idx_recognition_events_tenant", "tenant_id"),
+        Index("idx_recognition_events_run_time", "run_id", "timestamp"),
+        Index("idx_recognition_events_type", "event_type"),
+        Index("idx_recognition_events_identity", "identity_id"),
+        Index("idx_recognition_events_cluster", "cluster_id"),
+    )
+
+
 class ClusteringJobReport(Base):
     __tablename__ = "clustering_job_reports"
 
@@ -449,6 +531,8 @@ __all__ = [
     "IdentityMember",
     "IdentityScanJob",
     "IdentitySuggestion",
+    "RecognitionRun",
+    "RecognitionEvent",
     "ClusteringJobReport",
     "AssignmentDecision",
 ]

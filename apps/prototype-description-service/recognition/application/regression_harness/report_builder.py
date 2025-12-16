@@ -8,7 +8,7 @@ from collections.abc import Iterable
 from datetime import UTC, datetime
 from uuid import UUID
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, and_, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import (
@@ -16,6 +16,7 @@ from db.models import (
     IdentityClusterRepresentative,
     IdentityMember,
     MediaIdentity,
+    RecognitionEvent,
     RecognitionRun,
 )
 from recognition.domain.locator import IdentityLocator
@@ -43,6 +44,91 @@ def _locator_payload(identity: MediaIdentity) -> dict[str, object]:
         bbox_height=int(identity.bbox_height),
         crop_hash=None,
     ).to_dict()
+
+
+def _locator_sort_key(locator: IdentityLocator) -> tuple[int, int, int, int, int, str]:
+    return (
+        locator.media_id,
+        locator.bbox_x,
+        locator.bbox_y,
+        locator.bbox_width,
+        locator.bbox_height,
+        locator.crop_hash or "",
+    )
+
+
+async def _build_pre_curation_state(
+    session: AsyncSession,
+    *,
+    tenant_id: UUID,
+    run_id: UUID,
+    media_ids: set[int] | None,
+) -> dict[str, object]:
+    events_stmt: Select[tuple[RecognitionEvent]] = (
+        select(RecognitionEvent)
+        .where(
+            and_(
+                RecognitionEvent.tenant_id == tenant_id,
+                RecognitionEvent.run_id == run_id,
+                RecognitionEvent.event_type.in_(["cluster_created", "assignment_decision"]),
+            )
+        )
+        .order_by(RecognitionEvent.timestamp.asc(), RecognitionEvent.id.asc())
+    )
+    events = (await session.execute(events_stmt)).scalars().all()
+
+    members_by_cluster: dict[str, set[IdentityLocator]] = {}
+    creation_method_by_cluster: dict[str, str] = {}
+
+    def _maybe_add_locator(cluster_key: str, payload: object) -> None:
+        if not isinstance(payload, dict):
+            return
+        try:
+            locator = IdentityLocator.from_dict(payload)
+        except ValueError:
+            return
+        if media_ids is not None and locator.media_id not in media_ids:
+            return
+        members_by_cluster.setdefault(cluster_key, set()).add(locator)
+
+    for event in events:
+        cluster_uuid = event.cluster_id
+        cluster_key = str(cluster_uuid) if cluster_uuid is not None else None
+        payload = event.payload or {}
+
+        if event.event_type == "cluster_created":
+            if cluster_key is None:
+                continue
+            creation_method = payload.get("creation_method")
+            if isinstance(creation_method, str):
+                creation_method_by_cluster[cluster_key] = creation_method
+
+            members = payload.get("members")
+            if isinstance(members, list):
+                for member in members:
+                    if not isinstance(member, dict):
+                        continue
+                    _maybe_add_locator(cluster_key, member.get("identity_locator"))
+            continue
+
+        if event.event_type == "assignment_decision":
+            if cluster_key is None:
+                continue
+            if payload.get("decision") != "accept":
+                continue
+            _maybe_add_locator(cluster_key, payload.get("identity_locator"))
+
+    predicted_clusters: list[dict[str, object]] = []
+    for cluster_key, locators in sorted(members_by_cluster.items(), key=lambda item: item[0]):
+        predicted_clusters.append(
+            {
+                "predicted_cluster_id": cluster_key,
+                "creation_method": creation_method_by_cluster.get(cluster_key),
+                "member_identity_locators": [locator.to_dict() for locator in sorted(locators, key=_locator_sort_key)],
+            }
+        )
+
+    return {"predicted_clusters": predicted_clusters}
 
 
 async def generate_canonical_report(
@@ -175,6 +261,14 @@ async def generate_canonical_report(
     dataset_media_ids = (
         sorted(set(resolved_media_ids)) if resolved_media_ids is not None else sorted(inferred_media_ids)
     )
+    pre_curation_state: dict[str, object] | None = None
+    if run_uuid is not None:
+        pre_curation_state = await _build_pre_curation_state(
+            session,
+            tenant_id=tenant_uuid,
+            run_id=run_uuid,
+            media_ids=set(dataset_media_ids),
+        )
 
     return {
         "schema_version": 1,
@@ -194,6 +288,7 @@ async def generate_canonical_report(
             "embedding_model": {"name": None, "dimension": None},
         },
         "canonical_clusters": canonical_clusters,
+        "pre_curation_state": pre_curation_state,
         "cluster_outcomes": [],
         "metrics": {},
     }

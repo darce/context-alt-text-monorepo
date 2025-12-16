@@ -84,11 +84,13 @@ class GraphDiscovery(DiscoveryAlgorithm):
         Args:
             context: Run context for emitting `recognition_events`, or None to disable event emission.
         """
-        raise NotImplementedError("TODO: implement GraphDiscovery.bind_run_context")
+        self._run_context = context
 
     def _emit_graph_run_event(self, payload: dict[str, object]) -> None:
         """Emit a `graph_run` event when a run context is available."""
-        raise NotImplementedError("TODO: emit graph_run recognition event")
+        if self._run_context is None:
+            return
+        self._run_context.add_event(event_type="graph_run", payload=payload)
 
     def set_algorithm(self, algorithm: GraphAlgorithm) -> None:
         """Set the clustering algorithm implementation to use.
@@ -148,6 +150,8 @@ class GraphDiscovery(DiscoveryAlgorithm):
 
         # 2. Run Clustering
         algorithm = self._select_algorithm(len(combined_identities))
+        algorithm_label, algorithm_params = self._describe_algorithm(algorithm)
+        embedding_stats = self._compute_embedding_stats(face_vectors)
         labels = algorithm.cluster(combined_vectors, cast(list[MediaIdentity], combined_identities))
 
         if len(labels) != len(combined_identities):
@@ -259,7 +263,59 @@ class GraphDiscovery(DiscoveryAlgorithm):
             for identity, _ in noise_identities:
                 new_clusters.append(([identity], [1.0]))
 
+        cluster_count = len({label for label in labels if label != -1})
+        noise_count = sum(1 for label in labels if label == -1)
+        self._emit_graph_run_event(
+            {
+                "algorithm": algorithm_label,
+                "params": algorithm_params,
+                "identity_count": len(identities),
+                "anchor_count": len(anchors),
+                "combined_count": len(combined_identities),
+                "inject_anchors": bool(inject_anchors),
+                "embedding_stats": embedding_stats,
+                "outputs": {
+                    "cluster_count": cluster_count,
+                    "noise_count": noise_count,
+                    "candidate_count": len(candidates),
+                    "new_cluster_count": len(new_clusters),
+                },
+            }
+        )
+
         return GraphDiscoveryResult(candidates, new_clusters)
+
+    @staticmethod
+    def _describe_algorithm(algorithm: GraphAlgorithm) -> tuple[str, dict[str, object]]:
+        class_name = algorithm.__class__.__name__
+        label = {
+            "HdbscanGraphAlgorithm": "hdbscan",
+            "DeterministicChineseWhispers": "chinese_whispers",
+        }.get(class_name, class_name)
+        params: dict[str, object] = {}
+        for key, value in vars(algorithm).items():
+            if isinstance(value, (str, int, float, bool)) or value is None:
+                params[key] = value
+        return label, params
+
+    @staticmethod
+    def _compute_embedding_stats(vectors: Sequence[np.ndarray]) -> dict[str, object]:
+        if not vectors:
+            return {"count": 0, "dimension": None, "norm": {"min": None, "max": None, "mean": None, "std": None}}
+
+        norms = np.array([float(np.linalg.norm(vec)) for vec in vectors], dtype=np.float32)
+        dimension = int(vectors[0].shape[0]) if getattr(vectors[0], "shape", None) is not None else None
+
+        return {
+            "count": len(vectors),
+            "dimension": dimension,
+            "norm": {
+                "min": float(np.min(norms)) if norms.size else None,
+                "max": float(np.max(norms)) if norms.size else None,
+                "mean": float(np.mean(norms)) if norms.size else None,
+                "std": float(np.std(norms)) if norms.size else None,
+            },
+        }
 
     def _resolve_anchor_conflict(self, anchors: list[AnchorIdentity]) -> str:
         """Resolve which cluster to assign when multiple anchors are present.

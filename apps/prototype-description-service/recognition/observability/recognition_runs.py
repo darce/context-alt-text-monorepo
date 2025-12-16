@@ -14,6 +14,8 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import RecognitionEvent, RecognitionRun
+
 
 @dataclass(slots=True)
 class RecognitionRunContext:
@@ -50,7 +52,24 @@ class RecognitionRunContext:
             target_cluster_id: Optional target cluster UUID.
             payload: JSON payload for the event.
         """
-        raise NotImplementedError("TODO: implement RecognitionRunContext.add_event")
+        identity_uuid = _coerce_uuid(identity_id)
+        cluster_uuid = _coerce_uuid(cluster_id)
+        source_cluster_uuid = _coerce_uuid(source_cluster_id)
+        target_cluster_uuid = _coerce_uuid(target_cluster_id)
+
+        event = RecognitionEvent(
+            tenant_id=self.tenant_id,
+            run_id=self.run_id,
+            event_type=event_type,
+            identity_id=identity_uuid,
+            cluster_id=cluster_uuid,
+            source_cluster_id=source_cluster_uuid,
+            target_cluster_id=target_cluster_uuid,
+            payload=dict(payload or {}),
+        )
+        if timestamp is not None:
+            event.timestamp = timestamp
+        self.session.add(event)
 
 
 async def create_recognition_run(
@@ -81,7 +100,20 @@ async def create_recognition_run(
     Returns:
         RecognitionRunContext: Context bound to the created run.
     """
-    raise NotImplementedError("TODO: implement create_recognition_run")
+    run = RecognitionRun(
+        tenant_id=tenant_id,
+        status="running",
+        source=source,
+        scan_job_id=scan_job_id,
+        clustering_job_id=clustering_job_id,
+        git_sha=git_sha,
+        settings_snapshot=dict(settings_snapshot or {}),
+        dataset_selector=dict(dataset_selector or {}),
+        started_at=started_at,
+    )
+    session.add(run)
+    await session.flush()
+    return RecognitionRunContext(session=session, tenant_id=tenant_id, run_id=run.id)
 
 
 async def complete_recognition_run(
@@ -101,5 +133,25 @@ async def complete_recognition_run(
         completed_at: Optional completion timestamp.
         error_message: Optional error message for failed runs.
     """
-    raise NotImplementedError("TODO: implement complete_recognition_run")
+    if status not in {"completed", "failed"}:
+        raise ValueError("status must be 'completed' or 'failed'")
 
+    run = await session.get(RecognitionRun, run_id)
+    if run is None:
+        raise ValueError(f"RecognitionRun not found: {run_id}")
+
+    run.status = status
+    run.completed_at = completed_at
+    run.error_message = error_message
+    await session.flush()
+
+
+def _coerce_uuid(value: str | UUID | None) -> UUID | None:
+    if value is None:
+        return None
+    if isinstance(value, UUID):
+        return value
+    try:
+        return UUID(str(value))
+    except ValueError:
+        return None

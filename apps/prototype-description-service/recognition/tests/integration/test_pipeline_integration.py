@@ -9,7 +9,15 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 from sqlalchemy import select
 
-from db.models import IdentityCluster, IdentityClusteringJob, IdentityMember, IdentityScanJob, MediaIdentity, Tenant
+from db.models import (
+    IdentityCluster,
+    IdentityClusteringJob,
+    IdentityMember,
+    IdentityScanJob,
+    MediaIdentity,
+    RecognitionRun,
+    Tenant,
+)
 from recognition.application.embedding.detector import StubFaceDetector
 from recognition.application.embedding.generator import StubEmbeddingGenerator
 from recognition.application.scan.service import ScanService
@@ -163,3 +171,8 @@ async def test_clustering_job_persists_job_row(db_session, tenant) -> None:
     assert job.status in {"completed", "running"}
     assert job.total_identities == len(identities)
     assert job.processed_identities == len(identities)
+
+    runs = (await db_session.execute(select(RecognitionRun))).scalars().all()
+    assert len(runs) == 1
+    assert runs[0].clustering_job_id == job.id
+    assert runs[0].status in {"completed", "running"}

@@ -22,6 +22,8 @@ class MediaIdentity:
     confidence: float
     bbox_width: int
     bbox_height: int
+    bbox_x: int | None = None
+    bbox_y: int | None = None
     cluster_id: str | None = None
 
     def extract_face_embedding(self) -> np.ndarray:

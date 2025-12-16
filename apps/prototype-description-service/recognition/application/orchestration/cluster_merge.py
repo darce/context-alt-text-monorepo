@@ -116,6 +116,8 @@ async def _post_merge_retry_matching(
             confidence=float(model.confidence),
             bbox_width=int(model.bbox_width),
             bbox_height=int(model.bbox_height),
+            bbox_x=int(model.bbox_x),
+            bbox_y=int(model.bbox_y),
         )
         face_vec = _normalize_face_embedding(identity.embedding)
         best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
@@ -189,6 +191,8 @@ async def _post_merge_retry_matching(
                 confidence=float(model.confidence),
                 bbox_width=int(model.bbox_width),
                 bbox_height=int(model.bbox_height),
+                bbox_x=int(model.bbox_x),
+                bbox_y=int(model.bbox_y),
             )
             face_vec = _normalize_face_embedding(identity.embedding)
             best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)

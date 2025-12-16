@@ -14,6 +14,7 @@ from recognition.application.assignment.decision import AssignmentDecision, Assi
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
+from recognition.domain.locator import IdentityLocator
 from recognition.domain.repositories import ClusterRepository, MemberData, MemberRepository
 from recognition.domain.representative import ClusterRepresentative
 from recognition.observability.recognition_runs import RecognitionRunContext
@@ -106,7 +107,7 @@ class AssignmentWriter:
         Args:
             context: Run context for emitting `recognition_events`, or None to disable event emission.
         """
-        raise NotImplementedError("TODO: implement AssignmentWriter.bind_run_context")
+        self._run_context = context
 
     def _emit_cluster_created_event(
         self,
@@ -124,7 +125,26 @@ class AssignmentWriter:
             similarities: Similarity scores aligned with `identities`.
             algorithm: Cluster creation algorithm label (e.g. "graph").
         """
-        raise NotImplementedError("TODO: emit cluster_created recognition event")
+        if self._run_context is None:
+            return
+
+        members: list[dict[str, object]] = []
+        for identity, similarity in zip(identities, similarities, strict=False):
+            member_payload: dict[str, object] = {"identity_id": identity.id, "similarity": float(similarity)}
+            locator_payload = _locator_payload(identity)
+            if locator_payload is not None:
+                member_payload["identity_locator"] = locator_payload
+            members.append(member_payload)
+
+        self._run_context.add_event(
+            event_type="cluster_created",
+            cluster_id=cluster_id,
+            payload={
+                "creation_method": algorithm,
+                "member_count": len(identities),
+                "members": members,
+            },
+        )
 
     def _emit_representative_selected_event(
         self,
@@ -144,7 +164,25 @@ class AssignmentWriter:
             quality_score: Optional quality score for the representative.
             diversity_score: Optional diversity score for the representative.
         """
-        raise NotImplementedError("TODO: emit representative_selected recognition event")
+        if self._run_context is None:
+            return
+
+        payload: dict[str, object] = {"reason": reason}
+        if quality_score is not None:
+            payload["quality_score"] = float(quality_score)
+        if diversity_score is not None:
+            payload["diversity_score"] = float(diversity_score)
+
+        locator_payload = _locator_payload(identity)
+        if locator_payload is not None:
+            payload["identity_locator"] = locator_payload
+
+        self._run_context.add_event(
+            event_type="representative_selected",
+            identity_id=identity.id,
+            cluster_id=cluster_id,
+            payload=payload,
+        )
 
     async def persist_assignment(self, decision: AssignmentDecision) -> None:
         """Persist an accepted assignment decision."""
@@ -173,6 +211,13 @@ class AssignmentWriter:
                 tenant_id=decision.candidate.identity.tenant_id,
             )
             await self._clusters.add_representative(rep)
+            self._emit_representative_selected_event(
+                cluster_id=decision.candidate.cluster_id,
+                identity=decision.candidate.identity,
+                reason="diverse_addition",
+                quality_score=rep.quality_score,
+                diversity_score=rep.diversity_score,
+            )
             new_centroid = await self.recompute_centroid(decision.candidate.cluster_id)
             if new_centroid is not None:
                 cluster.centroid = new_centroid
@@ -265,6 +310,13 @@ class AssignmentWriter:
                 tenant_id=identity.tenant_id,
             )
             await self._clusters.add_representative(rep)
+            self._emit_representative_selected_event(
+                cluster_id=cluster_id,
+                identity=identity,
+                reason="fps_recompute",
+                quality_score=rep.quality_score,
+                diversity_score=rep.diversity_score,
+            )
 
     async def persist_new_cluster(
         self,
@@ -295,6 +347,12 @@ class AssignmentWriter:
         if cluster.id is None:
             raise ClusterNotFoundError("new cluster id missing after save")
         await self._members.bulk_add_members(cluster.id, member_data)
+        self._emit_cluster_created_event(
+            cluster_id=cluster.id,
+            identities=identities,
+            similarities=similarities,
+            algorithm=algorithm,
+        )
 
         # Create initial representative(s) using diversity-aware sampling (FPS)
         # to preserve "bridge" faces that connect different pose angles
@@ -313,6 +371,13 @@ class AssignmentWriter:
                     tenant_id=tenant_id,
                 )
                 await self._clusters.add_representative(rep)
+                self._emit_representative_selected_event(
+                    cluster_id=cluster.id,
+                    identity=identity,
+                    reason="fps_seed",
+                    quality_score=rep.quality_score,
+                    diversity_score=rep.diversity_score,
+                )
 
             # Recompute and persist the centroid immediately.
             # Without this, CentroidDiscovery cannot find this cluster in subsequent batches.
@@ -383,6 +448,13 @@ class AssignmentWriter:
                     tenant_id=identity.tenant_id,
                 )
                 await self._clusters.add_representative(rep)
+                self._emit_representative_selected_event(
+                    cluster_id=cluster_id,
+                    identity=identity,
+                    reason="diverse_addition",
+                    quality_score=rep.quality_score,
+                    diversity_score=rep.diversity_score,
+                )
 
         # Update member count
         cluster.member_count += 1
@@ -395,3 +467,19 @@ class ClusterNotFoundError(Exception):
     def __init__(self, cluster_id: str) -> None:
         super().__init__(f"Cluster not found: {cluster_id}")
         self.cluster_id = cluster_id
+
+
+def _locator_payload(identity: MediaIdentity) -> dict[str, object] | None:
+    if identity.bbox_x is None or identity.bbox_y is None:
+        return None
+    try:
+        return IdentityLocator(
+            media_id=int(identity.media_id),
+            bbox_x=int(identity.bbox_x),
+            bbox_y=int(identity.bbox_y),
+            bbox_width=int(identity.bbox_width),
+            bbox_height=int(identity.bbox_height),
+            crop_hash=None,
+        ).to_dict()
+    except (TypeError, ValueError):
+        return None

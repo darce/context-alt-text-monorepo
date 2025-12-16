@@ -68,6 +68,8 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_clustering_jobs", Base.metadata),
             Table("identity_scan_jobs", Base.metadata),
             Table("identity_suggestions", Base.metadata),
+            Table("recognition_runs", Base.metadata),
+            Table("recognition_events", Base.metadata),
             Table("api_keys", Base.metadata),
             Table("clustering_job_reports", Base.metadata),
             Table("assignment_decisions", Base.metadata),

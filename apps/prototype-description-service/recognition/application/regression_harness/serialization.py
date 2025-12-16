@@ -54,7 +54,7 @@ def load_canonical_labels(path: Path) -> dict[IdentityLocator, str]:
     return labels
 
 
-def write_json(path: Path, payload: dict[str, Any]) -> None:
+def write_json(path: Path, payload: Any) -> None:
     """Write a JSON payload to disk.
 
     Args:

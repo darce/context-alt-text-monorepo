@@ -19,8 +19,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
-from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.orchestration.cluster_curation import update_cluster
+from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
@@ -80,7 +80,9 @@ async def _post_merge_retry_matching(
     if callable(get_by_cluster):
         suggestions_for_cluster = await get_by_cluster(target_cluster_id)
 
-    pending_suggestions = [s for s in suggestions_for_cluster if getattr(getattr(s, "status", None), "value", None) == "pending"]
+    pending_suggestions = [
+        s for s in suggestions_for_cluster if getattr(getattr(s, "status", None), "value", None) == "pending"
+    ]
 
     for suggestion in pending_suggestions:
         identity_id = getattr(suggestion, "identity_id", None)
@@ -130,8 +132,9 @@ async def _post_merge_retry_matching(
         if best_sim >= gate.settings.similarity_threshold:
             evaluated += 1
             decision = await gate.evaluate(candidate)
-            if getattr(decision, "suggestion_confidence", None) is not None:
-                confidence_score = float(decision.suggestion_confidence)
+            suggestion_confidence = getattr(decision, "suggestion_confidence", None)
+            if suggestion_confidence is not None:
+                confidence_score = float(suggestion_confidence)
 
         # Always rescore the existing pending suggestion so the UI % stays current.
         update_scores = getattr(suggestion_service, "update_scores", None)
@@ -177,9 +180,6 @@ async def _post_merge_retry_matching(
             if identity_id in processed_identity_ids:
                 continue
             processed_identity_ids.add(identity_id)
-
-            if model.embedding is None:
-                continue
 
             identity = MediaIdentity(
                 id=str(model.id),

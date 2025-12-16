@@ -20,16 +20,28 @@ from recognition.application.assignment import AssignmentCandidate, AssignmentGa
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration.cluster_curation import (
     assign_outlier_to_cluster as assign_outlier_to_cluster_op,
+)
+from recognition.application.orchestration.cluster_curation import (
     create_cluster_for_identity as create_cluster_for_identity_op,
+)
+from recognition.application.orchestration.cluster_curation import (
     get_identity_cluster_id as get_identity_cluster_id_op,
+)
+from recognition.application.orchestration.cluster_curation import (
     list_clusters as list_clusters_op,
+)
+from recognition.application.orchestration.cluster_curation import (
     remove_identity_from_cluster as remove_identity_from_cluster_op,
+)
+from recognition.application.orchestration.cluster_curation import (
     update_cluster as update_cluster_op,
 )
 from recognition.application.orchestration.cluster_merge import merge_cluster as merge_cluster_op
 from recognition.application.orchestration.cluster_split import split_cluster as split_cluster_op
 from recognition.application.orchestration.incremental_clustering import (
     cluster_unclustered_identities as cluster_unclustered_identities_op,
+)
+from recognition.application.orchestration.incremental_clustering import (
     get_chunk_size as get_chunk_size_op,
 )
 from recognition.application.persistence.assignment_writer import AssignmentWriter
@@ -317,9 +329,8 @@ class ClusterService:
 
     async def remove_identity_from_cluster(self, identity_id: str) -> bool:
         """Remove an identity from its current cluster (make it an orphan)."""
-        tenant_id_for_logging = (
-            getattr(self.assignment_writer._members, "_tenant_id", None)
-            or getattr(self.assignment_writer._members, "tenant_id", None)
+        tenant_id_for_logging = getattr(self.assignment_writer._members, "_tenant_id", None) or getattr(
+            self.assignment_writer._members, "tenant_id", None
         )
         return await remove_identity_from_cluster_op(
             identity_id=identity_id,

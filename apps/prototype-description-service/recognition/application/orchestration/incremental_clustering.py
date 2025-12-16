@@ -223,7 +223,9 @@ async def cluster_unclustered_identities(
 
             reps = getattr(cluster, "representatives", []) or []
             if reps:
-                representatives_by_cluster[cluster.id] = [np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None]
+                representatives_by_cluster[cluster.id] = [
+                    np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
+                ]
 
         centroids_by_cluster: dict[str, np.ndarray] = {}
         for cluster in existing_clusters:
@@ -260,10 +262,14 @@ async def cluster_unclustered_identities(
             len(chunk_remaining),
         )
 
-        augmented_anchors = {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
+        augmented_anchors = (
+            {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
+        )
         for candidate in rep_candidates + centroid_candidates:
             if candidate.cluster_id and candidate.identity.embedding is not None:
-                augmented_anchors.setdefault(candidate.cluster_id, []).append(np.asarray(candidate.identity.embedding, dtype=np.float32))
+                augmented_anchors.setdefault(candidate.cluster_id, []).append(
+                    np.asarray(candidate.identity.embedding, dtype=np.float32)
+                )
 
         graph_result = await graph_discovery.discover(chunk_remaining, augmented_anchors)
         graph_candidates = graph_result.candidates
@@ -438,4 +444,3 @@ async def cluster_unclustered_identities(
         suggested=suggest_count,
         rejected=reject_count,
     )
-

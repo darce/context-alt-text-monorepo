@@ -1,0 +1,319 @@
+"""
+Cluster merge operations.
+
+Keeps merge concerns (member reassignment, representative recomputation, and post-merge retry matching)
+out of the main ClusterService façade.
+"""
+
+from __future__ import annotations
+
+import contextlib
+import logging
+import uuid
+from typing import Protocol
+
+import numpy as np
+from sqlalchemy import Select, exists, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models import IdentityMember as MemberModel
+from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
+from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.orchestration.cluster_curation import update_cluster
+from recognition.domain.cluster import IdentityCluster
+from recognition.domain.identity import MediaIdentity
+from recognition.domain.repositories import ClusterRepository, MemberRepository
+from recognition.observability import ClusteringLogger
+from recognition.shared.similarity import extract_face_embedding
+
+logger = logging.getLogger(__name__)
+
+
+class SuggestionService(Protocol):
+    async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None: ...
+
+
+def _normalize_face_embedding(embedding: np.ndarray) -> np.ndarray:
+    face = extract_face_embedding(np.asarray(embedding, dtype=np.float32))
+    norm = float(np.linalg.norm(face))
+    if norm == 0:
+        return face.astype(np.float32)
+    return (face.astype(np.float32) / norm).astype(np.float32)
+
+
+async def _post_merge_retry_matching(
+    *,
+    tenant_id: str,
+    target_cluster_id: str,
+    session: AsyncSession | None,
+    gate: AssignmentGate,
+    assignment_writer: AssignmentWriter,
+    suggestion_service: SuggestionService,
+    max_unclustered: int = 200,
+    min_similarity_for_unclustered: float = 0.95,
+) -> None:
+    """Best-effort post-merge matching pass for the updated target cluster."""
+    if session is None:
+        return
+
+    cluster_repo: ClusterRepository = assignment_writer._clusters
+    member_repo: MemberRepository = assignment_writer._members
+
+    reps = await cluster_repo.get_all_representatives(target_cluster_id)
+    if not reps:
+        return
+
+    rep_face_vecs = [_normalize_face_embedding(rep) for rep in reps]
+    if not rep_face_vecs:
+        return
+
+    accepted = 0
+    suggested = 0
+    evaluated = 0
+
+    processed_identity_ids: set[str] = set()
+
+    # 1) Re-evaluate pending suggestions for the target cluster.
+    get_by_cluster = getattr(suggestion_service, "get_by_cluster", None)
+    suggestions_for_cluster = []
+    if callable(get_by_cluster):
+        suggestions_for_cluster = await get_by_cluster(target_cluster_id)
+
+    pending_suggestions = [s for s in suggestions_for_cluster if getattr(getattr(s, "status", None), "value", None) == "pending"]
+
+    for suggestion in pending_suggestions:
+        identity_id = getattr(suggestion, "identity_id", None)
+        if not identity_id or identity_id in processed_identity_ids:
+            continue
+        processed_identity_ids.add(identity_id)
+
+        # If the identity is already assigned, resolve the suggestion and skip re-matching.
+        existing_members = await member_repo.get_by_identity_id(identity_id)
+        if existing_members:
+            resolution = "accepted" if any(m.cluster_id == target_cluster_id for m in existing_members) else "rejected"
+            resolve_for_identity = getattr(suggestion_service, "resolve_for_identity", None)
+            if callable(resolve_for_identity):
+                await resolve_for_identity(identity_id, target_cluster_id, resolution=resolution)
+            continue
+
+        try:
+            identity_uuid = uuid.UUID(str(identity_id))
+        except ValueError:
+            continue
+
+        model = await session.get(MediaIdentityModel, identity_uuid)
+        if not model or model.embedding is None:
+            continue
+
+        identity = MediaIdentity(
+            id=str(model.id),
+            tenant_id=str(model.tenant_id),
+            media_id=str(model.media_id),
+            embedding=np.asarray(model.embedding, dtype=np.float32),
+            confidence=float(model.confidence),
+            bbox_width=int(model.bbox_width),
+            bbox_height=int(model.bbox_height),
+        )
+        face_vec = _normalize_face_embedding(identity.embedding)
+        best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
+        candidate = AssignmentCandidate(
+            identity=identity,
+            identity_vector=face_vec,
+            cluster_id=target_cluster_id,
+            discovery_method=DiscoveryMethod.REPRESENTATIVE,
+            discovery_similarity=best_sim,
+        )
+
+        decision = None
+        confidence_score = best_sim
+        if best_sim >= gate.settings.similarity_threshold:
+            evaluated += 1
+            decision = await gate.evaluate(candidate)
+            if getattr(decision, "suggestion_confidence", None) is not None:
+                confidence_score = float(decision.suggestion_confidence)
+
+        # Always rescore the existing pending suggestion so the UI % stays current.
+        update_scores = getattr(suggestion_service, "update_scores", None)
+        if callable(update_scores):
+            await update_scores(
+                suggestion.id,
+                representative_similarity=best_sim,
+                member_similarity=best_sim,
+                confidence_score=confidence_score,
+            )
+
+        if decision is None:
+            continue
+
+        if decision.outcome == AssignmentOutcome.ACCEPT:
+            await assignment_writer.persist_assignment(decision)
+            accepted += 1
+            resolve_for_identity = getattr(suggestion_service, "resolve_for_identity", None)
+            if callable(resolve_for_identity):
+                await resolve_for_identity(identity.id, target_cluster_id, resolution="accepted")
+        elif decision.outcome == AssignmentOutcome.SUGGEST:
+            suggested += 1
+
+    # 2) Try high-confidence matches from remaining unclustered identities.
+    try:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+    except ValueError:
+        tenant_uuid = None
+
+    if tenant_uuid is not None and max_unclustered > 0:
+        stmt: Select[tuple[MediaIdentityModel]] = (
+            select(MediaIdentityModel)
+            .where(MediaIdentityModel.tenant_id == tenant_uuid)
+            .where(~exists(select(MemberModel.id).where(MemberModel.identity_id == MediaIdentityModel.id)))
+            .order_by(MediaIdentityModel.confidence.desc())
+            .limit(max_unclustered)
+        )
+        result = await session.execute(stmt)
+        unclustered_models = result.scalars().all()
+
+        for model in unclustered_models:
+            identity_id = str(model.id)
+            if identity_id in processed_identity_ids:
+                continue
+            processed_identity_ids.add(identity_id)
+
+            if model.embedding is None:
+                continue
+
+            identity = MediaIdentity(
+                id=str(model.id),
+                tenant_id=str(model.tenant_id),
+                media_id=str(model.media_id),
+                embedding=np.asarray(model.embedding, dtype=np.float32),
+                confidence=float(model.confidence),
+                bbox_width=int(model.bbox_width),
+                bbox_height=int(model.bbox_height),
+            )
+            face_vec = _normalize_face_embedding(identity.embedding)
+            best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
+            if best_sim < min_similarity_for_unclustered:
+                continue
+            if best_sim < gate.settings.similarity_threshold:
+                continue
+
+            evaluated += 1
+            candidate = AssignmentCandidate(
+                identity=identity,
+                identity_vector=face_vec,
+                cluster_id=target_cluster_id,
+                discovery_method=DiscoveryMethod.REPRESENTATIVE,
+                discovery_similarity=best_sim,
+            )
+            decision = await gate.evaluate(candidate)
+            if decision.outcome == AssignmentOutcome.ACCEPT:
+                await assignment_writer.persist_assignment(decision)
+                accepted += 1
+            elif decision.outcome == AssignmentOutcome.SUGGEST:
+                await suggestion_service.create(candidate, decision.suggestion_confidence)
+                suggested += 1
+
+    if accepted:
+        refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+        if callable(refresh_view):
+            await refresh_view()
+
+    if accepted or suggested:
+        logger.info(
+            "[clustering] post_merge_retry tenant_id=%s target_cluster=%s evaluated=%d accepted=%d suggested=%d",
+            tenant_id,
+            target_cluster_id,
+            evaluated,
+            accepted,
+            suggested,
+        )
+
+
+async def merge_cluster(
+    *,
+    source_cluster_id: str,
+    tenant_id: str,
+    target_cluster_id: str,
+    target_label: str | None,
+    assignment_writer: AssignmentWriter,
+    suggestion_service: SuggestionService,
+    gate: AssignmentGate,
+    clustering_logger: ClusteringLogger | None = None,
+    session: AsyncSession | None = None,
+) -> IdentityCluster | None:
+    """Merge a source cluster into a target cluster by reassigning members."""
+    cluster_repo: ClusterRepository = assignment_writer._clusters
+    member_repo: MemberRepository = assignment_writer._members
+
+    source = await cluster_repo.get_by_id(source_cluster_id)
+    target = await cluster_repo.get_by_id(target_cluster_id)
+    if not source or not target:
+        return None
+    # Normalize UUIDs to lowercase for comparison (db stores lowercase)
+    if source.tenant_id.lower() != tenant_id.lower() or target.tenant_id.lower() != tenant_id.lower():
+        return None
+
+    # If source and target are identical, treat as a label/confirmation update.
+    if source.id == target.id:
+        return await update_cluster(
+            cluster_id=target_cluster_id,
+            tenant_id=tenant_id,
+            label=target_label or target.label,
+            assignment_writer=assignment_writer,
+            clustering_logger=clustering_logger,
+        )
+
+    moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
+    target.member_count = (target.member_count or 0) + moved
+    target.label = target_label or target.label
+    target.is_labeled = bool(target.label)
+    target.user_confirmed = True
+    updated: IdentityCluster = await cluster_repo.update(target)
+
+    await cluster_repo.delete(source_cluster_id)
+
+    recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
+    if callable(recompute_reps):
+        await recompute_reps(target_cluster_id)
+    recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
+    if callable(recompute_centroid):
+        await recompute_centroid(target_cluster_id)
+
+    refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+    if callable(refresh_view):
+        await refresh_view()
+
+    # Log the merge event
+    if clustering_logger:
+        with contextlib.suppress(Exception):
+            clustering_logger.log_cluster_merged(
+                source_cluster_id=source_cluster_id,
+                target_cluster_id=target_cluster_id,
+                moved_count=moved,
+                tenant_id=tenant_id,
+            )
+
+    logger.info(
+        "[curation] MERGED source_cluster=%s target_cluster=%s moved_count=%d tenant_id=%s user_action=manual_merge",
+        source_cluster_id,
+        target_cluster_id,
+        moved,
+        tenant_id,
+    )
+
+    # After a merge, the target cluster's representatives are recomputed. This can unlock additional matches that were
+    # previously SUGGESTED (gate-blocked) or left unclustered. Best-effort: re-run matching for pending suggestions and
+    # high-confidence unclustered identities against the updated target cluster.
+    with contextlib.suppress(Exception):
+        await _post_merge_retry_matching(
+            tenant_id=tenant_id,
+            target_cluster_id=target_cluster_id,
+            session=session,
+            gate=gate,
+            assignment_writer=assignment_writer,
+            suggestion_service=suggestion_service,
+        )
+
+    # Ensure member_count reflects reassignment
+    updated.member_count = len(await member_repo.get_by_cluster(target_cluster_id))
+    return updated

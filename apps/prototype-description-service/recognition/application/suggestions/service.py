@@ -6,9 +6,12 @@ from __future__ import annotations
 
 import logging
 
+from sqlalchemy.ext.asyncio import AsyncSession
+
 from recognition.application.assignment import AssignmentCandidate
 from recognition.domain.repositories import ClusterRepository, SuggestionCreateData, SuggestionRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.observability.recognition_runs import RecognitionRunContext
 
 logger = logging.getLogger(__name__)
 
@@ -21,10 +24,43 @@ class SuggestionService:
         repository: SuggestionRepository,
         tenant_id: str,
         cluster_repository: ClusterRepository | None = None,
+        *,
+        session: AsyncSession | None = None,
+        run_context: RecognitionRunContext | None = None,
     ) -> None:
         self._repository = repository
         self._tenant_id = tenant_id
         self._cluster_repository = cluster_repository
+        self._session = session
+        self._run_context = run_context
+
+    def bind_run_context(self, context: RecognitionRunContext | None) -> None:
+        """Attach or clear the active recognition run context.
+
+        Args:
+            context: Run context for emitting `recognition_events`, or None to disable event emission.
+        """
+        raise NotImplementedError("TODO: implement SuggestionService.bind_run_context")
+
+    def _emit_suggestion_resolved_event(
+        self,
+        *,
+        identity_id: str,
+        cluster_id: str,
+        resolution: str,
+        suggestion_id: str | None,
+        source: str,
+    ) -> None:
+        """Emit a `suggestion_resolved` event when a run context is available.
+
+        Args:
+            identity_id: Suggested identity UUID (string form).
+            cluster_id: Cluster UUID (string form).
+            resolution: "accepted" or "rejected".
+            suggestion_id: Suggestion UUID when available.
+            source: "manual_accept", "manual_reject", or "implicit_assignment".
+        """
+        raise NotImplementedError("TODO: emit suggestion_resolved recognition event")
 
     async def create(
         self, candidate: AssignmentCandidate, confidence: float | None = None

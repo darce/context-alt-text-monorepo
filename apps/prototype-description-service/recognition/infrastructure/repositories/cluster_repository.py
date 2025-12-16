@@ -271,6 +271,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             confidence=float(model.confidence),
             bbox_width=int(model.bbox_width),
             bbox_height=int(model.bbox_height),
+            bbox_x=int(model.bbox_x),
+            bbox_y=int(model.bbox_y),
             cluster_id=None,
         )
 

@@ -14,19 +14,28 @@ from recognition.observability.decisions import (
     DecisionLog,
     DecisionType,
 )
+from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.observability.reports import BatchJobReport
 
 
 class ClusteringLogger:
     """Structured logger for clustering and assignment decisions."""
 
-    def __init__(self, logger: logging.Logger | None = None) -> None:
+    def __init__(
+        self, logger: logging.Logger | None = None, *, run_context: RecognitionRunContext | None = None
+    ) -> None:
         """Create a logger wrapper for clustering flows.
 
         Args:
             logger: Optional preconfigured logger. If omitted, a module logger is used.
+            run_context: Optional recognition run context for emitting `recognition_events`.
         """
         self.logger = logger or logging.getLogger(__name__)
+        self._run_context = run_context
+
+    def bind_run_context(self, context: RecognitionRunContext | None) -> None:
+        """Attach or clear the active recognition run context."""
+        self._run_context = context
 
     def log_decision(
         self,
@@ -66,6 +75,27 @@ class ClusteringLogger:
                 "job_id": job_id,
             },
         )
+
+        if self._run_context is not None:
+            payload: dict[str, Any] = dict(metadata or {})
+            payload.update(
+                {
+                    "decision": decision.value,
+                    "similarity": similarity,
+                    "reason": reason,
+                    "algorithm": algorithm,
+                    "job_id": job_id,
+                    "media_id": str(media_id) if media_id else None,
+                }
+            )
+            self._run_context.add_event(
+                event_type="assignment_decision",
+                timestamp=ts,
+                identity_id=str(identity_id),
+                cluster_id=str(cluster_id) if cluster_id else None,
+                payload=payload,
+            )
+
         return decision_log
 
     def log_batch_start(self, identity_count: int, algorithm: str, tenant_id: str | None = None) -> None:

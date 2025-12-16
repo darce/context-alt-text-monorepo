@@ -46,6 +46,7 @@ from recognition.application.orchestration.incremental_clustering import (
 )
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.locator import IdentityLocator
 from recognition.observability import ClusteringLogger, DecisionType
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
@@ -182,23 +183,58 @@ class ClusterService:
             AssignmentOutcome.SUGGEST: DecisionType.SUGGEST,
             AssignmentOutcome.REJECT: DecisionType.REJECT,
         }[decision.outcome]
+        locator_payload: dict[str, object] | None = None
+        identity = decision.candidate.identity
+        bbox_x = identity.bbox_x
+        bbox_y = identity.bbox_y
+        if bbox_x is not None and bbox_y is not None:
+            try:
+                locator_payload = IdentityLocator(
+                    media_id=int(identity.media_id),
+                    bbox_x=int(bbox_x),
+                    bbox_y=int(bbox_y),
+                    bbox_width=int(identity.bbox_width),
+                    bbox_height=int(identity.bbox_height),
+                    crop_hash=None,
+                ).to_dict()
+            except (TypeError, ValueError):
+                locator_payload = None
+
+        metadata = dict(decision.metadata or {})
+        gate_settings = getattr(self.gate, "settings", None)
+        threshold = getattr(gate_settings, "similarity_threshold", None) if gate_settings is not None else None
+        metadata.update(
+            {
+                "method": decision.candidate.discovery_method.value,
+                "stage": f"{decision.candidate.discovery_method.name.title()}Discovery",
+                "threshold": float(threshold) if threshold is not None else None,
+                "gate_checks": {"passed": decision.checks_passed, "failed": decision.checks_failed},
+                "anchor_linked": bool(decision.candidate.anchor_linked),
+                "confidence": float(decision.suggestion_confidence)
+                if decision.suggestion_confidence is not None
+                else decision.candidate.discovery_similarity,
+            }
+        )
+        if locator_payload is not None:
+            metadata["identity_locator"] = locator_payload
+
         decision_log = self.logger.log_decision(
             identity_id=decision.candidate.identity.id,
             cluster_id=decision.candidate.cluster_id,
             decision=decision_type,
             similarity=decision.candidate.discovery_similarity,
             reason=decision.rejection_reason,
-            metadata=decision.metadata,
+            metadata=metadata,
             algorithm="hybrid",
             job_id=None,
-            media_id=getattr(decision.candidate.identity, "media_id", None),
+            media_id=identity.media_id,
         )
         if self.decision_store:
             with contextlib.suppress(Exception):
                 self.decision_store.add(
                     {
                         "id": decision_log.identity_id,
-                        "tenant_id": getattr(decision.candidate.identity, "tenant_id", None),
+                        "tenant_id": identity.tenant_id,
                         "cluster_id": decision_log.cluster_id,
                         "decision": decision_log.decision.value,
                         "similarity": decision_log.similarity,
@@ -210,7 +246,7 @@ class ClusterService:
             with contextlib.suppress(Exception):
                 await self.observability_repo.add_decision(
                     decision_log,
-                    tenant_id=getattr(decision.candidate.identity, "tenant_id", None),
+                    tenant_id=identity.tenant_id,
                     algorithm="hybrid",
                     job_id=None,
                     metadata=decision.metadata or {},

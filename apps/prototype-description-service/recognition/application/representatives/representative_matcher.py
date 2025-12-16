@@ -14,6 +14,7 @@ from recognition.application.assignment import AssignmentGate, AssignmentOutcome
 from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.discovery.representative import RepresentativeDiscovery
 from recognition.domain.identity import MediaIdentity
+from recognition.domain.locator import IdentityLocator
 from recognition.observability import ClusteringLogger, DecisionType
 
 # Callback to persist representative embedding after assignment
@@ -86,11 +87,48 @@ class RepresentativeMatcher:
             AssignmentOutcome.SUGGEST: DecisionType.SUGGEST,
             AssignmentOutcome.REJECT: DecisionType.REJECT,
         }[decision.outcome]
+
+        locator_payload: dict[str, object] | None = None
+        identity = decision.candidate.identity
+        if identity.bbox_x is not None and identity.bbox_y is not None:
+            try:
+                locator_payload = IdentityLocator(
+                    media_id=int(identity.media_id),
+                    bbox_x=int(identity.bbox_x),
+                    bbox_y=int(identity.bbox_y),
+                    bbox_width=int(identity.bbox_width),
+                    bbox_height=int(identity.bbox_height),
+                    crop_hash=None,
+                ).to_dict()
+            except (TypeError, ValueError):
+                locator_payload = None
+
+        metadata = dict(decision.metadata or {})
+        gate_settings = getattr(self.gate, "settings", None)
+        threshold = getattr(gate_settings, "similarity_threshold", None) if gate_settings is not None else None
+        metadata.update(
+            {
+                "method": decision.candidate.discovery_method.value,
+                "stage": f"{decision.candidate.discovery_method.name.title()}Discovery",
+                "threshold": float(threshold) if threshold is not None else None,
+                "gate_checks": {"passed": decision.checks_passed, "failed": decision.checks_failed},
+                "anchor_linked": bool(decision.candidate.anchor_linked),
+                "confidence": float(decision.suggestion_confidence)
+                if decision.suggestion_confidence is not None
+                else decision.candidate.discovery_similarity,
+            }
+        )
+        if locator_payload is not None:
+            metadata["identity_locator"] = locator_payload
+
         self.logger.log_decision(
             identity_id=decision.candidate.identity.id,
             cluster_id=decision.candidate.cluster_id,
             decision=decision_type,
             similarity=decision.candidate.discovery_similarity,
             reason=decision.rejection_reason,
-            metadata=decision.metadata,
+            metadata=metadata,
+            algorithm=decision.candidate.discovery_method.value,
+            job_id=None,
+            media_id=identity.media_id,
         )

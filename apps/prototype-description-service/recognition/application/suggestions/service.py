@@ -5,9 +5,12 @@ Suggestion service backed by SuggestionRepository.
 from __future__ import annotations
 
 import logging
+import uuid
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import RecognitionRun
 from recognition.application.assignment import AssignmentCandidate
 from recognition.domain.repositories import ClusterRepository, SuggestionCreateData, SuggestionRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
@@ -40,7 +43,7 @@ class SuggestionService:
         Args:
             context: Run context for emitting `recognition_events`, or None to disable event emission.
         """
-        raise NotImplementedError("TODO: implement SuggestionService.bind_run_context")
+        self._run_context = context
 
     def _emit_suggestion_resolved_event(
         self,
@@ -60,7 +63,41 @@ class SuggestionService:
             suggestion_id: Suggestion UUID when available.
             source: "manual_accept", "manual_reject", or "implicit_assignment".
         """
-        raise NotImplementedError("TODO: emit suggestion_resolved recognition event")
+        if self._run_context is None:
+            return
+
+        self._run_context.add_event(
+            event_type="suggestion_resolved",
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            payload={
+                "resolution": resolution,
+                "outcome_cluster_id": cluster_id,
+                "suggestion_id": suggestion_id,
+                "source": source,
+            },
+        )
+
+    async def _ensure_run_context(self) -> None:
+        if self._run_context is not None:
+            return
+        if self._session is None:
+            return
+        try:
+            tenant_uuid = uuid.UUID(str(self._tenant_id))
+        except ValueError:
+            return
+
+        stmt = (
+            select(RecognitionRun.id)
+            .where(RecognitionRun.tenant_id == tenant_uuid)
+            .order_by(RecognitionRun.created_at.desc())
+            .limit(1)
+        )
+        run_id = (await self._session.execute(stmt)).scalar_one_or_none()
+        if run_id is None:
+            return
+        self._run_context = RecognitionRunContext(session=self._session, tenant_id=tenant_uuid, run_id=run_id)
 
     async def create(
         self, candidate: AssignmentCandidate, confidence: float | None = None
@@ -138,6 +175,14 @@ class SuggestionService:
                     suggestion.cluster_id,
                     suggestion.representative_similarity,
                 )
+                await self._ensure_run_context()
+                self._emit_suggestion_resolved_event(
+                    identity_id=suggestion.identity_id,
+                    cluster_id=suggestion.cluster_id,
+                    resolution="accepted",
+                    suggestion_id=suggestion.id,
+                    source="manual_accept",
+                )
             return suggestion
         except ValueError:
             logger.warning("[curation] Failed to accept suggestion_id=%s: Not found", suggestion_id)
@@ -155,6 +200,14 @@ class SuggestionService:
                     suggestion.cluster_id,
                     suggestion.representative_similarity,
                 )
+                await self._ensure_run_context()
+                self._emit_suggestion_resolved_event(
+                    identity_id=suggestion.identity_id,
+                    cluster_id=suggestion.cluster_id,
+                    resolution="rejected",
+                    suggestion_id=suggestion.id,
+                    source="manual_reject",
+                )
             return suggestion
         except ValueError:
             logger.warning("[curation] Failed to reject suggestion_id=%s: Not found", suggestion_id)
@@ -171,6 +224,7 @@ class SuggestionService:
         Returns the number of suggestions resolved.
         """
         suggestions = await self._repository.get_by_identity(self._tenant_id, identity_id)
+        await self._ensure_run_context()
         resolved_count = 0
         for suggestion in suggestions:
             if suggestion.cluster_id == cluster_id and suggestion.status == SuggestionStatus.PENDING:
@@ -183,6 +237,13 @@ class SuggestionService:
                     identity_id,
                     cluster_id,
                     resolution,
+                )
+                self._emit_suggestion_resolved_event(
+                    identity_id=identity_id,
+                    cluster_id=cluster_id,
+                    resolution=resolution,
+                    suggestion_id=suggestion.id,
+                    source="implicit_assignment",
                 )
         return resolved_count
 

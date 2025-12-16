@@ -14,7 +14,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import Any, Protocol
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -27,7 +27,9 @@ from recognition.application.assignment import AssignmentGate, AssignmentOutcome
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.identity import MediaIdentity
-from recognition.observability import ClusteringLogger
+from recognition.domain.locator import IdentityLocator
+from recognition.observability import ClusteringLogger, DecisionType
+from recognition.observability.recognition_runs import complete_recognition_run, create_recognition_run
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
 
@@ -126,6 +128,7 @@ async def cluster_unclustered_identities(
     )
     session.add(clustering_job)
     await session.flush()
+    job_label = str(clustering_job.id)
 
     stmt: Select[tuple[MediaIdentityModel]] = (
         select(MediaIdentityModel)
@@ -140,7 +143,6 @@ async def cluster_unclustered_identities(
         clustering_job.progress = 1.0
         clustering_job.completed_at = datetime.now(tz=UTC)
         finished_at = clustering_job.completed_at
-        job_label = str(clustering_job.id)
         await session.flush()
         await session.commit()
         return ClusterJobResult(
@@ -152,6 +154,19 @@ async def cluster_unclustered_identities(
             clusters_created=0,
         )
 
+    dataset_media_ids = sorted({int(row.media_id) for row in unclustered if row.media_id is not None})
+    run_ctx = await create_recognition_run(
+        session,
+        tenant_id=tenant_uuid,
+        source="cluster_unclustered_identities",
+        clustering_job_id=clustering_job.id,
+        settings_snapshot=gate.settings.model_dump(),
+        dataset_selector={"media_ids": dataset_media_ids},
+        started_at=started_at,
+    )
+    if clustering_logger:
+        clustering_logger.bind_run_context(run_ctx)
+
     domain_identities = [
         MediaIdentity(
             id=str(row.id),
@@ -161,6 +176,8 @@ async def cluster_unclustered_identities(
             confidence=row.confidence,
             bbox_width=row.bbox_width,
             bbox_height=row.bbox_height,
+            bbox_x=row.bbox_x,
+            bbox_y=row.bbox_y,
         )
         for row in unclustered
     ]
@@ -297,6 +314,53 @@ async def cluster_unclustered_identities(
                 decision.checks_passed,
                 decision.checks_failed,
             )
+            if clustering_logger:
+                locator_payload: dict[str, object] | None = None
+                if candidate.identity.bbox_x is not None and candidate.identity.bbox_y is not None:
+                    try:
+                        locator_payload = IdentityLocator(
+                            media_id=int(candidate.identity.media_id),
+                            bbox_x=int(candidate.identity.bbox_x),
+                            bbox_y=int(candidate.identity.bbox_y),
+                            bbox_width=int(candidate.identity.bbox_width),
+                            bbox_height=int(candidate.identity.bbox_height),
+                            crop_hash=None,
+                        ).to_dict()
+                    except (TypeError, ValueError):
+                        locator_payload = None
+
+                decision_metadata: dict[str, Any] = dict(decision.metadata or {})
+                decision_metadata.update(
+                    {
+                        "method": candidate.discovery_method.value,
+                        "stage": f"{candidate.discovery_method.name.title()}Discovery",
+                        "threshold": gate.settings.similarity_threshold,
+                        "gate_checks": {"passed": decision.checks_passed, "failed": decision.checks_failed},
+                        "anchor_linked": bool(candidate.anchor_linked),
+                        "confidence": float(decision.suggestion_confidence)
+                        if decision.suggestion_confidence is not None
+                        else candidate.discovery_similarity,
+                    }
+                )
+                if locator_payload is not None:
+                    decision_metadata["identity_locator"] = locator_payload
+
+                decision_type = {
+                    AssignmentOutcome.ACCEPT: DecisionType.ACCEPT,
+                    AssignmentOutcome.SUGGEST: DecisionType.SUGGEST,
+                    AssignmentOutcome.REJECT: DecisionType.REJECT,
+                }[decision.outcome]
+                clustering_logger.log_decision(
+                    identity_id=candidate.identity.id,
+                    cluster_id=candidate.cluster_id,
+                    decision=decision_type,
+                    similarity=candidate.discovery_similarity,
+                    reason=decision.rejection_reason,
+                    metadata=decision_metadata,
+                    algorithm="incremental",
+                    job_id=job_label,
+                    media_id=candidate.identity.media_id,
+                )
 
             if decision.outcome == AssignmentOutcome.ACCEPT:
                 await assignment_writer.persist_assignment(decision)
@@ -415,10 +479,17 @@ async def cluster_unclustered_identities(
     clustering_job.status = "completed"
     clustering_job.completed_at = datetime.now(tz=UTC)
     await session.flush()
+
+    await complete_recognition_run(
+        session,
+        run_id=run_ctx.run_id,
+        status="completed",
+        completed_at=clustering_job.completed_at,
+    )
     await session.commit()
-    job_label = str(clustering_job.id)
     finished_at = clustering_job.completed_at or datetime.now(tz=UTC)
     if clustering_logger:
+        clustering_logger.bind_run_context(None)
         clustering_job_report = BatchJobReport(
             job_id=job_label,
             algorithm="graph",  # or "incremental"

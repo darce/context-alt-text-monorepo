@@ -169,6 +169,9 @@ async def cluster_unclustered_identities(
     bind_writer_context = getattr(assignment_writer, "bind_run_context", None)
     if callable(bind_writer_context):
         bind_writer_context(run_ctx)
+    bind_graph_context = getattr(graph_discovery, "bind_run_context", None)
+    if callable(bind_graph_context):
+        bind_graph_context(run_ctx)
 
     domain_identities = [
         MediaIdentity(
@@ -495,6 +498,8 @@ async def cluster_unclustered_identities(
         clustering_logger.bind_run_context(None)
     if callable(bind_writer_context):
         bind_writer_context(None)
+    if callable(bind_graph_context):
+        bind_graph_context(None)
     if clustering_logger:
         clustering_job_report = BatchJobReport(
             job_id=job_label,

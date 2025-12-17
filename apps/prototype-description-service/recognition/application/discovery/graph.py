@@ -5,6 +5,7 @@ Graph-based discovery (HDBSCAN/Chinese Whispers) for assignment candidates.
 from __future__ import annotations
 
 import importlib.util
+import logging
 import uuid
 from abc import ABC, abstractmethod
 from collections.abc import Sequence
@@ -19,6 +20,15 @@ from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import extract_face_embedding
+
+logger = logging.getLogger(__name__)
+
+# TEMPORARY DEBUGGING SAFEGUARD (2025-12-17):
+# We intentionally disable the Chinese Whispers fallback so the graph stage runs with a single algorithm while
+# debugging HDBSCAN + representative/anchor matching behavior.
+#
+# To re-enable the original auto-selection (HDBSCAN for small batches, CW fallback otherwise), set this to False.
+DISABLE_CHINESE_WHISPERS_FALLBACK = True
 
 
 @dataclass
@@ -151,6 +161,19 @@ class GraphDiscovery(DiscoveryAlgorithm):
         # 2. Run Clustering
         algorithm = self._select_algorithm(len(combined_identities))
         algorithm_label, algorithm_params = self._describe_algorithm(algorithm)
+        hdbscan_limit = self.settings.hdbscan_max_batch_size or 500
+        logger.info(
+            "[GraphDiscovery] Starting discovery: identities=%d anchors=%d combined=%d inject_anchors=%s algorithm=%s hdbscan_available=%s hdbscan_limit=%d cw_fallback_disabled=%s params=%s",
+            len(identities),
+            len(anchors),
+            len(combined_identities),
+            inject_anchors,
+            algorithm_label,
+            self._hdbscan_available(),
+            hdbscan_limit,
+            DISABLE_CHINESE_WHISPERS_FALLBACK,
+            algorithm_params,
+        )
         embedding_stats = self._compute_embedding_stats(face_vectors)
         labels = algorithm.cluster(combined_vectors, cast(list[MediaIdentity], combined_identities))
 
@@ -265,6 +288,14 @@ class GraphDiscovery(DiscoveryAlgorithm):
 
         cluster_count = len({label for label in labels if label != -1})
         noise_count = sum(1 for label in labels if label == -1)
+        logger.info(
+            "[GraphDiscovery] Completed: algorithm=%s clusters=%d noise=%d candidates=%d new_clusters=%d",
+            algorithm_label,
+            cluster_count,
+            noise_count,
+            len(candidates),
+            len(new_clusters),
+        )
         self._emit_graph_run_event(
             {
                 "algorithm": algorithm_label,
@@ -361,7 +392,8 @@ class GraphDiscovery(DiscoveryAlgorithm):
             return self.algorithm
 
         hdbscan_limit = self.settings.hdbscan_max_batch_size or 500
-        if identities_count <= hdbscan_limit and self._hdbscan_available():
+        hdbscan_available = self._hdbscan_available()
+        if hdbscan_available and (identities_count <= hdbscan_limit or DISABLE_CHINESE_WHISPERS_FALLBACK):
             # Convert cosine similarity threshold to euclidean distance for normalized vectors.
             # For unit vectors: euclidean_distance = sqrt(2 * (1 - cosine_similarity))
             # This ensures HDBSCAN clusters faces that would pass our similarity threshold.
@@ -369,12 +401,26 @@ class GraphDiscovery(DiscoveryAlgorithm):
 
             from recognition.infrastructure.clustering import HdbscanGraphAlgorithm
 
+            if DISABLE_CHINESE_WHISPERS_FALLBACK and identities_count > hdbscan_limit:
+                logger.warning(
+                    "[GraphDiscovery] Forcing HDBSCAN for combined_count=%d > hdbscan_limit=%d (Chinese Whispers temporarily disabled)",
+                    identities_count,
+                    hdbscan_limit,
+                )
+
             target_cosine = float(self.settings.similarity_threshold)
             epsilon = math.sqrt(2.0 * (1.0 - target_cosine))
             return HdbscanGraphAlgorithm(
                 min_cluster_size=2,
                 min_samples=1,
                 cluster_selection_epsilon=epsilon,
+            )
+
+        if DISABLE_CHINESE_WHISPERS_FALLBACK:
+            raise RuntimeError(
+                "GraphDiscovery Chinese Whispers fallback is temporarily disabled for debugging. "
+                "Install/enable `hdbscan`, lower the batch size, or set "
+                "DISABLE_CHINESE_WHISPERS_FALLBACK=False in recognition/application/discovery/graph.py."
             )
 
         from recognition.infrastructure.clustering import DeterministicChineseWhispers

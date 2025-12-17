@@ -20,6 +20,7 @@ use function is_wp_error;
 use function md5;
 use function min;
 use function sanitize_text_field;
+use function sprintf;
 use function untrailingslashit;
 use function wp_get_attachment_url;
 use function wp_json_encode;
@@ -55,8 +56,25 @@ class RecognitionProxyController {
 						'required'          => true,
 						'items'             => array( 'type' => 'integer' ),
 						'description'       => 'Array of attachment IDs to analyze (max 300).',
-						'validate_callback' => static function ( $value ): bool {
-							return is_array( $value ) && count( $value ) > 0 && count( $value ) <= 300;
+						'validate_callback' => static function ( $value ) {
+							if ( ! is_array( $value ) ) {
+								return new WP_Error( 'invalid_media_ids', 'media_ids must be an array of attachment IDs.', array( 'status' => 400 ) );
+							}
+
+							$count = count( $value );
+							if ( 0 === $count ) {
+								return new WP_Error( 'missing_media_ids', 'Please provide one or more media IDs to analyze.', array( 'status' => 400 ) );
+							}
+
+							if ( $count > 300 ) {
+								return new WP_Error(
+									'too_many_media_ids',
+									sprintf( 'media_ids supports at most 300 items per request (received %d).', $count ),
+									array( 'status' => 400 )
+								);
+							}
+
+							return true;
 						},
 					),
 				),

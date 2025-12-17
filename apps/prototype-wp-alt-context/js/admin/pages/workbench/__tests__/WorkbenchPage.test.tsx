@@ -84,14 +84,16 @@ describe('WorkbenchPage', () => {
           options?.onMutate?.(mediaIds, mockContext);
           if (outcome === 'success') {
             options?.onSuccess?.(
-              {
-                id: 'job-123',
-                type: 'analyze' as const,
-                status: 'pending' as const,
-                progress: { completed: 0, total: mediaIds.length },
-                started_at: new Date().toISOString(),
-                finished_at: null,
-              },
+              [
+                {
+                  id: 'job-123',
+                  type: 'analyze' as const,
+                  status: 'pending' as const,
+                  progress: { completed: 0, total: mediaIds.length },
+                  started_at: new Date().toISOString(),
+                  finished_at: null,
+                },
+              ],
               mediaIds,
               undefined,
               mockContext,

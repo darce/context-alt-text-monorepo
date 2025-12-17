@@ -12,7 +12,6 @@ export type {
   JobProgress,
   JobStatusResponse,
   ScanStatus,
-  ClusterRequest,
   ClusterResponse,
   RepresentativeBounds,
   BoundingBox,
@@ -42,7 +41,7 @@ export type {
 } from './types';
 
 // Scan operations
-export { scanFaces, fetchScanStatus, clusterFaces } from './scanApi';
+export { scanFaces, scanFacesBatched, fetchScanStatus, clusterFaces } from './scanApi';
 
 // Cluster operations
 export {

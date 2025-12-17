@@ -50,6 +50,14 @@ export const useClusterSuggestions = ({
 }: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
   const queryClient = useQueryClient();
 
+  // When entering edit mode, always refetch clusters so the label dropdown stays current.
+  React.useEffect(() => {
+    if (!enabled) {
+      return;
+    }
+    void queryClient.invalidateQueries({ queryKey: ['clusters'] });
+  }, [enabled, queryClient]);
+
   // Fetch existing clusters (cached for 30s) - includes IDs for proper assignment
   const { data: existingClusters } = useQuery({
     queryKey: ['clusters'],
@@ -131,13 +139,9 @@ export const useClusterSuggestions = ({
 
   // Ensure labels are fetched (for merge detection) - only user-labeled
   const ensureLabels = React.useCallback(async (): Promise<string[]> => {
-    if (existingClusters) {
-      return existingClusters
-        .filter((c: ClusterSummary) => c.label && !c.is_auto_label)
-        .map((c: ClusterSummary) => c.label);
-    }
-
     try {
+      // Always refetch to avoid stale label lists during merge/assign flows.
+      await queryClient.invalidateQueries({ queryKey: ['clusters'] });
       const clusters = await queryClient.fetchQuery({
         queryKey: ['clusters'],
         queryFn: () => listRecognitionClusters({ limit: 500 }),
@@ -161,6 +165,7 @@ export const useClusterSuggestions = ({
 
       // If not in options, fetch clusters and search
       try {
+        await queryClient.invalidateQueries({ queryKey: ['clusters'] });
         const clusters = await queryClient.fetchQuery({
           queryKey: ['clusters'],
           queryFn: () => listRecognitionClusters({ limit: 500 }),

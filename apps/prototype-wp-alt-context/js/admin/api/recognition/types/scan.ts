@@ -49,10 +49,6 @@ export interface ScanStatus {
   finished_at: string | null;
 }
 
-export interface ClusterRequest {
-  similarity_threshold?: number;
-}
-
 /**
  * Response from POST /recognition/clustering/jobs
  * Extends JobStatusResponse with clustering-specific fields.

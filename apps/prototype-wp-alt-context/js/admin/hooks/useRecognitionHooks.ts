@@ -12,7 +12,7 @@ import {
   fetchScanStatus,
   getRecognitionCluster,
   listRecognitionClusters,
-  scanFaces,
+  scanFacesBatched,
   type AnalyzeResponse,
   type ClusterListParams,
   type ClusterResponse,
@@ -22,9 +22,14 @@ import {
 import { fetchTrainingStage } from '../api/recognition/identityApi';
 import type { TrainingStageResponse } from '../api/recognition/types';
 
-export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse, Error, number[], unknown>) =>
-  useMutation<AnalyzeResponse, Error, number[]>({
-    mutationFn: (mediaIds) => scanFaces({ mediaIds }),
+export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse[], Error, number[], unknown>) =>
+  useMutation<AnalyzeResponse[], Error, number[]>({
+    mutationFn: async (mediaIds) => {
+      if (mediaIds.length === 0) {
+        throw new Error('No media IDs provided for analysis.');
+      }
+      return scanFacesBatched({ mediaIds });
+    },
     ...options,
   });
 
@@ -69,7 +74,7 @@ export const useCombinedScanStatus = (jobId: string | null, activeJobIds: string
 
 export const useClusterIdentities = (options?: UseMutationOptions<ClusterResponse, Error, void, unknown>) =>
   useMutation<ClusterResponse, Error, void>({
-    mutationFn: () => clusterFaces({ similarity_threshold: 0.6 }),
+    mutationFn: () => clusterFaces(),
     ...options,
   });
 

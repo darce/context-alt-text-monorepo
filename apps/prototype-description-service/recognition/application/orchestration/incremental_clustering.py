@@ -78,8 +78,11 @@ async def cluster_unclustered_identities(
     clustering_logger: ClusteringLogger | None = None,
 ) -> ClusterJobResult:
     """Cluster any identities not yet assigned to a cluster."""
-    if job_id is None:
-        job_id = str(generate_id())
+    try:
+        job_uuid = uuid.UUID(str(job_id)) if job_id is not None else generate_id()
+    except ValueError:
+        job_uuid = generate_id()
+    job_id = str(job_uuid)
     logger.info(
         "[clustering] batch_start job_id=%s tenant_id=%s",
         job_id,
@@ -119,6 +122,7 @@ async def cluster_unclustered_identities(
         )
 
     clustering_job = IdentityClusteringJob(
+        id=job_uuid,
         tenant_id=tenant_uuid,
         status="running",
         started_at=started_at,

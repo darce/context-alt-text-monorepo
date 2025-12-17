@@ -5,8 +5,9 @@ from __future__ import annotations
 import logging
 import uuid
 
-from fastapi import FastAPI, Request
+from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import IntegrityError
 
 logger = logging.getLogger(__name__)
 
@@ -64,9 +65,46 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
     )
 
 
+def _is_duplicate_cluster_label(exc: IntegrityError) -> bool:
+    """Return True when IntegrityError is caused by duplicate (tenant_id, label)."""
+    message = str(exc).lower()
+    if "unique_tenant_identity_label" in message:
+        return True
+    # SQLite-style message: "UNIQUE constraint failed: identity_clusters.tenant_id, identity_clusters.label"
+    return "unique constraint failed" in message and "identity_clusters" in message and ".label" in message
+
+
+async def integrity_exception_handler(request: Request, exc: IntegrityError) -> JSONResponse:
+    """Translate common DB constraint violations into friendlier HTTP errors."""
+    trace_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+
+    if _is_duplicate_cluster_label(exc):
+        return JSONResponse(
+            status_code=status.HTTP_409_CONFLICT,
+            content={
+                "error": "DuplicateClusterLabel",
+                "message": "Cluster label already exists for this tenant.",
+                "path": str(request.url),
+                "trace_id": trace_id,
+            },
+        )
+
+    logger.exception("Unhandled integrity error", extra={"trace_id": trace_id, "path": str(request.url)})
+    return JSONResponse(
+        status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+        content={
+            "error": exc.__class__.__name__,
+            "message": str(exc),
+            "path": str(request.url),
+            "trace_id": trace_id,
+        },
+    )
+
+
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach exception handlers to the FastAPI app."""
     app.add_exception_handler(RecognitionError, recognition_exception_handler)
+    app.add_exception_handler(IntegrityError, integrity_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
 
 

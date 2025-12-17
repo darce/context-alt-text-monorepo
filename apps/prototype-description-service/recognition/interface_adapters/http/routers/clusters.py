@@ -113,12 +113,12 @@ async def update_cluster(
     session=Depends(get_session),
 ) -> ClusterResponse:
     """Update cluster label."""
-    _ = validate_label(request.label)
+    label = validate_label(request.label)
     validate_entity_id(cluster_id, field_name="cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
-    cluster = await cluster_service.update_cluster(cluster_id, request.tenant_id, label=request.label)
+    cluster = await cluster_service.update_cluster(cluster_id, request.tenant_id, label=label)
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
     return cluster

@@ -56,9 +56,11 @@ export const useRecognitionJobHistory = () => {
         jobHistory.map(async (id) => {
           try {
             const response = await fetchScanStatus(id);
-            return [id, response.status] as const;
-          } catch {
-            return [id, __('Unknown', 'alt-context')] as const;
+            return { id, status: response.status, notFound: false } as const;
+          } catch (error) {
+            const message = error instanceof Error ? error.message : '';
+            const notFound = message.includes('(404)');
+            return { id, status: __('Unknown', 'alt-context'), notFound } as const;
           }
         }),
       );
@@ -67,10 +69,31 @@ export const useRecognitionJobHistory = () => {
         return;
       }
 
+      const staleIds = entries.filter((entry) => entry.notFound).map((entry) => entry.id);
+      if (staleIds.length > 0) {
+        const nextHistory = jobHistory.filter((id) => !staleIds.includes(id));
+        setJobHistory(nextHistory);
+        persistHistory(nextHistory);
+        setJobStatuses((prev) => {
+          const next = { ...prev };
+          staleIds.forEach((id) => {
+            delete next[id];
+          });
+          return next;
+        });
+        setJobId((current) => (current && staleIds.includes(current) ? (nextHistory[0] ?? null) : current));
+        if (nextHistory.length === 0) {
+          return;
+        }
+      }
+
       setJobStatuses((prev) => {
         const next = { ...prev };
-        entries.forEach(([id, status]) => {
-          next[id] = status;
+        entries.forEach((entry) => {
+          if (staleIds.includes(entry.id)) {
+            return;
+          }
+          next[entry.id] = entry.status;
         });
         return next;
       });

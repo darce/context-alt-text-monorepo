@@ -112,10 +112,10 @@ export const WorkbenchPage = (): React.JSX.Element => {
       setIsWaitingForScanCompletion(false);
     },
     onSuccess: (data) => {
-      // Backend returns { id, type, status, progress, started_at, finished_at }
-      if (data.id) {
-        rememberJob(data.id);
-        setActiveJobIds([data.id]);
+      const jobIds = data.map((job) => job.id).filter((id): id is string => Boolean(id));
+      if (jobIds.length > 0) {
+        rememberJob(jobIds[0]);
+        setActiveJobIds(jobIds);
       }
       setIsWaitingForScanCompletion(true);
 

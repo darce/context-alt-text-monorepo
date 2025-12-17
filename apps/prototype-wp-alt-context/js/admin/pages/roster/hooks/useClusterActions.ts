@@ -3,7 +3,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import type { AnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
-import { reassignClusterIdentity, scanFaces } from '../../../api/recognition';
+import { reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
 
 interface ClusterActionOptions {
   onReassignSettled?: () => void;
@@ -28,11 +28,11 @@ export const useClusterActions = ({
   });
 
   const rescanMutation = useMutation<
-    AnalyzeResponse,
+    AnalyzeResponse[],
     Error,
     { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
   >({
-    mutationFn: ({ cluster, mediaIds }) => scanFaces({ mediaIds, sensitivity: 'high', clusterId: cluster.id }),
+    mutationFn: ({ cluster, mediaIds }) => scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
     },
@@ -57,8 +57,11 @@ export const useClusterActions = ({
 
   const statusMessage = useMemo(() => {
     if (rescanMutation.isSuccess && rescanMutation.data) {
-      return rescanMutation.data.id
-        ? `Started sensitive rescan (job ${rescanMutation.data.id}).`
+      const firstJob = rescanMutation.data[0];
+      return firstJob?.id
+        ? rescanMutation.data.length > 1
+          ? `Started sensitive rescan (${rescanMutation.data.length} batches, first job ${firstJob.id}).`
+          : `Started sensitive rescan (job ${firstJob.id}).`
         : 'Started sensitive rescan.';
     }
     if (commitMutation.isSuccess) {

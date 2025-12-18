@@ -10,6 +10,7 @@ use WP_REST_Response;
 
 use function absint;
 use function add_query_arg;
+use function apply_filters;
 use function current_user_can;
 use function esc_url_raw;
 use function get_current_user_id;
@@ -19,6 +20,7 @@ use function is_array;
 use function is_wp_error;
 use function md5;
 use function min;
+use function sanitize_key;
 use function sanitize_text_field;
 use function sprintf;
 use function untrailingslashit;
@@ -36,6 +38,12 @@ use function wp_remote_retrieve_response_code;
 class RecognitionProxyController {
 	private string $recognition_base_url;
 	private string $api_key;
+	private const DEFAULT_TIER_BATCH_LIMITS = array(
+		'free'       => 50,
+		'pro'        => 500,
+		'business'   => 2000,
+		'enterprise' => 10000,
+	);
 
 	public function __construct() {
 		$this->recognition_base_url = (string) get_option( 'alt_context_recognition_url', 'http://localhost:8000' );
@@ -55,27 +63,8 @@ class RecognitionProxyController {
 						'type'              => 'array',
 						'required'          => true,
 						'items'             => array( 'type' => 'integer' ),
-						'description'       => 'Array of attachment IDs to analyze (max 300).',
-						'validate_callback' => static function ( $value ) {
-							if ( ! is_array( $value ) ) {
-								return new WP_Error( 'invalid_media_ids', 'media_ids must be an array of attachment IDs.', array( 'status' => 400 ) );
-							}
-
-							$count = count( $value );
-							if ( 0 === $count ) {
-								return new WP_Error( 'missing_media_ids', 'Please provide one or more media IDs to analyze.', array( 'status' => 400 ) );
-							}
-
-							if ( $count > 300 ) {
-								return new WP_Error(
-									'too_many_media_ids',
-									sprintf( 'media_ids supports at most 300 items per request (received %d).', $count ),
-									array( 'status' => 400 )
-								);
-							}
-
-							return true;
-						},
+						'description'       => 'Array of attachment IDs to analyze.',
+						'validate_callback' => array( $this, 'validate_media_ids' ),
 					),
 				),
 			)
@@ -87,6 +76,16 @@ class RecognitionProxyController {
 			array(
 				'methods'             => 'GET',
 				'callback'            => array( $this, 'get_job_status' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/workbench/recognition/jobs/(?P<job_id>[a-f0-9-]+)/cancel',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'cancel_job' ),
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
@@ -282,6 +281,28 @@ class RecognitionProxyController {
 		return current_user_can( 'manage_options' );
 	}
 
+	public function validate_media_ids( $value, WP_REST_Request $request, string $param ): bool|WP_Error {
+		if ( ! is_array( $value ) ) {
+			return new WP_Error( 'invalid_media_ids', 'media_ids must be an array of attachment IDs.', array( 'status' => 400 ) );
+		}
+
+		$count = count( $value );
+		if ( 0 === $count ) {
+			return new WP_Error( 'missing_media_ids', 'Please provide one or more media IDs to analyze.', array( 'status' => 400 ) );
+		}
+
+		$max = $this->get_tier_batch_limit();
+		if ( $count > $max ) {
+			return new WP_Error(
+				'too_many_media_ids',
+				sprintf( 'media_ids supports at most %d items per request (received %d).', $max, $count ),
+				array( 'status' => 400 )
+			);
+		}
+
+		return true;
+	}
+
 	public function analyze_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$media_ids = $request->get_param( 'media_ids' );
 
@@ -314,6 +335,21 @@ class RecognitionProxyController {
 		return $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/jobs/%s', $job_id ),
+			array(),
+			array( 'tenant_id' => $this->get_tenant_id() )
+		);
+	}
+
+	public function cancel_job( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
+
+		if ( '' === $job_id ) {
+			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
+		}
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/jobs/%s/cancel', $job_id ),
 			array(),
 			array( 'tenant_id' => $this->get_tenant_id() )
 		);
@@ -719,5 +755,58 @@ class RecognitionProxyController {
 
 	private function get_tenant_id(): string {
 		return md5( (string) get_site_url() );
+	}
+
+	private function get_tier_batch_limit(): int {
+		$tier = sanitize_key( (string) get_option( 'alt_context_tier', 'free' ) );
+		$limits = $this->get_batch_limits();
+		return $limits[ $tier ] ?? $limits['free'];
+	}
+
+	/**
+	 * Resolve tier batch limits from options (and allow overrides via a WP filter).
+	 *
+	 * Option: alt_context_batch_limits
+	 * - Array or JSON object: { free: 50, pro: 500, business: 2000, enterprise: 10000 }
+	 *
+	 * Filter: alt_context_recognition_batch_limits
+	 * - Receives array<string,int> limits, returns same shape.
+	 *
+	 * @return array<string,int>
+	 */
+	private function get_batch_limits(): array {
+		$defaults = self::DEFAULT_TIER_BATCH_LIMITS;
+		$raw      = get_option( 'alt_context_batch_limits', array() );
+
+		$provided = array();
+		if ( is_array( $raw ) ) {
+			$provided = $raw;
+		} elseif ( is_string( $raw ) && '' !== $raw ) {
+			$decoded = json_decode( $raw, true );
+			if ( is_array( $decoded ) ) {
+				$provided = $decoded;
+			}
+		}
+
+		$limits = array();
+		foreach ( $defaults as $tier => $default_limit ) {
+			$value = $provided[ $tier ] ?? null;
+			$limit = absint( $value );
+			$limits[ $tier ] = $limit > 0 ? $limit : (int) $default_limit;
+		}
+
+		$filtered = apply_filters( 'alt_context_recognition_batch_limits', $limits );
+		if ( ! is_array( $filtered ) ) {
+			return $limits;
+		}
+
+		$normalized = array();
+		foreach ( $limits as $tier => $default_limit ) {
+			$value = $filtered[ $tier ] ?? $default_limit;
+			$limit = absint( $value );
+			$normalized[ $tier ] = $limit > 0 ? $limit : (int) $default_limit;
+		}
+
+		return $normalized;
 	}
 }

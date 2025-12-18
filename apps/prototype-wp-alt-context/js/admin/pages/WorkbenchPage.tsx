@@ -3,7 +3,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { useClusterIdentities, useScanIdentities, useCombinedScanStatus } from '../hooks/useRecognitionHooks';
+import { useCancelScanJobs, useClusterIdentities, useScanIdentities, useCombinedScanStatus } from '../hooks/useRecognitionHooks';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
@@ -85,6 +85,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [scanError, setScanError] = useState<string | null>(null);
   const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
   const [isWaitingForScanCompletion, setIsWaitingForScanCompletion] = useState(false);
+  const [isCancellingScan, setIsCancellingScan] = useState(false);
   const queryClient = useQueryClient();
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
@@ -149,6 +150,25 @@ export const WorkbenchPage = (): React.JSX.Element => {
 
   const { scanStatusQuery, multiScanStatus } = useCombinedScanStatus(jobId, activeJobIds);
 
+  const cancelMutation = useCancelScanJobs({
+    onMutate: () => {
+      setIsCancellingScan(true);
+    },
+    onSuccess: () => {
+      setIsWaitingForScanCompletion(false);
+      setActiveJobIds([]);
+      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+    },
+    onError: (error) => {
+      const message =
+        error instanceof Error ? error.message : __('Unable to cancel recognition job. Please try again.', 'alt-context');
+      setScanError(message);
+    },
+    onSettled: () => {
+      setIsCancellingScan(false);
+    },
+  });
+
   const scanStatusText = useMemo(() => {
     if (clusterMutation.isPending) {
       return __('Clustering faces…', 'alt-context');
@@ -166,6 +186,44 @@ export const WorkbenchPage = (): React.JSX.Element => {
     }
     return scanStatusQuery.data?.status ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
   }, [activeJobIds, multiScanStatus, scanStatusQuery.data?.status, scanMutation.isPending, clusterMutation.isPending]);
+
+  const scanProgress = useMemo(() => {
+    if (activeJobIds.length === 0) {
+      return scanStatusQuery.data?.progress ?? null;
+    }
+    const totals = multiScanStatus.reduce(
+      (acc, query) => {
+        const progress = query.data?.progress;
+        if (!progress) {
+          return acc;
+        }
+        acc.completed += progress.completed ?? 0;
+        acc.total += progress.total ?? 0;
+        return acc;
+      },
+      { completed: 0, total: 0 },
+    );
+    return totals.total > 0 ? totals : null;
+  }, [activeJobIds.length, multiScanStatus, scanStatusQuery.data?.progress]);
+
+  const isScanRunning = useMemo(() => {
+    if (scanMutation.isPending || isWaitingForScanCompletion) {
+      return true;
+    }
+
+    if (activeJobIds.length > 0) {
+      return multiScanStatus.some((query) => query.data?.status === 'pending' || query.data?.status === 'running');
+    }
+
+    const status = scanStatusQuery.data?.status;
+    return status === 'pending' || status === 'running';
+  }, [
+    scanMutation.isPending,
+    isWaitingForScanCompletion,
+    activeJobIds.length,
+    multiScanStatus,
+    scanStatusQuery.data?.status,
+  ]);
 
   useEffect(() => {
     if (scanStatusQuery.data?.status === 'completed') {
@@ -216,6 +274,14 @@ export const WorkbenchPage = (): React.JSX.Element => {
     scanMutation.mutate(mediaIds);
   };
 
+  const handleCancelScan = (): void => {
+    const targets = activeJobIds.length > 0 ? activeJobIds : jobId ? [jobId] : [];
+    if (targets.length === 0) {
+      return;
+    }
+    cancelMutation.mutate(targets);
+  };
+
   const handleSelectJobFromHistory = (id: string): void => {
     selectJob(id);
     setActiveSection(TAB_IDS.confirm);
@@ -262,10 +328,13 @@ export const WorkbenchPage = (): React.JSX.Element => {
             <ScanActionPanel
               selectedCount={selectedMedia.length}
               onScanFaces={handleScanFaces}
-              isScanning={scanMutation.isPending}
+              onCancelScan={isScanRunning ? handleCancelScan : undefined}
+              isScanning={isScanRunning}
+              isCancelling={isCancellingScan}
               statusText={scanStatusText}
               jobId={jobId}
               errorMessage={scanError}
+              progress={scanProgress}
             />
             <TrainingStageBanner />
             <SuggestionReviewPanel />

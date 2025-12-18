@@ -1,0 +1,396 @@
+"""SQLAlchemy implementation of the scan queue repository."""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Iterable, Sequence
+from datetime import UTC, datetime
+from typing import Any
+from typing import cast as typing_cast
+
+from sqlalchemy import Integer, Select, func, select, text, update
+from sqlalchemy import cast as sa_cast
+from sqlalchemy.engine import CursorResult
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models import IdentityScanJob, IdentityScanJobItem
+from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+
+
+class SqlAlchemyScanQueueRepository(ScanQueueRepository):
+    """Persist scan jobs and scan queue items using SQLAlchemy."""
+
+    def __init__(self, session: AsyncSession) -> None:
+        self._session = session
+
+    async def create_job(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_ids: Sequence[int],
+        created_by_user_id: int | None = None,
+    ) -> uuid.UUID:
+        job = IdentityScanJob(
+            tenant_id=tenant_id,
+            status="pending",
+            media_ids=list(media_ids),
+            total_media=len(media_ids),
+            processed_media=0,
+            identities_detected=0,
+            created_by_user_id=created_by_user_id,
+        )
+        self._session.add(job)
+        await self._session.flush()
+        return job.id
+
+    async def enqueue_items(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        items: Iterable[tuple[int, str]],
+    ) -> int:
+        now = datetime.now(tz=UTC)
+        created = [
+            IdentityScanJobItem(
+                id=uuid.uuid4(),
+                job_id=job_id,
+                tenant_id=tenant_id,
+                media_id=media_id,
+                media_url=media_url,
+                status="pending",
+                attempts=0,
+                identities_detected=0,
+                created_at=now,
+            )
+            for media_id, media_url in items
+        ]
+        if not created:
+            return 0
+        self._session.add_all(created)
+        await self._session.flush()
+        return len(created)
+
+    async def mark_job_running(self, *, job_id: uuid.UUID, started_at: datetime) -> None:
+        await self._session.execute(
+            update(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .values(status="running", started_at=started_at, error_message=None)
+        )
+
+    async def update_job_progress(
+        self,
+        *,
+        job_id: uuid.UUID,
+        processed_media: int,
+        identities_detected: int,
+    ) -> None:
+        await self._session.execute(
+            update(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .values(processed_media=processed_media, identities_detected=identities_detected)
+        )
+
+    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
+        await self._session.execute(
+            update(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .values(status="completed", completed_at=completed_at)
+        )
+
+    async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
+        await self._session.execute(
+            update(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .values(status="failed", completed_at=completed_at, error_message=error_message)
+        )
+
+    async def claim_pending_items(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        limit: int,
+        now: datetime,
+    ) -> list[ScanQueueItem]:
+        if limit <= 0:
+            return []
+
+        dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
+        if getattr(dialect, "name", "").startswith("postgres"):
+            return await self._claim_pending_items_postgres(tenant_id=tenant_id, job_id=job_id, limit=limit, now=now)
+        return await self._claim_pending_items_generic(tenant_id=tenant_id, job_id=job_id, limit=limit, now=now)
+
+    async def claim_pending_items_any(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
+        if limit <= 0:
+            return []
+        dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
+        if getattr(dialect, "name", "").startswith("postgres"):
+            return await self._claim_pending_items_any_postgres(limit=limit, now=now)
+        return await self._claim_pending_items_any_generic(limit=limit, now=now)
+
+    async def reclaim_stale_items(
+        self,
+        *,
+        stale_after_seconds: int,
+        max_attempts: int,
+        now: datetime,
+    ) -> int:
+        if stale_after_seconds <= 0:
+            return 0
+
+        dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
+        if getattr(dialect, "name", "").startswith("postgres"):
+            reclaim_sql = text(
+                """
+                UPDATE identity_scan_job_items
+                SET status = 'pending',
+                    started_at = NULL
+                WHERE status = 'processing'
+                  AND started_at IS NOT NULL
+                  AND started_at < (:now - (:stale_after || ' seconds')::interval)
+                  AND attempts < :max_attempts
+                """
+            )
+            result = await self._session.execute(
+                reclaim_sql,
+                {"now": now, "stale_after": stale_after_seconds, "max_attempts": max_attempts},
+            )
+            cursor = typing_cast(CursorResult[Any], result)
+            return int(cursor.rowcount or 0)
+
+        stale_before = now.timestamp() - stale_after_seconds
+        reclaim_stmt = (
+            update(IdentityScanJobItem)
+            .where(
+                IdentityScanJobItem.status == "processing",
+                IdentityScanJobItem.started_at.is_not(None),
+                sa_cast(func.strftime("%s", IdentityScanJobItem.started_at), Integer) < int(stale_before),
+                IdentityScanJobItem.attempts < max_attempts,
+            )
+            .values(status="pending", started_at=None)
+        )
+        result = await self._session.execute(reclaim_stmt)
+        cursor = typing_cast(CursorResult[Any], result)
+        return int(cursor.rowcount or 0)
+
+    async def _claim_pending_items_generic(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        limit: int,
+        now: datetime,
+    ) -> list[ScanQueueItem]:
+        stmt: Select[tuple[IdentityScanJobItem]] = (
+            select(IdentityScanJobItem)
+            .where(
+                IdentityScanJobItem.tenant_id == tenant_id,
+                IdentityScanJobItem.job_id == job_id,
+                IdentityScanJobItem.status == "pending",
+            )
+            .order_by(IdentityScanJobItem.created_at.asc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        rows = result.scalars().all()
+        if not rows:
+            return []
+        ids = [row.id for row in rows]
+        await self._session.execute(
+            update(IdentityScanJobItem)
+            .where(IdentityScanJobItem.id.in_(ids))
+            .values(
+                status="processing",
+                started_at=now,
+                attempts=IdentityScanJobItem.attempts + 1,
+                last_error=None,
+            )
+        )
+        return [_to_item(row) for row in rows]
+
+    async def _claim_pending_items_any_generic(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
+        stmt: Select[tuple[IdentityScanJobItem]] = (
+            select(IdentityScanJobItem)
+            .where(IdentityScanJobItem.status == "pending")
+            .order_by(IdentityScanJobItem.created_at.asc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        rows = result.scalars().all()
+        if not rows:
+            return []
+        ids = [row.id for row in rows]
+        await self._session.execute(
+            update(IdentityScanJobItem)
+            .where(IdentityScanJobItem.id.in_(ids))
+            .values(
+                status="processing",
+                started_at=now,
+                attempts=IdentityScanJobItem.attempts + 1,
+                last_error=None,
+            )
+        )
+        return [_to_item(row) for row in rows]
+
+    async def _claim_pending_items_postgres(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        limit: int,
+        now: datetime,
+    ) -> list[ScanQueueItem]:
+        # CTE claim pattern: select ids FOR UPDATE SKIP LOCKED then update returning.
+        claim_sql = text(
+            """
+            WITH claimed AS (
+              SELECT id
+              FROM identity_scan_job_items
+              WHERE tenant_id = :tenant_id
+                AND job_id = :job_id
+                AND status = 'pending'
+              ORDER BY created_at ASC
+              FOR UPDATE SKIP LOCKED
+              LIMIT :limit
+            )
+            UPDATE identity_scan_job_items
+            SET status = 'processing',
+                started_at = :now,
+                attempts = attempts + 1,
+                last_error = NULL
+            WHERE id IN (SELECT id FROM claimed)
+            RETURNING id, job_id, tenant_id, media_id, media_url, status, attempts, identities_detected, last_error, created_at, started_at, completed_at
+            """
+        )
+        result = await self._session.execute(
+            claim_sql,
+            {"tenant_id": tenant_id, "job_id": job_id, "limit": limit, "now": now},
+        )
+        rows = result.mappings().all()
+        return [
+            ScanQueueItem(
+                id=row["id"],
+                job_id=row["job_id"],
+                tenant_id=row["tenant_id"],
+                media_id=row["media_id"],
+                media_url=row["media_url"],
+                status=row["status"],
+                attempts=row["attempts"],
+                identities_detected=row.get("identities_detected", 0) or 0,
+                last_error=row["last_error"],
+                created_at=row["created_at"],
+                started_at=row["started_at"],
+                completed_at=row["completed_at"],
+            )
+            for row in rows
+        ]
+
+    async def _claim_pending_items_any_postgres(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
+        claim_sql = text(
+            """
+            WITH claimed AS (
+              SELECT id
+              FROM identity_scan_job_items
+              WHERE status = 'pending'
+              ORDER BY created_at ASC
+              FOR UPDATE SKIP LOCKED
+              LIMIT :limit
+            )
+            UPDATE identity_scan_job_items
+            SET status = 'processing',
+                started_at = :now,
+                attempts = attempts + 1,
+                last_error = NULL
+            WHERE id IN (SELECT id FROM claimed)
+            RETURNING id, job_id, tenant_id, media_id, media_url, status, attempts, identities_detected, last_error, created_at, started_at, completed_at
+            """
+        )
+        result = await self._session.execute(claim_sql, {"limit": limit, "now": now})
+        rows = result.mappings().all()
+        return [
+            ScanQueueItem(
+                id=row["id"],
+                job_id=row["job_id"],
+                tenant_id=row["tenant_id"],
+                media_id=row["media_id"],
+                media_url=row["media_url"],
+                status=row["status"],
+                attempts=row["attempts"],
+                identities_detected=row.get("identities_detected", 0) or 0,
+                last_error=row["last_error"],
+                created_at=row["created_at"],
+                started_at=row["started_at"],
+                completed_at=row["completed_at"],
+            )
+            for row in rows
+        ]
+
+    async def mark_item_completed(
+        self, *, item_id: uuid.UUID, completed_at: datetime, identities_detected: int
+    ) -> None:
+        await self._session.execute(
+            update(IdentityScanJobItem)
+            .where(IdentityScanJobItem.id == item_id)
+            .values(status="completed", completed_at=completed_at, identities_detected=identities_detected)
+        )
+
+    async def mark_item_failed(self, *, item_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
+        await self._session.execute(
+            update(IdentityScanJobItem)
+            .where(IdentityScanJobItem.id == item_id)
+            .values(status="failed", completed_at=completed_at, last_error=error_message)
+        )
+
+    async def release_item_for_retry(self, *, item_id: uuid.UUID, error_message: str) -> None:
+        await self._session.execute(
+            update(IdentityScanJobItem)
+            .where(IdentityScanJobItem.id == item_id)
+            .values(status="pending", started_at=None, last_error=error_message)
+        )
+
+    async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:
+        result = await self._session.execute(
+            update(IdentityScanJobItem)
+            .where(IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == "pending")
+            .values(status="cancelled", completed_at=cancelled_at)
+        )
+        cursor = typing_cast(CursorResult[Any], result)
+        return int(cursor.rowcount or 0)
+
+    async def get_job_item_status_counts(self, *, job_id: uuid.UUID) -> dict[str, int]:
+        stmt = (
+            select(IdentityScanJobItem.status, func.count(IdentityScanJobItem.id))
+            .where(IdentityScanJobItem.job_id == job_id)
+            .group_by(IdentityScanJobItem.status)
+        )
+        result = await self._session.execute(stmt)
+        rows = result.all()
+        return {status: int(count) for status, count in rows}
+
+    async def get_job_item_identities_detected(self, *, job_id: uuid.UUID) -> int:
+        stmt = select(func.coalesce(func.sum(IdentityScanJobItem.identities_detected), 0)).where(
+            IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == "completed"
+        )
+        result = await self._session.execute(stmt)
+        return int(result.scalar() or 0)
+
+
+def _to_item(row: IdentityScanJobItem) -> ScanQueueItem:
+    return ScanQueueItem(
+        id=row.id,
+        job_id=row.job_id,
+        tenant_id=row.tenant_id,
+        media_id=row.media_id,
+        media_url=row.media_url,
+        status=row.status,
+        attempts=row.attempts,
+        identities_detected=row.identities_detected,
+        last_error=row.last_error,
+        created_at=row.created_at,
+        started_at=row.started_at,
+        completed_at=row.completed_at,
+    )
+
+
+__all__ = ["SqlAlchemyScanQueueRepository"]

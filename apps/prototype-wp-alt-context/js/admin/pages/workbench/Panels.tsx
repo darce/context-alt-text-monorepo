@@ -3,19 +3,25 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 interface ScanActionPanelProps {
   selectedCount: number;
   onScanFaces: () => void;
+  onCancelScan?: () => void;
   isScanning: boolean;
+  isCancelling?: boolean;
   statusText?: string;
   jobId?: string | null;
   errorMessage?: string | null;
+  progress?: { completed: number; total: number } | null;
 }
 
 export const ScanActionPanel = ({
   selectedCount,
   onScanFaces,
+  onCancelScan,
   isScanning,
+  isCancelling,
   statusText,
   jobId,
   errorMessage,
+  progress,
 }: ScanActionPanelProps): React.JSX.Element => (
   <div className="acx-apply-panel">
     <p>
@@ -34,10 +40,33 @@ export const ScanActionPanel = ({
     >
       {isScanning ? __('Scanning media…', 'alt-context') : __('Analyze selected media', 'alt-context')}
     </button>
+    {onCancelScan && (
+      <button
+        type="button"
+        className="acx-link-button"
+        onClick={onCancelScan}
+        disabled={Boolean(isCancelling) || !isScanning}
+      >
+        {isCancelling ? __('Cancelling…', 'alt-context') : __('Cancel scan', 'alt-context')}
+      </button>
+    )}
     {statusText && (
       <p className="acx-apply-panel__status">
         {sprintf(__('Job %s: %s', 'alt-context'), jobId ?? __('pending', 'alt-context'), statusText)}
       </p>
+    )}
+    {progress && progress.total > 0 && (
+      <>
+        <p className="acx-apply-panel__status">
+          {sprintf(__('Progress: %d/%d', 'alt-context'), progress.completed, progress.total)}
+        </p>
+        <progress
+          className="acx-apply-panel__progress"
+          value={Math.min(progress.completed, progress.total)}
+          max={progress.total}
+          aria-label={__('Scan progress', 'alt-context')}
+        />
+      </>
     )}
     {errorMessage && <p className="acx-apply-panel__status acx-apply-panel__status--error">{errorMessage}</p>}
   </div>

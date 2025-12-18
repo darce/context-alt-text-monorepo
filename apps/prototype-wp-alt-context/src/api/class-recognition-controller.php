@@ -55,6 +55,16 @@ class RecognitionController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/jobs/(?P<job_id>[a-f0-9-]+)/cancel',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'cancel_job' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/cluster',
 			[
 				'methods'             => 'POST',
@@ -146,6 +156,23 @@ class RecognitionController {
 		return $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/jobs/%s', $request->get_param( 'job_id' ) ),
+			[],
+			[
+				'tenant_id' => $this->get_tenant_id(),
+			]
+		);
+	}
+
+	public function cancel_job( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$job_id = sanitize_text_field( (string) $request->get_param( 'job_id' ) );
+
+		if ( '' === $job_id ) {
+			return new WP_Error( 'missing_job_id', 'Job ID is required.', [ 'status' => 400 ] );
+		}
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/jobs/%s/cancel', $job_id ),
 			[],
 			[
 				'tenant_id' => $this->get_tenant_id(),

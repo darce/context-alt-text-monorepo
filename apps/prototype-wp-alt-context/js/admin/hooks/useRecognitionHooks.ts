@@ -10,6 +10,7 @@ import {
 import {
   clusterFaces,
   fetchScanStatus,
+  cancelScanJob,
   getRecognitionCluster,
   listRecognitionClusters,
   scanFacesBatched,
@@ -40,6 +41,12 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     queryFn: () => fetchScanStatus(jobId!),
     refetchInterval: (query) =>
       query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+  });
+
+export const useCancelScanJobs = (options?: UseMutationOptions<JobStatusResponse[], Error, string[], unknown>) =>
+  useMutation<JobStatusResponse[], Error, string[]>({
+    mutationFn: async (jobIds) => Promise.all(jobIds.map((jobId) => cancelScanJob(jobId))),
+    ...options,
   });
 
 export const useMultiScanStatus = (jobIds: string[], enabled = true) =>

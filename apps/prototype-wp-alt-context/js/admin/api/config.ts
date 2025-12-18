@@ -2,6 +2,8 @@ interface ApiConfig {
   nonce: string;
   endpoints: Record<string, string>;
   tenant_id?: string;
+  tier?: string;
+  max_media_per_batch?: number | string; // wp_localize_script may coerce to string
   devMode?: boolean | string | number; // wp_localize_script may convert to "1" or ""
 }
 

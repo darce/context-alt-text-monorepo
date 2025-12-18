@@ -4,13 +4,17 @@ declare(strict_types=1);
 
 namespace AltContext\Admin;
 
+use function absint;
 use function add_action;
+use function apply_filters;
 use function esc_url_raw;
 use function file_get_contents;
 use function in_array;
 use function is_array;
 use function is_readable;
 use function json_decode;
+use function get_option;
+use function sanitize_key;
 use function trailingslashit;
 use function rest_url;
 use function wp_enqueue_script;
@@ -27,6 +31,12 @@ class Admin {
 	private const DASHBOARD_HOOK = 'toplevel_page_alt-context-dashboard';
 	private const SCRIPT_HANDLE = 'alt-context-admin';
 	private const ENTRY_POINT = 'js/admin/main.tsx';
+	private const DEFAULT_TIER_BATCH_LIMITS = array(
+		'free'       => 50,
+		'pro'        => 500,
+		'business'   => 2000,
+		'enterprise' => 10000,
+	);
 
 	/**
 	 * Admin page slugs that should load the SPA bundle.
@@ -170,12 +180,16 @@ class Admin {
 	private function localize_spa_config( string $handle ): void {
 		$is_dev_mode = wp_get_environment_type() === 'development';
 
+		$tier = $this->get_tier();
+
 		wp_localize_script(
 			$handle,
 			'AltContextAdmin',
 			array(
 				'nonce'     => wp_create_nonce( 'wp_rest' ),
 				'devMode'   => $is_dev_mode,
+				'tier'      => $tier,
+				'max_media_per_batch' => $this->get_tier_batch_limit( $tier ),
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
 					'workbenchRecognitionAnalyze'    => rest_url( 'acx/v1/workbench/recognition/analyze' ),
@@ -203,5 +217,65 @@ class Admin {
 				),
 			)
 		);
+	}
+
+	private function get_tier(): string {
+		$tier = sanitize_key( (string) get_option( 'alt_context_tier', 'free' ) );
+		if ( isset( self::DEFAULT_TIER_BATCH_LIMITS[ $tier ] ) ) {
+			return $tier;
+		}
+		return 'free';
+	}
+
+	private function get_tier_batch_limit( string $tier ): int {
+		$limits = $this->get_batch_limits();
+		return $limits[ $tier ] ?? $limits['free'];
+	}
+
+	/**
+	 * Resolve tier batch limits from options (and allow overrides via a WP filter).
+	 *
+	 * Option: alt_context_batch_limits
+	 * - Array or JSON object: { free: 50, pro: 500, business: 2000, enterprise: 10000 }
+	 *
+	 * Filter: alt_context_recognition_batch_limits
+	 * - Receives array<string,int> limits, returns same shape.
+	 *
+	 * @return array<string,int>
+	 */
+	private function get_batch_limits(): array {
+		$defaults = self::DEFAULT_TIER_BATCH_LIMITS;
+		$raw      = get_option( 'alt_context_batch_limits', array() );
+
+		$provided = array();
+		if ( is_array( $raw ) ) {
+			$provided = $raw;
+		} elseif ( is_string( $raw ) && '' !== $raw ) {
+			$decoded = json_decode( $raw, true );
+			if ( is_array( $decoded ) ) {
+				$provided = $decoded;
+			}
+		}
+
+		$limits = array();
+		foreach ( $defaults as $tier => $default_limit ) {
+			$value = $provided[ $tier ] ?? null;
+			$limit = absint( $value );
+			$limits[ $tier ] = $limit > 0 ? $limit : (int) $default_limit;
+		}
+
+		$filtered = apply_filters( 'alt_context_recognition_batch_limits', $limits );
+		if ( ! is_array( $filtered ) ) {
+			return $limits;
+		}
+
+		$normalized = array();
+		foreach ( $limits as $tier => $default_limit ) {
+			$value = $filtered[ $tier ] ?? $default_limit;
+			$limit = absint( $value );
+			$normalized[ $tier ] = $limit > 0 ? $limit : (int) $default_limit;
+		}
+
+		return $normalized;
 	}
 }

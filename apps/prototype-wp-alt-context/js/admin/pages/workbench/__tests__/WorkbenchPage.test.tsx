@@ -11,6 +11,7 @@ import { useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
 import {
   useScanIdentities,
   useScanStatus,
+  useCancelScanJobs,
   useClusterIdentities,
   useMultiScanStatus,
   useCombinedScanStatus,
@@ -35,6 +36,7 @@ vi.mock('../../../hooks/useWorkbenchFilters', () => ({
 vi.mock('../../../hooks/useRecognitionHooks', () => ({
   useScanIdentities: vi.fn(),
   useScanStatus: vi.fn(),
+  useCancelScanJobs: vi.fn(),
   useClusterIdentities: vi.fn(),
   useMultiScanStatus: vi.fn(),
   useCombinedScanStatus: vi.fn(),
@@ -71,6 +73,7 @@ describe('WorkbenchPage', () => {
   const mockUseWorkbenchFilters = vi.mocked(useWorkbenchFilters);
   const mockUseScanIdentities = vi.mocked(useScanIdentities);
   const mockUseScanStatus = vi.mocked(useScanStatus);
+  const mockUseCancelScanJobs = vi.mocked(useCancelScanJobs);
   const mockUseClusterIdentities = vi.mocked(useClusterIdentities);
   const mockUseMultiScanStatus = vi.mocked(useMultiScanStatus);
   const mockUseCombinedScanStatus = vi.mocked(useCombinedScanStatus);
@@ -180,10 +183,10 @@ describe('WorkbenchPage', () => {
       data: {
         id: 'job-initial',
         type: 'analyze' as const,
-        status: 'pending' as const,
-        progress: { completed: 0, total: 1 },
+        status: 'completed' as const,
+        progress: { completed: 1, total: 1 },
         started_at: new Date().toISOString(),
-        finished_at: null,
+        finished_at: new Date().toISOString(),
       },
       isFetching: false,
       refetch: vi.fn(),
@@ -196,16 +199,21 @@ describe('WorkbenchPage', () => {
         data: {
           id: 'job-initial',
           type: 'analyze' as const,
-          status: 'pending' as const,
-          progress: { completed: 0, total: 1 },
+          status: 'completed' as const,
+          progress: { completed: 1, total: 1 },
           started_at: new Date().toISOString(),
-          finished_at: null,
+          finished_at: new Date().toISOString(),
         },
         isFetching: false,
         refetch: vi.fn(),
       } as unknown as ReturnType<typeof useScanStatus>,
       multiScanStatus: [],
     });
+
+    mockUseCancelScanJobs.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useCancelScanJobs>);
 
     mockUseClusterIdentities.mockReturnValue({
       mutate: vi.fn(),

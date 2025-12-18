@@ -31,11 +31,13 @@ PHP tests in `apps/prototype-wp-alt-context/tests/` are currently minimal (setup
 Your Mermaid diagrams are well-organized and useful for architecture/context questions, but they are less efficient for implementation-level work.
 
 When to use UML:
+
 - To understand multi-phase flows (scan → cluster → suggest)
 - To see system boundaries and service interactions
 - For onboarding or high-level design discussions
 
 When not to rely on UML:
+
 - Specific implementation or API changes (contracts and tests are better)
 - Debugging runtime behavior (tests and logs are superior)
 
@@ -46,6 +48,7 @@ When not to rely on UML:
 Use these concise templates when you want the fastest ramp-up:
 
 - Cross-service or API change (WordPress ↔ service):
+
 ```
 Context: docs/architecture/contracts/clustering-api.md
 Test reference: apps/prototype-description-service/recognition/tests/api/test_api_suggestions.py
@@ -53,18 +56,21 @@ Task: [what you want done]
 ```
 
 - Service implementation (Python):
+
 ```
 Context: apps/prototype-description-service/recognition/tests/api/test_api_analyze.py
 Task: [what you want done]
 ```
 
 - WordPress plugin changes (PHP/TS alignment):
+
 ```
 Context: docs/architecture/contracts/type-definitions.md
 Task: [what you want done]
 ```
 
 - Architecture / flow questions only:
+
 ```
 Context: docs/architecture/backend-uml/workflows/complete-workflow.mmd
 Question: [how does X flow through the system?]
@@ -72,12 +78,12 @@ Question: [how does X flow through the system?]
 
 ## TL;DR
 
-| Asset | Cold Start Value | When to Use |
-|---|---:|---|
-| Contracts | 🔥 Highest | Cross-boundary work, API changes |
-| Python tests | 🔥 High | Service implementation, behavior verification |
-| UML diagrams | 🌤️ Medium | Architecture understanding, flow questions |
-| PHP tests | 🌙 Low | Currently just scaffolding |
+| Asset        | Cold Start Value | When to Use                                   |
+| ------------ | ---------------: | --------------------------------------------- |
+| Contracts    |       🔥 Highest | Cross-boundary work, API changes              |
+| Python tests |          🔥 High | Service implementation, behavior verification |
+| UML diagrams |        🌤️ Medium | Architecture understanding, flow questions    |
+| PHP tests    |           🌙 Low | Currently just scaffolding                    |
 
 **Bottom line:** The `docs/architecture/contracts/` documents are the crown jewel for cold starts, and `type-definitions.md` is especially useful for keeping TypeScript, PHP, and Python aligned.
 Evaluation of Your Context Assets

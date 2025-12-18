@@ -20,6 +20,7 @@ TENANT_TABLES = [
     "identity_clusters",
     "identity_members",
     "identity_scan_jobs",
+    "identity_scan_job_items",
     "identity_cluster_representatives",
     "identity_clustering_jobs",
     "identity_suggestions",
@@ -77,6 +78,7 @@ def upgrade() -> None:
         sa.Column("pose_roll", sa.Float(), nullable=True),
         sa.Column("age", sa.Integer(), nullable=True),
         sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
+        sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("thumbnail_url", sa.String(length=500)),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
@@ -250,6 +252,51 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("created_by_user_id", sa.Integer()),
+    )
+
+    op.create_table(
+        "identity_scan_job_items",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "job_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_scan_jobs.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("media_id", sa.Integer(), nullable=False),
+        sa.Column("media_url", sa.Text(), nullable=False),
+        sa.Column(
+            "status",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'pending'"),
+        ),
+        sa.Column(
+            "attempts",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
+        sa.Column(
+            "identities_detected",
+            sa.Integer(),
+            nullable=False,
+            server_default=sa.text("0"),
+        ),
+        sa.Column("last_error", sa.Text()),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
+        sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
+        sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
+        sa.CheckConstraint(
+            "status IN ('pending', 'processing', 'completed', 'failed', 'skipped', 'cancelled')",
+            name="valid_item_status",
+        ),
     )
 
     op.create_table(
@@ -466,6 +513,19 @@ def upgrade() -> None:
         ["status"],
         postgresql_where=sa.text("status IN ('pending', 'running')"),
     )
+    op.create_index("idx_scan_job_items_job", "identity_scan_job_items", ["job_id"])
+    op.create_index(
+        "idx_scan_job_items_pending",
+        "identity_scan_job_items",
+        ["job_id", "status"],
+        postgresql_where=sa.text("status = 'pending'"),
+    )
+    op.create_index(
+        "idx_scan_job_items_stale",
+        "identity_scan_job_items",
+        ["status", "started_at"],
+        postgresql_where=sa.text("status = 'processing'"),
+    )
     op.create_index("idx_identity_clustering_jobs_tenant", "identity_clustering_jobs", ["tenant_id"])
     op.create_index(
         "idx_identity_clustering_jobs_status",
@@ -491,6 +551,11 @@ def upgrade() -> None:
     op.create_index(
         "idx_identity_scan_jobs_tenant_id",
         "identity_scan_jobs",
+        ["tenant_id", "id"],
+    )
+    op.create_index(
+        "idx_scan_job_items_tenant_id",
+        "identity_scan_job_items",
         ["tenant_id", "id"],
     )
     op.create_index(
@@ -751,6 +816,10 @@ def downgrade() -> None:
     op.execute("DROP FUNCTION IF EXISTS notify_cluster_centroid_dirty")
 
     op.drop_table("identity_cluster_refresh_queue")
+    op.drop_index("idx_scan_job_items_tenant_id", table_name="identity_scan_job_items")
+    op.drop_index("idx_scan_job_items_stale", table_name="identity_scan_job_items")
+    op.drop_index("idx_scan_job_items_pending", table_name="identity_scan_job_items")
+    op.drop_index("idx_scan_job_items_job", table_name="identity_scan_job_items")
     op.drop_index("idx_identity_scan_jobs_status", table_name="identity_scan_jobs")
     op.drop_index("idx_identity_scan_jobs_tenant", table_name="identity_scan_jobs")
     op.drop_index("idx_identity_members_identity", table_name="identity_members")
@@ -793,6 +862,7 @@ def downgrade() -> None:
     op.drop_table("recognition_events")
     op.drop_table("recognition_runs")
     op.drop_table("identity_suggestions")
+    op.drop_table("identity_scan_job_items")
     op.drop_table("identity_scan_jobs")
     op.drop_table("identity_cluster_representatives")
     op.drop_table("identity_clustering_jobs")

@@ -1,0 +1,145 @@
+"""Scan queue persistence primitives.
+
+This module defines the repository interface for enqueueing scan jobs and claiming queued work.
+It is intentionally small so it can be unit-tested with in-memory fakes and implemented with SQLAlchemy.
+"""
+
+from __future__ import annotations
+
+import uuid
+from collections.abc import Iterable, Sequence
+from dataclasses import dataclass
+from datetime import datetime
+from typing import Protocol
+
+
+@dataclass(frozen=True, slots=True)
+class ScanQueueItem:
+    """A single media scan unit of work."""
+
+    id: uuid.UUID
+    job_id: uuid.UUID
+    tenant_id: uuid.UUID
+    media_id: int
+    media_url: str
+    status: str
+    attempts: int
+    identities_detected: int
+    last_error: str | None
+    created_at: datetime | None = None
+    started_at: datetime | None = None
+    completed_at: datetime | None = None
+
+
+class ScanQueueRepository(Protocol):
+    """Repository used by API endpoints and workers to manage scan jobs."""
+
+    async def create_job(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_ids: Sequence[int],
+        created_by_user_id: int | None = None,
+    ) -> uuid.UUID:
+        """Create a parent scan job and return its job id."""
+
+    async def enqueue_items(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        items: Iterable[tuple[int, str]],
+    ) -> int:
+        """Enqueue media items for a scan job.
+
+        Args:
+            job_id: Parent scan job id.
+            tenant_id: Tenant id (RLS scope).
+            items: Iterable of (media_id, media_url).
+
+        Returns:
+            Number of enqueued items.
+        """
+
+    async def mark_job_running(self, *, job_id: uuid.UUID, started_at: datetime) -> None:
+        """Mark a scan job as running."""
+
+    async def update_job_progress(
+        self,
+        *,
+        job_id: uuid.UUID,
+        processed_media: int,
+        identities_detected: int,
+    ) -> None:
+        """Update job-level counters."""
+
+    async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
+        """Mark a scan job as completed."""
+
+    async def fail_job(self, *, job_id: uuid.UUID, completed_at: datetime, error_message: str) -> None:
+        """Mark a scan job as failed."""
+
+    async def claim_pending_items(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        job_id: uuid.UUID,
+        limit: int,
+        now: datetime,
+    ) -> list[ScanQueueItem]:
+        """Atomically claim up to `limit` pending items.
+
+        Implementations should prefer `FOR UPDATE SKIP LOCKED` on PostgreSQL.
+        """
+
+    async def claim_pending_items_any(
+        self,
+        *,
+        limit: int,
+        now: datetime,
+    ) -> list[ScanQueueItem]:
+        """Atomically claim up to `limit` pending items across all jobs."""
+
+    async def reclaim_stale_items(
+        self,
+        *,
+        stale_after_seconds: int,
+        max_attempts: int,
+        now: datetime,
+    ) -> int:
+        """Reclaim stale processing items and return how many were updated."""
+
+    async def mark_item_completed(
+        self,
+        *,
+        item_id: uuid.UUID,
+        completed_at: datetime,
+        identities_detected: int,
+    ) -> None:
+        """Mark a queue item as completed."""
+
+    async def mark_item_failed(
+        self,
+        *,
+        item_id: uuid.UUID,
+        completed_at: datetime,
+        error_message: str,
+    ) -> None:
+        """Mark a queue item as failed and record its error."""
+
+    async def release_item_for_retry(
+        self,
+        *,
+        item_id: uuid.UUID,
+        error_message: str,
+    ) -> None:
+        """Return an item to pending state for a retry attempt."""
+
+    async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:
+        """Cancel all pending items for a job and return how many were canceled."""
+
+    async def get_job_item_status_counts(self, *, job_id: uuid.UUID) -> dict[str, int]:
+        """Return counts of items by status for a job."""
+
+    async def get_job_item_identities_detected(self, *, job_id: uuid.UUID) -> int:
+        """Return total identities_detected sum for completed items in a job."""

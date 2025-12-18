@@ -37,6 +37,7 @@ from recognition.interface_adapters.http.schemas.responses import ClusterRespons
 from recognition.shared.ids import generate_id
 
 os.environ.setdefault("RECOGNITION_AUTH_ENABLED", "0")
+os.environ.setdefault("RECOGNITION_ASYNC_ANALYZE_INLINE", "1")
 
 
 def _clone_cluster(cluster: ClusterResponse, **updates: object) -> ClusterResponse:
@@ -67,6 +68,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_members", Base.metadata),
             Table("identity_clustering_jobs", Base.metadata),
             Table("identity_scan_jobs", Base.metadata),
+            Table("identity_scan_job_items", Base.metadata),
             Table("identity_suggestions", Base.metadata),
             Table("recognition_runs", Base.metadata),
             Table("recognition_events", Base.metadata),

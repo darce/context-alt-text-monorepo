@@ -82,6 +82,17 @@ class FakeScanService:
         )
 
 
+class FakeScanQueueService:
+    """Fake ScanQueueService that enqueues jobs without persistence."""
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, list[tuple[int, str]]]] = []
+
+    async def enqueue_scan_job(self, *, tenant_id, media_items, created_by_user_id=None):  # noqa: ANN001
+        self.calls.append((str(tenant_id), list(media_items)))
+        return SimpleNamespace(job_id=generate_id(), total=len(media_items))
+
+
 class FakeSuggestionStatus:
     """Lightweight status wrapper mirroring SuggestionStatus enum."""
 
@@ -207,6 +218,11 @@ def fake_scan_service() -> FakeScanService:
 
 
 @pytest.fixture
+def fake_scan_queue_service() -> FakeScanQueueService:
+    return FakeScanQueueService()
+
+
+@pytest.fixture
 def tenant_id() -> str:
     """Provide a valid tenant UUID for API contract tests."""
     return str(uuid.uuid4())
@@ -221,10 +237,13 @@ def api_client(
     fake_job_service: FakeJobService,
     fake_suggestion_service: FakeSuggestionService,
     fake_scan_service: FakeScanService,
+    fake_scan_queue_service: FakeScanQueueService,
     fake_media_identity_service: FakeMediaIdentityService,
 ) -> TestClient:
     """Build a TestClient with faked dependencies and no real DB."""
     monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "0")
+    # API contract tests should not run the inline processor (it requires real ScanService wiring).
+    monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
 
@@ -257,15 +276,7 @@ def api_client(
     app.dependency_overrides[dependencies.get_suggestion_service] = suggestion_service_dep
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[get_tenant_id] = lambda: tenant_id
-
-    def scan_service_builder():
-        def _builder(tenant_id: str):  # noqa: ANN001
-            fake_scan_service.session = None
-            return fake_scan_service
-
-        return _builder
-
-    app.dependency_overrides[dependencies.get_scan_service_builder] = scan_service_builder
+    app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: fake_scan_queue_service
 
     # Monkeypatch router helpers to point at fakes
     async def _fake_build_cluster_service(session, tenant_id, settings=None):  # noqa: ANN001

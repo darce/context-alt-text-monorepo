@@ -75,11 +75,17 @@ If a task seems to require external changes, STOP and propose an alternative wit
 
 ### Greenfield Policy
 
-This plugin has no production users. Storage surfaces (database tables, options, caches) are disposable. Prefer clean rewrites over migrations or backward-compatibility shims. Keep tests in lockstep with schema changes.
+> [!IMPORTANT]
+> This is a **greenfield project** with NO production users and NO existing data that must be preserved.
+
+- **No Data Migrations**: Storage surfaces (database tables, options, caches) are disposable. 
+- **Baseline Only**: All schema changes must be applied directly to the baseline migration file ([001_identity_schema.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py)).
+- **Clean Rewrites**: Prefer clean rewrites of logic and schema over backward-compatibility shims.
+- **No Feature Flags**: Full latitude to delete experimental features. Prefer removal over long-lived feature flags.
 
 ### Remove Over Flag
 
-No existing install base means full latitude to delete experimental features. Prefer removal over long-lived feature flags. Re-introduce features behind tests when truly needed.
+Delete-over-flag is the default. Re-introduce features behind tests only when truly needed.
 
 ---
 

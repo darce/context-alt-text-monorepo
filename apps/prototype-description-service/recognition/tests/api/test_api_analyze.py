@@ -9,7 +9,7 @@ import pytest
 from recognition.domain.job import JobType
 
 
-def test_analyze_creates_job(api_client, tenant_id, fake_scan_service) -> None:
+def test_analyze_creates_job(api_client, tenant_id, fake_scan_queue_service) -> None:
     resp = api_client.post(
         "/recognition/analyze",
         json={"media_ids": [str(uuid.uuid4())], "tenant_id": tenant_id},
@@ -19,8 +19,8 @@ def test_analyze_creates_job(api_client, tenant_id, fake_scan_service) -> None:
     body = resp.json()
     assert body["id"]
     assert body["type"] == "analyze"
-    assert body["status"] in {"completed", "running", "pending"}
-    assert fake_scan_service.calls[0][0] == tenant_id
+    assert body["status"] in {"running", "pending"}
+    assert fake_scan_queue_service.calls[0][0] == tenant_id
 
 
 def test_analyze_job_starts_with_correct_progress(api_client, tenant_id) -> None:
@@ -30,7 +30,7 @@ def test_analyze_job_starts_with_correct_progress(api_client, tenant_id) -> None
 
     assert resp.status_code == 202
     body = resp.json()
-    assert body["status"] in {"running", "pending", "completed"}
+    assert body["status"] in {"running", "pending"}
     assert body["progress"]["total"] == len(payload["media_ids"])
 
 

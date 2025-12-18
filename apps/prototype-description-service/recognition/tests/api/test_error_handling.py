@@ -15,8 +15,8 @@ from recognition.tests.api.conftest import FakeSession
 
 
 def test_analyze_maps_insufficient_privilege_to_403(monkeypatch, tenant_id):
-    class StubScanService:
-        async def analyze_media(self, tenant_id, media_ids, media_sources=None):  # noqa: ANN001
+    class ExplodingScanQueue:
+        async def enqueue_scan_job(self, **_kwargs):  # noqa: ANN001
             raise ProgrammingError("stmt", {}, Exception("InsufficientPrivilegeError"))
 
     app = FastAPI()
@@ -27,15 +27,9 @@ def test_analyze_maps_insufficient_privilege_to_403(monkeypatch, tenant_id):
     async def _no_session():
         yield FakeSession()
 
-    def _fake_scan_service_builder():
-        def _builder(tenant_id: str):  # noqa: ANN001
-            return StubScanService()
-
-        return _builder
-
     app.dependency_overrides[dependencies.get_session] = _no_session
     app.dependency_overrides[dependencies.get_optional_session] = _no_session
-    app.dependency_overrides[dependencies.get_scan_service_builder] = _fake_scan_service_builder
+    app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: ExplodingScanQueue()
 
     client = TestClient(app)
     resp = client.post(

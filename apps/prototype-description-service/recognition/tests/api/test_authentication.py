@@ -77,7 +77,7 @@ def test_valid_api_key_allows_request(monkeypatch) -> None:
 
     async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
         assert api_key == "good-key"
-        return tenant_id, "api-key-id", False
+        return tenant_id, "api-key-id", "free", False
 
     monkeypatch.setattr(dependencies, "_lookup_api_key", _fake_lookup)
     headers = {

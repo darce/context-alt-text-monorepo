@@ -20,7 +20,9 @@ from db.models import (
 )
 from recognition.application.embedding.detector import StubFaceDetector
 from recognition.application.embedding.generator import StubEmbeddingGenerator
+from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
+from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 
@@ -43,9 +45,13 @@ def _make_client(session, tenant: Tenant) -> TestClient:
 
         return _builder
 
+    async def _scan_queue_service_override():
+        return ScanQueueService(SqlAlchemyScanQueueRepository(session))
+
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
     app.dependency_overrides[dependencies.get_scan_service_builder] = _scan_service_builder
+    app.dependency_overrides[dependencies.get_scan_queue_service] = _scan_queue_service_override
     return TestClient(app)
 
 

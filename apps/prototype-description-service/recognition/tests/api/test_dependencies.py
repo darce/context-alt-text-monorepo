@@ -13,15 +13,15 @@ from recognition.interface_adapters.http.routers import clusters as clusters_rou
 from recognition.tests.api.conftest import FakeSession
 
 
-def test_analyze_router_uses_fake_scan_service(api_client, tenant_id, fake_scan_service) -> None:
+def test_analyze_router_uses_fake_scan_queue(api_client, tenant_id, fake_scan_queue_service) -> None:
     resp = api_client.post(
         "/recognition/analyze",
         json={"media_ids": [str(uuid.uuid4())], "tenant_id": tenant_id},
     )
 
     assert resp.status_code == 202
-    assert len(fake_scan_service.calls) == 1
-    call_tenant, call_media = fake_scan_service.calls[0]
+    assert len(fake_scan_queue_service.calls) == 1
+    call_tenant, call_media = fake_scan_queue_service.calls[0]
     assert call_tenant == tenant_id
     assert call_media
 

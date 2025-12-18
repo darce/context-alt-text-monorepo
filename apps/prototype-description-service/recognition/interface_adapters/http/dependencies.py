@@ -29,6 +29,7 @@ from recognition.application.embedding.service import EmbeddingService
 from recognition.application.orchestration import ClusterService
 from recognition.application.orchestration.job_service import JobService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.service import SuggestionService
@@ -39,6 +40,7 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
     SqlAlchemyJobRepository,
     SqlAlchemyMemberRepository,
+    SqlAlchemyScanQueueRepository,
     SqlAlchemySuggestionRepository,
 )
 from recognition.interface_adapters.http.deps.tenant import _normalize_tenant_id, get_tenant_id_optional
@@ -125,6 +127,7 @@ class AuthContext:
         token: str | None,
         tenant_claim: str | None,
         api_key_id: str | None = None,
+        rate_limit_tier: str | None = None,
         is_admin: bool = False,
         enabled: bool = False,
     ) -> None:
@@ -132,6 +135,7 @@ class AuthContext:
         self.tenant_claim = tenant_claim
         self.tenant_id = tenant_claim
         self.api_key_id = api_key_id
+        self.rate_limit_tier = rate_limit_tier
         self.is_admin = is_admin
         self.enabled = enabled
 
@@ -158,8 +162,8 @@ async def _lookup_api_key(
     api_key: str,
     settings: SecuritySettings,
     session: AsyncSession | None,
-) -> tuple[str | None, str | None, bool]:
-    """Validate API key and return (tenant_id, api_key_id)."""
+) -> tuple[str | None, str | None, str | None, bool]:
+    """Validate API key and return (tenant_id, api_key_id, rate_limit_tier, is_admin)."""
     hashed = _hash_api_key(api_key, settings.api_key_hash_algorithm)
     if session is not None and hasattr(session, "execute"):
         repo = SqlAlchemyApiKeyRepository(session)
@@ -172,10 +176,10 @@ async def _lookup_api_key(
         if record:
             with suppress(Exception):
                 await repo.touch(record)
-            return str(record.tenant_id), str(record.id), False
+            return str(record.tenant_id), str(record.id), record.rate_limit_tier, False
 
     if api_key in settings.dev_api_keys:
-        return None, None, True
+        return None, None, "enterprise", True
 
     raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="invalid or missing API key")
 
@@ -251,7 +255,7 @@ async def require_auth(
     if not api_key:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="invalid authorization scheme")
 
-    tenant_claim, api_key_id, is_admin = await _lookup_api_key(api_key, settings, session)
+    tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
     if tenant_claim and x_tenant_id:
         provided = _normalize_tenant_id(x_tenant_id)
         if tenant_claim != provided:
@@ -261,6 +265,7 @@ async def require_auth(
         token=api_key,
         tenant_claim=tenant_claim,
         api_key_id=api_key_id,
+        rate_limit_tier=rate_limit_tier,
         is_admin=is_admin,
         enabled=True,
     )
@@ -583,6 +588,30 @@ def get_scan_service_builder(
         )
 
     return _builder
+
+
+async def get_scan_queue_service(
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ScanQueueService:
+    """Provide a ScanQueueService backed by the database.
+
+    The async scan queue is only available when the database is reachable.
+    """
+    if session is None:
+        raise RuntimeError("Database session is required for ScanQueueService")
+    return ScanQueueService(SqlAlchemyScanQueueRepository(session))
+
+
+async def get_scan_queue_service_optional(
+    session: AsyncSession | None = Depends(get_optional_session),
+) -> ScanQueueService | None:
+    """Optional ScanQueueService provider for endpoints that can fall back.
+
+    Returns None when the database is unavailable.
+    """
+    if session is None:
+        return None
+    return ScanQueueService(SqlAlchemyScanQueueRepository(session))
 
 
 async def get_job_service(

@@ -5,7 +5,9 @@ Analyze routes: scan media and poll job status.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
+import os
 import uuid
 from datetime import UTC, datetime
 
@@ -19,6 +21,8 @@ from recognition.domain.job import Job, JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_service_dependency,
     get_optional_session,
+    get_scan_queue_service,
+    get_scan_queue_service_optional,
     get_scan_service_builder,
     require_auth,
     require_write_access,
@@ -31,6 +35,53 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth)])
 
 _DB_SETTINGS = get_database_settings()
+_DEFAULT_TIER_BATCH_LIMITS: dict[str, int] = {
+    "free": 50,
+    "pro": 500,
+    "business": 2000,
+    "enterprise": 10000,
+}
+
+
+def _load_tier_batch_limits() -> dict[str, int]:
+    """Load tier batch limits from env or defaults.
+
+    Environment:
+        RECOGNITION_TIER_BATCH_LIMITS_JSON
+            JSON object mapping tier -> max items per batch.
+            Example: {"free":50,"pro":500,"business":2000,"enterprise":10000}
+    """
+    raw = os.getenv("RECOGNITION_TIER_BATCH_LIMITS_JSON")
+    if not raw:
+        return dict(_DEFAULT_TIER_BATCH_LIMITS)
+
+    try:
+        decoded = json.loads(raw)
+    except json.JSONDecodeError:
+        return dict(_DEFAULT_TIER_BATCH_LIMITS)
+
+    if not isinstance(decoded, dict):
+        return dict(_DEFAULT_TIER_BATCH_LIMITS)
+
+    limits: dict[str, int] = {}
+    for tier, default in _DEFAULT_TIER_BATCH_LIMITS.items():
+        value = decoded.get(tier, default)
+        try:
+            parsed = int(value)
+        except (TypeError, ValueError):
+            parsed = default
+        limits[tier] = parsed if parsed > 0 else default
+
+    return limits
+
+
+_TIER_BATCH_LIMITS = _load_tier_batch_limits()
+
+
+def _max_batch_for_tier(tier: str | None) -> int:
+    """Return maximum media items per analyze request for a given tier."""
+    normalized = (tier or "free").strip().lower()
+    return _TIER_BATCH_LIMITS.get(normalized, _TIER_BATCH_LIMITS["free"])
 
 
 @router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -39,12 +90,12 @@ async def analyze_media(
     background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
+    scan_queue=Depends(get_scan_queue_service),
     scan_service_builder=Depends(get_scan_service_builder),
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
     tenant_uuid: uuid.UUID | None = None
     try:
-        scan_service = scan_service_builder(str(request.tenant_id))
         # Extract media IDs and URLs
         media_ids = request.media_ids
         media_sources: list[str] = []  # URLs or IDs to pass to detector
@@ -68,16 +119,47 @@ async def analyze_media(
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
         if auth and auth.tenant_claim and auth.tenant_claim != str(request.tenant_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
-        # Pass media_sources (URLs) to detector, but use media_ids for tracking
-        scan_job = await scan_service.analyze_media(request.tenant_id, media_ids, media_sources=media_sources)
-        progress = JobProgressResponse(completed=scan_job.processed_media or 0, total=scan_job.total_media or 0)
+
+        if tenant_uuid is None:
+            tenant_uuid = uuid.UUID(str(request.tenant_id))
+
+        media_items: list[tuple[int, str]] = []
+        if request.media_items:
+            media_items = [(int(item.media_id), str(item.media_url)) for item in request.media_items]
+        else:
+            media_items = [(_extract_media_id(mid), str(mid)) for mid in media_sources]
+
+        if getattr(auth, "enabled", False) and not getattr(auth, "is_admin", False):
+            tier = getattr(auth, "rate_limit_tier", None)
+            max_batch = _max_batch_for_tier(tier)
+            if len(media_items) > max_batch:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail=(f"Batch size {len(media_items)} exceeds limit {max_batch} for tier '{(tier or 'free')}'."),
+                )
+
+        enqueue_result = await scan_queue.enqueue_scan_job(
+            tenant_id=tenant_uuid,
+            media_items=media_items,
+        )
+
+        if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1":
+            background_tasks.add_task(
+                _process_scan_job_inline,
+                tenant_id=str(request.tenant_id),
+                job_id=str(enqueue_result.job_id),
+                media_ids=media_ids,
+                media_sources=media_sources,
+                scan_service_builder=scan_service_builder,
+            )
+        progress = JobProgressResponse(completed=0, total=enqueue_result.total)
         return JobStatusResponse(
-            id=str(scan_job.id),
+            id=str(enqueue_result.job_id),
             type=JobType.ANALYZE.value,
-            status=scan_job.status,
+            status="pending",
             progress=progress,
-            started_at=scan_job.started_at or datetime.now(tz=UTC),
-            finished_at=scan_job.completed_at,
+            started_at=datetime.now(tz=UTC),
+            finished_at=None,
         )
     except ProgrammingError as exc:
         if _is_insufficient_privilege(exc):
@@ -134,10 +216,34 @@ async def get_job_status(
 @router.post("/jobs/{job_id}/cancel", response_model=JobStatusResponse)
 async def cancel_job(
     job_id: str,
+    tenant_id: str = Query(default=None),
     auth=Depends(require_write_access),
     job_service=Depends(get_job_service_dependency),
+    session=Depends(get_optional_session),
+    scan_queue=Depends(get_scan_queue_service_optional),
 ) -> JobStatusResponse:
     """Cancel a long-running job."""
+    # Prefer canceling persisted scan jobs when a DB session is available.
+    if session is not None and scan_queue is not None:
+        if tenant_id and _is_postgres_session(session):
+            with contextlib.suppress(Exception):
+                tenant_uuid = uuid.UUID(str(tenant_id))
+                await ensure_tenant_exists(session, tenant_uuid)
+                await set_tenant_context(session, tenant_uuid)
+        try:
+            job_uuid = uuid.UUID(str(job_id))
+            await scan_queue.cancel_scan_job(job_id=job_uuid)
+            from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
+
+            repo = SqlAlchemyJobRepository(session)
+            domain_job = await repo.get(job_id)
+            if domain_job:
+                return _job_to_response(domain_job)
+        finally:
+            if tenant_id and _is_postgres_session(session):
+                with contextlib.suppress(Exception):
+                    await clear_tenant_context(session)
+
     job = await job_service.cancel_job(job_id)
     return _job_to_response(job)
 
@@ -148,6 +254,27 @@ def _extract_media_id(value: str) -> int:
     if digits:
         return int(digits[-6:])
     return abs(hash(value)) % 1_000_000
+
+
+async def _process_scan_job_inline(
+    *,
+    tenant_id: str,
+    job_id: str,
+    media_ids: list[str] | None,
+    media_sources: list[str],
+    scan_service_builder,
+) -> None:
+    """Inline processor used in tests/dev to keep integration tests deterministic.
+
+    Production should run a dedicated worker process instead.
+    """
+    service = scan_service_builder(str(tenant_id))
+    await service.process_scan_job(
+        tenant_id=str(tenant_id),
+        job_id=uuid.UUID(str(job_id)),
+        media_ids=media_ids or [],
+        media_sources=media_sources,
+    )
 
 
 def _job_to_response(job: Job) -> JobStatusResponse:

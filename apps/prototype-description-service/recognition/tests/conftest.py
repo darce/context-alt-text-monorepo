@@ -28,6 +28,7 @@ from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.service import SuggestionService
 from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.infrastructure.clustering.hdbscan_adapter import HdbscanGraphAlgorithm
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
@@ -230,6 +231,9 @@ class FakeClusterRepository:
         return None
 
     async def add_representative(self, representative) -> None:  # noqa: ANN001
+        return None
+
+    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
         return None
 
 

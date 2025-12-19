@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 import uuid
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
@@ -15,6 +16,8 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+
+logger = logging.getLogger(__name__)
 
 
 class SqlAlchemyScanQueueRepository(ScanQueueRepository):
@@ -30,6 +33,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         media_ids: Sequence[int],
         created_by_user_id: int | None = None,
     ) -> uuid.UUID:
+        logger.debug("create_job: creating job for tenant %s with %d media items", tenant_id, len(media_ids))
         job = IdentityScanJob(
             tenant_id=tenant_id,
             status="pending",
@@ -41,6 +45,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         )
         self._session.add(job)
         await self._session.flush()
+        logger.debug("create_job: created job id=%s", job.id)
         return job.id
 
     async def enqueue_items(

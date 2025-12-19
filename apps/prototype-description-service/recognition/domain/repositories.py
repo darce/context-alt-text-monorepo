@@ -12,6 +12,7 @@ from typing import Any, Protocol
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.job import Job
+from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 
@@ -59,7 +60,18 @@ class ClusterRepository(Protocol):
 
     async def get_representative_count(self, cluster_id: str) -> int: ...
 
-    async def get_all_representatives(self, cluster_id: str) -> Sequence[Any]: ...
+    async def get_all_representatives(self, cluster_id: str) -> Sequence[ClusterRepresentative]: ...
+
+    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+        """Fetch maturity information for a cluster.
+
+        Args:
+            cluster_id: Cluster to query.
+
+        Returns:
+            ClusterMaturityInfo or None if cluster not found.
+        """
+        ...
 
     async def get_member_embeddings(self, cluster_id: str) -> Sequence[Any]: ...
 

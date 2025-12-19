@@ -2,9 +2,8 @@
 Media identity domain model used across recognition workflows.
 """
 
-from __future__ import annotations
-
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from typing import Any
 
 import numpy as np
 
@@ -24,6 +23,11 @@ class MediaIdentity:
     bbox_height: int
     bbox_x: int | None = None
     bbox_y: int | None = None
+    pose_pitch: float | None = None
+    pose_yaw: float | None = None
+    pose_roll: float | None = None
+    image_phash: str | None = None
+    metadata: dict[str, Any] = field(default_factory=dict)
     cluster_id: str | None = None
 
     def extract_face_embedding(self) -> np.ndarray:

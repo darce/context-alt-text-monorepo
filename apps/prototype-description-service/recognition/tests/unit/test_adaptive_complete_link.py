@@ -66,6 +66,10 @@ async def test_adaptive_relaxation_applied_when_mature(settings, repository):
     candidate.discovery_similarity = 0.82
     candidate.anchor_linked = False  # Not anchor-linked, test adaptive logic
 
+    candidate.identity = Mock()
+    candidate.identity.id = "test-identity"
+    candidate.identity.image_phash = None
+
     result = await check.evaluate(candidate)
 
     assert result.passed is True
@@ -99,6 +103,9 @@ async def test_adaptive_relaxation_not_applied_when_immature(settings, repositor
     candidate.identity_vector = candidate_vec
     candidate.discovery_similarity = 0.78
     candidate.anchor_linked = False  # Not anchor-linked, test normal flow
+    # Mock identity for logging
+    candidate.identity = Mock()
+    candidate.identity.id = "test-identity"
 
     result = await check.evaluate(candidate)
 

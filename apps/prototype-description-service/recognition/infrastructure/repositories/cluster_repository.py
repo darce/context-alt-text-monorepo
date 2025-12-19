@@ -22,6 +22,11 @@ from db.models import IdentityClusterRepresentative, IdentityMember, MediaIdenti
 from db.settings import get_database_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
+from recognition.domain.maturity import (
+    ClusterMaturityInfo,
+    compute_maturity_adjustment,
+    compute_maturity_level,
+)
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.representative import ClusterRepresentative
 
@@ -139,13 +144,70 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return int(result.scalar_one() or 0)
 
-    async def get_all_representatives(self, cluster_id: str):
-        """Return all representative embeddings for a cluster."""
-        stmt = select(IdentityClusterRepresentative.embedding).where(
-            IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
+    async def get_all_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
+        """Return all representative domain objects for a cluster."""
+        stmt = (
+            select(IdentityClusterRepresentative, MediaIdentity.image_phash, MediaIdentity.media_id)
+            .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
         )
         result = await self._session.execute(stmt)
-        return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
+        reps = []
+        for model_rep, phash, media_id in result:
+            reps.append(
+                ClusterRepresentative(
+                    id=str(model_rep.id),
+                    cluster_id=str(model_rep.cluster_id),
+                    identity_id=str(model_rep.identity_id),
+                    embedding=np.array(model_rep.embedding, dtype=np.float32),
+                    created_at=model_rep.created_at,
+                    tenant_id=str(model_rep.tenant_id),
+                    quality_score=float(model_rep.quality_score),
+                    diversity_score=float(model_rep.diversity_score) if model_rep.diversity_score else None,
+                    media_id=media_id,
+                    image_phash=phash,
+                )
+            )
+        return reps
+
+    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+        """Fetch maturity information for a cluster."""
+        stmt = (
+            select(
+                ClusterModel.identity_count,
+                ClusterModel.user_confirmed,
+                func.count(IdentityClusterRepresentative.id).label("representative_count"),
+            )
+            .outerjoin(IdentityClusterRepresentative, ClusterModel.id == IdentityClusterRepresentative.cluster_id)
+            .where(ClusterModel.id == _coerce_uuid(cluster_id))
+            .group_by(ClusterModel.id)
+        )
+        result = await self._session.execute(stmt)
+        row = result.first()
+
+        if not row:
+            return None
+
+        # Extract values
+        identity_count = int(row.identity_count)
+        user_confirmed = bool(row.user_confirmed)
+        representative_count = int(row.representative_count)
+
+        # Compute domain logic
+        level = compute_maturity_level(
+            identity_count=identity_count,
+            representative_count=representative_count,
+            user_confirmed=user_confirmed,
+        )
+        adjustment = compute_maturity_adjustment(level)
+
+        return ClusterMaturityInfo(
+            level=level,
+            identity_count=identity_count,
+            representative_count=representative_count,
+            user_confirmed=user_confirmed,
+            threshold_adjustment=adjustment,
+        )
 
     async def get_member_embeddings(self, cluster_id: str):
         """Return embeddings for members of the cluster."""
@@ -273,6 +335,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             bbox_height=int(model.bbox_height),
             bbox_x=int(model.bbox_x),
             bbox_y=int(model.bbox_y),
+            image_phash=model.image_phash,
             cluster_id=None,
         )
 

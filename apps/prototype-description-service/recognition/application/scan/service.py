@@ -217,6 +217,7 @@ class ScanService:
                     pose_roll=det.pose_roll,
                     age=det.age,
                     gender=det.gender,
+                    image_phash=det.image_phash,
                 )
             )
 

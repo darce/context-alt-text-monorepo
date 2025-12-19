@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
-from typing import Protocol
+from typing import Protocol, cast
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -64,7 +64,7 @@ async def _post_merge_retry_matching(
     if not reps:
         return
 
-    rep_face_vecs = [_normalize_face_embedding(rep) for rep in reps]
+    rep_face_vecs = [_normalize_face_embedding(cast(np.ndarray, getattr(rep, "embedding", rep))) for rep in reps]
     if not rep_face_vecs:
         return
 

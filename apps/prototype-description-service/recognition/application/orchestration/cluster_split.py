@@ -100,10 +100,12 @@ async def split_cluster(
         identity_ids_for_group = [ids[i] for i, lbl in enumerate(labels) if lbl == label]
 
         new_cluster_id = str(generate_id())
+        # Use unique suffix to avoid label collision on repeated splits
+        unique_suffix = new_cluster_id[:4]
         new_cluster = IdentityCluster(
             id=new_cluster_id,
             tenant_id=original_cluster.tenant_id,
-            label=f"Split from {cluster_id[:8]}",
+            label=f"Split from {cluster_id[:8]} ({unique_suffix})",
             member_count=count,
             is_labeled=False,
             user_confirmed=True,

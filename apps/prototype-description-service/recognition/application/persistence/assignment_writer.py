@@ -5,6 +5,7 @@ AssignmentWriter interface for persisting gate decisions (Phase 5).
 from __future__ import annotations
 
 import uuid
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import cast
 
@@ -21,6 +22,27 @@ from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 
+@dataclass(frozen=True)
+class IdentityMember:
+    """Domain representation of a cluster member."""
+
+    id: str
+    cluster_id: str
+    identity_id: str
+    similarity: float
+    tenant_id: str | None = None
+    assigned_at: datetime | None = None
+
+
+def _compute_fingerprint(embedding: np.ndarray) -> str:
+    """Compute a stable fingerprint for a face embedding."""
+    import hashlib
+
+    # Use face-only portion for fingerprinting
+    face_vec = extract_face_embedding(embedding)
+    return hashlib.sha256(face_vec.tobytes()).hexdigest()[:8]
+
+
 def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     """Normalize a face embedding to unit length.
 
@@ -35,6 +57,36 @@ def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     if norm == 0:
         return face_vec.astype(np.float32)
     return face_vec.astype(np.float32) / norm
+
+
+def _compute_identity_quality(identity: MediaIdentity) -> float:
+    """Compute quality score for a media identity.
+
+    Quality is computed from:
+    - Detection confidence: 60% (primary signal from InsightFace)
+    - Face size: 40% (larger faces = more reliable embeddings)
+
+    Args:
+        identity: MediaIdentity with confidence and bbox dimensions.
+
+    Returns:
+        Quality score between 0.0 and 1.0.
+    """
+    # Detection score component (60% weight)
+    det_component = identity.confidence * 0.6
+
+    # Face size component (40% weight)
+    # Large (>20000 px²) = 1.0, Medium (5000-20000) = 0.7, Small (<5000) = 0.4
+    bbox_area = identity.bbox_width * identity.bbox_height
+    if bbox_area > 20000:
+        size_score = 1.0
+    elif bbox_area > 5000:
+        size_score = 0.7
+    else:
+        size_score = 0.4
+    size_component = size_score * 0.4
+
+    return round(det_component + size_component, 3)
 
 
 def _select_diverse_representatives(
@@ -130,7 +182,11 @@ class AssignmentWriter:
 
         members: list[dict[str, object]] = []
         for identity, similarity in zip(identities, similarities, strict=False):
-            member_payload: dict[str, object] = {"identity_id": identity.id, "similarity": float(similarity)}
+            member_payload: dict[str, object] = {
+                "identity_id": identity.id,
+                "similarity": float(similarity),
+                "embedding_fingerprint": _compute_fingerprint(identity.embedding),
+            }
             locator_payload = _locator_payload(identity)
             if locator_payload is not None:
                 member_payload["identity_locator"] = locator_payload
@@ -202,6 +258,7 @@ class AssignmentWriter:
         if await self._should_add_representative(decision):
             # Store the full 1024D embedding, not the face-only 512D vector
             full_embedding = decision.candidate.identity.embedding
+            quality = _compute_identity_quality(decision.candidate.identity)
             rep = ClusterRepresentative(
                 id=str(uuid.uuid4()),
                 cluster_id=decision.candidate.cluster_id,
@@ -209,6 +266,7 @@ class AssignmentWriter:
                 embedding=full_embedding,
                 created_at=datetime.now(tz=UTC),
                 tenant_id=decision.candidate.identity.tenant_id,
+                quality_score=quality,
             )
             await self._clusters.add_representative(rep)
             self._emit_representative_selected_event(
@@ -245,8 +303,8 @@ class AssignmentWriter:
             return True
 
         # Check diversity
-        for rep_embedding in existing_reps:
-            # Assuming rep_embedding is np.ndarray or similar
+        for rep in existing_reps:
+            rep_embedding = cast(np.ndarray, getattr(rep, "embedding", rep))
             similarity = compute_face_similarity(decision.candidate.identity_vector, rep_embedding)
             if similarity > self._settings.representative_diversity_threshold:
                 return False
@@ -264,8 +322,9 @@ class AssignmentWriter:
             return None
 
         # Calculate mean vector
-        # reps is Sequence[Any], assuming numpy arrays
-        stacked = np.stack(reps)
+        # Handle both raw embedding vectors and full ClusterRepresentative objects
+        rep_vecs = [cast(np.ndarray, getattr(r, "embedding", r)) for r in reps]
+        stacked = np.stack(rep_vecs)
         mean_vector = np.mean(stacked, axis=0)
 
         # Normalize
@@ -301,6 +360,7 @@ class AssignmentWriter:
         await self._clusters.update(cluster)
 
         for identity in selected:
+            quality = _compute_identity_quality(identity)
             rep = ClusterRepresentative(
                 id=str(uuid.uuid4()),
                 cluster_id=cluster_id,
@@ -308,6 +368,7 @@ class AssignmentWriter:
                 embedding=identity.embedding,
                 created_at=datetime.now(tz=UTC),
                 tenant_id=identity.tenant_id,
+                quality_score=quality,
             )
             await self._clusters.add_representative(rep)
             self._emit_representative_selected_event(
@@ -362,6 +423,7 @@ class AssignmentWriter:
                 self._settings.max_representatives_per_cluster,
             )
             for identity in diverse_reps:
+                quality = _compute_identity_quality(identity)
                 rep = ClusterRepresentative(
                     id=str(uuid.uuid4()),
                     cluster_id=cluster.id,
@@ -369,6 +431,8 @@ class AssignmentWriter:
                     embedding=identity.embedding,
                     created_at=datetime.now(tz=UTC),
                     tenant_id=tenant_id,
+                    quality_score=quality,
+                    image_phash=identity.image_phash,
                 )
                 await self._clusters.add_representative(rep)
                 self._emit_representative_selected_event(
@@ -432,13 +496,15 @@ class AssignmentWriter:
             is_diverse = True
             if existing_reps:
                 identity_vec = np.array(identity.embedding, dtype=np.float32)
-                for rep_embedding in existing_reps:
+                for rep in existing_reps:
+                    rep_embedding = cast(np.ndarray, getattr(rep, "embedding", rep))
                     rep_sim = compute_face_similarity(identity_vec, rep_embedding)
                     if rep_sim > self._settings.representative_diversity_threshold:
                         is_diverse = False
                         break
 
             if is_diverse:
+                quality = _compute_identity_quality(identity)
                 rep = ClusterRepresentative(
                     id=str(uuid.uuid4()),
                     cluster_id=cluster_id,
@@ -446,6 +512,8 @@ class AssignmentWriter:
                     embedding=identity.embedding,
                     created_at=datetime.now(tz=UTC),
                     tenant_id=identity.tenant_id,
+                    quality_score=quality,
+                    image_phash=identity.image_phash,
                 )
                 await self._clusters.add_representative(rep)
                 self._emit_representative_selected_event(

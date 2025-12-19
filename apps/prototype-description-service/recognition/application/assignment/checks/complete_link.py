@@ -4,6 +4,7 @@ Complete-link validation check to prevent single-representative domination.
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
 import numpy as np
@@ -12,6 +13,8 @@ from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.assignment.checks.base import AssignmentCheck, CheckResult
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.repositories import ClusterRepository
+
+logger = logging.getLogger(__name__)
 
 
 class CompleteLinkCheck(AssignmentCheck):
@@ -75,6 +78,85 @@ class CompleteLinkCheck(AssignmentCheck):
                 },
             )
 
+        # Bypass for near-identical embeddings (duplicate image detection).
+        # If discovery similarity >= 0.90 AND at least one representative has >= 0.99 similarity,
+        # the identity is almost certainly from a duplicate/near-duplicate image.
+        # ALSO: If we have an exact image_phash match, bypass (even if similarity is slightly lower due to jitter).
+        # This addresses the transitivity failure where duplicate images get split because
+        # RepresentativeDiscovery doesn't set anchor_linked=True.
+        # NOTE: We fetch representatives early here if needed; they're reused below.
+        from collections.abc import Sequence
+
+        representatives: Sequence[Any] | None = None
+        if candidate.discovery_similarity >= 0.90 or candidate.identity.image_phash:
+            representatives = await self.cluster_repository.get_all_representatives(candidate.cluster_id)
+            if representatives:
+                candidate_vec = self._normalize(candidate.identity_vector)
+                max_rep_sim = 0.0
+                phash_match = False
+
+                for rep in representatives:
+                    # Handle both raw embedding vectors and full ClusterRepresentative objects
+                    rep_vec_raw = getattr(rep, "embedding", rep)
+                    rep_vec = self._normalize(np.asarray(rep_vec_raw, dtype=np.float32))
+                    sim = float(np.dot(candidate_vec, rep_vec))
+                    max_rep_sim = max(max_rep_sim, sim)
+
+                    # Check for phash match
+                    rep_phash = getattr(rep, "image_phash", None)
+                    if not phash_match and candidate.identity.image_phash and rep_phash:
+                        if rep_phash == candidate.identity.image_phash:
+                            phash_match = True
+                            logger.info(
+                                "[complete_link] phash match found",
+                                extra={
+                                    "media_id": candidate.identity.media_id,
+                                    "cluster_id": candidate.cluster_id,
+                                    "phash": candidate.identity.image_phash,
+                                },
+                            )
+                        else:
+                            logger.debug(
+                                "[complete_link] phash mismatch",
+                                extra={
+                                    "candidate_phash": candidate.identity.image_phash,
+                                    "rep_phash": rep_phash,
+                                    "media_id": candidate.identity.media_id,
+                                },
+                            )
+
+                # 1. Pysical identity match bypass
+                if phash_match:
+                    return CheckResult(
+                        passed=True,
+                        metadata={
+                            "reason": "near_identical_to_representative",
+                            "similarity": max_rep_sim,
+                            "phash_match": True,
+                        },
+                    )
+
+                # 2. High similarity match bypass
+                if max_rep_sim >= 0.99:
+                    logger.debug(
+                        "[complete_link] BYPASS (near-identical) identity=%s cluster=%s "
+                        "discovery_sim=%.4f max_rep_sim=%.4f phash_match=%s",
+                        candidate.identity.id,
+                        candidate.cluster_id,
+                        candidate.discovery_similarity,
+                        max_rep_sim,
+                        phash_match,
+                    )
+                    return CheckResult(
+                        passed=True,
+                        metadata={
+                            "bypass_reason": "near_identical_to_representative",
+                            "discovery_similarity": candidate.discovery_similarity,
+                            "max_representative_similarity": max_rep_sim,
+                            "phash_match": phash_match,
+                        },
+                    )
+
         # Fetch cluster metadata to determine if it is user-labeled
         cluster = await self.cluster_repository.get_by_id(candidate.cluster_id)
         is_unlabeled = False
@@ -90,8 +172,14 @@ class CompleteLinkCheck(AssignmentCheck):
             self.settings.similarity_threshold if is_unlabeled else self.settings.complete_link_avg_threshold
         )
 
-        representatives = await self.cluster_repository.get_all_representatives(candidate.cluster_id)
-        rep_count = len(representatives)
+        # Reuse representatives if already fetched, otherwise fetch now
+        reps_to_use: Sequence[Any]
+        if representatives is None:
+            reps_to_use = await self.cluster_repository.get_all_representatives(candidate.cluster_id)
+        else:
+            reps_to_use = representatives
+
+        rep_count = len(reps_to_use)
         if rep_count < 2:
             # Singleton target: verify against the single representative
             # For Unlabeled, simply passing discovery (limit) is enough
@@ -108,18 +196,22 @@ class CompleteLinkCheck(AssignmentCheck):
 
         candidate_vec = self._normalize(candidate.identity_vector)
         similarities: list[float] = []
-        for rep in representatives:
-            rep_vec = self._normalize(np.asarray(rep, dtype=np.float32))
+        for rep in reps_to_use:
+            # Handle both raw embedding vectors and full ClusterRepresentative objects
+            rep_vec_raw = getattr(rep, "embedding", rep)
+            rep_vec = self._normalize(np.asarray(rep_vec_raw, dtype=np.float32))
             similarities.append(float(np.dot(candidate_vec, rep_vec)))
 
-        min_sim = float(min(similarities))
-        avg_sim = float(sum(similarities) / len(similarities))
+        min_sim = min(similarities)
+        avg_sim = sum(similarities) / len(similarities)
         metadata: dict[str, Any] = {
             "min_similarity": min_sim,
             "avg_similarity": avg_sim,
             "representative_count": rep_count,
             "target_is_unlabeled": is_unlabeled,
             "target_min_floor": target_min_floor,
+            "target_avg_threshold": target_avg_threshold,
+            "all_similarities": [round(s, 4) for s in similarities],
         }
 
         if min_sim < target_min_floor or avg_sim < target_avg_threshold:
@@ -141,6 +233,20 @@ class CompleteLinkCheck(AssignmentCheck):
             # If Unlabeled: REJECT (don't suggest garbage matching to garbage).
             # If Labeled: SUGGEST (ask user to confirm).
             should_reject = bool(is_unlabeled)
+
+            # Log detailed failure info for debugging transitivity issues
+            logger.debug(
+                "[complete_link] FAILED identity=%s cluster=%s min_sim=%.4f avg_sim=%.4f "
+                "min_floor=%.2f avg_threshold=%.2f reps=%d sims=%s",
+                candidate.identity.id,
+                candidate.cluster_id,
+                min_sim,
+                avg_sim,
+                target_min_floor,
+                target_avg_threshold,
+                rep_count,
+                [round(s, 3) for s in similarities],
+            )
 
             return CheckResult(
                 passed=False,

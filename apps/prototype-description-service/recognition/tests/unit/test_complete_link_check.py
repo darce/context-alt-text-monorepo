@@ -153,3 +153,49 @@ def test_complete_link_disabled_when_thresholds_missing() -> None:
     check = CompleteLinkCheck(settings=settings, cluster_repository=FakeClusterRepository({}))
 
     assert check.is_enabled() is False
+
+
+@pytest.mark.asyncio
+async def test_complete_link_bypasses_for_near_identical_representative() -> None:
+    """Check should bypass when candidate matches a representative at >= 0.99 similarity.
+
+    This handles the case where duplicate images have identical embeddings but the cluster
+    also contains other representatives from different photos, causing complete_link to
+    fail on the min_similarity check. The near-identical bypass allows the duplicate to
+    join despite not matching all representatives.
+    """
+    cluster_id = str(generate_id())
+    # Candidate is nearly identical to rep1 (sim ~0.9998) but different from rep2 (sim ~0.0)
+    candidate_vec = normalize(np.array([1.0, 0.0, 0.0]))
+    rep1 = normalize(np.array([1.0, 0.001, 0.0]))  # Near-identical to candidate
+    rep2 = normalize(np.array([0.0, 1.0, 0.0]))  # Very different (perpendicular)
+    reps = {cluster_id: [rep1, rep2]}
+
+    # Create candidate with discovery_similarity >= 0.90 (trigger for near-identical check)
+    identity = MediaIdentity(
+        id=str(generate_id()),
+        tenant_id=str(generate_id()),
+        media_id=str(generate_id()),
+        embedding=candidate_vec,
+        confidence=0.9,
+        bbox_width=10,
+        bbox_height=12,
+    )
+    candidate = AssignmentCandidate(
+        identity=identity,
+        identity_vector=candidate_vec,
+        cluster_id=cluster_id,
+        discovery_method=DiscoveryMethod.REPRESENTATIVE,
+        discovery_similarity=0.92,  # >= 0.90, triggers near-identical check
+    )
+
+    check = CompleteLinkCheck(settings=make_settings(), cluster_repository=FakeClusterRepository(reps))
+
+    result = await check.evaluate(candidate)
+
+    # Should pass via the near-identical bypass
+    assert result.passed is True
+    assert result.is_fatal is False
+    assert result.metadata is not None
+    assert result.metadata.get("bypass_reason") == "near_identical_to_representative"
+    assert result.metadata.get("max_representative_similarity", 0) >= 0.99

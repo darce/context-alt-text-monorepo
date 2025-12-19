@@ -11,12 +11,15 @@ The ScanService depends on this interface for face detection.
 from __future__ import annotations
 
 import hashlib
+import io
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
 from typing import TYPE_CHECKING
 
 import httpx
+import imagehash
+from PIL import Image
 
 from recognition.application.embedding.service import FaceDetection
 
@@ -59,11 +62,13 @@ class StubFaceDetector(FaceDetectorProtocol):
             width = max(1, digest[2] % 100)
             height = max(1, digest[3] % 100)
             confidence = (digest[4] / 255.0) if digest[4] else 0.99
+            image_phash = digest.hex()[:16]  # Fake phash for stubs
             detections.append(
                 FaceDetection(
                     media_id=str(media_ref),
                     bbox=(x1, y1, x1 + width, y1 + height),
                     confidence=float(confidence),
+                    image_phash=image_phash,
                 )
             )
         return detections
@@ -85,6 +90,15 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                 return response.content
         except httpx.HTTPError as e:
             logger.error("Failed to fetch image from %s: %s", url[:100], e)
+            return None
+
+    def _compute_phash(self, image_bytes: bytes) -> str | None:
+        """Compute perceptual hash for duplicate detection."""
+        try:
+            with Image.open(io.BytesIO(image_bytes)) as img:
+                return str(imagehash.phash(img, hash_size=16))
+        except Exception as e:
+            logger.error("Failed to compute phash: %s", e)
             return None
 
     async def detect(self, sources: Iterable[bytes | str]) -> list[FaceDetection]:
@@ -111,6 +125,9 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                 media_id = hashlib.sha256(source).hexdigest()
                 image_bytes = source
 
+            # Compute image phash once per image
+            image_phash = self._compute_phash(image_bytes)
+
             # Detect faces and get embeddings in one pass
             try:
                 faces = await self._adapter.detect_faces(image_bytes)
@@ -128,6 +145,7 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                             pose_roll=face.pose[2] if face.pose else None,
                             age=face.age,
                             gender=face.gender,
+                            image_phash=image_phash,
                         )
                     )
             except Exception as e:

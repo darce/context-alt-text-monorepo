@@ -80,6 +80,7 @@ def upgrade() -> None:
         sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
         sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("thumbnail_url", sa.String(length=500)),
+        sa.Column("image_phash", sa.String(length=64), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "updated_at",
@@ -484,6 +485,12 @@ def upgrade() -> None:
         "idx_media_identities_tenant_type",
         "media_identities",
         ["tenant_id", "identity_type"],
+    )
+    op.create_index(
+        "idx_media_identities_phash",
+        "media_identities",
+        ["tenant_id", "image_phash"],
+        postgresql_where=sa.text("image_phash IS NOT NULL"),
     )
     op.create_index(
         "idx_media_identities_embedding",

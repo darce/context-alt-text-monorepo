@@ -54,6 +54,7 @@ class FaceDetection:
     pose_roll: float | None = None
     age: int | None = None
     gender: int | None = None  # 0=female, 1=male
+    image_phash: str | None = None
 
 
 @dataclass

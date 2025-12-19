@@ -288,11 +288,13 @@ async def test_recompute_representatives_clears_and_rebuilds(db_session, tenant)
     # Reps rebuilt to max (2) and stale rep removed.
     reps = await cluster_repo.get_all_representatives(cluster.id)
     assert len(reps) == 2
-    assert not any(np.allclose(rep, old_embedding) for rep in reps)
+    # reps are ClusterRepresentative objects, not arrays. Extract embedding.
+    rep_embeddings = [r.embedding for r in reps]
+    assert not any(np.allclose(rep_emb, old_embedding) for rep_emb in rep_embeddings)
 
     # FPS should pick A (highest conf) and C (most diverse), not B (similar).
-    assert any(np.allclose(rep, emb_a) for rep in reps)
-    assert any(np.allclose(rep, emb_c) for rep in reps)
+    assert any(np.allclose(rep_emb, emb_a) for rep_emb in rep_embeddings)
+    assert any(np.allclose(rep_emb, emb_c) for rep_emb in rep_embeddings)
 
     updated_cluster = await cluster_repo.get_by_id(cluster.id)
     assert updated_cluster is not None

@@ -54,6 +54,74 @@ def load_canonical_labels(path: Path) -> dict[IdentityLocator, str]:
     return labels
 
 
+def load_predicted_labels(path: Path) -> dict[IdentityLocator, str]:
+    """Load predicted cluster assignments from a baseline report.
+
+    Unlike load_canonical_labels (which uses curated `canonical_clusters`),
+    this function extracts labels from `pre_curation_state.predicted_clusters` -
+    the original algorithmic assignments before any user curation.
+
+    Use this to measure clustering consistency/reproducibility across runs.
+
+    Note: If the same identity appears in multiple clusters (e.g., from multiple
+    runs with reassignments), the first assignment is kept.
+
+    Args:
+        path: Path to a canonical report JSON file.
+
+    Returns:
+        dict[IdentityLocator, str]: Locator -> predicted cluster ID (as label).
+    """
+    import logging
+
+    logger = logging.getLogger(__name__)
+
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("Canonical report must be a JSON object")
+
+    pre_curation = payload.get("pre_curation_state")
+    if not isinstance(pre_curation, dict):
+        raise ValueError("pre_curation_state not found. Report must be generated with --run-id or --all-runs")
+
+    predicted_clusters = pre_curation.get("predicted_clusters")
+    if not isinstance(predicted_clusters, list):
+        raise ValueError("pre_curation_state.predicted_clusters must be a list")
+
+    labels: dict[IdentityLocator, str] = {}
+    conflicts = 0
+    for cluster in predicted_clusters:
+        if not isinstance(cluster, dict):
+            continue
+        cluster_id = cluster.get("predicted_cluster_id")
+        if not isinstance(cluster_id, str):
+            continue
+
+        members = cluster.get("member_identity_locators")
+        if not isinstance(members, list):
+            continue
+
+        for locator_payload in members:
+            if not isinstance(locator_payload, Mapping):
+                continue
+            locator = IdentityLocator.from_dict(locator_payload)
+            if locator in labels:
+                if labels[locator] != cluster_id:
+                    conflicts += 1
+                # Keep first assignment (represents initial clustering state)
+                continue
+            labels[locator] = cluster_id
+
+    if conflicts > 0:
+        logger.warning(
+            "Found %d identities with conflicting cluster assignments (kept first). "
+            "This may indicate reassignments across multiple runs.",
+            conflicts,
+        )
+
+    return labels
+
+
 def write_json(path: Path, payload: Any) -> None:
     """Write a JSON payload to disk.
 

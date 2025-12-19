@@ -188,6 +188,7 @@ async def cluster_unclustered_identities(
             bbox_height=row.bbox_height,
             bbox_x=row.bbox_x,
             bbox_y=row.bbox_y,
+            image_phash=row.image_phash,
         )
         for row in unclustered
     ]
@@ -340,8 +341,21 @@ async def cluster_unclustered_identities(
                         locator_payload = None
 
                 decision_metadata: dict[str, Any] = dict(decision.metadata or {})
+                # Compute fingerprint for report correlation
+                fingerprint = None
+                if candidate.identity.embedding is not None:
+                    import hashlib
+
+                    from recognition.shared.similarity import extract_face_embedding
+
+                    face_vec = extract_face_embedding(candidate.identity.embedding)
+                    fingerprint = hashlib.sha256(face_vec.tobytes()).hexdigest()[:8]
+
                 decision_metadata.update(
                     {
+                        "identity_id": candidate.identity.id,
+                        "embedding_fingerprint": fingerprint,
+                        "image_phash": candidate.identity.image_phash,
                         "method": candidate.discovery_method.value,
                         "stage": f"{candidate.discovery_method.name.title()}Discovery",
                         "threshold": gate.settings.similarity_threshold,
@@ -367,7 +381,7 @@ async def cluster_unclustered_identities(
                     similarity=candidate.discovery_similarity,
                     reason=decision.rejection_reason,
                     metadata=decision_metadata,
-                    algorithm="incremental",
+                    algorithm=candidate.discovery_method.value,
                     job_id=job_label,
                     media_id=candidate.identity.media_id,
                 )
@@ -430,7 +444,7 @@ async def cluster_unclustered_identities(
                         tenant_id=tenant_id,
                         identities=members,
                         similarities=similarities,
-                        algorithm="graph",
+                        algorithm=graph_discovery.algorithm_name,
                     )
                     centroids_dirty = True
                     clusters_created += 1
@@ -447,7 +461,7 @@ async def cluster_unclustered_identities(
                     tenant_id=tenant_id,
                     identities=members,
                     similarities=similarities,
-                    algorithm="graph",
+                    algorithm=graph_discovery.algorithm_name,
                 )
                 centroids_dirty = True
                 clusters_created += 1
@@ -507,7 +521,7 @@ async def cluster_unclustered_identities(
     if clustering_logger:
         clustering_job_report = BatchJobReport(
             job_id=job_label,
-            algorithm="graph",  # or "incremental"
+            algorithm=graph_discovery.algorithm_name,
             started_at=started_at,
             completed_at=finished_at,
             total_identities=len(domain_identities),

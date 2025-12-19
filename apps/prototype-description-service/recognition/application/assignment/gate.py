@@ -5,6 +5,7 @@ Assignment gate orchestrating validation checks for cluster assignments.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from typing import Any
 
 from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.assignment.checks import (
@@ -60,12 +61,16 @@ class AssignmentGate:
         """
         checks_passed: list[str] = []
         checks_failed: list[str] = []
+        all_metadata: dict[str, Any] = {}
 
         for check in self.checks:
             if not check.is_enabled():
                 continue
 
             result = await check.evaluate(candidate)
+            if result.metadata:
+                all_metadata.update(result.metadata)
+
             if result.passed:
                 checks_passed.append(check.name)
                 continue
@@ -79,7 +84,7 @@ class AssignmentGate:
                     checks_passed=checks_passed,
                     checks_failed=checks_failed,
                     rejection_reason=result.reason,
-                    metadata=result.metadata,
+                    metadata=all_metadata,
                 )
 
         return AssignmentDecision(
@@ -87,6 +92,7 @@ class AssignmentGate:
             candidate=candidate,
             checks_passed=checks_passed,
             checks_failed=checks_failed,
+            metadata=all_metadata,
         )
 
     def add_check(self, check: AssignmentCheck) -> None:

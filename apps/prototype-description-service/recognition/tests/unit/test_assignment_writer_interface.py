@@ -11,6 +11,7 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
+from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.repositories import ClusterRepository, IdentityMember, MemberRepository
 
 
@@ -59,6 +60,9 @@ class NullClusterRepo(ClusterRepository):
 
     async def count_labeled(self) -> int:
         return 0
+
+    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+        return None
 
 
 class NullMemberRepo(MemberRepository):

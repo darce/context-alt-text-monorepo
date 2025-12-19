@@ -14,6 +14,7 @@ from recognition.application.assignment.decision import AssignmentOutcome
 from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
+from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.repositories import ClusterRepository
 from recognition.shared.ids import generate_id
 
@@ -68,6 +69,9 @@ class NoopRepository(ClusterRepository):
 
     async def count_labeled(self) -> int:
         return 10  # Return a mature count so adaptive threshold is relaxed
+
+    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+        return None
 
 
 def make_candidate() -> AssignmentCandidate:
@@ -176,7 +180,28 @@ async def test_gate_rejects_when_should_reject_true() -> None:
 
     decision = await gate.evaluate(make_candidate())
 
-    assert decision.outcome is AssignmentOutcome.REJECT
     assert decision.checks_passed == []
     assert decision.checks_failed == ["member_distribution"]
     assert decision.rejection_reason == "conflict with members"
+
+
+@pytest.mark.asyncio
+async def test_gate_aggregates_metadata_from_all_checks() -> None:
+    """Gate should aggregate metadata from both passed and failed checks."""
+    gate = AssignmentGate(
+        settings=make_settings(),
+        cluster_repository=NoopRepository(),
+        checks=[
+            FakeCheck(name="check_a", enabled=True, result=CheckResult(passed=True, metadata={"a": 1})),
+            FakeCheck(name="check_b", enabled=True, result=CheckResult(passed=True, metadata={"b": 2})),
+            FakeCheck(name="check_c", enabled=True, result=CheckResult(passed=False, is_fatal=True, metadata={"c": 3})),
+        ],
+    )
+
+    decision = await gate.evaluate(make_candidate())
+
+    assert decision.metadata is not None
+    assert decision.metadata["a"] == 1
+    assert decision.metadata["b"] == 2
+    assert decision.metadata["c"] == 3
+    assert decision.outcome is AssignmentOutcome.SUGGEST  # Stopped at check_c

@@ -9,40 +9,16 @@ Uses adaptive thresholds inspired by CurricularFace curriculum learning:
 
 from __future__ import annotations
 
-import math
-
 from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.assignment.checks.base import AssignmentCheck, CheckResult
+from recognition.application.assignment.quality import compute_identity_quality
 from recognition.application.settings import ClusteringSettings
+from recognition.domain.maturity import ClusterMaturityLevel, compute_maturity_adjustment
 from recognition.domain.repositories import ClusterRepository
 
 
-def compute_adaptive_threshold(
-    labeled_cluster_count: int,
-    base_threshold: float,
-    strict_threshold: float,
-    maturity_point: int,
-    decay_rate: float = 3.0,
-) -> float:
-    """Compute adaptive similarity threshold based on cluster maturity.
-
-    Uses exponential decay from strict to base threshold as clusters grow.
-    Inspired by CurricularFace: "address easy samples first, hard ones later".
-
-    For clustering, we invert this: be strict early (avoid false positives when
-    no ground truth exists), relax as the system learns (centroids become reliable).
-    """
-    if labeled_cluster_count == 0:
-        return strict_threshold
-
-    # Exponential decay from strict to base threshold
-    rate = decay_rate / maturity_point
-    adjustment = (strict_threshold - base_threshold) * math.exp(-rate * labeled_cluster_count)
-    return base_threshold + adjustment
-
-
 class ConfidenceCheck(AssignmentCheck):
-    """Handles confidence gating with adaptive thresholds based on training maturity."""
+    """Handles confidence gating with adaptive thresholds based on cluster maturity and identity quality."""
 
     name = "confidence"
 
@@ -55,11 +31,10 @@ class ConfidenceCheck(AssignmentCheck):
 
         Args:
             settings: Threshold configuration for confidence-based decisions.
-            cluster_repository: Repository to query labeled cluster count for adaptive thresholds.
+            cluster_repository: Repository to query cluster maturity.
         """
         self.settings = settings
         self.cluster_repository = cluster_repository
-        self._cached_labeled_count: int | None = None
 
     def is_enabled(self) -> bool:
         """Return whether the confidence guard should run.
@@ -67,24 +42,22 @@ class ConfidenceCheck(AssignmentCheck):
         Returns:
             bool: True when confidence-based gating is enabled.
         """
-        return self.settings.early_stage_suggestion_enabled and self.settings.early_stage_high_confidence_threshold > 0
+        return self.settings.early_stage_suggestion_enabled
 
     async def evaluate(self, candidate: AssignmentCandidate) -> CheckResult:
-        """Evaluate whether a candidate should be accepted, suggested, or rejected based on confidence.
+        """Evaluate whether a candidate should be accepted based on dynamic thresholds.
 
-        Uses adaptive thresholds that are strict when few labeled clusters exist,
-        and relax as the system learns from more labeled data.
+        Combines:
+        1. Base threshold (from settings)
+        2. Cluster maturity adjustment (stricter for new clusters, lenient for mature)
+        3. Identity quality adjustment (stricter for poor quality faces, lenient for high confidence)
 
         Args:
-            candidate: Proposed assignment to evaluate for confidence thresholds.
+            candidate: Proposed assignment to evaluate.
 
         Returns:
-            CheckResult: Pass/fail outcome indicating confidence disposition.
+            CheckResult: Pass/fail outcome.
         """
-        # Bypass confidence check for anchor-linked candidates from GraphDiscovery.
-        # Transitivity has already established the connection via the graph algorithm
-        # (Chinese Whispers/HDBSCAN grouped them with known cluster anchors).
-        # This is the key fix for batch consistency: trusting graph transitivity.
         if candidate.anchor_linked:
             return CheckResult(
                 passed=True,
@@ -94,39 +67,62 @@ class ConfidenceCheck(AssignmentCheck):
                 },
             )
 
-        similarity = candidate.discovery_similarity
-
-        # Compute adaptive threshold based on labeled cluster count
-        if self.cluster_repository is not None:
-            labeled_count = await self.cluster_repository.count_labeled()
-        else:
-            labeled_count = 0  # Fall back to strict threshold if no repo
-
-        base_threshold = self.settings.similarity_threshold
-        strict_threshold = self.settings.early_stage_high_confidence_threshold
-        maturity_point = self.settings.adaptive_threshold_maturity_point
-
-        adaptive_threshold = compute_adaptive_threshold(
-            labeled_cluster_count=labeled_count,
-            base_threshold=base_threshold,
-            strict_threshold=strict_threshold,
-            maturity_point=maturity_point,
+        # 1. Compute Identity Quality Adjustment for the candidate
+        # We need detection metrics from the identity
+        identity = candidate.identity
+        quality_info = compute_identity_quality(
+            confidence=identity.confidence,
+            pose_pitch=identity.pose_pitch,
+            pose_yaw=identity.pose_yaw,
+            pose_roll=identity.pose_roll,
+            bbox_width=identity.bbox_width,
+            bbox_height=identity.bbox_height,
         )
+        quality_adj = quality_info.threshold_adjustment
+
+        # 2. Get Cluster Maturity Adjustment
+        maturity_adj = 0.0
+        maturity_level_name = "UNKNOWN"
+
+        if self.cluster_repository and candidate.cluster_id:
+            maturity_info = await self.cluster_repository.get_maturity_info(candidate.cluster_id)
+            if maturity_info:
+                maturity_adj = maturity_info.threshold_adjustment
+                maturity_level_name = maturity_info.level.name
+            else:
+                # Cluster not found or repo failed, treat as COLD
+                maturity_adj = compute_maturity_adjustment(ClusterMaturityLevel.COLD)
+                maturity_level_name = "COLD (fallback)"
+        else:
+            # No repo available, treat as COLD
+            maturity_adj = compute_maturity_adjustment(ClusterMaturityLevel.COLD)
+            maturity_level_name = "COLD (no_repo)"
+
+        # 3. Compute Final Threshold
+        base = self.settings.similarity_threshold
+        # "Strict to base" logic is replaced by "Base + Adjs"
+        # If adjustments are positive => stricter.
+
+        final_threshold = base + maturity_adj + quality_adj
+        similarity = candidate.discovery_similarity
 
         metadata = {
             "discovery_similarity": similarity,
-            "adaptive_threshold": round(adaptive_threshold, 4),
-            "labeled_cluster_count": labeled_count,
-            "maturity_point": maturity_point,
+            "base_threshold": base,
+            "final_threshold": round(final_threshold, 4),
+            "maturity_adj": maturity_adj,
+            "quality_adj": quality_adj,
+            "maturity_level": maturity_level_name,
+            "quality_score": quality_info.score,
         }
 
-        if similarity >= adaptive_threshold:
+        if similarity >= final_threshold:
             return CheckResult(passed=True, metadata=metadata)
 
         return CheckResult(
             passed=False,
             is_fatal=True,
             should_reject=False,
-            reason=f"similarity {similarity:.2%} below adaptive threshold {adaptive_threshold:.2%}",
+            reason=f"similarity {similarity:.2%} below adaptive threshold {final_threshold:.2%}",
             metadata=metadata,
         )

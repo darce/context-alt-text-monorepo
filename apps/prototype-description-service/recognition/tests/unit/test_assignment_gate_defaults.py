@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from datetime import UTC, datetime
+
 import numpy as np
 import pytest
 
@@ -10,7 +12,9 @@ from recognition.application.assignment.decision import AssignmentOutcome
 from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
+from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.ids import generate_id
 
 
@@ -45,8 +49,19 @@ class GateRepoStub(ClusterRepository):
     async def get_representative_count(self, cluster_id: str) -> int:
         return len(self._reps.get(cluster_id, []))
 
-    async def get_all_representatives(self, cluster_id: str) -> list[np.ndarray]:
-        return self._reps.get(cluster_id, [])
+    async def get_all_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
+        vectors = self._reps.get(cluster_id, [])
+        return [
+            ClusterRepresentative(
+                id=str(generate_id()),
+                cluster_id=cluster_id,
+                identity_id=str(generate_id()),
+                embedding=v,
+                created_at=datetime.now(tz=UTC),
+                quality_score=0.9,
+            )
+            for v in vectors
+        ]
 
     async def get_member_embeddings(self, cluster_id: str) -> list[np.ndarray]:
         return self._members.get(cluster_id, [])
@@ -68,6 +83,9 @@ class GateRepoStub(ClusterRepository):
 
     async def count_labeled(self) -> int:
         return 10  # Return a mature count so adaptive threshold is relaxed
+
+    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+        return None
 
 
 def make_settings() -> ClusteringSettings:

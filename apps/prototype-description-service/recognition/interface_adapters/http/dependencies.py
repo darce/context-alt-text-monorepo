@@ -8,6 +8,7 @@ should replace the stub methods.
 from __future__ import annotations
 
 import hashlib
+import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
 from contextlib import suppress
@@ -49,6 +50,8 @@ from recognition.observability import ClusteringLogger
 from recognition.observability.persistence import ObservabilityRepository
 from recognition.observability.visualization import ClusterVisualizer
 from recognition.shared.ids import generate_id
+
+logger = logging.getLogger(__name__)
 
 
 @lru_cache
@@ -222,7 +225,8 @@ async def get_optional_session(
             commit = getattr(session, "commit", None)
             if callable(commit):
                 await commit()
-        except Exception:
+        except Exception as exc:
+            logger.error("get_optional_session: exception during yield/commit: %s", exc)
             rollback = getattr(session, "rollback", None)
             if callable(rollback):
                 await rollback()
@@ -588,6 +592,16 @@ def get_scan_service_builder(
         )
 
     return _builder
+
+
+def get_scan_queue_service_factory(
+    session: AsyncSession,
+) -> ScanQueueService:
+    """Factory to create ScanQueueService using an existing session.
+
+    Use this when you already have a session from get_optional_session.
+    """
+    return ScanQueueService(SqlAlchemyScanQueueRepository(session))
 
 
 async def get_scan_queue_service(

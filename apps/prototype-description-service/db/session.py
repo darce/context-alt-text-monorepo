@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator
 
 from sqlalchemy.ext.asyncio import (
@@ -12,6 +13,8 @@ from sqlalchemy.ext.asyncio import (
 )
 
 from db.settings import get_database_settings
+
+logger = logging.getLogger(__name__)
 
 _settings = get_database_settings()
 
@@ -28,10 +31,16 @@ async_session_factory = async_sessionmaker(
 
 
 async def get_session() -> AsyncIterator[AsyncSession]:
-    """Provide a scoped async SQLAlchemy session."""
+    """Provide a scoped async SQLAlchemy session.
 
-    async with async_session_factory() as session:
+    The caller is responsible for committing the transaction.
+    The session will be closed after the caller yields back.
+    """
+    session = async_session_factory()
+    try:
         yield session
+    finally:
+        await session.close()
 
 
 __all__ = ["engine", "get_session", "async_session_factory"]

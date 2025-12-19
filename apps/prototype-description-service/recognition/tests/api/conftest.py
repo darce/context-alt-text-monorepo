@@ -277,6 +277,7 @@ def api_client(
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[get_tenant_id] = lambda: tenant_id
     app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: fake_scan_queue_service
+    app.dependency_overrides[dependencies.get_scan_queue_service_optional] = lambda: fake_scan_queue_service
 
     # Monkeypatch router helpers to point at fakes
     async def _fake_build_cluster_service(session, tenant_id, settings=None):  # noqa: ANN001

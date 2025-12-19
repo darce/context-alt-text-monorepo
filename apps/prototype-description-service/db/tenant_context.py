@@ -83,14 +83,18 @@ async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:
 
 
 async def clear_tenant_context(session: AsyncSession) -> None:
-    """Reset the tenant context so pooled connections don't leak state."""
-    with contextlib.suppress(Exception):
-        await session.rollback()
+    """Reset the tenant context so pooled connections don't leak state.
+
+    Note: We do NOT rollback here - the caller is responsible for managing
+    the transaction (commit or rollback). We only reset the session-level
+    RLS variables.
+    """
     # SQLite doesn't support RLS or session variables - skip for test environments
     if _is_sqlite(session):
         return
-    await session.execute(text("RESET app.current_tenant"))
-    await session.execute(text("RESET app.bypass_rls"))
+    with contextlib.suppress(Exception):
+        await session.execute(text("RESET app.current_tenant"))
+        await session.execute(text("RESET app.bypass_rls"))
 
 
 async def enable_rls_bypass(session: AsyncSession) -> None:

@@ -21,7 +21,7 @@ from recognition.domain.job import Job, JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_service_dependency,
     get_optional_session,
-    get_scan_queue_service,
+    get_scan_queue_service_factory,
     get_scan_queue_service_optional,
     get_scan_service_builder,
     require_auth,
@@ -90,8 +90,8 @@ async def analyze_media(
     background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
-    scan_queue=Depends(get_scan_queue_service),
     scan_service_builder=Depends(get_scan_service_builder),
+    scan_queue=Depends(get_scan_queue_service_optional),
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
     tenant_uuid: uuid.UUID | None = None
@@ -138,10 +138,23 @@ async def analyze_media(
                     detail=(f"Batch size {len(media_items)} exceeds limit {max_batch} for tier '{(tier or 'free')}'."),
                 )
 
+        # Use injected scan_queue if available (for tests), otherwise create from factory
+        if scan_queue is None:
+            if session is None:
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Database unavailable",
+                )
+            scan_queue = get_scan_queue_service_factory(session)
+
         enqueue_result = await scan_queue.enqueue_scan_job(
             tenant_id=tenant_uuid,
             media_items=media_items,
         )
+
+        # Commit the job BEFORE the background task runs, so the task can find it
+        if session is not None:
+            await session.commit()
 
         if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1":
             background_tasks.add_task(
@@ -267,14 +280,81 @@ async def _process_scan_job_inline(
     """Inline processor used in tests/dev to keep integration tests deterministic.
 
     Production should run a dedicated worker process instead.
+
+    This function tries to use the injected scan_service_builder first (for tests).
+    If that fails (production with stale session), it creates a fresh session.
     """
-    service = scan_service_builder(str(tenant_id))
-    await service.process_scan_job(
-        tenant_id=str(tenant_id),
-        job_id=uuid.UUID(str(job_id)),
-        media_ids=media_ids or [],
-        media_sources=media_sources,
-    )
+    try:
+        # First, try using the injected builder (works in tests with session overrides)
+        service = scan_service_builder(str(tenant_id))
+        await service.process_scan_job(
+            tenant_id=str(tenant_id),
+            job_id=uuid.UUID(str(job_id)),
+            media_ids=media_ids or [],
+            media_sources=media_sources,
+        )
+        # If service has a session, commit it
+        if hasattr(service, "_session") and service._session is not None:
+            await service._session.commit()
+    except Exception as e:
+        # If the injected builder fails (stale session in production),
+        # create a fresh session for the background task
+        logger.debug("Injected service builder failed, creating fresh session: %s", e)
+        from db.session import async_session_factory
+        from db.tenant_context import set_tenant_context
+
+        async with async_session_factory() as session:
+            tenant_uuid = uuid.UUID(str(tenant_id))
+            await set_tenant_context(session, tenant_uuid)
+
+            from recognition.application.embedding.service import EmbeddingService
+            from recognition.config import get_settings as get_recognition_settings
+
+            settings = get_recognition_settings()
+            runtime_mode = settings.runtime_mode
+
+            embedder = EmbeddingService()
+
+            if runtime_mode == "test":
+                from recognition.application.embedding.detector import StubFaceDetector
+                from recognition.application.embedding.generator import StubEmbeddingGenerator
+
+                detector = StubFaceDetector()
+                generator = StubEmbeddingGenerator()
+            else:
+                try:
+                    from recognition.application.embedding.detector import InsightFaceFaceDetector
+                    from recognition.application.embedding.generator import InsightFaceEmbeddingGenerator
+                    from recognition.infrastructure.embeddings import InsightFaceAdapter
+
+                    adapter = InsightFaceAdapter()
+                    detector = InsightFaceFaceDetector(adapter)
+                    generator = InsightFaceEmbeddingGenerator(adapter)
+                except ImportError:
+                    from recognition.application.embedding.detector import StubFaceDetector
+                    from recognition.application.embedding.generator import StubEmbeddingGenerator
+
+                    logger.warning("InsightFace not installed, using stub detectors.")
+                    detector = StubFaceDetector()
+                    generator = StubEmbeddingGenerator()
+
+            from recognition.application.scan.service import ScanService
+
+            service = ScanService(
+                session=session,
+                detector=detector,
+                generator=generator,
+                embedder=embedder,
+            )
+
+            await service.process_scan_job(
+                tenant_id=str(tenant_id),
+                job_id=uuid.UUID(str(job_id)),
+                media_ids=media_ids or [],
+                media_sources=media_sources,
+            )
+
+            await session.commit()
 
 
 def _job_to_response(job: Job) -> JobStatusResponse:

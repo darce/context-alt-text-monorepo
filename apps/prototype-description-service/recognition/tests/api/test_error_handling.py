@@ -30,6 +30,7 @@ def test_analyze_maps_insufficient_privilege_to_403(monkeypatch, tenant_id):
     app.dependency_overrides[dependencies.get_session] = _no_session
     app.dependency_overrides[dependencies.get_optional_session] = _no_session
     app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: ExplodingScanQueue()
+    app.dependency_overrides[dependencies.get_scan_queue_service_optional] = lambda: ExplodingScanQueue()
 
     client = TestClient(app)
     resp = client.post(

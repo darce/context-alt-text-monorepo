@@ -110,6 +110,18 @@ class GraphDiscovery(DiscoveryAlgorithm):
         """
         self.algorithm = algorithm
 
+    @property
+    def algorithm_name(self) -> str:
+        """Return a human-readable name for the active graph algorithm.
+
+        Returns:
+            Short label like 'hdbscan', 'chinese_whispers', or 'unknown' if no algorithm is set.
+        """
+        if self.algorithm is None:
+            return "unknown"
+        label, _ = self._describe_algorithm(self.algorithm)
+        return label
+
     async def discover(
         self,
         identities: Sequence[MediaIdentity],

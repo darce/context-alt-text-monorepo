@@ -22,24 +22,24 @@ This prevents "singleton snowballing" while allowing mature, user-verified clust
 
 ### What Already Exists ✅
 
-| Component | File | Current Behavior |
-|-----------|------|------------------|
-| `MaturityCheck` | [checks/maturity.py](apps/prototype-description-service/recognition/application/assignment/checks/maturity.py) | Checks `min_representatives_for_maturity` setting; bypasses for anchor-linked to labeled clusters |
-| `ConfidenceCheck` | [checks/confidence.py](apps/prototype-description-service/recognition/application/assignment/checks/confidence.py) | Uses `compute_adaptive_threshold()` based on **global** labeled cluster count |
-| `user_confirmed` | [db/models.py](apps/prototype-description-service/db/models.py#L140) | Column exists on `identity_clusters` |
-| `diversity_score` | [db/models.py](apps/prototype-description-service/db/models.py#L214) | Column exists on `identity_cluster_representatives` |
-| `quality_score` | [db/models.py](apps/prototype-description-service/db/models.py#L213) | Column exists on `identity_cluster_representatives` (NOT on `media_identities`) |
-| Pose metadata | [db/models.py](apps/prototype-description-service/db/models.py) | `pose_pitch`, `pose_yaw`, `pose_roll` exist on `media_identities` |
-| `ClusteringSettings` | [settings/clustering.py](apps/prototype-description-service/recognition/application/settings/clustering.py) | All threshold settings in one place |
+| Component            | File                                                                                                               | Current Behavior                                                                                  |
+| -------------------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------- |
+| `MaturityCheck`      | [checks/maturity.py](apps/prototype-description-service/recognition/application/assignment/checks/maturity.py)     | Checks `min_representatives_for_maturity` setting; bypasses for anchor-linked to labeled clusters |
+| `ConfidenceCheck`    | [checks/confidence.py](apps/prototype-description-service/recognition/application/assignment/checks/confidence.py) | Uses `compute_adaptive_threshold()` based on **global** labeled cluster count                     |
+| `user_confirmed`     | [db/models.py](apps/prototype-description-service/db/models.py#L140)                                               | Column exists on `identity_clusters`                                                              |
+| `diversity_score`    | [db/models.py](apps/prototype-description-service/db/models.py#L214)                                               | Column exists on `identity_cluster_representatives`                                               |
+| `quality_score`      | [db/models.py](apps/prototype-description-service/db/models.py#L213)                                               | Column exists on `identity_cluster_representatives` (NOT on `media_identities`)                   |
+| Pose metadata        | [db/models.py](apps/prototype-description-service/db/models.py)                                                    | `pose_pitch`, `pose_yaw`, `pose_roll` exist on `media_identities`                                 |
+| `ClusteringSettings` | [settings/clustering.py](apps/prototype-description-service/recognition/application/settings/clustering.py)        | All threshold settings in one place                                                               |
 
 ### False Assumptions in Original Plan ❌
 
-| Original Claim | Reality |
-|----------------|---------|
-| "`MIN_CLUSTER_SIZE >= 2` global heuristic" | `MaturityCheck` uses `min_representatives_for_maturity` setting (default=0, disabled). The check is already per-cluster, not global. |
-| "`diversity_score` from `identity_cluster_representatives.diversity_score` (avg)" | This field exists but is **not yet populated** — it's nullable and unused. |
-| "Add `quality_score` to `media_identities`" | `quality_score` exists on `IdentityClusterRepresentative`, not `MediaIdentity`. Adding to `MediaIdentity` requires schema change. |
-| "Global adaptive threshold removed" | The current `ConfidenceCheck` uses labeled_cluster_count (global), which is correct for "system maturity". Per-cluster maturity is a **separate concern**. |
+| Original Claim                                                                    | Reality                                                                                                                                                    |
+| --------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "`MIN_CLUSTER_SIZE >= 2` global heuristic"                                        | `MaturityCheck` uses `min_representatives_for_maturity` setting (default=0, disabled). The check is already per-cluster, not global.                       |
+| "`diversity_score` from `identity_cluster_representatives.diversity_score` (avg)" | This field exists but is **not yet populated** — it's nullable and unused.                                                                                 |
+| "Add `quality_score` to `media_identities`"                                       | `quality_score` exists on `IdentityClusterRepresentative`, not `MediaIdentity`. Adding to `MediaIdentity` requires schema change.                          |
+| "Global adaptive threshold removed"                                               | The current `ConfidenceCheck` uses labeled_cluster_count (global), which is correct for "system maturity". Per-cluster maturity is a **separate concern**. |
 
 ---
 
@@ -47,21 +47,21 @@ This prevents "singleton snowballing" while allowing mature, user-verified clust
 
 Maturity defines how "stable" and "well-defined" a cluster is.
 
-| Metric | Source | Current Status | Impact on Threshold |
-|--------|--------|----------------|---------------------|
-| **Member Count** | `identity_clusters.identity_count` | ✅ Exists | Small clusters (< 3) require stricter similarity to prevent false merges |
-| **Representative Count** | `COUNT(identity_cluster_representatives)` | ✅ Used by `MaturityCheck` | Used for diversity proxy |
-| **Diversity Score** | `AVG(identity_cluster_representatives.diversity_score)` | ⚠️ Column exists but not populated | High diversity allows slightly more inclusive matching |
-| **Confirmation State** | `identity_clusters.user_confirmed` | ✅ Exists | User-confirmed clusters can be trusted more |
+| Metric                   | Source                                                  | Current Status                     | Impact on Threshold                                                      |
+| ------------------------ | ------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------ |
+| **Member Count**         | `identity_clusters.identity_count`                      | ✅ Exists                          | Small clusters (< 3) require stricter similarity to prevent false merges |
+| **Representative Count** | `COUNT(identity_cluster_representatives)`               | ✅ Used by `MaturityCheck`         | Used for diversity proxy                                                 |
+| **Diversity Score**      | `AVG(identity_cluster_representatives.diversity_score)` | ⚠️ Column exists but not populated | High diversity allows slightly more inclusive matching                   |
+| **Confirmation State**   | `identity_clusters.user_confirmed`                      | ✅ Exists                          | User-confirmed clusters can be trusted more                              |
 
 ### 1.1 Maturity Level Classification
 
-| Level | Criteria | Description |
-|-------|----------|-------------|
-| **Cold (L0)** | `identity_count` = 1, `user_confirmed` = false | Highly volatile. Only exact or near-exact matches allowed. |
-| **Nascent (L1)** | `identity_count` 2-5, `user_confirmed` = false | Building evidence. High similarity required. |
-| **Confirmed (L2)** | `user_confirmed` = true | User has validated. High reliability. |
-| **Mature (L3)** | `identity_count` > 10 AND `representative_count` >= 3 | Highly stable. Can absorb candidates with lower similarity if they match reps well. |
+| Level              | Criteria                                              | Description                                                                         |
+| ------------------ | ----------------------------------------------------- | ----------------------------------------------------------------------------------- |
+| **Cold (L0)**      | `identity_count` = 1, `user_confirmed` = false        | Highly volatile. Only exact or near-exact matches allowed.                          |
+| **Nascent (L1)**   | `identity_count` 2-5, `user_confirmed` = false        | Building evidence. High similarity required.                                        |
+| **Confirmed (L2)** | `user_confirmed` = true                               | User has validated. High reliability.                                               |
+| **Mature (L3)**    | `identity_count` > 10 AND `representative_count` >= 3 | Highly stable. Can absorb candidates with lower similarity if they match reps well. |
 
 ---
 
@@ -69,17 +69,18 @@ Maturity defines how "stable" and "well-defined" a cluster is.
 
 Quality defines how "reliable" a single identity's embedding is.
 
-| Metric | Source | Status | Ideal Value |
-|--------|--------|--------|-------------|
-| **Confidence** | `media_identities.confidence` | ✅ Exists | > 0.9 |
-| **Frontal Pose** | `pose_pitch`, `pose_yaw`, `pose_roll` | ✅ Exists | All < 15° |
-| **Area** | `bbox_width * bbox_height` | ✅ Computable | > 4096px (64×64) |
+| Metric           | Source                                | Status        | Ideal Value      |
+| ---------------- | ------------------------------------- | ------------- | ---------------- |
+| **Confidence**   | `media_identities.confidence`         | ✅ Exists     | > 0.9            |
+| **Frontal Pose** | `pose_pitch`, `pose_yaw`, `pose_roll` | ✅ Exists     | All < 15°        |
+| **Area**         | `bbox_width * bbox_height`            | ✅ Computable | > 4096px (64×64) |
 
 ### 2.1 Identity Quality Score ($Q_i$)
 
 $$Q_i = \text{confidence} \times \text{PosePenalty}(\theta) \times \text{SizeFactor}(A)$$
 
 Where:
+
 - $\text{PosePenalty}(\theta) = 1 - 0.5 \times \min(1, \frac{\max(|\text{pitch}|, |\text{yaw}|)}{45})$
 - $\text{SizeFactor}(A) = \min(1, \frac{A}{10000})$ for area $A = \text{width} \times \text{height}$
 
@@ -95,30 +96,30 @@ $$\text{Required Threshold} = T_{base} + \Delta_{cluster\_maturity}(C) + \Delta_
 
 **Cluster Maturity Adjustments:**
 
-| Maturity Level | $\Delta_{cluster\_maturity}$ | Rationale |
-|----------------|------------------------------|-----------|
-| Cold (L0) | +0.05 | Protect singletons from false merges |
-| Nascent (L1) | +0.02 | Still building evidence |
-| Confirmed (L2) | -0.02 | User trust established |
-| Mature (L3) | -0.03 | High confidence in cluster definition |
+| Maturity Level | $\Delta_{cluster\_maturity}$ | Rationale                             |
+| -------------- | ---------------------------- | ------------------------------------- |
+| Cold (L0)      | +0.05                        | Protect singletons from false merges  |
+| Nascent (L1)   | +0.02                        | Still building evidence               |
+| Confirmed (L2) | -0.02                        | User trust established                |
+| Mature (L3)    | -0.03                        | High confidence in cluster definition |
 
 **Identity Quality Adjustments:**
 
-| Quality Range | $\Delta_{identity\_quality}$ | Rationale |
-|---------------|------------------------------|-----------|
-| $Q_i < 0.5$ (poor) | +0.05 | Require more similarity for unreliable embeddings |
-| $0.5 \le Q_i < 0.8$ | +0.02 | Moderate penalty |
-| $Q_i \ge 0.8$ (good) | 0.00 | Trust the embedding |
-| $Q_i \ge 0.95$ (excellent) | -0.02 | Allow slightly more lenient matching |
+| Quality Range              | $\Delta_{identity\_quality}$ | Rationale                                         |
+| -------------------------- | ---------------------------- | ------------------------------------------------- |
+| $Q_i < 0.5$ (poor)         | +0.05                        | Require more similarity for unreliable embeddings |
+| $0.5 \le Q_i < 0.8$        | +0.02                        | Moderate penalty                                  |
+| $Q_i \ge 0.8$ (good)       | 0.00                         | Trust the embedding                               |
+| $Q_i \ge 0.95$ (excellent) | -0.02                        | Allow slightly more lenient matching              |
 
 ### 3.2 Relationship to Existing Checks
 
-| Existing Check | Proposed Change |
-|----------------|-----------------|
-| `MaturityCheck` | **Enhance:** Compute maturity level (L0-L3) and pass to downstream checks |
-| `ConfidenceCheck` | **Enhance:** Add `$\Delta_{cluster\_maturity}$` and `$\Delta_{identity\_quality}$` to threshold |
-| `CompleteLinkCheck` | **No change** — already uses per-cluster representative similarities |
-| `MemberDistributionCheck` | **No change** — already uses per-cluster member similarities |
+| Existing Check            | Proposed Change                                                                                 |
+| ------------------------- | ----------------------------------------------------------------------------------------------- |
+| `MaturityCheck`           | **Enhance:** Compute maturity level (L0-L3) and pass to downstream checks                       |
+| `ConfidenceCheck`         | **Enhance:** Add `$\Delta_{cluster\_maturity}$` and `$\Delta_{identity\_quality}$` to threshold |
+| `CompleteLinkCheck`       | **No change** — already uses per-cluster representative similarities                            |
+| `MemberDistributionCheck` | **No change** — already uses per-cluster member similarities                                    |
 
 ---
 
@@ -165,12 +166,12 @@ def compute_maturity_level(
     user_confirmed: bool,
 ) -> ClusterMaturityLevel:
     """Compute maturity level from cluster metrics.
-    
+
     Args:
         identity_count: Number of members in the cluster.
         representative_count: Number of representatives.
         user_confirmed: Whether user has confirmed the cluster.
-        
+
     Returns:
         ClusterMaturityLevel enum value.
     """
@@ -179,10 +180,10 @@ def compute_maturity_level(
 
 def compute_maturity_adjustment(level: ClusterMaturityLevel) -> float:
     """Return threshold adjustment for a maturity level.
-    
+
     Args:
         level: Cluster maturity level.
-        
+
     Returns:
         Float adjustment (positive = stricter, negative = more lenient).
     """
@@ -220,7 +221,7 @@ def compute_identity_quality(
     bbox_height: int,
 ) -> IdentityQualityInfo:
     """Compute identity quality score from detection metrics.
-    
+
     Args:
         confidence: Detection confidence (0-1).
         pose_pitch: Head pitch angle in degrees.
@@ -228,7 +229,7 @@ def compute_identity_quality(
         pose_roll: Head roll angle in degrees.
         bbox_width: Bounding box width in pixels.
         bbox_height: Bounding box height in pixels.
-        
+
     Returns:
         IdentityQualityInfo with computed score and adjustment.
     """
@@ -237,10 +238,10 @@ def compute_identity_quality(
 
 def compute_quality_adjustment(quality_score: float) -> float:
     """Return threshold adjustment for a quality score.
-    
+
     Args:
         quality_score: Identity quality (0-1).
-        
+
     Returns:
         Float adjustment (positive = stricter, negative = more lenient).
     """
@@ -255,10 +256,10 @@ def compute_quality_adjustment(quality_score: float) -> float:
 # Add to ClusterRepository protocol:
 async def get_maturity_info(self, cluster_id: UUID) -> ClusterMaturityInfo | None:
     """Fetch maturity information for a cluster.
-    
+
     Args:
         cluster_id: Cluster to query.
-        
+
     Returns:
         ClusterMaturityInfo or None if cluster not found.
     """
@@ -401,6 +402,7 @@ class TestComputeQualityAdjustment:
 **File:** `recognition/application/assignment/checks/confidence.py`
 
 Modify `evaluate()` to:
+
 1. Fetch `ClusterMaturityInfo` via repository
 2. Compute `IdentityQualityInfo` from candidate identity
 3. Apply both adjustments to adaptive threshold
@@ -421,25 +423,26 @@ Log `maturity_level`, `quality_score`, and `applied_threshold` in `recognition_e
 
 ### New Files
 
-| File | Purpose |
-|------|---------|
-| `recognition/application/assignment/maturity.py` | Maturity level computation |
-| `recognition/application/assignment/quality.py` | Identity quality computation |
-| `recognition/tests/unit/test_maturity_level.py` | Unit tests for maturity |
-| `recognition/tests/unit/test_identity_quality.py` | Unit tests for quality |
+| File                                              | Purpose                      |
+| ------------------------------------------------- | ---------------------------- |
+| `recognition/application/assignment/maturity.py`  | Maturity level computation   |
+| `recognition/application/assignment/quality.py`   | Identity quality computation |
+| `recognition/tests/unit/test_maturity_level.py`   | Unit tests for maturity      |
+| `recognition/tests/unit/test_identity_quality.py` | Unit tests for quality       |
 
 ### Modified Files
 
-| File | Change |
-|------|--------|
-| `recognition/domain/repositories.py` | Add `get_maturity_info()` to protocol |
-| `recognition/infrastructure/repositories/cluster_repository.py` | Implement `get_maturity_info()` |
-| `recognition/application/assignment/checks/confidence.py` | Add maturity/quality adjustments |
-| `recognition/application/assignment/candidate.py` | Optionally carry quality info |
+| File                                                            | Change                                |
+| --------------------------------------------------------------- | ------------------------------------- |
+| `recognition/domain/repositories.py`                            | Add `get_maturity_info()` to protocol |
+| `recognition/infrastructure/repositories/cluster_repository.py` | Implement `get_maturity_info()`       |
+| `recognition/application/assignment/checks/confidence.py`       | Add maturity/quality adjustments      |
+| `recognition/application/assignment/candidate.py`               | Optionally carry quality info         |
 
 ### Schema (No Changes)
 
 All required columns already exist:
+
 - `identity_clusters.user_confirmed`, `identity_count`
 - `media_identities.confidence`, `pose_pitch`, `pose_yaw`, `pose_roll`, `bbox_width`, `bbox_height`
 - `identity_cluster_representatives.diversity_score` (exists but needs population)

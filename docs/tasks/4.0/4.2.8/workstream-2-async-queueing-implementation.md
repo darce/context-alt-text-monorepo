@@ -469,8 +469,8 @@ if __name__ == "__main__":
 
 With async backend, we can submit large batches without hitting the 60s timeout, but we may still want to chunk to control request payload size. The chunk size is **server-configured** and passed to the SPA via `wp_localize_script`.
 
-| Setting | Source | Purpose |
-| --- | --- | --- |
+| Setting                               | Source             | Purpose                     |
+| ------------------------------------- | ------------------ | --------------------------- |
 | `AltContextAdmin.max_media_per_batch` | WP option / filter | Controls request chunk size |
 
 ```typescript
@@ -1372,23 +1372,23 @@ wp option update alt_context_batch_limits '{"free":50,"pro":500,"business":2000,
 
 All core components of the async queueing implementation have been verified:
 
-| Component | Status | Notes |
-|-----------|--------|-------|
-| `IdentityScanJobItem` model | ✅ | Added to `db/models.py` with all planned fields + `identities_detected` |
-| Baseline migration | ✅ | `001_identity_schema.py` includes table, indexes, RLS policies |
-| `ScanQueueRepository` protocol | ✅ | Clean interface in `recognition/application/scan/queue_repository.py` |
-| `SqlAlchemyScanQueueRepository` | ✅ | Full Postgres `FOR UPDATE SKIP LOCKED` implementation |
-| `ScanQueueService` | ✅ | Orchestrates enqueue, claim, refresh progress, cancel |
-| `ScanWorker` | ✅ | Located in `recognition/worker/scan_worker.py` with stale recovery |
-| `ScanService.process_media_item()` | ✅ | Single-item processing for worker use |
-| Cancel endpoint | ✅ | `POST /jobs/{id}/cancel` in `analyze.py` router |
-| PHP proxy route | ✅ | `cancel_job()` in `class-recognition-proxy-controller.php` |
-| Frontend `cancelScanJob()` | ✅ | Added to `scanApi.ts` |
-| Frontend `useCancelScanJobs()` | ✅ | Added to `useRecognitionHooks.ts` |
-| Progress bar UI | ✅ | Implemented in `Panels.tsx` with HTML5 `<progress>` element |
-| Tier-based limits | ✅ | `getTenantLimits()` reads from `getConfig()` |
-| Unit tests | ✅ | 5 tests in `test_scan_queue_service.py` all passing |
-| Full test suite | ✅ | 284 passed, 2 skipped |
+| Component                          | Status | Notes                                                                   |
+| ---------------------------------- | ------ | ----------------------------------------------------------------------- |
+| `IdentityScanJobItem` model        | ✅     | Added to `db/models.py` with all planned fields + `identities_detected` |
+| Baseline migration                 | ✅     | `001_identity_schema.py` includes table, indexes, RLS policies          |
+| `ScanQueueRepository` protocol     | ✅     | Clean interface in `recognition/application/scan/queue_repository.py`   |
+| `SqlAlchemyScanQueueRepository`    | ✅     | Full Postgres `FOR UPDATE SKIP LOCKED` implementation                   |
+| `ScanQueueService`                 | ✅     | Orchestrates enqueue, claim, refresh progress, cancel                   |
+| `ScanWorker`                       | ✅     | Located in `recognition/worker/scan_worker.py` with stale recovery      |
+| `ScanService.process_media_item()` | ✅     | Single-item processing for worker use                                   |
+| Cancel endpoint                    | ✅     | `POST /jobs/{id}/cancel` in `analyze.py` router                         |
+| PHP proxy route                    | ✅     | `cancel_job()` in `class-recognition-proxy-controller.php`              |
+| Frontend `cancelScanJob()`         | ✅     | Added to `scanApi.ts`                                                   |
+| Frontend `useCancelScanJobs()`     | ✅     | Added to `useRecognitionHooks.ts`                                       |
+| Progress bar UI                    | ✅     | Implemented in `Panels.tsx` with HTML5 `<progress>` element             |
+| Tier-based limits                  | ✅     | `getTenantLimits()` reads from `getConfig()`                            |
+| Unit tests                         | ✅     | 5 tests in `test_scan_queue_service.py` all passing                     |
+| Full test suite                    | ✅     | 284 passed, 2 skipped                                                   |
 
 ### Architectural Refinements Made During Implementation
 
@@ -1546,35 +1546,35 @@ Based on `git status` of `feature/4.2.8-async-queue`:
 
 ### Backend: `apps/prototype-description-service/`
 
-| File | Status |
-|------|--------|
-| `db/migrations/versions/001_identity_schema.py` | Modified |
-| `db/models.py` | Modified |
-| `recognition/application/scan/service.py` | Modified |
-| `recognition/application/scan/queue_repository.py` | **New** |
-| `recognition/application/scan/scan_queue_service.py` | **New** |
-| `recognition/infrastructure/repositories/__init__.py` | Modified |
-| `recognition/infrastructure/repositories/scan_queue_repository.py` | **New** |
-| `recognition/interface_adapters/http/dependencies.py` | Modified |
-| `recognition/interface_adapters/http/routers/analyze.py` | Modified |
-| `recognition/worker/scan_worker.py` | **New** |
-| `recognition/tests/unit/test_scan_queue_service.py` | **New** |
-| `recognition/tests/api/test_api_analyze.py` | Modified |
-| `recognition/tests/api/conftest.py` | Modified |
-| `recognition/tests/conftest.py` | Modified |
+| File                                                               | Status   |
+| ------------------------------------------------------------------ | -------- |
+| `db/migrations/versions/001_identity_schema.py`                    | Modified |
+| `db/models.py`                                                     | Modified |
+| `recognition/application/scan/service.py`                          | Modified |
+| `recognition/application/scan/queue_repository.py`                 | **New**  |
+| `recognition/application/scan/scan_queue_service.py`               | **New**  |
+| `recognition/infrastructure/repositories/__init__.py`              | Modified |
+| `recognition/infrastructure/repositories/scan_queue_repository.py` | **New**  |
+| `recognition/interface_adapters/http/dependencies.py`              | Modified |
+| `recognition/interface_adapters/http/routers/analyze.py`           | Modified |
+| `recognition/worker/scan_worker.py`                                | **New**  |
+| `recognition/tests/unit/test_scan_queue_service.py`                | **New**  |
+| `recognition/tests/api/test_api_analyze.py`                        | Modified |
+| `recognition/tests/api/conftest.py`                                | Modified |
+| `recognition/tests/conftest.py`                                    | Modified |
 
 ### Frontend: `apps/prototype-wp-alt-context/`
 
-| File | Status |
-|------|--------|
-| `js/admin/api/config.ts` | Modified |
-| `js/admin/api/recognition/index.ts` | Modified |
-| `js/admin/api/recognition/scanApi.ts` | Modified |
-| `js/admin/hooks/useRecognitionHooks.ts` | Modified |
-| `js/admin/pages/WorkbenchPage.tsx` | Modified |
-| `js/admin/pages/workbench/Panels.tsx` | Modified |
+| File                                                        | Status   |
+| ----------------------------------------------------------- | -------- |
+| `js/admin/api/config.ts`                                    | Modified |
+| `js/admin/api/recognition/index.ts`                         | Modified |
+| `js/admin/api/recognition/scanApi.ts`                       | Modified |
+| `js/admin/hooks/useRecognitionHooks.ts`                     | Modified |
+| `js/admin/pages/WorkbenchPage.tsx`                          | Modified |
+| `js/admin/pages/workbench/Panels.tsx`                       | Modified |
 | `js/admin/pages/workbench/__tests__/WorkbenchPage.test.tsx` | Modified |
-| `js/admin/styles/components/_workbench.scss` | Modified |
-| `src/admin/class-admin.php` | Modified |
-| `src/api/class-recognition-controller.php` | Modified |
-| `src/api/class-recognition-proxy-controller.php` | Modified |
+| `js/admin/styles/components/_workbench.scss`                | Modified |
+| `src/admin/class-admin.php`                                 | Modified |
+| `src/api/class-recognition-controller.php`                  | Modified |
+| `src/api/class-recognition-proxy-controller.php`            | Modified |

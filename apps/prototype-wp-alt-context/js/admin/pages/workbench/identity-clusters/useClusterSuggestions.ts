@@ -49,6 +49,8 @@ export const useClusterSuggestions = ({
   enabled,
 }: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
   const queryClient = useQueryClient();
+  const pageSize = 500;
+  const maxPages = 20;
 
   // When entering edit mode, always refetch clusters so the label dropdown stays current.
   React.useEffect(() => {
@@ -58,11 +60,28 @@ export const useClusterSuggestions = ({
     void queryClient.invalidateQueries({ queryKey: ['clusters'] });
   }, [enabled, queryClient]);
 
+  const fetchAllClusters = React.useCallback(async (): Promise<ClusterSummary[]> => {
+    const results: ClusterSummary[] = [];
+    for (let page = 0; page < maxPages; page += 1) {
+      const offset = page * pageSize;
+      const chunk = await listRecognitionClusters({ limit: pageSize, offset });
+      if (!chunk.length) {
+        break;
+      }
+      results.push(...chunk);
+      if (chunk.length < pageSize) {
+        break;
+      }
+    }
+    return results;
+  }, [maxPages, pageSize]);
+
   // Fetch existing clusters (cached for 30s) - includes IDs for proper assignment
   const { data: existingClusters } = useQuery({
     queryKey: ['clusters'],
-    queryFn: () => listRecognitionClusters({ limit: 500 }),
+    queryFn: fetchAllClusters,
     staleTime: 30000,
+    enabled,
   });
 
   // Fetch similarity suggestions when editing
@@ -103,11 +122,11 @@ export const useClusterSuggestions = ({
       });
     });
 
-    // Add existing clusters with their IDs (only user-labeled, not auto-labeled)
+    // Add existing clusters with their IDs (includes auto-labeled clusters with names)
     (existingClusters ?? []).forEach((cluster: ClusterSummary) => {
       const label = cluster.label;
-      // Skip clusters without labels or with auto-generated labels
-      if (!label || cluster.is_auto_label) {
+      // Skip clusters without labels
+      if (!label) {
         return;
       }
 
@@ -132,7 +151,7 @@ export const useClusterSuggestions = ({
   const existingLabels = React.useMemo(
     () =>
       (existingClusters ?? [])
-        .filter((c: ClusterSummary) => c.label && !c.is_auto_label)
+        .filter((c: ClusterSummary) => c.label)
         .map((c: ClusterSummary) => c.label),
     [existingClusters],
   );
@@ -144,13 +163,13 @@ export const useClusterSuggestions = ({
       await queryClient.invalidateQueries({ queryKey: ['clusters'] });
       const clusters = await queryClient.fetchQuery({
         queryKey: ['clusters'],
-        queryFn: () => listRecognitionClusters({ limit: 500 }),
+        queryFn: fetchAllClusters,
       });
-      return clusters.filter((c: ClusterSummary) => c.label && !c.is_auto_label).map((c: ClusterSummary) => c.label);
+      return clusters.filter((c: ClusterSummary) => c.label).map((c: ClusterSummary) => c.label);
     } catch {
       return [];
     }
-  }, [existingClusters, queryClient]);
+  }, [fetchAllClusters, queryClient]);
 
   // Find cluster ID by label (case-insensitive) - checks options first, then fetches if needed
   const findClusterIdByLabel = React.useCallback(
@@ -168,7 +187,7 @@ export const useClusterSuggestions = ({
         await queryClient.invalidateQueries({ queryKey: ['clusters'] });
         const clusters = await queryClient.fetchQuery({
           queryKey: ['clusters'],
-          queryFn: () => listRecognitionClusters({ limit: 500 }),
+          queryFn: fetchAllClusters,
         });
         const match = clusters.find((c: ClusterSummary) => c.label?.toLowerCase() === normalizedLabel);
         return match?.id ?? null;

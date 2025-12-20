@@ -50,6 +50,9 @@ export const listRecognitionClusters = async (params: ClusterListParams = {}): P
   if (Number.isFinite(params.offset)) {
     url.searchParams.set('offset', String(params.offset));
   }
+  if (params.labeled_only) {
+    url.searchParams.set('labeled_only', 'true');
+  }
 
   return fetchApi<ClusterSummary[]>(url.toString(), {
     method: 'GET',

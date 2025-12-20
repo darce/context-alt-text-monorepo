@@ -195,7 +195,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (
           <>
-            {(canEdit && !cluster.label) || canSearchForMatch ? (
+            {canEdit || canSearchForMatch ? (
               <button
                 type="button"
                 className="acx-identity-cluster__label acx-identity-cluster__label--action"

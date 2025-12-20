@@ -17,6 +17,7 @@ export interface ClusterSummary {
 export interface ClusterListParams {
   limit?: number;
   offset?: number;
+  labeled_only?: boolean;
 }
 
 export interface ClusterSuggestion {

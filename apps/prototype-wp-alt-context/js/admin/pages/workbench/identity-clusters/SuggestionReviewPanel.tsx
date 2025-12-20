@@ -36,10 +36,10 @@ const SuggestionCard = ({ suggestion, onAccept, onReject, isPending }: Suggestio
         </p>
         <p className="acx-suggestion-card__match">
           {matchPercent}% {__('match', 'alt-context')}
-          {suggestion.cluster_member_count && (
+          {suggestion.cluster_identity_count && (
             <span className="acx-suggestion-card__count">
               {' '}
-              ({suggestion.cluster_member_count} {__('in cluster', 'alt-context')})
+              ({suggestion.cluster_identity_count} {__('in cluster', 'alt-context')})
             </span>
           )}
         </p>

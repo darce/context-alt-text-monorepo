@@ -370,9 +370,10 @@ class RecognitionProxyController {
 		$limit = min( $limit, 500 ); // Cap to reasonable maximum
 
 		$query = array(
-			'tenant_id' => $this->get_tenant_id(),
-			'limit'     => $limit,
-			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
+			'tenant_id'    => $this->get_tenant_id(),
+			'limit'        => $limit,
+			'offset'       => absint( $request->get_param( 'offset' ) ?? 0 ),
+			'labeled_only' => $request->get_param( 'labeled_only' ) === 'true' ? 'true' : null,
 		);
 
 		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );

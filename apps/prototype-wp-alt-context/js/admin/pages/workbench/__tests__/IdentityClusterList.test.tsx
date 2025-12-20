@@ -134,6 +134,39 @@ describe('IdentityClusterList', () => {
     expect(updated?.identities_by_media['1'][0].is_auto_label).toBe(false);
   });
 
+  it('shows existing clusters in suggestions even when auto-labeled', async () => {
+    (api.listRecognitionClusters as Mock).mockResolvedValue([
+      { id: 'cluster-auto', label: 'Auto Label', identity_count: 4, is_auto_label: true },
+    ]);
+
+    const { user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+
+    await user.click(screen.getByRole('button', { name: /edit label/i }));
+    await user.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByText('Auto Label')).toBeInTheDocument();
+  });
+
+  it('loads additional cluster pages when the first page is full', async () => {
+    const firstPage = Array.from({ length: 500 }, (_, index) => ({
+      id: `cluster-${index}`,
+      label: `Label ${index}`,
+      identity_count: 1,
+    }));
+    const secondPage = [{ id: 'cluster-500', label: 'Erin McCleod', identity_count: 1 }];
+
+    (api.listRecognitionClusters as Mock).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+
+    const { user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+
+    await user.click(screen.getByRole('button', { name: /edit label/i }));
+    await user.click(screen.getByRole('combobox'));
+
+    expect(await screen.findByText('Erin McCleod')).toBeInTheDocument();
+    expect(api.listRecognitionClusters).toHaveBeenCalledWith({ limit: 500, offset: 0 });
+    expect(api.listRecognitionClusters).toHaveBeenCalledWith({ limit: 500, offset: 500 });
+  });
+
   it('merges into existing cluster when label matches', async () => {
     (api.mergeCluster as Mock).mockResolvedValue({
       source_id: 'cluster-1',

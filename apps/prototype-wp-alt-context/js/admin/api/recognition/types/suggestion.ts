@@ -20,7 +20,7 @@ export interface PendingSuggestion {
   resolved_at: string | null;
   // Enriched fields (from include_details=true)
   cluster_label: string | null;
-  cluster_member_count: number | null;
+  cluster_identity_count: number | null;
   identity_media_id: number | null;
 }
 

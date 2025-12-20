@@ -37,9 +37,9 @@ from recognition.infrastructure.repositories.suggestion_repository import SqlAlc
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.shared.ids import generate_id
 
-os.environ.setdefault("RECOGNITION_AUTH_ENABLED", "0")
-os.environ.setdefault("RECOGNITION_ASYNC_ANALYZE_INLINE", "1")
-os.environ.setdefault("RECOGNITION_RUNTIME_MODE", "test")
+os.environ["RECOGNITION_AUTH_ENABLED"] = "0"
+os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
+os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
 
 
 def _clone_cluster(cluster: ClusterResponse, **updates: object) -> ClusterResponse:

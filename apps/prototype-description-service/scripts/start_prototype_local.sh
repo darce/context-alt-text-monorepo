@@ -62,6 +62,9 @@ Environment variables:
   HOST                 Uvicorn host binding (default: 0.0.0.0)
   PORT                 Uvicorn port (default: 8000)
   FORCE_INSTALL        Set to 1 to force reinstalling deps even when offline
+  START_SCAN_WORKER    Set to 1 to start the scan worker alongside the API
+  SCAN_WORKER_LOG      Path for scan worker output (default: logs/scan_worker.log)
+  UVICORN_EXTRA_ARGS   Extra args passed to uvicorn (example: "--timeout-graceful-shutdown 1")
 
 Requires:
   - Native PostgreSQL (brew install postgresql@17)
@@ -102,6 +105,32 @@ ensure_postgres() {
   echo "[prototype-local] PostgreSQL is ready." >&2
 }
 
+find_scan_worker_pids() {
+  if command -v pgrep >/dev/null 2>&1; then
+    pgrep -f "recognition/worker/scan_worker.py" || true
+    return
+  fi
+  ps -ax | awk '/recognition\/worker\/scan_worker\.py/ && !/awk/ {print $1}'
+}
+
+start_scan_worker() {
+  if [[ "${START_SCAN_WORKER:-0}" != "1" ]]; then
+    return
+  fi
+
+  local existing_pids
+  existing_pids="$(find_scan_worker_pids)"
+  if [[ -n "${existing_pids}" ]]; then
+    echo "[prototype-local] Scan worker already running (PID(s): ${existing_pids})." >&2
+    return
+  fi
+
+  local log_path="${SCAN_WORKER_LOG:-${PROJECT_ROOT}/logs/scan_worker.log}"
+  mkdir -p "$(dirname "${log_path}")"
+  echo "[prototype-local] Starting scan worker (log: ${log_path})..." >&2
+  nohup "${PYTHON_BIN}" "${PROJECT_ROOT}/recognition/worker/scan_worker.py" >"${log_path}" 2>&1 &
+}
+
 start_service() {
   load_env
   export CACHE_BASE="${CACHE_BASE:-/Volumes/Butter/cache}"
@@ -120,8 +149,16 @@ start_service() {
 
   cd "${PROJECT_ROOT}"
 
+  start_scan_worker
+
+  uvicorn_args=(--host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload --reload-dir "${PROJECT_ROOT}")
+  if [[ -n "${UVICORN_EXTRA_ARGS:-}" ]]; then
+    # shellcheck disable=SC2206
+    uvicorn_args+=(${UVICORN_EXTRA_ARGS})
+  fi
+
   echo "[prototype-local] Starting uvicorn on ${HOST_VALUE}:${PORT_VALUE}" >&2
-  exec "${PYTHON_BIN}" -m uvicorn api.main:app --host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload --reload-dir "${PROJECT_ROOT}"
+  exec "${PYTHON_BIN}" -m uvicorn api.main:app "${uvicorn_args[@]}"
 }
 
 stop_service() {
@@ -154,6 +191,18 @@ stop_service() {
   else
     echo "[prototype-local] Port ${port} is free." >&2
   fi
+
+  local worker_pids
+  worker_pids="$(find_scan_worker_pids)"
+  if [[ -z "${worker_pids}" ]]; then
+    echo "[prototype-local] No scan worker process found." >&2
+    return
+  fi
+
+  echo "[prototype-local] Stopping scan worker PID(s): ${worker_pids}" >&2
+  for pid in ${worker_pids}; do
+    kill -TERM "${pid}" >/dev/null 2>&1 || true
+  done
 }
 
 COMMAND="${1:-start}"

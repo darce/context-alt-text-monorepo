@@ -3,7 +3,7 @@
 # Default target
 help:
 	@echo "Available commands:"
-	@echo "  make serve      - Start the development server"
+	@echo "  make serve      - Start the development server + scan worker"
 	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
 	@echo "  make lint       - Run code linting checks"
@@ -17,7 +17,10 @@ help:
 
 # Start development server
 serve:
-	@./scripts/start_prototype_local.sh start &
+	@RECOGNITION_ASYNC_ANALYZE_INLINE=0 \
+	START_SCAN_WORKER=1 \
+	UVICORN_EXTRA_ARGS="--timeout-graceful-shutdown 1" \
+	./scripts/start_prototype_local.sh start &
 
 # Stop development server
 stop:

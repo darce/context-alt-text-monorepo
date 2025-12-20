@@ -39,6 +39,7 @@ from recognition.shared.ids import generate_id
 
 os.environ.setdefault("RECOGNITION_AUTH_ENABLED", "0")
 os.environ.setdefault("RECOGNITION_ASYNC_ANALYZE_INLINE", "1")
+os.environ.setdefault("RECOGNITION_RUNTIME_MODE", "test")
 
 
 def _clone_cluster(cluster: ClusterResponse, **updates: object) -> ClusterResponse:

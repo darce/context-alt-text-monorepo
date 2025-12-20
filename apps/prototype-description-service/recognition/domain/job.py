@@ -34,6 +34,7 @@ class Job:
     progress_completed: int = 0
     progress_total: int = 0
     error_message: str | None = None
+    message: str | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     finished_at: datetime | None = None
 

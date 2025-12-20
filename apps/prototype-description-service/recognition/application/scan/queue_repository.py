@@ -43,6 +43,17 @@ class ScanQueueRepository(Protocol):
     ) -> uuid.UUID:
         """Create a parent scan job and return its job id."""
 
+    async def create_job_with_message(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_ids: Sequence[int],
+        total: int,
+        message: str | None,
+        created_by_user_id: int | None = None,
+    ) -> uuid.UUID:
+        """Create a parent scan job with an initial status message."""
+
     async def enqueue_items(
         self,
         *,
@@ -72,6 +83,18 @@ class ScanQueueRepository(Protocol):
         identities_detected: int,
     ) -> None:
         """Update job-level counters."""
+
+    async def update_job_message(self, *, job_id: uuid.UUID, message: str | None) -> None:
+        """Update job-level status message."""
+
+    async def finalize_job_queue(
+        self,
+        *,
+        job_id: uuid.UUID,
+        media_ids: Sequence[int],
+        message: str | None,
+    ) -> None:
+        """Persist media_ids and final queue message after enqueueing completes."""
 
     async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:
         """Mark a scan job as completed."""

@@ -87,10 +87,28 @@ class FakeScanQueueService:
 
     def __init__(self) -> None:
         self.calls: list[tuple[str, list[tuple[int, str]]]] = []
+        self.created_jobs: list[tuple[str, int]] = []
+        self.messages: dict[str, str] = {}
+
+    async def create_scan_job_record(self, *, tenant_id, total, created_by_user_id=None):  # noqa: ANN001
+        job_id = generate_id()
+        self.created_jobs.append((str(tenant_id), int(total)))
+        self.messages[str(job_id)] = f"Queueing 0/{int(total)} items"
+        return job_id
+
+    async def populate_scan_job_items(self, *, job_id, tenant_id, media_items, chunk_size=500):  # noqa: ANN001
+        self.calls.append((str(tenant_id), list(media_items)))
+        self.messages[str(job_id)] = f"Queued {len(media_items)} items"
+        return len(media_items)
 
     async def enqueue_scan_job(self, *, tenant_id, media_items, created_by_user_id=None):  # noqa: ANN001
-        self.calls.append((str(tenant_id), list(media_items)))
-        return SimpleNamespace(job_id=generate_id(), total=len(media_items))
+        job_id = await self.create_scan_job_record(
+            tenant_id=tenant_id,
+            total=len(media_items),
+            created_by_user_id=created_by_user_id,
+        )
+        total = await self.populate_scan_job_items(job_id=job_id, tenant_id=tenant_id, media_items=media_items)
+        return SimpleNamespace(job_id=job_id, total=total)
 
 
 class FakeSuggestionStatus:

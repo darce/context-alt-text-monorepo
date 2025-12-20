@@ -186,7 +186,6 @@ class ClusterCentroid(Base):
         primary_key=True,
     )
     tenant_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
-    member_count: Mapped[int] = mapped_column(Integer, nullable=False)
     centroid: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension))
     refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
 
@@ -268,6 +267,7 @@ class IdentityScanJob(Base):
     processed_media: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     identities_detected: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     error_message: Mapped[str | None] = mapped_column(Text)
+    message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     completed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))

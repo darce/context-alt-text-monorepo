@@ -28,6 +28,8 @@ class SqlAlchemyJobRepository(JobRepository):
                 media_ids=[],
                 total_media=job.progress_total,
                 processed_media=job.progress_completed,
+                error_message=job.error_message,
+                message=job.message,
                 started_at=job.started_at if job.status is JobStatus.RUNNING else None,
                 completed_at=job.finished_at,
             )
@@ -68,6 +70,8 @@ class SqlAlchemyJobRepository(JobRepository):
                 status=JobStatus(scan.status),
                 progress_completed=scan.processed_media or 0,
                 progress_total=scan.total_media or 0,
+                error_message=scan.error_message,
+                message=scan.message,
                 started_at=scan.started_at or datetime.now(tz=UTC),
                 finished_at=scan.completed_at,
             )
@@ -101,6 +105,8 @@ class SqlAlchemyJobRepository(JobRepository):
             scan_model.total_media = job.progress_total
             scan_model.started_at = job.started_at if job.status is not JobStatus.PENDING else None
             scan_model.completed_at = job.finished_at
+            scan_model.error_message = job.error_message
+            scan_model.message = job.message
         else:
             cluster_stmt = select(IdentityClusteringJob).where(IdentityClusteringJob.id == job_uuid)
             cluster_result = await self._session.execute(cluster_stmt)

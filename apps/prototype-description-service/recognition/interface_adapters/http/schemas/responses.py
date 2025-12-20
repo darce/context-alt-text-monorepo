@@ -7,7 +7,7 @@ from __future__ import annotations
 from datetime import datetime
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 
 def _validate_uuid(value: str) -> str:
@@ -47,6 +47,8 @@ class IdentityResponse(BaseModel):
 class RepresentativeResponse(BaseModel):
     """Cluster representative details."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     media_id: str | int
     thumb_url: str | None = None
@@ -66,11 +68,14 @@ class RepresentativeResponse(BaseModel):
 class ClusterResponse(BaseModel):
     """Cluster summary."""
 
+    model_config = ConfigDict(from_attributes=True)
+
     id: str
     tenant_id: str
     label: str | None
     is_labeled: bool
-    member_count: int
+    is_auto_label: bool
+    identity_count: int
     representatives: list[RepresentativeResponse] = Field(default_factory=list)
 
     @field_validator("id", "tenant_id")
@@ -131,6 +136,7 @@ class JobStatusResponse(BaseModel):
     progress: JobProgressResponse | None
     started_at: datetime
     finished_at: datetime | None
+    message: str | None = None
 
     @field_validator("id")
     @classmethod

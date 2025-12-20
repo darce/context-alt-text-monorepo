@@ -241,6 +241,7 @@ def upgrade() -> None:
             server_default=sa.text("0"),
         ),
         sa.Column("error_message", sa.Text()),
+        sa.Column("message", sa.Text()),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "started_at",
@@ -766,7 +767,7 @@ def upgrade() -> None:
             SELECT
                 c.id AS cluster_id,
                 c.tenant_id,
-                COUNT(ne.unit_embedding) AS member_count,
+                COUNT(ne.unit_embedding) AS identity_count,
                 AVG(ne.unit_embedding)::vector({EMBEDDING_DIMENSION}) AS avg_embedding,
                 COALESCE(MAX(ne.updated_at), c.updated_at) AS refreshed_at
             FROM identity_clusters c
@@ -776,9 +777,9 @@ def upgrade() -> None:
         SELECT
             cluster_id,
             tenant_id,
-            member_count,
+            identity_count,
             CASE
-                WHEN member_count > 0 AND avg_embedding IS NOT NULL THEN
+                WHEN identity_count > 0 AND avg_embedding IS NOT NULL THEN
                     l2_normalize(avg_embedding)::vector({EMBEDDING_DIMENSION})
                 ELSE NULL
             END AS centroid,

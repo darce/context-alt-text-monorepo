@@ -48,6 +48,31 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         logger.debug("create_job: created job id=%s", job.id)
         return job.id
 
+    async def create_job_with_message(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        media_ids: Sequence[int],
+        total: int,
+        message: str | None,
+        created_by_user_id: int | None = None,
+    ) -> uuid.UUID:
+        logger.debug("create_job_with_message: creating job for tenant %s with total %d", tenant_id, total)
+        job = IdentityScanJob(
+            tenant_id=tenant_id,
+            status="pending",
+            media_ids=list(media_ids),
+            total_media=total,
+            processed_media=0,
+            identities_detected=0,
+            message=message,
+            created_by_user_id=created_by_user_id,
+        )
+        self._session.add(job)
+        await self._session.flush()
+        logger.debug("create_job_with_message: created job id=%s", job.id)
+        return job.id
+
     async def enqueue_items(
         self,
         *,
@@ -94,6 +119,24 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             update(IdentityScanJob)
             .where(IdentityScanJob.id == job_id)
             .values(processed_media=processed_media, identities_detected=identities_detected)
+        )
+
+    async def update_job_message(self, *, job_id: uuid.UUID, message: str | None) -> None:
+        """Update a scan job's status message."""
+        await self._session.execute(update(IdentityScanJob).where(IdentityScanJob.id == job_id).values(message=message))
+
+    async def finalize_job_queue(
+        self,
+        *,
+        job_id: uuid.UUID,
+        media_ids: Sequence[int],
+        message: str | None,
+    ) -> None:
+        """Persist media_ids and final queue message after enqueueing completes."""
+        await self._session.execute(
+            update(IdentityScanJob)
+            .where(IdentityScanJob.id == job_id)
+            .values(media_ids=list(media_ids), message=message)
         )
 
     async def complete_job(self, *, job_id: uuid.UUID, completed_at: datetime) -> None:

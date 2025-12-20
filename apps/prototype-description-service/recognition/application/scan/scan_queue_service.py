@@ -8,7 +8,7 @@ This service owns enqueueing scan jobs and processing queued items. It is used b
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Iterable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -23,11 +23,99 @@ class EnqueueScanResult:
     total: int
 
 
+def _format_queue_message(enqueued: int, total: int) -> str:
+    return f"Queueing {enqueued}/{total} items"
+
+
+def _chunk_items(items: Sequence[tuple[int, str]], chunk_size: int) -> Iterable[Sequence[tuple[int, str]]]:
+    if chunk_size <= 0:
+        raise ValueError("chunk_size must be positive")
+    for start in range(0, len(items), chunk_size):
+        yield items[start : start + chunk_size]
+
+
 class ScanQueueService:
     """Coordinates scan queue persistence and processing."""
 
+    ENQUEUE_CHUNK_SIZE = 500
+
     def __init__(self, repository: ScanQueueRepository) -> None:
         self._repository = repository
+
+    async def create_scan_job_record(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        total: int,
+        created_by_user_id: int | None = None,
+    ) -> uuid.UUID:
+        """Create a scan job record without enqueueing items.
+
+        Args:
+            tenant_id: Tenant UUID.
+            total: Total number of items expected for the job.
+            created_by_user_id: Optional WP user id for audit.
+
+        Returns:
+            Newly created job UUID.
+        """
+        if total <= 0:
+            raise ValueError("total must be positive")
+        message = _format_queue_message(0, total)
+        job_id = await self._repository.create_job_with_message(
+            tenant_id=tenant_id,
+            media_ids=[],
+            total=total,
+            message=message,
+            created_by_user_id=created_by_user_id,
+        )
+        return job_id
+
+    async def populate_scan_job_items(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: uuid.UUID,
+        media_items: Sequence[tuple[int, str]],
+        chunk_size: int | None = None,
+        commit_hook: Callable[[], Awaitable[None]] | None = None,
+    ) -> int:
+        """Populate scan job items in batches.
+
+        Args:
+            job_id: Parent scan job id.
+            tenant_id: Tenant UUID.
+            media_items: Sequence of (media_id, media_url).
+            chunk_size: Max items to enqueue per batch.
+            commit_hook: Optional async callback to persist each chunk.
+
+        Returns:
+            Total number of enqueued items.
+        """
+        if not media_items:
+            return 0
+        total = len(media_items)
+        enqueued_total = 0
+        media_ids: list[int] = []
+        chunk_size = chunk_size or self.ENQUEUE_CHUNK_SIZE
+        for chunk in _chunk_items(media_items, chunk_size):
+            created = await self._repository.enqueue_items(job_id=job_id, tenant_id=tenant_id, items=chunk)
+            enqueued_total += created
+            media_ids.extend(media_id for media_id, _ in chunk)
+            await self._repository.update_job_message(
+                job_id=job_id,
+                message=_format_queue_message(enqueued_total, total),
+            )
+            if commit_hook:
+                await commit_hook()
+        await self._repository.finalize_job_queue(
+            job_id=job_id,
+            media_ids=media_ids,
+            message=f"Queued {total} items",
+        )
+        if commit_hook:
+            await commit_hook()
+        return enqueued_total
 
     async def enqueue_scan_job(
         self,
@@ -51,13 +139,12 @@ class ScanQueueService:
         """
         if not media_items:
             raise ValueError("media_items required")
-        media_ids = [media_id for media_id, _ in media_items]
-        job_id = await self._repository.create_job(
+        job_id = await self.create_scan_job_record(
             tenant_id=tenant_id,
-            media_ids=media_ids,
+            total=len(media_items),
             created_by_user_id=created_by_user_id,
         )
-        await self._repository.enqueue_items(job_id=job_id, tenant_id=tenant_id, items=media_items)
+        await self.populate_scan_job_items(job_id=job_id, tenant_id=tenant_id, media_items=media_items)
         return EnqueueScanResult(job_id=job_id, total=len(media_items))
 
     async def process_next_batch(

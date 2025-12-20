@@ -7,6 +7,7 @@ should replace the stub methods.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import logging
 import uuid
@@ -58,6 +59,25 @@ logger = logging.getLogger(__name__)
 def get_settings() -> ClusteringSettings:
     """Provide clustering settings; loads from environment variables."""
     return ClusteringSettings()
+
+
+_SHARED_ADAPTER = None
+_ADAPTER_LOCK = asyncio.Lock()
+
+
+async def get_shared_insightface_adapter():
+    """Return a singleton InsightFaceAdapter to avoid reloading models."""
+    global _SHARED_ADAPTER
+    if _SHARED_ADAPTER is None:
+        async with _ADAPTER_LOCK:
+            if _SHARED_ADAPTER is None:
+                from recognition.infrastructure.embeddings import InsightFaceAdapter
+
+                # Initialize the adapter (cheap)
+                _SHARED_ADAPTER = InsightFaceAdapter()
+                # Ensure model is loaded (expensive, done once)
+                await _SHARED_ADAPTER.ensure_loaded()
+    return _SHARED_ADAPTER
 
 
 class InMemoryJobService:
@@ -566,11 +586,27 @@ def get_scan_service_builder(
             detector = StubFaceDetector()
             generator = StubEmbeddingGenerator()
         else:
-            # Production mode: use real InsightFace (lazy-loaded)
+            # Production mode: use real InsightFace (lazy-loaded shared instance)
             try:
                 from recognition.infrastructure.embeddings import InsightFaceAdapter
 
-                adapter = InsightFaceAdapter()
+                # Use the global adapter if initialized, otherwise create one (fallback)
+                # Ideally, we should await get_shared_insightface_adapter(), but this builder is synchronous.
+                # However, since we are in a factory, we might need to rely on the shared instance being ready
+                # OR just return a new one if we can't await here.
+                # BUT: The builder returns a ScanService. ScanService doesn't await in init.
+                # The caller of `_builder` assumes it's sync.
+
+                # OPTIMIZATION: Check if we have a shared instance available
+                global _SHARED_ADAPTER
+                adapter = _SHARED_ADAPTER
+                if adapter is None:
+                    # Fallback to new instance if not yet initialized globally
+                    # This happens if get_shared_insightface_adapter hasn't been called yet.
+                    # We can't await here.
+                    logger.warning("Shared InsightFaceAdapter not initialized, creating new instance (slow)")
+                    adapter = InsightFaceAdapter()
+
                 detector = InsightFaceFaceDetector(adapter)
                 generator = InsightFaceEmbeddingGenerator(adapter)
             except ImportError:

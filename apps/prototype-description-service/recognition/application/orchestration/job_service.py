@@ -55,6 +55,12 @@ class JobService:
         job.update_progress(completed, total)
         return await self.repository.update(job)
 
+    async def update_job_message(self, job_id: str, message: str | None) -> Job:
+        """Update a job's status message."""
+        job = await self._get_or_raise(job_id)
+        job.message = message
+        return await self.repository.update(job)
+
     async def queue_analyze(self, tenant_id: str, media_ids: Iterable[str]) -> Job:
         """Queue analyze job and kick off scan/embedding pipeline."""
         media_ids_list = list(media_ids)

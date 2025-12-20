@@ -3,7 +3,12 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import { useQueryClient } from '@tanstack/react-query';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { useCancelScanJobs, useClusterIdentities, useScanIdentities, useCombinedScanStatus } from '../hooks/useRecognitionHooks';
+import {
+  useCancelScanJobs,
+  useClusterIdentities,
+  useScanIdentities,
+  useCombinedScanStatus,
+} from '../hooks/useRecognitionHooks';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
@@ -161,7 +166,9 @@ export const WorkbenchPage = (): React.JSX.Element => {
     },
     onError: (error) => {
       const message =
-        error instanceof Error ? error.message : __('Unable to cancel recognition job. Please try again.', 'alt-context');
+        error instanceof Error
+          ? error.message
+          : __('Unable to cancel recognition job. Please try again.', 'alt-context');
       setScanError(message);
     },
     onSettled: () => {
@@ -184,8 +191,20 @@ export const WorkbenchPage = (): React.JSX.Element => {
       }
       return sprintf(__('Processing %d/%d batches…', 'alt-context'), completed + failed, total);
     }
-    return scanStatusQuery.data?.status ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
-  }, [activeJobIds, multiScanStatus, scanStatusQuery.data?.status, scanMutation.isPending, clusterMutation.isPending]);
+    const statusMessage = scanStatusQuery.data?.message;
+    const statusValue = scanStatusQuery.data?.status;
+    if (statusMessage && statusValue !== 'completed' && statusValue !== 'failed') {
+      return statusMessage;
+    }
+    return statusValue ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
+  }, [
+    activeJobIds,
+    multiScanStatus,
+    scanStatusQuery.data?.message,
+    scanStatusQuery.data?.status,
+    scanMutation.isPending,
+    clusterMutation.isPending,
+  ]);
 
   const scanProgress = useMemo(() => {
     if (activeJobIds.length === 0) {

@@ -267,4 +267,27 @@ describe('WorkbenchPage', () => {
     renderWorkbench(queryClient);
     expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['media-identities'] });
   });
+
+  it('uses backend job messages when available', () => {
+    mockUseCombinedScanStatus.mockReturnValue({
+      scanStatusQuery: {
+        data: {
+          id: 'job-initial',
+          type: 'analyze' as const,
+          status: 'pending' as const,
+          progress: { completed: 0, total: 2 },
+          started_at: new Date().toISOString(),
+          finished_at: null,
+          message: 'Queueing 0/2 items',
+        },
+        isFetching: false,
+        refetch: vi.fn(),
+      } as unknown as ReturnType<typeof useScanStatus>,
+      multiScanStatus: [],
+    });
+
+    renderWorkbench();
+
+    expect(screen.getByText(/Queueing 0\/2 items/)).toBeInTheDocument();
+  });
 });

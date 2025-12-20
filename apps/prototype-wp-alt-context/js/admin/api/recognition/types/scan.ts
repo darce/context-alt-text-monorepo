@@ -29,6 +29,7 @@ export interface AnalyzeResponse {
   progress: JobProgress | null;
   started_at: string;
   finished_at: string | null;
+  message?: string | null;
 }
 
 /**
@@ -47,6 +48,7 @@ export interface ScanStatus {
   progress: JobProgress | null;
   started_at: string;
   finished_at: string | null;
+  message?: string | null;
 }
 
 /**

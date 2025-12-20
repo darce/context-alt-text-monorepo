@@ -74,13 +74,13 @@ class MemberDistributionCheck(AssignmentCheck):
             )
 
         members = await self.cluster_repository.get_member_embeddings(candidate.cluster_id)
-        member_count = len(members)
+        identity_count = len(members)
 
-        if member_count == 0:
+        if identity_count == 0:
             return CheckResult(
                 passed=True,
                 metadata={
-                    "member_count": 0,
+                    "identity_count": 0,
                     "min_similarity": 1.0,
                     "avg_similarity": 1.0,
                 },
@@ -95,7 +95,7 @@ class MemberDistributionCheck(AssignmentCheck):
         min_sim = float(min(similarities))
         avg_sim = float(sum(similarities) / len(similarities))
         metadata = {
-            "member_count": member_count,
+            "identity_count": identity_count,
             "min_similarity": min_sim,
             "avg_similarity": avg_sim,
         }

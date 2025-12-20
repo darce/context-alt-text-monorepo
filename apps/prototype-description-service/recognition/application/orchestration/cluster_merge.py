@@ -42,7 +42,7 @@ def _normalize_face_embedding(embedding: np.ndarray) -> np.ndarray:
     return (face.astype(np.float32) / norm).astype(np.float32)
 
 
-async def _post_merge_retry_matching(
+async def post_merge_retry_matching(
     *,
     tenant_id: str,
     target_cluster_id: str,
@@ -267,8 +267,30 @@ async def merge_cluster(
             clustering_logger=clustering_logger,
         )
 
+    moved_identity_ids: list[str] = []
+    moved_media_ids: list[int] = []
+    if session is not None:
+        source_members = await member_repo.get_by_cluster(source_cluster_id)
+        moved_identity_ids = [member.identity_id for member in source_members]
+        identity_uuids = []
+        for identity_id in moved_identity_ids:
+            try:
+                identity_uuids.append(uuid.UUID(str(identity_id)))
+            except ValueError:
+                continue
+        if identity_uuids:
+            rows = await session.execute(
+                select(MediaIdentityModel.id, MediaIdentityModel.media_id).where(
+                    MediaIdentityModel.id.in_(identity_uuids)
+                )
+            )
+            media_map = {str(row.id): row.media_id for row in rows}
+            moved_media_ids = [
+                int(media_map[identity_id]) for identity_id in moved_identity_ids if identity_id in media_map
+            ]
+
     moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
-    target.member_count = (target.member_count or 0) + moved
+    target.identity_count = (target.identity_count or 0) + moved
     target.label = target_label or target.label
     target.is_labeled = bool(target.label)
     target.user_confirmed = True
@@ -298,26 +320,23 @@ async def merge_cluster(
             )
 
     logger.info(
-        "[curation] MERGED source_cluster=%s target_cluster=%s moved_count=%d tenant_id=%s user_action=manual_merge",
+        "[curation] MERGED source_cluster=%s source_label='%s' target_cluster=%s target_label='%s' moved_count=%d "
+        "moved_identity_ids=%s moved_media_ids=%s tenant_id=%s user_action=manual_merge",
         source_cluster_id,
+        source.label,
         target_cluster_id,
+        target.label,
         moved,
+        moved_identity_ids,
+        moved_media_ids,
         tenant_id,
     )
 
     # After a merge, the target cluster's representatives are recomputed. This can unlock additional matches that were
-    # previously SUGGESTED (gate-blocked) or left unclustered. Best-effort: re-run matching for pending suggestions and
-    # high-confidence unclustered identities against the updated target cluster.
-    with contextlib.suppress(Exception):
-        await _post_merge_retry_matching(
-            tenant_id=tenant_id,
-            target_cluster_id=target_cluster_id,
-            session=session,
-            gate=gate,
-            assignment_writer=assignment_writer,
-            suggestion_service=suggestion_service,
-        )
+    # previously SUGGESTED (gate-blocked) or left unclustered.
+    # The caller is responsible for scheduling post_merge_retry_matching (e.g. as a background task)
+    # to avoid holding the request open.
 
-    # Ensure member_count reflects reassignment
-    updated.member_count = len(await member_repo.get_by_cluster(target_cluster_id))
+    # Ensure identity_count reflects reassignment
+    updated.identity_count = len(await member_repo.get_by_cluster(target_cluster_id))
     return updated

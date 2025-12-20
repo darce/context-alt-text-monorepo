@@ -10,12 +10,14 @@ from __future__ import annotations
 
 import contextlib
 import logging
+import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from typing import Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration.cluster_curation import (
@@ -36,7 +38,12 @@ from recognition.application.orchestration.cluster_curation import (
 from recognition.application.orchestration.cluster_curation import (
     update_cluster as update_cluster_op,
 )
-from recognition.application.orchestration.cluster_merge import merge_cluster as merge_cluster_op
+from recognition.application.orchestration.cluster_merge import (
+    merge_cluster as merge_cluster_op,
+)
+from recognition.application.orchestration.cluster_merge import (
+    post_merge_retry_matching as post_merge_retry_matching_op,
+)
 from recognition.application.orchestration.cluster_split import split_cluster as split_cluster_op
 from recognition.application.orchestration.incremental_clustering import (
     cluster_unclustered_identities as cluster_unclustered_identities_op,
@@ -291,7 +298,14 @@ class ClusterService:
         """Return adaptive chunk size for incremental cold-start clustering."""
         return get_chunk_size_op(total_processed)
 
-    async def list_clusters(self, tenant_id: str, limit: int = 100, offset: int = 0, include_outliers: bool = False):
+    async def list_clusters(
+        self,
+        tenant_id: str,
+        limit: int = 100,
+        offset: int = 0,
+        include_outliers: bool = False,
+        labeled_only: bool = False,
+    ):
         """Return clusters for a tenant using the persistence layer."""
         return await list_clusters_op(
             cluster_repo=self.assignment_writer._clusters,
@@ -300,6 +314,7 @@ class ClusterService:
             limit=limit,
             offset=offset,
             include_outliers=include_outliers,
+            labeled_only=labeled_only,
         )
 
     async def update_cluster(self, cluster_id: str, tenant_id: str, label: str | None) -> IdentityCluster | None:
@@ -343,6 +358,17 @@ class ClusterService:
             session=self._session,
         )
 
+    async def retry_matching(self, target_cluster_id: str, tenant_id: str) -> None:
+        """Run post-merge matching retry (intended for background tasks)."""
+        await post_merge_retry_matching_op(
+            tenant_id=tenant_id,
+            target_cluster_id=target_cluster_id,
+            session=self._session,
+            gate=self.gate,
+            assignment_writer=self.assignment_writer,
+            suggestion_service=self.suggestion_service,
+        )
+
     async def assign_outlier_to_cluster(
         self, identity_id: str, target_cluster_id: str, tenant_id: str, similarity: float = 0.0
     ) -> IdentityCluster | None:
@@ -368,11 +394,22 @@ class ClusterService:
         tenant_id_for_logging = getattr(self.assignment_writer._members, "_tenant_id", None) or getattr(
             self.assignment_writer._members, "tenant_id", None
         )
+        media_id = None
+        if self._session is not None:
+            try:
+                identity_uuid = uuid.UUID(str(identity_id))
+            except ValueError:
+                identity_uuid = None
+            if identity_uuid is not None:
+                model = await self._session.get(MediaIdentityModel, identity_uuid)
+                if model is not None:
+                    media_id = int(model.media_id)
         return await remove_identity_from_cluster_op(
             identity_id=identity_id,
             member_repo=self.assignment_writer._members,
             cluster_repo=self.assignment_writer._clusters,
             tenant_id_for_logging=tenant_id_for_logging,
+            media_id=media_id,
         )
 
     async def split_cluster(

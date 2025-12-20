@@ -24,7 +24,9 @@ class DummyClusterRepository(ClusterRepository):
     async def get_by_id(self, cluster_id: str) -> IdentityCluster | None:
         raise NotImplementedError
 
-    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0) -> list[IdentityCluster]:
+    async def get_by_tenant(
+        self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False
+    ) -> list[IdentityCluster]:
         raise NotImplementedError
 
     async def save(self, cluster: IdentityCluster) -> IdentityCluster:
@@ -58,7 +60,7 @@ async def test_save_and_retrieve_cluster(db_session, tenant) -> None:
         tenant_id=str(tenant.id),
         label="Person A",
         is_labeled=True,
-        member_count=0,
+        identity_count=0,
         created_at=datetime.now(tz=UTC),
     )
 
@@ -69,7 +71,7 @@ async def test_save_and_retrieve_cluster(db_session, tenant) -> None:
     assert fetched is not None
     assert fetched.label == "Person A"
     assert fetched.tenant_id == str(tenant.id)
-    assert fetched.member_count == 0
+    assert fetched.identity_count == 0
 
 
 @pytest.mark.asyncio
@@ -81,7 +83,7 @@ async def test_get_by_tenant_respects_pagination(db_session, tenant) -> None:
         tenant_id=str(tenant.id),
         label="Older",
         is_labeled=True,
-        member_count=2,
+        identity_count=2,
         created_at=datetime.now(tz=UTC) - timedelta(days=1),
     )
     newer = IdentityCluster(
@@ -89,7 +91,7 @@ async def test_get_by_tenant_respects_pagination(db_session, tenant) -> None:
         tenant_id=str(tenant.id),
         label="Newer",
         is_labeled=False,
-        member_count=1,
+        identity_count=1,
         created_at=datetime.now(tz=UTC),
     )
 
@@ -112,7 +114,7 @@ async def test_update_cluster_label(db_session, tenant) -> None:
         tenant_id=str(tenant.id),
         label=None,
         is_labeled=False,
-        member_count=0,
+        identity_count=0,
         created_at=datetime.now(tz=UTC),
     )
     saved = await repo.save(cluster)
@@ -140,7 +142,7 @@ async def test_delete_cascades_members(db_session, tenant) -> None:
         tenant_id=str(tenant.id),
         label="With members",
         is_labeled=True,
-        member_count=1,
+        identity_count=1,
         created_at=datetime.now(tz=UTC),
     )
     saved_cluster = await cluster_repo.save(cluster)
@@ -169,7 +171,7 @@ async def test_get_by_tenant_filters_other_tenants(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Mine",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=datetime.now(tz=UTC),
         )
     )
@@ -180,7 +182,7 @@ async def test_get_by_tenant_filters_other_tenants(db_session, tenant) -> None:
             tenant_id=str(other_tenant.id),
             label="Theirs",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=datetime.now(tz=UTC),
         )
     )
@@ -202,7 +204,7 @@ async def test_clear_representatives_removes_all(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="With reps",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=datetime.now(tz=UTC),
         )
     )

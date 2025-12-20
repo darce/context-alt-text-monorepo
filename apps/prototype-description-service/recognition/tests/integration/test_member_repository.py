@@ -62,7 +62,7 @@ async def test_add_member_and_fetch(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Member cluster",
             is_labeled=True,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -85,7 +85,7 @@ async def test_bulk_add_members(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Bulk cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -113,7 +113,7 @@ async def test_remove_member(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Deletable cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -143,7 +143,7 @@ async def test_get_by_cluster_is_tenant_scoped(db_session, tenant) -> None:
             tenant_id=str(other_tenant.id),
             label="Other tenant cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )

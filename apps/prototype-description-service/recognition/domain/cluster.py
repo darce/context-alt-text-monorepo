@@ -19,7 +19,7 @@ class IdentityCluster:
 
     tenant_id: str
     is_labeled: bool
-    member_count: int
+    identity_count: int
     label: str | None = None
     id: str | None = None
     representative_identity_id: str | None = None
@@ -28,3 +28,8 @@ class IdentityCluster:
     user_confirmed: bool = False
     representatives: Sequence[ClusterRepresentative] | None = None
     centroid: Any | None = None
+
+    @property
+    def is_auto_label(self) -> bool:
+        """Returns True if the label was automatically generated (not user confirmed)."""
+        return not self.user_confirmed

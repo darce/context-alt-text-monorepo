@@ -69,14 +69,14 @@ async def test_merge_cluster_moves_members_and_recomputes(
         id=source_id,
         tenant_id=tenant_id,
         is_labeled=False,
-        member_count=5,
+        identity_count=5,
         label="Source",
     )
     target_cluster = IdentityCluster(
         id=target_id,
         tenant_id=tenant_id,
         is_labeled=True,
-        member_count=10,
+        identity_count=10,
         label="Target",
     )
 
@@ -100,7 +100,7 @@ async def test_merge_cluster_moves_members_and_recomputes(
     mock_cluster_repo.delete.assert_awaited_once_with(source_id)
 
     # 3. Target updated (count matches get_by_cluster mock)
-    assert target_cluster.member_count == 15
+    assert target_cluster.identity_count == 15
     mock_cluster_repo.update.assert_awaited_once()
 
     # 4. HOOKS TRIGGERED

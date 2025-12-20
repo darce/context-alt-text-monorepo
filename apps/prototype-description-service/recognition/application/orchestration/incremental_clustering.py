@@ -449,7 +449,7 @@ async def cluster_unclustered_identities(
                     centroids_dirty = True
                     clusters_created += 1
                     logger.info(
-                        "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
+                        "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
                         job_id,
                         len(members),
                         [m.media_id for m in members],
@@ -466,7 +466,7 @@ async def cluster_unclustered_identities(
                 centroids_dirty = True
                 clusters_created += 1
                 logger.info(
-                    "[clustering] new_cluster job_id=%s member_count=%d media_ids=%s",
+                    "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
                     job_id,
                     len(members),
                     [m.media_id for m in members],

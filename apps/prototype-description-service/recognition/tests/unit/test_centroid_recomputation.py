@@ -82,7 +82,7 @@ async def test_centroid_after_addition(
         centroid=vector,
         created_at=None,
         is_labeled=False,
-        member_count=1,
+        identity_count=1,
     )
     mock_cluster_repo.get_by_id.return_value = cluster
 

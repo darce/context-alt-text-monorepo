@@ -39,7 +39,7 @@ async def test_get_maturity_info_cold_cluster(
     # 2. Create a cold cluster
     cluster_id = str(generate_id())
     cluster = IdentityCluster(
-        id=cluster_id, tenant_id=tenant.id, is_labeled=False, member_count=1, user_confirmed=False
+        id=cluster_id, tenant_id=tenant.id, is_labeled=False, identity_count=1, user_confirmed=False
     )
     await cluster_repository.save(cluster)
 
@@ -89,7 +89,9 @@ async def test_get_maturity_info_confirmed_cluster(
     await db_session.flush()
 
     cluster_id = str(generate_id())
-    cluster = IdentityCluster(id=cluster_id, tenant_id=tenant.id, is_labeled=True, member_count=2, user_confirmed=True)
+    cluster = IdentityCluster(
+        id=cluster_id, tenant_id=tenant.id, is_labeled=True, identity_count=2, user_confirmed=True
+    )
     await cluster_repository.save(cluster)
 
     rep = ClusterRepresentative(
@@ -119,7 +121,7 @@ async def test_get_maturity_info_mature_cluster(
 ) -> None:
     cluster_id = str(generate_id())
     cluster = IdentityCluster(
-        id=cluster_id, tenant_id=tenant.id, is_labeled=False, member_count=15, user_confirmed=False
+        id=cluster_id, tenant_id=tenant.id, is_labeled=False, identity_count=15, user_confirmed=False
     )
     await cluster_repository.save(cluster)
 

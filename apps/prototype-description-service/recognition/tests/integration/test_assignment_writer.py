@@ -82,7 +82,7 @@ async def test_persist_assignment_adds_member_and_updates_count(db_session, tena
             tenant_id=str(tenant.id),
             label=None,
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -100,7 +100,7 @@ async def test_persist_assignment_adds_member_and_updates_count(db_session, tena
 
     updated_cluster = await cluster_repo.get_by_id(cluster.id)
     assert updated_cluster is not None
-    assert updated_cluster.member_count == 1
+    assert updated_cluster.identity_count == 1
 
     members = await member_repo.get_by_cluster(cluster.id)
     assert len(members) == 1
@@ -120,7 +120,7 @@ async def test_persist_assignment_rejects_non_accept(db_session, tenant) -> None
             tenant_id=str(tenant.id),
             label=None,
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -155,7 +155,7 @@ async def test_persist_new_cluster_creates_members(db_session, tenant) -> None:
     )
 
     assert cluster.id is not None
-    assert cluster.member_count == len(identities)
+    assert cluster.identity_count == len(identities)
 
     members = await member_repo.get_by_cluster(cluster.id)
     assert len(members) == 2
@@ -206,7 +206,7 @@ async def test_update_cluster_metadata_updates_label_and_representative(db_sessi
             tenant_id=str(tenant.id),
             label=None,
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -233,7 +233,7 @@ async def test_recompute_representatives_clears_and_rebuilds(db_session, tenant)
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=3,
+            identity_count=3,
             created_at=datetime.now(tz=UTC),
         )
     )

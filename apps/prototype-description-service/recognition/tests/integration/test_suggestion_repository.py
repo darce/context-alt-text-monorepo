@@ -23,7 +23,7 @@ async def test_create_persists_suggestion(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Target",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -55,7 +55,7 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -80,7 +80,7 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
             tenant_id=other_tenant_id,
             label="Other",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -108,7 +108,7 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -134,7 +134,7 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
             tenant_id=other_tenant_id,
             label="Other",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -164,7 +164,7 @@ async def test_update_status_transitions(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -195,7 +195,7 @@ async def test_create_upserts_pending_suggestion_scores(db_session, tenant) -> N
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -239,7 +239,7 @@ async def test_update_scores_updates_pending_suggestions(db_session, tenant) -> 
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -276,7 +276,7 @@ async def test_update_scores_does_not_modify_resolved_suggestions(db_session, te
             tenant_id=str(tenant.id),
             label="Cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )

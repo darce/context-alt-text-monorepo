@@ -79,7 +79,7 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
 
 def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:
     cluster = seed_cluster(fake_cluster_service, tenant_id, label="target")
-    starting_count = cluster.member_count
+    starting_count = cluster.identity_count
 
     resp = api_client.post(
         f"/recognition/clusters/{cluster.id}/assign",
@@ -87,7 +87,7 @@ def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_s
     )
 
     assert resp.status_code == 200
-    assert resp.json()["member_count"] == starting_count + 1
+    assert resp.json()["identity_count"] == starting_count + 1
 
 
 def test_include_outliers_flag_is_passed_to_service(api_client, tenant_id, fake_cluster_service) -> None:

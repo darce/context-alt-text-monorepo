@@ -31,7 +31,7 @@ async def test_cluster_and_suggestion_ids_are_valid_uuids(
     identity_id = str(uuid.uuid4())
     cluster = seed_cluster(fake_cluster_service, tenant_id)
     # Seed the cluster in the repository too so the suggestions endpoint can find it
-    fake_cluster_repository.seed(cluster.id, label=cluster.label, member_count=1)
+    fake_cluster_repository.seed(cluster.id, label=cluster.label, identity_count=1)
     suggestion = await fake_suggestion_service.create(identity_id=identity_id, cluster_id=cluster.id)
 
     resp_clusters = api_client.get(

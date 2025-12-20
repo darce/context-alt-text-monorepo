@@ -7,8 +7,9 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 
+from db.session import async_session_factory
 from recognition.config.security import get_security_settings
 from recognition.domain.job import Job, JobType
 from recognition.interface_adapters.http.dependencies import (
@@ -44,6 +45,17 @@ from recognition.shared.ids import generate_id
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth)])
+
+
+async def run_background_retry(tenant_id: str, cluster_id: str) -> None:
+    """Execute post-merge matching retry in a background task with fresh session."""
+    try:
+        async with async_session_factory() as session:
+            # We don't pass settings here, defaulting to env vars which is fine for background tasks
+            cluster_service = await build_cluster_service(session=session, tenant_id=tenant_id)
+            await cluster_service.retry_matching(target_cluster_id=cluster_id, tenant_id=tenant_id)
+    except Exception as exc:
+        _logger.exception("Background merge retry failed for cluster %s: %s", cluster_id, exc)
 
 
 @router.post("/clustering/jobs", response_model=ClusteringJobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -96,13 +108,20 @@ async def list_clusters(
     limit: int = Query(50),
     offset: int = Query(0),
     include_outliers: bool = Query(False),
+    labeled_only: bool = Query(False),
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> list[ClusterResponse]:
     """List clusters with paging."""
     settings = get_security_settings()
     validate_paging(limit, offset, settings.max_page_size)
     cluster_service = await cluster_service_builder(tenant_id)
-    return await cluster_service.list_clusters(tenant_id, limit=limit, offset=offset, include_outliers=include_outliers)
+    return await cluster_service.list_clusters(
+        tenant_id,
+        limit=limit,
+        offset=offset,
+        include_outliers=include_outliers,
+        labeled_only=labeled_only,
+    )
 
 
 @router.patch("/clusters/{cluster_id}", response_model=ClusterResponse)
@@ -161,6 +180,7 @@ async def create_cluster_for_identity(
 async def merge_cluster(
     cluster_id: str,
     request: MergeClusterRequest,
+    background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_session),
 ) -> ClusterResponse:
@@ -178,6 +198,10 @@ async def merge_cluster(
     )
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+
+    # Schedule best-effort retry matching in background
+    background_tasks.add_task(run_background_retry, request.tenant_id, request.target_cluster_id)
+
     return cluster
 
 
@@ -308,6 +332,7 @@ def _job_to_response(job: Job) -> JobStatusResponse:
         progress=progress,
         started_at=started_at,
         finished_at=job.finished_at,
+        message=job.message,
     )
 
 
@@ -322,6 +347,7 @@ def _job_to_clustering_response(job: Job) -> ClusteringJobStatusResponse:
         progress=progress,
         started_at=started_at,
         finished_at=job.finished_at,
+        message=job.message,
         clusters_created=0,  # Not known until job completes
         total_identities_clustered=job.progress_completed,
     )

@@ -50,7 +50,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
 
-    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0):
+    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False):
         """Fetch clusters for a tenant, with representatives eagerly loaded for discovery."""
         stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
@@ -60,6 +60,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .limit(limit)
             .offset(offset)
         )
+
+        if labeled_only:
+            stmt = stmt.where(ClusterModel.label.isnot(None))
+            stmt = stmt.where(ClusterModel.user_confirmed.is_(True))
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
@@ -91,7 +95,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
 
         model.label = cluster.label
         model.user_confirmed = cluster.user_confirmed
-        model.identity_count = cluster.member_count
+        model.identity_count = cluster.identity_count
         rep_uuid = _coerce_uuid(cluster.representative_identity_id) if cluster.representative_identity_id else None
         if rep_uuid is not None:
             await _ensure_media_identity(self._session, model.tenant_id, rep_uuid)
@@ -312,7 +316,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             tenant_id=str(model.tenant_id),
             label=model.label,
             is_labeled=bool(model.label),
-            member_count=model.identity_count,
+            identity_count=model.identity_count,
             created_at=model.created_at if isinstance(model.created_at, datetime) else None,
             representative_identity_id=str(model.representative_identity_id)
             if model.representative_identity_id
@@ -344,7 +348,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         model_kwargs: dict[str, Any] = {
             "tenant_id": _coerce_uuid(cluster.tenant_id),
             "label": cluster.label,
-            "identity_count": cluster.member_count,
+            "identity_count": cluster.identity_count,
             "clustering_algorithm": cluster.clustering_algorithm,
             "user_confirmed": cluster.user_confirmed,
         }

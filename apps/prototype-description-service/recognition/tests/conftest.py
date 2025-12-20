@@ -89,7 +89,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
                 CREATE TABLE IF NOT EXISTS mv_identity_cluster_centroids (
                     cluster_id TEXT PRIMARY KEY,
                     tenant_id TEXT NOT NULL,
-                    member_count INTEGER NOT NULL DEFAULT 0,
+                    identity_count INTEGER NOT NULL DEFAULT 0,
                     centroid BLOB,
                     refreshed_at TIMESTAMP
                 )
@@ -200,7 +200,9 @@ class FakeClusterRepository:
     async def get_by_id(self, cluster_id: str) -> ClusterResponse | None:
         return self.clusters.get(cluster_id)
 
-    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0) -> list[ClusterResponse]:
+    async def get_by_tenant(
+        self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False
+    ) -> list[ClusterResponse]:
         return [c for c in self.clusters.values() if c.tenant_id == tenant_id][offset : offset + limit]
 
     async def save(self, cluster: ClusterResponse) -> ClusterResponse:
@@ -246,7 +248,7 @@ class FakeClusterService:
         self.calls: list[dict[str, object]] = []
 
     async def list_clusters(
-        self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False
+        self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False, labeled_only: bool = False
     ) -> list[ClusterResponse]:
         self.calls.append(
             {"method": "list_clusters", "tenant_id": tenant_id, "include_outliers": include_outliers, "limit": limit}
@@ -291,7 +293,8 @@ class FakeClusterService:
             tenant_id=str(tenant_id),
             label=label,
             is_labeled=True,
-            member_count=1,
+            is_auto_label=False,
+            identity_count=1,
             representatives=[],
         )
         self.clusters.append(cluster)
@@ -305,7 +308,7 @@ class FakeClusterService:
         if not source or not target:
             return None
         updated_target = self._copy_cluster(
-            target, label=target_label or target.label, member_count=target.member_count + source.member_count
+            target, label=target_label or target.label, identity_count=target.identity_count + source.identity_count
         )
         self._replace_cluster(updated_target)
         self.clusters = [c for c in self.clusters if c.id != source_cluster_id]
@@ -317,7 +320,7 @@ class FakeClusterService:
         target = next((c for c in self.clusters if c.id == target_cluster_id and c.tenant_id == tenant_id), None)
         if not target:
             return None
-        updated = self._copy_cluster(target, member_count=target.member_count + 1)
+        updated = self._copy_cluster(target, identity_count=target.identity_count + 1)
         self._replace_cluster(updated)
         return updated
 

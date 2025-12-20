@@ -186,10 +186,12 @@ class FakeMediaIdentityService:
 class FakeClusterForRepo:
     """Minimal cluster object returned by FakeClusterRepository."""
 
-    def __init__(self, cluster_id: str, label: str | None = None, member_count: int = 1) -> None:
+    def __init__(self, cluster_id: str, label: str | None = None, identity_count: int = 1) -> None:
         self.id = cluster_id
         self.label = label
-        self.member_count = member_count
+        self.identity_count = identity_count
+        self.user_confirmed = bool(label)
+        self.is_labeled = bool(label)
 
 
 class FakeClusterRepository:
@@ -198,8 +200,8 @@ class FakeClusterRepository:
     def __init__(self) -> None:
         self.clusters: dict[str, FakeClusterForRepo] = {}
 
-    def seed(self, cluster_id: str, label: str | None = None, member_count: int = 1) -> None:
-        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, label, member_count)
+    def seed(self, cluster_id: str, label: str | None = None, identity_count: int = 1) -> None:
+        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, label, identity_count)
 
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
@@ -331,7 +333,8 @@ def seed_cluster(fake_cluster_service: FakeClusterService, tenant_id: str, label
         tenant_id=str(tenant_id),
         label=label,
         is_labeled=bool(label),
-        member_count=1,
+        is_auto_label=False,
+        identity_count=1,
         representatives=[],
     )
     fake_cluster_service.clusters.append(cluster)

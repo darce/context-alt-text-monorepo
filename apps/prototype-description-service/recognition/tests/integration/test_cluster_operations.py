@@ -24,7 +24,7 @@ async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) ->
             tenant_id=str(tenant.id),
             label="target",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=None,
         )
     )
@@ -36,7 +36,7 @@ async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) ->
             tenant_id=str(tenant.id),
             label="source",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=None,
         )
     )
@@ -75,7 +75,7 @@ async def test_label_update_sets_confirmation_flags(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label=None,
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )
@@ -102,7 +102,7 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
             tenant_id=str(tenant.id),
             label="target",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=None,
         )
     )
@@ -112,7 +112,7 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
             tenant_id=str(tenant.id),
             label="source",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=None,
         )
     )
@@ -224,3 +224,98 @@ async def test_cluster_unclustered_identities_refreshes_centroids_between_chunks
 
     # At least once between chunks + once at the end.
     assert refresh_calls["count"] >= 2
+
+
+@pytest.mark.asyncio
+async def test_split_cluster_preserves_user_label_for_representative_group(db_session, tenant) -> None:
+    """Split should keep the user label with the representative's group."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer._clusters
+    member_repo = cluster_service.assignment_writer._members
+
+    embedding_a = [0.0] * 512
+    embedding_a[0] = 1.0
+    embedding_b = [0.0] * 512
+    embedding_b[1] = 1.0
+
+    identities = [
+        MediaIdentityModel(
+            tenant_id=tenant.id,
+            media_id=501,
+            media_url="http://example.test/501.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=1,
+            bbox_height=1,
+            confidence=0.99,
+            embedding=embedding_a,
+        ),
+        MediaIdentityModel(
+            tenant_id=tenant.id,
+            media_id=502,
+            media_url="http://example.test/502.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=1,
+            bbox_height=1,
+            confidence=0.99,
+            embedding=embedding_a,
+        ),
+        MediaIdentityModel(
+            tenant_id=tenant.id,
+            media_id=503,
+            media_url="http://example.test/503.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=1,
+            bbox_height=1,
+            confidence=0.99,
+            embedding=embedding_a,
+        ),
+    ]
+    representative = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=504,
+        media_url="http://example.test/504.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_b,
+    )
+    db_session.add_all([*identities, representative])
+    await db_session.flush()
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Alex Rivera",
+            is_labeled=True,
+            identity_count=4,
+            representative_identity_id=str(representative.id),
+            user_confirmed=True,
+            created_at=None,
+        )
+    )
+
+    for identity in [*identities, representative]:
+        await member_repo.add_member(cluster.id, identity_id=str(identity.id), similarity=0.9)
+    await db_session.commit()
+
+    new_ids, counts = await cluster_service.split_cluster(cluster.id, n_clusters=2)
+
+    assert len(new_ids) == 1
+    assert counts == [1]
+
+    new_cluster = await cluster_repo.get_by_id(new_ids[0])
+    original_cluster = await cluster_repo.get_by_id(cluster.id)
+
+    assert new_cluster is not None
+    assert original_cluster is not None
+    assert new_cluster.label == "Alex Rivera"
+    assert original_cluster.label == "Alex Rivera (split 1)"
+
+    new_members = await member_repo.get_by_cluster(new_ids[0])
+    assert [member.identity_id for member in new_members] == [str(representative.id)]

@@ -197,7 +197,7 @@ class AssignmentWriter:
             cluster_id=cluster_id,
             payload={
                 "creation_method": algorithm,
-                "member_count": len(identities),
+                "identity_count": len(identities),
                 "members": members,
             },
         )
@@ -280,7 +280,7 @@ class AssignmentWriter:
             if new_centroid is not None:
                 cluster.centroid = new_centroid
 
-        cluster.member_count += 1
+        cluster.identity_count += 1
         await self._clusters.update(cluster)
 
     async def refresh_centroids_view(self) -> None:
@@ -396,7 +396,7 @@ class AssignmentWriter:
                 tenant_id=tenant_id,
                 label=None,
                 is_labeled=False,
-                member_count=len(identities),
+                identity_count=len(identities),
                 created_at=datetime.now(tz=UTC),
                 clustering_algorithm=algorithm,
             )
@@ -525,7 +525,7 @@ class AssignmentWriter:
                 )
 
         # Update member count
-        cluster.member_count += 1
+        cluster.identity_count += 1
         await self._clusters.update(cluster)
 
 

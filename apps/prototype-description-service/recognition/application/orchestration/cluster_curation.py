@@ -62,7 +62,7 @@ async def build_outlier_cluster(session: AsyncSession | None, tenant_id: str) ->
         tenant_id=str(tenant_id),
         label="outliers",
         is_labeled=False,
-        member_count=len(unclustered),
+        identity_count=len(unclustered),
         created_at=datetime.now(tz=UTC),
         clustering_algorithm="outlier",
         user_confirmed=False,
@@ -78,14 +78,15 @@ async def list_clusters(
     limit: int = 100,
     offset: int = 0,
     include_outliers: bool = False,
+    labeled_only: bool = False,
 ) -> list[IdentityCluster]:
     """Return clusters for a tenant using the persistence layer."""
-    clusters = await cluster_repo.get_by_tenant(tenant_id, limit=limit, offset=offset)
+    clusters = await cluster_repo.get_by_tenant(tenant_id, limit=limit, offset=offset, labeled_only=labeled_only)
     for cluster in clusters:
         cluster.representatives = getattr(cluster, "representatives", []) or []
     if include_outliers:
         outlier_cluster = await build_outlier_cluster(session, tenant_id)
-        if outlier_cluster and outlier_cluster.member_count > 0:
+        if outlier_cluster and outlier_cluster.identity_count > 0:
             outlier_cluster.representatives = getattr(outlier_cluster, "representatives", []) or []
             clusters.append(outlier_cluster)
         return clusters
@@ -156,6 +157,7 @@ async def remove_identity_from_cluster(
     member_repo: MemberRepository,
     cluster_repo: ClusterRepository,
     tenant_id_for_logging: str | None = None,
+    media_id: int | None = None,
 ) -> bool:
     """Remove an identity from its current cluster (make it an orphan)."""
     members = await member_repo.get_by_identity_id(identity_id)
@@ -168,13 +170,14 @@ async def remove_identity_from_cluster(
     if removed:
         # Update cluster member count
         cluster = await cluster_repo.get_by_id(cluster_id)
-        if cluster and cluster.member_count > 0:
-            cluster.member_count -= 1
+        if cluster and cluster.identity_count > 0:
+            cluster.identity_count -= 1
             await cluster_repo.update(cluster)
 
     logger.info(
-        "[curation] REMOVED identity=%s from cluster=%s tenant_id=%s user_action=manual_remove",
+        "[curation] REMOVED identity=%s media_id=%s from cluster=%s tenant_id=%s user_action=manual_remove",
         identity_id,
+        media_id,
         cluster_id,
         tenant_id_for_logging or "unknown",
     )
@@ -215,6 +218,7 @@ async def create_cluster_for_identity(
             member_repo=member_repo,
             cluster_repo=cluster_repo,
             tenant_id_for_logging=tenant_id,
+            media_id=int(identity_model.media_id),
         )
 
     identity = MediaIdentity(
@@ -251,10 +255,11 @@ async def create_cluster_for_identity(
         await refresh_view()
 
     logger.info(
-        "[curation] CREATED cluster_id=%s label='%s' identity=%s tenant_id=%s user_action=manual_create",
+        "[curation] CREATED cluster_id=%s label='%s' identity=%s media_id=%s tenant_id=%s user_action=manual_create",
         updated.id,
         updated.label,
         identity_id,
+        identity_model.media_id,
         tenant_id,
     )
 
@@ -299,12 +304,14 @@ async def assign_outlier_to_cluster(
         return cluster
 
     await member_repo.add_member(target_cluster_id, identity_id=str(identity_model.id), similarity=similarity)
-    cluster.member_count += 1
+    cluster.identity_count += 1
     cluster = await cluster_repo.update(cluster)
 
     logger.info(
-        "[curation] ASSIGNED identity=%s target_cluster=%s similarity=%.4f tenant_id=%s user_action=manual_assign",
+        "[curation] ASSIGNED identity=%s media_id=%s target_cluster=%s similarity=%.4f tenant_id=%s "
+        "user_action=manual_assign",
         identity_model.id,
+        identity_model.media_id,
         target_cluster_id,
         similarity,
         tenant_id,

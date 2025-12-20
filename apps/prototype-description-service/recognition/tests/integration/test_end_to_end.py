@@ -47,18 +47,18 @@ async def test_full_clustering_flow(
     assert len(clusters) >= 1
 
     first_cluster = clusters[0]
-    assert first_cluster.member_count > 0
+    assert first_cluster.identity_count > 0
     # Algorithm can be "graph" (unified pipeline), "chinese_whispers", or "hdbscan"
     assert first_cluster.clustering_algorithm in ("graph", "chinese_whispers", "hdbscan")
 
     # Verify members
     members = await member_repository.get_by_cluster(first_cluster.id)
-    assert len(members) == first_cluster.member_count
+    assert len(members) == first_cluster.identity_count
 
     # Verify representatives
     # RepresentativeDiscovery should have picked reps for the new cluster
     reps = await cluster_repository.get_all_representatives(first_cluster.id)
-    if first_cluster.member_count > 0:
+    if first_cluster.identity_count > 0:
         assert len(reps) > 0, "New cluster should have at least one representative"
 
 

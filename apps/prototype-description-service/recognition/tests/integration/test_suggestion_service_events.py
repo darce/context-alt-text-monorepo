@@ -23,7 +23,7 @@ async def test_accept_emits_suggestion_resolved_event(db_session, tenant) -> Non
             tenant_id=str(tenant.id),
             label="Target",
             is_labeled=True,
-            member_count=0,
+            identity_count=0,
             created_at=None,
             user_confirmed=True,
         )
@@ -91,7 +91,7 @@ async def test_resolve_for_identity_emits_suggestion_resolved_event(db_session, 
             tenant_id=str(tenant.id),
             label="Target",
             is_labeled=True,
-            member_count=0,
+            identity_count=0,
             created_at=None,
             user_confirmed=True,
         )

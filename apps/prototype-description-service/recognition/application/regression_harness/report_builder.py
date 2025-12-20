@@ -292,7 +292,7 @@ async def _build_pre_curation_state(
             "predicted_cluster_id": cluster_key,
             "creation_method": creation_method_by_cluster.get(cluster_key),
             "member_identity_locators": [e["identity_locator"] for e in member_entries],
-            "member_count": len(member_entries),
+            "identity_count": len(member_entries),
         }
         # Include full member details with assignment info
         members_with_details = [e for e in member_entries if "original_assignment" in e]

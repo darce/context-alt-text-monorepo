@@ -85,7 +85,7 @@ async def test_persist_new_cluster_emits_events(db_session, tenant) -> None:
     cluster_created = next(event for event in events if event.event_type == "cluster_created")
     assert str(cluster_created.cluster_id) == cluster.id
     assert cluster_created.payload.get("creation_method") == "graph"
-    assert cluster_created.payload.get("member_count") == 2
+    assert cluster_created.payload.get("identity_count") == 2
 
     members = cluster_created.payload.get("members")
     assert isinstance(members, list)
@@ -110,7 +110,7 @@ async def test_persist_assignment_emits_representative_selected_event(db_session
             tenant_id=str(tenant.id),
             label=None,
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )

@@ -67,7 +67,7 @@ async def list_suggestions(
                     cluster_id=suggestion.cluster_id,
                     label=cluster.label or f"cluster-{suggestion.cluster_id[:8]}",
                     similarity=suggestion.representative_similarity,
-                    identity_count=cluster.member_count or 0,
+                    identity_count=cluster.identity_count or 0,
                 )
             )
 

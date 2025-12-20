@@ -57,7 +57,7 @@ async def test_create_skips_unlabeled_clusters() -> None:
         tenant_id=tenant_id,
         label=None,
         is_labeled=False,
-        member_count=1,
+        identity_count=1,
         user_confirmed=False,
         created_at=None,
     )
@@ -92,7 +92,7 @@ async def test_create_persists_for_user_labeled_clusters() -> None:
         tenant_id=tenant_id,
         label="Ryann Wiseman",
         is_labeled=True,
-        member_count=10,
+        identity_count=10,
         user_confirmed=True,
         created_at=None,
     )

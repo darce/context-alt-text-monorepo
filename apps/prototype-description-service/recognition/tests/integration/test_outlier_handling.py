@@ -24,7 +24,7 @@ async def test_outliers_included_when_requested(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="cluster",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=None,
         )
     )
@@ -37,7 +37,7 @@ async def test_outliers_included_when_requested(db_session, tenant) -> None:
             tenant_id=str(tenant.id),
             label="-1",
             is_labeled=False,
-            member_count=1,
+            identity_count=1,
             created_at=None,
         )
     )

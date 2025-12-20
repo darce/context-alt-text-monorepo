@@ -75,7 +75,7 @@ async def test_suggestions_are_tenant_scoped(db_session, tenant) -> None:
             tenant_id=tenant_a,
             label="tenant-a-cluster",
             is_labeled=False,
-            member_count=0,
+            identity_count=0,
             created_at=None,
         )
     )

@@ -24,7 +24,14 @@ def _tenant_validation_client() -> TestClient:
     def cluster_builder():
         async def _build(_tenant_id: str):
             class StubClusterService:
-                async def list_clusters(self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False):
+                async def list_clusters(
+                    self,
+                    tenant_id: str,
+                    limit: int,
+                    offset: int,
+                    include_outliers: bool = False,
+                    labeled_only: bool = False,
+                ):
                     return []
 
             return StubClusterService()
@@ -89,7 +96,14 @@ def test_query_param_tenant_fallback(monkeypatch) -> None:
             collected["tenant_id"] = tenant_id
 
             class StubClusterService:
-                async def list_clusters(self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False):
+                async def list_clusters(
+                    self,
+                    tenant_id: str,
+                    limit: int,
+                    offset: int,
+                    include_outliers: bool = False,
+                    labeled_only: bool = False,
+                ):
                     collected["service_tenant"] = tenant_id
                     return []
 
@@ -155,7 +169,14 @@ def test_session_context_cleared_after_request(monkeypatch) -> None:
     def builder(session_dep=Depends(dependencies.get_session)):
         async def _build(_: str):
             class StubClusterService:
-                async def list_clusters(self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False):
+                async def list_clusters(
+                    self,
+                    tenant_id: str,
+                    limit: int,
+                    offset: int,
+                    include_outliers: bool = False,
+                    labeled_only: bool = False,
+                ):
                     events.append(("list", tenant_id, session_dep.current_tenant))
                     return []
 

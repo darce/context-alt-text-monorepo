@@ -139,7 +139,7 @@ async def test_member_distribution_skips_when_no_members() -> None:
 
     assert result.passed is True
     assert result.metadata is not None
-    assert result.metadata["member_count"] == 0
+    assert result.metadata["identity_count"] == 0
     assert result.metadata["min_similarity"] == 1.0
     assert result.metadata["avg_similarity"] == 1.0
 

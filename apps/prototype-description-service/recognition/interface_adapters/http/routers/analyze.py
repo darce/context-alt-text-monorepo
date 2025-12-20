@@ -14,16 +14,17 @@ from datetime import UTC, datetime
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
 from sqlalchemy.exc import ProgrammingError
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from db.settings import get_database_settings
 from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
+from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.domain.job import Job, JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_service_dependency,
     get_optional_session,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,
-    get_scan_service_builder,
     require_auth,
     require_write_access,
 )
@@ -90,7 +91,6 @@ async def analyze_media(
     background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_optional_session),
-    scan_service_builder=Depends(get_scan_service_builder),
     scan_queue=Depends(get_scan_queue_service_optional),
 ) -> JobStatusResponse:
     """Scan media for face identities. Returns a job ID for polling."""
@@ -147,32 +147,52 @@ async def analyze_media(
                 )
             scan_queue = get_scan_queue_service_factory(session)
 
-        enqueue_result = await scan_queue.enqueue_scan_job(
+        job_id = await scan_queue.create_scan_job_record(
             tenant_id=tenant_uuid,
-            media_items=media_items,
+            total=len(media_items),
+            created_by_user_id=getattr(auth, "user_id", None),
         )
 
         # Commit the job BEFORE the background task runs, so the task can find it
         if session is not None:
             await session.commit()
 
-        if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1":
-            background_tasks.add_task(
-                _process_scan_job_inline,
+        session_factory: async_sessionmaker[AsyncSession] | None = None
+        # Only use request-bound factory for testing (SQLite/in-memory)
+        # For Postgres, use the default factory to get fresh connections from the pool
+        if session is not None and getattr(session, "bind", None) is not None and not _is_postgres_session(session):
+            session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
+
+        async def _chain_populate_and_process():
+            """Chain populate and process to ensure order and conserve connections."""
+            await _populate_scan_job_items_async(
                 tenant_id=str(request.tenant_id),
-                job_id=str(enqueue_result.job_id),
-                media_ids=media_ids,
-                media_sources=media_sources,
-                scan_service_builder=scan_service_builder,
+                job_id=str(job_id),
+                media_items=media_items,
+                scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+                session_factory=session_factory,
             )
-        progress = JobProgressResponse(completed=0, total=enqueue_result.total)
+            if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1":
+                await _process_scan_job_inline(
+                    tenant_id=str(request.tenant_id),
+                    job_id=str(job_id),
+                    media_ids=media_ids,
+                    media_sources=media_sources,
+                    session_factory=session_factory,
+                )
+
+        background_tasks.add_task(_chain_populate_and_process)
+
+        total = len(media_items)
+        progress = JobProgressResponse(completed=0, total=total)
         return JobStatusResponse(
-            id=str(enqueue_result.job_id),
+            id=str(job_id),
             type=JobType.ANALYZE.value,
             status="pending",
             progress=progress,
             started_at=datetime.now(tz=UTC),
             finished_at=None,
+            message=f"Queueing 0/{total} items",
         )
     except ProgrammingError as exc:
         if _is_insufficient_privilege(exc):
@@ -275,86 +295,140 @@ async def _process_scan_job_inline(
     job_id: str,
     media_ids: list[str] | None,
     media_sources: list[str],
-    scan_service_builder,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
 ) -> None:
     """Inline processor used in tests/dev to keep integration tests deterministic.
 
     Production should run a dedicated worker process instead.
-
-    This function tries to use the injected scan_service_builder first (for tests).
-    If that fails (production with stale session), it creates a fresh session.
     """
-    try:
-        # First, try using the injected builder (works in tests with session overrides)
-        service = scan_service_builder(str(tenant_id))
-        await service.process_scan_job(
-            tenant_id=str(tenant_id),
+    from db.tenant_context import set_tenant_context
+
+    if session_factory is None:
+        from db.session import async_session_factory as default_session_factory
+
+        session_factory = default_session_factory
+
+    # Prepare services OUTSIDE the DB session to avoid holding connections during load
+    from recognition.application.embedding.service import EmbeddingService
+    from recognition.config import get_settings as get_recognition_settings
+
+    settings = get_recognition_settings()
+    runtime_mode = settings.runtime_mode
+
+    embedder = EmbeddingService()
+
+    if runtime_mode == "test":
+        from recognition.application.embedding.detector import StubFaceDetector
+        from recognition.application.embedding.generator import StubEmbeddingGenerator
+
+        detector = StubFaceDetector()
+        generator = StubEmbeddingGenerator()
+    else:
+        try:
+            from recognition.application.embedding.detector import InsightFaceFaceDetector
+            from recognition.application.embedding.generator import InsightFaceEmbeddingGenerator
+            from recognition.interface_adapters.http.dependencies import get_shared_insightface_adapter
+
+            # Use shared adapter to avoid reloading the model (20-30s + memory)
+            # This handles locking and initialization internally
+            adapter = await get_shared_insightface_adapter()
+
+            detector = InsightFaceFaceDetector(adapter)
+            generator = InsightFaceEmbeddingGenerator(adapter)
+        except ImportError:
+            from recognition.application.embedding.detector import StubFaceDetector
+            from recognition.application.embedding.generator import StubEmbeddingGenerator
+
+            logger.warning("InsightFace not installed, using stub detectors.")
+            detector = StubFaceDetector()
+            generator = StubEmbeddingGenerator()
+
+    # 1. Mark Running (Short transaction)
+    async with session_factory() as session:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+        await set_tenant_context(session, tenant_uuid)
+
+        from recognition.application.scan.service import ScanService
+
+        scan_service = ScanService(session=session)
+        await scan_service.mark_job_running(uuid.UUID(str(job_id)))
+
+    # 2. Inference (No DB connection)
+    sources_list = list(media_sources) if media_sources else (list(media_ids) if media_ids else [])
+    detections = await detector.detect(sources_list)
+
+    # Generate embeddings if specific detector didn't provide them (e.g. stub or some configs)
+    from recognition.application.embedding.service import EmbeddingResult
+
+    detections_needing_embeddings = [d for d in detections if d.embedding is None]
+    if detections_needing_embeddings:
+        face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
+        embeddings: list[EmbeddingResult] = await generator.generate(face_bytes)
+        for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
+            det.embedding = result.embedding
+
+    # 3. Save Results (Short transaction)
+    async with session_factory() as session:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+        await set_tenant_context(session, tenant_uuid)
+
+        # We need generator instance here just to satisfy init, even if logic was done above
+        scan_service = ScanService(
+            session=session,
+            detector=detector,
+            generator=generator,
+            embedder=embedder,
+        )
+
+        await scan_service.save_job_results(
             job_id=uuid.UUID(str(job_id)),
+            tenant_id=str(tenant_id),
             media_ids=media_ids or [],
             media_sources=media_sources,
+            detections=detections,
         )
-        # If service has a session, commit it
-        if hasattr(service, "_session") and service._session is not None:
-            await service._session.commit()
-    except Exception as e:
-        # If the injected builder fails (stale session in production),
-        # create a fresh session for the background task
-        logger.debug("Injected service builder failed, creating fresh session: %s", e)
-        from db.session import async_session_factory
-        from db.tenant_context import set_tenant_context
 
-        async with async_session_factory() as session:
-            tenant_uuid = uuid.UUID(str(tenant_id))
-            await set_tenant_context(session, tenant_uuid)
 
-            from recognition.application.embedding.service import EmbeddingService
-            from recognition.config import get_settings as get_recognition_settings
+async def _populate_scan_job_items_async(
+    *,
+    tenant_id: str,
+    job_id: str,
+    media_items: list[tuple[int, str]],
+    scan_queue: ScanQueueService | None = None,
+    session_factory: async_sessionmaker[AsyncSession] | None = None,
+) -> None:
+    """Populate scan job items outside the request context."""
+    if scan_queue is not None:
+        await scan_queue.populate_scan_job_items(
+            job_id=uuid.UUID(str(job_id)),
+            tenant_id=uuid.UUID(str(tenant_id)),
+            media_items=media_items,
+        )
+        return
 
-            settings = get_recognition_settings()
-            runtime_mode = settings.runtime_mode
+    from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
-            embedder = EmbeddingService()
+    if session_factory is None:
+        from db.session import async_session_factory as default_session_factory
 
-            if runtime_mode == "test":
-                from recognition.application.embedding.detector import StubFaceDetector
-                from recognition.application.embedding.generator import StubEmbeddingGenerator
+        session_factory = default_session_factory
 
-                detector = StubFaceDetector()
-                generator = StubEmbeddingGenerator()
-            else:
-                try:
-                    from recognition.application.embedding.detector import InsightFaceFaceDetector
-                    from recognition.application.embedding.generator import InsightFaceEmbeddingGenerator
-                    from recognition.infrastructure.embeddings import InsightFaceAdapter
-
-                    adapter = InsightFaceAdapter()
-                    detector = InsightFaceFaceDetector(adapter)
-                    generator = InsightFaceEmbeddingGenerator(adapter)
-                except ImportError:
-                    from recognition.application.embedding.detector import StubFaceDetector
-                    from recognition.application.embedding.generator import StubEmbeddingGenerator
-
-                    logger.warning("InsightFace not installed, using stub detectors.")
-                    detector = StubFaceDetector()
-                    generator = StubEmbeddingGenerator()
-
-            from recognition.application.scan.service import ScanService
-
-            service = ScanService(
-                session=session,
-                detector=detector,
-                generator=generator,
-                embedder=embedder,
-            )
-
-            await service.process_scan_job(
-                tenant_id=str(tenant_id),
+    async with session_factory() as session:
+        tenant_uuid = uuid.UUID(str(tenant_id))
+        await set_tenant_context(session, tenant_uuid)
+        try:
+            repo = SqlAlchemyScanQueueRepository(session)
+            queue = ScanQueueService(repo)
+            await queue.populate_scan_job_items(
                 job_id=uuid.UUID(str(job_id)),
-                media_ids=media_ids or [],
-                media_sources=media_sources,
+                tenant_id=tenant_uuid,
+                media_items=media_items,
+                commit_hook=session.commit,
             )
-
             await session.commit()
+        finally:
+            with contextlib.suppress(Exception):
+                await clear_tenant_context(session)
 
 
 def _job_to_response(job: Job) -> JobStatusResponse:
@@ -368,6 +442,7 @@ def _job_to_response(job: Job) -> JobStatusResponse:
         progress=progress,
         started_at=started_at,
         finished_at=job.finished_at,
+        message=job.message,
     )
 
 

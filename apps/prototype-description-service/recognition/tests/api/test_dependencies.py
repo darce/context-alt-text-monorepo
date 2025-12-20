@@ -20,10 +20,10 @@ def test_analyze_router_uses_fake_scan_queue(api_client, tenant_id, fake_scan_qu
     )
 
     assert resp.status_code == 202
-    assert len(fake_scan_queue_service.calls) == 1
-    call_tenant, call_media = fake_scan_queue_service.calls[0]
+    assert len(fake_scan_queue_service.created_jobs) == 1
+    call_tenant, call_total = fake_scan_queue_service.created_jobs[0]
     assert call_tenant == tenant_id
-    assert call_media
+    assert call_total > 0
 
 
 def test_clusters_router_respects_dependency_override(api_client, tenant_id, fake_cluster_service) -> None:

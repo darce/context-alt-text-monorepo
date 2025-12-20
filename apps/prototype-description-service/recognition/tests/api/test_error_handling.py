@@ -16,7 +16,7 @@ from recognition.tests.api.conftest import FakeSession
 
 def test_analyze_maps_insufficient_privilege_to_403(monkeypatch, tenant_id):
     class ExplodingScanQueue:
-        async def enqueue_scan_job(self, **_kwargs):  # noqa: ANN001
+        async def create_scan_job_record(self, **_kwargs):  # noqa: ANN001
             raise ProgrammingError("stmt", {}, Exception("InsufficientPrivilegeError"))
 
     app = FastAPI()

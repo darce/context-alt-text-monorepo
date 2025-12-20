@@ -161,3 +161,43 @@ async def test_reclaim_stale_items_skips_exhausted_attempts(db_session, tenant) 
 
     reclaimed = await repo.reclaim_stale_items(stale_after_seconds=600, max_attempts=3, now=now)
     assert reclaimed == 0
+
+
+@pytest.mark.asyncio
+async def test_create_scan_job_record_sets_message(db_session, tenant) -> None:
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    queue = ScanQueueService(repo)
+
+    job_id = await queue.create_scan_job_record(tenant_id=tenant.id, total=3)
+
+    job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
+    assert job.total_media == 3
+    assert job.message == "Queueing 0/3 items"
+
+
+@pytest.mark.asyncio
+async def test_populate_scan_job_items_updates_message(db_session, tenant) -> None:
+    repo = SqlAlchemyScanQueueRepository(db_session)
+    queue = ScanQueueService(repo)
+
+    job_id = await repo.create_job(tenant_id=tenant.id, media_ids=[1, 2, 3])
+    enqueued = await queue.populate_scan_job_items(
+        job_id=job_id,
+        tenant_id=tenant.id,
+        media_items=[
+            (1, "http://example.test/1.jpg"),
+            (2, "http://example.test/2.jpg"),
+            (3, "http://example.test/3.jpg"),
+        ],
+        chunk_size=2,
+    )
+
+    assert enqueued == 3
+    job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
+    assert job.message == "Queued 3 items"
+    items = (
+        (await db_session.execute(select(IdentityScanJobItem).where(IdentityScanJobItem.job_id == job_id)))
+        .scalars()
+        .all()
+    )
+    assert len(items) == 3

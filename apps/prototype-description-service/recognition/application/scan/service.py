@@ -68,43 +68,39 @@ class ScanService:
             media_sources=media_sources,
         )
 
-    async def process_scan_job(
-        self,
-        *,
-        tenant_id: str,
-        job_id: uuid.UUID,
-        media_ids: Iterable[str],
-        media_sources: Iterable[str] | None = None,
-    ) -> IdentityScanJob:
-        """Process an existing scan job id and persist embeddings.
-
-        This is used by the async queue worker path.
-
-        Args:
-            tenant_id: Tenant identifier.
-            job_id: Existing scan job UUID to update.
-            media_ids: List of media IDs for tracking/persistence.
-            media_sources: Optional list of URLs/sources for the detector.
-
-        Returns:
-            Updated IdentityScanJob.
-        """
-        media_ids_list = list(media_ids)
-        sources_list = list(media_sources) if media_sources else media_ids_list
-        source_to_media_id = dict(zip(sources_list, media_ids_list, strict=False))
-
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        started_at = datetime.now(tz=UTC)
+    async def mark_job_running(self, job_id: uuid.UUID) -> IdentityScanJob:
+        """Mark a scan job as running."""
         scan_job = await self._session.get(IdentityScanJob, job_id)
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")
+
         scan_job.status = "running"
-        scan_job.started_at = started_at
-        scan_job.total_media = len(media_ids_list)
-        scan_job.media_ids = [_extract_media_id(mid) for mid in media_ids_list]
-        await self._session.flush()
+        scan_job.started_at = datetime.now(tz=UTC)
+        await self._session.commit()
+        return scan_job
+
+    async def save_job_results(
+        self,
+        *,
+        job_id: uuid.UUID,
+        tenant_id: str,
+        media_ids: Iterable[str],
+        media_sources: Iterable[str] | None,
+        detections: list[FaceDetection],
+    ) -> IdentityScanJob:
+        """Persist detection results and mark job as completed."""
+        media_ids_list = list(media_ids)
+        sources_list = list(media_sources) if media_sources else media_ids_list
+        source_to_media_id = dict(zip(sources_list, media_ids_list, strict=False))
+        tenant_uuid = uuid.UUID(str(tenant_id))
+
+        scan_job = await self._session.get(IdentityScanJob, job_id)
+        if scan_job is None:
+            raise RuntimeError(f"scan job not found: {job_id}")
 
         media_int_ids = [_extract_media_id(mid) for mid in media_ids_list]
+
+        # Delete old identities for these media items
         await self._session.execute(
             delete(MediaIdentity).where(
                 MediaIdentity.tenant_id == tenant_uuid,
@@ -112,8 +108,7 @@ class ScanService:
             )
         )
 
-        detections: list[FaceDetection] = await self._detector.detect(sources_list)
-
+        # Generate embeddings if needed
         detections_needing_embeddings = [d for d in detections if d.embedding is None]
         if detections_needing_embeddings:
             face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
@@ -158,6 +153,29 @@ class ScanService:
         scan_job.completed_at = datetime.now(tz=UTC)
         await self._session.commit()
         return scan_job
+
+    async def process_scan_job(
+        self,
+        *,
+        tenant_id: str,
+        job_id: uuid.UUID,
+        media_ids: Iterable[str],
+        media_sources: Iterable[str] | None = None,
+    ) -> IdentityScanJob:
+        """Process an existing scan job id and persist embeddings.
+
+        Optimized to release connection during inference if called granularly,
+        but backward compatible for synchronous calls.
+        """
+        # Legacy/Monolithic wrapper
+        await self.mark_job_running(job_id)
+
+        sources_list = list(media_sources) if media_sources else list(media_ids)
+        detections = await self._detector.detect(sources_list)
+
+        return await self.save_job_results(
+            job_id=job_id, tenant_id=tenant_id, media_ids=media_ids, media_sources=media_sources, detections=detections
+        )
 
     async def process_media_item(
         self,

@@ -100,3 +100,16 @@ async def test_progress_updates_completed_and_total() -> None:
 
     assert updated.progress_completed == 3
     assert updated.progress_total == 10
+
+
+@pytest.mark.asyncio
+async def test_update_job_message_persists_message() -> None:
+    service = _make_service()
+    repo = service.repository
+    assert isinstance(repo, InMemoryJobRepo)
+
+    job = await service.create_job(JobType.ANALYZE, tenant_id="tenant-1", total=1)
+    updated = await service.update_job_message(job.id, "Queueing 0/1 items")
+
+    assert updated.message == "Queueing 0/1 items"
+    assert repo.jobs[job.id].message == "Queueing 0/1 items"

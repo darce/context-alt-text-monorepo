@@ -7,9 +7,10 @@ Scaffold for Phase 7.3 suggestion persistence (TDD first).
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentitySuggestion as SuggestionModel
@@ -66,6 +67,10 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                 existing_suggestion.representative_similarity = _clamp_similarity(payload.representative_similarity)
                 existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
                 existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
+                if payload.refreshed_at:
+                    existing_suggestion.refreshed_at = payload.refreshed_at
+                if payload.source:
+                    existing_suggestion.source = payload.source
                 await self._session.flush()
                 await self._session.refresh(existing_suggestion)
             return self._to_domain(existing_suggestion)
@@ -78,6 +83,8 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             avg_member_similarity=_clamp_similarity(payload.member_similarity),
             confidence_score=_clamp_similarity(payload.confidence_score),
             resolution=SuggestionStatus.PENDING.value,
+            refreshed_at=payload.refreshed_at,
+            source=payload.source,
         )
         self._session.add(model)
         await self._session.flush()
@@ -175,6 +182,111 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         )
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
+
+    async def bulk_update_status(
+        self,
+        tenant_id: str,
+        suggestion_ids: Sequence[str],
+        status: SuggestionStatus,
+    ) -> int:
+        """Update status for multiple suggestions in one call.
+
+        Args:
+            tenant_id: Tenant UUID string.
+            suggestion_ids: Suggestion UUIDs to update.
+            status: Status to apply.
+
+        Returns:
+            Count of suggestions updated.
+
+        Raises:
+            NotImplementedError: Until bulk update behavior is defined.
+        """
+        if not suggestion_ids:
+            return 0
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if not tenant_uuid:
+            return 0
+        ids = [_coerce_uuid(item) for item in suggestion_ids]
+        suggestion_uuids = [item for item in ids if item is not None]
+        if not suggestion_uuids:
+            return 0
+        stmt = (
+            update(SuggestionModel)
+            .where(SuggestionModel.tenant_id == tenant_uuid)
+            .where(SuggestionModel.id.in_(suggestion_uuids))
+            .values(
+                resolution=status.value,
+                resolved_at=datetime.now(tz=UTC),
+            )
+        )
+        result = await self._session.execute(stmt)
+        rowcount = int(getattr(result, "rowcount", 0) or 0)
+        await self._session.flush()
+        return rowcount
+
+    async def upsert_by_identity_cluster(
+        self,
+        tenant_id: str,
+        payload: SuggestionCreateData,
+    ) -> AssignmentSuggestion:
+        """Create or update a suggestion for the identity+cluster pair.
+
+        Args:
+            tenant_id: Tenant UUID string.
+            payload: Suggestion data (identity, cluster, scores).
+
+        Returns:
+            The created or updated suggestion.
+
+        Raises:
+            NotImplementedError: Until upsert behavior is defined.
+        """
+        tenant_uuid = _coerce_uuid(tenant_id)
+        identity_uuid = _coerce_uuid(payload.identity_id)
+        cluster_uuid = _coerce_uuid(payload.cluster_id)
+        if not all([tenant_uuid, identity_uuid, cluster_uuid]):
+            raise ValueError("tenant_id, identity_id, and cluster_id must be valid UUID-compatible strings")
+
+        assert tenant_uuid is not None and identity_uuid is not None and cluster_uuid is not None
+
+        await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
+
+        stmt = (
+            select(SuggestionModel)
+            .where(SuggestionModel.tenant_id == tenant_uuid)
+            .where(SuggestionModel.identity_id == identity_uuid)
+            .where(SuggestionModel.suggested_cluster_id == cluster_uuid)
+        )
+        result = await self._session.execute(stmt)
+        existing = result.scalar_one_or_none()
+        if existing:
+            if existing.resolution == SuggestionStatus.PENDING.value:
+                existing.representative_similarity = _clamp_similarity(payload.representative_similarity)
+                existing.avg_member_similarity = _clamp_similarity(payload.member_similarity)
+                existing.confidence_score = _clamp_similarity(payload.confidence_score)
+                existing.refreshed_at = payload.refreshed_at or datetime.now(tz=UTC)
+                if payload.source:
+                    existing.source = payload.source
+                await self._session.flush()
+                await self._session.refresh(existing)
+            return self._to_domain(existing)
+
+        model = SuggestionModel(
+            tenant_id=tenant_uuid,
+            identity_id=identity_uuid,
+            suggested_cluster_id=cluster_uuid,
+            representative_similarity=_clamp_similarity(payload.representative_similarity),
+            avg_member_similarity=_clamp_similarity(payload.member_similarity),
+            confidence_score=_clamp_similarity(payload.confidence_score),
+            resolution=SuggestionStatus.PENDING.value,
+            refreshed_at=payload.refreshed_at,
+            source=payload.source,
+        )
+        self._session.add(model)
+        await self._session.flush()
+        await self._session.refresh(model)
+        return self._to_domain(model)
 
     def _to_domain(self, model: SuggestionModel) -> AssignmentSuggestion:
         """Convert ORM model to domain object."""

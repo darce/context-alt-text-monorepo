@@ -52,8 +52,10 @@ from recognition.application.orchestration.incremental_clustering import (
     get_chunk_size as get_chunk_size_op,
 )
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.suggestions.service import SuggestionRefreshReason
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.locator import IdentityLocator
+from recognition.domain.repositories import IdentityClusterBlockRepository
 from recognition.observability import ClusteringLogger, DecisionType
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
@@ -67,6 +69,14 @@ class SuggestionService(Protocol):
     async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None:
         """Create a suggestion record for later human review."""
 
+    async def refresh_for_identity(
+        self,
+        *,
+        identity_id: str,
+        reason: SuggestionRefreshReason,
+    ) -> list[object]:
+        """Refresh suggestions for a specific identity."""
+
 
 class ClusterService:
     """Coordinates discovery outputs, gate evaluation, and persistence."""
@@ -79,6 +89,7 @@ class ClusterService:
         graph_discovery: GraphDiscovery,
         assignment_writer: AssignmentWriter,
         suggestion_service: SuggestionService,
+        block_repository: IdentityClusterBlockRepository | None = None,
         logger: ClusteringLogger | None = None,
         visualizer=None,
         decision_store=None,
@@ -91,6 +102,7 @@ class ClusterService:
         self.graph_discovery = graph_discovery
         self.assignment_writer = assignment_writer
         self.suggestion_service = suggestion_service
+        self.block_repository = block_repository
         self.logger = logger
         self.visualizer = visualizer
         self.decision_store = decision_store
@@ -389,7 +401,7 @@ class ClusterService:
             identity_id=identity_id,
         )
 
-    async def remove_identity_from_cluster(self, identity_id: str) -> bool:
+    async def remove_identity_from_cluster(self, identity_id: str, recompute: bool = True) -> bool:
         """Remove an identity from its current cluster (make it an orphan)."""
         tenant_id_for_logging = getattr(self.assignment_writer._members, "_tenant_id", None) or getattr(
             self.assignment_writer._members, "tenant_id", None
@@ -408,6 +420,8 @@ class ClusterService:
             identity_id=identity_id,
             member_repo=self.assignment_writer._members,
             cluster_repo=self.assignment_writer._clusters,
+            assignment_writer=self.assignment_writer,
+            recompute=recompute,
             tenant_id_for_logging=tenant_id_for_logging,
             media_id=media_id,
         )
@@ -416,13 +430,22 @@ class ClusterService:
         self,
         cluster_id: str,
         n_clusters: int = 0,
+        anchor_identity_id: str | None = None,
+        split_mode: str | None = None,
+        recompute: bool = True,
     ) -> tuple[list[str], list[int]]:
         """Split a mixed cluster using hierarchical clustering."""
         return await split_cluster_op(
             cluster_id=cluster_id,
             n_clusters=n_clusters,
+            anchor_identity_id=anchor_identity_id,
+            split_mode=split_mode,
             session=self._session,
             cluster_repo=self.assignment_writer._clusters,
             member_repo=self.assignment_writer._members,
+            block_repo=self.block_repository,
+            suggestion_service=self.suggestion_service,
+            assignment_writer=self.assignment_writer,
+            recompute=recompute,
             clustering_logger=self.logger,
         )

@@ -324,6 +324,39 @@ The WordPress plugin calls the recognition service via the `/recognition` prefix
   ]
   ```
 
+### Split Cluster (sync or async)
+
+- **Endpoint:** `POST /recognition/clusters/{cluster_id}/split`
+- **Headers:** `X-Tenant-ID`
+- **Body:**
+  ```json
+  {
+    "tenant_id": "e761e2dc-0d2b-4d4d-8a16-3b72f2e4a652",
+    "n_clusters": 2,
+    "anchor_identity_id": "9b2e5a7b-1234-5678-9abc-ff0011223344",
+    "split_mode": "anchor",
+    "mode": "async"
+  }
+  ```
+- **Response (200 sync):**
+  ```json
+  {
+    "new_cluster_ids": ["cluster-abc123"],
+    "moved_counts": [3],
+    "new_cluster_id": "cluster-abc123",
+    "moved_count": 3
+  }
+  ```
+- **Response (202 async):**
+  ```json
+  {
+    "job_id": "b4a5b5b2-6a16-4e3a-8b2a-8c3e3b0a1234",
+    "status": "pending",
+    "message": "Split operation queued"
+  }
+  ```
+- **Notes:** When `mode="async"`, poll `GET /recognition/jobs/{job_id}` for completion.
+
 **Headers:**
 
 - `ETag: "def456"` (new ETag value)

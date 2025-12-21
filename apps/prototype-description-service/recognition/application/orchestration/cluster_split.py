@@ -7,6 +7,9 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
+from dataclasses import dataclass
+from enum import Enum
+from typing import Protocol
 
 import numpy as np
 from sqlalchemy import select
@@ -14,21 +17,79 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.suggestions.service import SuggestionRefreshReason
+from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.cluster import IdentityCluster
-from recognition.domain.repositories import ClusterRepository, MemberRepository
+from recognition.domain.repositories import (
+    ClusterRepository,
+    IdentityClusterBlockRepository,
+    MemberRepository,
+)
 from recognition.observability import ClusteringLogger
 from recognition.shared.ids import generate_id
+from recognition.shared.similarity import compute_face_similarity
 
 logger = logging.getLogger(__name__)
+
+
+class SplitStrategy(str, Enum):
+    """Strategy used to split a cluster."""
+
+    HIERARCHICAL = "hierarchical"
+    ANCHOR_FORCED = "anchor_forced"
+
+
+class SplitScope(str, Enum):
+    """Scope hint for split operations."""
+
+    CLUSTER = "cluster"
+    MEDIA = "media"
+    ANCHOR = "anchor"
+
+
+class SuggestionService(Protocol):
+    async def refresh_for_identity(
+        self,
+        *,
+        identity_id: str,
+        reason: SuggestionRefreshReason,
+    ) -> list[object]:
+        """Refresh suggestions for a specific identity."""
+
+
+@dataclass(frozen=True)
+class SplitPlan:
+    """Plan describing how a user-initiated split should be executed.
+
+    Attributes:
+        cluster_id: Cluster UUID to split.
+        n_clusters: Desired number of clusters (0 = auto-detect, 2+ = fixed).
+        anchor_identity_id: Identity UUID that should retain the original label.
+        strategy: Split strategy to apply.
+        split_mode: Optional mode hint (ex: "anchor", "media").
+    """
+
+    cluster_id: str
+    n_clusters: int
+    anchor_identity_id: str | None
+    strategy: SplitStrategy
+    split_mode: str | None = None
 
 
 async def split_cluster(
     *,
     cluster_id: str,
     n_clusters: int,
+    anchor_identity_id: str | None = None,
+    split_mode: str | None = None,
     session: AsyncSession | None,
     cluster_repo: ClusterRepository,
     member_repo: MemberRepository,
+    block_repo: IdentityClusterBlockRepository | None = None,
+    suggestion_service: SuggestionService | None = None,
+    assignment_writer: AssignmentWriter | None = None,
+    recompute: bool = True,
     clustering_logger: ClusteringLogger | None = None,
 ) -> tuple[list[str], list[int]]:
     """Split a mixed cluster using hierarchical clustering."""
@@ -63,11 +124,37 @@ async def split_cluster(
     if len(identities) < 2:
         return [], []
 
+    identity_lookup = {str(identity.id).lower(): identity for identity in identities}
+    anchor_key = None
+    if anchor_identity_id:
+        anchor_key = anchor_identity_id.lower()
+        if anchor_key not in identity_lookup and identity_lookup:
+            anchor_key = next(iter(identity_lookup.keys()))
+            logger.info(
+                "Split cluster %s: anchor identity not found, falling back to %s",
+                cluster_id,
+                anchor_key,
+            )
+    if split_mode:
+        logger.info("Split cluster %s: split_mode=%s", cluster_id, split_mode)
+
     # 2. Use HierarchicalClustering to split identities
     hierarchical = HierarchicalClustering(distance_threshold=0.30)
     clusters_by_label = hierarchical.split_identities(identities, n_clusters)
 
     # Check if we found multiple groups
+    if anchor_key and n_clusters >= 2 and len(clusters_by_label) <= 1:
+        clusters_by_label = _force_anchor_split(
+            identities,
+            anchor_key,
+            similarity_floor=get_recognition_settings().clustering.anchor_split_similarity_floor,
+        )
+        logger.info(
+            "Split cluster %s: forced anchor split for anchor=%s",
+            cluster_id,
+            anchor_key,
+        )
+
     if len(clusters_by_label) <= 1:
         logger.info("Split cluster %s: All faces similar enough to stay together, nothing to split", cluster_id)
         return [], []
@@ -109,7 +196,11 @@ async def split_cluster(
 
     # Keep user labels on the group that best matches the original cluster.
     label_owner = None
-    if user_label and original_cluster.representative_identity_id:
+    if anchor_key:
+        anchor_label = identity_to_label.get(anchor_key)
+        if anchor_label is not None:
+            label_owner = anchor_label
+    if user_label and label_owner is None and original_cluster.representative_identity_id:
         rep_id = original_cluster.representative_identity_id.lower()
         label_owner = identity_to_label.get(rep_id)
 
@@ -138,6 +229,14 @@ async def split_cluster(
 
     if user_label and label_owner is None:
         label_owner = largest_label
+
+    if anchor_key and label_owner is not None and label_owner in label_counts:
+        if label_owner != largest_label:
+            sorted_labels = [
+                (label_owner, label_counts[label_owner]),
+                *[item for item in sorted_labels if item[0] != label_owner],
+            ]
+        largest_label = label_owner
 
     label_assignments: dict[int, str] = {}
     if user_label:
@@ -168,6 +267,8 @@ async def split_cluster(
     new_cluster_ids: list[str] = []
     moved_counts: list[int] = []
     split_details: list[dict[str, object]] = []
+    remaining_identity_ids = [ids[i] for i, lbl in enumerate(labels) if lbl == largest_label]
+    moved_identity_ids_all: list[str] = []
 
     # 4. Create new clusters for each non-largest group
     for label, count in sorted_labels[1:]:  # Skip largest (index 0)
@@ -198,6 +299,22 @@ async def split_cluster(
         for identity_id in identity_ids_for_group:
             await member_repo.remove_by_identity_id(identity_id)
             await member_repo.add_member(new_cluster_id, identity_id=identity_id, similarity=1.0)
+            if block_repo is not None:
+                await block_repo.add_block(
+                    tenant_id=original_cluster.tenant_id,
+                    identity_id=identity_id,
+                    blocked_cluster_id=cluster_id,
+                    reason="manual_split",
+                )
+            moved_identity_ids_all.append(identity_id)
+        if block_repo is not None and remaining_identity_ids:
+            for identity_id in remaining_identity_ids:
+                await block_repo.add_block(
+                    tenant_id=original_cluster.tenant_id,
+                    identity_id=identity_id,
+                    blocked_cluster_id=new_cluster_id,
+                    reason="manual_split",
+                )
 
         new_cluster_ids.append(new_cluster_id)
         moved_counts.append(count)
@@ -239,6 +356,31 @@ async def split_cluster(
         remaining_count,
     )
 
+    if assignment_writer and new_cluster_ids and recompute:
+        affected_cluster_ids = [cluster_id, *new_cluster_ids]
+        recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
+        if callable(recompute_reps):
+            for affected_id in affected_cluster_ids:
+                await recompute_reps(affected_id)
+        recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
+        if callable(recompute_centroid):
+            for affected_id in affected_cluster_ids:
+                await recompute_centroid(affected_id)
+        refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+        if callable(refresh_view):
+            await refresh_view()
+
+    if suggestion_service and (moved_identity_ids_all or anchor_key):
+        impacted_ids = {*(moved_identity_ids_all), *(remaining_identity_ids if anchor_key else [])}
+        if anchor_key:
+            impacted_ids.add(anchor_key)
+        for identity_id in impacted_ids:
+            with contextlib.suppress(Exception):
+                await suggestion_service.refresh_for_identity(
+                    identity_id=identity_id,
+                    reason=SuggestionRefreshReason.MANUAL_SPLIT,
+                )
+
     # Log the split event
     if clustering_logger and new_cluster_ids:
         with contextlib.suppress(Exception):
@@ -261,3 +403,48 @@ async def split_cluster(
     )
 
     return new_cluster_ids, moved_counts
+
+
+def _force_anchor_split(
+    identities: list[MediaIdentityModel],
+    anchor_identity_id: str,
+    *,
+    similarity_floor: float | None = None,
+) -> dict[int, list[MediaIdentityModel]]:
+    """Force a two-way split around an anchor identity."""
+    if similarity_floor is None:
+        similarity_floor = get_recognition_settings().clustering.anchor_split_similarity_floor
+
+    anchor = None
+    remaining: list[MediaIdentityModel] = []
+    for identity in identities:
+        if str(identity.id).lower() == anchor_identity_id:
+            anchor = identity
+        else:
+            remaining.append(identity)
+    if anchor is None or not remaining:
+        return {0: identities}
+
+    anchor_vec = np.asarray(anchor.embedding, dtype=np.float32)
+    anchor_group: list[MediaIdentityModel] = [anchor]
+    other_group: list[MediaIdentityModel] = []
+    similarity_by_identity: list[tuple[MediaIdentityModel, float]] = []
+
+    for identity in remaining:
+        identity_vec = np.asarray(identity.embedding, dtype=np.float32)
+        similarity = compute_face_similarity(anchor_vec, identity_vec)
+        similarity_by_identity.append((identity, similarity))
+        if similarity >= similarity_floor:
+            anchor_group.append(identity)
+        else:
+            other_group.append(identity)
+
+    if not other_group:
+        farthest_identity, _similarity = min(similarity_by_identity, key=lambda item: item[1])
+        anchor_group = [member for member in anchor_group if member is not farthest_identity]
+        other_group = [farthest_identity]
+
+    if not other_group:
+        return {0: identities}
+
+    return {0: anchor_group, 1: other_group}

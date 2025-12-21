@@ -92,6 +92,13 @@ async def accept_suggestion(
     suggestion = await suggestion_service.accept(suggestion_id)
     if not suggestion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found")
+    resolve_exclusive = getattr(suggestion_service, "resolve_for_identity_exclusive", None)
+    if callable(resolve_exclusive):
+        await resolve_exclusive(
+            identity_id=suggestion.identity_id,
+            accepted_cluster_id=suggestion.cluster_id,
+            reason="manual_accept",
+        )
     return _to_response(suggestion)
 
 

@@ -6,17 +6,38 @@ from __future__ import annotations
 
 import logging
 import uuid
+from datetime import UTC, datetime
+from enum import Enum
 
+import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import MediaIdentity as MediaIdentityModel
 from db.models import RecognitionRun
 from recognition.application.assignment import AssignmentCandidate
-from recognition.domain.repositories import ClusterRepository, SuggestionCreateData, SuggestionRepository
+from recognition.application.settings import ClusteringSettings
+from recognition.config import get_settings as get_recognition_settings
+from recognition.domain.repositories import (
+    ClusterRepository,
+    IdentityClusterBlockRepository,
+    SuggestionCreateData,
+    SuggestionRepository,
+)
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 from recognition.observability.recognition_runs import RecognitionRunContext
+from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 logger = logging.getLogger(__name__)
+
+
+class SuggestionRefreshReason(str, Enum):
+    """Reason code for refreshing suggestion candidates."""
+
+    MANUAL_SPLIT = "manual_split"
+    WRONG_PERSON = "wrong_person"
+    MANUAL_ASSIGN = "manual_assign"
+    MANUAL_MERGE = "manual_merge"
 
 
 class SuggestionService:
@@ -30,12 +51,16 @@ class SuggestionService:
         *,
         session: AsyncSession | None = None,
         run_context: RecognitionRunContext | None = None,
+        settings: ClusteringSettings | None = None,
+        block_repository: IdentityClusterBlockRepository | None = None,
     ) -> None:
         self._repository = repository
         self._tenant_id = tenant_id
         self._cluster_repository = cluster_repository
         self._session = session
         self._run_context = run_context
+        self._settings = settings or get_recognition_settings().clustering
+        self._block_repository = block_repository
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.
@@ -155,6 +180,156 @@ class SuggestionService:
             logger.warning("[suggestions] Failed to update scores: suggestion_id=%s not found", suggestion_id)
             return None
 
+    async def refresh_for_identity(
+        self,
+        *,
+        identity_id: str,
+        reason: SuggestionRefreshReason,
+    ) -> list[AssignmentSuggestion]:
+        """Recompute suggestion candidates for a single identity.
+
+        Args:
+            identity_id: Identity UUID string to refresh suggestions for.
+            reason: Trigger reason for the refresh.
+
+        Returns:
+            List of refreshed suggestions (pending state).
+
+        Raises:
+            NotImplementedError: Until refresh logic is implemented.
+        """
+        if self._session is None or self._cluster_repository is None:
+            return []
+
+        try:
+            tenant_uuid = uuid.UUID(str(self._tenant_id))
+            identity_uuid = uuid.UUID(str(identity_id))
+        except ValueError:
+            return []
+
+        model = await self._session.get(MediaIdentityModel, identity_uuid)
+        if model is None or model.tenant_id != tenant_uuid or model.embedding is None:
+            return []
+
+        identity_embedding = extract_face_embedding(np.asarray(model.embedding, dtype=np.float32))
+        if identity_embedding.size == 0:
+            return []
+
+        clusters = await self._cluster_repository.get_by_tenant(self._tenant_id, labeled_only=True)
+        if not clusters:
+            return []
+
+        now = datetime.now(tz=UTC)
+        suggestions: list[AssignmentSuggestion] = []
+        for cluster in clusters:
+            if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
+                continue
+            if not cluster.id:
+                continue
+            cluster_id = cluster.id
+
+            if self._block_repository is not None and await self._block_repository.is_blocked(
+                tenant_id=self._tenant_id,
+                identity_id=identity_id,
+                cluster_id=cluster_id,
+            ):
+                continue
+
+            reps = await self._cluster_repository.get_all_representatives(cluster_id)
+            if not reps:
+                continue
+
+            best_similarity = 0.0
+            for rep in reps:
+                rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
+                similarity = compute_face_similarity(identity_embedding, rep_vec)
+                best_similarity = max(best_similarity, similarity)
+
+            if best_similarity < self._settings.suggestion_floor:
+                continue
+            if best_similarity >= self._settings.suggestion_ceiling:
+                continue
+
+            payload = SuggestionCreateData(
+                identity_id=identity_id,
+                cluster_id=cluster_id,
+                representative_similarity=best_similarity,
+                member_similarity=best_similarity,
+                confidence_score=best_similarity,
+                source=reason.value,
+                refreshed_at=now,
+            )
+            suggestion = await self._repository.upsert_by_identity_cluster(self._tenant_id, payload)
+            suggestions.append(suggestion)
+
+        return suggestions
+
+    async def resolve_for_identity_exclusive(
+        self,
+        *,
+        identity_id: str,
+        accepted_cluster_id: str,
+        reason: str | None = None,
+    ) -> int:
+        """Resolve suggestions for an identity, accepting one and rejecting the rest.
+
+        Args:
+            identity_id: Identity UUID string to resolve suggestions for.
+            accepted_cluster_id: Cluster UUID string to accept.
+            reason: Optional reason for audit logging.
+
+        Returns:
+            Count of suggestions updated.
+
+        Raises:
+            NotImplementedError: Until resolution logic is implemented.
+        """
+        suggestions = await self._repository.get_by_identity(self._tenant_id, identity_id)
+        if not suggestions:
+            return 0
+
+        pending = [s for s in suggestions if s.status == SuggestionStatus.PENDING]
+        if not pending:
+            return 0
+
+        accepted_id = None
+        for suggestion in pending:
+            if suggestion.cluster_id == accepted_cluster_id:
+                accepted_id = suggestion.id
+                break
+
+        updated = 0
+        if accepted_id is not None:
+            await self._repository.update_status(self._tenant_id, accepted_id, SuggestionStatus.ACCEPTED)
+            updated += 1
+            await self._ensure_run_context()
+            self._emit_suggestion_resolved_event(
+                identity_id=identity_id,
+                cluster_id=accepted_cluster_id,
+                resolution="accepted",
+                suggestion_id=accepted_id,
+                source=reason or "manual_accept",
+            )
+
+        reject_ids = [s.id for s in pending if s.id != accepted_id]
+        if reject_ids:
+            updated += await self._repository.bulk_update_status(
+                self._tenant_id,
+                reject_ids,
+                SuggestionStatus.REJECTED,
+            )
+            await self._ensure_run_context()
+            for suggestion_id in reject_ids:
+                self._emit_suggestion_resolved_event(
+                    identity_id=identity_id,
+                    cluster_id=accepted_cluster_id,
+                    resolution="rejected",
+                    suggestion_id=suggestion_id,
+                    source=reason or "manual_reject",
+                )
+
+        return updated
+
     async def list_for_identity(self, identity_id: str) -> list[AssignmentSuggestion]:
         """Return suggestions for an identity, scoped to the service tenant."""
         return await self._repository.get_by_identity(self._tenant_id, identity_id)
@@ -248,4 +423,4 @@ class SuggestionService:
         return resolved_count
 
 
-__all__ = ["SuggestionService"]
+__all__ = ["SuggestionRefreshReason", "SuggestionService"]

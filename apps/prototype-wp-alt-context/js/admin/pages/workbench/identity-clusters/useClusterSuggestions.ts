@@ -149,10 +149,7 @@ export const useClusterSuggestions = ({
 
   // Compute existing labels from clusters (only user-labeled)
   const existingLabels = React.useMemo(
-    () =>
-      (existingClusters ?? [])
-        .filter((c: ClusterSummary) => c.label)
-        .map((c: ClusterSummary) => c.label),
+    () => (existingClusters ?? []).filter((c: ClusterSummary) => c.label).map((c: ClusterSummary) => c.label),
     [existingClusters],
   );
 

@@ -16,6 +16,7 @@ import { ClusterEditForm } from './ClusterEditForm';
 import { MergeUndoBanner } from './MergeUndoBanner';
 import { DebugMetricsPanel } from './DebugMetricsPanel';
 import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
+import { AnchorSelectionModal } from './AnchorSelectionModal';
 
 interface IdentityClusterItemProps {
   cluster: ClusterGroup;
@@ -46,6 +47,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   const labelText = derivedLabel ?? __('Unlabeled identity', 'alt-context');
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
+  const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
 
   // State management
   const {
@@ -73,6 +75,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   // Mutations
   const mutations = useClusterMutations({
     clusterId: editableClusterId,
+    identityCount: cluster.members.length,
     currentLabel: cluster.label,
     derivedLabel,
     onRenameSuccess: onSaveSuccess,
@@ -180,13 +183,22 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       return;
     }
 
-    // Force split into at least 2 clusters when user explicitly requests it.
-    // This ensures the split actually happens even if faces appear similar.
-    // The hierarchical algorithm will find the best 2-way split.
-    if (window.confirm(__('Split this cluster into 2 groups based on face similarity?', 'alt-context'))) {
-      mutations.split(cluster.clusterId, 2);
+    if (cluster.members.length < 2) {
+      setError(__('Need at least two identities to split.', 'alt-context'));
+      return;
     }
+    setIsAnchorModalOpen(true);
   };
+
+  const handleAnchorSelect = React.useCallback(
+    (selectedIdentityId: string) => {
+      if (!cluster.clusterId) {
+        return;
+      }
+      mutations.split(cluster.clusterId, 2, selectedIdentityId);
+    },
+    [cluster.clusterId, mutations],
+  );
 
   return (
     <div className="acx-identity-cluster">
@@ -251,6 +263,14 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       {editState.error && <p className="acx-identity-cluster__error">{editState.error}</p>}
 
       <DebugMetricsPanel metrics={representative?.debug_metrics} />
+
+      <AnchorSelectionModal
+        isOpen={isAnchorModalOpen}
+        label={cluster.label}
+        members={cluster.members}
+        onClose={() => setIsAnchorModalOpen(false)}
+        onSelectAnchor={handleAnchorSelect}
+      />
     </div>
   );
 };

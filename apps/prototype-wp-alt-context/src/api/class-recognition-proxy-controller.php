@@ -474,6 +474,10 @@ class RecognitionProxyController {
 			'target_cluster_id' => $target ? sanitize_text_field( (string) $target ) : null,
 			'user_id'           => get_current_user_id(),
 		);
+		$block_from_cluster = $request->get_param( 'block_from_cluster' );
+		if ( null !== $block_from_cluster ) {
+			$payload['block_from_cluster'] = rest_sanitize_boolean( $block_from_cluster );
+		}
 
 		return $this->proxy_request( 'POST', '/recognition/clusters/reassign', $payload );
 	}
@@ -536,6 +540,14 @@ class RecognitionProxyController {
 			'tenant_id'  => $this->get_tenant_id(),
 			'n_clusters' => $n_clusters,
 		);
+		$anchor_identity_id = sanitize_text_field( (string) $request->get_param( 'anchor_identity_id' ) );
+		if ( '' !== $anchor_identity_id ) {
+			$payload['anchor_identity_id'] = $anchor_identity_id;
+		}
+		$split_mode = sanitize_text_field( (string) $request->get_param( 'split_mode' ) );
+		if ( '' !== $split_mode ) {
+			$payload['split_mode'] = $split_mode;
+		}
 
 		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/split', $cluster_id ), $payload );
 	}

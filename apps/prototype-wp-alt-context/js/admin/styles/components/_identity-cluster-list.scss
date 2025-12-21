@@ -181,6 +181,62 @@
   }
 }
 
+.acx-anchor-modal {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+    gap: 12px;
+  }
+
+  &__option {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 6px;
+    padding: 10px 8px;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px;
+    background: #f8fafc;
+    cursor: pointer;
+
+    &:hover {
+      border-color: #cbd5f5;
+      background: #f1f5f9;
+    }
+  }
+
+  &__thumb {
+    display: block;
+
+    &--placeholder {
+      width: 64px;
+      height: 64px;
+      border-radius: 50%;
+      background: #e2e8f0;
+    }
+  }
+
+  &__meta {
+    font-size: 11px;
+    color: #64748b;
+    text-align: center;
+  }
+
+  &__actions {
+    display: flex;
+    justify-content: flex-end;
+  }
+
+  &__empty {
+    font-size: 13px;
+    color: #64748b;
+  }
+}
+
 // Ensure combobox content has background
 .acx-combobox__content {
   background-color: #fff !important;

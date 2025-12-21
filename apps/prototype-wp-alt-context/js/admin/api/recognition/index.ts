@@ -32,6 +32,7 @@ export type {
   RevertMergeRequest,
   RevertMergeResponse,
   SplitClusterResponse,
+  AsyncSplitClusterResponse,
   CreateClusterForIdentityRequest,
   CreateClusterForIdentityResponse,
   // Suggestion types

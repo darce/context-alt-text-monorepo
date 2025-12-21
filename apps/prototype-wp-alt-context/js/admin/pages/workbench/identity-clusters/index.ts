@@ -22,6 +22,7 @@ export { ClusterEditForm } from './ClusterEditForm';
 export { MergeUndoBanner } from './MergeUndoBanner';
 export { SuggestionReviewPanel } from './SuggestionReviewPanel';
 export { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
+export { AnchorSelectionModal } from './AnchorSelectionModal';
 
 // Hooks
 export { useClusterEditState } from './useClusterEditState';

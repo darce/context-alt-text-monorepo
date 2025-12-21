@@ -55,11 +55,13 @@ export interface MergeClusterResponse {
 export interface ReassignClusterIdentityRequest {
   identityId: string;
   targetClusterId?: string | null;
+  blockFromCluster?: boolean;
 }
 
 export interface ReassignClusterFaceRequest {
   faceId: string;
   targetClusterId?: string | null;
+  blockFromCluster?: boolean;
 }
 
 export interface RevertMergeRequest {
@@ -85,6 +87,19 @@ export interface SplitClusterResponse {
   new_cluster_id: string | null;
   /** @deprecated Use moved_counts[0] - Legacy field for backward compatibility */
   moved_count: number;
+}
+
+export interface AsyncSplitClusterResponse {
+  job_id: string;
+  status: string;
+  message: string;
+}
+
+export interface SplitClusterRequest {
+  nClusters?: number;
+  anchorIdentityId?: string;
+  splitMode?: 'auto' | 'forced';
+  mode?: 'sync' | 'async';
 }
 
 export interface CreateClusterForIdentityRequest {

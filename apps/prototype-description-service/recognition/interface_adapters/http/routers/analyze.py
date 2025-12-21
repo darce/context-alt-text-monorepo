@@ -13,6 +13,7 @@ from datetime import UTC, datetime
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
@@ -117,6 +118,13 @@ async def analyze_media(
                 await set_tenant_context(session, tenant_uuid)
             except Exception as exc:  # pragma: no cover - validation should handle
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
+            if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") != "1" and not await _scan_worker_available(
+                session
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+                    detail="Scan worker unavailable. Start the scan worker or enable inline processing.",
+                )
         if auth and auth.tenant_claim and auth.tenant_claim != str(request.tenant_id):
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -460,3 +468,23 @@ def _is_postgres_session(session) -> bool:
     dialect = getattr(bind, "dialect", None) if bind else None
     name = getattr(dialect, "name", "")
     return name.startswith("postgres")
+
+
+async def _scan_worker_available(session: AsyncSession) -> bool:
+    """Return True when a scan worker connection is visible."""
+    try:
+        result = await session.execute(
+            text(
+                """
+                SELECT 1
+                FROM pg_stat_activity
+                WHERE datname = current_database()
+                  AND application_name = :app_name
+                LIMIT 1
+                """
+            ),
+            {"app_name": "scan_worker"},
+        )
+        return result.scalar_one_or_none() is not None
+    except Exception:
+        return False

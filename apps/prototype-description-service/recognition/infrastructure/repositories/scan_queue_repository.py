@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 import uuid
 from collections.abc import Iterable, Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 from typing import cast as typing_cast
 
@@ -189,6 +189,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
 
         dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
         if getattr(dialect, "name", "").startswith("postgres"):
+            stale_before = now - timedelta(seconds=stale_after_seconds)
             reclaim_sql = text(
                 """
                 UPDATE identity_scan_job_items
@@ -196,24 +197,24 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                     started_at = NULL
                 WHERE status = 'processing'
                   AND started_at IS NOT NULL
-                  AND started_at < (:now - (:stale_after || ' seconds')::interval)
+                  AND started_at < :stale_before
                   AND attempts < :max_attempts
                 """
             )
             result = await self._session.execute(
                 reclaim_sql,
-                {"now": now, "stale_after": stale_after_seconds, "max_attempts": max_attempts},
+                {"stale_before": stale_before, "max_attempts": max_attempts},
             )
             cursor = typing_cast(CursorResult[Any], result)
             return int(cursor.rowcount or 0)
 
-        stale_before = now.timestamp() - stale_after_seconds
+        stale_before_ts = now.timestamp() - stale_after_seconds
         reclaim_stmt = (
             update(IdentityScanJobItem)
             .where(
                 IdentityScanJobItem.status == "processing",
                 IdentityScanJobItem.started_at.is_not(None),
-                sa_cast(func.strftime("%s", IdentityScanJobItem.started_at), Integer) < int(stale_before),
+                sa_cast(func.strftime("%s", IdentityScanJobItem.started_at), Integer) < int(stale_before_ts),
                 IdentityScanJobItem.attempts < max_attempts,
             )
             .values(status="pending", started_at=None)

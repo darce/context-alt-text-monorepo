@@ -8,6 +8,7 @@ import pytest
 
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.domain.cluster import IdentityCluster
+from recognition.infrastructure.repositories import SqlAlchemyIdentityClusterBlockRepository
 from recognition.interface_adapters.http import dependencies
 
 
@@ -319,3 +320,242 @@ async def test_split_cluster_preserves_user_label_for_representative_group(db_se
 
     new_members = await member_repo.get_by_cluster(new_ids[0])
     assert [member.identity_id for member in new_members] == [str(representative.id)]
+
+
+@pytest.mark.asyncio
+async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> None:
+    """Split should keep the user label on the anchor identity's group."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer._clusters
+    member_repo = cluster_service.assignment_writer._members
+
+    embedding_a = [0.0] * 512
+    embedding_a[0] = 1.0
+    embedding_b = [0.0] * 512
+    embedding_b[1] = 1.0
+
+    anchor_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=601,
+        media_url="http://example.test/601.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_a,
+    )
+    group_a_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=602,
+        media_url="http://example.test/602.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_a,
+    )
+    representative = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=603,
+        media_url="http://example.test/603.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_b,
+    )
+    group_b_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=604,
+        media_url="http://example.test/604.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_b,
+    )
+    db_session.add_all([anchor_identity, group_a_identity, representative, group_b_identity])
+    await db_session.flush()
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Casey Jordan",
+            is_labeled=True,
+            identity_count=4,
+            representative_identity_id=str(representative.id),
+            user_confirmed=True,
+            created_at=None,
+        )
+    )
+    for identity in [anchor_identity, group_a_identity, representative, group_b_identity]:
+        await member_repo.add_member(cluster.id, identity_id=str(identity.id), similarity=0.9)
+    await db_session.commit()
+
+    new_ids, _counts = await cluster_service.split_cluster(
+        cluster.id,
+        n_clusters=2,
+        anchor_identity_id=str(anchor_identity.id),
+    )
+
+    assert len(new_ids) == 1
+    anchor_memberships = await member_repo.get_by_identity_id(str(anchor_identity.id))
+    assert anchor_memberships
+    anchor_cluster_id = anchor_memberships[0].cluster_id
+    anchor_cluster = await cluster_repo.get_by_id(anchor_cluster_id)
+
+    assert anchor_cluster is not None
+    assert anchor_cluster.label == "Casey Jordan"
+
+
+@pytest.mark.asyncio
+async def test_split_cluster_forces_two_groups_with_anchor(db_session, tenant) -> None:
+    """Split should force two groups when an anchor is provided and faces are similar."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer._clusters
+    member_repo = cluster_service.assignment_writer._members
+
+    embedding = [0.0] * 512
+    embedding[0] = 1.0
+
+    anchor_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=701,
+        media_url="http://example.test/701.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    other_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=702,
+        media_url="http://example.test/702.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    db_session.add_all([anchor_identity, other_identity])
+    await db_session.flush()
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Jamie Lee",
+            is_labeled=True,
+            identity_count=2,
+            representative_identity_id=str(anchor_identity.id),
+            user_confirmed=True,
+            created_at=None,
+        )
+    )
+    await member_repo.add_member(cluster.id, identity_id=str(anchor_identity.id), similarity=0.9)
+    await member_repo.add_member(cluster.id, identity_id=str(other_identity.id), similarity=0.9)
+    await db_session.commit()
+
+    new_ids, counts = await cluster_service.split_cluster(
+        cluster.id,
+        n_clusters=2,
+        anchor_identity_id=str(anchor_identity.id),
+    )
+
+    assert len(new_ids) == 1
+    assert counts == [1]
+
+    anchor_membership = await member_repo.get_by_identity_id(str(anchor_identity.id))
+    other_membership = await member_repo.get_by_identity_id(str(other_identity.id))
+    assert anchor_membership and other_membership
+    assert anchor_membership[0].cluster_id != other_membership[0].cluster_id
+
+    anchor_cluster = await cluster_repo.get_by_id(anchor_membership[0].cluster_id)
+    assert anchor_cluster is not None
+    assert anchor_cluster.label == "Jamie Lee"
+
+
+@pytest.mark.asyncio
+async def test_split_cluster_blocks_moved_identities(db_session, tenant) -> None:
+    """Split should block moved identities from rejoining the original cluster."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer._clusters
+    member_repo = cluster_service.assignment_writer._members
+    block_repo = SqlAlchemyIdentityClusterBlockRepository(db_session, tenant_id=str(tenant.id))
+
+    embedding = [0.0] * 512
+    embedding[0] = 1.0
+
+    anchor_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=703,
+        media_url="http://example.test/703.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    moved_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=704,
+        media_url="http://example.test/704.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    db_session.add_all([anchor_identity, moved_identity])
+    await db_session.flush()
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Taylor Quinn",
+            is_labeled=True,
+            identity_count=2,
+            representative_identity_id=str(anchor_identity.id),
+            user_confirmed=True,
+            created_at=None,
+        )
+    )
+    await member_repo.add_member(cluster.id, identity_id=str(anchor_identity.id), similarity=0.9)
+    await member_repo.add_member(cluster.id, identity_id=str(moved_identity.id), similarity=0.9)
+    await db_session.commit()
+
+    new_ids, _counts = await cluster_service.split_cluster(
+        cluster.id,
+        n_clusters=2,
+        anchor_identity_id=str(anchor_identity.id),
+    )
+
+    assert len(new_ids) == 1
+    new_cluster_id = new_ids[0]
+
+    anchor_membership = await member_repo.get_by_identity_id(str(anchor_identity.id))
+    moved_membership = await member_repo.get_by_identity_id(str(moved_identity.id))
+    assert anchor_membership and moved_membership
+
+    anchor_cluster_id = anchor_membership[0].cluster_id
+    assert await block_repo.is_blocked(
+        tenant_id=str(tenant.id),
+        identity_id=str(moved_identity.id),
+        cluster_id=anchor_cluster_id,
+    )
+    assert await block_repo.is_blocked(
+        tenant_id=str(tenant.id),
+        identity_id=str(anchor_identity.id),
+        cluster_id=new_cluster_id,
+    )

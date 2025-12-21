@@ -35,11 +35,13 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.service import SuggestionService
+from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import SecuritySettings, get_security_settings
 from recognition.domain.job import Job
 from recognition.infrastructure.repositories import (
     SqlAlchemyApiKeyRepository,
     SqlAlchemyClusterRepository,
+    SqlAlchemyIdentityClusterBlockRepository,
     SqlAlchemyJobRepository,
     SqlAlchemyMemberRepository,
     SqlAlchemyScanQueueRepository,
@@ -57,8 +59,8 @@ logger = logging.getLogger(__name__)
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
-    """Provide clustering settings; loads from environment variables."""
-    return ClusteringSettings()
+    """Provide clustering settings from the recognition config."""
+    return get_recognition_settings().clustering
 
 
 _SHARED_ADAPTER = None
@@ -352,7 +354,16 @@ async def get_suggestion_service(
     tenant = tenant_id or ""
     repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
     cluster_repo = SqlAlchemyClusterRepository(session)
-    return SuggestionService(repo, tenant_id=tenant, cluster_repository=cluster_repo, session=session)
+    block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant)
+    settings = get_settings()
+    return SuggestionService(
+        repo,
+        tenant_id=tenant,
+        cluster_repository=cluster_repo,
+        session=session,
+        settings=settings,
+        block_repository=block_repo,
+    )
 
 
 async def get_cluster_repository(
@@ -504,6 +515,7 @@ async def build_cluster_service(
 
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant_id)
+    block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant_id)
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo)
 
     suggestion_repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant_id)
@@ -512,17 +524,24 @@ async def build_cluster_service(
         tenant_id=tenant_id,
         cluster_repository=cluster_repo,
         session=session,
+        settings=settings,
+        block_repository=block_repo,
     )
 
     charts_dir = Path("logs") / "charts"
 
     return ClusterService(
-        gate=AssignmentGate(settings=settings, cluster_repository=cluster_repo),
+        gate=AssignmentGate(
+            settings=settings,
+            cluster_repository=cluster_repo,
+            block_repository=block_repo,
+        ),
         representative_discovery=RepresentativeDiscovery(settings=settings),
         centroid_discovery=CentroidDiscovery(settings=settings),
         graph_discovery=GraphDiscovery(settings=settings, algorithm=None),
         assignment_writer=assignment_writer,
         suggestion_service=suggestion_service,
+        block_repository=block_repo,
         logger=ClusteringLogger(),
         visualizer=ClusterVisualizer(output_dir=charts_dir),
         decision_store=get_decision_store(),

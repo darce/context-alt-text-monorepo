@@ -131,7 +131,7 @@ class JobStatusResponse(BaseModel):
     """Job status payload."""
 
     id: str
-    type: Literal["analyze", "clustering"]
+    type: Literal["analyze", "clustering", "curation", "split"]
     status: Literal["pending", "running", "completed", "failed"]
     progress: JobProgressResponse | None
     started_at: datetime
@@ -199,6 +199,20 @@ class SplitClusterResponse(BaseModel):
     moved_count: int = Field(default=0, description="Legacy: first moved count")
 
 
+class AsyncSplitClusterResponse(BaseModel):
+    """Response when a split operation is queued for async execution.
+
+    Returns:
+        job_id: UUID of the queued clustering job.
+        status: Initial job status ("pending").
+        message: User-facing message.
+    """
+
+    job_id: str
+    status: str = "pending"
+    message: str = "Split operation queued"
+
+
 __all__ = [
     "BboxResponse",
     "ClusterResponse",
@@ -209,6 +223,7 @@ __all__ = [
     "IdentitySuggestionsResponse",
     "JobProgressResponse",
     "JobStatusResponse",
+    "AsyncSplitClusterResponse",
     "ReassignIdentityResponse",
     "RepresentativeResponse",
     "SplitClusterResponse",

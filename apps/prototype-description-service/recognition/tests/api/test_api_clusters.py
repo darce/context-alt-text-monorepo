@@ -6,7 +6,6 @@ import uuid
 
 import pytest
 
-from recognition.shared.ids import generate_id
 from recognition.tests.api.conftest import seed_cluster
 
 
@@ -99,3 +98,31 @@ def test_include_outliers_flag_is_passed_to_service(api_client, tenant_id, fake_
 
     assert resp.status_code == 200
     assert any(call.get("include_outliers") for call in fake_cluster_service.calls)
+
+
+@pytest.mark.asyncio
+async def test_reassign_removal_refreshes_suggestions(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_suggestion_service,
+) -> None:
+    identity_id = str(uuid.uuid4())
+    cluster = seed_cluster(fake_cluster_service, tenant_id, label="source")
+    fake_cluster_service.seed_identity_membership(identity_id, cluster.id)
+
+    resp = api_client.post(
+        "/recognition/clusters/reassign",
+        json={
+            "tenant_id": tenant_id,
+            "identity_id": identity_id,
+            "target_cluster_id": None,
+            "block_from_cluster": False,
+        },
+    )
+
+    assert resp.status_code == 200
+    assert fake_suggestion_service.refresh_calls
+    last_identity_id, last_reason = fake_suggestion_service.refresh_calls[-1]
+    assert last_identity_id == identity_id
+    assert getattr(last_reason, "value", str(last_reason)) == "wrong_person"

@@ -7,11 +7,13 @@ from __future__ import annotations
 import logging
 from datetime import UTC, datetime
 
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 
 from db.session import async_session_factory
+from recognition.application.suggestions.service import SuggestionRefreshReason
 from recognition.config.security import get_security_settings
-from recognition.domain.job import Job, JobType
+from recognition.domain.job import Job, JobType, SplitJobPayload
+from recognition.infrastructure.repositories import SqlAlchemyIdentityClusterBlockRepository
 from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
     get_cluster_service_builder,
@@ -31,6 +33,7 @@ from recognition.interface_adapters.http.schemas.requests import (
     SplitClusterRequest,
 )
 from recognition.interface_adapters.http.schemas.responses import (
+    AsyncSplitClusterResponse,
     ClusteringJobStatusResponse,
     ClusterResponse,
     CreateClusterForIdentityResponse,
@@ -205,25 +208,62 @@ async def merge_cluster(
     return cluster
 
 
-@router.post("/clusters/{cluster_id}/split", response_model=SplitClusterResponse)
+@router.post("/clusters/{cluster_id}/split", response_model=SplitClusterResponse | AsyncSplitClusterResponse)
 async def split_cluster(
     cluster_id: str,
     request: SplitClusterRequest,
+    response: Response,
     auth=Depends(require_write_access),
     session=Depends(get_session),
-) -> SplitClusterResponse:
+) -> SplitClusterResponse | AsyncSplitClusterResponse:
     """
     Split a cluster using hierarchical clustering.
 
     If n_clusters=0 (default), automatically determines the optimal split
     based on face similarity. If n_clusters>=2, forces exactly that many groups.
     The largest group stays in the original cluster; others become new clusters.
+
+    If mode="async", the split is queued and returns 202 Accepted with a job ID.
     """
     validate_entity_id(cluster_id, field_name="cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    if request.mode == "async":
+        job_service = await get_job_service(session=session, tenant_id=request.tenant_id)
+        payload = SplitJobPayload(
+            cluster_id=cluster_id,
+            n_clusters=request.n_clusters,
+            anchor_identity_id=request.anchor_identity_id,
+            split_mode=request.split_mode,
+        )
+        job = await job_service.queue_split(tenant_id=request.tenant_id, payload=payload)
+        response.status_code = status.HTTP_202_ACCEPTED
+        return AsyncSplitClusterResponse(
+            job_id=job.id,
+            status=job.status.value,
+            message=f"Split operation queued for cluster {cluster_id[:8]}",
+        )
+
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
-    new_ids, counts = await cluster_service.split_cluster(cluster_id, n_clusters=request.n_clusters)
+    new_ids, counts = await cluster_service.split_cluster(
+        cluster_id,
+        n_clusters=request.n_clusters,
+        anchor_identity_id=request.anchor_identity_id,
+        split_mode=request.split_mode,
+        recompute=False,
+    )
+    if new_ids:
+        job_service = await get_job_service(
+            session=session,
+            tenant_id=request.tenant_id,
+            cluster_service_builder=lambda _tid: cluster_service,
+            scan_service_builder=None,
+        )
+        await job_service.queue_curation_followup(
+            tenant_id=request.tenant_id,
+            cluster_ids=[cluster_id, *new_ids],
+        )
 
     # Build response with both new list format and legacy single-cluster fields
     return SplitClusterResponse(
@@ -265,6 +305,12 @@ async def reassign_identity(
     source_cluster_id = await cluster_service.get_identity_cluster_id(request.identity_id)
 
     if request.target_cluster_id:
+        block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=request.tenant_id)
+        await block_repo.remove_block(
+            tenant_id=request.tenant_id,
+            identity_id=request.identity_id,
+            blocked_cluster_id=request.target_cluster_id,
+        )
         # Assign to target cluster
         result = await cluster_service.assign_outlier_to_cluster(
             identity_id=request.identity_id,
@@ -280,14 +326,61 @@ async def reassign_identity(
 
         # Resolve any pending suggestion for this identity+cluster as accepted
         suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
-        await suggestion_service.resolve_for_identity(
-            identity_id=request.identity_id,
-            cluster_id=request.target_cluster_id,
-            resolution="accepted",
-        )
+        resolve_exclusive = getattr(suggestion_service, "resolve_for_identity_exclusive", None)
+        if callable(resolve_exclusive):
+            await resolve_exclusive(
+                identity_id=request.identity_id,
+                accepted_cluster_id=request.target_cluster_id,
+                reason="manual_assign",
+            )
+        else:
+            await suggestion_service.resolve_for_identity(
+                identity_id=request.identity_id,
+                cluster_id=request.target_cluster_id,
+                resolution="accepted",
+            )
+        refresh_for_identity = getattr(suggestion_service, "refresh_for_identity", None)
+        if callable(refresh_for_identity):
+            await refresh_for_identity(
+                identity_id=request.identity_id,
+                reason=SuggestionRefreshReason.MANUAL_ASSIGN,
+            )
     else:
         # Remove from current cluster (make orphan)
-        await cluster_service.remove_identity_from_cluster(request.identity_id)
+        await cluster_service.remove_identity_from_cluster(request.identity_id, recompute=False)
+        if source_cluster_id:
+            if request.block_from_cluster:
+                block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=request.tenant_id)
+                await block_repo.add_block(
+                    tenant_id=request.tenant_id,
+                    identity_id=request.identity_id,
+                    blocked_cluster_id=source_cluster_id,
+                    reason="manual_removal",
+                )
+            job_service = await get_job_service(
+                session=session,
+                tenant_id=request.tenant_id,
+                cluster_service_builder=lambda _tid: cluster_service,
+                scan_service_builder=None,
+            )
+            await job_service.queue_curation_followup(
+                tenant_id=request.tenant_id,
+                cluster_ids=[source_cluster_id],
+                identity_ids=[request.identity_id],
+            )
+        suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
+        if source_cluster_id:
+            await suggestion_service.resolve_for_identity(
+                identity_id=request.identity_id,
+                cluster_id=source_cluster_id,
+                resolution="rejected",
+            )
+        refresh_for_identity = getattr(suggestion_service, "refresh_for_identity", None)
+        if callable(refresh_for_identity):
+            await refresh_for_identity(
+                identity_id=request.identity_id,
+                reason=SuggestionRefreshReason.WRONG_PERSON,
+            )
 
     return ReassignIdentityResponse(
         identity_id=request.identity_id,

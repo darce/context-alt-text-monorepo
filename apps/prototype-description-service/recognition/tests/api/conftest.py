@@ -135,6 +135,7 @@ class FakeSuggestionService:
 
     def __init__(self) -> None:
         self.suggestions: dict[str, FakeSuggestion] = {}
+        self.refresh_calls: list[tuple[str, object]] = []
 
     async def list_for_identity(self, identity_id: str) -> list[FakeSuggestion]:
         return [s for s in self.suggestions.values() if s.identity_id == identity_id]
@@ -157,6 +158,41 @@ class FakeSuggestionService:
         suggestion = FakeSuggestion(identity_id=identity_id, cluster_id=cluster_id)
         self.suggestions[suggestion.id] = suggestion
         return suggestion
+
+    async def resolve_for_identity(
+        self,
+        identity_id: str,
+        cluster_id: str,
+        resolution: str = "accepted",
+    ) -> int:
+        resolved = 0
+        for suggestion in self.suggestions.values():
+            if suggestion.identity_id == identity_id and suggestion.cluster_id == cluster_id:
+                suggestion.status = FakeSuggestionStatus(resolution)
+                resolved += 1
+        return resolved
+
+    async def resolve_for_identity_exclusive(
+        self,
+        *,
+        identity_id: str,
+        accepted_cluster_id: str,
+        reason: str | None = None,
+    ) -> int:
+        resolved = 0
+        for suggestion in self.suggestions.values():
+            if suggestion.identity_id != identity_id:
+                continue
+            if suggestion.cluster_id == accepted_cluster_id:
+                suggestion.status = FakeSuggestionStatus("accepted")
+            else:
+                suggestion.status = FakeSuggestionStatus("rejected")
+            resolved += 1
+        return resolved
+
+    async def refresh_for_identity(self, *, identity_id: str, reason) -> list[FakeSuggestion]:
+        self.refresh_calls.append((identity_id, reason))
+        return []
 
     async def list_pending(self, limit: int = 50, offset: int = 0) -> list[FakeSuggestion]:
         items = list(self.suggestions.values())

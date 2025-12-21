@@ -5,6 +5,7 @@ from __future__ import annotations
 import pytest
 
 from recognition.application.assignment.checks import (
+    BlockCheck,
     CompleteLinkCheck,
     ConfidenceCheck,
     MaturityCheck,
@@ -28,6 +29,7 @@ async def test_build_cluster_service_wires_sqlalchemy_repositories(db_session, t
     assert isinstance(service.assignment_writer._members, SqlAlchemyMemberRepository)
     assert isinstance(service.logger, ClusteringLogger)
     assert {type(check) for check in service.gate.checks} == {
+        BlockCheck,
         MaturityCheck,
         CompleteLinkCheck,
         MemberDistributionCheck,

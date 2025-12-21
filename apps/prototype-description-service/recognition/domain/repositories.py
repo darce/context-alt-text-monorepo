@@ -132,6 +132,66 @@ class MemberRepository(Protocol):
 
 
 @dataclass(frozen=True)
+class IdentityClusterBlock:
+    """Durable block preventing auto-assignment to a specific cluster."""
+
+    id: str
+    tenant_id: str
+    identity_id: str
+    blocked_cluster_id: str
+    reason: str | None = None
+    created_at: datetime | None = None
+    created_by_user_id: int | None = None
+    expires_at: datetime | None = None
+
+
+class IdentityClusterBlockRepository(Protocol):
+    """Abstract interface for identity-cluster block persistence."""
+
+    async def add_block(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        blocked_cluster_id: str,
+        reason: str | None = None,
+        created_by_user_id: int | None = None,
+        expires_at: datetime | None = None,
+    ) -> IdentityClusterBlock:
+        """Persist a new block preventing auto-assignment."""
+        ...
+
+    async def remove_block(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        blocked_cluster_id: str,
+    ) -> bool:
+        """Remove a block. Returns True if a block was removed."""
+        ...
+
+    async def get_blocks_for_identity(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+    ) -> list[IdentityClusterBlock]:
+        """List all blocks for an identity in a tenant."""
+        ...
+
+    async def is_blocked(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        cluster_id: str,
+    ) -> bool:
+        """Return True if the identity is blocked from the given cluster."""
+        ...
+
+
+@dataclass(frozen=True)
 class SuggestionCreateData:
     """Input data for creating a suggestion."""
 
@@ -140,6 +200,8 @@ class SuggestionCreateData:
     representative_similarity: float
     member_similarity: float
     confidence_score: float
+    source: str | None = None
+    refreshed_at: datetime | None = None
 
 
 class SuggestionRepository(Protocol):
@@ -176,6 +238,46 @@ class SuggestionRepository(Protocol):
     async def list_pending(self, tenant_id: str, limit: int, offset: int) -> list[AssignmentSuggestion]:
         """List pending suggestions for a tenant."""
         ...
+
+    async def bulk_update_status(
+        self,
+        tenant_id: str,
+        suggestion_ids: Sequence[str],
+        status: SuggestionStatus,
+    ) -> int:
+        """Update status for multiple suggestions in one call.
+
+        Args:
+            tenant_id: Tenant UUID string.
+            suggestion_ids: Suggestion UUIDs to update.
+            status: Status to apply.
+
+        Returns:
+            Count of suggestions updated.
+
+        Raises:
+            NotImplementedError: Until implemented by concrete repositories.
+        """
+        raise NotImplementedError("TODO: implement bulk_update_status")
+
+    async def upsert_by_identity_cluster(
+        self,
+        tenant_id: str,
+        payload: SuggestionCreateData,
+    ) -> AssignmentSuggestion:
+        """Create or update a suggestion for the identity+cluster pair.
+
+        Args:
+            tenant_id: Tenant UUID string.
+            payload: Suggestion data (identity, cluster, scores).
+
+        Returns:
+            The created or updated suggestion.
+
+        Raises:
+            NotImplementedError: Until implemented by concrete repositories.
+        """
+        raise NotImplementedError("TODO: implement upsert_by_identity_cluster")
 
 
 class JobRepository(Protocol):

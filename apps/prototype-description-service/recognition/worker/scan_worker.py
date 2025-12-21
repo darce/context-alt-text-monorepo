@@ -14,8 +14,10 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
+from db.models import IdentityClusteringJob
 from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol, InsightFaceFaceDetector, StubFaceDetector
 from recognition.application.embedding.generator import (
@@ -24,11 +26,15 @@ from recognition.application.embedding.generator import (
     StubEmbeddingGenerator,
 )
 from recognition.application.embedding.service import EmbeddingService
+from recognition.application.orchestration.curation_job import run_curation_job
+from recognition.application.orchestration.job_service import JobService
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.config import get_settings as get_recognition_settings
+from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+from recognition.interface_adapters.http.dependencies import build_cluster_service
 
 logger = logging.getLogger(__name__)
 
@@ -49,7 +55,15 @@ class ScanWorker:
 
     def __init__(self, config: ScanWorkerConfig) -> None:
         self._config = config
-        self._engine = create_async_engine(config.postgres_dsn, echo=False, pool_pre_ping=True)
+        connect_args: dict[str, object] = {}
+        if config.postgres_dsn.startswith("postgresql"):
+            connect_args["server_settings"] = {"application_name": "scan_worker"}
+        self._engine = create_async_engine(
+            config.postgres_dsn,
+            echo=False,
+            pool_pre_ping=True,
+            connect_args=connect_args,
+        )
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine, expire_on_commit=False
         )
@@ -66,6 +80,11 @@ class ScanWorker:
                 queue = ScanQueueService(repo)
 
                 now = datetime.now(tz=UTC)
+                if await self._process_pending_clustering_jobs(session=session, now=now):
+                    await session.commit()
+                    await asyncio.sleep(self._config.poll_interval_seconds)
+                    continue
+
                 await repo.reclaim_stale_items(
                     stale_after_seconds=self._config.stale_after_seconds,
                     max_attempts=self._config.max_attempts,
@@ -140,6 +159,132 @@ class ScanWorker:
             return
         await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
 
+    async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
+        stmt = (
+            select(IdentityClusteringJob)
+            .where(IdentityClusteringJob.status == "pending")
+            .where(IdentityClusteringJob.job_type.in_(["curation", "split"]))
+            .order_by(IdentityClusteringJob.created_at.asc())
+            .with_for_update(skip_locked=True)
+            .limit(1)
+        )
+        result = await session.execute(stmt)
+        job = result.scalar_one_or_none()
+        if job is None:
+            return False
+
+        job.status = "running"
+        job.started_at = now
+        await session.flush()
+
+        try:
+            if job.job_type == "split":
+                await self._handle_split_job(job=job, session=session)
+            elif job.job_type == "curation":
+                await self._handle_curation_job(job=job, session=session)
+            else:
+                job.status = "failed"
+                job.error_message = f"unsupported job_type: {job.job_type}"
+                job.completed_at = datetime.now(tz=UTC)
+                await session.flush()
+            return True
+        except Exception as exc:  # pragma: no cover
+            job.status = "failed"
+            job.error_message = str(exc)
+            job.completed_at = datetime.now(tz=UTC)
+            await session.flush()
+            return True
+
+    async def _handle_curation_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
+        cluster_ids = _coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
+        if not cluster_ids:
+            job.status = "failed"
+            job.error_message = "missing cluster ids"
+            job.completed_at = datetime.now(tz=UTC)
+            await session.flush()
+            return
+
+        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
+        result_counts = await run_curation_job(
+            tenant_id=str(job.tenant_id),
+            cluster_ids=cluster_ids,
+            assignment_writer=cluster_service.assignment_writer,
+            cluster_repo=cluster_service.assignment_writer._clusters,
+            cluster_service=cluster_service,
+        )
+        completed = int(result_counts.get("clusters_recomputed", 0))
+        total = max(int(job.total_identities or 0), len(cluster_ids))
+        job.processed_identities = completed
+        job.total_identities = total
+        job.progress = _compute_progress(completed, total)
+        job.status = "completed"
+        job.completed_at = datetime.now(tz=UTC)
+        await session.flush()
+
+    async def _handle_split_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
+        """Execute a split job.
+
+        Args:
+            job: Job with split payload.
+            session: Active database session.
+
+        Raises:
+            ValueError: If payload is invalid.
+        """
+        payload = job.payload or {}
+        cluster_id_value = payload.get("cluster_id")
+        if not cluster_id_value:
+            raise ValueError("Split job missing cluster_id")
+
+        cluster_id = str(cluster_id_value)
+        n_clusters = _coerce_int(payload.get("n_clusters"), default=0)
+        anchor_identity_id = _coerce_optional_str(payload.get("anchor_identity_id"))
+        split_mode = _coerce_optional_str(payload.get("split_mode"))
+
+        logger.info(
+            "[worker] START split_job job_id=%s cluster_id=%s n_clusters=%d tenant_id=%s",
+            job.id,
+            cluster_id,
+            n_clusters,
+            job.tenant_id,
+        )
+
+        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
+        new_ids, counts = await cluster_service.split_cluster(
+            cluster_id=cluster_id,
+            n_clusters=n_clusters,
+            anchor_identity_id=anchor_identity_id,
+            split_mode=split_mode,
+            recompute=False,
+        )
+
+        if new_ids:
+            job_service = JobService(
+                repository=SqlAlchemyJobRepository(session),
+                cluster_service=cluster_service,
+                scan_service=None,
+            )
+            await job_service.queue_curation_followup(
+                tenant_id=str(job.tenant_id),
+                cluster_ids=[cluster_id, *new_ids],
+            )
+
+        total = max(1, len(new_ids))
+        job.processed_identities = total
+        job.total_identities = total
+        job.progress = _compute_progress(total, total)
+        job.status = "completed"
+        job.message = f"Split complete: created {len(new_ids)} clusters"
+        job.completed_at = datetime.now(tz=UTC)
+        await session.flush()
+
+        logger.info(
+            "[worker] COMPLETE split_job job_id=%s new_clusters=%s moved_counts=%s",
+            job.id,
+            new_ids,
+            counts,
+        )
+
 
 def _build_scan_service(session: AsyncSession) -> ScanService:
     settings = get_recognition_settings()
@@ -159,6 +304,45 @@ def _build_scan_service(session: AsyncSession) -> ScanService:
             detector = StubFaceDetector()
             generator = StubEmbeddingGenerator()
     return ScanService(session=session, detector=detector, generator=generator, embedder=embedder)
+
+
+def _compute_progress(completed: int, total: int) -> float:
+    if total <= 0:
+        return 0.0
+    return min(1.0, completed / total)
+
+
+def _coerce_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    results: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            results.append(item)
+        elif isinstance(item, uuid.UUID):
+            results.append(str(item))
+    return results
+
+
+def _coerce_optional_str(value: object) -> str | None:
+    if value is None:
+        return None
+    return str(value)
+
+
+def _coerce_int(value: object, *, default: int) -> int:
+    if value is None:
+        return default
+    if isinstance(value, bool):
+        return int(value)
+    if isinstance(value, (int, float)):
+        return int(value)
+    if isinstance(value, (str, bytes, bytearray)):
+        try:
+            return int(value)
+        except ValueError:
+            return default
+    return default
 
 
 async def _main() -> None:

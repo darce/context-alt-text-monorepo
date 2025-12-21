@@ -24,6 +24,7 @@ TENANT_TABLES = [
     "identity_cluster_representatives",
     "identity_clustering_jobs",
     "identity_suggestions",
+    "identity_cluster_blocks",
     "recognition_runs",
     "recognition_events",
 ]
@@ -310,15 +311,36 @@ def upgrade() -> None:
             sa.ForeignKey("tenants.id", ondelete="CASCADE"),
             nullable=False,
         ),
+        sa.Column(
+            "job_type",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'clustering'"),
+        ),
         sa.Column("status", sa.String(length=20), nullable=False, server_default=sa.text("'pending'")),
         sa.Column("progress", sa.Float(), nullable=False, server_default=sa.text("0")),
         sa.Column("total_identities", sa.Integer(), nullable=True),
         sa.Column("processed_identities", sa.Integer(), nullable=True, server_default=sa.text("0")),
+        sa.Column("message", sa.Text()),
+        sa.Column(
+            "payload",
+            sa.dialects.postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
         sa.Column("error_message", sa.Text()),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column("started_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("completed_at", sa.TIMESTAMP(timezone=True)),
         sa.Column("created_by_user_id", sa.Integer()),
+        sa.CheckConstraint(
+            "status IN ('pending', 'running', 'completed', 'failed')",
+            name="valid_status",
+        ),
+        sa.CheckConstraint(
+            "job_type IN ('clustering', 'curation', 'split')",
+            name="valid_job_type",
+        ),
     )
 
     # Identity suggestions for borderline cluster matches (0.55-0.68 avg_member similarity)
@@ -353,6 +375,8 @@ def upgrade() -> None:
         # Timestamps
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("refreshed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("source", sa.String(length=50), nullable=True),
         # Resolution status: 'pending', 'accepted', 'rejected', 'expired'
         sa.Column(
             "resolution",
@@ -386,6 +410,39 @@ def upgrade() -> None:
             "identity_id",
             "suggested_cluster_id",
             name="unique_identity_suggestion",
+        ),
+    )
+
+    op.create_table(
+        "identity_cluster_blocks",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "blocked_cluster_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("reason", sa.Text(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("created_by_user_id", sa.Integer(), nullable=True),
+        sa.Column("expires_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.UniqueConstraint(
+            "tenant_id",
+            "identity_id",
+            "blocked_cluster_id",
+            name="unique_identity_cluster_block",
         ),
     )
 
@@ -619,6 +676,16 @@ def upgrade() -> None:
         "idx_identity_suggestions_tenant_id",
         "identity_suggestions",
         ["tenant_id", "id"],
+    )
+    op.create_index(
+        "idx_identity_cluster_blocks_identity",
+        "identity_cluster_blocks",
+        ["tenant_id", "identity_id"],
+    )
+    op.create_index(
+        "idx_identity_cluster_blocks_cluster",
+        "identity_cluster_blocks",
+        ["tenant_id", "blocked_cluster_id"],
     )
 
     op.create_index("idx_recognition_runs_tenant", "recognition_runs", ["tenant_id"])
@@ -854,6 +921,8 @@ def downgrade() -> None:
     op.drop_index("idx_identity_suggestions_cluster", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_identity", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_tenant", table_name="identity_suggestions")
+    op.drop_index("idx_identity_cluster_blocks_cluster", table_name="identity_cluster_blocks")
+    op.drop_index("idx_identity_cluster_blocks_identity", table_name="identity_cluster_blocks")
     op.drop_index("idx_recognition_events_cluster", table_name="recognition_events")
     op.drop_index("idx_recognition_events_identity", table_name="recognition_events")
     op.drop_index("idx_recognition_events_type", table_name="recognition_events")
@@ -869,6 +938,7 @@ def downgrade() -> None:
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
     op.drop_table("recognition_events")
     op.drop_table("recognition_runs")
+    op.drop_table("identity_cluster_blocks")
     op.drop_table("identity_suggestions")
     op.drop_table("identity_scan_job_items")
     op.drop_table("identity_scan_jobs")

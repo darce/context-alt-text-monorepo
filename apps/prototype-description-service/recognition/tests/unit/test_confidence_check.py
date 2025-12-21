@@ -18,6 +18,8 @@ from recognition.shared.ids import generate_id
 def make_settings() -> ClusteringSettings:
     return ClusteringSettings(
         similarity_threshold=0.75,
+        suggestion_floor=0.65,
+        suggestion_ceiling=0.75,
         early_stage_suggestion_enabled=True,
         early_stage_high_confidence_threshold=0.90,  # Legacy param, mostly unused now
     )
@@ -143,3 +145,41 @@ async def test_confidence_anchor_linked_bypass() -> None:
     result = await check.evaluate(candidate)
     assert result.passed is True
     assert result.metadata["bypass_reason"] == "anchor_linked_transitivity"
+
+
+@pytest.mark.asyncio
+async def test_confidence_suggestion_band_returns_suggest() -> None:
+    """Similarity within suggestion band should produce a suggest outcome."""
+    settings = ClusteringSettings(
+        similarity_threshold=0.8,
+        suggestion_floor=0.7,
+        suggestion_ceiling=0.8,
+        early_stage_suggestion_enabled=True,
+    )
+    check = ConfidenceCheck(settings, None)
+    candidate = make_candidate(similarity=0.75, confidence=0.9, bbox_size=100)
+
+    result = await check.evaluate(candidate)
+
+    assert result.passed is False
+    assert result.should_reject is False
+
+
+@pytest.mark.asyncio
+async def test_confidence_fatal_quality_failure_rejects() -> None:
+    """Extremely low quality should reject before suggestions."""
+    settings = ClusteringSettings(
+        similarity_threshold=0.8,
+        suggestion_floor=0.7,
+        suggestion_ceiling=0.8,
+        early_stage_suggestion_enabled=True,
+    )
+    check = ConfidenceCheck(settings, None)
+    candidate = make_candidate(similarity=0.78, confidence=0.2, bbox_size=20, pose_angle=0.0)
+
+    result = await check.evaluate(candidate)
+
+    assert result.passed is False
+    assert result.should_reject is True
+    assert result.reason == "fatal_quality_failure"
+    assert result.metadata["fatal_quality_failure"] is True

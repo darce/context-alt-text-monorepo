@@ -11,8 +11,9 @@ from __future__ import annotations
 
 from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.assignment.checks.base import AssignmentCheck, CheckResult
-from recognition.application.assignment.quality import compute_identity_quality
+from recognition.application.assignment.quality import IdentityQualityInfo, compute_identity_quality
 from recognition.application.settings import ClusteringSettings
+from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityLevel, compute_maturity_adjustment
 from recognition.domain.repositories import ClusterRepository
 
@@ -98,12 +99,18 @@ class ConfidenceCheck(AssignmentCheck):
             maturity_adj = compute_maturity_adjustment(ClusterMaturityLevel.COLD)
             maturity_level_name = "COLD (no_repo)"
 
-        # 3. Compute Final Threshold
+        # 3. Compute Final Threshold + Suggestion Band
         base = self.settings.similarity_threshold
+        suggestion_floor = self.settings.suggestion_floor
+        suggestion_ceiling = self.settings.suggestion_ceiling
         # "Strict to base" logic is replaced by "Base + Adjs"
         # If adjustments are positive => stricter.
 
         final_threshold = base + maturity_adj + quality_adj
+        adjusted_floor = suggestion_floor + maturity_adj + quality_adj
+        adjusted_ceiling = suggestion_ceiling + maturity_adj + quality_adj
+        if adjusted_floor > final_threshold:
+            adjusted_floor = final_threshold
         similarity = candidate.discovery_similarity
 
         metadata = {
@@ -112,17 +119,44 @@ class ConfidenceCheck(AssignmentCheck):
             "final_threshold": round(final_threshold, 4),
             "maturity_adj": maturity_adj,
             "quality_adj": quality_adj,
+            "suggestion_floor": round(adjusted_floor, 4),
+            "suggestion_ceiling": round(adjusted_ceiling, 4),
             "maturity_level": maturity_level_name,
             "quality_score": quality_info.score,
         }
 
+        if self._is_fatal_failure(identity=identity, quality_info=quality_info):
+            metadata["fatal_quality_failure"] = True
+            return CheckResult(
+                passed=False,
+                is_fatal=True,
+                should_reject=True,
+                reason="fatal_quality_failure",
+                metadata=metadata,
+            )
+
         if similarity >= final_threshold:
             return CheckResult(passed=True, metadata=metadata)
+
+        if similarity >= adjusted_floor:
+            return CheckResult(
+                passed=False,
+                is_fatal=True,
+                should_reject=False,
+                reason=f"similarity {similarity:.2%} within suggestion band",
+                metadata=metadata,
+            )
 
         return CheckResult(
             passed=False,
             is_fatal=True,
-            should_reject=False,
-            reason=f"similarity {similarity:.2%} below adaptive threshold {final_threshold:.2%}",
+            should_reject=True,
+            reason=f"similarity {similarity:.2%} below suggestion floor {adjusted_floor:.2%}",
             metadata=metadata,
+        )
+
+    def _is_fatal_failure(self, *, identity: MediaIdentity, quality_info: IdentityQualityInfo) -> bool:
+        return (
+            identity.confidence < self.settings.fatal_confidence_floor
+            or quality_info.score < self.settings.fatal_quality_floor
         )

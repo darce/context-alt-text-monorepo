@@ -302,3 +302,113 @@ async def test_update_scores_does_not_modify_resolved_suggestions(db_session, te
     assert rescored.id == suggestion.id
     assert rescored.representative_similarity == pytest.approx(payload.representative_similarity)
     assert rescored.member_similarity == pytest.approx(payload.member_similarity)
+
+
+@pytest.mark.asyncio
+async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> None:
+    """bulk_update_status should update status for multiple suggestions."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Cluster",
+            is_labeled=False,
+            identity_count=0,
+            created_at=None,
+        )
+    )
+    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+
+    suggestion_a = await repo.create(
+        str(tenant.id),
+        SuggestionCreateData(
+            identity_id=str(uuid.uuid4()),
+            cluster_id=cluster.id,
+            representative_similarity=0.88,
+            member_similarity=0.81,
+            confidence_score=0.84,
+        ),
+    )
+    suggestion_b = await repo.create(
+        str(tenant.id),
+        SuggestionCreateData(
+            identity_id=str(uuid.uuid4()),
+            cluster_id=cluster.id,
+            representative_similarity=0.86,
+            member_similarity=0.8,
+            confidence_score=0.82,
+        ),
+    )
+
+    updated = await repo.bulk_update_status(
+        str(tenant.id),
+        [suggestion_a.id, suggestion_b.id],
+        SuggestionStatus.REJECTED,
+    )
+
+    assert updated == 2
+
+    results = await repo.get_by_cluster(str(tenant.id), cluster.id)
+    statuses = {s.id: s.status for s in results}
+    assert statuses[suggestion_a.id] is SuggestionStatus.REJECTED
+    assert statuses[suggestion_b.id] is SuggestionStatus.REJECTED
+
+
+@pytest.mark.asyncio
+async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> None:
+    """upsert_by_identity_cluster should update pending suggestions, not resolved ones."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Cluster",
+            is_labeled=False,
+            identity_count=0,
+            created_at=None,
+        )
+    )
+    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    identity_id = str(uuid.uuid4())
+
+    pending = await repo.create(
+        str(tenant.id),
+        SuggestionCreateData(
+            identity_id=identity_id,
+            cluster_id=cluster.id,
+            representative_similarity=0.9,
+            member_similarity=0.85,
+            confidence_score=0.87,
+        ),
+    )
+
+    updated = await repo.upsert_by_identity_cluster(
+        str(tenant.id),
+        SuggestionCreateData(
+            identity_id=identity_id,
+            cluster_id=cluster.id,
+            representative_similarity=0.7,
+            member_similarity=0.65,
+            confidence_score=0.68,
+        ),
+    )
+
+    assert updated.id == pending.id
+    assert updated.representative_similarity == pytest.approx(0.7)
+    assert updated.member_similarity == pytest.approx(0.65)
+
+    resolved = await repo.update_status(str(tenant.id), pending.id, SuggestionStatus.ACCEPTED)
+    assert resolved.status is SuggestionStatus.ACCEPTED
+
+    skipped = await repo.upsert_by_identity_cluster(
+        str(tenant.id),
+        SuggestionCreateData(
+            identity_id=identity_id,
+            cluster_id=cluster.id,
+            representative_similarity=0.2,
+            member_similarity=0.2,
+            confidence_score=0.2,
+        ),
+    )
+    assert skipped.status is SuggestionStatus.ACCEPTED

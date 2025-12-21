@@ -6,6 +6,8 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import Enum
 
+from pydantic import BaseModel, Field
+
 
 class JobStatus(str, Enum):
     """Lifecycle states for orchestration jobs."""
@@ -21,6 +23,24 @@ class JobType(str, Enum):
 
     ANALYZE = "analyze"
     CLUSTERING = "clustering"
+    CURATION = "curation"
+    SPLIT = "split"
+
+
+class SplitJobPayload(BaseModel):
+    """Payload for async split jobs.
+
+    Attributes:
+        cluster_id: Target cluster to split.
+        n_clusters: Desired cluster count.
+        anchor_identity_id: Optional anchor for label retention.
+        split_mode: Optional mode hint.
+    """
+
+    cluster_id: str = Field(..., description="Target cluster to split.")
+    n_clusters: int = Field(default=0, ge=0, description="Desired cluster count (0=auto).")
+    anchor_identity_id: str | None = Field(default=None, description="Optional anchor identity ID.")
+    split_mode: str | None = Field(default=None, description="Optional split mode hint.")
 
 
 @dataclass
@@ -35,6 +55,7 @@ class Job:
     progress_total: int = 0
     error_message: str | None = None
     message: str | None = None
+    payload: dict[str, object] | None = None
     started_at: datetime = field(default_factory=lambda: datetime.now(tz=UTC))
     finished_at: datetime | None = None
 

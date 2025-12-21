@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Iterable
 
-from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.job import Job, JobStatus, JobType, SplitJobPayload
 from recognition.domain.repositories import JobRepository
 from recognition.infrastructure.repositories.cancelable_jobs import is_canceled
 from recognition.shared.ids import generate_id
@@ -79,6 +80,54 @@ class JobService:
         await self.update_progress(job.id, completed=1, total=1)
         return await self.complete_job(job.id)
 
+    async def queue_curation_followup(
+        self,
+        tenant_id: str,
+        *,
+        cluster_ids: Iterable[str],
+        identity_ids: Iterable[str] | None = None,
+    ) -> Job:
+        """Queue curation follow-up work after split or wrong-person removal.
+
+        Args:
+            tenant_id: Tenant that owns the affected clusters.
+            cluster_ids: Cluster IDs to recompute representatives/centroid for.
+            identity_ids: Optional identities affected by the curation action.
+
+        Returns:
+            Job describing the queued curation work.
+
+        """
+        if not self.cluster_service:
+            raise RuntimeError("ClusterService is required for curation jobs")
+        cluster_ids_list = list(dict.fromkeys(cluster_ids))
+        identity_ids_list = list(identity_ids or [])
+        job = Job(
+            id=str(generate_id()),
+            type=JobType.CURATION,
+            tenant_id=tenant_id,
+            progress_total=len(cluster_ids_list),
+            progress_completed=0,
+            status=JobStatus.PENDING,
+            message="curation_followup",
+            payload={"cluster_ids": cluster_ids_list, "identity_ids": identity_ids_list},
+        )
+        return await self.repository.save(job)
+
+    async def queue_split(self, tenant_id: str, payload: SplitJobPayload) -> Job:
+        """Queue a split job for async execution."""
+        job = Job(
+            id=str(generate_id()),
+            type=JobType.SPLIT,
+            tenant_id=tenant_id,
+            progress_total=1,
+            progress_completed=0,
+            status=JobStatus.PENDING,
+            message="split",
+            payload=payload.model_dump(),
+        )
+        return await self.repository.save(job)
+
     async def get_job_status(self, job_id: str) -> Job | None:
         """Return persisted job status."""
         return await self.repository.get(job_id)
@@ -121,8 +170,56 @@ class JobService:
         except Exception as exc:
             return await self.fail_job(job.id, str(exc))
 
+    async def process_curation_job(
+        self,
+        job_id: str,
+        tenant_id: str,
+        *,
+        cluster_ids: Iterable[str],
+        identity_ids: Iterable[str] | None = None,
+    ) -> Job:
+        """Background-friendly wrapper to process a curation follow-up job by ID."""
+        from recognition.application.orchestration.curation_job import run_curation_job
+
+        job = await self._get_or_raise(job_id)
+        if not self.cluster_service:
+            return await self.fail_job(job.id, "cluster service not available")
+        cluster_ids_list = list(cluster_ids)
+        if not cluster_ids_list:
+            cluster_ids_list = _coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
+        if not cluster_ids_list:
+            return await self.fail_job(job.id, "missing cluster ids")
+
+        job.progress_total = max(job.progress_total, len(cluster_ids_list))
+        job = await self.start_job(job.id)
+        try:
+            result = await run_curation_job(
+                tenant_id=tenant_id,
+                cluster_ids=cluster_ids_list,
+                assignment_writer=self.cluster_service.assignment_writer,
+                cluster_repo=self.cluster_service.assignment_writer._clusters,
+                cluster_service=self.cluster_service,
+            )
+            completed = int(result.get("clusters_recomputed", 0))
+            job = await self.update_progress(job.id, completed=completed, total=job.progress_total)
+            return await self.complete_job(job.id)
+        except Exception as exc:
+            return await self.fail_job(job.id, str(exc))
+
     async def _get_or_raise(self, job_id: str) -> Job:
         job = await self.repository.get(job_id)
         if not job:
             raise ValueError(f"Job not found: {job_id}")
         return job
+
+
+def _coerce_str_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    results: list[str] = []
+    for item in value:
+        if isinstance(item, str):
+            results.append(item)
+        elif isinstance(item, uuid.UUID):
+            results.append(str(item))
+    return results

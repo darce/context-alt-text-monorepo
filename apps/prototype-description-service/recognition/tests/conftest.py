@@ -68,6 +68,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_clusters", Base.metadata),
             Table("identity_cluster_representatives", Base.metadata),
             Table("identity_members", Base.metadata),
+            Table("identity_cluster_blocks", Base.metadata),
             Table("identity_clustering_jobs", Base.metadata),
             Table("identity_scan_jobs", Base.metadata),
             Table("identity_scan_job_items", Base.metadata),
@@ -154,6 +155,7 @@ class FakeJobService:
 
     def __init__(self, repository: FakeJobRepository | None = None) -> None:
         self.repository = repository or FakeJobRepository()
+        self.calls: list[dict[str, object]] = []
 
     async def create_job(self, job_type: JobType, tenant_id: str, total: int = 0) -> Job:
         job = Job(
@@ -189,6 +191,42 @@ class FakeJobService:
             raise ValueError(f"Job not found: {job_id}")
         job.fail("canceled")
         return await self.repository.update(job)
+
+    async def queue_curation_followup(
+        self,
+        *,
+        tenant_id: str,
+        cluster_ids: list[str],
+        identity_ids: list[str] | None = None,
+    ) -> None:
+        self.calls.append(
+            {
+                "method": "queue_curation_followup",
+                "tenant_id": tenant_id,
+                "cluster_ids": list(cluster_ids),
+                "identity_ids": list(identity_ids) if identity_ids else [],
+            }
+        )
+
+    async def queue_split(self, tenant_id: str, payload) -> Job:  # noqa: ANN001
+        job = Job(
+            id=str(generate_id()),
+            type=JobType.SPLIT,
+            tenant_id=tenant_id,
+            progress_total=1,
+            progress_completed=0,
+            status=JobStatus.PENDING,
+            message="split",
+            payload=payload.model_dump() if hasattr(payload, "model_dump") else payload,
+        )
+        self.calls.append(
+            {
+                "method": "queue_split",
+                "tenant_id": tenant_id,
+                "payload": job.payload or {},
+            }
+        )
+        return await self.repository.save(job)
 
 
 class FakeClusterRepository:
@@ -246,6 +284,7 @@ class FakeClusterService:
     def __init__(self, clusters: list[ClusterResponse] | None = None) -> None:
         self.clusters = clusters or []
         self.calls: list[dict[str, object]] = []
+        self.identity_cluster_map: dict[str, str] = {}
 
     async def list_clusters(
         self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False, labeled_only: bool = False
@@ -320,9 +359,19 @@ class FakeClusterService:
         target = next((c for c in self.clusters if c.id == target_cluster_id and c.tenant_id == tenant_id), None)
         if not target:
             return None
+        self.identity_cluster_map[identity_id] = target_cluster_id
         updated = self._copy_cluster(target, identity_count=target.identity_count + 1)
         self._replace_cluster(updated)
         return updated
+
+    async def get_identity_cluster_id(self, identity_id: str) -> str | None:
+        return self.identity_cluster_map.get(identity_id)
+
+    async def remove_identity_from_cluster(self, identity_id: str, recompute: bool = True) -> bool:
+        return self.identity_cluster_map.pop(identity_id, None) is not None
+
+    def seed_identity_membership(self, identity_id: str, cluster_id: str) -> None:
+        self.identity_cluster_map[identity_id] = cluster_id
 
     def _replace_cluster(self, cluster: ClusterResponse) -> None:
         self.clusters = [c for c in self.clusters if c.id != cluster.id]

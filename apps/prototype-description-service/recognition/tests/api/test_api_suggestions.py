@@ -43,6 +43,22 @@ async def test_accept_and_reject_suggestion(api_client, tenant_id, fake_suggesti
     assert reject_resp.json()["status"] == "rejected"
 
 
+@pytest.mark.asyncio
+async def test_accept_rejects_other_pending_suggestions(api_client, tenant_id, fake_suggestion_service) -> None:
+    identity_id = str(uuid.uuid4())
+    accepted = await fake_suggestion_service.create(identity_id=identity_id, cluster_id=str(uuid.uuid4()))
+    other = await fake_suggestion_service.create(identity_id=identity_id, cluster_id=str(uuid.uuid4()))
+
+    resp = api_client.post(
+        f"/recognition/suggestions/{accepted.id}/accept",
+        headers={"X-Tenant-ID": tenant_id},
+        json={"tenant_id": tenant_id},
+    )
+
+    assert resp.status_code == 200
+    assert fake_suggestion_service.suggestions[other.id].status.value == "rejected"
+
+
 def test_accept_missing_suggestion_returns_404(api_client, tenant_id) -> None:
     resp = api_client.post(
         "/recognition/suggestions/missing-id/accept",

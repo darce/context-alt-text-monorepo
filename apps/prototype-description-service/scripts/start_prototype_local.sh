@@ -105,6 +105,38 @@ ensure_postgres() {
   echo "[prototype-local] PostgreSQL is ready." >&2
 }
 
+check_database_exists() {
+  local db_name="${DB_NAME:-}"
+  if [[ -z "${db_name}" ]]; then
+    return 0
+  fi
+
+  local db_host="${PGHOST:-localhost}"
+  local db_port="${PGPORT:-5432}"
+  local admin_user="${ADMIN_PGUSER:-${PGUSER:-}}"
+  local admin_pass="${ADMIN_PGPASSWORD:-${PGPASSWORD:-}}"
+
+  local exists
+  if [[ -n "${admin_pass}" ]]; then
+    exists="$(PGPASSWORD="${admin_pass}" psql -h "${db_host}" -p "${db_port}" -U "${admin_user}" -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" 2>/dev/null || true)"
+  else
+    exists="$(psql -h "${db_host}" -p "${db_port}" -U "${admin_user}" -d postgres -tAc \
+      "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" 2>/dev/null || true)"
+  fi
+
+  if [[ "${exists}" != "1" ]]; then
+    echo "[prototype-local] Database ${db_name} not found." >&2
+    if [[ "${ALLOW_DEV_DB_RESET:-0}" == "1" ]]; then
+      echo "[prototype-local] Bootstrapping database via reset_dev_db.sh..." >&2
+      "${PROJECT_ROOT}/scripts/reset_dev_db.sh"
+    else
+      echo "[prototype-local] Set ALLOW_DEV_DB_RESET=1 and run ./scripts/reset_dev_db.sh to bootstrap." >&2
+      exit 1
+    fi
+  fi
+}
+
 find_scan_worker_pids() {
   if command -v pgrep >/dev/null 2>&1; then
     pgrep -f "recognition/worker/scan_worker.py" || true
@@ -149,6 +181,7 @@ start_service() {
 
   cd "${PROJECT_ROOT}"
 
+  check_database_exists
   start_scan_worker
 
   uvicorn_args=(--host "${HOST_VALUE}" --port "${PORT_VALUE}" --reload --reload-dir "${PROJECT_ROOT}")

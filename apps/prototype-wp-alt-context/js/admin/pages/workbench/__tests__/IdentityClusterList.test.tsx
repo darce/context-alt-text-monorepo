@@ -294,25 +294,42 @@ describe('IdentityClusterList', () => {
       expect(api.reassignClusterIdentity).toHaveBeenCalledWith({
         identityId: 'identity-1',
         targetClusterId: null,
+        blockFromCluster: true,
       }),
     );
   });
 
   it('allows splitting a cluster', async () => {
     (api.splitCluster as Mock).mockResolvedValue({ moved_count: 5 });
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
-    const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const secondIdentity = {
+      ...baseIdentity,
+      identity_id: 'identity-2',
+      media_id: 2,
+    };
+
+    const { client, user } = renderWithClient(
+      <IdentityClusterList identities={[baseIdentity, secondIdentity]} mediaId={1} />,
+    );
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
-        '1': [baseIdentity],
+        '1': [baseIdentity, secondIdentity],
       },
     };
     client.setQueryData(['media-identities', [1]], cacheData);
 
     await user.click(screen.getByRole('button', { name: /split cluster/i }));
 
+    await user.click(await screen.findByRole('button', { name: /use face from media #1/i }));
+
     // Split always forces 2 clusters to guarantee a split happens
-    await waitFor(() => expect(api.splitCluster).toHaveBeenCalledWith('cluster-1', 2));
+    await waitFor(() =>
+      expect(api.splitCluster).toHaveBeenCalledWith('cluster-1', {
+        nClusters: 2,
+        anchorIdentityId: 'identity-1',
+        splitMode: 'forced',
+        mode: 'sync',
+      }),
+    );
   });
 });

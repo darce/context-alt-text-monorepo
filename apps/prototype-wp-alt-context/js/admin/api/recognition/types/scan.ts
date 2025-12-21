@@ -24,7 +24,7 @@ export interface JobProgress {
  */
 export interface AnalyzeResponse {
   id: string;
-  type: 'analyze' | 'clustering';
+  type: 'analyze' | 'clustering' | 'curation' | 'split';
   status: 'pending' | 'running' | 'completed' | 'failed';
   progress: JobProgress | null;
   started_at: string;

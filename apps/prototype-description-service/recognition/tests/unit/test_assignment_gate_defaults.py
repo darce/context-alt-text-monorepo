@@ -98,6 +98,8 @@ def make_settings() -> ClusteringSettings:
         member_validation_min_floor=0.7,
         member_validation_avg_threshold=0.8,
         early_stage_suggestion_enabled=True,
+        suggestion_floor=0.5,
+        suggestion_ceiling=0.75,
         early_stage_high_confidence_threshold=0.9,
         adaptive_threshold_maturity_point=5,
         hdbscan_max_batch_size=None,

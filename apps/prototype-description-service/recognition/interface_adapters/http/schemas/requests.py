@@ -138,6 +138,7 @@ class ReassignIdentityRequest(BaseModel):
     tenant_id: str
     identity_id: str
     target_cluster_id: str | None = None
+    block_from_cluster: bool = True
 
     @field_validator("tenant_id", "identity_id")
     @classmethod
@@ -160,14 +161,27 @@ class SplitClusterRequest(BaseModel):
         n_clusters: Number of clusters to split into.
                    0 = auto-detect based on similarity (default)
                    2+ = force exactly this many clusters
+        anchor_identity_id: Identity ID used to keep labels with the selected person.
+        split_mode: Optional split mode hint (ex: "anchor", "media").
+        mode: Execution mode ("sync" or "async").
     """
 
     tenant_id: str
     n_clusters: int = Field(default=0, ge=0, description="0=auto-detect, 2+=fixed count")
+    anchor_identity_id: str | None = None
+    split_mode: str | None = Field(default=None, description="Optional split mode hint")
+    mode: Literal["sync", "async"] = Field(default="sync", description="Execution mode")
 
     @field_validator("tenant_id")
     @classmethod
     def validate_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("anchor_identity_id")
+    @classmethod
+    def validate_anchor_identity_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         return _validate_uuid(v)
 
 

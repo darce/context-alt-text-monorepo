@@ -156,6 +156,8 @@ async def remove_identity_from_cluster(
     identity_id: str,
     member_repo: MemberRepository,
     cluster_repo: ClusterRepository,
+    assignment_writer: AssignmentWriter | None = None,
+    recompute: bool = True,
     tenant_id_for_logging: str | None = None,
     media_id: int | None = None,
 ) -> bool:
@@ -173,6 +175,16 @@ async def remove_identity_from_cluster(
         if cluster and cluster.identity_count > 0:
             cluster.identity_count -= 1
             await cluster_repo.update(cluster)
+        if assignment_writer and recompute:
+            recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
+            if callable(recompute_reps):
+                await recompute_reps(cluster_id)
+            recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
+            if callable(recompute_centroid):
+                await recompute_centroid(cluster_id)
+            refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+            if callable(refresh_view):
+                await refresh_view()
 
     logger.info(
         "[curation] REMOVED identity=%s media_id=%s from cluster=%s tenant_id=%s user_action=manual_remove",
@@ -217,6 +229,7 @@ async def create_cluster_for_identity(
             identity_id=identity_id,
             member_repo=member_repo,
             cluster_repo=cluster_repo,
+            assignment_writer=assignment_writer,
             tenant_id_for_logging=tenant_id,
             media_id=int(identity_model.media_id),
         )

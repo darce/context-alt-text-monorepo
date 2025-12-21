@@ -12,6 +12,8 @@ from pathlib import Path
 
 from pydantic import BaseModel, ConfigDict, Field
 
+from recognition.application.settings import ClusteringSettings
+
 
 class ThumbnailSettings(BaseModel):
     """Settings for serving generated thumbnails."""
@@ -59,6 +61,7 @@ class RecognitionSettings(BaseModel):
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
+    clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)
 
     # Runtime mode: "production" uses real InsightFace, "test" uses stubs
     runtime_mode: str = Field(default_factory=lambda: os.environ.get("RECOGNITION_RUNTIME_MODE", "production"))

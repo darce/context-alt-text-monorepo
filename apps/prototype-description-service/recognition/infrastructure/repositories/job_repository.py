@@ -38,14 +38,17 @@ class SqlAlchemyJobRepository(JobRepository):
             await self._session.refresh(scan_model)
             job.id = str(scan_model.id)
             return job
-        else:
+        if job.type in (JobType.CLUSTERING, JobType.CURATION, JobType.SPLIT):
             progress = _compute_progress(job.progress_completed, job.progress_total)
             cluster_model = IdentityClusteringJob(
                 tenant_id=_coerce_uuid(job.tenant_id),
+                job_type=job.type.value,
                 status=job.status.value,
                 progress=progress,
                 total_identities=job.progress_total,
                 processed_identities=job.progress_completed,
+                message=job.message,
+                payload=job.payload or {},
                 started_at=job.started_at if job.status is JobStatus.RUNNING else None,
                 completed_at=job.finished_at,
             )
@@ -54,6 +57,7 @@ class SqlAlchemyJobRepository(JobRepository):
             await self._session.refresh(cluster_model)
             job.id = str(cluster_model.id)
             return job
+        raise ValueError(f"Unsupported job type: {job.type}")
 
     async def get(self, job_id: str) -> Job | None:
         """Fetch a job by ID."""
@@ -78,13 +82,17 @@ class SqlAlchemyJobRepository(JobRepository):
 
         clustering = await self._session.get(IdentityClusteringJob, job_uuid)
         if clustering:
+            job_type = JobType(clustering.job_type) if clustering.job_type else JobType.CLUSTERING
             return Job(
                 id=str(clustering.id),
-                type=JobType.CLUSTERING,
+                type=job_type,
                 tenant_id="",  # tenant not stored on model; populated via context
                 status=JobStatus(clustering.status),
                 progress_completed=clustering.processed_identities or 0,
                 progress_total=clustering.total_identities or 0,
+                error_message=clustering.error_message,
+                message=clustering.message,
+                payload=clustering.payload or {},
                 started_at=clustering.started_at or datetime.now(tz=UTC),
                 finished_at=clustering.completed_at,
             )
@@ -107,18 +115,22 @@ class SqlAlchemyJobRepository(JobRepository):
             scan_model.completed_at = job.finished_at
             scan_model.error_message = job.error_message
             scan_model.message = job.message
-        else:
+        elif job.type in (JobType.CLUSTERING, JobType.CURATION, JobType.SPLIT):
             cluster_stmt = select(IdentityClusteringJob).where(IdentityClusteringJob.id == job_uuid)
             cluster_result = await self._session.execute(cluster_stmt)
             cluster_model: IdentityClusteringJob | None = cluster_result.scalar_one_or_none()
             if not cluster_model:
                 return await self.save(job)
+            cluster_model.job_type = job.type.value
             cluster_model.status = job.status.value
             cluster_model.processed_identities = job.progress_completed
             cluster_model.total_identities = job.progress_total
             cluster_model.progress = _compute_progress(job.progress_completed, job.progress_total)
             cluster_model.started_at = job.started_at if job.status is not JobStatus.PENDING else None
             cluster_model.completed_at = job.finished_at
+            cluster_model.message = job.message
+            cluster_model.payload = job.payload or {}
+            cluster_model.error_message = job.error_message
 
         await self._session.flush()
         return job

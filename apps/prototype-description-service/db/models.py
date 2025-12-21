@@ -46,6 +46,9 @@ class Tenant(Base):
     identity_suggestions: Mapped[list[IdentitySuggestion]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
+    identity_cluster_blocks: Mapped[list[IdentityClusterBlock]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
     api_keys: Mapped[list[ApiKey]] = relationship(back_populates="tenant", cascade="all, delete-orphan")
 
 
@@ -336,10 +339,17 @@ class IdentityClusteringJob(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
+    job_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'clustering'"))
     status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
     progress: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0"))
     total_identities: Mapped[int | None] = mapped_column(Integer)
     processed_identities: Mapped[int | None] = mapped_column(Integer, server_default=text("0"))
+    message: Mapped[str | None] = mapped_column(Text)
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+    )
     error_message: Mapped[str | None] = mapped_column(Text)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     started_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
@@ -350,6 +360,10 @@ class IdentityClusteringJob(Base):
         CheckConstraint(
             "status IN ('pending', 'running', 'completed', 'failed')",
             name="valid_status",
+        ),
+        CheckConstraint(
+            "job_type IN ('clustering', 'curation', 'split')",
+            name="valid_job_type",
         ),
         Index("idx_clustering_jobs_tenant", "tenant_id"),
         Index(
@@ -540,6 +554,8 @@ class IdentitySuggestion(Base):
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
     resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    source: Mapped[str | None] = mapped_column(String(50))
 
     # Resolution status
     resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
@@ -579,6 +595,37 @@ class IdentitySuggestion(Base):
     )
 
 
+class IdentityClusterBlock(Base):
+    """Negative constraint preventing identity from joining a cluster."""
+
+    __tablename__ = "identity_cluster_blocks"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
+    )
+    blocked_cluster_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+    reason: Mapped[str] = mapped_column(Text, nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    expires_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+
+    tenant: Mapped[Tenant] = relationship(back_populates="identity_cluster_blocks")
+    identity: Mapped[MediaIdentity] = relationship()
+    blocked_cluster: Mapped[IdentityCluster] = relationship()
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "identity_id", "blocked_cluster_id", name="unique_identity_cluster_block"),
+        Index("idx_identity_cluster_blocks_identity", "tenant_id", "identity_id"),
+        Index("idx_identity_cluster_blocks_cluster", "tenant_id", "blocked_cluster_id"),
+    )
+
+
 __all__ = [
     "Tenant",
     "MediaIdentity",
@@ -588,6 +635,7 @@ __all__ = [
     "IdentityScanJob",
     "IdentityScanJobItem",
     "IdentitySuggestion",
+    "IdentityClusterBlock",
     "RecognitionRun",
     "RecognitionEvent",
     "ClusteringJobReport",

@@ -14,7 +14,9 @@ import type {
   ReassignClusterFaceRequest,
   RevertMergeRequest,
   RevertMergeResponse,
+  SplitClusterRequest,
   SplitClusterResponse,
+  AsyncSplitClusterResponse,
   CreateClusterForIdentityRequest,
   CreateClusterForIdentityResponse,
 } from './types';
@@ -96,18 +98,26 @@ export const reassignClusterIdentity = async (request: ReassignClusterIdentityRe
   }
 
   const url = needsReassignSuffix ? `${stripTrailingSlash(base)}/reassign` : stripTrailingSlash(base);
+  const body: Record<string, unknown> = {
+    identity_id: request.identityId,
+    target_cluster_id: request.targetClusterId ?? null,
+  };
+  if (typeof request.blockFromCluster === 'boolean') {
+    body.block_from_cluster = request.blockFromCluster;
+  }
   await fetchApi(url, {
     method: 'POST',
-    body: {
-      identity_id: request.identityId,
-      target_cluster_id: request.targetClusterId ?? null,
-    },
+    body,
     restNonce: getConfig().nonce,
   });
 };
 
 export const reassignClusterFace = (request: ReassignClusterFaceRequest): Promise<void> =>
-  reassignClusterIdentity({ identityId: request.faceId, targetClusterId: request.targetClusterId });
+  reassignClusterIdentity({
+    identityId: request.faceId,
+    targetClusterId: request.targetClusterId,
+    blockFromCluster: request.blockFromCluster,
+  });
 
 export const revertMergeCluster = async (request: RevertMergeRequest): Promise<RevertMergeResponse> => {
   const base = getEndpoint('workbenchRecognitionRevertMerge', 'recognitionRevertMerge');
@@ -125,13 +135,30 @@ export const revertMergeCluster = async (request: RevertMergeRequest): Promise<R
 /**
  * Split a cluster using hierarchical clustering.
  * @param clusterId - The cluster to split
- * @param nClusters - Number of clusters: 0 = auto-detect (default), 2+ = fixed count
+ * @param request - Split controls (cluster count, anchor identity)
  */
-export const splitCluster = async (clusterId: string, nClusters = 0): Promise<SplitClusterResponse> => {
+export const splitCluster = async (
+  clusterId: string,
+  request: SplitClusterRequest = {},
+): Promise<SplitClusterResponse | AsyncSplitClusterResponse> => {
   const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
-  return fetchApi<SplitClusterResponse>(`${stripTrailingSlash(base)}/${clusterId}/split`, {
+  const { nClusters = 0, anchorIdentityId, splitMode, mode } = request;
+  const body: Record<string, unknown> = {
+    tenant_id: getConfig().tenant_id,
+    n_clusters: nClusters,
+  };
+  if (anchorIdentityId) {
+    body.anchor_identity_id = anchorIdentityId;
+  }
+  if (splitMode) {
+    body.split_mode = splitMode;
+  }
+  if (mode) {
+    body.mode = mode;
+  }
+  return fetchApi<SplitClusterResponse | AsyncSplitClusterResponse>(`${stripTrailingSlash(base)}/${clusterId}/split`, {
     method: 'POST',
-    body: { tenant_id: getConfig().tenant_id, n_clusters: nClusters },
+    body,
     restNonce: getConfig().nonce,
   });
 };

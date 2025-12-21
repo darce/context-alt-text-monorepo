@@ -9,6 +9,7 @@ import { useMutation, useQueryClient } from '@tanstack/react-query';
 
 import {
   createClusterForIdentity,
+  fetchScanStatus,
   mergeCluster,
   reassignClusterIdentity,
   revertMergeCluster,
@@ -21,6 +22,8 @@ import {
 interface UseClusterMutationsOptions {
   /** Cluster ID for the mutations (null if not editable) */
   clusterId: string | null;
+  /** Identity count for async split threshold checks */
+  identityCount?: number;
   /** Current cluster label (for revert operations) */
   currentLabel: string | null;
   /** Derived display label */
@@ -35,6 +38,27 @@ interface UseClusterMutationsOptions {
   onError?: (error: string) => void;
 }
 
+const SPLIT_ASYNC_THRESHOLD = 50;
+const SPLIT_POLL_INTERVAL_MS = 1500;
+const SPLIT_TIMEOUT_MS = 120_000;
+
+const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+const pollSplitJob = async (jobId: string): Promise<void> => {
+  const startedAt = Date.now();
+  while (Date.now() - startedAt < SPLIT_TIMEOUT_MS) {
+    const status = await fetchScanStatus(jobId);
+    if (status.status === 'completed') {
+      return;
+    }
+    if (status.status === 'failed') {
+      throw new Error(status.message ?? __('Split job failed.', 'alt-context'));
+    }
+    await delay(SPLIT_POLL_INTERVAL_MS);
+  }
+  throw new Error(__('Split job timed out. Please retry.', 'alt-context'));
+};
+
 /**
  * Hook providing all cluster mutation operations.
  *
@@ -47,6 +71,7 @@ interface UseClusterMutationsOptions {
  */
 export const useClusterMutations = ({
   clusterId,
+  identityCount,
   currentLabel,
   derivedLabel,
   onRenameSuccess,
@@ -62,6 +87,7 @@ export const useClusterMutations = ({
     void queryClient.invalidateQueries({ queryKey: ['cluster-labels'] });
     void queryClient.invalidateQueries({ queryKey: ['clusters'] });
     void queryClient.invalidateQueries({ queryKey: ['identity-suggestions'] });
+    void queryClient.invalidateQueries({ queryKey: ['pending-suggestions'] });
   };
 
   // Optimistically update cache for label changes
@@ -158,7 +184,7 @@ export const useClusterMutations = ({
   const reassignMutation = useMutation({
     mutationFn: async (identityIds: string[]) => {
       for (const id of identityIds) {
-        await reassignClusterIdentity({ identityId: id, targetClusterId: null });
+        await reassignClusterIdentity({ identityId: id, targetClusterId: null, blockFromCluster: true });
       }
     },
     onSuccess: () => {
@@ -203,8 +229,22 @@ export const useClusterMutations = ({
 
   // Split cluster mutation
   const splitMutation = useMutation({
-    mutationFn: ({ clusterId, nClusters = 2 }: { clusterId: string; nClusters?: number }) =>
-      splitCluster(clusterId, nClusters),
+    mutationFn: async ({
+      clusterId,
+      nClusters = 2,
+      anchorIdentityId,
+    }: {
+      clusterId: string;
+      nClusters?: number;
+      anchorIdentityId?: string;
+    }) => {
+      const mode = (identityCount ?? 0) > SPLIT_ASYNC_THRESHOLD ? 'async' : 'sync';
+      const result = await splitCluster(clusterId, { nClusters, anchorIdentityId, splitMode: 'forced', mode });
+      if ('job_id' in result) {
+        await pollSplitJob(result.job_id);
+      }
+      return result;
+    },
     onSuccess: () => {
       invalidateQueries();
     },
@@ -232,7 +272,8 @@ export const useClusterMutations = ({
       assignToClusterMutation.mutate({ identityId, targetClusterId }),
     createClusterForIdentity: (identityId: string, label: string) =>
       createClusterMutation.mutate({ identityId, label }),
-    split: (clusterId: string, nClusters = 2) => splitMutation.mutate({ clusterId, nClusters }),
+    split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
+      splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),
 
     // Loading states
     isPending,

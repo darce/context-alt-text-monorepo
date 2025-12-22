@@ -215,13 +215,13 @@ class SuggestionService:
         if identity_embedding.size == 0:
             return []
 
-        clusters = await self._cluster_repository.get_by_tenant(self._tenant_id, labeled_only=True)
-        if not clusters:
-            return []
-
         now = datetime.now(tz=UTC)
         suggestions: list[AssignmentSuggestion] = []
-        for cluster in clusters:
+        clusters_with_reps = await self._cluster_repository.get_labeled_with_representatives(self._tenant_id)
+        if not clusters_with_reps:
+            return []
+
+        for cluster, reps in clusters_with_reps:
             if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
                 continue
             if not cluster.id:
@@ -235,7 +235,6 @@ class SuggestionService:
             ):
                 continue
 
-            reps = await self._cluster_repository.get_all_representatives(cluster_id)
             if not reps:
                 continue
 

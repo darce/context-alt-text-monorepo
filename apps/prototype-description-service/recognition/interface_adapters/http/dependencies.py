@@ -235,23 +235,24 @@ async def get_optional_session(
     """Best-effort session provider; returns None when the database is unavailable."""
     async for session in _get_session():
         try:
-            await session.execute(text("SELECT 1"))
-            if tenant_id:
-                await set_tenant_context(session, uuid.UUID(str(tenant_id)))
-        except Exception:
-            yield None
-            return
-        try:
-            yield session
-            commit = getattr(session, "commit", None)
-            if callable(commit):
-                await commit()
-        except Exception as exc:
-            logger.error("get_optional_session: exception during yield/commit: %s", exc)
-            rollback = getattr(session, "rollback", None)
-            if callable(rollback):
-                await rollback()
-            raise
+            try:
+                await session.execute(text("SELECT 1"))
+                if tenant_id:
+                    await set_tenant_context(session, uuid.UUID(str(tenant_id)))
+            except Exception:
+                yield None
+                return
+            try:
+                yield session
+                commit = getattr(session, "commit", None)
+                if callable(commit):
+                    await commit()
+            except Exception as exc:
+                logger.error("get_optional_session: exception during yield/commit: %s", exc)
+                rollback = getattr(session, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+                raise
         finally:
             if tenant_id:
                 await clear_tenant_context(session)

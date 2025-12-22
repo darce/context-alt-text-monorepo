@@ -165,22 +165,18 @@ async def test_refresh_for_identity_creates_suggestion_for_band() -> None:
     )
 
     class ClusterRepoStub:
-        async def get_by_tenant(self, *_args, **_kwargs):
-            return [
-                IdentityCluster(
-                    id=cluster_id,
-                    tenant_id=tenant_id,
-                    label="Avery Rhodes",
-                    is_labeled=True,
-                    identity_count=5,
-                    user_confirmed=True,
-                    created_at=None,
-                )
-            ]
-
-        async def get_all_representatives(self, _cluster_id):
+        async def get_labeled_with_representatives(self, *_args, **_kwargs):
             rep_vec = np.array([0.75, np.sqrt(1 - 0.75**2)], dtype=np.float32)
-            return [type("Rep", (), {"embedding": rep_vec})()]
+            cluster = IdentityCluster(
+                id=cluster_id,
+                tenant_id=tenant_id,
+                label="Avery Rhodes",
+                is_labeled=True,
+                identity_count=5,
+                user_confirmed=True,
+                created_at=None,
+            )
+            return [(cluster, [type("Rep", (), {"embedding": rep_vec})()])]
 
     class SessionStub:
         async def get(self, _model, _identity_id):

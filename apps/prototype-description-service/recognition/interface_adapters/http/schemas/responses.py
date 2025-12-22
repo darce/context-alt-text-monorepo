@@ -173,6 +173,44 @@ class HealthResponse(BaseModel):
     version: str | None = None
 
 
+class ConnectionPoolStats(BaseModel):
+    """Connection pool statistics for monitoring.
+
+    Attributes:
+        size: Configured pool size (base connections).
+        overflow: Configured max overflow connections.
+        checked_out: Currently checked out connections.
+        checked_in: Available connections in pool.
+        overflow_count: Current overflow connections in use.
+        total_capacity: Maximum possible connections.
+        utilization_percent: Percentage of capacity in use.
+    """
+
+    size: int
+    overflow: int
+    checked_out: int
+    checked_in: int
+    overflow_count: int
+    total_capacity: int
+    utilization_percent: float
+
+
+class HealthCheckResponse(BaseModel):
+    """Health check response with database connectivity.
+
+    Attributes:
+        status: "healthy" or "degraded".
+        database: Database connection status.
+        pool_stats: Connection pool statistics.
+        timestamp: ISO timestamp of check.
+    """
+
+    status: str
+    database: str
+    pool_stats: ConnectionPoolStats | None = None
+    timestamp: str
+
+
 class ReassignIdentityResponse(BaseModel):
     """Response after reassigning an identity to a cluster."""
 
@@ -217,7 +255,9 @@ __all__ = [
     "BboxResponse",
     "ClusterResponse",
     "ClusteringJobStatusResponse",
+    "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",
+    "HealthCheckResponse",
     "HealthResponse",
     "IdentityResponse",
     "IdentitySuggestionsResponse",

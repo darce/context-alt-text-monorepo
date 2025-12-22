@@ -98,6 +98,25 @@ class ClusterRepository(Protocol):
         """Count clusters with user-provided labels (not auto-generated)."""
         ...
 
+    async def get_labeled_with_representatives(
+        self,
+        tenant_id: str,
+    ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
+        """Fetch labeled clusters with representatives in single query.
+
+        Uses eager loading to avoid N+1 query problem.
+
+        Args:
+            tenant_id: Tenant UUID string.
+
+        Returns:
+            List of (cluster, representatives) tuples.
+
+        Raises:
+            NotImplementedError: Until implemented.
+        """
+        raise NotImplementedError("TODO: get_labeled_with_representatives")
+
 
 class MemberRepository(Protocol):
     """Abstract interface for cluster member persistence."""

@@ -13,9 +13,11 @@ from recognition.application.assignment.checks.base import AssignmentCheck, Chec
 from recognition.application.assignment.decision import AssignmentOutcome
 from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.settings import ClusteringSettings
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.ids import generate_id
 
 
@@ -69,6 +71,12 @@ class NoopRepository(ClusterRepository):
 
     async def count_labeled(self) -> int:
         return 10  # Return a mature count so adaptive threshold is relaxed
+
+    async def get_labeled_with_representatives(
+        self,
+        tenant_id: str,
+    ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
+        return []
 
     async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
         return None

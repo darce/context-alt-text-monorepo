@@ -53,10 +53,20 @@ def get_pool_stats() -> dict[str, int | float]:
     Returns:
         Dictionary with pool metrics.
     """
+
+    def _call_pool_method(pool_obj: object, name: str, default: int = 0) -> int:
+        method = getattr(pool_obj, name, None)
+        if callable(method):
+            try:
+                return int(method())
+            except Exception:
+                return default
+        return default
+
     pool = engine.pool
-    size = int(pool.size())
+    size = _call_pool_method(pool, "size")
     max_overflow = int(getattr(pool, "_max_overflow", _settings.max_overflow))
-    checked_out = int(pool.checkedout())
+    checked_out = _call_pool_method(pool, "checkedout")
     checked_in = max(0, size - checked_out)
     overflow_count = max(0, checked_out - size)
     total_capacity = size + max_overflow

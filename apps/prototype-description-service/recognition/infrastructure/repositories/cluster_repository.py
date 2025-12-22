@@ -72,7 +72,24 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         tenant_id: str,
     ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
         """Fetch labeled clusters with representatives via eager loading."""
-        raise NotImplementedError("TODO: get_labeled_with_representatives")
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None:
+            return []
+
+        stmt: Select[tuple[ClusterModel]] = (
+            select(ClusterModel)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.user_confirmed.is_(True))
+            .where(ClusterModel.label.is_not(None))
+            .where(~ClusterModel.label.startswith("cluster-"))
+            .options(selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity))
+        )
+        result = await self._session.execute(stmt)
+        output: list[tuple[IdentityCluster, list[ClusterRepresentative]]] = []
+        for model in result.scalars().all():
+            cluster = self._to_domain(model)
+            output.append((cluster, cluster.representatives))
+        return output
 
     async def save(self, cluster):
         """Persist a new cluster."""

@@ -20,11 +20,15 @@ ENV_FILE = Path(__file__).resolve().parents[1] / ".env"
 
 @dataclass(frozen=True)
 class DatabaseSettings:
-    """Settings container for database connectivity and pgvector config."""
+    """Settings container for database connectivity, pool config, and pgvector config."""
 
     postgres_dsn: str
     postgres_sync_dsn: str
     pgvector_dimension: int
+    pool_size: int
+    max_overflow: int
+    pool_timeout: int
+    pool_recycle: int
 
 
 def _infer_sync_dsn(async_dsn: str) -> str:
@@ -93,11 +97,19 @@ def get_database_settings() -> DatabaseSettings:
     async_dsn = os.getenv("POSTGRES_DSN") or _render_default_async_dsn()
     sync_dsn = os.getenv("POSTGRES_SYNC_DSN") or _infer_sync_dsn(async_dsn)
     pgvector_dim = int(os.getenv("PGVECTOR_DIM", "512"))
+    pool_size = int(os.getenv("DB_POOL_SIZE", "10"))
+    max_overflow = int(os.getenv("DB_MAX_OVERFLOW", "5"))
+    pool_timeout = int(os.getenv("DB_POOL_TIMEOUT", "30"))
+    pool_recycle = int(os.getenv("DB_POOL_RECYCLE", "3600"))
 
     return DatabaseSettings(
         postgres_dsn=async_dsn,
         postgres_sync_dsn=sync_dsn,
         pgvector_dimension=pgvector_dim,
+        pool_size=pool_size,
+        max_overflow=max_overflow,
+        pool_timeout=pool_timeout,
+        pool_recycle=pool_recycle,
     )
 
 

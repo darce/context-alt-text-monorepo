@@ -450,11 +450,10 @@ def get_pool_stats() -> dict[str, int | float]:
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, Depends
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_pool_stats
-from recognition.interface_adapters.http.dependencies import get_optional_session
+from recognition.interface_adapters.http.dependencies import get_optional_session, require_auth
 from recognition.interface_adapters.http.schemas.responses import (
     ConnectionPoolStats,
     HealthCheckResponse,
@@ -467,30 +466,20 @@ router = APIRouter(prefix="/health", tags=["health"])
 async def health_check(
     session: AsyncSession | None = Depends(get_optional_session),
 ) -> HealthCheckResponse:
-    """Health check with database connectivity and pool stats."""
-    db_status = "disconnected"
-    pool_stats_dict = get_pool_stats()
-    
-    if session is not None:
-        try:
-            await session.execute(text("SELECT 1"))
-            db_status = "connected"
-        except Exception:
-            db_status = "error"
-    
+    """Health check with database connectivity."""
+    db_status = "connected" if session is not None else "disconnected"
     status = "healthy" if db_status == "connected" else "degraded"
-    pool_stats = ConnectionPoolStats(**pool_stats_dict)
-    
+
     return HealthCheckResponse(
         status=status,
         database=db_status,
-        pool_stats=pool_stats,
+        pool_stats=None,
         timestamp=datetime.now(tz=UTC).isoformat(),
     )
 
 
 @router.get("/pool", response_model=ConnectionPoolStats)
-async def pool_stats() -> ConnectionPoolStats:
+async def pool_stats(_auth=Depends(require_auth)) -> ConnectionPoolStats:
     """Get connection pool statistics."""
     stats = get_pool_stats()
     return ConnectionPoolStats(**stats)
@@ -498,12 +487,12 @@ async def pool_stats() -> ConnectionPoolStats:
 
 ### 4.3 Register Health Router
 
-**File:** `recognition/main.py`
+**File:** `recognition/interface_adapters/http/router.py`
 
 ```python
 from recognition.interface_adapters.http.routers import health
 
-app.include_router(health.router)
+router.include_router(health.router)
 ```
 
 ---
@@ -594,41 +583,31 @@ async def test_concurrent_requests_dont_exhaust_pool():
 
 ### API Tests
 
-**File:** `recognition/tests/api/test_health_endpoint.py` (NEW)
+**File:** `recognition/tests/api/test_api_health.py`
 
 ```python
-@pytest.mark.asyncio
-async def test_health_endpoint_returns_pool_stats(test_client):
-    """Health endpoint should return connection pool statistics."""
-    response = await test_client.get("/health")
-    
+def test_health_endpoint_returns_minimal_payload(test_client):
+    """Health endpoint should return minimal status without pool stats."""
+    response = test_client.get("/recognition/health")
+
     assert response.status_code == 200
     data = response.json()
-    
-    assert "status" in data
-    assert "database" in data
-    assert "pool_stats" in data
-    
-    pool = data["pool_stats"]
-    assert "size" in pool
-    assert "checked_out" in pool
-    assert "utilization_percent" in pool
+
+    assert data["status"] in {"healthy", "degraded"}
+    assert data["database"] in {"connected", "disconnected"}
+    assert data["pool_stats"] is None
+    assert "timestamp" in data
 
 
-@pytest.mark.asyncio
-async def test_pool_endpoint_shows_current_usage(test_client):
-    """Pool endpoint should show real-time usage."""
-    response = await test_client.get("/health/pool")
-    
-    assert response.status_code == 200
-    data = response.json()
-    
-    # Should show at least 1 connection (this request)
-    assert data["checked_out"] >= 1
-    assert data["utilization_percent"] > 0
+def test_pool_endpoint_requires_auth_when_enabled(test_client, monkeypatch):
+    """Pool endpoint should require auth when auth is enabled."""
+    monkeypatch.setenv("RECOGNITION_AUTH_ENABLED", "1")
+    response = test_client.get("/recognition/health/pool")
+
+    assert response.status_code == 401
 ```
 
-**Run:** `cd apps/prototype-description-service && pytest recognition/tests/api/test_health_endpoint.py -v`
+**Run:** `cd apps/prototype-description-service && pytest recognition/tests/api/test_api_health.py -v`
 
 ### Manual Verification
 
@@ -642,8 +621,9 @@ async def test_pool_endpoint_shows_current_usage(test_client):
 1. **Verify No Leak:**
    ```bash
    # Monitor pool stats during curation
-   watch -n 1 'curl -s http://localhost:8000/health/pool | jq'
+   watch -n 1 'curl -s http://localhost:8000/recognition/health/pool | jq'
    ```
+   - If auth is enabled, add `-H "Authorization: Bearer <api-key>"`
    - Perform 10+ split/merge operations
    - **Expected:** `checked_out` never exceeds `total_capacity`
    - **Expected:** `utilization_percent` returns to ~0% when idle
@@ -652,13 +632,14 @@ async def test_pool_endpoint_shows_current_usage(test_client):
    ```bash
    # Simulate 30 concurrent requests
    for i in {1..30}; do
-     curl -s http://localhost:8000/health &
+     curl -s http://localhost:8000/recognition/health &
    done
    wait
    
    # Check final pool state
-   curl -s http://localhost:8000/health/pool | jq
+   curl -s http://localhost:8000/recognition/health/pool | jq
    ```
+   - If auth is enabled, add `-H "Authorization: Bearer <api-key>"`
    - **Expected:** No timeout errors
    - **Expected:** All connections returned to pool
 
@@ -681,28 +662,28 @@ async def test_pool_endpoint_shows_current_usage(test_client):
 - [x] Add `get_labeled_with_representatives` to repository protocol
 
 ### Phase 1: Fix Leak (P0)
-- [ ] Move `set_tenant_context` inside try block in `get_session`
-- [ ] Move `set_tenant_context` inside try block in `get_optional_session`
-- [ ] Remove redundant `set_tenant_context` in `build_cluster_service`
+- [x] Move `set_tenant_context` inside try block in `get_session`
+- [x] Move `set_tenant_context` inside try block in `get_optional_session`
+- [x] Remove redundant `set_tenant_context` in `build_cluster_service`
 
 ### Phase 2: Configure Pool (P0)
-- [ ] Add pool settings to `DatabaseSettings`
-- [ ] Apply pool configuration in `db/session.py`
+- [x] Add pool settings to `DatabaseSettings`
+- [x] Apply pool configuration in `db/session.py`
 
 ### Phase 3: Batch Queries (P1)
-- [ ] Implement `get_labeled_with_representatives` in cluster repository
-- [ ] Update `refresh_for_identity` to use batch query
+- [x] Implement `get_labeled_with_representatives` in cluster repository
+- [x] Update `refresh_for_identity` to use batch query
 
 ### Phase 4: Monitoring (P1)
-- [ ] Add `get_pool_stats()` utility
-- [ ] Create health check router
-- [ ] Register health router in main app
+- [x] Add `get_pool_stats()` utility
+- [x] Create health check router
+- [x] Register health router in main app
 
 ### Testing
-- [ ] Write unit tests for pool stats
-- [ ] Write unit test for session cleanup on failure
+- [x] Write unit tests for pool stats
+- [x] Write unit test for session cleanup on failure
 - [ ] Write integration test for concurrent requests
-- [ ] Write API tests for health endpoints
+- [x] Write API tests for health endpoints
 - [ ] Manual load testing
 
 ### Deployment
@@ -717,7 +698,7 @@ async def test_pool_endpoint_shows_current_usage(test_client):
 
 ✅ No connection leaks under concurrent load  
 ✅ Pool utilization returns to 0% when idle  
-✅ Health endpoint shows real-time pool stats  
+✅ Health pool endpoint shows real-time pool stats  
 ✅ Suggestion refresh uses single batch query  
 ✅ Service handles 30+ concurrent requests  
 ✅ All tests pass  

@@ -11,6 +11,7 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.assignment.decision import AssignmentOutcome
 from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.settings import ClusteringSettings
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.repositories import ClusterRepository
@@ -83,6 +84,12 @@ class GateRepoStub(ClusterRepository):
 
     async def count_labeled(self) -> int:
         return 10  # Return a mature count so adaptive threshold is relaxed
+
+    async def get_labeled_with_representatives(
+        self,
+        tenant_id: str,
+    ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
+        return []
 
     async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
         return None

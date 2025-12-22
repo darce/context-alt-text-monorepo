@@ -6,7 +6,15 @@ from __future__ import annotations
 
 from fastapi import APIRouter
 
-from recognition.interface_adapters.http.routers import analyze, clusters, diagnostics, health, media, suggestions, training
+from recognition.interface_adapters.http.routers import (
+    analyze,
+    clusters,
+    diagnostics,
+    health,
+    media,
+    suggestions,
+    training,
+)
 
 router = APIRouter(tags=["recognition"])
 

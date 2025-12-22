@@ -88,7 +88,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         output: list[tuple[IdentityCluster, list[ClusterRepresentative]]] = []
         for model in result.scalars().all():
             cluster = self._to_domain(model)
-            output.append((cluster, cluster.representatives))
+            representatives = list(cluster.representatives or [])
+            output.append((cluster, representatives))
         return output
 
     async def save(self, cluster):

@@ -12,7 +12,7 @@ import hashlib
 import logging
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterable
-from contextlib import suppress
+from contextlib import aclosing, suppress
 from datetime import UTC, datetime
 from functools import lru_cache
 from pathlib import Path
@@ -211,51 +211,53 @@ async def _lookup_api_key(
 
 async def get_session(tenant_id: str | None = Depends(get_tenant_id_optional)) -> AsyncIterator[AsyncSession]:
     """Yield a SQLAlchemy async session; set tenant context when provided."""
-    async for session in _get_session():
-        try:
-            if tenant_id:
-                await set_tenant_context(session, uuid.UUID(str(tenant_id)))
-            yield session
-            commit = getattr(session, "commit", None)
-            if callable(commit):
-                await commit()
-        except Exception:
-            rollback = getattr(session, "rollback", None)
-            if callable(rollback):
-                await rollback()
-            raise
-        finally:
-            if tenant_id:
-                await clear_tenant_context(session)
+    async with aclosing(_get_session()) as session_iter:
+        async for session in session_iter:
+            try:
+                if tenant_id:
+                    await set_tenant_context(session, uuid.UUID(str(tenant_id)))
+                yield session
+                commit = getattr(session, "commit", None)
+                if callable(commit):
+                    await commit()
+            except Exception:
+                rollback = getattr(session, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+                raise
+            finally:
+                if tenant_id:
+                    await clear_tenant_context(session)
 
 
 async def get_optional_session(
     tenant_id: str | None = Depends(get_tenant_id_optional),
 ) -> AsyncIterator[AsyncSession | None]:
     """Best-effort session provider; returns None when the database is unavailable."""
-    async for session in _get_session():
-        try:
+    async with aclosing(_get_session()) as session_iter:
+        async for session in session_iter:
             try:
-                await session.execute(text("SELECT 1"))
+                try:
+                    await session.execute(text("SELECT 1"))
+                    if tenant_id:
+                        await set_tenant_context(session, uuid.UUID(str(tenant_id)))
+                except Exception:
+                    yield None
+                    return
+                try:
+                    yield session
+                    commit = getattr(session, "commit", None)
+                    if callable(commit):
+                        await commit()
+                except Exception as exc:
+                    logger.error("get_optional_session: exception during yield/commit: %s", exc)
+                    rollback = getattr(session, "rollback", None)
+                    if callable(rollback):
+                        await rollback()
+                    raise
+            finally:
                 if tenant_id:
-                    await set_tenant_context(session, uuid.UUID(str(tenant_id)))
-            except Exception:
-                yield None
-                return
-            try:
-                yield session
-                commit = getattr(session, "commit", None)
-                if callable(commit):
-                    await commit()
-            except Exception as exc:
-                logger.error("get_optional_session: exception during yield/commit: %s", exc)
-                rollback = getattr(session, "rollback", None)
-                if callable(rollback):
-                    await rollback()
-                raise
-        finally:
-            if tenant_id:
-                await clear_tenant_context(session)
+                    await clear_tenant_context(session)
 
 
 async def require_auth(
@@ -328,23 +330,24 @@ async def require_write_access(auth: AuthContext = Depends(require_auth)) -> Aut
 
 async def get_observability_session() -> AsyncIterator[AsyncSession | None]:
     """Session provider without tenant validation for diagnostics."""
-    async for session in _get_session():
-        try:
-            await session.execute(text("SELECT 1"))
-        except Exception:
-            yield None
+    async with aclosing(_get_session()) as session_iter:
+        async for session in session_iter:
+            try:
+                await session.execute(text("SELECT 1"))
+            except Exception:
+                yield None
+                return
+            try:
+                yield session
+                commit = getattr(session, "commit", None)
+                if callable(commit):
+                    await commit()
+            except Exception:
+                rollback = getattr(session, "rollback", None)
+                if callable(rollback):
+                    await rollback()
+                raise
             return
-        try:
-            yield session
-            commit = getattr(session, "commit", None)
-            if callable(commit):
-                await commit()
-        except Exception:
-            rollback = getattr(session, "rollback", None)
-            if callable(rollback):
-                await rollback()
-            raise
-        return
 
 
 async def get_suggestion_service(

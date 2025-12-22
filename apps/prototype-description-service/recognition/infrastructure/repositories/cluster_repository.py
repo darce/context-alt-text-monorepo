@@ -67,6 +67,13 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
+    async def get_labeled_with_representatives(
+        self,
+        tenant_id: str,
+    ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
+        """Fetch labeled clusters with representatives via eager loading."""
+        raise NotImplementedError("TODO: get_labeled_with_representatives")
+
     async def save(self, cluster):
         """Persist a new cluster."""
         tenant_uuid = _coerce_uuid(cluster.tenant_id)

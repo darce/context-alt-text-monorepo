@@ -43,4 +43,13 @@ async def get_session() -> AsyncIterator[AsyncSession]:
         await session.close()
 
 
-__all__ = ["engine", "get_session", "async_session_factory"]
+def get_pool_stats() -> dict[str, int | float]:
+    """Return current connection pool statistics.
+
+    Returns:
+        Dictionary with pool metrics.
+    """
+    raise NotImplementedError("TODO: implement get_pool_stats")
+
+
+__all__ = ["engine", "get_session", "async_session_factory", "get_pool_stats"]

@@ -212,9 +212,9 @@ async def _lookup_api_key(
 async def get_session(tenant_id: str | None = Depends(get_tenant_id_optional)) -> AsyncIterator[AsyncSession]:
     """Yield a SQLAlchemy async session; set tenant context when provided."""
     async for session in _get_session():
-        if tenant_id:
-            await set_tenant_context(session, uuid.UUID(str(tenant_id)))
         try:
+            if tenant_id:
+                await set_tenant_context(session, uuid.UUID(str(tenant_id)))
             yield session
             commit = getattr(session, "commit", None)
             if callable(commit):
@@ -234,11 +234,10 @@ async def get_optional_session(
 ) -> AsyncIterator[AsyncSession | None]:
     """Best-effort session provider; returns None when the database is unavailable."""
     async for session in _get_session():
-        # Set tenant context inside the generator scope
-        if tenant_id:
-            await set_tenant_context(session, uuid.UUID(str(tenant_id)))
         try:
             await session.execute(text("SELECT 1"))
+            if tenant_id:
+                await set_tenant_context(session, uuid.UUID(str(tenant_id)))
         except Exception:
             yield None
             return
@@ -511,7 +510,6 @@ async def build_cluster_service(
     # Auto-provision tenant if it doesn't exist (first-use provisioning)
     tenant_uuid = uuid.UUID(tenant_id)
     await ensure_tenant_exists(session, tenant_uuid)
-    await set_tenant_context(session, tenant_uuid)
 
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant_id)

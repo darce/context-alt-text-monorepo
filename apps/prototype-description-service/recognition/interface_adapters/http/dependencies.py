@@ -41,6 +41,7 @@ from recognition.domain.job import Job
 from recognition.infrastructure.repositories import (
     SqlAlchemyApiKeyRepository,
     SqlAlchemyClusterRepository,
+    SqlAlchemyConstraintRepository,
     SqlAlchemyIdentityClusterBlockRepository,
     SqlAlchemyJobRepository,
     SqlAlchemyMemberRepository,
@@ -358,6 +359,7 @@ async def get_suggestion_service(
     repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
     cluster_repo = SqlAlchemyClusterRepository(session)
     block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant)
+    constraint_repo = SqlAlchemyConstraintRepository(session)
     settings = get_settings()
     return SuggestionService(
         repo,
@@ -366,6 +368,7 @@ async def get_suggestion_service(
         session=session,
         settings=settings,
         block_repository=block_repo,
+        constraint_repository=constraint_repo,
     )
 
 
@@ -513,12 +516,17 @@ async def build_cluster_service(
 
     # Auto-provision tenant if it doesn't exist (first-use provisioning)
     tenant_uuid = uuid.UUID(tenant_id)
+
+    # Ensure RLS context is set for this tenant
+    await set_tenant_context(session, tenant_uuid)
+
     await ensure_tenant_exists(session, tenant_uuid)
 
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant_id)
     block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant_id)
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo)
+    constraint_repo = SqlAlchemyConstraintRepository(session)
 
     suggestion_repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant_id)
     suggestion_service = SuggestionService(
@@ -532,11 +540,18 @@ async def build_cluster_service(
 
     charts_dir = Path("logs") / "charts"
 
+    # Create HAC settings (can be overridden later via config)
+    from recognition.application.settings.clustering import HACSettings
+
+    hac_settings = HACSettings()
+
     return ClusterService(
         gate=AssignmentGate(
             settings=settings,
             cluster_repository=cluster_repo,
             block_repository=block_repo,
+            constraint_repository=constraint_repo,
+            member_repository=member_repo,
         ),
         representative_discovery=RepresentativeDiscovery(settings=settings),
         centroid_discovery=CentroidDiscovery(settings=settings),
@@ -544,6 +559,8 @@ async def build_cluster_service(
         assignment_writer=assignment_writer,
         suggestion_service=suggestion_service,
         block_repository=block_repo,
+        constraint_repository=constraint_repo,
+        hac_settings=hac_settings,
         logger=ClusteringLogger(),
         visualizer=ClusterVisualizer(output_dir=charts_dir),
         decision_store=get_decision_store(),
@@ -697,6 +714,12 @@ async def get_job_service(
             await session.execute(text("SELECT 1"))
         except Exception:
             session = None
+
+    if session is not None and tenant_id:
+        with suppress(ValueError):
+            # Ensure RLS context is set if we have a session and tenant
+            # This handles cases where tenant_id comes from body, bypassing get_session's check
+            await set_tenant_context(session, uuid.UUID(str(tenant_id)))
 
     if session is None:
         return JobService(repository=_MEM_JOB_REPO, cluster_service=None, scan_service=None)

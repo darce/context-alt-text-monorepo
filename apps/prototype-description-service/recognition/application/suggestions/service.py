@@ -21,6 +21,7 @@ from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.repositories import (
     ClusterRepository,
     IdentityClusterBlockRepository,
+    IdentityConstraintRepository,
     SuggestionCreateData,
     SuggestionRepository,
 )
@@ -53,6 +54,7 @@ class SuggestionService:
         run_context: RecognitionRunContext | None = None,
         settings: ClusteringSettings | None = None,
         block_repository: IdentityClusterBlockRepository | None = None,
+        constraint_repository: IdentityConstraintRepository | None = None,
     ) -> None:
         self._repository = repository
         self._tenant_id = tenant_id
@@ -61,6 +63,7 @@ class SuggestionService:
         self._run_context = run_context
         self._settings = settings or get_recognition_settings().clustering
         self._block_repository = block_repository
+        self._constraint_repository = constraint_repository
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.
@@ -234,6 +237,28 @@ class SuggestionService:
                 cluster_id=cluster_id,
             ):
                 continue
+
+            # Skip clusters with cannot-link constraints (Phase 3 constraint-aware suggestions)
+            if self._constraint_repository is not None:
+                member_repo = getattr(self._cluster_repository, "_member_repo", None)
+                if member_repo is not None:
+                    try:
+                        members = await member_repo.get_by_cluster(cluster_id)
+                        member_ids = [str(m.identity_id) for m in members]
+                        violates = await self._constraint_repository.has_cannot_link(
+                            tenant_id=str(tenant_uuid),
+                            identity_id=str(identity_uuid),
+                            cluster_member_ids=member_ids,
+                        )
+                        if violates:
+                            logger.debug(
+                                "[suggestions] Skipping cluster due to cannot-link constraint: cluster_id=%s identity_id=%s",
+                                cluster_id,
+                                identity_id,
+                            )
+                            continue
+                    except Exception as e:
+                        logger.warning("[suggestions] Error checking constraints: %s", e)
 
             if not reps:
                 continue

@@ -92,3 +92,34 @@ class ClusteringSettings(BaseModel):
         default=0.20,
         description="Minimum quality score below which suggestions are suppressed.",
     )
+
+
+class HACSettings(BaseModel):
+    """Settings for constrained HAC refinement.
+
+    Per instructions.md: Use pydantic.BaseModel with hardcoded defaults,
+    NOT pydantic-settings. Override by instantiation, not .env files.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    linkage_method: str = Field(
+        default="median",
+        description="HAC linkage method. 'median' per Apple paper.",
+    )
+    distance_threshold: float = Field(
+        default=0.4,
+        description="Maximum distance for cluster formation.",
+    )
+    constraint_penalty: float = Field(
+        default=1.0,
+        description="Distance penalty for cannot-link pairs. Must be > distance_threshold.",
+    )
+    max_scope_size: int = Field(
+        default=500,
+        description="Maximum identities in single HAC run (O(n^2) constraint).",
+    )
+    knn_neighborhood: int = Field(
+        default=50,
+        description="kNN neighborhood size for scoped HAC.",
+    )

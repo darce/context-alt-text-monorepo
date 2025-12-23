@@ -4,6 +4,7 @@ Cluster management routes.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from datetime import UTC, datetime
 
@@ -71,6 +72,7 @@ async def create_clustering_job(
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
     job_service = await get_job_service(
         session=session,
@@ -139,6 +141,7 @@ async def update_cluster(
     validate_entity_id(cluster_id, field_name="cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
     cluster = await cluster_service.update_cluster(cluster_id, request.tenant_id, label=label)
     if not cluster:
@@ -192,6 +195,7 @@ async def merge_cluster(
     validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
     cluster = await cluster_service.merge_cluster(
         source_cluster_id=cluster_id,
@@ -357,6 +361,33 @@ async def reassign_identity(
                     blocked_cluster_id=source_cluster_id,
                     reason="manual_removal",
                 )
+
+                # Create CANNOT_LINK constraint to permanently prevent linking
+                try:
+                    from recognition.domain.constraints import ConstraintSource, ConstraintType
+                    from recognition.infrastructure.repositories import SqlAlchemyConstraintRepository
+
+                    # We need the cluster's representative to anchor the constraint
+                    cluster_repo = cluster_service.assignment_writer._clusters
+                    source_cluster = await cluster_repo.get_by_id(source_cluster_id)
+
+                    if source_cluster and source_cluster.representative_identity_id:
+                        constraint_repo = SqlAlchemyConstraintRepository(session)
+                        with contextlib.suppress(Exception):
+                            await constraint_repo.create(
+                                tenant_id=request.tenant_id,
+                                identity_a=request.identity_id,
+                                identity_b=str(source_cluster.representative_identity_id),
+                                constraint_type=ConstraintType.CANNOT_LINK.value,
+                                source=ConstraintSource.WRONG_PERSON.value,
+                                created_by_user_id=None,  # User ID not currently available in request
+                            )
+                except Exception as exc:
+                    # Don't fail the request if constraint creation fails
+                    _logger.warning(
+                        "Failed to create CANNOT_LINK constraint for identity %s: %s", request.identity_id, exc
+                    )
+
             job_service = await get_job_service(
                 session=session,
                 tenant_id=request.tenant_id,
@@ -402,6 +433,7 @@ async def assign_outlier(
     validate_entity_id(request.identity_id, field_name="identity_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
     cluster = await cluster_service.assign_outlier_to_cluster(
         identity_id=request.identity_id,

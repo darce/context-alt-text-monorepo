@@ -23,7 +23,7 @@ from recognition.application.orchestration.cluster_curation import update_cluste
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
-from recognition.domain.repositories import ClusterRepository, MemberRepository
+from recognition.domain.repositories import ClusterRepository, IdentityConstraintRepository, MemberRepository
 from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import extract_face_embedding
 
@@ -244,6 +244,7 @@ async def merge_cluster(
     gate: AssignmentGate,
     clustering_logger: ClusteringLogger | None = None,
     session: AsyncSession | None = None,
+    constraint_repository: IdentityConstraintRepository | None = None,
 ) -> IdentityCluster | None:
     """Merge a source cluster into a target cluster by reassigning members."""
     cluster_repo: ClusterRepository = assignment_writer._clusters
@@ -296,7 +297,24 @@ async def merge_cluster(
     target.user_confirmed = True
     updated: IdentityCluster = await cluster_repo.update(target)
 
-    await cluster_repo.delete(source_cluster_id)
+    # Source cluster deletion moved to end of function to prevent early commit failures
+    source_rep_id = source.representative_identity_id
+    target_rep_id = target.representative_identity_id
+
+    # Create MUST_LINK constraint between representatives if implementation supports it
+    if constraint_repository and source_rep_id and target_rep_id and source_rep_id != target_rep_id:
+        from recognition.domain.constraints import ConstraintSource, ConstraintType
+
+        # Use passed session or repo session if available
+        # Note: repo implementation should handle async/await
+        with contextlib.suppress(Exception):
+            await constraint_repository.create(
+                tenant_id=tenant_id,
+                identity_a=str(source_rep_id),
+                identity_b=str(target_rep_id),
+                constraint_type=ConstraintType.MUST_LINK.value,
+                source=ConstraintSource.MERGE.value,
+            )
 
     recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
     if callable(recompute_reps):
@@ -309,7 +327,7 @@ async def merge_cluster(
     if callable(refresh_view):
         await refresh_view()
 
-    # Log the merge event
+    # Log the merge event before deletion for audit trail
     if clustering_logger:
         with contextlib.suppress(Exception):
             clustering_logger.log_cluster_merged(
@@ -331,6 +349,10 @@ async def merge_cluster(
         moved_media_ids,
         tenant_id,
     )
+
+    # Delete source cluster LAST, after all recomputations and logging are complete.
+    # This avoids "Cluster not found" 404s during session flush if other operations reference it.
+    await cluster_repo.delete(source_cluster_id)
 
     # After a merge, the target cluster's representatives are recomputed. This can unlock additional matches that were
     # previously SUGGESTED (gate-blocked) or left unclustered.

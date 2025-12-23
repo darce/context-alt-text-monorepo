@@ -25,6 +25,7 @@ TENANT_TABLES = [
     "identity_clustering_jobs",
     "identity_suggestions",
     "identity_cluster_blocks",
+    "identity_constraints",
     "recognition_runs",
     "recognition_events",
 ]
@@ -444,6 +445,40 @@ def upgrade() -> None:
             "blocked_cluster_id",
             name="unique_identity_cluster_block",
         ),
+    )
+
+    op.create_table(
+        "identity_constraints",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_a",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "identity_b",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("media_identities.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("constraint_type", sa.String(length=20), nullable=False),
+        sa.Column("source", sa.String(length=20), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
+        sa.Column("created_by_user_id", sa.Integer()),
+        sa.UniqueConstraint("tenant_id", "identity_a", "identity_b", name="unique_identity_constraint"),
+        sa.CheckConstraint("identity_a < identity_b", name="canonical_ordering"),
+    )
+    op.create_index(
+        "idx_identity_constraints_lookup",
+        "identity_constraints",
+        ["tenant_id", "identity_a", "identity_b"],
     )
 
     # Canonical evaluation + regression harness (Phase 1 "runs + events")

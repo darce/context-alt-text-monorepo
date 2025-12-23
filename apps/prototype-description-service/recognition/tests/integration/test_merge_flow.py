@@ -158,3 +158,43 @@ async def test_merge_cluster_logic(
     # Ideally check if id3 got picked up if we force high similarity?
     # Hard to force with integration test random embeddings.
     # Just running it is sufficient to prove the wiring works.
+
+
+@pytest.mark.asyncio
+async def test_merge_transaction_ordering(
+    db_session,
+    tenant: Tenant,
+    cluster_service: ClusterService,
+    cluster_repository: SqlAlchemyClusterRepository,
+    member_repository: SqlAlchemyMemberRepository,
+    scan_service: ScanService,
+) -> None:
+    """Verify that source cluster deletion happens without 404 errors during complex merges."""
+    tenant_id = str(tenant.id)
+    import uuid
+
+    from recognition.domain.cluster import IdentityCluster as DomainCluster
+
+    # Setup: 2 clusters
+    c1 = await cluster_repository.save(
+        DomainCluster(tenant_id=tenant_id, label="Source", is_labeled=True, identity_count=1)
+    )
+    c2 = await cluster_repository.save(
+        DomainCluster(tenant_id=tenant_id, label="Target", is_labeled=True, identity_count=1)
+    )
+
+    # Ensure they exist
+    assert await cluster_repository.get_by_id(str(c1.id)) is not None
+
+    # Perform Merge
+    # The key regression test here is that this does NOT raise "Cluster not found"
+    # which happened when deletion occurred before commit/flush of dependencies
+    await cluster_service.merge_cluster(
+        source_cluster_id=str(c1.id), tenant_id=tenant_id, target_cluster_id=str(c2.id), target_label="Merged Safe"
+    )
+
+    # Verify final state
+    assert await cluster_repository.get_by_id(str(c1.id)) is None
+    merged = await cluster_repository.get_by_id(str(c2.id))
+    assert merged is not None
+    assert merged.label == "Merged Safe"

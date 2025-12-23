@@ -10,6 +10,7 @@ from datetime import datetime
 from typing import Any, Protocol
 
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.constraints import IdentityConstraint
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.job import Job
 from recognition.domain.maturity import ClusterMaturityInfo
@@ -313,3 +314,90 @@ class JobRepository(Protocol):
     async def update(self, job: Job) -> Job:
         """Update a job's state."""
         ...
+
+
+class IdentityConstraintRepository(Protocol):
+    """Protocol for identity constraint persistence."""
+
+    async def create(
+        self,
+        tenant_id: str,
+        identity_a: str,
+        identity_b: str,
+        constraint_type: str,
+        source: str,
+        created_by_user_id: int | None = None,
+    ) -> IdentityConstraint:
+        """Create a new pairwise constraint.
+
+        Args:
+            tenant_id: Tenant scope.
+            identity_a: First identity ID.
+            identity_b: Second identity ID.
+            constraint_type: MUST_LINK or CANNOT_LINK (as string).
+            source: User action source (as string).
+            created_by_user_id: Optional user ID.
+
+        Returns:
+            Created constraint with canonical ordering applied.
+
+        Raises:
+            IntegrityError: If constraint already exists.
+        """
+        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+
+    async def get(
+        self,
+        tenant_id: str,
+        identity_a: str,
+        identity_b: str,
+    ) -> IdentityConstraint | None:
+        """Get constraint between two identities (order-agnostic).
+
+        Args:
+            tenant_id: Tenant scope.
+            identity_a: First identity ID.
+            identity_b: Second identity ID.
+
+        Returns:
+            Constraint if exists, None otherwise.
+        """
+        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+
+    async def get_all_for_identity(
+        self,
+        tenant_id: str,
+        identity_id: str,
+    ) -> list[IdentityConstraint]:
+        """Get all constraints involving an identity.
+
+        Args:
+            tenant_id: Tenant scope.
+            identity_id: Identity to query.
+
+        Returns:
+            List of constraints where identity_id is either a or b.
+        """
+        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+
+    async def get_all(self, tenant_id: str) -> list[IdentityConstraint]:
+        """Get all constraints for a tenant."""
+        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+
+    async def has_cannot_link(
+        self,
+        tenant_id: str,
+        identity_id: str,
+        cluster_member_ids: list[str],
+    ) -> bool:
+        """Check if identity has cannot-link with any cluster member.
+
+        Args:
+            tenant_id: Tenant scope.
+            identity_id: Identity to check.
+            cluster_member_ids: Members of target cluster.
+
+        Returns:
+            True if any cannot-link constraint exists.
+        """
+        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")

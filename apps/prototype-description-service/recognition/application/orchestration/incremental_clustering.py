@@ -76,6 +76,8 @@ async def cluster_unclustered_identities(
     assignment_writer: AssignmentWriter,
     suggestion_service: SuggestionService,
     clustering_logger: ClusteringLogger | None = None,
+    constrained_hac: Any | None = None,
+    hac_settings: Any | None = None,
 ) -> ClusterJobResult:
     """Cluster any identities not yet assigned to a cluster."""
     try:
@@ -471,6 +473,58 @@ async def cluster_unclustered_identities(
                     len(members),
                     [m.media_id for m in members],
                 )
+
+        # ============================================================
+        # HAC Refinement for Noise Pool (if constraints exist)
+        # ============================================================
+        if (
+            constrained_hac is not None
+            and hac_settings is not None
+            and still_unclustered
+            and len(still_unclustered) <= hac_settings.max_scope_size
+        ):
+            logger.info(
+                "[clustering] Running HAC refinement on %d noise identities",
+                len(still_unclustered),
+            )
+
+            # Extract embeddings for HAC
+            embeddings_for_hac = {
+                uuid.UUID(i.id): np.array(i.embedding, dtype=np.float32)
+                for i in still_unclustered
+                if i.embedding is not None
+            }
+
+            if embeddings_for_hac:
+                # Run constrained HAC
+                hac_clusters = await constrained_hac.refine_clusters(
+                    tenant_id=uuid.UUID(tenant_id), embeddings=embeddings_for_hac
+                )
+
+                # Group identities by HAC-assigned cluster
+                hac_groups: dict[uuid.UUID, list[MediaIdentity]] = {}
+                for identity in still_unclustered:
+                    cluster_uuid = hac_clusters.get(uuid.UUID(identity.id))
+                    if cluster_uuid:
+                        hac_groups.setdefault(cluster_uuid, []).append(identity)
+
+                # Persist each HAC cluster (only multi-member clusters)
+                for members in hac_groups.values():
+                    if len(members) > 1:
+                        await assignment_writer.persist_new_cluster(
+                            tenant_id=tenant_id,
+                            identities=members,
+                            similarities=[],  # HAC doesn't provide pairwise sims
+                            algorithm="constrained_hac",
+                        )
+                        centroids_dirty = True
+                        clusters_created += 1
+                        logger.info(
+                            "[clustering] hac_cluster job_id=%s identity_count=%d media_ids=%s",
+                            job_id,
+                            len(members),
+                            [m.media_id for m in members],
+                        )
 
         processed += len(chunk)
         clustering_job.processed_identities = processed

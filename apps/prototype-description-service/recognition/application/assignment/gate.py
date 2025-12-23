@@ -10,15 +10,18 @@ from typing import Any
 from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.assignment.checks import (
     BlockCheck,
-    CompleteLinkCheck,
     ConfidenceCheck,
-    MaturityCheck,
-    MemberDistributionCheck,
+    ConstraintCheck,
 )
 from recognition.application.assignment.checks.base import AssignmentCheck
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
 from recognition.application.settings import ClusteringSettings
-from recognition.domain.repositories import ClusterRepository, IdentityClusterBlockRepository
+from recognition.domain.repositories import (
+    ClusterRepository,
+    IdentityClusterBlockRepository,
+    IdentityConstraintRepository,
+    MemberRepository,
+)
 
 
 class AssignmentGate:
@@ -29,6 +32,8 @@ class AssignmentGate:
         settings: ClusteringSettings,
         cluster_repository: ClusterRepository,
         block_repository: IdentityClusterBlockRepository | None = None,
+        constraint_repository: IdentityConstraintRepository | None = None,
+        member_repository: MemberRepository | None = None,
         checks: Iterable[AssignmentCheck] | None = None,
     ) -> None:
         """Create a new assignment gate.
@@ -42,13 +47,14 @@ class AssignmentGate:
         self.cluster_repository = cluster_repository
         if checks is None:
             gate_checks: list[AssignmentCheck] = [
-                MaturityCheck(settings, cluster_repository),
-                CompleteLinkCheck(settings, cluster_repository),
-                MemberDistributionCheck(settings, cluster_repository),
                 ConfidenceCheck(settings, cluster_repository),
             ]
             if block_repository is not None:
                 gate_checks.insert(0, BlockCheck(block_repository))
+            if constraint_repository is not None and member_repository is not None:
+                # Constraints (MUST/CANNOT link) are strong signals, check early
+                gate_checks.insert(1, ConstraintCheck(constraint_repository, member_repository))
+
             self.checks = gate_checks
         else:
             self.checks = list(checks)

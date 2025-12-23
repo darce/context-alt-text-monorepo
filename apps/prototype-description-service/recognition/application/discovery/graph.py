@@ -428,16 +428,11 @@ class GraphDiscovery(DiscoveryAlgorithm):
                 cluster_selection_epsilon=epsilon,
             )
 
-        if DISABLE_CHINESE_WHISPERS_FALLBACK:
-            raise RuntimeError(
-                "GraphDiscovery Chinese Whispers fallback is temporarily disabled for debugging. "
-                "Install/enable `hdbscan`, lower the batch size, or set "
-                "DISABLE_CHINESE_WHISPERS_FALLBACK=False in recognition/application/discovery/graph.py."
-            )
-
-        from recognition.infrastructure.clustering import DeterministicChineseWhispers
-
-        return DeterministicChineseWhispers(threshold=float(self.settings.similarity_threshold))
+        # Chinese Whispers has been removed (HAC replaces it as refinement algorithm)
+        raise RuntimeError(
+            "GraphDiscovery requires HDBSCAN. Chinese Whispers fallback has been removed. "
+            "Install with: pip install hdbscan"
+        )
 
     @staticmethod
     def _hdbscan_available() -> bool:

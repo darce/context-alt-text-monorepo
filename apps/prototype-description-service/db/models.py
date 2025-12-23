@@ -626,6 +626,33 @@ class IdentityClusterBlock(Base):
     )
 
 
+class IdentityConstraint(Base):
+    """Pairwise constraint between two identities (Must-Link / Cannot-Link)."""
+
+    __tablename__ = "identity_constraints"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_a: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_b: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
+    )
+    constraint_type: Mapped[str] = mapped_column(String(20), nullable=False)
+    source: Mapped[str] = mapped_column(String(20), nullable=False)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
+    created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "identity_a", "identity_b", name="unique_identity_constraint"),
+        CheckConstraint("identity_a < identity_b", name="canonical_ordering"),
+        Index("idx_identity_constraints_lookup", "tenant_id", "identity_a", "identity_b"),
+    )
+
+
 __all__ = [
     "Tenant",
     "MediaIdentity",
@@ -636,6 +663,7 @@ __all__ = [
     "IdentityScanJobItem",
     "IdentitySuggestion",
     "IdentityClusterBlock",
+    "IdentityConstraint",
     "RecognitionRun",
     "RecognitionEvent",
     "ClusteringJobReport",

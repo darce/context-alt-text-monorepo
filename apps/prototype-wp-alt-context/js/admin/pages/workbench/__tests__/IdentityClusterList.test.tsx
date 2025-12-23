@@ -276,11 +276,12 @@ describe('IdentityClusterList', () => {
     expect(screen.getByRole('combobox')).toBeInTheDocument();
   });
 
-  it('allows unlinking an identity (wrong person)', async () => {
+  it('allows unlinking an identity (wrong person) only for singletons', async () => {
     (api.reassignClusterIdentity as Mock).mockResolvedValue({});
     vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
-    const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    // 1. Singleton case - button should be visible
+    const { client, user, unmount } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [baseIdentity],
@@ -288,8 +289,10 @@ describe('IdentityClusterList', () => {
     };
     client.setQueryData(['media-identities', [1]], cacheData);
 
-    await user.click(screen.getByRole('button', { name: /wrong person/i }));
+    const wrongPersonButton = screen.getByRole('button', { name: /wrong person/i });
+    expect(wrongPersonButton).toBeInTheDocument();
 
+    await user.click(wrongPersonButton);
     await waitFor(() =>
       expect(api.reassignClusterIdentity).toHaveBeenCalledWith({
         identityId: 'identity-1',
@@ -297,6 +300,18 @@ describe('IdentityClusterList', () => {
         blockFromCluster: true,
       }),
     );
+    unmount();
+
+    // 2. Multi-member case - button should be hidden
+    const member1 = { ...baseIdentity, identity_id: '1', cluster_id: 'c1', cluster_label: 'Startrek' };
+    const member2 = { ...baseIdentity, identity_id: '2', cluster_id: 'c1', cluster_label: 'Startrek' };
+
+    // We need to mock the API return for listClusters or rely on the component using the updated identities
+    // The component groups identities by cluster_id.
+    // However, IdentityClusterList takes `identities` prop.
+    renderWithClient(<IdentityClusterList identities={[member1, member2]} mediaId={1} />);
+
+    expect(screen.queryByRole('button', { name: /wrong person/i })).not.toBeInTheDocument();
   });
 
   it('allows splitting a cluster', async () => {

@@ -16,6 +16,8 @@ interface ClusterActionsProps {
   isAutoLabel: boolean;
   /** Whether the cluster can be split (has a cluster ID) */
   canSplit: boolean;
+  /** Whether the identity can be rejected/removed (e.g. singletons) */
+  canReject?: boolean;
   /** Whether any mutation is in progress */
   isPending: boolean;
   /** Called when edit button is clicked */
@@ -35,6 +37,7 @@ export const ClusterActions = ({
   hasLabel,
   isAutoLabel,
   canSplit,
+  canReject = true,
   isPending,
   onEdit,
   onWrongPerson,
@@ -59,9 +62,11 @@ export const ClusterActions = ({
       <button type="button" className="acx-identity-cluster__action" onClick={onEdit}>
         {!hasLabel || isAutoLabel ? __('Name this person', 'alt-context') : __('Edit label', 'alt-context')}
       </button>
-      <button type="button" className="acx-identity-cluster__action" onClick={onWrongPerson} disabled={isPending}>
-        {__('Wrong person', 'alt-context')}
-      </button>
+      {canReject && (
+        <button type="button" className="acx-identity-cluster__action" onClick={onWrongPerson} disabled={isPending}>
+          {__('Wrong person', 'alt-context')}
+        </button>
+      )}
       {canSplit && (
         <button type="button" className="acx-identity-cluster__action" onClick={onSplit} disabled={isPending}>
           {__('Split cluster', 'alt-context')}

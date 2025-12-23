@@ -81,13 +81,14 @@ export const useClusterMutations = ({
 }: UseClusterMutationsOptions) => {
   const queryClient = useQueryClient();
 
-  // Invalidate queries after mutations
-  const invalidateQueries = () => {
+  // Invalidate and refetch queries after mutations
+  const invalidateQueries = async () => {
     void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     void queryClient.invalidateQueries({ queryKey: ['cluster-labels'] });
     void queryClient.invalidateQueries({ queryKey: ['clusters'] });
-    void queryClient.invalidateQueries({ queryKey: ['identity-suggestions'] });
-    void queryClient.invalidateQueries({ queryKey: ['pending-suggestions'] });
+    // Force immediate refetch for suggestions (per hybrid-clustering-strategy.md Phase 3)
+    await queryClient.refetchQueries({ queryKey: ['identity-suggestions'] });
+    await queryClient.refetchQueries({ queryKey: ['pending-suggestions'] });
   };
 
   // Optimistically update cache for label changes
@@ -131,7 +132,7 @@ export const useClusterMutations = ({
       if (clusterId) {
         updateCachedClusterLabel(clusterId, updatedLabel);
       }
-      invalidateQueries();
+      void invalidateQueries();
       onRenameSuccess?.(updatedLabel);
     },
     onError: (err: Error) => {
@@ -155,7 +156,7 @@ export const useClusterMutations = ({
       if (clusterId) {
         updateCachedClusterLabel(clusterId, result.target_label ?? '');
       }
-      invalidateQueries();
+      void invalidateQueries();
       onMergeSuccess?.(result);
     },
     onError: (err: Error) => {
@@ -172,7 +173,7 @@ export const useClusterMutations = ({
         sourceLabel: payload.source_label ?? currentLabel ?? derivedLabel ?? null,
       }),
     onSuccess: () => {
-      invalidateQueries();
+      void invalidateQueries();
       onRevertSuccess?.();
     },
     onError: (err: Error) => {
@@ -188,7 +189,7 @@ export const useClusterMutations = ({
       }
     },
     onSuccess: () => {
-      invalidateQueries();
+      void invalidateQueries();
     },
     onError: (err: Error) => {
       onError?.(err.message);
@@ -201,7 +202,7 @@ export const useClusterMutations = ({
       await reassignClusterIdentity({ identityId, targetClusterId });
     },
     onSuccess: () => {
-      invalidateQueries();
+      void invalidateQueries();
       onRenameSuccess?.(''); // Clear edit state
     },
     onError: (err: Error) => {
@@ -215,7 +216,7 @@ export const useClusterMutations = ({
       return createClusterForIdentity({ identityId, label });
     },
     onSuccess: (result) => {
-      invalidateQueries();
+      void invalidateQueries();
       onRenameSuccess?.(result.label);
     },
     onError: (err: Error) => {
@@ -246,7 +247,7 @@ export const useClusterMutations = ({
       return result;
     },
     onSuccess: () => {
-      invalidateQueries();
+      void invalidateQueries();
     },
     onError: (err: Error) => {
       onError?.(err.message);

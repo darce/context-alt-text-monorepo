@@ -160,7 +160,8 @@ start_scan_worker() {
   local log_path="${SCAN_WORKER_LOG:-${PROJECT_ROOT}/logs/scan_worker.log}"
   mkdir -p "$(dirname "${log_path}")"
   echo "[prototype-local] Starting scan worker (log: ${log_path})..." >&2
-  nohup "${PYTHON_BIN}" "${PROJECT_ROOT}/recognition/worker/scan_worker.py" >"${log_path}" 2>&1 &
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Starting scan worker..." >> "${log_path}"
+  nohup "${PYTHON_BIN}" "${PROJECT_ROOT}/recognition/worker/scan_worker.py" >>"${log_path}" 2>&1 &
 }
 
 start_service() {
@@ -195,6 +196,7 @@ start_service() {
 }
 
 stop_service() {
+  load_env
   local port="${PORT:-${DEFAULT_PORT}}"
   echo "[prototype-local] Attempting to stop processes on port ${port}..." >&2
 
@@ -202,7 +204,7 @@ stop_service() {
   pids_str="$(lsof -ti tcp:"${port}" 2>/dev/null || true)"
   if [[ -z "${pids_str}" ]]; then
     echo "[prototype-local] No process bound to port ${port}." >&2
-    pkill -f "uvicorn api.main:app" >/dev/null 2>&1 && echo "[prototype-local] Terminated matching uvicorn process." >&2
+    pkill -f "uvicorn api.main:app" >/dev/null 2>&1 && echo "[prototype-local] Terminated matching uvicorn process." >&2 || true
     return
   fi
 
@@ -233,6 +235,8 @@ stop_service() {
   fi
 
   echo "[prototype-local] Stopping scan worker PID(s): ${worker_pids}" >&2
+  local log_path="${SCAN_WORKER_LOG:-${PROJECT_ROOT}/logs/scan_worker.log}"
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] Stopping scan worker PID(s): ${worker_pids}" >> "${log_path}"
   for pid in ${worker_pids}; do
     kill -TERM "${pid}" >/dev/null 2>&1 || true
   done

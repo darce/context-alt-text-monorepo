@@ -8,3 +8,4 @@ export * from './scan';
 export * from './identity';
 export * from './cluster';
 export * from './suggestion';
+export * from './constraint';

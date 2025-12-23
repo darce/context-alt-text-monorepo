@@ -192,7 +192,7 @@ export const useClusterSuggestions = ({
         return null;
       }
     },
-    [options, queryClient],
+    [options, queryClient, fetchAllClusters],
   );
 
   return {

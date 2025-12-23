@@ -173,7 +173,10 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         ),
       )
     ) {
-      mutations.reassign(cluster.members.map((m) => m.identity_id));
+      // Send only representative ID per requirements (backend will handle cluster implications)
+      if (representative?.identity_id) {
+        mutations.reassign([representative.identity_id]);
+      }
     }
   };
 
@@ -224,6 +227,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
               hasLabel={Boolean(cluster.label)}
               isAutoLabel={cluster.isAutoLabel}
               canSplit={Boolean(cluster.clusterId)}
+              canReject={isSingleton || cluster.members.length === 1}
               isPending={mutations.isPending}
               onEdit={startEditing}
               onWrongPerson={handleWrongPerson}

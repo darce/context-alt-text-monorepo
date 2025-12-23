@@ -62,7 +62,6 @@ export {
 export {
   fetchMediaIdentities,
   fetchIdentitySuggestions,
-  fetchTrainingStage,
   fetchPendingSuggestions,
   acceptSuggestion,
   rejectSuggestion,

@@ -9,7 +9,6 @@ import { getEndpoint, getConfig, isDevMode } from '../config';
 import type {
   MediaIdentitiesResponse,
   IdentitySuggestionsResponse,
-  TrainingStageResponse,
   PendingSuggestionsResponse,
   SuggestionActionResponse,
 } from './types';
@@ -49,20 +48,6 @@ export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Pr
   url.searchParams.set('top_k', String(topK));
 
   return fetchApi<IdentitySuggestionsResponse>(url.toString(), {
-    method: 'GET',
-    restNonce: getConfig().nonce,
-  });
-};
-
-/**
- * Fetch the current training stage info.
- * Returns adaptive threshold information based on curriculum learning.
- */
-export const fetchTrainingStage = async (): Promise<TrainingStageResponse> => {
-  const base = getEndpoint('workbenchRecognitionTrainingStage', 'recognitionTrainingStage');
-  const url = new URL(base, window.location.origin);
-
-  return fetchApi<TrainingStageResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });

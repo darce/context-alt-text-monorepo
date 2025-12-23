@@ -14,7 +14,6 @@ import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
 import { MediaSelection } from './workbench/MediaSelection';
-import { TrainingStageBanner } from './workbench/TrainingStageBanner';
 import { SuggestionReviewPanel } from './workbench/identity-clusters';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
 
@@ -355,7 +354,6 @@ export const WorkbenchPage = (): React.JSX.Element => {
               errorMessage={scanError}
               progress={scanProgress}
             />
-            <TrainingStageBanner />
             <SuggestionReviewPanel />
             <MediaSelection
               items={mediaItems}

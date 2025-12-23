@@ -20,8 +20,6 @@ import {
   type ClusterSummary,
   type JobStatusResponse,
 } from '../api/recognition';
-import { fetchTrainingStage } from '../api/recognition/identityApi';
-import type { TrainingStageResponse } from '../api/recognition/types';
 
 export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse[], Error, number[], unknown>) =>
   useMutation<AnalyzeResponse[], Error, number[]>({
@@ -98,16 +96,4 @@ export const useRecognitionCluster = (clusterId: string | null, enabled = true) 
     enabled: Boolean(clusterId) && enabled,
     queryFn: () => getRecognitionCluster(clusterId!),
     staleTime: 30_000,
-  });
-
-/**
- * Fetch training stage info based on curriculum learning.
- * Shows current adaptive threshold and progress towards maturity.
- */
-export const useTrainingStage = () =>
-  useQuery<TrainingStageResponse>({
-    queryKey: ['recognition-training-stage'],
-    queryFn: () => fetchTrainingStage(),
-    staleTime: 60_000, // Cache for 1 minute
-    refetchOnWindowFocus: false,
   });

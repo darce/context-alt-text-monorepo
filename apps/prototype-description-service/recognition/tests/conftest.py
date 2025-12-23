@@ -79,6 +79,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("clustering_job_reports", Base.metadata),
             Table("assignment_decisions", Base.metadata),
             Table("media_identities", Base.metadata),
+            Table("identity_constraints", Base.metadata),
             Table("tenants", Base.metadata),
         ]
         await conn.run_sync(Base.metadata.create_all, tables=tables)

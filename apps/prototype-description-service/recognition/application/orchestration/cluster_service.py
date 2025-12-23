@@ -13,9 +13,12 @@ import logging
 import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from sqlalchemy.ext.asyncio import AsyncSession
+
+if TYPE_CHECKING:
+    from recognition.application.clustering.constrained_hac import ConstrainedHAC
 
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome
@@ -52,10 +55,11 @@ from recognition.application.orchestration.incremental_clustering import (
     get_chunk_size as get_chunk_size_op,
 )
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.settings.clustering import HACSettings
 from recognition.application.suggestions.service import SuggestionRefreshReason
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.locator import IdentityLocator
-from recognition.domain.repositories import IdentityClusterBlockRepository
+from recognition.domain.repositories import IdentityClusterBlockRepository, IdentityConstraintRepository
 from recognition.observability import ClusteringLogger, DecisionType
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
@@ -81,6 +85,10 @@ class SuggestionService(Protocol):
 class ClusterService:
     """Coordinates discovery outputs, gate evaluation, and persistence."""
 
+    # Type annotations for attributes that are set conditionally
+    constrained_hac: ConstrainedHAC | None
+    hac_settings: HACSettings | None
+
     def __init__(
         self,
         gate: AssignmentGate,
@@ -90,6 +98,8 @@ class ClusterService:
         assignment_writer: AssignmentWriter,
         suggestion_service: SuggestionService,
         block_repository: IdentityClusterBlockRepository | None = None,
+        constraint_repository: IdentityConstraintRepository | None = None,
+        hac_settings: HACSettings | None = None,
         logger: ClusteringLogger | None = None,
         visualizer=None,
         decision_store=None,
@@ -103,11 +113,25 @@ class ClusterService:
         self.assignment_writer = assignment_writer
         self.suggestion_service = suggestion_service
         self.block_repository = block_repository
+        self.constraint_repository = constraint_repository
         self.logger = logger
         self.visualizer = visualizer
         self.decision_store = decision_store
         self.observability_repo = observability_repo
         self._session = session
+
+        # Initialize ConstrainedHAC if constraint repository is available
+        if constraint_repository is not None:
+            from recognition.application.clustering.constrained_hac import ConstrainedHAC
+            from recognition.application.settings.clustering import HACSettings as DefaultHACSettings
+
+            self.constrained_hac = ConstrainedHAC(
+                constraint_repo=constraint_repository, settings=hac_settings or DefaultHACSettings()
+            )
+            self.hac_settings = hac_settings or DefaultHACSettings()
+        else:
+            self.constrained_hac = None
+            self.hac_settings = None
 
     async def cluster(
         self,
@@ -303,6 +327,8 @@ class ClusterService:
             assignment_writer=self.assignment_writer,
             suggestion_service=self.suggestion_service,
             clustering_logger=self.logger,
+            constrained_hac=self.constrained_hac,
+            hac_settings=self.hac_settings,
         )
 
     @staticmethod
@@ -368,6 +394,7 @@ class ClusterService:
             gate=self.gate,
             clustering_logger=self.logger,
             session=self._session,
+            constraint_repository=self.constraint_repository,
         )
 
     async def retry_matching(self, target_cluster_id: str, tenant_id: str) -> None:

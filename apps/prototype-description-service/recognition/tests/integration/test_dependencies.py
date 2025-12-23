@@ -6,10 +6,8 @@ import pytest
 
 from recognition.application.assignment.checks import (
     BlockCheck,
-    CompleteLinkCheck,
     ConfidenceCheck,
-    MaturityCheck,
-    MemberDistributionCheck,
+    ConstraintCheck,
 )
 from recognition.application.orchestration import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
@@ -28,12 +26,11 @@ async def test_build_cluster_service_wires_sqlalchemy_repositories(db_session, t
     assert isinstance(service.assignment_writer._clusters, SqlAlchemyClusterRepository)
     assert isinstance(service.assignment_writer._members, SqlAlchemyMemberRepository)
     assert isinstance(service.logger, ClusteringLogger)
+    # Gate now uses simplified checks (MaturityCheck, CompleteLinkCheck, MemberDistributionCheck removed)
     assert {type(check) for check in service.gate.checks} == {
         BlockCheck,
-        MaturityCheck,
-        CompleteLinkCheck,
-        MemberDistributionCheck,
         ConfidenceCheck,
+        ConstraintCheck,
     }
 
 

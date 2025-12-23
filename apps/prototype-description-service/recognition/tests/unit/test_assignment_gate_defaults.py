@@ -141,7 +141,7 @@ def normalize(vector: np.ndarray) -> np.ndarray:
 
 @pytest.mark.asyncio
 async def test_default_checks_accept_when_all_pass() -> None:
-    """Default gate should accept when every check passes."""
+    """Default gate should accept when confidence check passes."""
     cluster_id = str(generate_id())
     base = normalize(np.array([1.0, 0.0, 0.0]))
     reps = {cluster_id: [base, normalize(base + np.array([0.0, 0.1, 0.0]))]}
@@ -152,12 +152,13 @@ async def test_default_checks_accept_when_all_pass() -> None:
 
     assert decision.outcome is AssignmentOutcome.ACCEPT
     assert decision.checks_failed == []
-    assert set(decision.checks_passed) == {"maturity", "complete_link", "member_distribution", "confidence"}
+    # Gate now uses only confidence check (maturity, complete_link, member_distribution removed)
+    assert set(decision.checks_passed) == {"confidence"}
 
 
 @pytest.mark.asyncio
 async def test_default_checks_suggest_on_low_confidence() -> None:
-    """Default gate should suggest when confidence check fails after others pass."""
+    """Default gate should suggest when confidence check fails."""
     cluster_id = str(generate_id())
     base = normalize(np.array([1.0, 0.0, 0.0]))
     reps = {cluster_id: [base, normalize(base + np.array([0.0, 0.1, 0.0]))]}
@@ -168,6 +169,5 @@ async def test_default_checks_suggest_on_low_confidence() -> None:
 
     assert decision.outcome is AssignmentOutcome.SUGGEST
     assert "confidence" in decision.checks_failed
-    assert "maturity" in decision.checks_passed
-    assert "complete_link" in decision.checks_passed
-    assert "member_distribution" in decision.checks_passed
+    # Gate now uses only confidence check (maturity, complete_link, member_distribution removed)
+    assert decision.checks_passed == []

@@ -26,15 +26,6 @@ def test_job_polling_endpoint_exists(api_client, tenant_id, fake_job_service):
     assert resp.status_code in {200, 404}  # endpoint exists; status depends on fake store
 
 
-def test_training_stage_endpoint(api_client, tenant_id):
-    resp = api_client.get("/recognition/training-stage", headers={"X-Tenant-ID": tenant_id})
-
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["stage"]
-    assert body["tenant_id"] == tenant_id
-
-
 def test_top_level_suggestions(api_client, tenant_id, fake_suggestion_service, fake_cluster_service):
     cluster = seed_cluster(fake_cluster_service, tenant_id)
     fake_suggestion_service.suggestions["sugg-1"] = type(

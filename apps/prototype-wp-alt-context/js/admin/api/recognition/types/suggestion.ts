@@ -38,20 +38,3 @@ export interface SuggestionActionResponse {
   cluster_id: string | null;
   message: string;
 }
-
-/**
- * Training stage info based on curriculum learning principles.
- * Thresholds start strict (early stage) and relax as more identities are labeled.
- */
-export interface TrainingStageResponse {
-  tenant_id: string;
-  stage: 'early' | 'developing' | 'mature';
-  stage_label: string;
-  cluster_count: number;
-  identity_count: number;
-  current_threshold: number;
-  base_threshold: number;
-  strict_threshold: number;
-  maturity_point: number;
-  progress_percent: number;
-}

@@ -352,10 +352,29 @@ async def _main() -> None:
       - POSTGRES_DSN (required)
     """
     import os
+    import sys
 
-    postgres_dsn = os.environ["POSTGRES_DSN"]
-    worker = ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn))
-    await worker.run_forever()
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
+
+    postgres_dsn = os.environ.get("POSTGRES_DSN")
+    if not postgres_dsn:
+        logger.error("POSTGRES_DSN not set. Exiting.")
+        sys.exit(1)
+
+    while True:
+        try:
+            worker = ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn))
+            await worker.run_forever()
+        except asyncio.CancelledError:
+            logger.info("Scan worker stopped.")
+            break
+        except Exception as exc:
+            logger.error("Scan worker crashed (retrying in 5s): %s", exc)
+            await asyncio.sleep(5)
 
 
 if __name__ == "__main__":

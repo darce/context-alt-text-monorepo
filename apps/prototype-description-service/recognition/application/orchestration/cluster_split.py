@@ -9,7 +9,6 @@ import logging
 import uuid
 from dataclasses import dataclass
 from enum import Enum
-from typing import Protocol
 
 import numpy as np
 from sqlalchemy import select
@@ -17,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.suggestions.service import SuggestionRefreshReason
 from recognition.config import get_settings as get_recognition_settings
@@ -48,16 +48,6 @@ class SplitScope(str, Enum):
     ANCHOR = "anchor"
 
 
-class SuggestionService(Protocol):
-    async def refresh_for_identity(
-        self,
-        *,
-        identity_id: str,
-        reason: SuggestionRefreshReason,
-    ) -> list[object]:
-        """Refresh suggestions for a specific identity."""
-
-
 @dataclass(frozen=True)
 class SplitPlan:
     """Plan describing how a user-initiated split should be executed.
@@ -87,7 +77,7 @@ async def split_cluster(
     cluster_repo: ClusterRepository,
     member_repo: MemberRepository,
     block_repo: IdentityClusterBlockRepository | None = None,
-    suggestion_service: SuggestionService | None = None,
+    suggestion_service: SuggestionServiceProtocol | None = None,
     assignment_writer: AssignmentWriter | None = None,
     recompute: bool = True,
     clustering_logger: ClusteringLogger | None = None,
@@ -195,40 +185,16 @@ async def split_cluster(
         user_label = original_cluster.label
 
     # Keep user labels on the group that best matches the original cluster.
-    label_owner = None
-    if anchor_key:
-        anchor_label = identity_to_label.get(anchor_key)
-        if anchor_label is not None:
-            label_owner = anchor_label
-    if user_label and label_owner is None and original_cluster.representative_identity_id:
-        rep_id = original_cluster.representative_identity_id.lower()
-        label_owner = identity_to_label.get(rep_id)
-
-    if user_label and label_owner is None:
-        reference_vec = original_cluster.centroid
-        if reference_vec is None:
-            reference_vec = np.mean(np.asarray([id.embedding for id in identities], dtype=np.float32), axis=0)
-        else:
-            reference_vec = np.asarray(reference_vec, dtype=np.float32)
-        reference_norm = float(np.linalg.norm(reference_vec))
-        if reference_norm > 0:
-            reference_vec = reference_vec / reference_norm
-
-        best_label = None
-        best_similarity = -1.0
-        for label, group_members in clusters_by_label.items():
-            group_vec = np.mean(np.asarray([m.embedding for m in group_members], dtype=np.float32), axis=0)
-            group_norm = float(np.linalg.norm(group_vec))
-            if group_norm > 0:
-                group_vec = group_vec / group_norm
-            similarity = float(np.dot(group_vec, reference_vec))
-            if similarity > best_similarity:
-                best_similarity = similarity
-                best_label = label
-        label_owner = best_label
-
-    if user_label and label_owner is None:
-        label_owner = largest_label
+    # Keep user labels on the group that best matches the original cluster.
+    label_owner = _determine_label_owner(
+        user_label=user_label,
+        original_cluster=original_cluster,
+        anchor_key=anchor_key,
+        identity_to_label=identity_to_label,
+        largest_label=largest_label,
+        clusters_by_label=clusters_by_label,
+        original_identities=identities,
+    )
 
     if anchor_key and label_owner is not None and label_owner in label_counts:
         if label_owner != largest_label:
@@ -448,3 +414,64 @@ def _force_anchor_split(
         return {0: identities}
 
     return {0: anchor_group, 1: other_group}
+
+
+def _determine_label_owner(
+    *,
+    user_label: str | None,
+    original_cluster: IdentityCluster,
+    anchor_key: str | None,
+    identity_to_label: dict[str, int],
+    largest_label: int,
+    clusters_by_label: dict[int, list[MediaIdentityModel]],
+    original_identities: list[MediaIdentityModel],
+) -> int | None:
+    """Determine which cluster group should inherit the original label."""
+    if not user_label:
+        return None
+
+    # 1. Anchor override
+    if anchor_key:
+        anchor_label = identity_to_label.get(anchor_key)
+        if anchor_label is not None:
+            return anchor_label
+
+    # 2. Representative match
+    if original_cluster.representative_identity_id:
+        rep_id = original_cluster.representative_identity_id.lower()
+        rep_label = identity_to_label.get(rep_id)
+        if rep_label is not None:
+            return rep_label
+
+    # 3. Centroid similarity match
+    reference_vec = original_cluster.centroid
+    if reference_vec is None:
+        reference_vec = np.mean(np.asarray([id.embedding for id in original_identities], dtype=np.float32), axis=0)
+    else:
+        reference_vec = np.asarray(reference_vec, dtype=np.float32)
+
+    reference_norm = float(np.linalg.norm(reference_vec))
+    if reference_norm > 0:
+        reference_vec = reference_vec / reference_norm
+
+    best_label = None
+    best_similarity = -1.0
+
+    for label, group_members in clusters_by_label.items():
+        if not group_members:
+            continue
+        group_vec = np.mean(np.asarray([m.embedding for m in group_members], dtype=np.float32), axis=0)
+        group_norm = float(np.linalg.norm(group_vec))
+        if group_norm > 0:
+            group_vec = group_vec / group_norm
+
+        similarity = float(np.dot(group_vec, reference_vec))
+        if similarity > best_similarity:
+            best_similarity = similarity
+            best_label = label
+
+    if best_label is not None:
+        return best_label
+
+    # 4. Fallback to largest group
+    return largest_label

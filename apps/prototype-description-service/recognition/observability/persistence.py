@@ -5,7 +5,6 @@ Persistence helpers for observability artifacts (decisions and batch reports).
 from __future__ import annotations
 
 import json
-import uuid
 from datetime import datetime
 from typing import Any
 
@@ -15,6 +14,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import AssignmentDecision, ClusteringJobReport
 from recognition.observability.decisions import DecisionLog
 from recognition.observability.reports import BatchJobReport
+from recognition.shared.ids import parse_optional_uuid
 
 
 class ObservabilityRepository:
@@ -27,7 +27,7 @@ class ObservabilityRepository:
         """Persist a clustering batch report."""
         payload = json.loads(report.to_json())
         row = ClusteringJobReport(
-            tenant_id=self._parse_uuid(tenant_id),
+            tenant_id=parse_optional_uuid(tenant_id),
             job_id=str(report.job_id),
             algorithm=report.algorithm,
             started_at=report.started_at,
@@ -57,7 +57,7 @@ class ObservabilityRepository:
     ) -> AssignmentDecision:
         """Persist a single decision log."""
         row = AssignmentDecision(
-            tenant_id=self._parse_uuid(tenant_id),
+            tenant_id=parse_optional_uuid(tenant_id),
             identity_id=str(decision.identity_id),
             cluster_id=str(decision.cluster_id) if decision.cluster_id else None,
             decision=decision.decision.value,
@@ -84,7 +84,7 @@ class ObservabilityRepository:
         offset: int = 0,
     ) -> list[dict[str, Any]]:
         """Query persisted decision logs with filters."""
-        parsed_tenant = self._parse_uuid(tenant_id)
+        parsed_tenant = parse_optional_uuid(tenant_id)
         stmt = select(AssignmentDecision)
         if parsed_tenant:
             stmt = stmt.where(AssignmentDecision.tenant_id == parsed_tenant)
@@ -116,15 +116,6 @@ class ObservabilityRepository:
             "metadata": row.metadata_json or {},
             "timestamp": row.timestamp.isoformat(),
         }
-
-    @staticmethod
-    def _parse_uuid(value: str | None) -> uuid.UUID | None:
-        if value is None:
-            return None
-        try:
-            return uuid.UUID(str(value))
-        except (ValueError, TypeError):
-            return None
 
 
 __all__ = ["ObservabilityRepository"]

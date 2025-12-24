@@ -14,7 +14,7 @@ import logging
 import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Protocol
+from typing import Any
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -23,8 +23,14 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityClusteringJob
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
-from recognition.application.assignment import AssignmentGate, AssignmentOutcome
+from recognition.application.assignment import (
+    AssignmentCandidate,
+    AssignmentDecision,
+    AssignmentGate,
+    AssignmentOutcome,
+)
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
+from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.locator import IdentityLocator
@@ -34,10 +40,6 @@ from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
 
 logger = logging.getLogger(__name__)
-
-
-class SuggestionService(Protocol):
-    async def create(self, candidate, confidence: float | None = None) -> None: ...
 
 
 @dataclass(slots=True)
@@ -74,7 +76,7 @@ async def cluster_unclustered_identities(
     centroid_discovery: CentroidDiscovery,
     graph_discovery: GraphDiscovery,
     assignment_writer: AssignmentWriter,
-    suggestion_service: SuggestionService,
+    suggestion_service: SuggestionServiceProtocol,
     clustering_logger: ClusteringLogger | None = None,
     constrained_hac: Any | None = None,
     hac_settings: Any | None = None,
@@ -237,80 +239,27 @@ async def cluster_unclustered_identities(
         # ============================================================
         # Gather cluster data for discovery algorithms (refresh each chunk)
         # ============================================================
-        existing_clusters = await assignment_writer._clusters.get_by_tenant(str(tenant_id), limit=1000, offset=0)
-        logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
-
-        representatives_by_cluster: dict[str, list[np.ndarray]] = {}
-        labeled_cluster_ids: set[str] = set()
-
-        for cluster in existing_clusters:
-            if cluster.id is None:
-                continue
-
-            is_user_labeled = cluster.user_confirmed or (cluster.label and not cluster.label.startswith("cluster-"))
-            if is_user_labeled:
-                labeled_cluster_ids.add(cluster.id)
-
-            reps = getattr(cluster, "representatives", []) or []
-            if reps:
-                representatives_by_cluster[cluster.id] = [
-                    np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
-                ]
-
-        centroids_by_cluster: dict[str, np.ndarray] = {}
-        for cluster in existing_clusters:
-            if cluster.id is None:
-                continue
-            centroid = getattr(cluster, "centroid", None)
-            if centroid is not None:
-                centroids_by_cluster[cluster.id] = np.array(centroid, dtype=np.float32)
-
-        anchor_embeddings = representatives_by_cluster
+        # ============================================================
+        # Gather cluster data for discovery algorithms (refresh each chunk)
+        # ============================================================
+        (
+            representatives_by_cluster,
+            centroids_by_cluster,
+            labeled_cluster_ids,
+        ) = await _prepare_cluster_caches(assignment_writer, str(tenant_id))
 
         # ============================================================
         # UNIFIED PIPELINE (chunked): Discovery -> Gate -> Writer
         # ============================================================
-        rep_candidates = await representative_discovery.discover(
-            chunk,
-            representatives_by_cluster,
+        all_candidates, new_cluster_proposals = await _run_discovery_pipeline(
+            chunk=chunk,
+            representative_discovery=representative_discovery,
+            centroid_discovery=centroid_discovery,
+            graph_discovery=graph_discovery,
+            representatives_by_cluster=representatives_by_cluster,
+            centroids_by_cluster=centroids_by_cluster,
             labeled_cluster_ids=labeled_cluster_ids,
         )
-        matched_ids = {c.identity.id for c in rep_candidates}
-        chunk_remaining = [i for i in chunk if i.id not in matched_ids]
-        logger.info(
-            "[clustering] RepresentativeDiscovery: %d candidates, %d remaining",
-            len(rep_candidates),
-            len(chunk_remaining),
-        )
-
-        centroid_candidates = await centroid_discovery.discover(chunk_remaining, centroids_by_cluster)
-        centroid_matched_ids = {c.identity.id for c in centroid_candidates}
-        chunk_remaining = [i for i in chunk_remaining if i.id not in centroid_matched_ids]
-        logger.info(
-            "[clustering] CentroidDiscovery: %d candidates, %d remaining",
-            len(centroid_candidates),
-            len(chunk_remaining),
-        )
-
-        augmented_anchors = (
-            {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
-        )
-        for candidate in rep_candidates + centroid_candidates:
-            if candidate.cluster_id and candidate.identity.embedding is not None:
-                augmented_anchors.setdefault(candidate.cluster_id, []).append(
-                    np.asarray(candidate.identity.embedding, dtype=np.float32)
-                )
-
-        graph_result = await graph_discovery.discover(chunk_remaining, augmented_anchors)
-        graph_candidates = graph_result.candidates
-        new_cluster_proposals = graph_result.new_clusters
-        logger.info(
-            "[clustering] GraphDiscovery: %d candidates, %d new cluster proposals",
-            len(graph_candidates),
-            len(new_cluster_proposals),
-        )
-
-        all_candidates = rep_candidates + centroid_candidates + graph_candidates
         logger.info("[clustering] Total candidates to evaluate through gate: %d", len(all_candidates))
 
         accepted_ids: set[str] = set()
@@ -319,74 +268,14 @@ async def cluster_unclustered_identities(
 
         for candidate in all_candidates:
             decision = await gate.evaluate(candidate)
-            logger.info(
-                "[clustering] Gate decision for identity %s -> cluster %s: %s (checks passed: %s, failed: %s)",
-                candidate.identity.id,
-                candidate.cluster_id,
-                decision.outcome.value,
-                decision.checks_passed,
-                decision.checks_failed,
+            _log_and_report_decision(
+                logger_instance=logger,
+                clustering_logger=clustering_logger,
+                gate=gate,
+                candidate=candidate,
+                decision=decision,
+                job_label=job_label,
             )
-            if clustering_logger:
-                locator_payload: dict[str, object] | None = None
-                if candidate.identity.bbox_x is not None and candidate.identity.bbox_y is not None:
-                    try:
-                        locator_payload = IdentityLocator(
-                            media_id=int(candidate.identity.media_id),
-                            bbox_x=int(candidate.identity.bbox_x),
-                            bbox_y=int(candidate.identity.bbox_y),
-                            bbox_width=int(candidate.identity.bbox_width),
-                            bbox_height=int(candidate.identity.bbox_height),
-                            crop_hash=None,
-                        ).to_dict()
-                    except (TypeError, ValueError):
-                        locator_payload = None
-
-                decision_metadata: dict[str, Any] = dict(decision.metadata or {})
-                # Compute fingerprint for report correlation
-                fingerprint = None
-                if candidate.identity.embedding is not None:
-                    import hashlib
-
-                    from recognition.shared.similarity import extract_face_embedding
-
-                    face_vec = extract_face_embedding(candidate.identity.embedding)
-                    fingerprint = hashlib.sha256(face_vec.tobytes()).hexdigest()[:8]
-
-                decision_metadata.update(
-                    {
-                        "identity_id": candidate.identity.id,
-                        "embedding_fingerprint": fingerprint,
-                        "image_phash": candidate.identity.image_phash,
-                        "method": candidate.discovery_method.value,
-                        "stage": f"{candidate.discovery_method.name.title()}Discovery",
-                        "threshold": gate.settings.similarity_threshold,
-                        "gate_checks": {"passed": decision.checks_passed, "failed": decision.checks_failed},
-                        "anchor_linked": bool(candidate.anchor_linked),
-                        "confidence": float(decision.suggestion_confidence)
-                        if decision.suggestion_confidence is not None
-                        else candidate.discovery_similarity,
-                    }
-                )
-                if locator_payload is not None:
-                    decision_metadata["identity_locator"] = locator_payload
-
-                decision_type = {
-                    AssignmentOutcome.ACCEPT: DecisionType.ACCEPT,
-                    AssignmentOutcome.SUGGEST: DecisionType.SUGGEST,
-                    AssignmentOutcome.REJECT: DecisionType.REJECT,
-                }[decision.outcome]
-                clustering_logger.log_decision(
-                    identity_id=candidate.identity.id,
-                    cluster_id=candidate.cluster_id,
-                    decision=decision_type,
-                    similarity=candidate.discovery_similarity,
-                    reason=decision.rejection_reason,
-                    metadata=decision_metadata,
-                    algorithm=candidate.discovery_method.value,
-                    job_id=job_label,
-                    media_id=candidate.identity.media_id,
-                )
 
             if decision.outcome == AssignmentOutcome.ACCEPT:
                 await assignment_writer.persist_assignment(decision)
@@ -477,54 +366,17 @@ async def cluster_unclustered_identities(
         # ============================================================
         # HAC Refinement for Noise Pool (if constraints exist)
         # ============================================================
-        if (
-            constrained_hac is not None
-            and hac_settings is not None
-            and still_unclustered
-            and len(still_unclustered) <= hac_settings.max_scope_size
-        ):
-            logger.info(
-                "[clustering] Running HAC refinement on %d noise identities",
-                len(still_unclustered),
-            )
-
-            # Extract embeddings for HAC
-            embeddings_for_hac = {
-                uuid.UUID(i.id): np.array(i.embedding, dtype=np.float32)
-                for i in still_unclustered
-                if i.embedding is not None
-            }
-
-            if embeddings_for_hac:
-                # Run constrained HAC
-                hac_clusters = await constrained_hac.refine_clusters(
-                    tenant_id=uuid.UUID(tenant_id), embeddings=embeddings_for_hac
-                )
-
-                # Group identities by HAC-assigned cluster
-                hac_groups: dict[uuid.UUID, list[MediaIdentity]] = {}
-                for identity in still_unclustered:
-                    cluster_uuid = hac_clusters.get(uuid.UUID(identity.id))
-                    if cluster_uuid:
-                        hac_groups.setdefault(cluster_uuid, []).append(identity)
-
-                # Persist each HAC cluster (only multi-member clusters)
-                for members in hac_groups.values():
-                    if len(members) > 1:
-                        await assignment_writer.persist_new_cluster(
-                            tenant_id=tenant_id,
-                            identities=members,
-                            similarities=[],  # HAC doesn't provide pairwise sims
-                            algorithm="constrained_hac",
-                        )
-                        centroids_dirty = True
-                        clusters_created += 1
-                        logger.info(
-                            "[clustering] hac_cluster job_id=%s identity_count=%d media_ids=%s",
-                            job_id,
-                            len(members),
-                            [m.media_id for m in members],
-                        )
+        hac_created = await _run_hac_refinement(
+            still_unclustered=still_unclustered,
+            tenant_id=str(tenant_id),
+            job_id=job_id,
+            constrained_hac=constrained_hac,
+            hac_settings=hac_settings,
+            assignment_writer=assignment_writer,
+        )
+        if hac_created > 0:
+            clusters_created += hac_created
+            centroids_dirty = True
 
         processed += len(chunk)
         clustering_job.processed_identities = processed
@@ -598,3 +450,242 @@ async def cluster_unclustered_identities(
         suggested=suggest_count,
         rejected=reject_count,
     )
+
+
+async def _run_hac_refinement(
+    *,
+    still_unclustered: list[MediaIdentity],
+    tenant_id: str,
+    job_id: str,
+    constrained_hac: Any,
+    hac_settings: Any,
+    assignment_writer: AssignmentWriter,
+) -> int:
+    """Run constrained HAC refinement on noise identities."""
+    if not (
+        constrained_hac and hac_settings and still_unclustered and len(still_unclustered) <= hac_settings.max_scope_size
+    ):
+        return 0
+
+    logger.info(
+        "[clustering] Running HAC refinement on %d noise identities",
+        len(still_unclustered),
+    )
+
+    # Extract embeddings for HAC
+    embeddings_for_hac = {uuid.UUID(i.id): i.face_vector for i in still_unclustered}
+
+    if not embeddings_for_hac:
+        return 0
+
+    # Run constrained HAC
+    hac_clusters = await constrained_hac.refine_clusters(tenant_id=uuid.UUID(tenant_id), embeddings=embeddings_for_hac)
+
+    # Group identities by HAC-assigned cluster
+    hac_groups: dict[uuid.UUID, list[MediaIdentity]] = {}
+    for identity in still_unclustered:
+        cluster_uuid = hac_clusters.get(uuid.UUID(identity.id))
+        if cluster_uuid:
+            hac_groups.setdefault(cluster_uuid, []).append(identity)
+
+    clusters_created = 0
+    # Persist each HAC cluster (only multi-member clusters)
+    for members in hac_groups.values():
+        if len(members) > 1:
+            await assignment_writer.persist_new_cluster(
+                tenant_id=tenant_id,
+                identities=members,
+                similarities=[],  # HAC doesn't provide pairwise sims
+                algorithm="constrained_hac",
+            )
+            clusters_created += 1
+            logger.info(
+                "[clustering] hac_cluster job_id=%s identity_count=%d media_ids=%s",
+                job_id,
+                len(members),
+                [m.media_id for m in members],
+            )
+    return clusters_created
+
+
+def _log_and_report_decision(
+    *,
+    logger_instance: logging.Logger,
+    clustering_logger: ClusteringLogger | None,
+    gate: AssignmentGate,
+    candidate: AssignmentCandidate,
+    decision: AssignmentDecision,
+    job_label: str,
+) -> None:
+    """Log decision to standard logs and observability backend."""
+    logger_instance.info(
+        "[clustering] Gate decision for identity %s -> cluster %s: %s (checks passed: %s, failed: %s)",
+        candidate.identity.id,
+        candidate.cluster_id,
+        decision.outcome.value,
+        decision.checks_passed,
+        decision.checks_failed,
+    )
+
+    if not clustering_logger:
+        return
+
+    locator_payload: dict[str, object] | None = None
+    if candidate.identity.bbox_x is not None and candidate.identity.bbox_y is not None:
+        try:
+            locator_payload = IdentityLocator(
+                media_id=int(candidate.identity.media_id),
+                bbox_x=int(candidate.identity.bbox_x),
+                bbox_y=int(candidate.identity.bbox_y),
+                bbox_width=int(candidate.identity.bbox_width),
+                bbox_height=int(candidate.identity.bbox_height),
+                crop_hash=None,
+            ).to_dict()
+        except (TypeError, ValueError):
+            locator_payload = None
+
+    decision_metadata: dict[str, Any] = dict(decision.metadata or {})
+    # Compute fingerprint for report correlation
+    fingerprint = None
+    if candidate.identity.embedding is not None:
+        import hashlib
+
+        # Use face_vector (normalized) for consistent fingerprinting or extract_face_embedding
+        # To match previous behavior safely if we don't want to change hash values:
+        # But here we can just use the internal helper logic or raw bytes if needed.
+        # Let's use the explicit extract to be safe and consistent with previous code inline.
+        from recognition.shared.similarity import extract_face_embedding
+
+        face_vec = extract_face_embedding(np.asarray(candidate.identity.embedding, dtype=np.float32))
+        fingerprint = hashlib.sha256(face_vec.tobytes()).hexdigest()[:8]
+
+    decision_metadata.update(
+        {
+            "identity_id": candidate.identity.id,
+            "embedding_fingerprint": fingerprint,
+            "image_phash": candidate.identity.image_phash,
+            "method": candidate.discovery_method.value,
+            "stage": f"{candidate.discovery_method.name.title()}Discovery",
+            "threshold": gate.settings.similarity_threshold,
+            "gate_checks": {"passed": decision.checks_passed, "failed": decision.checks_failed},
+            "anchor_linked": bool(candidate.anchor_linked),
+            "confidence": float(decision.suggestion_confidence)
+            if decision.suggestion_confidence is not None
+            else candidate.discovery_similarity,
+        }
+    )
+    if locator_payload is not None:
+        decision_metadata["identity_locator"] = locator_payload
+
+    decision_type = {
+        AssignmentOutcome.ACCEPT: DecisionType.ACCEPT,
+        AssignmentOutcome.SUGGEST: DecisionType.SUGGEST,
+        AssignmentOutcome.REJECT: DecisionType.REJECT,
+    }[decision.outcome]
+
+    clustering_logger.log_decision(
+        identity_id=candidate.identity.id,
+        cluster_id=candidate.cluster_id,
+        decision=decision_type,
+        similarity=candidate.discovery_similarity,
+        reason=decision.rejection_reason,
+        metadata=decision_metadata,
+        algorithm=candidate.discovery_method.value,
+        job_id=job_label,
+        media_id=candidate.identity.media_id,
+    )
+
+
+async def _prepare_cluster_caches(
+    assignment_writer: AssignmentWriter,
+    tenant_id: str,
+) -> tuple[dict[str, list[np.ndarray]], dict[str, np.ndarray], set[str]]:
+    """Fetch existing clusters and build cached structures for discovery."""
+    existing_clusters = await assignment_writer._clusters.get_by_tenant(tenant_id, limit=1000, offset=0)
+    logger.info("[clustering] Found %d existing clusters for discovery", len(existing_clusters))
+
+    representatives_by_cluster: dict[str, list[np.ndarray]] = {}
+    labeled_cluster_ids: set[str] = set()
+
+    for cluster in existing_clusters:
+        if cluster.id is None:
+            continue
+
+        is_user_labeled = cluster.user_confirmed or (cluster.label and not cluster.label.startswith("cluster-"))
+        if is_user_labeled:
+            labeled_cluster_ids.add(cluster.id)
+
+        reps = getattr(cluster, "representatives", []) or []
+        if reps:
+            representatives_by_cluster[cluster.id] = [
+                np.array(r.embedding, dtype=np.float32) for r in reps if r.embedding is not None
+            ]
+
+    centroids_by_cluster: dict[str, np.ndarray] = {}
+    for cluster in existing_clusters:
+        if cluster.id is None:
+            continue
+        centroid = getattr(cluster, "centroid", None)
+        if centroid is not None:
+            centroids_by_cluster[cluster.id] = np.array(centroid, dtype=np.float32)
+
+    return representatives_by_cluster, centroids_by_cluster, labeled_cluster_ids
+
+
+async def _run_discovery_pipeline(
+    *,
+    chunk: list[MediaIdentity],
+    representative_discovery: RepresentativeDiscovery,
+    centroid_discovery: CentroidDiscovery,
+    graph_discovery: GraphDiscovery,
+    representatives_by_cluster: dict[str, list[np.ndarray]],
+    centroids_by_cluster: dict[str, np.ndarray],
+    labeled_cluster_ids: set[str],
+) -> tuple[list[AssignmentCandidate], list[tuple[list[MediaIdentity], list[float]]]]:
+    """Run the multi-stage discovery pipeline (Rep -> Centroid -> Graph)."""
+    # 1. Representative Discovery
+    rep_candidates = await representative_discovery.discover(
+        chunk,
+        representatives_by_cluster,
+        labeled_cluster_ids=labeled_cluster_ids,
+    )
+    matched_ids = {c.identity.id for c in rep_candidates}
+    chunk_remaining = [i for i in chunk if i.id not in matched_ids]
+    logger.info(
+        "[clustering] RepresentativeDiscovery: %d candidates, %d remaining",
+        len(rep_candidates),
+        len(chunk_remaining),
+    )
+
+    # 2. Centroid Discovery
+    centroid_candidates = await centroid_discovery.discover(chunk_remaining, centroids_by_cluster)
+    centroid_matched_ids = {c.identity.id for c in centroid_candidates}
+    chunk_remaining = [i for i in chunk_remaining if i.id not in centroid_matched_ids]
+    logger.info(
+        "[clustering] CentroidDiscovery: %d candidates, %d remaining",
+        len(centroid_candidates),
+        len(chunk_remaining),
+    )
+
+    # 3. Augment anchors for Graph Discovery
+    anchor_embeddings = representatives_by_cluster
+    augmented_anchors = (
+        {k: list(v) for k, v in anchor_embeddings.items()} if isinstance(anchor_embeddings, dict) else {}
+    )
+    for candidate in rep_candidates + centroid_candidates:
+        if candidate.cluster_id and candidate.identity.embedding is not None:
+            # Use face_vector for consistency with domain object
+            augmented_anchors.setdefault(candidate.cluster_id, []).append(candidate.identity.face_vector)
+
+    # 4. Graph Discovery
+    graph_result = await graph_discovery.discover(chunk_remaining, augmented_anchors)
+    graph_candidates = graph_result.candidates
+    new_cluster_proposals = graph_result.new_clusters
+    logger.info(
+        "[clustering] GraphDiscovery: %d candidates, %d new cluster proposals",
+        len(graph_candidates),
+        len(new_cluster_proposals),
+    )
+
+    all_candidates = rep_candidates + centroid_candidates + graph_candidates
+    return all_candidates, new_cluster_proposals

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import re
 import uuid
 
 from fastapi import HTTPException, status
@@ -62,8 +61,6 @@ def validate_label(label: str | None) -> str | None:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="label cannot be empty")
     if len(stripped) > 255:
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="label too long")
-    if re.search(r"<[^>]+>", stripped):
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="label contains HTML")
     return stripped
 
 

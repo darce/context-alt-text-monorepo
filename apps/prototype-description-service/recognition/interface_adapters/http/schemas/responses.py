@@ -9,17 +9,10 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from recognition.interface_adapters.http.validation_utils import validate_uuid_format
 
-def _validate_uuid(value: str) -> str:
-    if isinstance(value, int):
-        return str(value)
-    if not isinstance(value, str):
-        raise TypeError("id must be a string")
-    if len(value) < 1:
-        raise ValueError("id must be at least 1 character")
-    if not all(ch.isalnum() or ch == "-" for ch in value):
-        raise ValueError("id must contain only alphanumeric characters or dashes")
-    return value
+# Alias for backward compatibility with external usage
+_validate_uuid = validate_uuid_format
 
 
 class BboxResponse(BaseModel):

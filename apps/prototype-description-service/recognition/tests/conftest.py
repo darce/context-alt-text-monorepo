@@ -21,7 +21,8 @@ from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.discovery.centroid import CentroidDiscovery
 from recognition.application.discovery.graph import GraphDiscovery
 from recognition.application.discovery.representative import RepresentativeDiscovery
-from recognition.application.embedding.service import EmbeddingResult, FaceDetection
+from recognition.application.embedding.detector import FaceDetection
+from recognition.application.embedding.generator import EmbeddingResult
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.scan.service import ScanService

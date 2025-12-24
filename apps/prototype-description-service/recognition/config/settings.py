@@ -13,6 +13,7 @@ from pathlib import Path
 from pydantic import BaseModel, ConfigDict, Field
 
 from recognition.application.settings import ClusteringSettings
+from recognition.application.settings.scan import ScanSettings
 
 
 class ThumbnailSettings(BaseModel):
@@ -40,7 +41,7 @@ class IdentityDetectionSettings(BaseModel):
 
     default_threshold: float = Field(default=0.45, description="Default detection confidence threshold.")
     max_identities_per_image: int = Field(default=999, description="Maximum faces to detect per image.")
-    embedding_dimension: int = Field(default=1024, description="Embedding vector dimension (512 face + 512 extended).")
+    embedding_dimension: int = Field(default=512, description="Embedding vector dimension (face identity only).")
     max_candidates: int = Field(default=10, description="Maximum candidate matches to consider.")
 
 
@@ -62,6 +63,7 @@ class RecognitionSettings(BaseModel):
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)
+    scan: ScanSettings = Field(default_factory=ScanSettings)
 
     # Runtime mode: "production" uses real InsightFace, "test" uses stubs
     runtime_mode: str = Field(default_factory=lambda: os.environ.get("RECOGNITION_RUNTIME_MODE", "production"))

@@ -15,6 +15,7 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import RecognitionEvent, RecognitionRun
+from recognition.shared.ids import parse_optional_uuid
 
 
 @dataclass(slots=True)
@@ -52,10 +53,10 @@ class RecognitionRunContext:
             target_cluster_id: Optional target cluster UUID.
             payload: JSON payload for the event.
         """
-        identity_uuid = _coerce_uuid(identity_id)
-        cluster_uuid = _coerce_uuid(cluster_id)
-        source_cluster_uuid = _coerce_uuid(source_cluster_id)
-        target_cluster_uuid = _coerce_uuid(target_cluster_id)
+        identity_uuid = parse_optional_uuid(identity_id)
+        cluster_uuid = parse_optional_uuid(cluster_id)
+        source_cluster_uuid = parse_optional_uuid(source_cluster_id)
+        target_cluster_uuid = parse_optional_uuid(target_cluster_id)
 
         event = RecognitionEvent(
             tenant_id=self.tenant_id,
@@ -144,14 +145,3 @@ async def complete_recognition_run(
     run.completed_at = completed_at
     run.error_message = error_message
     await session.flush()
-
-
-def _coerce_uuid(value: str | UUID | None) -> UUID | None:
-    if value is None:
-        return None
-    if isinstance(value, UUID):
-        return value
-    try:
-        return UUID(str(value))
-    except ValueError:
-        return None

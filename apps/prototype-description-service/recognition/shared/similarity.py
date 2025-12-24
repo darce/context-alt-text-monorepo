@@ -8,7 +8,6 @@ import numpy as np
 
 # Embedding layout constants
 FACE_EMBEDDING_DIM = 512
-EXTENDED_EMBEDDING_DIM = 1024
 
 
 def extract_face_embedding(embedding: np.ndarray) -> np.ndarray:
@@ -22,8 +21,35 @@ def extract_face_embedding(embedding: np.ndarray) -> np.ndarray:
         return vector
     if len(vector) == FACE_EMBEDDING_DIM:
         return vector
-    # For extended embeddings, take only the face portion
+    # Take only the face portion if larger
     return vector[:FACE_EMBEDDING_DIM]
+
+
+def normalize_vector(vector: np.ndarray) -> np.ndarray:
+    """Normalize a vector to unit length.
+
+    Args:
+        vector: Input vector to normalize.
+
+    Returns:
+        Unit-length vector as float32. Returns zero vector unchanged.
+    """
+    norm = float(np.linalg.norm(vector))
+    if norm == 0:
+        return vector.astype(np.float32)
+    return vector.astype(np.float32) / norm
+
+
+def normalize_face_embedding(embedding: np.ndarray) -> np.ndarray:
+    """Extract face embedding and normalize to unit length.
+
+    Args:
+        embedding: Raw embedding (512D).
+
+    Returns:
+        Unit-length 512D face embedding as float32.
+    """
+    return normalize_vector(extract_face_embedding(embedding))
 
 
 def compute_face_similarity(a: np.ndarray, b: np.ndarray) -> float:

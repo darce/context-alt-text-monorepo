@@ -40,4 +40,16 @@ def parse_id(value: str) -> uuid.UUID:
     return uuid.UUID(value.strip())
 
 
-__all__ = ["generate_id", "parse_id"]
+def parse_optional_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
+    """Parse a UUID safely, returning None if invalid or None."""
+    if value is None:
+        return None
+    if isinstance(value, uuid.UUID):
+        return value
+    try:
+        return uuid.UUID(str(value))
+    except (ValueError, TypeError):
+        return None
+
+
+__all__ = ["generate_id", "parse_id", "parse_optional_uuid"]

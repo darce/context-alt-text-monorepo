@@ -37,3 +37,13 @@ class MediaIdentity:
             np.ndarray: Face embedding suitable for similarity checks.
         """
         return _extract_face_embedding(np.asarray(self.embedding, dtype=np.float32))
+
+    @property
+    def face_vector(self) -> np.ndarray:
+        """Return normalized 512D face embedding for similarity calculations.
+
+        This property extracts the face portion and normalizes it to unit length.
+        """
+        from recognition.shared.similarity import normalize_face_embedding
+
+        return normalize_face_embedding(np.asarray(self.embedding, dtype=np.float32))

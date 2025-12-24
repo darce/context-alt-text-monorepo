@@ -14,12 +14,12 @@ import numpy as np
 import pytest
 
 from recognition.application.embedding.detector import (
+    FaceDetection,
     FaceDetector,
     FaceDetectorProtocol,
     InsightFaceFaceDetector,
     StubFaceDetector,
 )
-from recognition.application.embedding.service import FaceDetection
 
 
 class TestStubFaceDetector:

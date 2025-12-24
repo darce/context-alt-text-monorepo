@@ -15,18 +15,35 @@ import io
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import httpx
 import imagehash
+import numpy as np
 from PIL import Image
-
-from recognition.application.embedding.service import FaceDetection
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class FaceDetection:
+    """Detected face bounding box, confidence, and optional embedding for a media asset."""
+
+    media_id: str
+    bbox: tuple[int, int, int, int]
+    confidence: float
+    embedding: np.ndarray | None = None  # 512D or 1024D face embedding (unit normalized)
+    # Detection metadata
+    pose_pitch: float | None = None
+    pose_yaw: float | None = None
+    pose_roll: float | None = None
+    age: int | None = None
+    gender: int | None = None  # 0=female, 1=male
+    image_phash: str | None = None
 
 
 class FaceDetectorProtocol(ABC):

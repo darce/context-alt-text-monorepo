@@ -19,6 +19,7 @@ from recognition.application.embedding.generator import (
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
+from recognition.infrastructure.embeddings import DetectedFace, InsightFaceAdapter
 
 
 class TestStubEmbeddingGenerator:
@@ -27,18 +28,18 @@ class TestStubEmbeddingGenerator:
     @pytest.mark.asyncio
     async def test_outputs_expected_dimension(self) -> None:
         """Embeddings should match the configured dimensionality."""
-        generator = StubEmbeddingGenerator(embedding_dim=1024)
+        generator = StubEmbeddingGenerator(embedding_dim=512)
 
         results = await generator.generate([b"face-1"])
 
         assert len(results) == 1
-        assert results[0].embedding.shape[0] == 1024
+        assert results[0].embedding.shape[0] == 512
         assert results[0].confidence >= 0
 
     @pytest.mark.asyncio
     async def test_embeddings_are_normalized(self) -> None:
         """Embeddings should be unit-length vectors."""
-        generator = StubEmbeddingGenerator(embedding_dim=1024)
+        generator = StubEmbeddingGenerator(embedding_dim=512)
 
         results = await generator.generate([b"face-1", b"face-2"])
 
@@ -49,7 +50,7 @@ class TestStubEmbeddingGenerator:
     @pytest.mark.asyncio
     async def test_embeddings_are_deterministic(self) -> None:
         """Same input should produce same embedding (hash-based)."""
-        generator = StubEmbeddingGenerator(embedding_dim=1024)
+        generator = StubEmbeddingGenerator(embedding_dim=512)
         face_bytes = b"test-face-crop"
 
         result1 = await generator.generate([face_bytes])
@@ -60,7 +61,7 @@ class TestStubEmbeddingGenerator:
     @pytest.mark.asyncio
     async def test_different_inputs_produce_different_embeddings(self) -> None:
         """Different inputs should produce different embeddings."""
-        generator = StubEmbeddingGenerator(embedding_dim=1024)
+        generator = StubEmbeddingGenerator(embedding_dim=512)
 
         result1 = await generator.generate([b"face-a"])
         result2 = await generator.generate([b"face-b"])
@@ -71,13 +72,13 @@ class TestStubEmbeddingGenerator:
     @pytest.mark.asyncio
     async def test_handles_multiple_faces(self) -> None:
         """Should generate embeddings for multiple face crops."""
-        generator = StubEmbeddingGenerator(embedding_dim=1024)
+        generator = StubEmbeddingGenerator(embedding_dim=512)
 
         results = await generator.generate([b"face-1", b"face-2", b"face-3"])
 
         assert len(results) == 3
         for result in results:
-            assert result.embedding.shape[0] == 1024
+            assert result.embedding.shape[0] == 512
 
     @pytest.mark.asyncio
     async def test_respects_custom_dimension(self) -> None:
@@ -107,31 +108,66 @@ class TestEmbeddingGeneratorProtocol:
 class TestInsightFaceEmbeddingGenerator:
     """Tests for InsightFace-backed generator (with mocked adapter)."""
 
+    @pytest.fixture
+    def mock_adapter(self) -> MagicMock:
+        adapter = MagicMock(spec=InsightFaceAdapter)
+
+        # Helper to create fake detected faces
+        def create_face(confidence: float = 0.99, embedding_dim: int = 512) -> DetectedFace:
+            # Note: We don't populate bbox/pose/etc for these tests as they aren't used by generator
+            return DetectedFace(
+                bbox=(0, 0, 100, 100),
+                confidence=confidence,
+                embedding_512=np.random.rand(embedding_dim).astype(np.float32),
+                pose=None,
+                age=None,
+                gender=None,
+                landmarks=None,
+            )
+
+        # Default behavior: return one face per call
+        adapter.analyze.return_value = [create_face()]
+        return adapter
+
     @pytest.mark.asyncio
-    async def test_calls_adapter_analyze(self) -> None:
+    async def test_calls_adapter_analyze(self, mock_adapter: MagicMock) -> None:
         """Should call adapter.analyze for each image."""
-        mock_adapter = MagicMock()
-        mock_face = MagicMock(confidence=0.92)
-        mock_embedding = np.random.randn(1024).astype(np.float32)
-        mock_adapter.analyze = AsyncMock(return_value=[(mock_face, mock_embedding)])
+        mock_face = mock_adapter.analyze.return_value[0]
+        # Explicitly set mock attributes to ensure we assert on the right values
+        expected_embedding = np.random.randn(512).astype(np.float32)
+        mock_face.embedding_512 = expected_embedding
+        mock_face.confidence = 0.92
 
         generator = InsightFaceEmbeddingGenerator(mock_adapter)
         results = await generator.generate([b"real-face-image"])
 
         mock_adapter.analyze.assert_called_once()
         assert len(results) == 1
-        np.testing.assert_array_equal(results[0].embedding, mock_embedding)
+        np.testing.assert_array_equal(results[0].embedding, expected_embedding)
         assert results[0].confidence == 0.92
 
     @pytest.mark.asyncio
-    async def test_handles_multiple_faces_per_image(self) -> None:
+    async def test_handles_multiple_faces_per_image(self, mock_adapter: MagicMock) -> None:
         """Should return embeddings for all faces found in image."""
-        mock_adapter = MagicMock()
-        mock_face1 = MagicMock(confidence=0.95)
-        mock_face2 = MagicMock(confidence=0.88)
-        mock_emb1 = np.random.randn(1024).astype(np.float32)
-        mock_emb2 = np.random.randn(1024).astype(np.float32)
-        mock_adapter.analyze = AsyncMock(return_value=[(mock_face1, mock_emb1), (mock_face2, mock_emb2)])
+        mock_face1 = DetectedFace(
+            bbox=(0, 0, 1, 1),
+            confidence=0.95,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=None,
+            age=None,
+            gender=None,
+            landmarks=None,
+        )
+        mock_face2 = DetectedFace(
+            bbox=(0, 0, 1, 1),
+            confidence=0.88,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=None,
+            age=None,
+            gender=None,
+            landmarks=None,
+        )
+        mock_adapter.analyze = AsyncMock(return_value=[mock_face1, mock_face2])
 
         generator = InsightFaceEmbeddingGenerator(mock_adapter)
         results = await generator.generate([b"image-with-two-faces"])
@@ -139,11 +175,12 @@ class TestInsightFaceEmbeddingGenerator:
         assert len(results) == 2
         assert results[0].confidence == 0.95
         assert results[1].confidence == 0.88
+        np.testing.assert_array_equal(results[0].embedding, mock_face1.embedding_512)
+        np.testing.assert_array_equal(results[1].embedding, mock_face2.embedding_512)
 
     @pytest.mark.asyncio
-    async def test_handles_adapter_exception_gracefully(self) -> None:
+    async def test_handles_adapter_exception_gracefully(self, mock_adapter: MagicMock) -> None:
         """Should log error and continue if adapter raises exception."""
-        mock_adapter = MagicMock()
         mock_adapter.analyze = AsyncMock(side_effect=RuntimeError("Model failed"))
 
         generator = InsightFaceEmbeddingGenerator(mock_adapter)
@@ -153,12 +190,19 @@ class TestInsightFaceEmbeddingGenerator:
         assert results == []
 
     @pytest.mark.asyncio
-    async def test_processes_multiple_images(self) -> None:
+    async def test_processes_multiple_images(self, mock_adapter: MagicMock) -> None:
         """Should process multiple images sequentially."""
-        mock_adapter = MagicMock()
-        mock_face = MagicMock(confidence=0.9)
-        mock_emb = np.random.randn(1024).astype(np.float32)
-        mock_adapter.analyze = AsyncMock(return_value=[(mock_face, mock_emb)])
+        mock_face = DetectedFace(
+            bbox=(0, 0, 1, 1),
+            confidence=0.9,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=None,
+            age=None,
+            gender=None,
+            landmarks=None,
+        )
+
+        mock_adapter.analyze = AsyncMock(return_value=[mock_face])
 
         generator = InsightFaceEmbeddingGenerator(mock_adapter)
         results = await generator.generate([b"img1", b"img2", b"img3"])
@@ -171,19 +215,19 @@ class TestInsightFaceEmbeddingGenerator:
 @pytest.mark.asyncio
 async def test_embedding_generator_outputs_expected_dimension() -> None:
     """Legacy test: EmbeddingGenerator alias should work."""
-    generator = EmbeddingGenerator(embedding_dim=1024)
+    generator = EmbeddingGenerator(embedding_dim=512)
 
     results = await generator.generate([b"face-1"])
 
     assert len(results) == 1
-    assert results[0].embedding.shape[0] == 1024
+    assert results[0].embedding.shape[0] == 512
     assert results[0].confidence >= 0
 
 
 @pytest.mark.asyncio
 async def test_embeddings_are_normalized() -> None:
     """Legacy test: EmbeddingGenerator embeddings should be normalized."""
-    generator = EmbeddingGenerator(embedding_dim=1024)
+    generator = EmbeddingGenerator(embedding_dim=512)
 
     results = await generator.generate([b"face-1", b"face-2"])
 

@@ -25,7 +25,6 @@ from recognition.application.embedding.generator import (
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
-from recognition.application.embedding.service import EmbeddingService
 from recognition.application.orchestration.curation_job import run_curation_job
 from recognition.application.orchestration.job_service import JobService
 from recognition.application.scan.queue_repository import ScanQueueItem
@@ -289,7 +288,6 @@ class ScanWorker:
 def _build_scan_service(session: AsyncSession) -> ScanService:
     settings = get_recognition_settings()
     runtime_mode = settings.runtime_mode
-    embedder = EmbeddingService()
     if runtime_mode == "test":
         detector: FaceDetectorProtocol = StubFaceDetector()
         generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
@@ -303,7 +301,7 @@ def _build_scan_service(session: AsyncSession) -> ScanService:
         except Exception:
             detector = StubFaceDetector()
             generator = StubEmbeddingGenerator()
-    return ScanService(session=session, detector=detector, generator=generator, embedder=embedder)
+    return ScanService(session=session, detector=detector, generator=generator)
 
 
 def _compute_progress(completed: int, total: int) -> float:

@@ -13,7 +13,7 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
-from recognition.shared.similarity import extract_face_embedding
+from recognition.shared.similarity import normalize_face_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -34,7 +34,7 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
     async def discover(
         self,
         identities: Sequence[MediaIdentity],
-        representatives_by_cluster: object,
+        representatives_by_cluster: dict[str, list[np.ndarray]],
         labeled_cluster_ids: set[str] | None = None,
     ) -> list[AssignmentCandidate]:
         """Generate candidates by matching against cluster representatives.
@@ -51,13 +51,6 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
         Raises:
             NotImplementedError: Always, until discovery logic is implemented.
         """
-        if not isinstance(representatives_by_cluster, dict):
-            logger.warning(
-                "[RepresentativeDiscovery] representatives_by_cluster is not a dict: %s",
-                type(representatives_by_cluster),
-            )
-            return []
-
         labeled_ids = labeled_cluster_ids or set()
         total_reps = sum(len(reps) for reps in representatives_by_cluster.values())
         logger.info(
@@ -73,7 +66,7 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
         # Track best similarities for debugging
         best_similarities: list[tuple[str, str | None, float]] = []
         for identity in identities:
-            face_vec = self._normalize_face(np.asarray(identity.embedding, dtype=np.float32))
+            face_vec = identity.face_vector
             best_cluster, best_sim = self._find_best_match(face_vec, representatives_by_cluster, labeled_ids)
             best_similarities.append((identity.id, best_cluster, best_sim))
             if best_cluster and best_sim >= self.settings.similarity_threshold:
@@ -86,7 +79,7 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
                         discovery_similarity=best_sim,
                     )
                 )
-                logger.info(
+                logger.debug(
                     "[RepresentativeDiscovery] MATCHED identity %s -> cluster %s with similarity %.4f",
                     identity.id,
                     best_cluster,
@@ -132,7 +125,7 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
 
         for cluster_id, representatives in representatives_by_cluster.items():
             for rep in representatives:
-                rep_vec = self._normalize_face(np.asarray(rep, dtype=np.float32))
+                rep_vec = normalize_face_embedding(np.asarray(rep, dtype=np.float32))
                 similarity = float(np.dot(face_vector, rep_vec))
 
                 # Update global best
@@ -160,15 +153,3 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
 
         # 3. No Labeled Match -> Return Unlabeled (or None if below threshold)
         return best_cluster, best_similarity
-
-    def _normalize_face(self, embedding: np.ndarray) -> np.ndarray:
-        """Extract the 512D face embedding and normalize to unit length."""
-        return self._normalize(extract_face_embedding(embedding))
-
-    @staticmethod
-    def _normalize(vector: np.ndarray) -> np.ndarray:
-        """Return normalized copy of the vector."""
-        norm = float(np.linalg.norm(vector))
-        if norm == 0:
-            return vector.astype(np.float32)
-        return vector.astype(np.float32) / norm

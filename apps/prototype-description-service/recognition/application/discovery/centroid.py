@@ -12,7 +12,7 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
-from recognition.shared.similarity import extract_face_embedding
+from recognition.shared.similarity import normalize_face_embedding
 
 
 class CentroidDiscovery(DiscoveryAlgorithm):
@@ -31,7 +31,7 @@ class CentroidDiscovery(DiscoveryAlgorithm):
     async def discover(
         self,
         identities: Sequence[MediaIdentity],
-        centroids_by_cluster: object,
+        centroids_by_cluster: dict[str, np.ndarray],
     ) -> list[AssignmentCandidate]:
         """Generate candidates by matching identities to cluster centroids.
 
@@ -42,12 +42,9 @@ class CentroidDiscovery(DiscoveryAlgorithm):
         Returns:
             list[AssignmentCandidate]: Candidates suitable for gate evaluation.
         """
-        if not isinstance(centroids_by_cluster, dict):
-            return []
-
         candidates: list[AssignmentCandidate] = []
         for identity in identities:
-            face_vec = self._normalize_face(np.asarray(identity.embedding, dtype=np.float32))
+            face_vec = identity.face_vector
             best_cluster, best_sim = self._find_best_centroid_match(face_vec, centroids_by_cluster)
 
             if best_cluster and best_sim >= self.settings.similarity_threshold:
@@ -82,22 +79,10 @@ class CentroidDiscovery(DiscoveryAlgorithm):
         best_similarity = 0.0
 
         for cluster_id, centroid in centroids_by_cluster.items():
-            centroid_vec = self._normalize_face(np.asarray(centroid, dtype=np.float32))
+            centroid_vec = normalize_face_embedding(np.asarray(centroid, dtype=np.float32))
             similarity = float(np.dot(face_vector, centroid_vec))
             if similarity > best_similarity:
                 best_similarity = similarity
                 best_cluster = cluster_id
 
         return best_cluster, best_similarity
-
-    def _normalize_face(self, embedding: np.ndarray) -> np.ndarray:
-        """Extract the 512D face embedding and normalize to unit length."""
-        return self._normalize(extract_face_embedding(embedding))
-
-    @staticmethod
-    def _normalize(vector: np.ndarray) -> np.ndarray:
-        """Return normalized copy of the vector."""
-        norm = float(np.linalg.norm(vector))
-        if norm == 0:
-            return vector.astype(np.float32)
-        return vector.astype(np.float32) / norm

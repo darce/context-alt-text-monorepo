@@ -1,5 +1,5 @@
 """
-Graph-based discovery (HDBSCAN/Chinese Whispers) for assignment candidates.
+Graph-based discovery (HDBSCAN) for assignment candidates.
 """
 
 from __future__ import annotations
@@ -19,16 +19,9 @@ from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 from recognition.observability.recognition_runs import RecognitionRunContext
-from recognition.shared.similarity import extract_face_embedding
+from recognition.shared.similarity import normalize_face_embedding, normalize_vector
 
 logger = logging.getLogger(__name__)
-
-# TEMPORARY DEBUGGING SAFEGUARD (2025-12-17):
-# We intentionally disable the Chinese Whispers fallback so the graph stage runs with a single algorithm while
-# debugging HDBSCAN + representative/anchor matching behavior.
-#
-# To re-enable the original auto-selection (HDBSCAN for small batches, CW fallback otherwise), set this to False.
-DISABLE_CHINESE_WHISPERS_FALLBACK = True
 
 
 @dataclass
@@ -115,7 +108,7 @@ class GraphDiscovery(DiscoveryAlgorithm):
         """Return a human-readable name for the active graph algorithm.
 
         Returns:
-            Short label like 'hdbscan', 'chinese_whispers', or 'unknown' if no algorithm is set.
+            Short label like 'hdbscan' or 'unknown' if no algorithm is set.
         """
         if self.algorithm is None:
             return "unknown"
@@ -125,7 +118,7 @@ class GraphDiscovery(DiscoveryAlgorithm):
     async def discover(
         self,
         identities: Sequence[MediaIdentity],
-        anchor_embeddings: object,
+        anchor_embeddings: dict[str, list[np.ndarray]],
         inject_anchors: bool = True,
     ) -> GraphDiscoveryResult:
         """Generate candidates and new-cluster groups via graph algorithms.
@@ -140,9 +133,6 @@ class GraphDiscovery(DiscoveryAlgorithm):
         """
         if not identities:
             return GraphDiscoveryResult([], [])
-        if not isinstance(anchor_embeddings, dict):
-            anchor_embeddings = {}
-
         # 1. Prepare Inputs
         anchors: list[AnchorIdentity] = []
         anchor_vecs: list[np.ndarray] = []
@@ -157,12 +147,10 @@ class GraphDiscovery(DiscoveryAlgorithm):
                         cluster_id=cluster_id,
                     )
                     anchors.append(anchor)
-                    anchor_vecs.append(self._normalize_face(np.asarray(rep, dtype=np.float32)))
+                    anchor_vecs.append(normalize_face_embedding(np.asarray(rep, dtype=np.float32)))
 
         # Combine new identities with anchors
-        face_vectors = [
-            self._normalize_face(np.asarray(identity.embedding, dtype=np.float32)) for identity in identities
-        ]
+        face_vectors = [identity.face_vector for identity in identities]
 
         # Combined lists for the algorithm
         # Note: We must cast AnchorIdentity to Any or a compatible Protocol if strictly typed,
@@ -175,7 +163,7 @@ class GraphDiscovery(DiscoveryAlgorithm):
         algorithm_label, algorithm_params = self._describe_algorithm(algorithm)
         hdbscan_limit = self.settings.hdbscan_max_batch_size or 500
         logger.info(
-            "[GraphDiscovery] Starting discovery: identities=%d anchors=%d combined=%d inject_anchors=%s algorithm=%s hdbscan_available=%s hdbscan_limit=%d cw_fallback_disabled=%s params=%s",
+            "[GraphDiscovery] Starting discovery: identities=%d anchors=%d combined=%d inject_anchors=%s algorithm=%s hdbscan_available=%s hdbscan_limit=%d params=%s",
             len(identities),
             len(anchors),
             len(combined_identities),
@@ -183,7 +171,6 @@ class GraphDiscovery(DiscoveryAlgorithm):
             algorithm_label,
             self._hdbscan_available(),
             hdbscan_limit,
-            DISABLE_CHINESE_WHISPERS_FALLBACK,
             algorithm_params,
         )
         embedding_stats = self._compute_embedding_stats(face_vectors)
@@ -333,7 +320,6 @@ class GraphDiscovery(DiscoveryAlgorithm):
         class_name = algorithm.__class__.__name__
         label = {
             "HdbscanGraphAlgorithm": "hdbscan",
-            "DeterministicChineseWhispers": "chinese_whispers",
         }.get(class_name, class_name)
         params: dict[str, object] = {}
         for key, value in vars(algorithm).items():
@@ -378,9 +364,9 @@ class GraphDiscovery(DiscoveryAlgorithm):
             return 0.0
 
         # Centroid of members
-        member_centroid = self._normalize(np.mean(np.stack(members), axis=0))
+        member_centroid = normalize_vector(np.mean(np.stack(members), axis=0))
         # Centroid of anchors
-        anchor_centroid = self._normalize(np.mean(np.stack(anchors), axis=0))
+        anchor_centroid = normalize_vector(np.mean(np.stack(anchors), axis=0))
 
         return float(np.dot(member_centroid, anchor_centroid))
 
@@ -399,39 +385,25 @@ class GraphDiscovery(DiscoveryAlgorithm):
         return grouped
 
     def _select_algorithm(self, identities_count: int) -> GraphAlgorithm:
-        """Choose clustering algorithm based on batch size and configuration."""
+        """Choose clustering algorithm based on configuration."""
         if self.algorithm is not None:
             return self.algorithm
 
-        hdbscan_limit = self.settings.hdbscan_max_batch_size or 500
-        hdbscan_available = self._hdbscan_available()
-        if hdbscan_available and (identities_count <= hdbscan_limit or DISABLE_CHINESE_WHISPERS_FALLBACK):
-            # Convert cosine similarity threshold to euclidean distance for normalized vectors.
-            # For unit vectors: euclidean_distance = sqrt(2 * (1 - cosine_similarity))
-            # This ensures HDBSCAN clusters faces that would pass our similarity threshold.
-            import math
+        if not self._hdbscan_available():
+            raise RuntimeError("GraphDiscovery requires HDBSCAN. Install with: pip install hdbscan")
 
-            from recognition.infrastructure.clustering import HdbscanGraphAlgorithm
+        # Convert cosine similarity threshold to euclidean distance for normalized vectors.
+        # For unit vectors: euclidean_distance = sqrt(2 * (1 - cosine_similarity))
+        # This ensures HDBSCAN clusters faces that would pass our similarity threshold.
+        import math
 
-            if DISABLE_CHINESE_WHISPERS_FALLBACK and identities_count > hdbscan_limit:
-                logger.warning(
-                    "[GraphDiscovery] Forcing HDBSCAN for combined_count=%d > hdbscan_limit=%d (Chinese Whispers temporarily disabled)",
-                    identities_count,
-                    hdbscan_limit,
-                )
+        from recognition.infrastructure.clustering import HdbscanGraphAlgorithm
 
-            target_cosine = float(self.settings.similarity_threshold)
-            epsilon = math.sqrt(2.0 * (1.0 - target_cosine))
-            return HdbscanGraphAlgorithm(
-                min_cluster_size=2,
-                min_samples=1,
-                cluster_selection_epsilon=epsilon,
-            )
-
-        # Chinese Whispers has been removed (HAC replaces it as refinement algorithm)
-        raise RuntimeError(
-            "GraphDiscovery requires HDBSCAN. Chinese Whispers fallback has been removed. "
-            "Install with: pip install hdbscan"
+        target_cosine = float(self.settings.similarity_threshold)
+        epsilon = math.sqrt(2.0 * (1.0 - target_cosine))
+        return HdbscanGraphAlgorithm(
+            settings=self.settings,
+            cluster_selection_epsilon=epsilon,
         )
 
     @staticmethod
@@ -460,8 +432,8 @@ class GraphDiscovery(DiscoveryAlgorithm):
         for anchor_id, reps in anchor_embeddings.items():
             if not reps:
                 continue
-            anchor_vecs = [self._normalize_face(np.asarray(rep, dtype=np.float32)) for rep in reps]
-            anchor_mean = self._normalize(np.mean(anchor_vecs, axis=0))
+            anchor_vecs = [normalize_face_embedding(np.asarray(rep, dtype=np.float32)) for rep in reps]
+            anchor_mean = normalize_vector(np.mean(anchor_vecs, axis=0))
 
             sims = [float(np.dot(vec, anchor_mean)) for vec in member_vectors]
             avg_sim = float(sum(sims) / len(sims))
@@ -494,7 +466,7 @@ class GraphDiscovery(DiscoveryAlgorithm):
                 continue
             # Find best match among this cluster's representatives
             for rep in reps:
-                rep_vec = self._normalize_face(np.asarray(rep, dtype=np.float32))
+                rep_vec = normalize_face_embedding(np.asarray(rep, dtype=np.float32))
                 sim = float(np.dot(face_vec, rep_vec))
                 if sim > best_similarity:
                     best_similarity = sim
@@ -502,21 +474,9 @@ class GraphDiscovery(DiscoveryAlgorithm):
 
         return best_anchor, best_similarity
 
-    def _normalize_face(self, embedding: np.ndarray) -> np.ndarray:
-        """Extract the face embedding portion and normalize to unit length."""
-        return self._normalize(extract_face_embedding(embedding))
-
-    @staticmethod
-    def _normalize(vector: np.ndarray) -> np.ndarray:
-        """Return normalized copy of the vector."""
-        norm = float(np.linalg.norm(vector))
-        if norm == 0:
-            return vector.astype(np.float32)
-        return vector.astype(np.float32) / norm
-
     def _compute_member_similarities(self, member_vectors: Sequence[np.ndarray]) -> list[float]:
         """Compute similarity of each member to the group centroid."""
         if not member_vectors:
             return []
-        centroid = self._normalize(np.mean(np.stack(member_vectors, axis=0), axis=0))
+        centroid = normalize_vector(np.mean(np.stack(member_vectors, axis=0), axis=0))
         return [float(np.dot(vec, centroid)) for vec in member_vectors]

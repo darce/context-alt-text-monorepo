@@ -11,11 +11,11 @@ import pytest
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.settings import ClusteringSettings
-from recognition.application.suggestions.service import SuggestionRefreshReason, SuggestionService
+from recognition.application.suggestions.service import SuggestionService
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, SuggestionRepository
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
 
 
 def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:

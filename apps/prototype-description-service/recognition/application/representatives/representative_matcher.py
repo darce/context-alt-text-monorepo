@@ -5,27 +5,23 @@ RepresentativeMatcher adapter that routes representative matches through Assignm
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable, Sequence
-from typing import Protocol
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    pass
 from uuid import UUID
 
 import numpy as np
 
 from recognition.application.assignment import AssignmentGate, AssignmentOutcome, AssignmentWriter
-from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.discovery.representative import RepresentativeDiscovery
+from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.locator import IdentityLocator
 from recognition.observability import ClusteringLogger, DecisionType
 
 # Callback to persist representative embedding after assignment
 AddRepresentativeFn = Callable[[UUID, MediaIdentity], Awaitable[np.ndarray | None]]
-
-
-class SuggestionService(Protocol):
-    """Protocol for creating assignment suggestions."""
-
-    async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None:
-        """Create a suggestion record for later human review."""
 
 
 class RepresentativeMatcher:
@@ -37,7 +33,7 @@ class RepresentativeMatcher:
         gate: AssignmentGate,
         writer: AssignmentWriter,
         add_representative_embedding: AddRepresentativeFn,
-        suggestion_service: SuggestionService | None = None,
+        suggestion_service: SuggestionServiceProtocol | None = None,
         logger: ClusteringLogger | None = None,
     ) -> None:
         self.discovery = discovery

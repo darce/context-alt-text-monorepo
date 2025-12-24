@@ -7,7 +7,7 @@ import uuid
 import pytest
 
 from db.session import get_pool_stats
-from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http.deps import session as session_module
 
 
 def test_pool_stats_returns_valid_metrics() -> None:
@@ -44,12 +44,13 @@ async def test_session_cleanup_on_context_failure(monkeypatch) -> None:
     async def fake_clear(_session):
         events.append("clear")
 
-    monkeypatch.setattr(dependencies, "_get_session", fake_session_source)
-    monkeypatch.setattr(dependencies, "set_tenant_context", fail_set)
-    monkeypatch.setattr(dependencies, "clear_tenant_context", fake_clear)
+    # Patch in the session module where these are actually used
+    monkeypatch.setattr(session_module, "_get_session", fake_session_source)
+    monkeypatch.setattr(session_module, "set_tenant_context", fail_set)
+    monkeypatch.setattr(session_module, "clear_tenant_context", fake_clear)
 
     with pytest.raises(RuntimeError, match="Simulated failure"):
-        async for _ in dependencies.get_session(tenant_id=str(uuid.uuid4())):
+        async for _ in session_module.get_session(tenant_id=str(uuid.uuid4())):
             pass
 
     assert "clear" in events

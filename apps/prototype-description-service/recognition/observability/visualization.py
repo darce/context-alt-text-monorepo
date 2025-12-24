@@ -23,6 +23,13 @@ class ClusterVisualizer:
         self.output_dir = output_dir
         self.output_dir.mkdir(parents=True, exist_ok=True)
 
+    @staticmethod
+    def _init_matplotlib() -> None:
+        """Lazy init for matplotlib with Agg backend."""
+        import matplotlib
+
+        matplotlib.use("Agg")
+
     def generate_batch_report_chart(
         self,
         report: BatchJobReport,
@@ -44,9 +51,7 @@ class ClusterVisualizer:
         path = self.output_dir / fname
 
         # Lazy import to avoid hard dependency when not used
-        import matplotlib
-
-        matplotlib.use("Agg")
+        self._init_matplotlib()
         import matplotlib.pyplot as plt
 
         labels = ["accepted", "suggested", "rejected"]
@@ -79,9 +84,7 @@ class ClusterVisualizer:
         fname = f"cluster_{cluster_id}_similarities.png"
         path = self.output_dir / fname
 
-        import matplotlib
-
-        matplotlib.use("Agg")
+        self._init_matplotlib()
         import matplotlib.pyplot as plt
 
         fig, ax = plt.subplots()

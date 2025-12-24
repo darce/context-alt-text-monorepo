@@ -10,7 +10,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
-from typing import Protocol, cast
+from typing import cast
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -20,26 +20,15 @@ from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
 from recognition.application.orchestration.cluster_curation import update_cluster
+from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, IdentityConstraintRepository, MemberRepository
 from recognition.observability import ClusteringLogger
-from recognition.shared.similarity import extract_face_embedding
+from recognition.shared.similarity import normalize_face_embedding
 
 logger = logging.getLogger(__name__)
-
-
-class SuggestionService(Protocol):
-    async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None: ...
-
-
-def _normalize_face_embedding(embedding: np.ndarray) -> np.ndarray:
-    face = extract_face_embedding(np.asarray(embedding, dtype=np.float32))
-    norm = float(np.linalg.norm(face))
-    if norm == 0:
-        return face.astype(np.float32)
-    return (face.astype(np.float32) / norm).astype(np.float32)
 
 
 async def post_merge_retry_matching(
@@ -49,7 +38,7 @@ async def post_merge_retry_matching(
     session: AsyncSession | None,
     gate: AssignmentGate,
     assignment_writer: AssignmentWriter,
-    suggestion_service: SuggestionService,
+    suggestion_service: SuggestionServiceProtocol,
     max_unclustered: int = 200,
     min_similarity_for_unclustered: float = 0.95,
 ) -> None:
@@ -64,7 +53,7 @@ async def post_merge_retry_matching(
     if not reps:
         return
 
-    rep_face_vecs = [_normalize_face_embedding(cast(np.ndarray, getattr(rep, "embedding", rep))) for rep in reps]
+    rep_face_vecs = [normalize_face_embedding(cast(np.ndarray, getattr(rep, "embedding", rep))) for rep in reps]
     if not rep_face_vecs:
         return
 
@@ -119,7 +108,7 @@ async def post_merge_retry_matching(
             bbox_x=int(model.bbox_x),
             bbox_y=int(model.bbox_y),
         )
-        face_vec = _normalize_face_embedding(identity.embedding)
+        face_vec = normalize_face_embedding(identity.embedding)
         best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
         candidate = AssignmentCandidate(
             identity=identity,
@@ -194,7 +183,7 @@ async def post_merge_retry_matching(
                 bbox_x=int(model.bbox_x),
                 bbox_y=int(model.bbox_y),
             )
-            face_vec = _normalize_face_embedding(identity.embedding)
+            face_vec = normalize_face_embedding(identity.embedding)
             best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
             if best_sim < min_similarity_for_unclustered:
                 continue
@@ -240,7 +229,7 @@ async def merge_cluster(
     target_cluster_id: str,
     target_label: str | None,
     assignment_writer: AssignmentWriter,
-    suggestion_service: SuggestionService,
+    suggestion_service: SuggestionServiceProtocol,
     gate: AssignmentGate,
     clustering_logger: ClusteringLogger | None = None,
     session: AsyncSession | None = None,

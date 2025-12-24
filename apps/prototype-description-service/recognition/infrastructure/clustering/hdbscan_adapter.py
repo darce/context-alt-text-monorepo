@@ -9,6 +9,7 @@ from collections.abc import Sequence
 import numpy as np
 
 from recognition.application.discovery.graph import GraphAlgorithm
+from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
 
 
@@ -17,23 +18,32 @@ class HdbscanGraphAlgorithm(GraphAlgorithm):
 
     def __init__(
         self,
-        min_cluster_size: int = 2,
-        min_samples: int = 1,
+        settings: ClusteringSettings | None = None,
+        min_cluster_size: int | None = None,
+        min_samples: int | None = None,
         metric: str = "euclidean",
-        cluster_selection_epsilon: float = 0.55,  # sqrt(2*(1-0.85))
+        cluster_selection_epsilon: float | None = None,
     ) -> None:
         """Initialize the HDBSCAN algorithm parameters.
 
         Args:
-            min_cluster_size: Minimum size of clusters.
-            min_samples: Minimum samples parameter for HDBSCAN.
+            settings: ClusteringSettings object.
+            min_cluster_size: Override for min_cluster_size.
+            min_samples: Override for min_samples.
             metric: Distance metric to use.
-            cluster_selection_epsilon: Cluster selection epsilon parameter (distance space).
+            cluster_selection_epsilon: Override for cluster_selection_epsilon.
         """
-        self.min_cluster_size = min_cluster_size
-        self.min_samples = min_samples
+        if settings is None:
+            settings = ClusteringSettings()
+
+        self.min_cluster_size = min_cluster_size if min_cluster_size is not None else settings.hdbscan_min_cluster_size
+        self.min_samples = min_samples if min_samples is not None else settings.hdbscan_min_samples
+        self.cluster_selection_epsilon = (
+            cluster_selection_epsilon
+            if cluster_selection_epsilon is not None
+            else settings.hdbscan_cluster_selection_epsilon
+        )
         self.metric = metric
-        self.cluster_selection_epsilon = cluster_selection_epsilon
 
     def cluster(
         self,

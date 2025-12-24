@@ -7,7 +7,6 @@ from __future__ import annotations
 import logging
 import uuid
 from datetime import UTC, datetime
-from enum import Enum
 
 import numpy as np
 from sqlalchemy import select
@@ -25,20 +24,11 @@ from recognition.domain.repositories import (
     SuggestionCreateData,
     SuggestionRepository,
 )
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
 from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 logger = logging.getLogger(__name__)
-
-
-class SuggestionRefreshReason(str, Enum):
-    """Reason code for refreshing suggestion candidates."""
-
-    MANUAL_SPLIT = "manual_split"
-    WRONG_PERSON = "wrong_person"
-    MANUAL_ASSIGN = "manual_assign"
-    MANUAL_MERGE = "manual_merge"
 
 
 class SuggestionService:
@@ -127,6 +117,27 @@ class SuggestionService:
             return
         self._run_context = RecognitionRunContext(session=self._session, tenant_id=tenant_uuid, run_id=run_id)
 
+    def _is_eligible_cluster(self, cluster) -> bool:
+        """Check if a cluster is eligible for suggestions.
+
+        Eligible clusters must verify:
+        1. Tenant match (if service is tenant-scoped)
+        2. User labeled (not auto-generated)
+        3. User confirmed (explicitly curated)
+        """
+        if self._tenant_id and cluster.tenant_id.lower() != self._tenant_id.lower():
+            logger.info("[suggestions] Skipping suggestion: tenant mismatch cluster_id=%s", cluster.id)
+            return False
+
+        if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
+            logger.info(
+                "[suggestions] Skipping suggestion: cluster not user-labeled cluster_id=%s",
+                cluster.id,
+            )
+            return False
+
+        return True
+
     async def create(
         self, candidate: AssignmentCandidate, confidence: float | None = None
     ) -> AssignmentSuggestion | None:
@@ -140,14 +151,8 @@ class SuggestionService:
             if not cluster:
                 logger.info("[suggestions] Skipping suggestion: cluster not found cluster_id=%s", candidate.cluster_id)
                 return None
-            if self._tenant_id and cluster.tenant_id.lower() != self._tenant_id.lower():
-                logger.info("[suggestions] Skipping suggestion: tenant mismatch cluster_id=%s", candidate.cluster_id)
-                return None
-            if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
-                logger.info(
-                    "[suggestions] Skipping suggestion: cluster not user-labeled cluster_id=%s",
-                    candidate.cluster_id,
-                )
+
+            if not self._is_eligible_cluster(cluster):
                 return None
 
         similarity = candidate.discovery_similarity
@@ -225,8 +230,9 @@ class SuggestionService:
             return []
 
         for cluster, reps in clusters_with_reps:
-            if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
+            if not self._is_eligible_cluster(cluster):
                 continue
+
             if not cluster.id:
                 continue
             cluster_id = cluster.id
@@ -447,4 +453,4 @@ class SuggestionService:
         return resolved_count
 
 
-__all__ = ["SuggestionRefreshReason", "SuggestionService"]
+__all__ = ["SuggestionService"]

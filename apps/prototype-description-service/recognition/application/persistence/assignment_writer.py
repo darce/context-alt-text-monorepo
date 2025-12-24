@@ -59,32 +59,34 @@ def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
     return face_vec.astype(np.float32) / norm
 
 
-def _compute_identity_quality(identity: MediaIdentity) -> float:
+def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
     """Compute quality score for a media identity.
 
     Quality is computed from:
-    - Detection confidence: 60% (primary signal from InsightFace)
-    - Face size: 40% (larger faces = more reliable embeddings)
+    - Detection confidence (primary signal from InsightFace)
+    - Face size (larger faces = more reliable embeddings)
 
     Args:
         identity: MediaIdentity with confidence and bbox dimensions.
+        settings: Clustering settings containing quality parameters.
 
     Returns:
         Quality score between 0.0 and 1.0.
     """
-    # Detection score component (60% weight)
-    det_component = identity.confidence * 0.6
+    quality_settings = settings.quality
 
-    # Face size component (40% weight)
-    # Large (>20000 px²) = 1.0, Medium (5000-20000) = 0.7, Small (<5000) = 0.4
+    # Detection score component
+    det_component = identity.confidence * quality_settings.detection_confidence_weight
+
+    # Face size component
     bbox_area = identity.bbox_width * identity.bbox_height
-    if bbox_area > 20000:
-        size_score = 1.0
-    elif bbox_area > 5000:
-        size_score = 0.7
+    if bbox_area > quality_settings.face_size_large_threshold:
+        size_score = quality_settings.face_size_large_score
+    elif bbox_area > quality_settings.face_size_medium_threshold:
+        size_score = quality_settings.face_size_medium_score
     else:
-        size_score = 0.4
-    size_component = size_score * 0.4
+        size_score = quality_settings.face_size_small_score
+    size_component = size_score * quality_settings.face_size_weight
 
     return round(det_component + size_component, 3)
 
@@ -240,6 +242,34 @@ class AssignmentWriter:
             payload=payload,
         )
 
+    async def _create_and_add_representative(
+        self,
+        cluster_id: str,
+        identity: MediaIdentity,
+        reason: str,
+    ) -> ClusterRepresentative:
+        """Create and persist a representative, emitting events."""
+        quality = _compute_identity_quality(identity, self._settings)
+        rep = ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster_id,
+            identity_id=identity.id,
+            embedding=identity.embedding,
+            created_at=datetime.now(tz=UTC),
+            tenant_id=identity.tenant_id,
+            quality_score=quality,
+            image_phash=identity.image_phash,
+        )
+        await self._clusters.add_representative(rep)
+        self._emit_representative_selected_event(
+            cluster_id=cluster_id,
+            identity=identity,
+            reason=reason,
+            quality_score=rep.quality_score,
+            diversity_score=rep.diversity_score,
+        )
+        return rep
+
     async def persist_assignment(self, decision: AssignmentDecision) -> None:
         """Persist an accepted assignment decision."""
         if decision.outcome is not AssignmentOutcome.ACCEPT:
@@ -257,24 +287,10 @@ class AssignmentWriter:
 
         if await self._should_add_representative(decision):
             # Store the full 1024D embedding, not the face-only 512D vector
-            full_embedding = decision.candidate.identity.embedding
-            quality = _compute_identity_quality(decision.candidate.identity)
-            rep = ClusterRepresentative(
-                id=str(uuid.uuid4()),
-                cluster_id=decision.candidate.cluster_id,
-                identity_id=decision.candidate.identity.id,
-                embedding=full_embedding,
-                created_at=datetime.now(tz=UTC),
-                tenant_id=decision.candidate.identity.tenant_id,
-                quality_score=quality,
-            )
-            await self._clusters.add_representative(rep)
-            self._emit_representative_selected_event(
+            await self._create_and_add_representative(
                 cluster_id=decision.candidate.cluster_id,
                 identity=decision.candidate.identity,
                 reason="diverse_addition",
-                quality_score=rep.quality_score,
-                diversity_score=rep.diversity_score,
             )
             new_centroid = await self.recompute_centroid(decision.candidate.cluster_id)
             if new_centroid is not None:
@@ -360,23 +376,10 @@ class AssignmentWriter:
         await self._clusters.update(cluster)
 
         for identity in selected:
-            quality = _compute_identity_quality(identity)
-            rep = ClusterRepresentative(
-                id=str(uuid.uuid4()),
-                cluster_id=cluster_id,
-                identity_id=identity.id,
-                embedding=identity.embedding,
-                created_at=datetime.now(tz=UTC),
-                tenant_id=identity.tenant_id,
-                quality_score=quality,
-            )
-            await self._clusters.add_representative(rep)
-            self._emit_representative_selected_event(
+            await self._create_and_add_representative(
                 cluster_id=cluster_id,
                 identity=identity,
                 reason="fps_recompute",
-                quality_score=rep.quality_score,
-                diversity_score=rep.diversity_score,
             )
 
     async def persist_new_cluster(
@@ -423,24 +426,10 @@ class AssignmentWriter:
                 self._settings.max_representatives_per_cluster,
             )
             for identity in diverse_reps:
-                quality = _compute_identity_quality(identity)
-                rep = ClusterRepresentative(
-                    id=str(uuid.uuid4()),
-                    cluster_id=cluster.id,
-                    identity_id=identity.id,
-                    embedding=identity.embedding,
-                    created_at=datetime.now(tz=UTC),
-                    tenant_id=tenant_id,
-                    quality_score=quality,
-                    image_phash=identity.image_phash,
-                )
-                await self._clusters.add_representative(rep)
-                self._emit_representative_selected_event(
+                await self._create_and_add_representative(
                     cluster_id=cluster.id,
                     identity=identity,
                     reason="fps_seed",
-                    quality_score=rep.quality_score,
-                    diversity_score=rep.diversity_score,
                 )
 
             # Recompute and persist the centroid immediately.
@@ -504,24 +493,10 @@ class AssignmentWriter:
                         break
 
             if is_diverse:
-                quality = _compute_identity_quality(identity)
-                rep = ClusterRepresentative(
-                    id=str(uuid.uuid4()),
-                    cluster_id=cluster_id,
-                    identity_id=identity.id,
-                    embedding=identity.embedding,
-                    created_at=datetime.now(tz=UTC),
-                    tenant_id=identity.tenant_id,
-                    quality_score=quality,
-                    image_phash=identity.image_phash,
-                )
-                await self._clusters.add_representative(rep)
-                self._emit_representative_selected_event(
+                await self._create_and_add_representative(
                     cluster_id=cluster_id,
                     identity=identity,
                     reason="diverse_addition",
-                    quality_score=rep.quality_score,
-                    diversity_score=rep.diversity_score,
                 )
 
         # Update member count

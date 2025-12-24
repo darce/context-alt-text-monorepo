@@ -4,32 +4,14 @@ Request schemas for recognition HTTP API.
 
 from __future__ import annotations
 
-import uuid
 from typing import Literal
 
 from pydantic import BaseModel, Field, field_validator
 
+from recognition.interface_adapters.http.validation_utils import validate_uuid_format
 
-def _validate_uuid(value: str) -> str:
-    """Validate and normalize UUID to standard hyphenated lowercase format.
-
-    Accepts both 32-char hex strings (no dashes) and 36-char UUID strings (with dashes).
-    Always returns the standard 36-char lowercase UUID format.
-    """
-    if isinstance(value, int):
-        return str(value)
-    if not isinstance(value, str):
-        raise TypeError("id must be a string")
-    if len(value) < 1:
-        raise ValueError("id must be at least 1 character")
-    if not all(ch.isalnum() or ch == "-" for ch in value):
-        raise ValueError("id must contain only alphanumeric characters or dashes")
-    # Normalize to standard UUID format (lowercase with dashes)
-    try:
-        return str(uuid.UUID(value))
-    except ValueError:
-        # Fall back to lowercase for non-UUID identifiers
-        return value.lower()
+# Alias for backward compatibility with external usage
+_validate_uuid = validate_uuid_format
 
 
 class MediaItem(BaseModel):

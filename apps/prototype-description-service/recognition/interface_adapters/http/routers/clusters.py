@@ -13,7 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 from db.session import async_session_factory
 from recognition.application.suggestions.service import SuggestionRefreshReason
 from recognition.config.security import get_security_settings
-from recognition.domain.job import Job, JobType, SplitJobPayload
+from recognition.domain.job import JobType, SplitJobPayload
 from recognition.infrastructure.repositories import SqlAlchemyIdentityClusterBlockRepository
 from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
@@ -24,6 +24,9 @@ from recognition.interface_adapters.http.dependencies import (
     require_write_access,
 )
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
+from recognition.interface_adapters.http.job_utils import (
+    job_to_clustering_response as _job_to_clustering_response,
+)
 from recognition.interface_adapters.http.schemas.requests import (
     AssignOutlierRequest,
     ClusteringJobRequest,
@@ -39,7 +42,6 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusterResponse,
     CreateClusterForIdentityResponse,
     JobProgressResponse,
-    JobStatusResponse,
     ReassignIdentityResponse,
     SplitClusterResponse,
 )
@@ -446,33 +448,4 @@ async def assign_outlier(
     return cluster
 
 
-def _job_to_response(job: Job) -> JobStatusResponse:
-    """Convert Job domain object to API response."""
-    progress = JobProgressResponse(completed=job.progress_completed, total=job.progress_total)
-    started_at = job.started_at or datetime.now(tz=UTC)
-    return JobStatusResponse(
-        id=job.id,
-        type=job.type.value,
-        status=job.status.value,
-        progress=progress,
-        started_at=started_at,
-        finished_at=job.finished_at,
-        message=job.message,
-    )
-
-
-def _job_to_clustering_response(job: Job) -> ClusteringJobStatusResponse:
-    """Convert Job domain object to clustering API response."""
-    progress = JobProgressResponse(completed=job.progress_completed, total=job.progress_total)
-    started_at = job.started_at or datetime.now(tz=UTC)
-    return ClusteringJobStatusResponse(
-        id=job.id,
-        type=job.type.value,
-        status=job.status.value,
-        progress=progress,
-        started_at=started_at,
-        finished_at=job.finished_at,
-        message=job.message,
-        clusters_created=0,  # Not known until job completes
-        total_identities_clustered=job.progress_completed,
-    )
+# _job_to_response and _job_to_clustering_response are imported from job_utils

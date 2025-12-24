@@ -20,7 +20,7 @@ from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from db.settings import get_database_settings
 from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
 from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.domain.job import Job, JobType
+from recognition.domain.job import JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_service_dependency,
     get_optional_session,
@@ -29,6 +29,7 @@ from recognition.interface_adapters.http.dependencies import (
     require_auth,
     require_write_access,
 )
+from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
 from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest, _validate_uuid
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
 
@@ -317,13 +318,10 @@ async def _process_scan_job_inline(
         session_factory = default_session_factory
 
     # Prepare services OUTSIDE the DB session to avoid holding connections during load
-    from recognition.application.embedding.service import EmbeddingService
     from recognition.config import get_settings as get_recognition_settings
 
     settings = get_recognition_settings()
     runtime_mode = settings.runtime_mode
-
-    embedder = EmbeddingService()
 
     if runtime_mode == "test":
         from recognition.application.embedding.detector import StubFaceDetector
@@ -366,7 +364,7 @@ async def _process_scan_job_inline(
     detections = await detector.detect(sources_list)
 
     # Generate embeddings if specific detector didn't provide them (e.g. stub or some configs)
-    from recognition.application.embedding.service import EmbeddingResult
+    from recognition.application.embedding.generator import EmbeddingResult
 
     detections_needing_embeddings = [d for d in detections if d.embedding is None]
     if detections_needing_embeddings:
@@ -385,7 +383,6 @@ async def _process_scan_job_inline(
             session=session,
             detector=detector,
             generator=generator,
-            embedder=embedder,
         )
 
         await scan_service.save_job_results(
@@ -439,19 +436,7 @@ async def _populate_scan_job_items_async(
                 await clear_tenant_context(session)
 
 
-def _job_to_response(job: Job) -> JobStatusResponse:
-    """Convert domain Job to API response."""
-    progress = JobProgressResponse(completed=job.progress_completed, total=job.progress_total)
-    started_at = job.started_at or datetime.now(tz=UTC)
-    return JobStatusResponse(
-        id=job.id,
-        type=job.type.value,
-        status=job.status.value,
-        progress=progress,
-        started_at=started_at,
-        finished_at=job.finished_at,
-        message=job.message,
-    )
+# _job_to_response is imported from job_utils for shared use across routers
 
 
 def _is_insufficient_privilege(exc: ProgrammingError) -> bool:

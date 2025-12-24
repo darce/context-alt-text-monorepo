@@ -164,7 +164,10 @@ def test_session_context_cleared_after_request(monkeypatch) -> None:
 
     monkeypatch.setattr("db.tenant_context.set_tenant_context", fake_set)
     monkeypatch.setattr("db.tenant_context.clear_tenant_context", fake_clear)
-    monkeypatch.setattr(dependencies, "_get_session", fake_session_source)
+    # Patch in the session module where it's actually used
+    from recognition.interface_adapters.http.deps import session as session_module
+
+    monkeypatch.setattr(session_module, "_get_session", fake_session_source)
 
     def builder(session_dep=Depends(dependencies.get_session)):
         async def _build(_: str):

@@ -79,7 +79,10 @@ def test_valid_api_key_allows_request(monkeypatch) -> None:
         assert api_key == "good-key"
         return tenant_id, "api-key-id", "free", False
 
-    monkeypatch.setattr(dependencies, "_lookup_api_key", _fake_lookup)
+    # Patch in the auth module where it's actually used
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
     headers = {
         "X-Tenant-ID": tenant_id,
         "Authorization": "Bearer good-key",

@@ -8,12 +8,9 @@ cluster curation operations live in dedicated modules under
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import uuid
-from collections.abc import Iterable
-from datetime import UTC, datetime
-from typing import TYPE_CHECKING, Protocol
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -21,7 +18,7 @@ if TYPE_CHECKING:
     from recognition.application.clustering.constrained_hac import ConstrainedHAC
 
 from db.models import MediaIdentity as MediaIdentityModel
-from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome
+from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
 from recognition.application.orchestration.cluster_curation import (
     assign_outlier_to_cluster as assign_outlier_to_cluster_op,
@@ -54,32 +51,14 @@ from recognition.application.orchestration.incremental_clustering import (
 from recognition.application.orchestration.incremental_clustering import (
     get_chunk_size as get_chunk_size_op,
 )
+from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings.clustering import HACSettings
-from recognition.application.suggestions.service import SuggestionRefreshReason
 from recognition.domain.cluster import IdentityCluster
-from recognition.domain.locator import IdentityLocator
 from recognition.domain.repositories import IdentityClusterBlockRepository, IdentityConstraintRepository
-from recognition.observability import ClusteringLogger, DecisionType
-from recognition.observability.reports import BatchJobReport
-from recognition.shared.ids import generate_id
+from recognition.observability import ClusteringLogger
 
 logger = logging.getLogger(__name__)
-
-
-class SuggestionService(Protocol):
-    """Protocol for creating assignment suggestions."""
-
-    async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None:
-        """Create a suggestion record for later human review."""
-
-    async def refresh_for_identity(
-        self,
-        *,
-        identity_id: str,
-        reason: SuggestionRefreshReason,
-    ) -> list[object]:
-        """Refresh suggestions for a specific identity."""
 
 
 class ClusterService:
@@ -96,7 +75,7 @@ class ClusterService:
         centroid_discovery: CentroidDiscovery,
         graph_discovery: GraphDiscovery,
         assignment_writer: AssignmentWriter,
-        suggestion_service: SuggestionService,
+        suggestion_service: SuggestionServiceProtocol,
         block_repository: IdentityClusterBlockRepository | None = None,
         constraint_repository: IdentityConstraintRepository | None = None,
         hac_settings: HACSettings | None = None,
@@ -132,187 +111,6 @@ class ClusterService:
         else:
             self.constrained_hac = None
             self.hac_settings = None
-
-    async def cluster(
-        self,
-        identities: Iterable,
-        representatives_by_cluster: object,
-        centroids_by_cluster: object,
-        anchor_embeddings: object,
-        session: AsyncSession | None = None,
-    ) -> None:
-        """Run discovery across all paths and route candidates through the gate."""
-        identity_list = list(identities)
-        job_id = str(generate_id())
-        algorithm_label = "hybrid"
-        report = BatchJobReport(
-            job_id=job_id,
-            algorithm=algorithm_label,
-            started_at=datetime.now(tz=UTC),
-            completed_at=None,
-            total_identities=len(identity_list),
-            accept_count=0,
-            suggest_count=0,
-            reject_count=0,
-            clusters_created=0,
-            avg_similarity=None,
-        )
-        tenant_id = identity_list[0].tenant_id if identity_list else None
-        if self.logger:
-            self.logger.log_batch_start(
-                identity_count=len(identity_list), algorithm=algorithm_label, tenant_id=tenant_id
-            )
-
-        rep_candidates = await self.representative_discovery.discover(identity_list, representatives_by_cluster)
-        remaining_ids = {c.identity.id for c in rep_candidates}
-        remaining = [i for i in identity_list if i.id not in remaining_ids]
-
-        centroid_candidates = await self.centroid_discovery.discover(remaining, centroids_by_cluster)
-        centroid_remaining = {c.identity.id for c in centroid_candidates}
-        remaining = [i for i in remaining if i.id not in centroid_remaining]
-
-        graph_result = await self.graph_discovery.discover(remaining, anchor_embeddings)
-        graph_candidates = graph_result.candidates
-        new_clusters = graph_result.new_clusters
-
-        all_candidates = rep_candidates + centroid_candidates + graph_candidates
-        report.clusters_created = len({c.cluster_id for c in all_candidates})
-
-        async def _persist_candidates() -> None:
-            for candidate in all_candidates:
-                decision = await self.gate.evaluate(candidate)
-                if decision.outcome is AssignmentOutcome.ACCEPT:
-                    await self.assignment_writer.persist_assignment(decision)
-                    await self._log_decision(decision)
-                elif decision.outcome is AssignmentOutcome.SUGGEST:
-                    await self.suggestion_service.create(candidate, decision.suggestion_confidence)
-                    await self._log_decision(decision)
-                else:
-                    await self._log_decision(decision)
-
-                report.add_decision(decision.outcome.value, candidate.discovery_similarity)
-
-        if session:
-            async with session.begin():
-                await _persist_candidates()
-                await self._persist_new_clusters(new_clusters, algorithm_label)
-        else:
-            await _persist_candidates()
-            await self._persist_new_clusters(new_clusters, algorithm_label)
-
-        # Refresh centroids view if possible
-        refresh = getattr(self.assignment_writer, "refresh_centroids_view", None)
-        if callable(refresh):
-            await refresh()
-
-        report.completed_at = datetime.now(tz=UTC)
-        if self.logger:
-            self.logger.log_batch_complete(report)
-        if self.visualizer:
-            with contextlib.suppress(Exception):
-                self.visualizer.generate_batch_report_chart(
-                    report, algorithm=algorithm_label, timestamp=report.completed_at
-                )
-        if self.observability_repo and tenant_id:
-            with contextlib.suppress(Exception):
-                await self.observability_repo.save_batch_report(report, tenant_id=str(tenant_id))
-
-    async def _log_decision(self, decision) -> None:
-        """Log and persist a decision if configured."""
-        if not self.logger:
-            return
-        decision_type = {
-            AssignmentOutcome.ACCEPT: DecisionType.ACCEPT,
-            AssignmentOutcome.SUGGEST: DecisionType.SUGGEST,
-            AssignmentOutcome.REJECT: DecisionType.REJECT,
-        }[decision.outcome]
-        locator_payload: dict[str, object] | None = None
-        identity = decision.candidate.identity
-        bbox_x = identity.bbox_x
-        bbox_y = identity.bbox_y
-        if bbox_x is not None and bbox_y is not None:
-            try:
-                locator_payload = IdentityLocator(
-                    media_id=int(identity.media_id),
-                    bbox_x=int(bbox_x),
-                    bbox_y=int(bbox_y),
-                    bbox_width=int(identity.bbox_width),
-                    bbox_height=int(identity.bbox_height),
-                    crop_hash=None,
-                ).to_dict()
-            except (TypeError, ValueError):
-                locator_payload = None
-
-        metadata = dict(decision.metadata or {})
-        gate_settings = getattr(self.gate, "settings", None)
-        threshold = getattr(gate_settings, "similarity_threshold", None) if gate_settings is not None else None
-        metadata.update(
-            {
-                "method": decision.candidate.discovery_method.value,
-                "stage": f"{decision.candidate.discovery_method.name.title()}Discovery",
-                "threshold": float(threshold) if threshold is not None else None,
-                "gate_checks": {"passed": decision.checks_passed, "failed": decision.checks_failed},
-                "anchor_linked": bool(decision.candidate.anchor_linked),
-                "confidence": float(decision.suggestion_confidence)
-                if decision.suggestion_confidence is not None
-                else decision.candidate.discovery_similarity,
-            }
-        )
-        if locator_payload is not None:
-            metadata["identity_locator"] = locator_payload
-
-        decision_log = self.logger.log_decision(
-            identity_id=decision.candidate.identity.id,
-            cluster_id=decision.candidate.cluster_id,
-            decision=decision_type,
-            similarity=decision.candidate.discovery_similarity,
-            reason=decision.rejection_reason,
-            metadata=metadata,
-            algorithm="hybrid",
-            job_id=None,
-            media_id=identity.media_id,
-        )
-        if self.decision_store:
-            with contextlib.suppress(Exception):
-                self.decision_store.add(
-                    {
-                        "id": decision_log.identity_id,
-                        "tenant_id": identity.tenant_id,
-                        "cluster_id": decision_log.cluster_id,
-                        "decision": decision_log.decision.value,
-                        "similarity": decision_log.similarity,
-                        "reason": decision_log.reason,
-                        "timestamp": decision_log.timestamp.isoformat(),
-                    }
-                )
-        if self.observability_repo:
-            with contextlib.suppress(Exception):
-                await self.observability_repo.add_decision(
-                    decision_log,
-                    tenant_id=identity.tenant_id,
-                    algorithm="hybrid",
-                    job_id=None,
-                    metadata=decision.metadata or {},
-                )
-
-    async def _persist_new_clusters(
-        self,
-        clusters: list[tuple[list, list[float]]],
-        algorithm_label: str,
-    ) -> None:
-        """Persist newly formed clusters from graph discovery."""
-        for members, similarities in clusters:
-            if not members:
-                continue
-            tenant_id = getattr(members[0], "tenant_id", None)
-            if tenant_id is None:
-                continue
-            await self.assignment_writer.persist_new_cluster(
-                tenant_id=tenant_id,
-                identities=members,
-                similarities=similarities,
-                algorithm=algorithm_label,
-            )
 
     async def cluster_unclustered_identities(self, tenant_id: str, job_id: str | None = None):
         """Cluster any identities not yet assigned to a cluster."""

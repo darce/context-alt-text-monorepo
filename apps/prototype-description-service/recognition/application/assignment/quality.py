@@ -4,6 +4,11 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from recognition.application.settings import QualitySettings
+
+# Default settings instance for backward compatibility
+_default_settings = QualitySettings()
+
 
 @dataclass(frozen=True, slots=True)
 class IdentityQualityInfo:
@@ -24,6 +29,7 @@ def compute_identity_quality(
     pose_roll: float | None,
     bbox_width: int,
     bbox_height: int,
+    settings: QualitySettings | None = None,
 ) -> IdentityQualityInfo:
     """Compute identity quality score from detection metrics.
 
@@ -34,19 +40,20 @@ def compute_identity_quality(
         pose_roll: Head roll angle in degrees.
         bbox_width: Bounding box width in pixels.
         bbox_height: Bounding box height in pixels.
+        settings: Optional quality settings. Uses defaults if not provided.
 
     Returns:
         IdentityQualityInfo with computed score and adjustment.
     """
-    # 1. Pose penalty: angles > 20 deg start reducing quality rapidly
-    # Approx logic: 1.0 at 0 deg, 0.5 at 45 deg
-    # Using simplistic linear penalty for now
-    total_angle = abs(pose_pitch or 0) + abs(pose_yaw or 0) + abs(pose_roll or 0)
-    pose_penalty = max(0.0, 1.0 - (total_angle / 90.0))  # Zero at 90 deg deviation
+    s = settings or _default_settings
 
-    # 2. Size factor: punish faces < 50px
+    # 1. Pose penalty: angles > threshold start reducing quality rapidly
+    total_angle = abs(pose_pitch or 0) + abs(pose_yaw or 0) + abs(pose_roll or 0)
+    pose_penalty = max(0.0, 1.0 - (total_angle / s.pose_penalty_divisor))
+
+    # 2. Size factor: punish faces below min_face_size
     min_dim = min(bbox_width, bbox_height)
-    size_factor = min(1.0, min_dim / 80.0)
+    size_factor = min(1.0, min_dim / s.min_face_size)
 
     # 3. Combined score
     raw_score = confidence * pose_penalty * size_factor
@@ -57,25 +64,30 @@ def compute_identity_quality(
         confidence=confidence,
         pose_penalty=pose_penalty,
         size_factor=size_factor,
-        threshold_adjustment=compute_quality_adjustment(score),
+        threshold_adjustment=compute_quality_adjustment(score, settings=s),
     )
 
 
-def compute_quality_adjustment(quality_score: float) -> float:
+def compute_quality_adjustment(
+    quality_score: float,
+    settings: QualitySettings | None = None,
+) -> float:
     """Return threshold adjustment for a quality score.
 
     Args:
         quality_score: Identity quality (0-1).
+        settings: Optional quality settings. Uses defaults if not provided.
 
     Returns:
         Float adjustment (positive = stricter, negative = more lenient).
     """
-    if quality_score >= 0.9:
-        return -0.05  # Highly trusted: loosen threshold significantly
-    if quality_score >= 0.8:
-        return 0.0  # Neutral zone
-    if quality_score >= 0.6:
-        return 0.02  # Mediocre: tighten slightly
+    s = settings or _default_settings
 
-    # Poor quality: tighten significantly
-    return 0.05
+    if quality_score >= s.high_quality_threshold:
+        return s.high_quality_adjustment
+    if quality_score >= s.neutral_quality_threshold:
+        return s.neutral_quality_adjustment
+    if quality_score >= s.mediocre_quality_threshold:
+        return s.mediocre_quality_adjustment
+
+    return s.poor_quality_adjustment

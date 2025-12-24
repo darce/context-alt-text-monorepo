@@ -33,7 +33,7 @@ from db.models import IdentityCluster, MediaIdentity
 
 logger = logging.getLogger(__name__)
 
-# Type aliases matching chinese_whispers.py
+# Type aliases for clustering callbacks
 CreateClusterFn = Callable[[Sequence[MediaIdentity]], Awaitable[tuple[IdentityCluster, object]]]
 AddToClusterFn = Callable[[UUID, Sequence[MediaIdentity]], Awaitable[None]]
 AnchorEmbeddings = dict[UUID, list[np.ndarray]]

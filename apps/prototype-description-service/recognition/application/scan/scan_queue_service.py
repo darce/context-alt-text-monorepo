@@ -13,6 +13,8 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+from recognition.application.settings.scan import ScanSettings
+from recognition.config import get_settings
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,10 +39,9 @@ def _chunk_items(items: Sequence[tuple[int, str]], chunk_size: int) -> Iterable[
 class ScanQueueService:
     """Coordinates scan queue persistence and processing."""
 
-    ENQUEUE_CHUNK_SIZE = 500
-
-    def __init__(self, repository: ScanQueueRepository) -> None:
+    def __init__(self, repository: ScanQueueRepository, settings: ScanSettings | None = None) -> None:
         self._repository = repository
+        self._settings = settings or get_settings().scan
 
     async def create_scan_job_record(
         self,
@@ -97,7 +98,7 @@ class ScanQueueService:
         total = len(media_items)
         enqueued_total = 0
         media_ids: list[int] = []
-        chunk_size = chunk_size or self.ENQUEUE_CHUNK_SIZE
+        chunk_size = chunk_size or self._settings.enqueue_chunk_size
         for chunk in _chunk_items(media_items, chunk_size):
             created = await self._repository.enqueue_items(job_id=job_id, tenant_id=tenant_id, items=chunk)
             enqueued_total += created

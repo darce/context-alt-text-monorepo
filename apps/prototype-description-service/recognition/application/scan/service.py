@@ -12,9 +12,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
 from db.settings import get_database_settings
-from recognition.application.embedding.detector import FaceDetectorProtocol, StubFaceDetector
-from recognition.application.embedding.generator import EmbeddingGeneratorProtocol, StubEmbeddingGenerator
-from recognition.application.embedding.service import EmbeddingResult, EmbeddingService, FaceDetection
+from recognition.application.embedding.detector import FaceDetection, FaceDetectorProtocol, StubFaceDetector
+from recognition.application.embedding.generator import (
+    EmbeddingGeneratorProtocol,
+    EmbeddingResult,
+    StubEmbeddingGenerator,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -29,12 +32,10 @@ class ScanService:
         session: AsyncSession,
         detector: FaceDetectorProtocol | None = None,
         generator: EmbeddingGeneratorProtocol | None = None,
-        embedder: EmbeddingService | None = None,
     ) -> None:
         self._session = session
         self._detector = detector or StubFaceDetector()
         self._generator = generator or StubEmbeddingGenerator(embedding_dim=_DB_SETTINGS.pgvector_dimension)
-        self._embedder = embedder or EmbeddingService(embedding_dim=_DB_SETTINGS.pgvector_dimension)
 
     async def analyze_media(
         self,

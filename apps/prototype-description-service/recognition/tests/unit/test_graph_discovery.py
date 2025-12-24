@@ -116,10 +116,8 @@ async def test_graph_discovery_uses_face_embeddings() -> None:
 
 
 @pytest.mark.asyncio
-async def test_graph_discovery_selects_algorithm(monkeypatch) -> None:
-    """Auto-select HDBSCAN for small batches and CW for large batches."""
-    if getattr(graph_module, "DISABLE_CHINESE_WHISPERS_FALLBACK", False):
-        pytest.skip("Chinese Whispers fallback temporarily disabled for HDBSCAN debugging")
+async def test_graph_discovery_selects_hdbscan(monkeypatch) -> None:
+    """HDBSCAN is always selected when available."""
     calls: list[str] = []
 
     class StubAlgorithm(GraphAlgorithm):
@@ -133,19 +131,19 @@ async def test_graph_discovery_selects_algorithm(monkeypatch) -> None:
 
     monkeypatch.setattr(graph_module.GraphDiscovery, "_hdbscan_available", staticmethod(lambda: True))
     monkeypatch.setattr(clustering_module, "HdbscanGraphAlgorithm", lambda **_: StubAlgorithm("hdbscan"))
-    monkeypatch.setattr(clustering_module, "DeterministicChineseWhispers", lambda threshold=None: StubAlgorithm("cw"))
 
     settings = make_settings(threshold=0.8, hdbscan_max_batch_size=3)
     discovery = graph_module.GraphDiscovery(settings=settings, algorithm=None)
     anchor_embeddings: dict[str, list[np.ndarray]] = {"anchor": [np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)]}
 
     small_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(3)]
-    large_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(4)]
+    large_batch = [make_identity(np.ones(FACE_EMBEDDING_DIM, dtype=np.float32)) for _ in range(10)]
 
     await discovery.discover(small_batch, anchor_embeddings, inject_anchors=False)
     await discovery.discover(large_batch, anchor_embeddings, inject_anchors=False)
 
-    assert calls == ["hdbscan", "cw"]
+    # HDBSCAN is always used regardless of batch size (Chinese Whispers removed)
+    assert calls == ["hdbscan", "hdbscan"]
 
 
 @pytest.mark.asyncio

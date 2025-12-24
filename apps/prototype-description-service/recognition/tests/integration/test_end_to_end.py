@@ -48,8 +48,8 @@ async def test_full_clustering_flow(
 
     first_cluster = clusters[0]
     assert first_cluster.identity_count > 0
-    # Algorithm can be "graph" (unified pipeline), "chinese_whispers", or "hdbscan"
-    assert first_cluster.clustering_algorithm in ("graph", "chinese_whispers", "hdbscan")
+    # Algorithm can be "graph" (unified pipeline) or "hdbscan"
+    assert first_cluster.clustering_algorithm in ("graph", "hdbscan")
 
     # Verify members
     members = await member_repository.get_by_cluster(first_cluster.id)

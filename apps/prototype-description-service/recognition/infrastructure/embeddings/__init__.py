@@ -20,7 +20,6 @@ import numpy as np
 from PIL import Image
 
 from recognition.config import get_settings
-from recognition.domain.embeddings import build_extended_embedding
 
 if TYPE_CHECKING:
     from insightface.app import FaceAnalysis
@@ -45,7 +44,7 @@ class InsightFaceAdapter:
     """Adapter for InsightFace detection and embedding generation.
 
     Wraps InsightFace's FaceAnalysis for face detection and generates
-    1024D extended embeddings (512D face + 512D metadata).
+    512D face embeddings.
 
     Usage:
         adapter = InsightFaceAdapter()
@@ -181,43 +180,16 @@ class InsightFaceAdapter:
         logger.debug("Detected %d faces in image", len(results))
         return results
 
-    async def generate_extended_embedding(self, face: DetectedFace) -> np.ndarray:
-        """Generate 1024D extended embedding from a detected face.
-
-        Combines the 512D face identity vector with metadata (pose, age, gender,
-        detection confidence, bounding box area, landmark quality).
-
-        Args:
-            face: DetectedFace from detect_faces()
-
-        Returns:
-            1024D numpy array (float32)
-        """
-        return build_extended_embedding(
-            face_embedding=face.embedding_512,
-            det_score=face.confidence,
-            bbox=face.bbox,
-            pose=face.pose,
-            age=face.age,
-            gender=face.gender,
-            landmarks=face.landmarks,
-        )
-
-    async def analyze(self, image_bytes: bytes) -> list[tuple[DetectedFace, np.ndarray]]:
-        """Detect faces and generate extended embeddings in one call.
+    async def analyze(self, image_bytes: bytes) -> list[DetectedFace]:
+        """Detect faces and generate embeddings in one call.
 
         Args:
             image_bytes: Image data as bytes
 
         Returns:
-            List of (DetectedFace, embedding_1024d) tuples
+            List of DetectedFace objects
         """
-        faces = await self.detect_faces(image_bytes)
-        results = []
-        for face in faces:
-            embedding = await self.generate_extended_embedding(face)
-            results.append((face, embedding))
-        return results
+        return await self.detect_faces(image_bytes)
 
     def model_info(self) -> dict[str, object]:
         """Return information about the loaded model."""

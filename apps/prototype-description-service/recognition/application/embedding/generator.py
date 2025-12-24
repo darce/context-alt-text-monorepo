@@ -14,16 +14,24 @@ import hashlib
 import logging
 from abc import ABC, abstractmethod
 from collections.abc import Iterable
+from dataclasses import dataclass
 from typing import TYPE_CHECKING
 
 import numpy as np
-
-from recognition.application.embedding.service import EmbeddingResult
 
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class EmbeddingResult:
+    """Embedding output for a detected face."""
+
+    media_id: str
+    embedding: np.ndarray
+    confidence: float
 
 
 class EmbeddingGeneratorProtocol(ABC):
@@ -92,11 +100,11 @@ class InsightFaceEmbeddingGenerator(EmbeddingGeneratorProtocol):
                 # Run detection and embedding in one pass
                 face_results = await self._adapter.analyze(image_bytes)
 
-                for _face, embedding_1024d in face_results:
+                for _face in face_results:
                     results.append(
                         EmbeddingResult(
                             media_id=media_id,
-                            embedding=embedding_1024d,
+                            embedding=_face.embedding_512,  # Use 512D embedding
                             confidence=_face.confidence,
                         )
                     )

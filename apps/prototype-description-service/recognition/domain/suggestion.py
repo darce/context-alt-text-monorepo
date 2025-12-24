@@ -17,6 +17,15 @@ class SuggestionStatus(Enum):
     REJECTED = "rejected"
 
 
+class SuggestionRefreshReason(str, Enum):
+    """Reason code for refreshing suggestion candidates."""
+
+    MANUAL_SPLIT = "manual_split"
+    WRONG_PERSON = "wrong_person"
+    MANUAL_ASSIGN = "manual_assign"
+    MANUAL_MERGE = "manual_merge"
+
+
 @dataclass
 class AssignmentSuggestion:
     """Represents a proposed identity-to-cluster assignment awaiting review."""

@@ -56,6 +56,7 @@ export {
   revertMergeCluster,
   splitCluster,
   createClusterForIdentity,
+  pinRepresentative,
 } from './clusterApi';
 
 // Identity operations

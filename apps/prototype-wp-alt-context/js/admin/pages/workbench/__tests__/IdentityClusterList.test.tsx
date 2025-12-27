@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
@@ -27,6 +27,39 @@ window.HTMLElement.prototype.releasePointerCapture = vi.fn();
 
 // Mock scrollIntoView for cmdk
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
+
+// Mock EventSource for useClusterEvents
+class MockEventSource {
+  onmessage: any = null;
+  onerror: any = null;
+  close = vi.fn();
+  static CONNECTING = 0;
+  static OPEN = 1;
+  static CLOSED = 2;
+  constructor(_url: string) {}
+}
+
+const setupMocks = () => {
+  // Mock AltContextAdmin config
+  (window as any).AltContextAdmin = {
+    nonce: 'test-nonce',
+    endpoints: {
+      recognition: 'http://localhost:8000',
+      recognitionClusters: 'http://localhost:8000/clusters',
+      workbenchFaceClusters: 'http://localhost:8000/clusters',
+      workbenchRecognitionClusters: 'http://localhost:8000/clusters',
+      workbenchRecognitionReassignIdentity: 'http://localhost:8000/reassign-identity',
+      recognitionRevertMerge: 'http://localhost:8000/revert-merge',
+      workbenchRecognitionRevertMerge: 'http://localhost:8000/revert-merge',
+      workbenchRecognitionCreateClusterForIdentity: 'http://localhost:8000/create-for-identity',
+      recognitionFaceSuggestions: 'http://localhost:8000/suggestions',
+      workbenchRecognitionFaceSuggestions: 'http://localhost:8000/suggestions',
+    },
+    tenant_id: 'test-tenant',
+  };
+
+  window.EventSource = MockEventSource as any;
+};
 
 vi.mock('../../../api/recognition', () => ({
   mergeCluster: vi.fn(),
@@ -62,6 +95,7 @@ const baseIdentity = {
 
 describe('IdentityClusterList', () => {
   beforeEach(() => {
+    setupMocks();
     vi.clearAllMocks();
   });
 
@@ -88,7 +122,8 @@ describe('IdentityClusterList', () => {
     await user.click(screen.getByRole('button', { name: /edit label/i }));
     await user.click(screen.getByRole('combobox'));
     const input = await screen.findByPlaceholderText(/enter a name/i);
-    await user.type(input, 'New Label');
+    fireEvent.change(input, { target: { value: 'New Label' } });
+    await waitFor(() => expect(input).toHaveValue('New Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'New Label'));
@@ -124,7 +159,8 @@ describe('IdentityClusterList', () => {
     await user.click(screen.getByRole('button', { name: /Name this person/i }));
     await user.click(screen.getByRole('combobox'));
     const input = await screen.findByPlaceholderText(/enter a name/i);
-    await user.type(input, 'Person A');
+    fireEvent.change(input, { target: { value: 'Person A' } });
+    await waitFor(() => expect(input).toHaveValue('Person A'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-auto', 'Person A'));
@@ -142,7 +178,8 @@ describe('IdentityClusterList', () => {
     const { user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
 
     await user.click(screen.getByRole('button', { name: /edit label/i }));
-    await user.click(screen.getByRole('combobox'));
+    const input = await screen.findByRole('combobox');
+    fireEvent.change(input, { target: { value: '' } });
 
     expect(await screen.findByText('Auto Label')).toBeInTheDocument();
   });
@@ -160,7 +197,8 @@ describe('IdentityClusterList', () => {
     const { user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
 
     await user.click(screen.getByRole('button', { name: /edit label/i }));
-    await user.click(screen.getByRole('combobox'));
+    const input = await screen.findByRole('combobox');
+    fireEvent.change(input, { target: { value: 'Erin' } });
 
     expect(await screen.findByText('Erin McCleod')).toBeInTheDocument();
     expect(api.listRecognitionClusters).toHaveBeenCalledWith({ limit: 500, offset: 0 });
@@ -198,7 +236,8 @@ describe('IdentityClusterList', () => {
     await user.click(screen.getByRole('button', { name: /edit label/i }));
     await user.click(screen.getByRole('combobox'));
     const input = await screen.findByPlaceholderText(/enter a name/i);
-    await user.type(input, 'Existing Label');
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
+    await waitFor(() => expect(input).toHaveValue('Existing Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label'));
@@ -238,7 +277,8 @@ describe('IdentityClusterList', () => {
     await user.click(screen.getByRole('button', { name: /edit label/i }));
     await user.click(screen.getByRole('combobox'));
     const input = await screen.findByPlaceholderText(/enter a name/i);
-    await user.type(input, 'Existing Label');
+    fireEvent.change(input, { target: { value: 'Existing Label' } });
+    await waitFor(() => expect(input).toHaveValue('Existing Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
     await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label'));
@@ -289,7 +329,7 @@ describe('IdentityClusterList', () => {
     };
     client.setQueryData(['media-identities', [1]], cacheData);
 
-    const wrongPersonButton = screen.getByRole('button', { name: /wrong person/i });
+    const wrongPersonButton = await screen.findByText('Wrong person', { selector: 'button' });
     expect(wrongPersonButton).toBeInTheDocument();
 
     await user.click(wrongPersonButton);

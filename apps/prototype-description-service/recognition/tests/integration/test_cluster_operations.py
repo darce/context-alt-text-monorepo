@@ -559,3 +559,71 @@ async def test_split_cluster_blocks_moved_identities(db_session, tenant) -> None
         identity_id=str(anchor_identity.id),
         cluster_id=new_cluster_id,
     )
+
+
+@pytest.mark.asyncio
+async def test_pin_representative(db_session, tenant) -> None:
+    """Pinning a representative should update the is_user_selected flag."""
+    from datetime import UTC, datetime
+
+    from recognition.domain.representative import ClusterRepresentative
+
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer._clusters
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Pin Test",
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+        )
+    )
+
+    rep_id = str(uuid.uuid4())
+
+    # Must create identity first to satisfy FK
+    embedding = [0.1] * 512
+    identity_model = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=999,
+        media_url="http://example.test/999.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    db_session.add(identity_model)
+    await db_session.flush()
+    identity_id = str(identity_model.id)
+
+    rep = ClusterRepresentative(
+        id=rep_id,
+        cluster_id=cluster.id,
+        identity_id=identity_id,
+        embedding=[0.1] * 512,
+        created_at=datetime.now(tz=UTC),
+        tenant_id=str(tenant.id),
+        is_user_selected=False,
+    )
+    await cluster_repo.add_representative(rep)
+
+    # 1. Pin it
+    await cluster_repo.mark_representative_user_selected(rep_id, is_selected=True)
+
+    # 2. Verify
+    reps = await cluster_repo.get_all_representatives(cluster.id)
+    assert len(reps) == 1
+    assert reps[0].id == rep_id
+    assert reps[0].is_user_selected is True
+
+    # 3. Unpin it
+    await cluster_repo.mark_representative_user_selected(rep_id, is_selected=False)
+
+    # 4. Verify
+    reps = await cluster_repo.get_all_representatives(cluster.id)
+    assert reps[0].is_user_selected is False

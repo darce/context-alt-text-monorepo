@@ -91,8 +91,8 @@ async def test_accept_evaluates_candidacy(
 
     await writer.persist_assignment(decision)
 
-    # Should check rep count
-    mock_cluster_repo.get_representative_count.assert_awaited_with(cluster_id)
+    # Should get all reps to check count and diversity
+    mock_cluster_repo.get_all_representatives.assert_awaited_with(cluster_id)
 
     # Should add as representative because count < max and diversity is good
     mock_cluster_repo.add_representative.assert_awaited_once()
@@ -118,7 +118,7 @@ async def test_reject_skips_candidacy(
         await writer.persist_assignment(decision)
 
     # Should NOT check rep count or add rep
-    mock_cluster_repo.get_representative_count.assert_not_awaited()
+    mock_cluster_repo.get_all_representatives.assert_not_awaited()
     mock_cluster_repo.add_representative.assert_not_awaited()
 
 

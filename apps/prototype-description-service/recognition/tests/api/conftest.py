@@ -17,7 +17,7 @@ from recognition.interface_adapters.http.routers import clusters as clusters_rou
 from recognition.interface_adapters.http.routers import suggestions as suggestions_router
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.shared.ids import generate_id
-from recognition.tests.conftest import FakeClusterService, FakeJobService
+from recognition.tests.fakes import FakeClusterService, FakeJobService
 
 
 class FakeSession:
@@ -194,6 +194,11 @@ class FakeSuggestionService:
         self.refresh_calls.append((identity_id, reason))
         return []
 
+    async def refresh_for_cluster(self, cluster_id: str) -> list[FakeSuggestion]:
+        # Track calls for verification if needed
+        self.refresh_calls.append((cluster_id, "cluster_refresh"))
+        return []
+
     async def list_pending(self, limit: int = 50, offset: int = 0) -> list[FakeSuggestion]:
         items = list(self.suggestions.values())
         return items[offset : offset + limit]
@@ -228,6 +233,8 @@ class FakeClusterForRepo:
         self.identity_count = identity_count
         self.user_confirmed = bool(label)
         self.is_labeled = bool(label)
+        self.created_at = datetime.now(tz=UTC)
+        self.is_auto_label = False
 
 
 class FakeClusterRepository:
@@ -241,6 +248,11 @@ class FakeClusterRepository:
 
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
+
+    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[FakeClusterForRepo]:
+        unlabeled = [c for c in self.clusters.values() if not c.label]
+        sorted_clusters = sorted(unlabeled, key=lambda c: c.identity_count, reverse=True)
+        return sorted_clusters[:limit]
 
 
 @pytest.fixture

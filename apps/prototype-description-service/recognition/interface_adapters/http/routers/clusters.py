@@ -17,9 +17,11 @@ from recognition.domain.job import JobType, SplitJobPayload
 from recognition.infrastructure.repositories import SqlAlchemyIdentityClusterBlockRepository
 from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
+    get_cluster_repository,
     get_cluster_service_builder,
     get_job_service,
     get_session,
+    get_suggestion_service,
     require_auth,
     require_write_access,
 )
@@ -33,6 +35,7 @@ from recognition.interface_adapters.http.schemas.requests import (
     CreateClusterForIdentityRequest,
     MergeClusterRequest,
     PatchClusterRequest,
+    PinRepresentativeRequest,
     ReassignIdentityRequest,
     SplitClusterRequest,
 )
@@ -131,6 +134,28 @@ async def list_clusters(
     )
 
 
+@router.get("/clusters/top-unlabeled", response_model=list[ClusterResponse])
+async def get_top_unlabeled_clusters(
+    tenant_id: str = Depends(get_tenant_id),
+    limit: int = Query(10),
+    repo=Depends(get_cluster_repository),
+) -> list[ClusterResponse]:
+    """Fetch top unlabeled clusters by member count for bootstrapping suggestions."""
+    clusters = await repo.get_top_unlabeled(tenant_id, limit=limit)
+    return [
+        ClusterResponse(
+            id=str(c.id),
+            tenant_id=tenant_id,
+            label=c.label,
+            is_labeled=c.is_labeled,
+            is_auto_label=c.is_auto_label,
+            identity_count=c.identity_count,
+            user_confirmed=c.user_confirmed,
+        )
+        for c in clusters
+    ]
+
+
 @router.patch("/clusters/{cluster_id}", response_model=ClusterResponse)
 async def update_cluster(
     cluster_id: str,
@@ -211,6 +236,10 @@ async def merge_cluster(
     # Schedule best-effort retry matching in background
     background_tasks.add_task(run_background_retry, request.tenant_id, request.target_cluster_id)
 
+    # Refresh suggestions for the target cluster
+    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
+    await suggestion_service.refresh_for_cluster(request.target_cluster_id)
+
     return cluster
 
 
@@ -272,13 +301,20 @@ async def split_cluster(
         )
 
     # Build response with both new list format and legacy single-cluster fields
-    return SplitClusterResponse(
+    response_obj = SplitClusterResponse(
         new_cluster_ids=new_ids,
         moved_counts=counts,
         # Legacy fields: use first new cluster if any
         new_cluster_id=new_ids[0] if new_ids else None,
         moved_count=counts[0] if counts else 0,
     )
+
+    # Refresh suggestions for affected clusters
+    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
+    for cid in [cluster_id, *new_ids]:
+        await suggestion_service.refresh_for_cluster(cid)
+
+    return response_obj
 
 
 @router.post("/clusters/reassign", response_model=ReassignIdentityResponse)
@@ -415,6 +451,12 @@ async def reassign_identity(
                 reason=SuggestionRefreshReason.WRONG_PERSON,
             )
 
+        # Refresh suggestions for the affected clusters
+        if source_cluster_id:
+            await suggestion_service.refresh_for_cluster(source_cluster_id)
+        if request.target_cluster_id:
+            await suggestion_service.refresh_for_cluster(request.target_cluster_id)
+
     return ReassignIdentityResponse(
         identity_id=request.identity_id,
         source_cluster_id=source_cluster_id,
@@ -445,7 +487,33 @@ async def assign_outlier(
     )
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster or identity not found")
+
+    # Refresh suggestions for the target cluster
+    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
+    await suggestion_service.refresh_for_cluster(cluster_id)
+
     return cluster
+
+
+@router.patch("/clusters/{cluster_id}/representatives/{representative_id}/pin", status_code=status.HTTP_204_NO_CONTENT)
+async def pin_representative(
+    cluster_id: str,
+    representative_id: str,
+    request: PinRepresentativeRequest,
+    auth=Depends(require_write_access),
+    repo=Depends(get_cluster_repository),
+) -> None:
+    """Pin or unpin a cluster representative."""
+    validate_entity_id(cluster_id, field_name="cluster_id")
+    validate_entity_id(representative_id, field_name="representative_id")
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    await repo.mark_representative_user_selected(
+        representative_id=representative_id,
+        is_selected=request.is_pinned,
+    )
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 # _job_to_response and _job_to_clustering_response are imported from job_utils

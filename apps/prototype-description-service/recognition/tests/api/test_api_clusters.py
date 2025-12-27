@@ -122,7 +122,16 @@ async def test_reassign_removal_refreshes_suggestions(
     )
 
     assert resp.status_code == 200
-    assert fake_suggestion_service.refresh_calls
-    last_identity_id, last_reason = fake_suggestion_service.refresh_calls[-1]
-    assert last_identity_id == identity_id
-    assert getattr(last_reason, "value", str(last_reason)) == "wrong_person"
+    assert len(fake_suggestion_service.refresh_calls) >= 2
+
+    # Check for identity refresh
+    identity_refreshes = [c for c in fake_suggestion_service.refresh_calls if c[0] == identity_id]
+    assert identity_refreshes, "Identity refresh not found"
+    id_ref_id, id_ref_reason = identity_refreshes[0]
+    assert getattr(id_ref_reason, "value", str(id_ref_reason)) == "wrong_person"
+
+    # Check for cluster refresh
+    cluster_refreshes = [c for c in fake_suggestion_service.refresh_calls if c[0] == cluster.id]
+    assert cluster_refreshes, "Cluster refresh not found"
+    cl_ref_id, cl_ref_reason = cluster_refreshes[0]
+    assert cl_ref_reason == "cluster_refresh"

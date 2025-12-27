@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.tests.api.conftest import FakeSession
-from recognition.tests.conftest import FakeClusterService
+from recognition.tests.fakes import FakeClusterService
 
 
 def _auth_client(fake_cluster_service: FakeClusterService, monkeypatch) -> TestClient:
@@ -60,10 +60,15 @@ def test_token_tenant_mismatch_returns_403(monkeypatch) -> None:
     client = _auth_client(FakeClusterService(), monkeypatch)
     token_tenant = str(uuid.uuid4())
     request_tenant = str(uuid.uuid4())
-    headers = {
-        "X-Tenant-ID": request_tenant,
-        "Authorization": f"Bearer tenant:{token_tenant}",
-    }
+
+    async def _fake_lookup(api_key, settings, session):  # noqa: ANN001
+        assert api_key == "good-key"
+        return token_tenant, "api-key-id", "free", False
+
+    from recognition.interface_adapters.http.deps import auth
+
+    monkeypatch.setattr(auth, "_lookup_api_key", _fake_lookup)
+    headers = {"X-Tenant-ID": request_tenant, "Authorization": "Bearer good-key"}
 
     response = client.get("/recognition/clusters", headers=headers)
 

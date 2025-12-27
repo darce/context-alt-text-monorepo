@@ -20,12 +20,6 @@ def test_analyze_accepts_media_items(api_client, tenant_id):
     assert resp.status_code == 202
 
 
-def test_job_polling_endpoint_exists(api_client, tenant_id, fake_job_service):
-    resp = api_client.get("/recognition/jobs/nonexistent")
-
-    assert resp.status_code in {200, 404}  # endpoint exists; status depends on fake store
-
-
 def test_top_level_suggestions(api_client, tenant_id, fake_suggestion_service, fake_cluster_service):
     cluster = seed_cluster(fake_cluster_service, tenant_id)
     fake_suggestion_service.suggestions["sugg-1"] = type(

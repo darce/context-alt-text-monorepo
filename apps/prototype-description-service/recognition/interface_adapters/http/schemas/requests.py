@@ -167,6 +167,18 @@ class SplitClusterRequest(BaseModel):
         return _validate_uuid(v)
 
 
+class PinRepresentativeRequest(BaseModel):
+    """Request to pin/unpin a representative."""
+
+    tenant_id: str
+    is_pinned: bool = True
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 __all__ = [
     "AnalyzeRequest",
     "ClusteringJobRequest",
@@ -174,6 +186,7 @@ __all__ = [
     "CreateClusterForIdentityRequest",
     "MergeClusterRequest",
     "PatchClusterRequest",
+    "PinRepresentativeRequest",
     "ReassignIdentityRequest",
     "SplitClusterRequest",
     "SuggestionActionRequest",

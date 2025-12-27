@@ -138,6 +138,14 @@ async def cluster_unclustered_identities(
     await session.flush()
     job_label = str(clustering_job.id)
 
+    # Clean up any orphaned provisional representatives from previous failed runs
+    try:
+        cleaned_count = await assignment_writer._clusters.cleanup_orphaned_provisional_reps(str(tenant_id))
+        if cleaned_count > 0:
+            logger.info("[clustering] Cleaned up %d orphaned provisional representatives", cleaned_count)
+    except Exception as exc:
+        logger.warning("[clustering] Failed to cleanup orphaned representatives: %s", exc)
+
     stmt: Select[tuple[MediaIdentityModel]] = (
         select(MediaIdentityModel)
         .where(MediaIdentityModel.tenant_id == tenant_uuid)
@@ -278,7 +286,7 @@ async def cluster_unclustered_identities(
             )
 
             if decision.outcome == AssignmentOutcome.ACCEPT:
-                await assignment_writer.persist_assignment(decision)
+                await assignment_writer.persist_assignment(decision, batch_mode=True)
                 centroids_dirty = True
                 accept_count += 1
                 accepted_ids.add(candidate.identity.id)
@@ -388,6 +396,14 @@ async def cluster_unclustered_identities(
             refresh = getattr(assignment_writer, "refresh_centroids_view", None)
             if callable(refresh):
                 await refresh()
+
+    # Confirm all provisional representatives created in this batch
+    try:
+        confirmed_count = await assignment_writer._clusters.confirm_all_provisional_reps(str(tenant_id))
+        if confirmed_count > 0:
+            logger.info("[clustering] Confirmed %d provisional representatives", confirmed_count)
+    except Exception as exc:
+        logger.warning("[clustering] Failed to confirm provisional representatives: %s", exc)
 
     # Refresh centroids view if possible (keeps centroid discovery inputs current in future batches)
     refresh = getattr(assignment_writer, "refresh_centroids_view", None)

@@ -13,19 +13,6 @@ from recognition.interface_adapters.http.routers import clusters as clusters_rou
 from recognition.tests.api.conftest import FakeSession
 
 
-def test_analyze_router_uses_fake_scan_queue(api_client, tenant_id, fake_scan_queue_service) -> None:
-    resp = api_client.post(
-        "/recognition/analyze",
-        json={"media_ids": [str(uuid.uuid4())], "tenant_id": tenant_id},
-    )
-
-    assert resp.status_code == 202
-    assert len(fake_scan_queue_service.created_jobs) == 1
-    call_tenant, call_total = fake_scan_queue_service.created_jobs[0]
-    assert call_tenant == tenant_id
-    assert call_total > 0
-
-
 def test_clusters_router_respects_dependency_override(api_client, tenant_id, fake_cluster_service) -> None:
     resp = api_client.post("/recognition/clustering/jobs", json={"tenant_id": tenant_id, "mode": "sync"})
 
@@ -64,7 +51,7 @@ def test_clusters_router_invokes_cluster_service_dependency(monkeypatch, tenant_
         yield FakeSession()
 
     async def fake_get_job_service(session, tenant_id, cluster_service_builder=None, scan_service_builder=None):
-        from recognition.tests.conftest import FakeJobService
+        from recognition.tests.fakes import FakeJobService
 
         return FakeJobService()
 

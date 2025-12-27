@@ -14,6 +14,7 @@ import contextlib
 import logging
 import uuid
 from datetime import UTC, datetime
+from enum import Enum
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -21,6 +22,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -109,6 +111,16 @@ async def update_cluster(
         return None
 
     old_label = cluster.label
+
+    # Idempotency check: skip if label is unchanged
+    if old_label == label:
+        logger.debug(
+            "[curation] Skipping rename (no change) cluster_id=%s label='%s'",
+            cluster_id,
+            label,
+        )
+        return cluster
+
     cluster.label = label
     cluster.is_labeled = bool(label)
     cluster.user_confirmed = bool(label)
@@ -125,20 +137,21 @@ async def update_cluster(
             )
 
     logger.info(
-        "[curation] RENAMED cluster_id=%s old_label='%s' new_label='%s' tenant_id=%s user_action=manual_rename",
+        "[curation] RENAMED cluster_id=%s old_label='%s' new_label='%s' "
+        "tenant_id=%s user_action=manual_rename metadata_only=true",
         cluster_id,
         old_label,
         label,
         tenant_id,
     )
 
-    # Recompute representatives/centroid if hooks exist (label changes can affect reps)
-    recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
-    if callable(recompute_reps):
-        await recompute_reps(cluster_id)
-    recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
-    if callable(recompute_centroid):
-        await recompute_centroid(cluster_id)
+    # Broadcast metadata update
+    broadcaster = get_event_broadcaster()
+    await broadcaster.broadcast(
+        "cluster_updated",
+        {"cluster_id": cluster_id, "reason": "metadata_only_update", "label": label},
+        tenant_id=tenant_id,
+    )
 
     return updated
 
@@ -185,6 +198,14 @@ async def remove_identity_from_cluster(
             refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
             if callable(refresh_view):
                 await refresh_view()
+
+        # Broadcast cluster change
+        broadcaster = get_event_broadcaster()
+        await broadcaster.broadcast(
+            "cluster_updated",
+            {"cluster_id": cluster_id, "reason": "identity_removed"},
+            tenant_id=tenant_id_for_logging,
+        )
 
     logger.info(
         "[curation] REMOVED identity=%s media_id=%s from cluster=%s tenant_id=%s user_action=manual_remove",
@@ -279,6 +300,13 @@ async def create_cluster_for_identity(
     return updated
 
 
+class CurationActionType(str, Enum):
+    FALSE_POSITIVE = "false_positive"  # Moved FROM auto-assigned cluster
+    FALSE_NEGATIVE = "false_negative"  # Assigned FROM singleton/outlier
+    NEW_IDENTITY = "new_identity"  # Created new cluster
+    BLOCK = "cannot_link"  # Explicit wrong person constraint
+
+
 async def assign_outlier_to_cluster(
     *,
     identity_id: str,
@@ -312,22 +340,53 @@ async def assign_outlier_to_cluster(
     if not identity_model or identity_model.tenant_id != cluster_tenant_uuid:
         return None
 
-    existing_members = await member_repo.get_by_cluster(target_cluster_id)
-    if any(m.identity_id == str(identity_model.id) for m in existing_members):
+    # Determine source state for metrics
+    source_cluster_id = await get_identity_cluster_id(member_repo=member_repo, identity_id=str(identity_model.id))
+    is_false_positive = source_cluster_id is not None
+
+    # If identity is in a DIFFERENT cluster, remove it first
+    if source_cluster_id:
+        if source_cluster_id == target_cluster_id:
+            return cluster  # Already in target
+
+        await remove_identity_from_cluster(
+            identity_id=str(identity_model.id),
+            member_repo=member_repo,
+            cluster_repo=cluster_repo,
+            assignment_writer=assignment_writer,
+            recompute=True,  # Recompute source cluster's centroids
+            tenant_id_for_logging=tenant_id,
+            media_id=int(identity_model.media_id),
+        )
+
+    # Use idempotent add to prevent duplicate key errors on retry
+    added = await member_repo.add_member_if_not_exists(
+        target_cluster_id, identity_id=str(identity_model.id), similarity=similarity
+    )
+    if added is None:
+        # Identity was already in target cluster (shouldn't happen after above check, but be safe)
+        logger.info(
+            "[curation] Identity already in target cluster identity=%s cluster=%s",
+            identity_model.id,
+            target_cluster_id,
+        )
         return cluster
 
-    await member_repo.add_member(target_cluster_id, identity_id=str(identity_model.id), similarity=similarity)
     cluster.identity_count += 1
     cluster = await cluster_repo.update(cluster)
 
+    action_type = CurationActionType.FALSE_POSITIVE if is_false_positive else CurationActionType.FALSE_NEGATIVE
+
     logger.info(
         "[curation] ASSIGNED identity=%s media_id=%s target_cluster=%s similarity=%.4f tenant_id=%s "
-        "user_action=manual_assign",
+        "user_action=manual_assign action_type=%s source_cluster=%s",
         identity_model.id,
         identity_model.media_id,
         target_cluster_id,
         similarity,
         tenant_id,
+        action_type.value,
+        source_cluster_id,
     )
 
     recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
@@ -336,5 +395,13 @@ async def assign_outlier_to_cluster(
     recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
     if callable(recompute_centroid):
         await recompute_centroid(target_cluster_id)
+
+    # Broadcast suggestion refresh event
+    broadcaster = get_event_broadcaster()
+    await broadcaster.broadcast(
+        "suggestions_updated",
+        {"cluster_id": target_cluster_id, "reason": "identity_assigned"},
+        tenant_id=tenant_id,
+    )
 
     return cluster

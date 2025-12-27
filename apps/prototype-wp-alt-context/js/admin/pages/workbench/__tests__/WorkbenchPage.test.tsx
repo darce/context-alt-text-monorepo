@@ -17,6 +17,16 @@ import {
   useCombinedScanStatus,
 } from '../../../hooks/useRecognitionHooks';
 
+// Mock AltContextAdmin config
+(window as any).AltContextAdmin = {
+  nonce: 'test-nonce',
+  endpoints: {
+    recognition: 'http://localhost:8000',
+    recognitionClusters: 'http://localhost:8000/clusters',
+  },
+  tenant_id: 'test-tenant',
+};
+
 vi.mock('../../../hooks/useWorkbenchMedia', () => ({
   useWorkbenchMedia: vi.fn(),
 }));

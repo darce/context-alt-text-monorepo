@@ -8,9 +8,12 @@
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 
-import type { DetectedIdentity } from '../../../api/recognition';
+import { type DetectedIdentity } from '../../../api/recognition';
+import { getConfig } from '../../../api/config';
+import { useClusterEvents } from '../../../hooks/useClusterEvents';
 import { groupIdentitiesByClusters } from './utils';
 import { IdentityClusterItem } from './IdentityClusterItem';
+import { CurateTopClustersPrompt } from './CurateTopClustersPrompt';
 
 interface IdentityClusterListProps {
   /** Detected identities to display */
@@ -27,15 +30,25 @@ interface IdentityClusterListProps {
  * - Label (editable via Combobox with suggestions)
  * - Actions: Edit, Wrong person, Split
  */
-export const IdentityClusterList = ({ identities }: IdentityClusterListProps): React.JSX.Element => {
+export const IdentityClusterList = ({ identities, mediaId }: IdentityClusterListProps): React.JSX.Element => {
+  const config = getConfig();
   const clusters = React.useMemo(() => groupIdentitiesByClusters(identities), [identities]);
+
+  // Subscribe to real-time cluster notifications
+  useClusterEvents(config.tenant_id || '');
 
   if (clusters.length === 0) {
     return <p className="acx-identity-clusters__empty">{__('No identities detected yet.', 'alt-context')}</p>;
   }
 
+  // Find if any clusters in this media are unlabeled
+  const hasUnlabeled = clusters.some(c => !c.label || c.label.startsWith('cluster-'));
+
   return (
     <div className="acx-identity-clusters">
+      {hasUnlabeled && (
+        <CurateTopClustersPrompt tenantId={config.tenant_id || ''} />
+      )}
       {clusters.map((cluster) => (
         <IdentityClusterItem key={cluster.key} cluster={cluster} />
       ))}

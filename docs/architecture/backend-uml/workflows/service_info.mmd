@@ -1,16 +1,35 @@
 ---
-title: Training Stage Insight
+title: Service Health & Diagnostics
 ---
 sequenceDiagram
     participant Client as Admin SPA
-    participant API as /recognition/training-stage
+    participant API as Recognition API
     participant Session as AsyncSession
-    participant DB as identity_clusters + media_identities
-    participant Settings as ClusteringSettingsModel
+    participant Pool as Connection Pool
+    participant Obs as ObservabilityRepository
+    participant Store as DecisionStore (fallback)
+    participant DB as PostgreSQL
 
-    Client->>API: GET training-stage?tenant_id=
-    API->>Session: set_tenant_context()
-    API->>DB: count labeled clusters (label not null, not cluster-*)
-    API->>DB: count all clusters + identities
-    API->>Settings: compute_adaptive_threshold(labeled_count)
-    API-->>Client: stage, stage_label, cluster_count, identity_count,\ncurrent_threshold, base_threshold, strict_threshold, maturity_point, progress_percent
+    Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,DB: Mini-map: ENTRY: GET /health -> subsystem health checks, ENTRY: GET /recognition/diagnostics/decisions -> ObservabilityRepository, Code: apps/prototype-description-service/api/main.py | recognition/interface_adapters/http/routers/diagnostics.py
+
+    Client->>API: ENTRY: GET /health
+    API-->>Client: subsystem reports (recognition + roster + scene)
+
+    Client->>API: ENTRY: GET /recognition/health
+    API->>Session: get_optional_session()
+    API-->>Client: {status, database, timestamp}
+
+    Client->>API: ENTRY: GET /recognition/health/pool
+    API->>Pool: get_pool_stats()
+    API-->>Client: pool metrics
+
+    Client->>API: ENTRY: GET /recognition/diagnostics/decisions
+    alt DB-backed observability available
+        API->>Obs: list_decisions(filters)
+        Obs->>DB: SELECT assignment_decisions
+        API-->>Client: decision logs
+    else fallback
+        API->>Store: list(filters)
+        API-->>Client: in-memory decision logs
+    end

@@ -1,0 +1,57 @@
+flowchart LR
+    %% Quick map: endpoints -> services -> repositories
+
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph Endpoints["API Endpoints"]
+        Analyze["ENTRY: POST /recognition/analyze"]
+        Jobs["ENTRY: GET /recognition/jobs/{id}"]
+        ClusterJob["ENTRY: POST /recognition/clustering/jobs"]
+        Clusters["ENTRY: GET /recognition/clusters"]
+        ClusterPatch["ENTRY: PATCH /recognition/clusters/{id}"]
+        Suggestions["ENTRY: GET /recognition/suggestions"]
+        SuggestAccept["ENTRY: POST /recognition/suggestions/{id}/accept"]
+        Media["ENTRY: GET /recognition/media/identities"]
+        Diagnostics["ENTRY: GET /recognition/diagnostics/decisions"]
+    end
+
+    subgraph Services["Services"]
+        ScanQueue["ScanQueueService"]
+        JobService["JobService"]
+        ClusterService["ClusterService"]
+        SuggestionService["SuggestionService"]
+        MediaService["MediaIdentityService"]
+        ObsRepo["ObservabilityRepository"]
+    end
+
+    subgraph Repos["Repositories / Persistence"]
+        ScanQueueRepo["SqlAlchemyScanQueueRepository"]
+        JobRepo["SqlAlchemyJobRepository"]
+        ClusterRepo["SqlAlchemyClusterRepository"]
+        MemberRepo["SqlAlchemyMemberRepository"]
+        SuggestionRepo["SqlAlchemySuggestionRepository"]
+        DecisionsTable["assignment_decisions"]
+    end
+
+    Analyze --> ScanQueue --> ScanQueueRepo
+    Jobs --> JobService --> JobRepo
+    ClusterJob --> ClusterService --> ClusterRepo
+    ClusterJob --> ClusterService --> MemberRepo
+    ClusterJob --> ClusterService --> SuggestionRepo
+    Clusters --> ClusterService --> ClusterRepo
+    ClusterPatch --> ClusterService --> ClusterRepo
+    Suggestions --> SuggestionService --> SuggestionRepo
+    SuggestAccept --> SuggestionService --> SuggestionRepo
+    Media --> MediaService --> ClusterRepo
+    Diagnostics --> ObsRepo --> DecisionsTable
+
+    EndpointCode["Code anchors:\nrecognition/interface_adapters/http/routers/analyze.py\nrecognition/interface_adapters/http/routers/clusters.py\nrecognition/interface_adapters/http/routers/suggestions.py\nrecognition/interface_adapters/http/routers/media.py\nrecognition/interface_adapters/http/routers/diagnostics.py"]
+    ServiceCode["Code anchors:\nrecognition/application/scan/scan_queue_service.py\nrecognition/application/orchestration/cluster_service.py\nrecognition/application/suggestions/service.py\nrecognition/interface_adapters/http/deps/stores.py\nrecognition/observability/persistence.py"]
+    RepoCode["Code anchors:\nrecognition/infrastructure/repositories/*\napps/prototype-description-service/db/models.py"]
+    Endpoints -.-> EndpointCode
+    Services -.-> ServiceCode
+    Repos -.-> RepoCode

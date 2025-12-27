@@ -2,64 +2,40 @@
 sequenceDiagram
     autonumber
     
-    participant Job as ClusteringJobService
+    participant Job as ClusterService
     participant Logger as ClusteringLogger
-    participant Gate as AssignmentGate
+    participant Run as RecognitionRunContext
+    participant Obs as ObservabilityRepository
     participant Viz as ClusterVisualizer
-    participant FS as FileSystem (logs/)
+    participant DB as PostgreSQL
     
-    Note over Job,FS: Batch Job with Observability Integration
+    Note over Job,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Job,DB: Mini-map: ClusterService.cluster_unclustered_identities -> ClusteringLogger -> ObservabilityRepository, Code: recognition/application/orchestration/incremental_clustering.py | recognition/observability/logging.py | recognition/observability/persistence.py
     
     %% Job Start
-    Job->>Logger: __init__(algorithm="HDBSCAN", job_id)
-    Job->>Logger: log_batch_start(identity_count=150, algorithm="HDBSCAN")
-    Logger-->>Logger: Log: "Starting HDBSCAN batch job with 150 identities"
-    
-    rect rgb(40, 40, 80)
-        Note over Job,Logger: Discovery Phase - Log Candidates
-        loop For each candidate
-            Job->>Logger: log_candidate_generated(candidate)
-            Logger-->>Logger: Log: "[HDBSCAN] Candidate: identity=X → cluster=Y, sim=0.87"
-        end
-    end
+    Job->>Run: create_recognition_run()
+    Job->>Logger: bind_run_context(run)
+    Job->>Logger: log_batch_start(identity_count, algorithm)
     
     rect rgb(40, 80, 40)
-        Note over Job,Gate: Evaluation Phase - Log Decisions
+        Note over Job,Logger: Evaluation Phase - Log Decisions
         loop For each candidate
-            Job->>Gate: evaluate(candidate)
-            Gate->>Logger: log_check_result("complete_link", passed=true, {min_sim: 0.78})
-            Gate->>Logger: log_check_result("maturity", passed=true, {rep_count: 3})
-            Gate-->>Job: AssignmentDecision(ACCEPT|SUGGEST|REJECT)
-            
-            alt Decision = ACCEPT
-                Job->>Logger: log_decision(identity_id, cluster_id, ACCEPT, sim=0.87)
-                Logger-->>Logger: Log: "[HDBSCAN] ACCEPT: identity X → cluster Y (sim=0.87)"
-            else Decision = SUGGEST
-                Job->>Logger: log_decision(identity_id, cluster_id, SUGGEST, sim=0.83, reason="borderline")
-                Logger-->>Logger: Log: "[HDBSCAN] SUGGEST: identity X → cluster Y (sim=0.83, borderline)"
-            else Decision = REJECT
-                Job->>Logger: log_decision(identity_id, None, REJECT, sim=0.71, reason="below threshold")
-                Logger-->>Logger: Log: "[HDBSCAN] REJECT: identity X (sim=0.71, below threshold)"
+            Job->>Logger: log_decision(identity_id, cluster_id, decision, similarity, reason)
+            Logger->>Run: add_event("assignment_decision", payload)
+            opt observability repo wired
+                Logger->>Obs: add_decision(decision)
+                Obs->>DB: INSERT assignment_decisions
             end
         end
     end
     
     rect rgb(80, 40, 80)
-        Note over Job,FS: Completion Phase - Generate Report & Chart
+        Note over Job,Viz: Completion Phase - Report + Chart
         Job->>Job: Build BatchJobReport
-        Note right of Job: accept_count: 120<br/>suggest_count: 18<br/>reject_count: 12
-        
         Job->>Logger: log_batch_complete(report)
-        Logger-->>Logger: Log: "[HDBSCAN] Batch complete: 120 accepted, 18 suggested, 12 rejected"
-        
-        Job->>Viz: generate_batch_report_chart(report, algorithm="HDBSCAN")
-        Note over Viz: Chart title: "[HDBSCAN] Batch Job Summary"<br/>Subtitle: "Accepted: 120 | Suggested: 18 | Rejected: 12"
-        Viz->>FS: Save batch_job123_2025-12-01_143215.png
-        FS-->>Viz: Path to saved chart
-        Viz-->>Job: Path("/logs/charts/batch_job123_2025-12-01_143215.png")
-        
-        Job->>Logger: log_batch_start(identity_count=0, algorithm="HDBSCAN")
-        Logger-->>Logger: Log: "[HDBSCAN] Chart saved: /logs/charts/batch_job123_2025-12-01_143215.png"
+        opt observability repo wired
+            Logger->>Obs: save_batch_report(report)
+            Obs->>DB: INSERT clustering_job_reports
+        end
+        Job->>Viz: generate_batch_report_chart(report, algorithm)
     end
-    
-    Note over Job,FS: Every batch job produces:<br/>1. Structured decision logs (accept/suggest/reject)<br/>2. Chart with algorithm name + decision breakdown

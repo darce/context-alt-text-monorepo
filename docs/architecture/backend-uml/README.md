@@ -1,40 +1,49 @@
-# Recognition Service Architecture Views (v4.2.4)
+# Recognition Service Architecture Views
 
-Backend architecture diagrams for the recognition service. Updated December 2025.
+Backend architecture diagrams for the recognition service (current implementation).
 
 ## Diagram Index
 
+### System Overview
 | File | Description |
 |------|-------------|
-| `master.mmd` | Full system overview with all layers |
-| `class-diagram.mmd` | Complete class diagram with domain, assignment, discovery layers |
+| `master.mmd` | System overview (clients, API, worker, data plane) |
+| `agent-quick-start.mmd` | Endpoints -> services -> repositories quick map |
 | `container.mmd` | Runtime components and dependencies |
 | `context.mmd` | External systems integration |
 | `context_integration.mmd` | WordPress plugin touchpoints |
+| `class-diagram.mmd` | Key service + pipeline class overview |
+
+### Domain
+| File | Description |
+|------|-------------|
+| `domain/identity_domain.mmd` | Core identity/cluster/suggestion models |
+| `domain/job_domain.mmd` | Job lifecycle models |
+| `domain/constraints_domain.mmd` | Constraint domain types |
+| `domain/face-identity-boundary.mmd` | Face detection to identity seam |
+
+### Components
+| File | Description |
+|------|-------------|
+| `components/assignment-gate.mmd` | Assignment gate validation flow |
+| `components/observability_module.mmd` | Observability classes and persistence helpers |
+
+### Persistence & Observability
+| File | Description |
+|------|-------------|
 | `persistence.mmd` | Database entities and pgvector schema |
-
-### Components (`components/`)
-| File | Description |
-|------|-------------|
-| `assignment-gate.mmd` | AssignmentGate validation flow |
-| `observability_module.mmd` | Metrics and logging |
-
-### Domain (`domain/`)
-| File | Description |
-|------|-------------|
-| `identity_domain.mmd` | Core domain entities |
-| `face-identity-boundary.mmd` | Face↔Identity nomenclature seam |
+| `observability/metrics.mmd` | Observability persistence + diagnostics |
 
 ### Workflows (`workflows/`)
 | File | Description |
 |------|-------------|
-| `complete-workflow.mmd` | Full clustering sequence |
-| `unified-assignment.mmd` | Assignment gate sequence |
-| `batch_job_observability.mmd` | Batch job logging flow |
-| `recognize_faces.mmd` | Face detection flow |
+| `complete-workflow.mmd` | End-to-end workflow (high level) |
+| `recognize_faces.mmd` | Analyze + scan queue processing |
+| `unified-assignment.mmd` | Discovery + assignment gate flow |
+| `batch_job_observability.mmd` | Observability logging + reporting |
+| `error_retry.mmd` | Scan queue error handling |
 | `startup_sequence.mmd` | Application startup |
-| `error_retry.mmd` | Error handling |
-| `service_info.mmd` | Health check endpoints |
+| `service_info.mmd` | Health + diagnostics endpoints |
 
 ## Authoring Guidelines
 

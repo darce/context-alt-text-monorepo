@@ -2,8 +2,8 @@ sequenceDiagram
     autonumber
     
     %% =======================================================================
-    %% RECOGNITION SERVICE V4.2.4 - UNIFIED ASSIGNMENT FLOW
-    %% Shows how ALL discovery methods route through AssignmentGate
+    %% UNIFIED ASSIGNMENT FLOW
+    %% Shows how all discovery methods route through AssignmentGate
     %% =======================================================================
     
     participant UI as Workbench UI
@@ -13,16 +13,18 @@ sequenceDiagram
     participant CD as CentroidDiscovery
     participant GD as GraphDiscovery
     participant Gate as AssignmentGate
-    participant MC as MaturityCheck
-    participant CLC as CompleteLinkCheck
-    participant MDC as MemberDistributionCheck
+    participant BC as BlockCheck
+    participant CON as ConstraintCheck
     participant CC as ConfidenceCheck
     participant Writer as AssignmentWriter
     participant Sugg as SuggestionService
     participant DB as Database
+
+    Note over UI,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over UI,DB: Mini-map: ENTRY: POST /recognition/clustering/jobs -> ClusterService.cluster_unclustered_identities, Code: recognition/interface_adapters/http/routers/clusters.py | recognition/application/orchestration/cluster_service.py | recognition/infrastructure/repositories/cluster_repository.py
     
     %% Phase 1: Initiate Clustering
-    UI->>API: POST /recognition/clustering/jobs
+    UI->>API: ENTRY: POST /recognition/clustering/jobs
 
     API->>CS: cluster_unclustered_identities(tenant_id)
     
@@ -87,58 +89,29 @@ sequenceDiagram
             Note over Gate: THE ONLY PATH TO ASSIGNMENT
             CS->>Gate: evaluate(candidate)
             
-            %% Anchor-Linked Bypass (for batch consistency)
-            alt candidate.anchor_linked == true
-                Note over Gate: Graph transitivity established
-                Gate-->>CS: AssignmentDecision(ACCEPT)
-            else normal evaluation
-                %% Maturity Check
-                Gate->>MC: evaluate(candidate)
-                MC->>DB: get_representative_count(cluster_id)
-                DB-->>MC: count
-                alt count < 2
-                    MC-->>Gate: CheckResult(failed, should_suggest)
+            %% Block check (fatal reject)
+            Gate->>BC: evaluate(candidate)
+            alt blocked
+                BC-->>Gate: CheckResult(failed, fatal reject)
+                Gate-->>CS: AssignmentDecision(REJECT)
+            else not blocked
+                BC-->>Gate: CheckResult(passed)
+                %% Constraint check (non-fatal; records failure)
+                Gate->>CON: evaluate(candidate)
+                CON-->>Gate: CheckResult(passed or failed)
+
+                %% Confidence check (adaptive thresholds + quality)
+                Note over CC: settings: ClusteringSettings.similarity_threshold, suggestion_floor, suggestion_ceiling, fatal_confidence_floor, fatal_quality_floor, early_stage_suggestion_enabled, anchor_linked candidates bypass thresholds
+                Gate->>CC: evaluate(candidate)
+                alt similarity >= threshold
+                    CC-->>Gate: CheckResult(passed)
+                    Gate-->>CS: AssignmentDecision(ACCEPT)
+                else within suggestion band
+                    CC-->>Gate: CheckResult(failed, suggest)
                     Gate-->>CS: AssignmentDecision(SUGGEST)
-                else count >= 2
-                    MC-->>Gate: CheckResult(passed)
-                    
-                    %% Complete Link Check
-                    Gate->>CLC: evaluate(candidate)
-                    CLC->>DB: get_all_representatives(cluster_id)
-                    DB-->>CLC: reps[]
-                    CLC->>CLC: compute similarities to ALL reps
-                    CLC->>CLC: min_sim, avg_sim = analyze
-                    alt min_sim < floor OR avg_sim < threshold
-                        CLC-->>Gate: CheckResult(failed, should_suggest)
-                        Gate-->>CS: AssignmentDecision(SUGGEST)
-                    else passed
-                        CLC-->>Gate: CheckResult(passed)
-                        
-                        %% Member Distribution Check
-                        Gate->>MDC: evaluate(candidate)
-                        MDC->>DB: get_member_embeddings(cluster_id)
-                        DB-->>MDC: members[]
-                        MDC->>MDC: compute avg member similarity
-                        alt avg_member_sim < threshold
-                            MDC-->>Gate: CheckResult(failed, should_reject)
-                            Gate-->>CS: AssignmentDecision(REJECT)
-                        else passed
-                            MDC-->>Gate: CheckResult(passed)
-                            
-                            %% Confidence Check (adaptive threshold)
-                            Gate->>CC: evaluate(candidate)
-                            CC->>DB: count_labeled_clusters()
-                            DB-->>CC: labeled_count
-                            CC->>CC: compute_adaptive_threshold()
-                            alt similarity < adaptive_threshold
-                                CC-->>Gate: CheckResult(failed, should_suggest)
-                                Gate-->>CS: AssignmentDecision(SUGGEST)
-                            else passed
-                                CC-->>Gate: CheckResult(passed)
-                                Gate-->>CS: AssignmentDecision(ACCEPT)
-                            end
-                        end
-                    end
+                else below floor / fatal quality
+                    CC-->>Gate: CheckResult(failed, reject)
+                    Gate-->>CS: AssignmentDecision(REJECT)
                 end
             end
         end
@@ -162,7 +135,7 @@ sequenceDiagram
     %% Phase 4: Create new clusters for truly unclustered
     Note over CS: Phase 4: New Cluster Creation
     
-    CS->>GD: cluster_new(unclustered_pool)
+    CS->>GD: discover(unclustered_pool, anchors={})
     GD->>GD: run_hdbscan(no anchors)
     GD-->>CS: new_cluster_proposals[]
     

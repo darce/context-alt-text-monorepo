@@ -1,140 +1,90 @@
 ---
-title: Recognition Domain Overview
+title: Recognition Domain Models (Core)
 ---
 classDiagram
-    class IdentityDetection {
-        +bbox : tuple[int,int,int,int]
-        +confidence : float
-        +landmarks : ndarray?
-        +area() float
-    }
-
-    class IdentityEmbedding {
-        +embedding : ndarray
-        +detection : IdentityDetection
-        +to_list() list[float]
-    }
-
-    class Tenant {
-        +id : UUID
-        +site_url : str
-        +created_at : datetime
-        +updated_at : datetime
-    }
-
     class MediaIdentity {
-        +id : UUID
-        +tenant_id : UUID
-        +media_id : int
-        +media_url : str
-        +bbox_x : int
-        +bbox_y : int
-        +bbox_width : int
-        +bbox_height : int
-        +confidence : float
-        +embedding : Vector~1024~
-        +thumbnail_url : str?
-        +created_at : datetime
-        +updated_at : datetime
-        +created_by_user_id : int?
+        +str id
+        +str tenant_id
+        +str media_id
+        +ndarray embedding
+        +float confidence
+        +int bbox_width
+        +int bbox_height
+        +int? bbox_x
+        +int? bbox_y
+        +float? pose_pitch
+        +float? pose_yaw
+        +float? pose_roll
+        +str? image_phash
+        +dict metadata
+        +str? cluster_id
+        +extract_face_embedding() ndarray
+        +face_vector ndarray
     }
 
     class IdentityCluster {
-        +id : UUID
-        +tenant_id : UUID
-        +label : str?
-        +representative_identity_id : UUID?
-        +identity_count : int
-        +similarity_threshold : float?
-        +clustering_algorithm : str
-        +user_confirmed : bool
-        +confirmation_count : int
-        +created_at : datetime
-        +updated_at : datetime
+        +str? id
+        +str tenant_id
+        +bool is_labeled
+        +int identity_count
+        +str? label
+        +str? representative_identity_id
+        +datetime? created_at
+        +str clustering_algorithm
+        +bool user_confirmed
+        +list~ClusterRepresentative~ representatives
+        +object? centroid
+        +bool is_auto_label
     }
 
-    class IdentityClusterRepresentative {
-        +id : UUID
-        +tenant_id : UUID
-        +cluster_id : UUID
-        +identity_id : UUID
-        +embedding : Vector~1024~
-        +quality_score : float
-        +diversity_score : float?
-        +created_at : datetime
+    class ClusterRepresentative {
+        +str id
+        +str cluster_id
+        +str identity_id
+        +ndarray embedding
+        +datetime created_at
+        +float quality_score
+        +float? diversity_score
+        +bool is_user_selected
+        +bool is_provisional
+        +float? pose_pitch
+        +float? pose_yaw
+        +float? pose_roll
     }
 
     class IdentityMember {
-        +id : UUID
-        +tenant_id : UUID
-        +cluster_id : UUID
-        +identity_id : UUID
-        +similarity : float
-        +assigned_at : datetime
-        +created_at : datetime
-        +created_by_user_id : int?
+        +str id
+        +str cluster_id
+        +str identity_id
+        +float similarity
+        +str? tenant_id
+        +datetime? assigned_at
     }
 
-    class ClusterCentroid {
-        <<Materialized View>>
-        +cluster_id : UUID
-        +tenant_id : UUID
-        +member_count : int
-        +centroid : Vector~1024~
-        +refreshed_at : datetime
+    class AssignmentSuggestion {
+        +str id
+        +str identity_id
+        +str cluster_id
+        +float representative_similarity
+        +float member_similarity
+        +SuggestionStatus status
+        +datetime? created_at
     }
 
-    class IdentityScanJob {
-        +id : UUID
-        +tenant_id : UUID
-        +status : str
-        +media_ids : list[int]
-        +total_media : int
-        +processed_media : int
-        +identities_detected : int
-        +error_message : str?
-        +created_at : datetime
-        +started_at : datetime?
-        +completed_at : datetime?
+    class SuggestionStatus {
+        <<enumeration>>
+        PENDING
+        ACCEPTED
+        REJECTED
     }
 
-    class IdentityClusteringJob {
-        +id : UUID
-        +tenant_id : UUID
-        +status : str
-        +progress : float
-        +total_identities : int?
-        +processed_identities : int?
-        +error_message : str?
-        +created_at : datetime
-        +started_at : datetime?
-        +completed_at : datetime?
-    }
+    IdentityCluster "1" --> "*" ClusterRepresentative : has
+    IdentityCluster "1" --> "*" IdentityMember : members
+    IdentityCluster "0..1" --> "1" MediaIdentity : representative_identity
+    MediaIdentity "1" --> "0..1" IdentityMember : membership
+    MediaIdentity "1" --> "0..*" AssignmentSuggestion : suggested
+    AssignmentSuggestion "1" --> "1" IdentityCluster : target_cluster
+    AssignmentSuggestion --> SuggestionStatus : status
 
-    class IdentitySuggestion {
-        +id : UUID
-        +tenant_id : UUID
-        +identity_id : UUID
-        +suggested_cluster_id : UUID
-        +representative_similarity : float
-        +avg_member_similarity : float
-        +confidence_score : float
-        +priority : int
-        +resolution : str
-        +created_at : datetime
-        +resolved_at : datetime?
-    }
-
-    Tenant "1" -- "*" MediaIdentity : owns
-    Tenant "1" -- "*" IdentityCluster : owns
-    Tenant "1" -- "*" IdentitySuggestion : owns
-    IdentityCluster "1" -- "*" IdentityMember : members
-    IdentityCluster "1" -- "*" IdentityClusterRepresentative : representatives
-    IdentityCluster "0..1" -- "1" MediaIdentity : representative_identity
-    IdentityCluster "1" -- "0..1" ClusterCentroid : centroid
-    MediaIdentity "1" -- "0..1" IdentityMember : membership
-    MediaIdentity "1" -- "0..1" IdentityClusterRepresentative : rep_for
-    MediaIdentity "1" -- "0..*" IdentitySuggestion : suggested
-    IdentitySuggestion "1" -- "1" IdentityCluster : target_cluster
-    IdentityScanJob "1" --> "1" Tenant
-    IdentityClusteringJob "1" --> "1" Tenant
+    note for MediaIdentity "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
+    note for MediaIdentity "Code anchors: recognition/domain/identity.py; recognition/domain/cluster.py; recognition/domain/representative.py; recognition/domain/suggestion.py"

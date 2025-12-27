@@ -5,31 +5,43 @@ sequenceDiagram
     participant Client as WordPress Plugin
     participant API as /recognition/analyze
     participant Session as AsyncSession + tenant context
-    participant Jobs as IdentityScanJob rows
-    participant BG as BackgroundTasks (_process_scan_chunk)
-    participant ScanSvc as IdentityScanService
-    participant Provider as FaceEmbeddingProvider
+    participant Queue as ScanQueueService
+    participant BG as BackgroundTasks (populate queue)
+    participant Worker as scan_worker.py
+    participant ScanSvc as ScanService
+    participant Detector as FaceDetectorProtocol
+    participant Generator as EmbeddingGeneratorProtocol
     participant DB as PostgreSQL + pgvector
-    participant Thumbs as ThumbnailService storage
+    participant Thumbs as Thumbnail storage
 
-    Client->>API: POST analyze {tenant_id, site_url?, media_items[], user_id?}
-    API->>Session: set_tenant_context(); create tenant if missing
-    API->>API: chunk media_items into batches of 10
-    loop per chunk
-        API->>Session: insert IdentityScanJob(status=pending)
-        API->>BG: add_task(_process_scan_chunk, job_id, tenant_id, chunk, user_id)
-    end
-    API-->>Client: 202 accepted {job_ids, status="queued"}
+    Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,DB: Mini-map: ENTRY: POST /recognition/analyze -> ScanQueueService -> SqlAlchemyScanQueueRepository, Worker: recognition/worker/scan_worker.py, ScanSvc: recognition/application/scan/service.py
+
+    Client->>API: ENTRY: POST /recognition/analyze {tenant_id, media_items[], user_id?}
+    API->>Session: set_tenant_context and ensure tenant exists
+    API->>Queue: create_scan_job_record(total, user_id)
+    API->>BG: add_task(populate_scan_job_items, job_id, media_items)
+    API-->>Client: 202 accepted {job_id, status=pending}
 
     BG->>Session: async_session_factory()
-    BG->>Session: set_tenant_context(tenant_id)
-    BG->>Provider: load InsightFace model (if needed)
-    BG->>ScanSvc: scan_identities(job, media_items, user_id)
-    ScanSvc->>Provider: analyze(image) -> IdentityEmbedding[]
-    ScanSvc->>Thumbs: save cropped thumbnails (optional)
-    ScanSvc->>DB: insert MediaIdentity rows; update job counters
-    alt success
-        ScanSvc->>DB: commit; job.status="completed"
-    else error
-        ScanSvc->>DB: rollback; job.status="failed"; job.error_message
+    BG->>Queue: populate_scan_job_items(job_id, media_items)
+    Queue->>DB: INSERT identity_scan_job_items
+
+    alt async worker processing
+        Worker->>DB: claim pending IdentityScanJobItem via SKIP LOCKED
+        Worker->>ScanSvc: process_media_item(tenant_id, media_url)
+        ScanSvc->>Detector: detect(media_url)
+        ScanSvc->>Generator: generate(face_bytes) if missing embeddings
+        ScanSvc->>DB: insert MediaIdentity rows
+        ScanSvc->>DB: update job item status
+        Worker->>Queue: refresh_job_progress(job_id)
+        Queue->>DB: update IdentityScanJob status/progress
+        Worker->>Thumbs: write thumbnails (optional)
+    else inline processing (RECOGNITION_ASYNC_ANALYZE_INLINE=1)
+        API->>ScanSvc: process_scan_job(job_id, media_items)
+        ScanSvc->>Detector: detect(media_url)
+        ScanSvc->>Generator: generate(face_bytes)
+        ScanSvc->>DB: insert MediaIdentity rows
+        ScanSvc->>DB: update IdentityScanJob status/progress
+        ScanSvc->>Thumbs: write thumbnails (optional)
     end

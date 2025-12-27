@@ -1,0 +1,33 @@
+---
+title: Recognition Domain Models (Constraints)
+---
+classDiagram
+    class IdentityConstraint {
+        +UUID id
+        +UUID tenant_id
+        +UUID identity_a
+        +UUID identity_b
+        +ConstraintType constraint_type
+        +ConstraintSource source
+        +datetime created_at
+        +int? created_by_user_id
+    }
+
+    class ConstraintType {
+        <<enumeration>>
+        MUST_LINK
+        CANNOT_LINK
+    }
+
+    class ConstraintSource {
+        <<enumeration>>
+        MERGE
+        SPLIT
+        WRONG_PERSON
+    }
+
+    IdentityConstraint --> ConstraintType : type
+    IdentityConstraint --> ConstraintSource : source
+
+    note for IdentityConstraint "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
+    note for IdentityConstraint "Code anchors: recognition/domain/constraints.py"

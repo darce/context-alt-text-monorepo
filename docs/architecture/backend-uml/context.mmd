@@ -2,33 +2,37 @@
 title: Prototype Description Service Context
 ---
 flowchart LR
-    subgraph client["WordPress Site"]
-        wp_plugin["Context Alt Text Plugin\n(Admin SPA)"]
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
     end
 
-    subgraph service["Prototype Description Service (FastAPI)"]
-        recognition_api["/recognition/**\nAnalyze + clustering + suggestions"]
-        metrics_api["/recognition/metrics*\nQuality snapshots"]
-        health_api["/health + /recognition/health\nSubsystem probes"]
-        background_tasks["FastAPI BackgroundTasks\nchunked scans"]
+    subgraph client["WordPress Workbench"]
+        wp_spa["ENTRY: Admin SPA"]
+        wp_proxy["ENTRY: WP REST proxy\n/wp-json/acx/v1/workbench/recognition/*"]
+    end
+
+    subgraph service["Prototype Description Service"]
+        recognition_api["ENTRY: FastAPI /recognition/*\nAnalyze, clusters, suggestions,\nmedia, diagnostics, events, health"]
+        sse["ENTRY: SSE /recognition/clusters/events"]
+        scan_worker["Scan worker process\nclaims queue items + curation jobs"]
     end
 
     subgraph data_plane["Data & Models"]
-        postgres["PostgreSQL + pgvector\nmultitenant (app.current_tenant)"]
-        model_weights["InsightFace weights/cache\nFaceAnalysis model files"]
+        postgres["PostgreSQL + pgvector\nRLS per tenant (app.current_tenant)"]
+        model_weights["InsightFace model cache"]
         thumbnails["Thumbnail storage\nmounted static path"]
     end
 
-    wp_plugin -->|Tenant-scoped REST calls\nanalyze, clusters, suggestions| recognition_api
-    wp_plugin --> metrics_api
-    wp_plugin --> health_api
+    wp_spa --> wp_proxy --> recognition_api
+    recognition_api --> sse --> wp_spa
 
-    recognition_api -->|creates jobs + writes embeddings| postgres
-    recognition_api -->|invokes| background_tasks
-    background_tasks -->|IdentityScanService + FaceEmbeddingProvider| model_weights
-    background_tasks -->|MediaIdentity rows + thumbnails| postgres
-    background_tasks --> thumbnails
+    recognition_api -->|enqueue scan jobs + query data| postgres
+    scan_worker -->|claim items + persist identities| postgres
+    scan_worker --> model_weights
+    scan_worker --> thumbnails
+    thumbnails --> wp_spa
 
-    recognition_api -->|IdentityClusteringService\n+ suggestion APIs| postgres
-    metrics_api -->|SQL aggregates| postgres
-    thumbnails --> wp_plugin
+    ApiCode["Code anchors:\nrecognition/interface_adapters/http/routers/*\nrecognition/worker/scan_worker.py"]
+    recognition_api -.-> ApiCode

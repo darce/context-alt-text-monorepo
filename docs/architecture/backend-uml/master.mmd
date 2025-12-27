@@ -1,156 +1,54 @@
-graph TD
-    %% =======================================================================
-    %% RECOGNITION SERVICE V4.2.4 - BACKEND MASTER OVERVIEW
-    %% Updated: December 6, 2025
-    %% Status: Core implementation complete (Phases 1-6, Tasks 72-74)
-    %% See also: ../frontend/master_overview.mmd for WordPress plugin architecture
-    %% =======================================================================
+flowchart LR
+    %% ======================================================================
+    %% RECOGNITION SERVICE - SYSTEM OVERVIEW
+    %% Focus: Runtime components and their primary data flows
+    %% ======================================================================
 
-    subgraph Frontend["WordPress Plugin Frontend"]
-        WPProxy["PHP Proxy<br/>RecognitionProxyController"]
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
     end
 
-    subgraph API["API Layer (FastAPI) ✅"]
-        AnalyzeRouter["AnalyzeRouter<br/>POST /analyze<br/>GET /jobs/{id}<br/>POST /jobs/{id}/cancel"]
-        ClusterRouter["ClusterRouter<br/>POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}<br/>POST /merge, /assign"]
-        SuggestionRouter["SuggestionRouter<br/>GET /suggestions<br/>POST accept/reject"]
-        MediaRouter["MediaRouter<br/>GET /media/identities"]
-        TrainingRouter["TrainingRouter<br/>GET /training-stage"]
-        DiagnosticsRouter["DiagnosticsRouter<br/>GET /diagnostics/decisions"]
+    subgraph Client["WordPress Workbench"]
+        direction TB
+        AdminUI["ENTRY: Admin SPA"]
+        WPProxy["ENTRY: WP REST proxy<br/>/wp-json/acx/v1/workbench/recognition/*"]
     end
 
-    WPProxy -->|"HTTP + API Key"| API
-
-    subgraph Security["Security Layer ✅"]
-        Auth["require_auth<br/>API Key validation"]
-        WriteAccess["require_write_access<br/>Mutate protection"]
-        TenantIso["Tenant Isolation<br/>X-Tenant-ID validation"]
+    subgraph API["Recognition API (FastAPI)"]
+        direction TB
+        Routers["ENTRY: /recognition/* routers<br/>analyze, clusters, suggestions,<br/>media, diagnostics, events, health"]
+        Auth["Auth + tenant guards<br/>Authorization Bearer + X-Tenant-ID"]
+        Services["Application services<br/>ScanQueueService, ClusterService,<br/>SuggestionService, JobService"]
+        SSE["ENTRY: SSE stream<br/>/recognition/clusters/events"]
     end
 
-    subgraph Orchestration["Orchestration Layer ✅"]
-        ScanService[ScanService]
-        ClusterService[ClusterService]
-        JobService[JobService]
+    subgraph Worker["Async Scan Worker"]
+        direction TB
+        ScanWorker["scan_worker.py<br/>claims scan items + curation jobs"]
+        ScanService["ScanService<br/>FaceDetector + EmbeddingGenerator"]
     end
 
-    subgraph Discovery["Discovery Layer ✅"]
-        RD[RepresentativeDiscovery]
-        CD[CentroidDiscovery]
-        GD[GraphDiscovery]
+    subgraph Data["Data Plane"]
+        direction TB
+        DB["Postgres + pgvector<br/>RLS tenant isolation"]
+        Thumbs["Thumbnail storage"]
+        Models["InsightFace model cache"]
     end
 
-    subgraph Clustering["Clustering Algorithms ✅"]
-        HDBSCAN["HDBSCANClustering<br/>≤500 identities"]
-        CW["ChineseWhispersClustering<br/>>500 identities<br/>Deterministic"]
-    end
+    AdminUI --> WPProxy --> Routers
+    Routers --> Auth --> Services
+    Services --> DB
+    Routers --> SSE --> AdminUI
 
-    subgraph Assignment["Assignment Layer ✅"]
-        Gate[AssignmentGate]
-        
-        subgraph Checks["Validation Checks"]
-            MC[MaturityCheck]
-            CLC[CompleteLinkCheck]
-            MDC[MemberDistributionCheck]
-            CC[ConfidenceCheck]
-        end
-        
-        Writer[AssignmentWriter]
-    end
+    Services -->|"enqueue scan jobs"| DB
+    DB -->|"scan queue items"| ScanWorker
+    ScanWorker --> ScanService --> Models
+    ScanService --> DB
+    ScanService --> Thumbs
 
-    subgraph Suggestions["Suggestion Layer ✅"]
-        SuggService[SuggestionService]
-        SuggRepo[SuggestionRepository]
-        Admin((Admin User))
-    end
+    Services -.->|"observability logs<br/>assignment_decisions + recognition_events"| DB
 
-    subgraph Observability["Observability Layer ✅"]
-        Logger[ClusteringLogger]
-        Report[BatchJobReport]
-        Visualizer[ClusterVisualizer]
-        ObsRepo[ObservabilityRepository]
-    end
-
-    subgraph Infrastructure["Infrastructure Layer ✅"]
-        EmbeddingService["EmbeddingService<br/>to_media_identities()"]
-        InsightFace["InsightFaceAdapter<br/>FaceDetector + EmbeddingGenerator"]
-        DB[(PostgreSQL)]
-        ClusterRepo[ClusterRepository]
-        MemberRepo[MemberRepository]
-        Settings[ClusteringSettings]
-    end
-
-    %% Flow: API Security
-    API --> Security
-    Security --> Auth
-    Security --> WriteAccess
-    Security --> TenantIso
-
-    %% Flow: API to Services
-    AnalyzeRouter --> ScanService
-    AnalyzeRouter --> JobService
-    ClusterRouter --> ClusterService
-    ClusterRouter --> JobService
-    SuggestionRouter --> SuggService
-    MediaRouter --> ClusterService
-    TrainingRouter --> ClusterService
-    DiagnosticsRouter --> ObsRepo
-
-    %% Flow: Scanning
-    ScanService -->|1. Detect Faces| EmbeddingService
-    EmbeddingService --> InsightFace
-    ScanService -->|2. Persist Identity| DB
-
-    %% Flow: Clustering
-    ClusterService -->|1. Get Unclustered| ClusterRepo
-    ClusterRepo --> DB
-    MemberRepo --> DB
-    
-    ClusterService -->|2. Find Candidates| RD
-    ClusterService -->|2. Find Candidates| CD
-    ClusterService -->|2. Find Candidates| GD
-    
-    %% GraphDiscovery algorithm selection
-    GD -->|≤500 identities| HDBSCAN
-    GD -->|>500 identities| CW
-    
-    RD -->|Candidates| Gate
-    CD -->|Candidates| Gate
-    GD -->|Candidates| Gate
-    
-    %% Flow: Assignment Gate
-    Gate -->|Validate| Checks
-    Checks -->|Result| Gate
-    Gate -->|Query| ClusterRepo
-    Gate -.->|Configured by| Settings
-    
-    Gate -->|ACCEPT| Writer
-    Gate -->|SUGGEST| SuggService
-    Gate -->|REJECT| Unclustered[Unclustered Pool]
-    
-    Writer -->|Persist| DB
-    SuggService --> SuggRepo
-    SuggRepo -->|Persist| DB
-    
-    %% Flow: Suggestions
-    Admin -->|Review| SuggService
-    SuggService -->|Accept/Reject| DB
-
-    %% Flow: Observability
-    ClusterService -.->|Log Decisions| Logger
-    Logger -.->|Accumulate| Report
-    Logger --> ObsRepo
-    ClusterService -.->|Generate Charts| Visualizer
-    Visualizer -.->|Visualize| Report
-    ObsRepo --> DB
-    
-    %% Styling (WCAG AA compliant - 4.5:1 text contrast, 3:1 graphical contrast)
-    style API fill:#c8e6c9,stroke:#2e7d32,stroke-width:2px,color:#1b5e20
-    style Security fill:#e3f2fd,stroke:#0d47a1,stroke-width:2px,color:#0d47a1
-    style Gate fill:#fff3e0,stroke:#bf360c,stroke-width:2px,color:#bf360c
-    style Checks fill:#fff8e1,stroke:#f57f17,color:#e65100
-    style Discovery fill:#e3f2fd,stroke:#0d47a1,color:#0d47a1
-    style Clustering fill:#f1f8e9,stroke:#33691e,color:#33691e
-    style Orchestration fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
-    style Suggestions fill:#fff3e0,stroke:#f57c00,color:#e65100
-    style Observability fill:#e8f5e9,stroke:#1b5e20,color:#1b5e20
-    style Infrastructure fill:#fce4ec,stroke:#ad1457,color:#880e4f
+    RouterCode["Code anchors:\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/services.py\nrecognition/infrastructure/repositories/*"]
+    Routers -.-> RouterCode

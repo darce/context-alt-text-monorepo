@@ -1,100 +1,96 @@
 ---
-title: Prototype Description Service Containers (v4.2.4)
+title: Prototype Description Service Containers
 ---
 flowchart TB
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
     subgraph api["FastAPI Surface (api/main.py)"]
-        app_factory["create_app()<br/>logging + middleware"]
-        analyze_router["AnalyzeRouter<br/>/recognition/analyze"]
-        cluster_router["ClusterRouter<br/>/recognition/clusters"]
-        suggestion_router["SuggestionRouter<br/>/recognition/suggestions"]
-        media_router["MediaRouter<br/>/recognition/media"]
-        health_routers["/health + subsystem health"]
+        app_factory["create_app()"]
+        routers["ENTRY: /recognition/* routers<br/>analyze, clusters, suggestions,<br/>media, diagnostics, events, health"]
+        auth_deps["Auth + tenant deps<br/>require_auth, get_tenant_id"]
     end
 
-    subgraph orchestration["Orchestration Layer"]
-        scan_service["ScanService<br/>face detection + embedding"]
-        cluster_service["ClusterService<br/>cluster_unclustered_identities()<br/>merge_cluster()"]
-        job_service["JobService<br/>scan + clustering jobs"]
+    subgraph services["Application Services"]
+        scan_queue["ScanQueueService<br/>scan job + queue items"]
+        cluster_service["ClusterService<br/>incremental clustering + curation"]
+        suggestion_service["SuggestionService<br/>review + refresh"]
+        job_service["JobService<br/>clustering/split/curation jobs"]
+        media_service["MediaIdentityService<br/>media identity lookup"]
     end
 
-    subgraph discovery["Discovery Layer"]
-        rep_discovery["RepresentativeDiscovery<br/>match against reps"]
-        centroid_discovery["CentroidDiscovery<br/>match against centroids"]
-        graph_discovery["GraphDiscovery<br/>HDBSCAN / Chinese Whispers"]
+    subgraph discovery["Discovery Pipeline"]
+        rep_discovery["RepresentativeDiscovery"]
+        centroid_discovery["CentroidDiscovery"]
+        graph_discovery["GraphDiscovery"]
+        hdbscan["HdbscanGraphAlgorithm"]
     end
 
-    subgraph assignment["Assignment Layer"]
-        gate["AssignmentGate<br/>evaluate candidates"]
-        checks["Checks: CompleteLinkCheck<br/>MaturityCheck, ConfidenceCheck"]
-        writer["AssignmentWriter<br/>persist assignments"]
-        suggestion_service["SuggestionService<br/>manage suggestions"]
+    subgraph assignment["Assignment Pipeline"]
+        gate["AssignmentGate"]
+        checks["Checks: BlockCheck<br/>ConstraintCheck, ConfidenceCheck"]
+        writer["AssignmentWriter"]
     end
 
-    subgraph infra["Infrastructure & Adapters"]
-        embedding_service["EmbeddingService<br/>to_media_identities() seam"]
-        insightface["InsightFaceAdapter<br/>FaceDetector + Generator"]
-        cluster_repo["SqlAlchemyClusterRepository"]
-        member_repo["SqlAlchemyMemberRepository"]
-        suggestion_repo["SqlAlchemySuggestionRepository"]
+    subgraph worker["Async Scan Worker"]
+        scan_worker["scan_worker.py"]
+        scan_service["ScanService"]
+        detector["FaceDetectorProtocol"]
+        generator["EmbeddingGeneratorProtocol"]
+    end
+
+    subgraph infra["Infrastructure & Persistence"]
+        insightface["InsightFaceAdapter"]
+        repos["SqlAlchemy* repositories"]
         async_session["AsyncSession"]
         postgres["PostgreSQL + pgvector<br/>RLS policies"]
-        settings["ClusteringSettings<br/>thresholds + config"]
+        settings["ClusteringSettings"]
     end
 
-    %% API connections
-    app_factory --> analyze_router
-    app_factory --> cluster_router
-    app_factory --> suggestion_router
-    app_factory --> media_router
-    app_factory --> health_routers
+    %% API wiring
+    app_factory --> routers
+    routers --> auth_deps
+    routers --> scan_queue
+    routers --> cluster_service
+    routers --> suggestion_service
+    routers --> job_service
+    routers --> media_service
 
-    %% Router to service
-    analyze_router --> scan_service
-    analyze_router --> job_service
-    cluster_router --> cluster_service
-    cluster_router --> job_service
-    suggestion_router --> suggestion_service
-    media_router --> cluster_service
-
-    %% Scan flow
-    scan_service --> embedding_service
-    embedding_service --> insightface
-    scan_service --> async_session
-
-    %% Cluster service orchestration
+    %% Clustering pipeline
     cluster_service --> rep_discovery
     cluster_service --> centroid_discovery
     cluster_service --> graph_discovery
-    cluster_service --> gate
-    cluster_service --> writer
-    cluster_service --> suggestion_service
-
-    %% Discovery produces candidates for gate
+    graph_discovery --> hdbscan
     rep_discovery --> gate
     centroid_discovery --> gate
     graph_discovery --> gate
-
-    %% Gate validation and outcomes
     gate --> checks
     gate --> writer
-    gate --> suggestion_service
-    gate --> cluster_repo
-    gate -.-> settings
+    cluster_service --> suggestion_service
 
-    %% Writer persistence
-    writer --> cluster_repo
-    writer --> member_repo
+    %% Worker pipeline
+    scan_worker --> scan_queue
+    scan_worker --> scan_service
+    scan_service --> detector
+    scan_service --> generator
+    detector --> insightface
+    generator --> insightface
 
-    %% Suggestion persistence
-    suggestion_service --> suggestion_repo
+    %% Persistence
+    scan_queue --> repos
+    cluster_service --> repos
+    suggestion_service --> repos
+    job_service --> repos
+    media_service --> repos
+    writer --> repos
+    repos --> async_session --> postgres
 
-    %% Repository to database
-    cluster_repo --> async_session
-    member_repo --> async_session
-    suggestion_repo --> async_session
-    async_session --> postgres
-
-    %% Settings injection
     settings --> gate
     settings --> cluster_service
     settings --> writer
+
+    RouterCode["Code anchors:\napps/prototype-description-service/api/main.py\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/services.py\nrecognition/infrastructure/repositories/*"]
+    routers -.-> RouterCode

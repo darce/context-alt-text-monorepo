@@ -1,20 +1,43 @@
 ---
-title: Metrics & Health Hooks
+title: Observability Persistence & Diagnostics
 ---
 flowchart LR
-    subgraph routers["HTTP Routers"]
-        metrics_router["recognition/interface_adapters/http/metrics_router.py\nGET /recognition/metrics + /metrics/snapshot"]
-        health_router["recognition/interface_adapters/http/health_router.py\nGET /recognition/health"]
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
     end
 
-    subgraph services["Data Sources"]
-        session_dep["db.session.get_session\nAsyncSession + tenant context"]
-        aggregates["SQL aggregates over\nidentity_clusters + media_identities"]
-        clustering_metrics["recognition/application/metrics.py\nClusteringMetrics dataclass + compare()"]
-        shared_health["shared/health.py\nHealthReport helpers"]
+    subgraph Emission["Event Emission"]
+        Logger["ClusteringLogger\nlog_decision(), log_batch_complete()"]
+        RunCtx["RecognitionRunContext\nadd_event()"]
     end
 
-    metrics_router --> session_dep
-    metrics_router --> aggregates
-    metrics_router --> clustering_metrics
-    health_router --> shared_health
+    subgraph Persistence["Observability Tables"]
+        Runs["recognition_runs"]
+        Events["recognition_events"]
+        Decisions["assignment_decisions"]
+        Reports["clustering_job_reports"]
+    end
+
+    subgraph Repo["Persistence Helper"]
+        ObsRepo["ObservabilityRepository\nadd_decision(), save_batch_report()"]
+    end
+
+    subgraph API["Diagnostics Endpoint"]
+        Diagnostics["ENTRY: GET /recognition/diagnostics/decisions"]
+        Fallback["DecisionStore (in-memory fallback)"]
+    end
+
+    Logger --> RunCtx
+    RunCtx --> Events
+    RunCtx --> Runs
+    Logger -.-> ObsRepo
+    ObsRepo --> Decisions
+    ObsRepo --> Reports
+
+    Diagnostics --> Decisions
+    Diagnostics -.-> Fallback
+
+    DiagnosticsCode["Code anchors:\nrecognition/interface_adapters/http/routers/diagnostics.py\nrecognition/observability/persistence.py\nrecognition/observability/recognition_runs.py"]
+    Diagnostics -.-> DiagnosticsCode

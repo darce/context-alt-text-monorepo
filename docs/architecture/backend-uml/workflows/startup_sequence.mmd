@@ -7,15 +7,19 @@ sequenceDiagram
     participant Settings as recognition.config.get_settings
     participant Cache as configure_dev_cache()
     participant Static as FastAPI StaticFiles
-    participant Routers as recognition.interface_adapters.http.router
-    participant Session as db.session.async_session_factory
+    participant Routers as recognition.interface_adapters.http.*
+    participant Handlers as register_exception_handlers()
 
-    CLI->>App: import api.main:app
+    Note over CLI,Routers: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over CLI,Routers: Mini-map: ENTRY: api/main.py:create_app -> recognition.interface_adapters.http.router, Code: apps/prototype-description-service/api/main.py | recognition/interface_adapters/http/router.py
+
+    CLI->>App: ENTRY: import api.main:app
     App->>App: configure_logging("INFO")
-    App->>Cache: configure_dev_cache()
-    App->>Settings: load YAML + .env -> RecognitionConfig
+    App->>Cache: configure_dev_cache() via _log_startup_info
+    App->>Settings: load settings (env + yaml)
     App->>Static: mount thumbnails_dir (base_url from settings)
-    App->>Routers: include /recognition + /roster + /scene routers
-    App->>Session: wire get_session dependency
+    App->>Routers: include /recognition routers (legacy + api)
+    App->>Routers: include /roster + /scene health routers
+    App->>Handlers: register exception handlers
     App-->>CLI: FastAPI app ready
-    Note over Routers,Session: Per-request dependencies set app.current_tenant for RLS
+    Note over Routers: Per-request dependencies set app.current_tenant for RLS

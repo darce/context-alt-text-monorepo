@@ -67,6 +67,35 @@ class SqlAlchemyMemberRepository(MemberRepository):
         await self._session.refresh(model)
         return self._to_domain(model)
 
+    async def add_member_if_not_exists(
+        self, cluster_id: str, identity_id: str, similarity: float
+    ) -> IdentityMember | None:
+        """Add a member only if not already in this cluster.
+
+        Returns the member if created, None if already exists.
+        This prevents duplicate key errors when retrying assignments.
+        """
+        tenant_uuid = _coerce_uuid(self._tenant_id)
+        cluster_uuid = _coerce_uuid(cluster_id)
+        identity_uuid = _coerce_uuid(identity_id)
+        if tenant_uuid is None or cluster_uuid is None or identity_uuid is None:
+            raise ValueError("tenant_id, cluster_id, and identity_id must be valid UUID-compatible strings")
+
+        # Check if already a member of this specific cluster
+        stmt = (
+            select(MemberModel)
+            .where(MemberModel.tenant_id == tenant_uuid)
+            .where(MemberModel.cluster_id == cluster_uuid)
+            .where(MemberModel.identity_id == identity_uuid)
+        )
+        result = await self._session.execute(stmt)
+        existing = result.scalar_one_or_none()
+
+        if existing:
+            return None  # Already a member
+
+        return await self.add_member(cluster_id, identity_id, similarity)
+
     async def bulk_add_members(self, cluster_id: str, members) -> list[IdentityMember]:
         """Bulk insert members."""
         if not members:
@@ -99,25 +128,29 @@ class SqlAlchemyMemberRepository(MemberRepository):
         return [self._to_domain(model) for model in models]
 
     async def move_members(self, source_cluster_id: str, target_cluster_id: str) -> int:
-        """Reassign all members from a source cluster to a target cluster."""
+        """Reassign all members from a source cluster to a target cluster.
+
+        Uses a single bulk UPDATE statement to prevent deadlocks when
+        concurrent merges affect overlapping members.
+        """
+        from sqlalchemy import update
+
         tenant_uuid = _coerce_uuid(self._tenant_id)
         source_uuid = _coerce_uuid(source_cluster_id)
         target_uuid = _coerce_uuid(target_cluster_id)
         if tenant_uuid is None or source_uuid is None or target_uuid is None:
             raise ValueError("tenant_id, source_cluster_id, and target_cluster_id must be valid UUIDs")
 
-        stmt: Select[tuple[MemberModel]] = (
-            select(MemberModel).where(MemberModel.cluster_id == source_uuid).where(MemberModel.tenant_id == tenant_uuid)
+        # Use a single UPDATE statement for atomicity and deadlock prevention
+        stmt = (
+            update(MemberModel)
+            .where(MemberModel.cluster_id == source_uuid)
+            .where(MemberModel.tenant_id == tenant_uuid)
+            .values(cluster_id=target_uuid)
         )
         result = await self._session.execute(stmt)
-        models = result.scalars().all()
-        for model in models:
-            model.cluster_id = target_uuid
-
         await self._session.flush()
-        for model in models:
-            await self._session.refresh(model)
-        return len(models)
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     async def remove_member(self, member_id: str) -> None:
         """Remove a member."""

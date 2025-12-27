@@ -154,14 +154,41 @@ class ClusterService:
         )
 
     async def update_cluster(self, cluster_id: str, tenant_id: str, label: str | None) -> IdentityCluster | None:
-        """Update cluster label and confirmation state."""
-        return await update_cluster_op(
+        """Update cluster label and confirmation state.
+
+        When a cluster becomes user-labeled, surfaces suggestions for identities
+        in unlabeled clusters that match this newly-labeled cluster.
+        """
+        # Get current state to detect transition to user-labeled
+        cluster_repo = self.assignment_writer._clusters
+        old_cluster = await cluster_repo.get_by_id(cluster_id)
+        was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
+
+        result = await update_cluster_op(
             cluster_id=cluster_id,
             tenant_id=tenant_id,
             label=label,
             assignment_writer=self.assignment_writer,
             clustering_logger=self.logger,
         )
+
+        # If cluster just became user-labeled, surface suggestions
+        if result and label and not was_user_confirmed:
+            surface_fn = getattr(self.suggestion_service, "surface_for_newly_labeled_cluster", None)
+            if callable(surface_fn):
+                try:
+                    surfaced = await surface_fn(cluster_id)
+                    if surfaced > 0:
+                        logger.info(
+                            "[curation] Surfaced %d suggestions after labeling cluster_id=%s label='%s'",
+                            surfaced,
+                            cluster_id,
+                            label,
+                        )
+                except Exception as e:
+                    logger.warning("[curation] Failed to surface suggestions: %s", e)
+
+        return result
 
     async def create_cluster_for_identity(self, identity_id: str, label: str, tenant_id: str) -> IdentityCluster:
         return await create_cluster_for_identity_op(

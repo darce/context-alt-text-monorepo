@@ -67,6 +67,25 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
+    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
+        """Fetch top unlabeled clusters by member count.
+
+        Used for bootstrapping suggestions (users must label clusters before identity-based
+        similarity suggestions can be generated).
+        """
+        tenant_uuid = _coerce_uuid(tenant_id)
+        stmt: Select[tuple[ClusterModel]] = (
+            select(ClusterModel)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.user_confirmed.is_(False))
+            .where(ClusterModel.label.isnot(None))
+            .where(ClusterModel.label.startswith("cluster-"))
+            .order_by(ClusterModel.identity_count.desc())
+            .limit(limit)
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain(row) for row in result.scalars().all()]
+
     async def get_labeled_with_representatives(
         self,
         tenant_id: str,
@@ -195,9 +214,101 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     diversity_score=float(model_rep.diversity_score) if model_rep.diversity_score else None,
                     media_id=media_id,
                     image_phash=phash,
+                    is_user_selected=bool(model_rep.is_user_selected),
+                    is_provisional=bool(model_rep.is_provisional),
+                    pose_pitch=float(model_rep.pose_pitch) if model_rep.pose_pitch is not None else None,
+                    pose_yaw=float(model_rep.pose_yaw) if model_rep.pose_yaw is not None else None,
+                    pose_roll=float(model_rep.pose_roll) if model_rep.pose_roll is not None else None,
                 )
             )
         return reps
+
+    async def mark_representative_user_selected(
+        self,
+        representative_id: str,
+        is_selected: bool = True,
+    ) -> None:
+        """Mark a representative as user-selected (pinned)."""
+        stmt = select(IdentityClusterRepresentative).where(
+            IdentityClusterRepresentative.id == _coerce_uuid(representative_id)
+        )
+        result = await self._session.execute(stmt)
+        model = result.scalar_one_or_none()
+        if not model:
+            raise ValueError(f"Representative {representative_id} not found")
+        model.is_user_selected = is_selected
+        await self._session.flush()
+
+    async def get_user_selected_representatives(
+        self,
+        cluster_id: str,
+    ) -> list[ClusterRepresentative]:
+        """Get all user-selected representatives for a cluster."""
+        stmt = (
+            select(IdentityClusterRepresentative, MediaIdentity.image_phash, MediaIdentity.media_id)
+            .join(MediaIdentity, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
+            .where(IdentityClusterRepresentative.is_user_selected.is_(True))
+        )
+        result = await self._session.execute(stmt)
+        reps = []
+        for model_rep, _phash, _media_id in result:
+            reps.append(
+                ClusterRepresentative(
+                    id=str(model_rep.id),
+                    cluster_id=str(model_rep.cluster_id),
+                    identity_id=str(model_rep.identity_id),
+                    embedding=np.array(model_rep.embedding, dtype=np.float32),
+                    created_at=model_rep.created_at,
+                    tenant_id=str(model_rep.tenant_id),
+                    quality_score=float(model_rep.quality_score),
+                    diversity_score=float(model_rep.diversity_score) if model_rep.diversity_score else None,
+                    is_user_selected=bool(model_rep.is_user_selected),
+                    is_provisional=bool(model_rep.is_provisional),
+                    pose_pitch=float(model_rep.pose_pitch) if model_rep.pose_pitch is not None else None,
+                    pose_yaw=float(model_rep.pose_yaw) if model_rep.pose_yaw is not None else None,
+                    pose_roll=float(model_rep.pose_roll) if model_rep.pose_roll is not None else None,
+                )
+            )
+        return reps
+
+    async def confirm_provisional_representatives(self, cluster_id: str) -> int:
+        """Mark all provisional representatives in a cluster as confirmed."""
+        from sqlalchemy import update
+
+        stmt = (
+            update(IdentityClusterRepresentative)
+            .where(IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id))
+            .where(IdentityClusterRepresentative.is_provisional.is_(True))
+            .values(is_provisional=False)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
+
+    async def confirm_all_provisional_reps(self, tenant_id: str) -> int:
+        """Mark all provisional representatives for a tenant as confirmed."""
+        from sqlalchemy import update
+
+        stmt = (
+            update(IdentityClusterRepresentative)
+            .where(IdentityClusterRepresentative.tenant_id == _coerce_uuid(tenant_id))
+            .where(IdentityClusterRepresentative.is_provisional.is_(True))
+            .values(is_provisional=False)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
+
+    async def cleanup_orphaned_provisional_reps(self, tenant_id: str) -> int:
+        """Remove provisional reps from clusters with no active batch."""
+        stmt = delete(IdentityClusterRepresentative).where(
+            IdentityClusterRepresentative.tenant_id == _coerce_uuid(tenant_id),
+            IdentityClusterRepresentative.is_provisional.is_(True),
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(result.rowcount)  # type: ignore[attr-defined]
 
     async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
         """Fetch maturity information for a cluster."""
@@ -269,17 +380,31 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         self._session.add(member)
         await self._session.flush()
 
-    async def add_representative(self, representative) -> None:
+    async def add_representative(self, representative: ClusterRepresentative) -> None:
         """Persist a representative embedding for a cluster."""
         rep = IdentityClusterRepresentative(
+            id=_coerce_uuid(representative.id) if representative.id else None,
             tenant_id=_coerce_uuid(representative.tenant_id),
             cluster_id=_coerce_uuid(representative.cluster_id),
             identity_id=_coerce_uuid(representative.identity_id),
             embedding=list(representative.embedding),
             quality_score=float(getattr(representative, "quality_score", 1.0)),
             diversity_score=getattr(representative, "diversity_score", None),
+            is_user_selected=getattr(representative, "is_user_selected", False),
+            is_provisional=getattr(representative, "is_provisional", False),
+            pose_pitch=float(representative.pose_pitch) if representative.pose_pitch is not None else None,
+            pose_yaw=float(representative.pose_yaw) if representative.pose_yaw is not None else None,
+            pose_roll=float(representative.pose_roll) if representative.pose_roll is not None else None,
         )
         self._session.add(rep)
+        await self._session.flush()
+
+    async def remove_representative(self, representative_id: str) -> None:
+        """Remove a specific representative."""
+        stmt = delete(IdentityClusterRepresentative).where(
+            IdentityClusterRepresentative.id == _coerce_uuid(representative_id)
+        )
+        await self._session.execute(stmt)
         await self._session.flush()
 
     async def clear_representatives(self, cluster_id: str) -> None:
@@ -328,6 +453,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         quality_score=float(rep.quality_score),
                         diversity_score=float(rep.diversity_score) if rep.diversity_score else None,
                         media_id=media_id,
+                        is_user_selected=bool(rep.is_user_selected),
+                        is_provisional=bool(rep.is_provisional),
                     )
                 )
 

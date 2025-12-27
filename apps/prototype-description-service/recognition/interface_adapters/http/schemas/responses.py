@@ -45,6 +45,7 @@ class RepresentativeResponse(BaseModel):
     id: str
     media_id: str | int
     thumb_url: str | None = None
+    is_pinned: bool = Field(False, alias="is_user_selected")
 
     @field_validator("id")
     @classmethod

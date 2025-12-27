@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.tests.api.conftest import FakeSession, FakeSuggestionService, seed_cluster
-from recognition.tests.conftest import FakeClusterService
+from recognition.tests.fakes import FakeClusterService
 
 
 def _client(fake_cluster_service: FakeClusterService, fake_suggestion_service: FakeSuggestionService) -> TestClient:

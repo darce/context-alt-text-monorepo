@@ -205,9 +205,14 @@ def upgrade() -> None:
             nullable=False,
         ),
         sa.Column("embedding", Vector(EMBEDDING_DIMENSION), nullable=False),
+        sa.Column("pose_pitch", sa.Float(), nullable=True),
+        sa.Column("pose_yaw", sa.Float(), nullable=True),
+        sa.Column("pose_roll", sa.Float(), nullable=True),
         sa.Column("quality_score", sa.Float(), nullable=False),
-        sa.Column("diversity_score", sa.Float()),
-        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
+        sa.Column("diversity_score", sa.Float(), nullable=True),
+        sa.Column("is_user_selected", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("is_provisional", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("quality_score >= 0 AND quality_score <= 1", name="quality_score_range"),
         sa.CheckConstraint("abs(vector_norm(embedding) - 1.0) < 0.01", name="cluster_rep_embedding_unit_norm"),
         sa.UniqueConstraint("cluster_id", "identity_id", name="unique_cluster_representative"),
@@ -684,6 +689,18 @@ def upgrade() -> None:
         "idx_cluster_reps_diversity",
         "identity_cluster_representatives",
         ["cluster_id", "diversity_score"],
+    )
+    op.create_index(
+        "idx_cluster_reps_user_selected",
+        "identity_cluster_representatives",
+        ["cluster_id", "is_user_selected"],
+        postgresql_where=sa.text("is_user_selected = true"),
+    )
+    op.create_index(
+        "idx_cluster_reps_provisional",
+        "identity_cluster_representatives",
+        ["cluster_id", "is_provisional"],
+        postgresql_where=sa.text("is_provisional = true"),
     )
     op.create_index(
         "idx_identity_suggestions_tenant",

@@ -352,6 +352,8 @@ async def _main() -> None:
     import os
     import sys
 
+    from sqlalchemy import text
+
     logging.basicConfig(
         level=logging.INFO,
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
@@ -363,6 +365,36 @@ async def _main() -> None:
         logger.error("POSTGRES_DSN not set. Exiting.")
         sys.exit(1)
 
+    # Wait for database availability before starting main loop
+    async def wait_for_database(dsn: str, max_retries: int = 30) -> bool:
+        """Wait for database to be available.
+
+        Returns True if available, False if exhausted retries.
+        """
+        engine = create_async_engine(dsn, echo=False)
+        for attempt in range(max_retries):
+            try:
+                async with engine.connect() as conn:
+                    await conn.execute(text("SELECT 1"))
+                    logger.info("Database connection established.")
+                    await engine.dispose()
+                    return True
+            except Exception as exc:
+                logger.warning(
+                    "Database not ready (attempt %d/%d): %s",
+                    attempt + 1,
+                    max_retries,
+                    exc,
+                )
+                await asyncio.sleep(2)
+        await engine.dispose()
+        return False
+
+    # Initial wait for database
+    if not await wait_for_database(postgres_dsn):
+        logger.error("Database unavailable after max retries. Exiting.")
+        sys.exit(1)
+
     while True:
         try:
             worker = ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn))
@@ -372,7 +404,10 @@ async def _main() -> None:
             break
         except Exception as exc:
             logger.error("Scan worker crashed (retrying in 5s): %s", exc)
+            # Wait for db to be available again before retrying
             await asyncio.sleep(5)
+            if not await wait_for_database(postgres_dsn, max_retries=10):
+                logger.warning("Database still unavailable, will retry...")
 
 
 if __name__ == "__main__":

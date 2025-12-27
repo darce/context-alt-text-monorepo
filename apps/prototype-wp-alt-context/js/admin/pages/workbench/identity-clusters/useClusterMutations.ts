@@ -127,6 +127,7 @@ export const useClusterMutations = ({
 
   // Rename mutation
   const renameMutation = useMutation({
+    mutationKey: ['rename-cluster', clusterId],
     mutationFn: (label: string) => updateClusterLabel(clusterId!, label),
     onSuccess: (_data, updatedLabel) => {
       if (clusterId) {
@@ -146,6 +147,7 @@ export const useClusterMutations = ({
 
   // Merge mutation
   const mergeMutation = useMutation({
+    mutationKey: ['merge-cluster', clusterId],
     mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel?: string }) => {
       if (!clusterId) {
         return Promise.reject(new Error(__('Cannot merge: no cluster ID', 'alt-context')));
@@ -183,6 +185,7 @@ export const useClusterMutations = ({
 
   // Reassign (remove from cluster) mutation
   const reassignMutation = useMutation({
+    mutationKey: ['reassign-identities', clusterId],
     mutationFn: async (identityIds: string[]) => {
       for (const id of identityIds) {
         await reassignClusterIdentity({ identityId: id, targetClusterId: null, blockFromCluster: true });
@@ -198,6 +201,7 @@ export const useClusterMutations = ({
 
   // Assign identity to existing cluster (for singletons)
   const assignToClusterMutation = useMutation({
+    mutationKey: ['assign-to-cluster', clusterId],
     mutationFn: async ({ identityId, targetClusterId }: { identityId: string; targetClusterId: string }) => {
       await reassignClusterIdentity({ identityId, targetClusterId });
     },
@@ -212,6 +216,7 @@ export const useClusterMutations = ({
 
   // Create cluster for singleton identity
   const createClusterMutation = useMutation({
+    mutationKey: ['create-cluster-for-identity'],
     mutationFn: async ({ identityId, label }: { identityId: string; label: string }) => {
       return createClusterForIdentity({ identityId, label });
     },
@@ -230,6 +235,7 @@ export const useClusterMutations = ({
 
   // Split cluster mutation
   const splitMutation = useMutation({
+    mutationKey: ['split-cluster', clusterId],
     mutationFn: async ({
       clusterId,
       nClusters = 2,

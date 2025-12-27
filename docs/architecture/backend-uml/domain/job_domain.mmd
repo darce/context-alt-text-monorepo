@@ -1,0 +1,47 @@
+---
+title: Recognition Domain Models (Jobs)
+---
+classDiagram
+    class Job {
+        +str id
+        +JobType type
+        +str tenant_id
+        +JobStatus status
+        +int progress_completed
+        +int progress_total
+        +str? error_message
+        +str? message
+        +dict? payload
+        +datetime started_at
+        +datetime? finished_at
+    }
+
+    class JobStatus {
+        <<enumeration>>
+        PENDING
+        RUNNING
+        COMPLETED
+        FAILED
+    }
+
+    class JobType {
+        <<enumeration>>
+        ANALYZE
+        CLUSTERING
+        CURATION
+        SPLIT
+    }
+
+    class SplitJobPayload {
+        +str cluster_id
+        +int n_clusters
+        +str? anchor_identity_id
+        +str? split_mode
+    }
+
+    Job --> JobStatus : status
+    Job --> JobType : type
+    Job --> SplitJobPayload : payload
+
+    note for Job "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
+    note for Job "Code anchors: recognition/domain/job.py"

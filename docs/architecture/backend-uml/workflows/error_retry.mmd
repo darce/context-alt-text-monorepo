@@ -2,23 +2,41 @@
 title: Scan Job Error Path
 ---
 sequenceDiagram
+    participant Client as WordPress Plugin
     participant API as /recognition/analyze
-    participant Session as AsyncSession
-    participant BG as BackgroundTasks worker
-    participant ScanSvc as IdentityScanService
+    participant Queue as ScanQueueService
+    participant Worker as scan_worker.py
+    participant ScanSvc as ScanService
     participant DB as PostgreSQL
     participant Logger as Logging
 
-    API->>Session: create IdentityScanJob(status=pending)
-    API->>BG: add_task(_process_scan_chunk,...)
-    BG->>Session: set_tenant_context()
-    BG->>ScanSvc: scan_identities(job, media_items)
-    alt model/persistence error
+    Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,DB: Mini-map: ENTRY: POST /recognition/analyze -> ScanQueueService -> SqlAlchemyScanQueueRepository, Worker: recognition/worker/scan_worker.py, ScanSvc: recognition/application/scan/service.py
+
+    Client->>API: ENTRY: POST /recognition/analyze
+    API->>Queue: create_scan_job_record()
+    Queue->>DB: INSERT identity_scan_jobs + identity_scan_job_items
+    API-->>Client: 202 accepted {job_id}
+
+    Worker->>DB: claim pending IdentityScanJobItem
+    Worker->>ScanSvc: process_media_item(...)
+    alt model/IO error
         ScanSvc-->>Logger: exception
-        ScanSvc->>DB: rollback()
-        ScanSvc->>DB: job.status="failed"; error_message; completed_at
-        DB-->>BG: commit failure status
+        Worker->>DB: mark item failed or release for retry
+        alt attempts less than max
+            Worker->>DB: status=pending, attempts+1
+        else attempts exhausted
+            Worker->>DB: status=failed, last_error
+        end
+        Worker->>Queue: refresh_job_progress(job_id)
+        Queue->>DB: update IdentityScanJob status (failed if any failed items)
     else success
-        ScanSvc->>DB: job.status="completed"; counters updated
+        Worker->>DB: status=completed, identities_detected
+        Worker->>Queue: refresh_job_progress(job_id)
+        Queue->>DB: update IdentityScanJob status/progress
     end
-    API-->>Client: jobs recorded; poll /recognition/jobs/{id}
+
+    Client->>API: GET /recognition/jobs/{job_id}
+    API->>Queue: get job status
+    Queue->>DB: SELECT identity_scan_jobs
+    API-->>Client: {status, progress, message}

@@ -94,6 +94,7 @@ class MediaIdentity(Base):
     pose_pitch: Mapped[float | None] = mapped_column(Float, nullable=True)
     pose_yaw: Mapped[float | None] = mapped_column(Float, nullable=True)
     pose_roll: Mapped[float | None] = mapped_column(Float, nullable=True)
+    quality_score: Mapped[float | None] = mapped_column(Float, nullable=True)
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True)
@@ -213,8 +214,13 @@ class IdentityClusterRepresentative(Base):
         UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="CASCADE"), nullable=False
     )
     embedding: Mapped[list[float]] = mapped_column(Vector(_DB_SETTINGS.pgvector_dimension), nullable=False)
+    pose_pitch: Mapped[float | None] = mapped_column(Float)
+    pose_yaw: Mapped[float | None] = mapped_column(Float)
+    pose_roll: Mapped[float | None] = mapped_column(Float)
     quality_score: Mapped[float] = mapped_column(Float, nullable=False)
     diversity_score: Mapped[float | None] = mapped_column(Float)
+    is_user_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    is_provisional: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     tenant: Mapped[Tenant] = relationship()

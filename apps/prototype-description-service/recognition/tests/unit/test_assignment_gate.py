@@ -69,6 +69,9 @@ class NoopRepository(ClusterRepository):
     async def clear_representatives(self, cluster_id: str) -> None:
         raise NotImplementedError
 
+    async def remove_representative(self, representative_id: str) -> None:
+        raise NotImplementedError
+
     async def count_labeled(self) -> int:
         return 10  # Return a mature count so adaptive threshold is relaxed
 
@@ -80,6 +83,24 @@ class NoopRepository(ClusterRepository):
 
     async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
         return None
+
+    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
+        return []
+
+    async def mark_representative_user_selected(self, representative_id: str, is_selected: bool = True) -> None:
+        raise NotImplementedError
+
+    async def get_user_selected_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
+        raise NotImplementedError
+
+    async def confirm_provisional_representatives(self, cluster_id: str) -> int:
+        raise NotImplementedError
+
+    async def confirm_all_provisional_reps(self, tenant_id: str) -> int:
+        raise NotImplementedError
+
+    async def cleanup_orphaned_provisional_reps(self, tenant_id: str) -> int:
+        raise NotImplementedError
 
 
 def make_candidate() -> AssignmentCandidate:
@@ -125,11 +146,13 @@ class FakeCheck(AssignmentCheck):
     name: str
     enabled: bool
     result: CheckResult
+    called: bool = False
 
     def is_enabled(self) -> bool:
         return self.enabled
 
-    async def evaluate(self, candidate: AssignmentCandidate) -> CheckResult:  # pragma: no cover - simple forwarder
+    async def evaluate(self, candidate: AssignmentCandidate) -> CheckResult:
+        self.called = True
         return self.result
 
 
@@ -213,3 +236,44 @@ async def test_gate_aggregates_metadata_from_all_checks() -> None:
     assert decision.metadata["b"] == 2
     assert decision.metadata["c"] == 3
     assert decision.outcome is AssignmentOutcome.SUGGEST  # Stopped at check_c
+
+
+@pytest.mark.asyncio
+async def test_gate_skips_disabled_checks() -> None:
+    """Gate should ignore disabled checks and not record them."""
+    disabled = FakeCheck(name="disabled_check", enabled=False, result=CheckResult(passed=True))
+    enabled = FakeCheck(name="enabled_check", enabled=True, result=CheckResult(passed=True))
+    gate = AssignmentGate(
+        settings=make_settings(),
+        cluster_repository=NoopRepository(),
+        checks=[disabled, enabled],
+    )
+
+    decision = await gate.evaluate(make_candidate())
+
+    assert decision.outcome is AssignmentOutcome.ACCEPT
+    assert decision.checks_passed == ["enabled_check"]
+    assert decision.checks_failed == []
+    assert disabled.called is False
+    assert enabled.called is True
+
+
+@pytest.mark.asyncio
+async def test_gate_continues_after_nonfatal_failure() -> None:
+    """Gate should continue after non-fatal failures and still accept."""
+    gate = AssignmentGate(
+        settings=make_settings(),
+        cluster_repository=NoopRepository(),
+        checks=[
+            FakeCheck(name="check_a", enabled=True, result=CheckResult(passed=True)),
+            FakeCheck(name="soft_fail", enabled=True, result=CheckResult(passed=False, reason="soft failure")),
+            FakeCheck(name="check_c", enabled=True, result=CheckResult(passed=True)),
+        ],
+    )
+
+    decision = await gate.evaluate(make_candidate())
+
+    assert decision.outcome is AssignmentOutcome.ACCEPT
+    assert decision.checks_passed == ["check_a", "check_c"]
+    assert decision.checks_failed == ["soft_fail"]
+    assert decision.rejection_reason is None

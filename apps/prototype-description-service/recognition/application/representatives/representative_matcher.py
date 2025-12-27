@@ -9,8 +9,6 @@ from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     pass
-from uuid import UUID
-
 import numpy as np
 
 from recognition.application.assignment import AssignmentGate, AssignmentOutcome, AssignmentWriter
@@ -21,7 +19,7 @@ from recognition.domain.locator import IdentityLocator
 from recognition.observability import ClusteringLogger, DecisionType
 
 # Callback to persist representative embedding after assignment
-AddRepresentativeFn = Callable[[UUID, MediaIdentity], Awaitable[np.ndarray | None]]
+AddRepresentativeFn = Callable[[str, MediaIdentity], Awaitable[np.ndarray | None]]
 
 
 class RepresentativeMatcher:
@@ -46,8 +44,8 @@ class RepresentativeMatcher:
     async def match(
         self,
         candidates: Sequence[MediaIdentity],
-        representatives_by_cluster: dict[UUID, list[np.ndarray]],
-    ) -> tuple[int, list[MediaIdentity], dict[UUID, list[np.ndarray]]]:
+        representatives_by_cluster: dict[str, list[np.ndarray]],
+    ) -> tuple[int, list[MediaIdentity], dict[str, list[np.ndarray]]]:
         """Match identities against representatives using the gate."""
         assignments = 0
         still_unclustered: list[MediaIdentity] = []
@@ -59,7 +57,11 @@ class RepresentativeMatcher:
             self._log_decision(decision)
 
             if decision.outcome is AssignmentOutcome.ACCEPT:
-                await self.writer.assign(assignment_candidate)
+                await self.writer.assign_to_existing_cluster(
+                    assignment_candidate.identity,
+                    assignment_candidate.cluster_id,
+                    assignment_candidate.discovery_similarity,
+                )
                 rep = await self.add_representative_embedding(
                     assignment_candidate.cluster_id, assignment_candidate.identity
                 )

@@ -69,13 +69,10 @@ class GateStub(AssignmentGate):
 
 class WriterStub(AssignmentWriter):
     def __init__(self) -> None:
-        self.assigned: list[AssignmentCandidate] = []
+        self.assigned: list[tuple[MediaIdentity, str, float]] = []
 
-    async def assign(self, candidate: AssignmentCandidate) -> None:
-        self.assigned.append(candidate)
-
-    async def create_cluster(self, members):
-        raise NotImplementedError
+    async def assign_to_existing_cluster(self, identity: MediaIdentity, cluster_id: str, similarity: float) -> None:
+        self.assigned.append((identity, cluster_id, similarity))
 
 
 class SuggestionStub:
@@ -123,7 +120,8 @@ async def test_representative_matcher_routes_through_gate() -> None:
     )
 
     assert assigned_count == 1
-    assert writer.assigned[0].identity.id == identity_accept.id
+    assert writer.assigned[0][0].id == identity_accept.id
+    assert writer.assigned[0][1] == cluster_id
     assert len(suggestions.suggestions) == 1
     assert suggestions.suggestions[0][0].identity.id == identity_suggest.id
     assert still_unclustered == [identity_suggest]

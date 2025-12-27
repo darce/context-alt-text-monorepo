@@ -20,7 +20,12 @@ class ClusterRepresentative:
     embedding: np.ndarray
     created_at: datetime
     tenant_id: str | None = None
+    pose_pitch: float | None = None
+    pose_yaw: float | None = None
+    pose_roll: float | None = None
     quality_score: float = 1.0
     diversity_score: float | None = None
     media_id: int | None = None  # For HTTP response serialization
     image_phash: str | None = None
+    is_user_selected: bool = False  # User pinned this rep
+    is_provisional: bool = False  # Added during batch, pending confirmation

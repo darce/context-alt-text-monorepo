@@ -19,6 +19,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
+from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.orchestration.cluster_curation import update_cluster
 from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
@@ -337,6 +338,18 @@ async def merge_cluster(
         moved_identity_ids,
         moved_media_ids,
         tenant_id,
+    )
+
+    # Broadcast merge event
+    broadcaster = get_event_broadcaster()
+    await broadcaster.broadcast(
+        "cluster_merged",
+        {
+            "source_cluster_id": source_cluster_id,
+            "target_cluster_id": target_cluster_id,
+            "moved_count": moved,
+        },
+        tenant_id=tenant_id,
     )
 
     # Delete source cluster LAST, after all recomputations and logging are complete.

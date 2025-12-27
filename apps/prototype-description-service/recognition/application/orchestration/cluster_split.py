@@ -16,6 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster as IdentityClusterModel
 from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.suggestions.service import SuggestionRefreshReason
@@ -26,7 +27,7 @@ from recognition.domain.repositories import (
     IdentityClusterBlockRepository,
     MemberRepository,
 )
-from recognition.observability import ClusteringLogger
+from recognition.observability import ClusteringLogger, DecisionType
 from recognition.shared.ids import generate_id
 from recognition.shared.similarity import compute_face_similarity
 
@@ -357,15 +358,31 @@ async def split_cluster(
                 tenant_id=original_cluster.tenant_id,
             )
 
-    logger.info(
-        "[curation] SPLIT original_cluster=%s original_label='%s' new_clusters=%s moved_counts=%s "
-        "moved_details=%s tenant_id=%s user_action=manual_split",
-        cluster_id,
-        original_cluster.label,
-        new_cluster_ids,
-        moved_counts,
-        split_details,
-        original_cluster.tenant_id,
+    # Log split as FALSE_POSITIVE for moved identities (curation metrics)
+    if clustering_logger:
+        for identity_id in moved_identity_ids_all:
+            with contextlib.suppress(Exception):
+                clustering_logger.log_decision(
+                    identity_id=identity_id,
+                    cluster_id=cluster_id,  # From original cluster
+                    decision=DecisionType.REJECT,
+                    reason="false_positive_split",
+                    metadata={
+                        "action": "split",
+                        "tenant_id": original_cluster.tenant_id,
+                    },
+                )
+
+    # Broadcast split event
+    broadcaster = get_event_broadcaster()
+    await broadcaster.broadcast(
+        "cluster_split",
+        {
+            "original_cluster_id": cluster_id,
+            "new_cluster_ids": new_cluster_ids,
+            "moved_counts": moved_counts,
+        },
+        tenant_id=original_cluster.tenant_id,
     )
 
     return new_cluster_ids, moved_counts

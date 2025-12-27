@@ -91,6 +91,8 @@ class ClusterRepository(Protocol):
 
     async def add_representative(self, representative: ClusterRepresentative) -> None: ...
 
+    async def remove_representative(self, representative_id: str) -> None: ...
+
     async def clear_representatives(self, cluster_id: str) -> None:
         """Remove all stored representatives for a cluster."""
         ...
@@ -118,6 +120,84 @@ class ClusterRepository(Protocol):
         """
         raise NotImplementedError("TODO: get_labeled_with_representatives")
 
+    async def get_top_unlabeled(
+        self,
+        tenant_id: str,
+        limit: int = 10,
+    ) -> list[IdentityCluster]:
+        """Get unlabeled clusters sorted by identity_count descending.
+
+        Args:
+            tenant_id: Tenant scope.
+            limit: Maximum clusters to return.
+
+        Returns:
+            Unlabeled clusters with highest member counts.
+        """
+        ...
+
+    async def mark_representative_user_selected(
+        self,
+        representative_id: str,
+        is_selected: bool = True,
+    ) -> None:
+        """Mark a representative as user-selected (pinned).
+
+        Args:
+            representative_id: UUID of the representative to mark.
+            is_selected: True to pin, False to unpin.
+
+        Raises:
+            ValueError: If representative not found.
+        """
+        ...
+
+    async def get_user_selected_representatives(
+        self,
+        cluster_id: str,
+    ) -> Sequence[ClusterRepresentative]:
+        """Get all user-selected representatives for a cluster.
+
+        Args:
+            cluster_id: Cluster UUID.
+
+        Returns:
+            List of pinned representatives.
+        """
+        ...
+
+    async def confirm_provisional_representatives(self, cluster_id: str) -> int:
+        """Mark all provisional representatives in a cluster as confirmed.
+
+        Args:
+            cluster_id: Cluster whose provisional reps should be confirmed.
+
+        Returns:
+            Number of representatives confirmed.
+        """
+        ...
+
+    async def confirm_all_provisional_reps(self, tenant_id: str) -> int:
+        """Mark all provisional representatives for a tenant as confirmed.
+
+        Args:
+            tenant_id: Tenant scope.
+
+        Returns:
+            Number of representatives confirmed.
+        """
+        ...
+
+    async def cleanup_orphaned_provisional_reps(self, tenant_id: str) -> int:
+        """Remove provisional reps from clusters with no active batch.
+
+        Called during startup to clean up after crashes.
+
+        Returns:
+            Number of provisional reps removed.
+        """
+        ...
+
 
 class MemberRepository(Protocol):
     """Abstract interface for cluster member persistence."""
@@ -132,6 +212,16 @@ class MemberRepository(Protocol):
 
     async def add_member(self, cluster_id: str, identity_id: str, similarity: float) -> IdentityMember:
         """Add a single member to a cluster."""
+        ...
+
+    async def add_member_if_not_exists(
+        self, cluster_id: str, identity_id: str, similarity: float
+    ) -> IdentityMember | None:
+        """Add a member only if not already in this cluster.
+
+        Returns the member if created, None if already exists.
+        This prevents duplicate key errors when retrying assignments.
+        """
         ...
 
     async def bulk_add_members(self, cluster_id: str, members: Sequence[MemberData]) -> list[IdentityMember]:

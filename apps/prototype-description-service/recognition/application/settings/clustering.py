@@ -176,6 +176,14 @@ class ClusteringSettings(BaseModel):
         default=10,
         description="Maximum number of representatives to maintain per cluster.",
     )
+    pose_diversity_bonus: int = Field(
+        default=3,
+        description="Extra representatives allowed for novel head poses beyond max_representatives_per_cluster.",
+    )
+    pose_bucket_size: float = Field(
+        default=30.0,
+        description="Degrees per pose bucket for novelty detection.",
+    )
     representative_diversity_threshold: float = Field(
         default=0.90,
         description="Maximum similarity allowed between representatives (lower adds diversity).",

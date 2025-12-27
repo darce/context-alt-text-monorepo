@@ -82,7 +82,7 @@ class WriterStub(AssignmentWriter):
         self.created_clusters: list[tuple[str, list[MediaIdentity], list[float], str]] = []
         self.refresh_called = False
 
-    async def persist_assignment(self, decision: AssignmentDecision) -> None:
+    async def persist_assignment(self, decision: AssignmentDecision, batch_mode: bool = False) -> None:
         self.assigned.append(decision)
 
     async def persist_new_cluster(self, tenant_id: str, identities, similarities, algorithm="graph"):

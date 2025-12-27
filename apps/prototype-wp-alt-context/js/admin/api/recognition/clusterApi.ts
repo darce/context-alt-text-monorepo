@@ -184,3 +184,17 @@ export const createClusterForIdentity = async (
     restNonce: getConfig().nonce,
   });
 };
+
+export const pinRepresentative = async (
+  clusterId: string,
+  representativeId: string,
+  isPinned: boolean,
+): Promise<void> => {
+  const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${clusterId}/representatives/${representativeId}/pin`;
+  await fetchApi(url, {
+    method: 'PATCH',
+    body: { is_pinned: isPinned },
+    restNonce: getConfig().nonce,
+  });
+};

@@ -113,3 +113,8 @@ export interface CreateClusterForIdentityResponse {
   identity_id: string;
   message: string;
 }
+
+export interface PinRepresentativeRequest {
+  tenant_id: string;
+  is_pinned: boolean;
+}

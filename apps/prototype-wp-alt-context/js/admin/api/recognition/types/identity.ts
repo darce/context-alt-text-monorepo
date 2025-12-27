@@ -48,10 +48,12 @@ export interface DebugMetrics {
 
 export interface DetectedIdentity {
   identity_id: string;
+  representative_id?: string | null;
   media_id: number;
   cluster_id: string | null;
   cluster_label: string | null;
   is_auto_label: boolean;
+  is_pinned?: boolean;
   bbox: BoundingBox;
   confidence: number;
   similarity: number | null;

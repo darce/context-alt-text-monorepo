@@ -80,6 +80,7 @@ async def cluster_unclustered_identities(
     clustering_logger: ClusteringLogger | None = None,
     constrained_hac: Any | None = None,
     hac_settings: Any | None = None,
+    commit: bool = True,
 ) -> ClusterJobResult:
     """Cluster any identities not yet assigned to a cluster."""
     try:
@@ -160,7 +161,8 @@ async def cluster_unclustered_identities(
         clustering_job.completed_at = datetime.now(tz=UTC)
         finished_at = clustering_job.completed_at
         await session.flush()
-        await session.commit()
+        if commit:
+            await session.commit()
         return ClusterJobResult(
             job_id=job_label,
             started_at=started_at,
@@ -432,7 +434,8 @@ async def cluster_unclustered_identities(
         status="completed",
         completed_at=clustering_job.completed_at,
     )
-    await session.commit()
+    if commit:
+        await session.commit()
     finished_at = clustering_job.completed_at or datetime.now(tz=UTC)
     if clustering_logger:
         clustering_logger.bind_run_context(None)

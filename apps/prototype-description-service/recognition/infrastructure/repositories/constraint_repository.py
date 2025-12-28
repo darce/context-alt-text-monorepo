@@ -6,9 +6,14 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from typing import Any, cast
 
-from sqlalchemy import or_, select
+from sqlalchemy import insert, or_, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.dml import Insert
 
 from db.models import IdentityConstraint as ConstraintModel
 from recognition.domain.constraints import (
@@ -50,18 +55,42 @@ class SqlAlchemyConstraintRepository(IdentityConstraintRepository):
         id_a, id_b = canonical_order(uuid.UUID(identity_a), uuid.UUID(identity_b))
         if id_a == id_b:
             raise ValueError("Cannot create constraint between identical identity IDs")
+        constraint_id = uuid.uuid4()
+        values = {
+            "id": constraint_id,
+            "tenant_id": uuid.UUID(tenant_id),
+            "identity_a": id_a,
+            "identity_b": id_b,
+            "constraint_type": constraint_type,
+            "source": source,
+            "created_at": datetime.now(tz=UTC),
+            "created_by_user_id": created_by_user_id,
+        }
 
-        model = ConstraintModel(
-            tenant_id=uuid.UUID(tenant_id),
-            identity_a=id_a,
-            identity_b=id_b,
-            constraint_type=constraint_type,
-            source=source,
-            created_at=datetime.now(tz=UTC),
-            created_by_user_id=created_by_user_id,
-        )
-        self.session.add(model)
-        await self.session.flush()
+        bind = self.session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else None
+
+        stmt: Insert
+        if dialect_name == "postgresql":
+            stmt = pg_insert(ConstraintModel).values(**values).on_conflict_do_nothing()
+        elif dialect_name == "sqlite":
+            stmt = sqlite_insert(ConstraintModel).values(**values).on_conflict_do_nothing()
+        else:
+            stmt = insert(ConstraintModel).values(**values)
+
+        result = cast(CursorResult[Any], await self.session.execute(stmt))
+        if result.rowcount == 0:
+            existing = await self.get(tenant_id, str(id_a), str(id_b))
+            if existing:
+                return existing
+            raise ValueError("Constraint insert skipped but existing row not found")
+
+        model = await self.session.get(ConstraintModel, constraint_id)
+        if model is None:
+            existing = await self.get(tenant_id, str(id_a), str(id_b))
+            if existing:
+                return existing
+            raise ValueError("Constraint insert failed to load created row")
         return self._to_domain(model)
 
     async def get(

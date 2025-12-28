@@ -6,11 +6,18 @@ Scaffolded for Phase 5 persistence work.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime
+from typing import Any, cast
 
-from sqlalchemy import Select, select
+from sqlalchemy import Select, insert, select
+from sqlalchemy.dialects.postgresql import insert as pg_insert
+from sqlalchemy.dialects.sqlite import insert as sqlite_insert
+from sqlalchemy.engine import CursorResult
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.sql.dml import Insert
 
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity
@@ -27,6 +34,14 @@ def _clamp_similarity(value: float) -> float:
     (e.g., 1.0000001 from cosine similarity), which violates the DB check constraint.
     """
     return max(0.0, min(1.0, value))
+
+
+def _is_deadlock_error(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    if "deadlock detected" in message:
+        return True
+    orig = getattr(exc, "orig", None)
+    return orig is not None and orig.__class__.__name__ == "DeadlockDetectedError"
 
 
 class SqlAlchemyMemberRepository(MemberRepository):
@@ -81,20 +96,35 @@ class SqlAlchemyMemberRepository(MemberRepository):
         if tenant_uuid is None or cluster_uuid is None or identity_uuid is None:
             raise ValueError("tenant_id, cluster_id, and identity_id must be valid UUID-compatible strings")
 
-        # Check if already a member of this specific cluster
-        stmt = (
-            select(MemberModel)
-            .where(MemberModel.tenant_id == tenant_uuid)
-            .where(MemberModel.cluster_id == cluster_uuid)
-            .where(MemberModel.identity_id == identity_uuid)
-        )
-        result = await self._session.execute(stmt)
-        existing = result.scalar_one_or_none()
+        await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
-        if existing:
-            return None  # Already a member
+        member_id = uuid.uuid4()
+        values = {
+            "id": member_id,
+            "tenant_id": tenant_uuid,
+            "cluster_id": cluster_uuid,
+            "identity_id": identity_uuid,
+            "similarity": _clamp_similarity(similarity),
+        }
+        bind = self._session.get_bind()
+        dialect_name = bind.dialect.name if bind is not None else None
 
-        return await self.add_member(cluster_id, identity_id, similarity)
+        stmt: Insert
+        if dialect_name == "postgresql":
+            stmt = pg_insert(MemberModel).values(**values).on_conflict_do_nothing()
+        elif dialect_name == "sqlite":
+            stmt = sqlite_insert(MemberModel).values(**values).on_conflict_do_nothing()
+        else:
+            stmt = insert(MemberModel).values(**values)
+
+        result = cast(CursorResult[Any], await self._session.execute(stmt))
+        if result.rowcount == 0:
+            return None
+
+        model = await self._session.get(MemberModel, member_id)
+        if model is None:
+            return None
+        return self._to_domain(model)
 
     async def bulk_add_members(self, cluster_id: str, members) -> list[IdentityMember]:
         """Bulk insert members."""
@@ -130,7 +160,7 @@ class SqlAlchemyMemberRepository(MemberRepository):
     async def move_members(self, source_cluster_id: str, target_cluster_id: str) -> int:
         """Reassign all members from a source cluster to a target cluster.
 
-        Uses a single bulk UPDATE statement to prevent deadlocks when
+        Uses a single bulk UPDATE statement and retries on deadlocks when
         concurrent merges affect overlapping members.
         """
         from sqlalchemy import update
@@ -148,9 +178,23 @@ class SqlAlchemyMemberRepository(MemberRepository):
             .where(MemberModel.tenant_id == tenant_uuid)
             .values(cluster_id=target_uuid)
         )
-        result = await self._session.execute(stmt)
-        await self._session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
+        max_attempts = 3
+        last_error: DBAPIError | None = None
+        for attempt in range(max_attempts):
+            try:
+                result = await self._session.execute(stmt)
+                await self._session.flush()
+                return int(result.rowcount)  # type: ignore[attr-defined]
+            except DBAPIError as exc:
+                last_error = exc
+                if _is_deadlock_error(exc) and attempt < max_attempts - 1:
+                    await self._session.rollback()
+                    await asyncio.sleep(0.05 * (attempt + 1))
+                    continue
+                raise
+        if last_error:
+            raise last_error
+        raise RuntimeError("Failed to move members after retries.")
 
     async def remove_member(self, member_id: str) -> None:
         """Remove a member."""

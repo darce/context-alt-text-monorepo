@@ -94,17 +94,27 @@ class StubFaceDetector(FaceDetectorProtocol):
 class InsightFaceFaceDetector(FaceDetectorProtocol):
     """Real face detector using InsightFace."""
 
-    def __init__(self, adapter: InsightFaceAdapter, timeout: float = 30.0) -> None:
+    def __init__(
+        self,
+        adapter: InsightFaceAdapter,
+        timeout: float = 30.0,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
         self._adapter = adapter
         self._timeout = timeout
+        self._client = client
 
     async def _fetch_image(self, url: str) -> bytes | None:
         """Fetch image bytes from a URL."""
         try:
-            async with httpx.AsyncClient(timeout=self._timeout) as client:
-                response = await client.get(url)
-                response.raise_for_status()
-                return response.content
+            if self._client is None:
+                async with httpx.AsyncClient(timeout=self._timeout) as client:
+                    response = await client.get(url)
+                    response.raise_for_status()
+                    return response.content
+            response = await self._client.get(url)
+            response.raise_for_status()
+            return response.content
         except httpx.HTTPError as e:
             logger.error("Failed to fetch image from %s: %s", url[:100], e)
             return None

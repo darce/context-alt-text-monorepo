@@ -155,6 +155,40 @@ class TestInsightFaceFaceDetector:
         assert detections[0].media_id == "http://example.com/image.jpg"
 
     @pytest.mark.asyncio
+    async def test_uses_shared_client_when_provided(self) -> None:
+        """Should use provided AsyncClient instead of creating a new one."""
+        mock_adapter = MagicMock()
+        mock_face = MagicMock(
+            bbox=(10, 20, 100, 150),
+            confidence=0.95,
+            embedding_512=np.random.randn(512).astype(np.float32),
+            pose=None,
+            age=None,
+            gender=None,
+        )
+        mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
+
+        mock_response = MagicMock()
+        mock_response.content = b"\xff\xd8fake-jpeg-bytes"
+        mock_response.raise_for_status = MagicMock()
+        mock_client = MagicMock()
+        mock_client.get = AsyncMock(return_value=mock_response)
+
+        detector = InsightFaceFaceDetector(mock_adapter, client=mock_client)
+
+        with pytest.MonkeyPatch.context() as mp:
+            import httpx
+
+            def fail_client(*args, **kwargs):
+                raise AssertionError("AsyncClient should not be constructed when client is provided")
+
+            mp.setattr(httpx, "AsyncClient", fail_client)
+            detections = await detector.detect(["http://example.com/image.jpg"])
+
+        mock_client.get.assert_called_once()
+        assert len(detections) == 1
+
+    @pytest.mark.asyncio
     async def test_handles_multiple_faces_per_image(self) -> None:
         """Should return multiple detections if adapter finds multiple faces."""
         mock_adapter = MagicMock()

@@ -61,7 +61,7 @@ def test_patch_cluster_label_updates_cluster(api_client, tenant_id, fake_cluster
     assert resp.json()["label"] == "test"
 
 
-def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_service) -> None:
+def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_service, fake_job_service) -> None:
     target = seed_cluster(fake_cluster_service, tenant_id, label="target")
     source = seed_cluster(fake_cluster_service, tenant_id, label="source")
 
@@ -73,7 +73,19 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
     assert resp.status_code == 200
     body = resp.json()
     assert body["label"] == "merged"
-    assert all(c.id != source.id for c in fake_cluster_service.clusters)
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["label"] == "merged"
+
+    # Source cluster should NOT be deleted immediately (deferred)
+    assert any(c.id == source.id for c in fake_cluster_service.clusters)
+
+    # Verify curation job was queued with source_cluster_id
+    curation_calls = [c for c in fake_job_service.calls if c["method"] == "queue_curation_followup"]
+    assert curation_calls
+    call = curation_calls[-1]
+    assert call["source_cluster_id"] == source.id
+    assert target.id in call["cluster_ids"]
 
 
 def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:

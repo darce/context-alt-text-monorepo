@@ -42,6 +42,9 @@ class NoopRepository(ClusterRepository):
     async def refresh_centroids_view(self) -> None:
         pass
 
+    async def refresh_centroids_view_concurrent(self) -> None:
+        pass
+
     async def get_unclustered(self, tenant_id):
         raise NotImplementedError
 

@@ -110,6 +110,52 @@ async def test_merge_cluster_moves_members_and_recomputes(
 
 
 @pytest.mark.asyncio
+async def test_merge_cluster_defers_recompute_and_deletion(
+    service: ClusterService,
+    mock_cluster_repo: AsyncMock,
+    mock_member_repo: AsyncMock,
+    mock_writer: Mock,
+) -> None:
+    """Should support a fast merge path that defers heavyweight work."""
+    tenant_id = str(uuid.uuid4())
+    source_id = str(uuid.uuid4())
+    target_id = str(uuid.uuid4())
+
+    source_cluster = IdentityCluster(
+        id=source_id,
+        tenant_id=tenant_id,
+        is_labeled=False,
+        identity_count=5,
+        label="Source",
+    )
+    target_cluster = IdentityCluster(
+        id=target_id,
+        tenant_id=tenant_id,
+        is_labeled=True,
+        identity_count=10,
+        label="Target",
+    )
+
+    mock_cluster_repo.get_by_id.side_effect = [source_cluster, target_cluster]
+    mock_cluster_repo.update.return_value = target_cluster
+
+    merged = await service.merge_cluster(
+        source_cluster_id=source_id,
+        tenant_id=tenant_id,
+        target_cluster_id=target_id,
+        defer_recompute=True,
+    )
+
+    assert merged is target_cluster
+    mock_member_repo.move_members.assert_awaited_once_with(source_id, target_id)
+    mock_cluster_repo.delete.assert_not_called()
+    mock_member_repo.get_by_cluster.assert_not_awaited()
+    mock_writer.recompute_centroid.assert_not_awaited()
+    mock_writer.recompute_representatives.assert_not_awaited()
+    mock_writer.refresh_centroids_view.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_merge_cluster_missing_validation(
     service: ClusterService,
     mock_cluster_repo: AsyncMock,

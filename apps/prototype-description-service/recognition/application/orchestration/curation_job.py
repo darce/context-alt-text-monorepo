@@ -9,6 +9,7 @@ from collections.abc import Sequence
 
 from recognition.application.orchestration.cluster_service import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.repositories import ClusterRepository
 
 logger = logging.getLogger(__name__)
@@ -53,10 +54,6 @@ async def run_curation_job(
         if callable(recompute_centroid):
             await recompute_centroid(cluster_id)
 
-    refresh_view = getattr(assignment_writer, "refresh_centroids_view_concurrent", None)
-    if callable(refresh_view):
-        await refresh_view()
-
     identities_clustered = 0
     if run_incremental_clustering and cluster_service is not None:
         unclustered = await cluster_repo.get_unclustered(tenant_id)
@@ -66,6 +63,30 @@ async def run_curation_job(
 
     if source_cluster_id and cluster_service is not None and unique_cluster_ids:
         target_cluster_id = unique_cluster_ids[0]
+        constraint_repo = getattr(cluster_service, "constraint_repository", None)
+        if constraint_repo is not None:
+            try:
+                source_cluster = await cluster_repo.get_by_id(source_cluster_id)
+                target_cluster = await cluster_repo.get_by_id(target_cluster_id)
+                source_rep_id = getattr(source_cluster, "representative_identity_id", None) if source_cluster else None
+                target_rep_id = getattr(target_cluster, "representative_identity_id", None) if target_cluster else None
+                if source_rep_id and target_rep_id and source_rep_id != target_rep_id:
+                    await constraint_repo.create(
+                        tenant_id=tenant_id,
+                        identity_a=str(source_rep_id),
+                        identity_b=str(target_rep_id),
+                        constraint_type=ConstraintType.MUST_LINK.value,
+                        source=ConstraintSource.MERGE.value,
+                    )
+            except Exception as exc:
+                logger.warning(
+                    "[curation_job] must_link create failed tenant_id=%s source_cluster_id=%s target_cluster_id=%s: %s",
+                    tenant_id,
+                    source_cluster_id,
+                    target_cluster_id,
+                    exc,
+                )
+
         try:
             await cluster_service.retry_matching(target_cluster_id=target_cluster_id, tenant_id=tenant_id)
         except Exception as exc:

@@ -276,18 +276,20 @@ async def merge_cluster(
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
-    # Queue curation job for deferred work (replaces background tasks)
-    job_service = await get_job_service(
-        session=session,
-        tenant_id=request.tenant_id,
-        cluster_service_builder=lambda _tid: cluster_service,
-        scan_service_builder=None,
-    )
-    await job_service.queue_curation_followup(
-        tenant_id=request.tenant_id,
-        cluster_ids=[request.target_cluster_id],
-        source_cluster_id=cluster_id,
-    )
+    # Queue curation job for deferred work (replaces background tasks).
+    # Skip if source == target (merge becomes a metadata update and should not trigger delete).
+    if cluster_id.lower() != request.target_cluster_id.lower():
+        job_service = await get_job_service(
+            session=session,
+            tenant_id=request.tenant_id,
+            cluster_service_builder=lambda _tid: cluster_service,
+            scan_service_builder=None,
+        )
+        await job_service.queue_curation_followup(
+            tenant_id=request.tenant_id,
+            cluster_ids=[request.target_cluster_id],
+            source_cluster_id=cluster_id,
+        )
 
     return cluster
 

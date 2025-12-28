@@ -102,6 +102,9 @@ class JobService:
         """
         cluster_ids_list = list(dict.fromkeys(cluster_ids))
         identity_ids_list = list(identity_ids or [])
+        if source_cluster_id and str(source_cluster_id).lower() in {cid.lower() for cid in cluster_ids_list}:
+            # Never allow merge cleanup to delete a cluster that is also a recompute target.
+            source_cluster_id = None
         job = Job(
             id=str(generate_id()),
             type=JobType.CURATION,

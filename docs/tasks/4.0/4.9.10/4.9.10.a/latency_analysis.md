@@ -129,27 +129,37 @@ class ScanWorker:
 
 ```python
 async def _process_claimed_items(self, claimed: list[ScanQueueItem]) -> None:
-    sem = asyncio.Semaphore(self._config.claim_batch_size)
+    sem = asyncio.Semaphore(min(self._config.max_concurrency, len(claimed)))
 
     async def _process_item(item: ScanQueueItem) -> None:
-        async with self._session_factory() as session:
-            repo = SqlAlchemyScanQueueRepository(session)
-            queue = ScanQueueService(repo)
-            scan_service = self._scan_service(session)
-            async with sem:
-                identities = await scan_service.process_media_item(
-                    tenant_id=str(item.tenant_id),
-                    media_id=item.media_id,
-                    media_url=item.media_url,
-                )
-                await repo.mark_item_completed(
-                    item_id=item.id,
-                    completed_at=datetime.now(tz=UTC),
-                    identities_detected=identities,
-                )
-            await session.commit()
+        request_id = uuid.uuid4()
+        async with sem:
+            async with self._session_factory() as session:
+                await enable_rls_bypass(session)
+                repo = SqlAlchemyScanQueueRepository(session)
+                scan_service = self._build_scan_service(session)
+                logger.info("[worker] START scan_item request_id=%s item_id=%s", request_id, item.id)
+                try:
+                    identities = await scan_service.process_media_item(
+                        tenant_id=str(item.tenant_id),
+                        media_id=item.media_id,
+                        media_url=item.media_url,
+                    )
+                    await repo.mark_item_completed(
+                        item_id=item.id,
+                        completed_at=datetime.now(tz=UTC),
+                        identities_detected=identities,
+                    )
+                except Exception as exc:
+                    await self._handle_item_failure(
+                        repo=repo,
+                        item=item,
+                        now=datetime.now(tz=UTC),
+                        error_message=str(exc),
+                    )
+                await session.commit()
 
-    await asyncio.gather(*[_process_item(item) for item in claimed], return_exceptions=False)
+    await asyncio.gather(*[_process_item(item) for item in claimed], return_exceptions=True)
 ```
 
 ### 4.3. Reduce HTTP Overhead in the Detector
@@ -160,7 +170,7 @@ async def _process_claimed_items(self, claimed: list[ScanQueueItem]) -> None:
 
 ```python
 class InsightFaceFaceDetector(FaceDetectorProtocol):
-    def __init__(self, adapter: InsightFaceAdapter, client: httpx.AsyncClient) -> None:
+    def __init__(self, adapter: InsightFaceAdapter, client: httpx.AsyncClient | None = None) -> None:
         self._adapter = adapter
         self._client = client
 
@@ -182,6 +192,8 @@ class ScanWorker:
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
+        if self._http_client is not None:
+            await self._http_client.aclose()
         await self._engine.dispose()
 
 backoff = 2.0
@@ -208,3 +220,27 @@ while True:
     - Confirm "Loading InsightFace" appears only once.
     - Confirm parallel timestamps.
     - Verify clean exit on interrupt.
+
+---
+
+## 6. Implementation Checklist
+
+### Phase 1: Singleton Model Adapter
+- [x] Refactor `ScanWorker` to initialize `InsightFaceAdapter` in `__init__` (once per worker) <!-- id: 1 -->
+- [x] Pass shared adapter instance to `ScanService` factory <!-- id: 2 -->
+- [ ] Verify `InsightFace model loaded` log appears only once per worker lifetime <!-- id: 3 -->
+
+### Phase 2: Concurrent Batch Processing
+- [x] Implement `asyncio.Semaphore` for bounded concurrency (e.g., limit 5-10) <!-- id: 4 -->
+- [x] Refactor `_process_claimed_items` to use `asyncio.gather` for parallel processing <!-- id: 5 -->
+- [x] Ensure `AsyncSession` is scoped per-task (not shared across concurrent tasks) <!-- id: 6 -->
+- [x] Add Request ID logging to trace interleaved execution <!-- id: 7 -->
+
+### Phase 3: Resource Management & Stability
+- [x] Implement `__aenter__` and `__aexit__` in `ScanWorker` for explicit `engine.dispose()` <!-- id: 8 -->
+- [x] Add exponential backoff retry loop in `run_worker` entry point <!-- id: 9 -->
+- [ ] Verify worker recovers correctly after DB connectivity loss <!-- id: 10 -->
+
+### Phase 4: HTTP Optimization
+- [x] Refactor `InsightFaceFaceDetector` to accept a shared `httpx.AsyncClient` <!-- id: 11 -->
+- [x] Pass shared client from `ScanWorker` through to detector <!-- id: 12 -->

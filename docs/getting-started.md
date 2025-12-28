@@ -20,17 +20,17 @@ The Context Alt Text project is a monorepo containing multiple packages and appl
 ```
 context-alt-text-monorepo/
 ├── apps/
-│   ├── recognition-service/     # Python FastAPI service for face recognition
-│   └── wp-context-alt-text/      # WordPress plugin (main application)
+│   ├── prototype-description-service/  # Python FastAPI service for face recognition
+│   └── prototype-wp-alt-context/       # WordPress plugin (main application)
 ├── packages/
 │   ├── shared-contracts/         # Shared TypeScript/JSON schemas
 │   └── wp-testing-helpers/       # WordPress testing utilities
 ├── docs/                         # Monorepo-level documentation
-│   ├── architecture/            # System design, UML diagrams, contracts
-│   ├── literature/              # Reference materials
-│   └── PROMPTS_INDEX.md         # Agentic development prompts
+│   ├── agentic/                 # AI agent documentation hub
+│   ├── architecture/            # ADRs, domain-specific guides
+│   └── roadmaps/                # Project roadmaps
 ├── scripts/                      # Monorepo-level scripts
-└── tools/                        # Development tools
+└── logs/                         # Development logs
 ```
 
 ---
@@ -55,8 +55,8 @@ cd context-alt-text-monorepo
 
 **Then choose your focus:**
 
-- 📖 **WordPress Plugin:** [`apps/wp-context-alt-text/README.md`](../apps/wp-context-alt-text/README.md)
-- 📖 **Recognition Service:** [`apps/recognition-service/README.md`](../apps/recognition-service/README.md)
+- 📖 **WordPress Plugin:** [`apps/prototype-wp-alt-context/README.md`](../apps/prototype-wp-alt-context/README.md)
+- 📖 **Recognition Service:** [`apps/prototype-description-service/README.md`](../apps/prototype-description-service/README.md)
 - 📖 **Quick Start Commands:** See [monorepo README](../README.md#-quick-start)
 
 ---
@@ -65,14 +65,14 @@ cd context-alt-text-monorepo
 
 ### Applications (`apps/`)
 
-#### `recognition-service/`
+#### `prototype-description-service/`
 
 Python FastAPI service providing face recognition using InsightFace models.
 
-- **Technology:** Python 3.10+, FastAPI, InsightFace, w600k_r50 model
-- **Purpose:** AI-powered face detection and recognition
-- **Deployment:** Hugging Face Spaces, Docker, or local development
-- **Documentation:** [`apps/recognition-service/README.md`](../apps/recognition-service/README.md)
+- **Technology:** Python 3.11+, FastAPI, InsightFace, pgvector
+- **Purpose:** AI-powered face detection, clustering, and identity management
+- **Deployment:** Docker or local development
+- **Documentation:** [`apps/prototype-description-service/README.md`](../apps/prototype-description-service/README.md)
 
 **Architecture Note:** The recognition service uses a **Face → Identity nomenclature boundary**:
 
@@ -84,14 +84,14 @@ Python FastAPI service providing face recognition using InsightFace models.
 
 This allows swapping detection providers (InsightFace → ArcFace, MediaPipe) without changing domain logic. See [ADR-001](architecture/ADR-001-face-identity-nomenclature.md) for details.
 
-#### `wp-context-alt-text/`
+#### `prototype-wp-alt-context/`
 
 WordPress plugin for managing alternative text with AI assistance.
 
-- **Technology:** PHP 8.2+, TypeScript, React 19, Vite 7
-- **Purpose:** WordPress plugin for alt text management
-- **Deployment:** WordPress plugins directory or custom hosting
-- **Documentation:** [`apps/wp-context-alt-text/README.md`](../apps/wp-context-alt-text/README.md)
+- **Technology:** PHP 8.2+, TypeScript, React 18, Vite 5
+- **Purpose:** WordPress plugin for alt text management with face recognition
+- **Deployment:** WordPress plugins directory
+- **Documentation:** [`apps/prototype-wp-alt-context/README.md`](../apps/prototype-wp-alt-context/README.md)
 
 ---
 
@@ -127,15 +127,15 @@ Located in `docs/` at the root:
 **Key Files:**
 
 - [`docs/getting-started.md`](.) - This file! Monorepo onboarding
-- [`docs/PROMPTS_INDEX.md`](PROMPTS_INDEX.md) - Agentic development prompts
-- [`docs/architecture/`](architecture/) - System design documents, UML diagrams
+- [`docs/agentic/BOOTSTRAP.md`](agentic/BOOTSTRAP.md) - AI agent entry point
+- [`docs/agentic/`](agentic/) - Contracts, diagrams, instructions
 
 #### Project-Specific Documentation
 
 Located in each project:
 
-- **WordPress Plugin:** `apps/wp-context-alt-text/docs/`
-- **Recognition Service:** `apps/recognition-service/README.md`
+- **WordPress Plugin:** `apps/prototype-wp-alt-context/`
+- **Recognition Service:** `apps/prototype-description-service/`
 
 ---
 
@@ -207,17 +207,13 @@ The monorepo uses a **two-level documentation structure**:
 
 ### Level 2: Project Documentation
 
-**WordPress Plugin** (`apps/wp-context-alt-text/docs/`):
+**WordPress Plugin** (`apps/prototype-wp-alt-context/`):
 
-- [`README.md`](../apps/wp-context-alt-text/README.md) - Quick start, focused entry point (~400 lines)
-- [`docs/configuration.md`](../apps/wp-context-alt-text/docs/configuration.md) - Environment profiles, settings
-- [`docs/development.md`](../apps/wp-context-alt-text/docs/development.md) - Contributing, testing, code standards
-- [`docs/api-reference.md`](../apps/wp-context-alt-text/docs/api-reference.md) - REST API documentation
-- [`docs/troubleshooting.md`](../apps/wp-context-alt-text/docs/troubleshooting.md) - Common issues and solutions
+- [`README.md`](../apps/prototype-wp-alt-context/README.md) - Quick start and setup
 
-**Recognition Service** (`apps/recognition-service/`):
+**Recognition Service** (`apps/prototype-description-service/`):
 
-- [`README.md`](../apps/recognition-service/README.md) - All documentation in main README
+- [`README.md`](../apps/prototype-description-service/README.md) - Setup and API documentation
 
 ---
 
@@ -255,7 +251,7 @@ This organization follows **industry-standard patterns**:
 
 ### Regular Contributors
 
-1. **Check** [`docs/PROMPTS_INDEX.md`](PROMPTS_INDEX.md) for agentic development rules
+1. **Check** [`docs/agentic/BOOTSTRAP.md`](agentic/BOOTSTRAP.md) for agentic development rules
 2. **Review** architecture docs before making structural changes
 3. **Update** documentation when changing public APIs
 4. **Add** tests for all new functionality
@@ -291,14 +287,14 @@ All projects include comprehensive test suites. See project-specific documentati
 
 ### WordPress Plugin
 
-- **PHP Tests:** `composer test` (163 tests, 653 assertions)
+- **PHP Tests:** `composer test`
 - **TypeScript Tests:** `npm run test`
-- **Documentation:** [`apps/wp-context-alt-text/docs/development.md#testing`](../apps/wp-context-alt-text/docs/development.md#testing)
+- **Documentation:** [`apps/prototype-wp-alt-context/README.md`](../apps/prototype-wp-alt-context/README.md)
 
 ### Recognition Service
 
 - **Python Tests:** `pytest` with coverage
-- **Documentation:** [`apps/recognition-service/README.md`](../apps/recognition-service/README.md)
+- **Documentation:** [`apps/prototype-description-service/README.md`](../apps/prototype-description-service/README.md)
 
 ---
 
@@ -326,11 +322,10 @@ All projects include comprehensive test suites. See project-specific documentati
 
 - Build assets: `npm run build`
 - Deploy to WordPress hosting
-- Update version number
 
 **Recognition Service:**
 
-- Deploy to Hugging Face Space
+- Deploy via Docker
 - Update environment variables
 - Test health endpoint
 
@@ -349,17 +344,16 @@ All projects include comprehensive test suites. See project-specific documentati
 
 **For WordPress Plugin Development:**
 
-- 📖 Read [`apps/wp-context-alt-text/README.md`](../apps/wp-context-alt-text/README.md)
-- 📖 Review [`apps/wp-context-alt-text/docs/development.md`](../apps/wp-context-alt-text/docs/development.md)
+- 📖 Read [`apps/prototype-wp-alt-context/README.md`](../apps/prototype-wp-alt-context/README.md)
 
 **For Recognition Service Development:**
 
-- 📖 Read [`apps/recognition-service/README.md`](../apps/recognition-service/README.md)
+- 📖 Read [`apps/prototype-description-service/README.md`](../apps/prototype-description-service/README.md)
 
-**For Architecture/Design:**
+**For AI Agents:**
 
-- 📖 Explore [`docs/architecture/`](architecture/)
-- 📖 Review [`docs/PROMPTS_INDEX.md`](PROMPTS_INDEX.md) for agentic development
+- 📖 Start at [`docs/agentic/BOOTSTRAP.md`](agentic/BOOTSTRAP.md)
+- 📖 Read [`docs/agentic/instructions.md`](agentic/instructions.md)
 
 ---
 

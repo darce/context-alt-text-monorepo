@@ -44,6 +44,9 @@ const SPLIT_TIMEOUT_MS = 120_000;
 
 const delay = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
+const isAbortError = (err: unknown): boolean =>
+  Boolean(err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError');
+
 const pollSplitJob = async (jobId: string): Promise<void> => {
   const startedAt = Date.now();
   while (Date.now() - startedAt < SPLIT_TIMEOUT_MS) {
@@ -86,9 +89,6 @@ export const useClusterMutations = ({
     void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     void queryClient.invalidateQueries({ queryKey: ['cluster-labels'] });
     void queryClient.invalidateQueries({ queryKey: ['clusters'] });
-    // Force immediate refetch for suggestions (per hybrid-clustering-strategy.md Phase 3)
-    await queryClient.refetchQueries({ queryKey: ['identity-suggestions'] });
-    await queryClient.refetchQueries({ queryKey: ['pending-suggestions'] });
   };
 
   // Optimistically update cache for label changes
@@ -128,19 +128,34 @@ export const useClusterMutations = ({
   // Rename mutation
   const renameMutation = useMutation({
     mutationKey: ['rename-cluster', clusterId],
-    mutationFn: (label: string) => updateClusterLabel(clusterId!, label),
-    onSuccess: (_data, updatedLabel) => {
+    mutationFn: ({ label, signal }: { label: string; signal?: AbortSignal }) =>
+      updateClusterLabel(clusterId!, label, signal),
+    onMutate: async ({ label }) => {
+      if (!clusterId) {
+        return;
+      }
+      await queryClient.cancelQueries({ queryKey: ['media-identities'] });
+      updateCachedClusterLabel(clusterId, label);
+    },
+    onSuccess: (_data, variables) => {
+      const updatedLabel = variables.label;
       if (clusterId) {
         updateCachedClusterLabel(clusterId, updatedLabel);
       }
       void invalidateQueries();
       onRenameSuccess?.(updatedLabel);
     },
-    onError: (err: Error) => {
-      if (err.message.includes('409')) {
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        void invalidateQueries();
+        return;
+      }
+      void invalidateQueries();
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('409')) {
         onError?.(__('Label already exists. Use the dropdown to merge.', 'alt-context'));
       } else {
-        onError?.(err.message);
+        onError?.(message);
       }
     },
   });
@@ -148,11 +163,19 @@ export const useClusterMutations = ({
   // Merge mutation
   const mergeMutation = useMutation({
     mutationKey: ['merge-cluster', clusterId],
-    mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel?: string }) => {
+    mutationFn: ({
+      targetClusterId,
+      targetLabel,
+      signal,
+    }: {
+      targetClusterId: string;
+      targetLabel?: string;
+      signal?: AbortSignal;
+    }) => {
       if (!clusterId) {
         return Promise.reject(new Error(__('Cannot merge: no cluster ID', 'alt-context')));
       }
-      return mergeCluster(clusterId, targetClusterId, targetLabel);
+      return mergeCluster(clusterId, targetClusterId, targetLabel, signal);
     },
     onSuccess: (result) => {
       if (clusterId) {
@@ -161,8 +184,12 @@ export const useClusterMutations = ({
       void invalidateQueries();
       onMergeSuccess?.(result);
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
     },
   });
 
@@ -194,41 +221,61 @@ export const useClusterMutations = ({
     onSuccess: () => {
       void invalidateQueries();
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
     },
   });
 
   // Assign identity to existing cluster (for singletons)
   const assignToClusterMutation = useMutation({
     mutationKey: ['assign-to-cluster', clusterId],
-    mutationFn: async ({ identityId, targetClusterId }: { identityId: string; targetClusterId: string }) => {
-      await reassignClusterIdentity({ identityId, targetClusterId });
+    mutationFn: async ({
+      identityId,
+      targetClusterId,
+      signal,
+    }: {
+      identityId: string;
+      targetClusterId: string;
+      signal?: AbortSignal;
+    }) => {
+      await reassignClusterIdentity({ identityId, targetClusterId }, signal);
     },
     onSuccess: () => {
       void invalidateQueries();
       onRenameSuccess?.(''); // Clear edit state
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
     },
   });
 
   // Create cluster for singleton identity
   const createClusterMutation = useMutation({
     mutationKey: ['create-cluster-for-identity'],
-    mutationFn: async ({ identityId, label }: { identityId: string; label: string }) => {
-      return createClusterForIdentity({ identityId, label });
+    mutationFn: async ({ identityId, label, signal }: { identityId: string; label: string; signal?: AbortSignal }) => {
+      return createClusterForIdentity({ identityId, label }, signal);
     },
     onSuccess: (result) => {
       void invalidateQueries();
       onRenameSuccess?.(result.label);
     },
-    onError: (err: Error) => {
-      if (err.message.includes('409')) {
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      if (message.includes('409')) {
         onError?.(__('Label already exists. Select it from the dropdown to assign.', 'alt-context'));
       } else {
-        onError?.(err.message);
+        onError?.(message);
       }
     },
   });
@@ -255,8 +302,12 @@ export const useClusterMutations = ({
     onSuccess: () => {
       void invalidateQueries();
     },
-    onError: (err: Error) => {
-      onError?.(err.message);
+    onError: (err: unknown) => {
+      if (isAbortError(err)) {
+        return;
+      }
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
     },
   });
 
@@ -271,14 +322,15 @@ export const useClusterMutations = ({
 
   return {
     // Mutations
-    rename: renameMutation.mutate,
-    merge: (targetClusterId: string, targetLabel?: string) => mergeMutation.mutate({ targetClusterId, targetLabel }),
+    rename: (label: string, signal?: AbortSignal) => renameMutation.mutate({ label, signal }),
+    merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) =>
+      mergeMutation.mutate({ targetClusterId, targetLabel, signal }),
     revertMerge: revertMergeMutation.mutate,
     reassign: reassignMutation.mutate,
-    assignToCluster: (identityId: string, targetClusterId: string) =>
-      assignToClusterMutation.mutate({ identityId, targetClusterId }),
-    createClusterForIdentity: (identityId: string, label: string) =>
-      createClusterMutation.mutate({ identityId, label }),
+    assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) =>
+      assignToClusterMutation.mutate({ identityId, targetClusterId, signal }),
+    createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) =>
+      createClusterMutation.mutate({ identityId, label, signal }),
     split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
       splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),
 

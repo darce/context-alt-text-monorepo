@@ -126,7 +126,9 @@ describe('IdentityClusterList', () => {
     await waitFor(() => expect(input).toHaveValue('New Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'New Label'));
+    await waitFor(() =>
+      expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'New Label', expect.anything()),
+    );
 
     const updated = client.getQueryData<MediaIdentitiesResponse>(['media-identities', [1]]);
     expect(updated?.identities_by_media['1'][0].cluster_label).toBe('New Label');
@@ -163,28 +165,38 @@ describe('IdentityClusterList', () => {
     await waitFor(() => expect(input).toHaveValue('Person A'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-auto', 'Person A'));
+    await waitFor(() =>
+      expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-auto', 'Person A', expect.anything()),
+    );
 
     const updated = client.getQueryData<MediaIdentitiesResponse>(['media-identities', [1]]);
     expect(updated?.identities_by_media['1'][0].cluster_label).toBe('Person A');
     expect(updated?.identities_by_media['1'][0].is_auto_label).toBe(false);
   });
 
-  it('shows existing clusters in suggestions even when auto-labeled', async () => {
-    (api.listRecognitionClusters as Mock).mockResolvedValue([
-      { id: 'cluster-auto', label: 'Auto Label', identity_count: 4, is_auto_label: true },
-    ]);
+  it('shows identity suggestions in the overlay', async () => {
+    (api.fetchIdentitySuggestions as Mock).mockResolvedValueOnce({
+      matches: [
+        {
+          cluster_id: 'cluster-suggested',
+          label: 'Ada Lovelace',
+          similarity: 0.92,
+          identity_count: 3,
+        },
+      ],
+    });
 
     const { user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
 
     await user.click(screen.getByRole('button', { name: /edit label/i }));
     const input = await screen.findByRole('combobox');
-    fireEvent.change(input, { target: { value: '' } });
+    fireEvent.change(input, { target: { value: 'Ada' } });
 
-    expect(await screen.findByText('Auto Label')).toBeInTheDocument();
+    expect(await screen.findByText('Ada Lovelace')).toBeInTheDocument();
+    expect(api.listRecognitionClusters).not.toHaveBeenCalled();
   });
 
-  it('loads additional cluster pages when the first page is full', async () => {
+  it('pages cluster lookup when saving to an existing label', async () => {
     const firstPage = Array.from({ length: 500 }, (_, index) => ({
       id: `cluster-${index}`,
       label: `Label ${index}`,
@@ -193,16 +205,47 @@ describe('IdentityClusterList', () => {
     const secondPage = [{ id: 'cluster-500', label: 'Erin McCleod', identity_count: 1 }];
 
     (api.listRecognitionClusters as Mock).mockResolvedValueOnce(firstPage).mockResolvedValueOnce(secondPage);
+    (api.mergeCluster as Mock).mockResolvedValue({
+      source_id: 'cluster-1',
+      source_label: 'Cluster 1',
+      target_id: 'cluster-500',
+      target_label: 'Erin McCleod',
+      identities_moved: 1,
+      moved_identity_ids: ['identity-1'],
+      target_identity_count: 2,
+    });
+    vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
-    const { user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [baseIdentity],
+      },
+    };
+    client.setQueryData(['media-identities', [1]], cacheData);
 
     await user.click(screen.getByRole('button', { name: /edit label/i }));
-    const input = await screen.findByRole('combobox');
-    fireEvent.change(input, { target: { value: 'Erin' } });
+    await user.click(screen.getByRole('combobox'));
+    const input = await screen.findByPlaceholderText(/enter a name/i);
+    fireEvent.change(input, { target: { value: 'Erin McCleod' } });
+    await waitFor(() => expect(input).toHaveValue('Erin McCleod'));
+    await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    expect(await screen.findByText('Erin McCleod')).toBeInTheDocument();
-    expect(api.listRecognitionClusters).toHaveBeenCalledWith({ limit: 500, offset: 0 });
-    expect(api.listRecognitionClusters).toHaveBeenCalledWith({ limit: 500, offset: 500 });
+    await waitFor(() =>
+      expect(api.listRecognitionClusters).toHaveBeenCalledWith(
+        { limit: 500, offset: 0, labeled_only: true },
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(api.listRecognitionClusters).toHaveBeenCalledWith(
+        { limit: 500, offset: 500, labeled_only: true },
+        expect.anything(),
+      ),
+    );
+    await waitFor(() =>
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'cluster-500', 'Erin McCleod', expect.anything()),
+    );
   });
 
   it('merges into existing cluster when label matches', async () => {
@@ -240,7 +283,9 @@ describe('IdentityClusterList', () => {
     await waitFor(() => expect(input).toHaveValue('Existing Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label'));
+    await waitFor(() =>
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
+    );
   });
 
   it('shows undo when merge completes and reverts on request', async () => {
@@ -281,7 +326,12 @@ describe('IdentityClusterList', () => {
     await waitFor(() => expect(input).toHaveValue('Existing Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
 
-    await waitFor(() => expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label'));
+    await waitFor(() =>
+      expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
+    );
+
+    const closeButton = await screen.findByRole('button', { name: /Close/i });
+    await user.click(closeButton);
 
     const undoButton = await screen.findByRole('button', { name: /Undo merge/i });
     await user.click(undoButton);

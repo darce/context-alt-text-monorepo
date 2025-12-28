@@ -13,6 +13,15 @@ import type {
   SuggestionActionResponse,
 } from './types';
 
+type PendingSuggestionApiResponse = {
+  id: string;
+  identity_id: string;
+  cluster_id: string;
+  rep_similarity: number;
+  member_similarity: number | null;
+  status: string;
+};
+
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
     return { identities_by_media: {} };
@@ -63,10 +72,34 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  return fetchApi<PendingSuggestionsResponse>(url.toString(), {
+  const response = await fetchApi<PendingSuggestionsResponse | PendingSuggestionApiResponse[]>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
+
+  if (Array.isArray(response)) {
+    const suggestions = response.map((suggestion) => ({
+      id: suggestion.id,
+      identity_id: suggestion.identity_id,
+      suggested_cluster_id: suggestion.cluster_id,
+      representative_similarity: suggestion.rep_similarity,
+      avg_member_similarity: suggestion.member_similarity ?? suggestion.rep_similarity,
+      confidence_score: suggestion.rep_similarity,
+      resolution: suggestion.status,
+      cluster_label: null,
+      cluster_identity_count: null,
+      identity_media_id: null,
+    }));
+
+    return {
+      suggestions,
+      total: suggestions.length,
+      limit,
+      offset,
+    };
+  }
+
+  return response;
 };
 
 /**

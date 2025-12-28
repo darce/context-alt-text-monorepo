@@ -2,6 +2,7 @@ export interface HTTPOptions {
   method?: 'GET' | 'POST' | 'PATCH' | 'DELETE';
   body?: unknown;
   restNonce?: string;
+  signal?: AbortSignal;
 }
 
 /**
@@ -30,6 +31,7 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
     method: options.method ?? 'GET',
     headers: buildHeaders(options),
     body: options.body ? JSON.stringify(options.body) : null,
+    signal: options.signal,
   });
 
   if (!response.ok) {

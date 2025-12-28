@@ -67,6 +67,36 @@ async def run_background_retry(tenant_id: str, cluster_id: str) -> None:
         _logger.exception("Background merge retry failed for cluster %s: %s", cluster_id, exc)
 
 
+async def run_background_surface_suggestions(tenant_id: str, cluster_id: str) -> None:
+    """Surface suggestions for newly labeled clusters with a fresh session."""
+    try:
+        async with async_session_factory() as session:
+            cluster_service = await build_cluster_service(session=session, tenant_id=tenant_id)
+            surface_fn = getattr(cluster_service.suggestion_service, "surface_for_newly_labeled_cluster", None)
+            if callable(surface_fn):
+                await surface_fn(cluster_id)
+    except Exception as exc:
+        _logger.exception(
+            "Background suggestion surfacing failed for cluster %s: %s",
+            cluster_id,
+            exc,
+        )
+
+
+async def run_background_refresh_suggestions(tenant_id: str, cluster_id: str) -> None:
+    """Refresh suggestions for a cluster with a fresh session."""
+    try:
+        async with async_session_factory() as session:
+            cluster_service = await build_cluster_service(session=session, tenant_id=tenant_id)
+            await cluster_service.suggestion_service.refresh_for_cluster(cluster_id)
+    except Exception as exc:
+        _logger.exception(
+            "Background suggestion refresh failed for cluster %s: %s",
+            cluster_id,
+            exc,
+        )
+
+
 @router.post("/clustering/jobs", response_model=ClusteringJobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
 async def create_clustering_job(
     request: ClusteringJobRequest,
@@ -160,6 +190,7 @@ async def get_top_unlabeled_clusters(
 async def update_cluster(
     cluster_id: str,
     request: PatchClusterRequest,
+    background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_session),
 ) -> ClusterResponse:
@@ -170,9 +201,20 @@ async def update_cluster(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
-    cluster = await cluster_service.update_cluster(cluster_id, request.tenant_id, label=label)
+    cluster_repo = cluster_service.assignment_writer._clusters
+    old_cluster = await cluster_repo.get_by_id(cluster_id)
+    was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
+
+    cluster = await cluster_service.update_cluster(
+        cluster_id,
+        request.tenant_id,
+        label=label,
+        surface_suggestions=False,
+    )
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+    if label and not was_user_confirmed:
+        background_tasks.add_task(run_background_surface_suggestions, request.tenant_id, cluster_id)
     return cluster
 
 
@@ -237,8 +279,7 @@ async def merge_cluster(
     background_tasks.add_task(run_background_retry, request.tenant_id, request.target_cluster_id)
 
     # Refresh suggestions for the target cluster
-    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
-    await suggestion_service.refresh_for_cluster(request.target_cluster_id)
+    background_tasks.add_task(run_background_refresh_suggestions, request.tenant_id, request.target_cluster_id)
 
     return cluster
 

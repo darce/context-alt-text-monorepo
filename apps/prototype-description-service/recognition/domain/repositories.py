@@ -431,8 +431,8 @@ class IdentityConstraintRepository(Protocol):
         Returns:
             Created constraint with canonical ordering applied.
 
-        Raises:
-            IntegrityError: If constraint already exists.
+        Notes:
+            Implementations may return the existing constraint if one already exists.
         """
         raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
 

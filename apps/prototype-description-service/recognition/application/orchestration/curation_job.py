@@ -59,7 +59,7 @@ async def run_curation_job(
     if run_incremental_clustering and cluster_service is not None:
         unclustered = await cluster_repo.get_unclustered(tenant_id)
         if unclustered:
-            result = await cluster_service.cluster_unclustered_identities(tenant_id)
+            result = await cluster_service.cluster_unclustered_identities(tenant_id, commit=False)
             identities_clustered = int(getattr(result, "completed", 0) or 0)
 
     logger.info(

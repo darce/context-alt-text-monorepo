@@ -112,7 +112,7 @@ class ClusterService:
             self.constrained_hac = None
             self.hac_settings = None
 
-    async def cluster_unclustered_identities(self, tenant_id: str, job_id: str | None = None):
+    async def cluster_unclustered_identities(self, tenant_id: str, job_id: str | None = None, *, commit: bool = True):
         """Cluster any identities not yet assigned to a cluster."""
         return await cluster_unclustered_identities_op(
             tenant_id=tenant_id,
@@ -127,6 +127,7 @@ class ClusterService:
             clustering_logger=self.logger,
             constrained_hac=self.constrained_hac,
             hac_settings=self.hac_settings,
+            commit=commit,
         )
 
     @staticmethod
@@ -153,16 +154,24 @@ class ClusterService:
             labeled_only=labeled_only,
         )
 
-    async def update_cluster(self, cluster_id: str, tenant_id: str, label: str | None) -> IdentityCluster | None:
+    async def update_cluster(
+        self,
+        cluster_id: str,
+        tenant_id: str,
+        label: str | None,
+        *,
+        surface_suggestions: bool = True,
+    ) -> IdentityCluster | None:
         """Update cluster label and confirmation state.
 
-        When a cluster becomes user-labeled, surfaces suggestions for identities
-        in unlabeled clusters that match this newly-labeled cluster.
+        When a cluster becomes user-labeled, optionally surface suggestions for
+        identities in unlabeled clusters that match this newly-labeled cluster.
         """
-        # Get current state to detect transition to user-labeled
-        cluster_repo = self.assignment_writer._clusters
-        old_cluster = await cluster_repo.get_by_id(cluster_id)
-        was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
+        was_user_confirmed = False
+        if surface_suggestions:
+            cluster_repo = self.assignment_writer._clusters
+            old_cluster = await cluster_repo.get_by_id(cluster_id)
+            was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
 
         result = await update_cluster_op(
             cluster_id=cluster_id,
@@ -173,7 +182,7 @@ class ClusterService:
         )
 
         # If cluster just became user-labeled, surface suggestions
-        if result and label and not was_user_confirmed:
+        if surface_suggestions and result and label and not was_user_confirmed:
             surface_fn = getattr(self.suggestion_service, "surface_for_newly_labeled_cluster", None)
             if callable(surface_fn):
                 try:

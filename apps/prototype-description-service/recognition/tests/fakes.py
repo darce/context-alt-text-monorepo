@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import cast
 
 from recognition.domain.job import Job, JobStatus, JobType
@@ -20,6 +21,28 @@ def _clone_cluster(cluster: ClusterResponse, **updates: object) -> ClusterRespon
     if callable(copier_v1):
         return cast(ClusterResponse, copier_v1(update=updates))
     return cluster
+
+
+class _FakeClusterRecord:
+    """Minimal cluster record with confirmation state."""
+
+    def __init__(self, cluster: ClusterResponse) -> None:
+        self.id = cluster.id
+        self.label = cluster.label
+        self.user_confirmed = bool(cluster.label)
+
+
+class _FakeClusterRepository:
+    """In-memory cluster repository for FakeClusterService."""
+
+    def __init__(self, service: FakeClusterService) -> None:
+        self._service = service
+
+    async def get_by_id(self, cluster_id: str) -> _FakeClusterRecord | None:
+        cluster = next((c for c in self._service.clusters if c.id == cluster_id), None)
+        if not cluster:
+            return None
+        return _FakeClusterRecord(cluster)
 
 
 class FakeJobRepository:
@@ -126,6 +149,7 @@ class FakeClusterService:
         self.clusters = clusters or []
         self.calls: list[dict[str, object]] = []
         self.identity_cluster_map: dict[str, str] = {}
+        self.assignment_writer = SimpleNamespace(_clusters=_FakeClusterRepository(self))
 
     async def list_clusters(
         self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False, labeled_only: bool = False
@@ -136,8 +160,21 @@ class FakeClusterService:
         filtered = [c for c in self.clusters if c.tenant_id == tenant_id]
         return filtered[offset : offset + limit]
 
-    async def cluster_unclustered_identities(self, tenant_id: str):
-        self.calls.append({"method": "cluster_unclustered_identities", "tenant_id": tenant_id})
+    async def cluster_unclustered_identities(
+        self,
+        tenant_id: str,
+        job_id: str | None = None,
+        *,
+        commit: bool = True,
+    ):
+        self.calls.append(
+            {
+                "method": "cluster_unclustered_identities",
+                "tenant_id": tenant_id,
+                "job_id": job_id,
+                "commit": commit,
+            }
+        )
         now = datetime.now(tz=UTC)
         return type(
             "Result",
@@ -151,7 +188,14 @@ class FakeClusterService:
             },
         )()
 
-    async def update_cluster(self, cluster_id: str, tenant_id: str, label: str | None) -> ClusterResponse | None:
+    async def update_cluster(
+        self,
+        cluster_id: str,
+        tenant_id: str,
+        label: str | None,
+        *,
+        surface_suggestions: bool = True,
+    ) -> ClusterResponse | None:
         cluster = next((c for c in self.clusters if c.id == cluster_id and c.tenant_id == tenant_id), None)
         if not cluster:
             return None

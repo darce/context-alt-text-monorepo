@@ -1,9 +1,7 @@
 """Scan worker process for async analyze jobs.
 
 This worker is designed to run as a separate process from the FastAPI web server.
-It claims pending `IdentityScanJobItem` rows and processes them sequentially in small batches.
-
-The initial implementation focuses on durability and correctness (no dropped work), not throughput.
+It claims pending `IdentityScanJobItem` rows and processes them in small batches with bounded concurrency.
 """
 
 from __future__ import annotations
@@ -14,11 +12,12 @@ import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+import httpx
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import IdentityClusteringJob
-from db.tenant_context import enable_rls_bypass
+from db.tenant_context import enable_rls_bypass, set_tenant_context
 from recognition.application.embedding.detector import FaceDetectorProtocol, InsightFaceFaceDetector, StubFaceDetector
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
@@ -45,6 +44,7 @@ class ScanWorkerConfig:
     postgres_dsn: str
     poll_interval_seconds: float = 1.0
     claim_batch_size: int = 10
+    max_concurrency: int = 5
     stale_after_seconds: int = 600
     max_attempts: int = 3
 
@@ -66,6 +66,33 @@ class ScanWorker:
         self._session_factory: async_sessionmaker[AsyncSession] = async_sessionmaker(
             bind=self._engine, expire_on_commit=False
         )
+        self._http_client: httpx.AsyncClient | None = None
+        self._detector: FaceDetectorProtocol = StubFaceDetector()
+        self._generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
+
+        settings = get_recognition_settings()
+        if settings.runtime_mode != "test":
+            try:
+                from recognition.infrastructure.embeddings import InsightFaceAdapter
+
+                adapter = InsightFaceAdapter()
+                self._http_client = httpx.AsyncClient(timeout=30.0)
+                self._detector = InsightFaceFaceDetector(adapter, client=self._http_client)
+                self._generator = InsightFaceEmbeddingGenerator(adapter)
+            except Exception:
+                logger.exception("Failed to initialize InsightFace adapter, falling back to stubs.")
+                self._detector = StubFaceDetector()
+                self._generator = StubEmbeddingGenerator()
+
+    async def __aenter__(self) -> ScanWorker:
+        """Prepare worker resources."""
+        return self
+
+    async def __aexit__(self, exc_type, exc, tb) -> None:
+        """Release worker resources."""
+        if self._http_client is not None:
+            await self._http_client.aclose()
+        await self._engine.dispose()
 
     async def run_forever(self) -> None:
         """Run a claim/process loop forever.
@@ -73,77 +100,117 @@ class ScanWorker:
         The worker claims pending items across all jobs using SKIP LOCKED on Postgres.
         """
         while True:
+            claimed: list[ScanQueueItem] = []
+            should_sleep = False
             async with self._session_factory() as session:
                 await enable_rls_bypass(session)
                 repo = SqlAlchemyScanQueueRepository(session)
-                queue = ScanQueueService(repo)
 
                 now = datetime.now(tz=UTC)
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
-                    await asyncio.sleep(self._config.poll_interval_seconds)
-                    continue
+                    should_sleep = True
+                else:
+                    await repo.reclaim_stale_items(
+                        stale_after_seconds=self._config.stale_after_seconds,
+                        max_attempts=self._config.max_attempts,
+                        now=now,
+                    )
 
-                await repo.reclaim_stale_items(
-                    stale_after_seconds=self._config.stale_after_seconds,
-                    max_attempts=self._config.max_attempts,
-                    now=now,
-                )
+                    claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
+                    if not claimed:
+                        await session.commit()
+                        should_sleep = True
+                    else:
+                        for job_id in {item.job_id for item in claimed}:
+                            await repo.mark_job_running(job_id=job_id, started_at=now)
+                        await session.commit()
 
-                claimed = await repo.claim_pending_items_any(limit=self._config.claim_batch_size, now=now)
-                if not claimed:
-                    await session.commit()
-                    await asyncio.sleep(self._config.poll_interval_seconds)
-                    continue
+            if should_sleep:
+                await asyncio.sleep(self._config.poll_interval_seconds)
+                continue
 
-                for job_id in {item.job_id for item in claimed}:
-                    await repo.mark_job_running(job_id=job_id, started_at=now)
-
-                scan_service = _build_scan_service(session)
-                await self._process_claimed_items(
-                    session=session,
-                    scan_service=scan_service,
-                    queue=queue,
-                    repo=repo,
-                    claimed=claimed,
-                )
-                await session.commit()
+            await self._process_claimed_items(claimed=claimed)
 
     async def _process_claimed_items(
         self,
         *,
-        session: AsyncSession,
-        scan_service: ScanService,
-        queue: ScanQueueService,
-        repo: SqlAlchemyScanQueueRepository,
         claimed: list[ScanQueueItem],
     ) -> None:
-        now = datetime.now(tz=UTC)
-        affected_jobs: set[uuid.UUID] = set()
-        for item in claimed:
-            affected_jobs.add(item.job_id)
-            try:
-                identities_detected = await scan_service.process_media_item(
-                    tenant_id=str(item.tenant_id),
-                    media_id=item.media_id,
-                    media_url=item.media_url,
-                )
-                await repo.mark_item_completed(
-                    item_id=item.id,
-                    completed_at=now,
-                    identities_detected=identities_detected,
-                )
-            except Exception as exc:  # pragma: no cover
-                error_message = str(exc)
-                await self._handle_item_failure(
-                    repo=repo,
-                    item=item,
-                    now=now,
-                    error_message=error_message,
-                )
+        if not claimed:
+            return
 
-        for job_id in affected_jobs:
-            await queue.refresh_job_progress(job_id=job_id)
+        affected_jobs = {item.job_id for item in claimed}
+        max_concurrency = max(1, self._config.max_concurrency)
+        semaphore = asyncio.Semaphore(min(max_concurrency, len(claimed)))
+
+        async def _process_item(item: ScanQueueItem) -> None:
+            request_id = uuid.uuid4()
+            async with semaphore, self._session_factory() as session:
+                await enable_rls_bypass(session)
+                repo = SqlAlchemyScanQueueRepository(session)
+                scan_service = self._build_scan_service(session)
+                now = datetime.now(tz=UTC)
+                logger.info(
+                    "[worker] START scan_item request_id=%s job_id=%s item_id=%s media_id=%s",
+                    request_id,
+                    item.job_id,
+                    item.id,
+                    item.media_id,
+                )
+                try:
+                    identities_detected = await scan_service.process_media_item(
+                        tenant_id=str(item.tenant_id),
+                        media_id=item.media_id,
+                        media_url=item.media_url,
+                    )
+                    await repo.mark_item_completed(
+                        item_id=item.id,
+                        completed_at=now,
+                        identities_detected=identities_detected,
+                    )
+                    await session.commit()
+                    logger.info(
+                        "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
+                        request_id,
+                        item.job_id,
+                        item.id,
+                        identities_detected,
+                    )
+                except Exception as exc:  # pragma: no cover
+                    error_message = str(exc)
+                    await self._handle_item_failure(
+                        repo=repo,
+                        item=item,
+                        now=now,
+                        error_message=error_message,
+                    )
+                    await session.commit()
+                    logger.exception(
+                        "[worker] FAIL scan_item request_id=%s job_id=%s item_id=%s",
+                        request_id,
+                        item.job_id,
+                        item.id,
+                    )
+
+        results = await asyncio.gather(*(_process_item(item) for item in claimed), return_exceptions=True)
+        for result in results:
+            if isinstance(result, Exception):
+                logger.error("[worker] scan_item task failed", exc_info=result)
+
+        await self._refresh_job_progress(affected_jobs)
+
+    async def _refresh_job_progress(self, job_ids: set[uuid.UUID]) -> None:
+        """Recompute progress for affected scan jobs."""
+        if not job_ids:
+            return
+        async with self._session_factory() as session:
+            await enable_rls_bypass(session)
+            repo = SqlAlchemyScanQueueRepository(session)
+            queue = ScanQueueService(repo)
+            for job_id in job_ids:
+                await queue.refresh_job_progress(job_id=job_id)
+            await session.commit()
 
     async def _handle_item_failure(
         self,
@@ -172,6 +239,7 @@ class ScanWorker:
         if job is None:
             return False
 
+        await self._ensure_job_context(session=session, job=job)
         job.status = "running"
         job.started_at = now
         await session.flush()
@@ -182,12 +250,14 @@ class ScanWorker:
             elif job.job_type == "curation":
                 await self._handle_curation_job(job=job, session=session)
             else:
+                await self._ensure_job_context(session=session, job=job)
                 job.status = "failed"
                 job.error_message = f"unsupported job_type: {job.job_type}"
                 job.completed_at = datetime.now(tz=UTC)
                 await session.flush()
             return True
         except Exception as exc:  # pragma: no cover
+            await self._ensure_job_context(session=session, job=job)
             job.status = "failed"
             job.error_message = str(exc)
             job.completed_at = datetime.now(tz=UTC)
@@ -197,6 +267,7 @@ class ScanWorker:
     async def _handle_curation_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
         cluster_ids = _coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
         if not cluster_ids:
+            await self._ensure_job_context(session=session, job=job)
             job.status = "failed"
             job.error_message = "missing cluster ids"
             job.completed_at = datetime.now(tz=UTC)
@@ -211,6 +282,7 @@ class ScanWorker:
             cluster_repo=cluster_service.assignment_writer._clusters,
             cluster_service=cluster_service,
         )
+        await self._ensure_job_context(session=session, job=job)
         completed = int(result_counts.get("clusters_recomputed", 0))
         total = max(int(job.total_identities or 0), len(cluster_ids))
         job.processed_identities = completed
@@ -268,6 +340,7 @@ class ScanWorker:
                 cluster_ids=[cluster_id, *new_ids],
             )
 
+        await self._ensure_job_context(session=session, job=job)
         total = max(1, len(new_ids))
         job.processed_identities = total
         job.total_identities = total
@@ -284,24 +357,14 @@ class ScanWorker:
             counts,
         )
 
+    def _build_scan_service(self, session: AsyncSession) -> ScanService:
+        """Create a ScanService bound to the provided session."""
+        return ScanService(session=session, detector=self._detector, generator=self._generator)
 
-def _build_scan_service(session: AsyncSession) -> ScanService:
-    settings = get_recognition_settings()
-    runtime_mode = settings.runtime_mode
-    if runtime_mode == "test":
-        detector: FaceDetectorProtocol = StubFaceDetector()
-        generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
-    else:
-        try:
-            from recognition.infrastructure.embeddings import InsightFaceAdapter
-
-            adapter = InsightFaceAdapter()
-            detector = InsightFaceFaceDetector(adapter)
-            generator = InsightFaceEmbeddingGenerator(adapter)
-        except Exception:
-            detector = StubFaceDetector()
-            generator = StubEmbeddingGenerator()
-    return ScanService(session=session, detector=detector, generator=generator)
+    async def _ensure_job_context(self, *, session: AsyncSession, job: IdentityClusteringJob) -> None:
+        """Reassert tenant context before updating clustering job rows."""
+        await set_tenant_context(session, job.tenant_id)
+        await enable_rls_bypass(session)
 
 
 def _compute_progress(completed: int, total: int) -> float:
@@ -395,17 +458,20 @@ async def _main() -> None:
         logger.error("Database unavailable after max retries. Exiting.")
         sys.exit(1)
 
+    backoff = 2.0
     while True:
         try:
-            worker = ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn))
-            await worker.run_forever()
+            async with ScanWorker(ScanWorkerConfig(postgres_dsn=postgres_dsn)) as worker:
+                await worker.run_forever()
+            backoff = 2.0
         except asyncio.CancelledError:
             logger.info("Scan worker stopped.")
             break
         except Exception as exc:
-            logger.error("Scan worker crashed (retrying in 5s): %s", exc)
+            logger.error("Scan worker crashed (retrying in %.1fs): %s", backoff, exc)
             # Wait for db to be available again before retrying
-            await asyncio.sleep(5)
+            await asyncio.sleep(backoff)
+            backoff = min(backoff * 2, 60.0)
             if not await wait_for_database(postgres_dsn, max_retries=10):
                 logger.warning("Database still unavailable, will retry...")
 

@@ -25,3 +25,7 @@ class SuggestionServiceProtocol(Protocol):
     ) -> list[AssignmentSuggestion]:
         """Refresh suggestions for a specific identity."""
         ...
+
+    async def refresh_for_cluster(self, cluster_id: str) -> int:
+        """Refresh suggestions for a whole cluster."""
+        ...

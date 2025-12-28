@@ -86,6 +86,7 @@ class JobService:
         *,
         cluster_ids: Iterable[str],
         identity_ids: Iterable[str] | None = None,
+        source_cluster_id: str | None = None,
     ) -> Job:
         """Queue curation follow-up work after split or wrong-person removal.
 
@@ -93,13 +94,12 @@ class JobService:
             tenant_id: Tenant that owns the affected clusters.
             cluster_ids: Cluster IDs to recompute representatives/centroid for.
             identity_ids: Optional identities affected by the curation action.
+            source_cluster_id: Optional source cluster ID (merge cleanup).
 
         Returns:
             Job describing the queued curation work.
 
         """
-        if not self.cluster_service:
-            raise RuntimeError("ClusterService is required for curation jobs")
         cluster_ids_list = list(dict.fromkeys(cluster_ids))
         identity_ids_list = list(identity_ids or [])
         job = Job(
@@ -110,7 +110,11 @@ class JobService:
             progress_completed=0,
             status=JobStatus.PENDING,
             message="curation_followup",
-            payload={"cluster_ids": cluster_ids_list, "identity_ids": identity_ids_list},
+            payload={
+                "cluster_ids": cluster_ids_list,
+                "identity_ids": identity_ids_list,
+                "source_cluster_id": source_cluster_id,
+            },
         )
         return await self.repository.save(job)
 
@@ -177,6 +181,7 @@ class JobService:
         *,
         cluster_ids: Iterable[str],
         identity_ids: Iterable[str] | None = None,
+        source_cluster_id: str | None = None,
     ) -> Job:
         """Background-friendly wrapper to process a curation follow-up job by ID."""
         from recognition.application.orchestration.curation_job import run_curation_job
@@ -190,6 +195,11 @@ class JobService:
         if not cluster_ids_list:
             return await self.fail_job(job.id, "missing cluster ids")
 
+        if source_cluster_id is None and job.payload:
+            payload_source = job.payload.get("source_cluster_id")
+            if payload_source:
+                source_cluster_id = str(payload_source)
+
         job.progress_total = max(job.progress_total, len(cluster_ids_list))
         job = await self.start_job(job.id)
         try:
@@ -199,6 +209,7 @@ class JobService:
                 assignment_writer=self.cluster_service.assignment_writer,
                 cluster_repo=self.cluster_service.assignment_writer._clusters,
                 cluster_service=self.cluster_service,
+                source_cluster_id=source_cluster_id,
             )
             completed = int(result.get("clusters_recomputed", 0))
             job = await self.update_progress(job.id, completed=completed, total=job.progress_total)

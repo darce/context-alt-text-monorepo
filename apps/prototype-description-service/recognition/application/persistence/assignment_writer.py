@@ -450,6 +450,13 @@ class AssignmentWriter:
         if callable(refresh):
             await refresh()
 
+    async def refresh_centroids_view_concurrent(self) -> None:
+        """Trigger a concurrent refresh of the cluster centroids view."""
+        # Call repo if it supports it
+        refresh = getattr(self._clusters, "refresh_centroids_view_concurrent", None)
+        if callable(refresh):
+            await refresh()
+
     async def _should_add_representative(self, decision: AssignmentDecision, batch_mode: bool = False) -> bool:
         """Determine if the assigned identity should become a representative."""
         cluster_id = decision.candidate.cluster_id

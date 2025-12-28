@@ -22,6 +22,7 @@ async def run_curation_job(
     cluster_repo: ClusterRepository,
     cluster_service: ClusterService | None = None,
     run_incremental_clustering: bool = True,
+    source_cluster_id: str | None = None,
 ) -> dict[str, int]:
     """Execute post-curation cleanup tasks.
 
@@ -32,6 +33,7 @@ async def run_curation_job(
         cluster_repo: Repository used to inspect unclustered identities.
         cluster_service: Optional cluster service for incremental clustering.
         run_incremental_clustering: Whether to re-cluster orphans.
+        source_cluster_id: Optional source cluster ID to delete after merge cleanup.
 
     Returns:
         Dict with counts: {"clusters_recomputed": N, "identities_clustered": M}.
@@ -51,7 +53,7 @@ async def run_curation_job(
         if callable(recompute_centroid):
             await recompute_centroid(cluster_id)
 
-    refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+    refresh_view = getattr(assignment_writer, "refresh_centroids_view_concurrent", None)
     if callable(refresh_view):
         await refresh_view()
 
@@ -62,12 +64,41 @@ async def run_curation_job(
             result = await cluster_service.cluster_unclustered_identities(tenant_id, commit=False)
             identities_clustered = int(getattr(result, "completed", 0) or 0)
 
+    if source_cluster_id and cluster_service is not None and unique_cluster_ids:
+        target_cluster_id = unique_cluster_ids[0]
+        try:
+            await cluster_service.retry_matching(target_cluster_id=target_cluster_id, tenant_id=tenant_id)
+        except Exception as exc:
+            logger.warning(
+                "[curation_job] retry_matching failed tenant_id=%s target_cluster_id=%s: %s",
+                tenant_id,
+                target_cluster_id,
+                exc,
+            )
+
+        try:
+            await cluster_service.suggestion_service.refresh_for_cluster(target_cluster_id)
+        except Exception as exc:
+            logger.warning(
+                "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",
+                tenant_id,
+                target_cluster_id,
+                exc,
+            )
+
     logger.info(
         "[curation_job] COMPLETE tenant_id=%s clusters_recomputed=%d identities_clustered=%d",
         tenant_id,
         len(unique_cluster_ids),
         identities_clustered,
     )
+
+    if source_cluster_id:
+        logger.info("[curation_job] cleaning up merged source_cluster=%s", source_cluster_id)
+        # Delete source cluster after recomputations are complete
+        if cluster_repo:
+            await cluster_repo.delete(source_cluster_id)
+
     return {
         "clusters_recomputed": len(unique_cluster_ids),
         "identities_clustered": identities_clustered,

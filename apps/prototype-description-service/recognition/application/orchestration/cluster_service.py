@@ -214,6 +214,8 @@ class ClusterService:
         tenant_id: str,
         target_cluster_id: str,
         target_label: str | None = None,
+        *,
+        defer_recompute: bool = False,
     ) -> IdentityCluster | None:
         """Merge a source cluster into a target cluster by reassigning members."""
         # Session is already managed by the caller (FastAPI dependency)
@@ -228,7 +230,7 @@ class ClusterService:
             gate=self.gate,
             clustering_logger=self.logger,
             session=self._session,
-            constraint_repository=self.constraint_repository,
+            defer_recompute=defer_recompute,
         )
 
     async def retry_matching(self, target_cluster_id: str, tenant_id: str) -> None:

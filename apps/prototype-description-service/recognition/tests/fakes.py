@@ -111,6 +111,7 @@ class FakeJobService:
         tenant_id: str,
         cluster_ids: list[str],
         identity_ids: list[str] | None = None,
+        source_cluster_id: str | None = None,
     ) -> None:
         self.calls.append(
             {
@@ -118,6 +119,7 @@ class FakeJobService:
                 "tenant_id": tenant_id,
                 "cluster_ids": list(cluster_ids),
                 "identity_ids": list(identity_ids) if identity_ids else [],
+                "source_cluster_id": source_cluster_id,
             }
         )
 
@@ -225,7 +227,12 @@ class FakeClusterService:
         return cluster
 
     async def merge_cluster(
-        self, source_cluster_id: str, tenant_id: str, target_cluster_id: str, target_label: str | None
+        self,
+        source_cluster_id: str,
+        tenant_id: str,
+        target_cluster_id: str,
+        target_label: str | None,
+        defer_recompute: bool = False,
     ) -> ClusterResponse | None:
         source = next((c for c in self.clusters if c.id == source_cluster_id and c.tenant_id == tenant_id), None)
         target = next((c for c in self.clusters if c.id == target_cluster_id and c.tenant_id == tenant_id), None)
@@ -235,7 +242,8 @@ class FakeClusterService:
             target, label=target_label or target.label, identity_count=target.identity_count + source.identity_count
         )
         self._replace_cluster(updated_target)
-        self.clusters = [c for c in self.clusters if c.id != source_cluster_id]
+        if not defer_recompute:
+            self.clusters = [c for c in self.clusters if c.id != source_cluster_id]
         return updated_target
 
     async def assign_outlier_to_cluster(

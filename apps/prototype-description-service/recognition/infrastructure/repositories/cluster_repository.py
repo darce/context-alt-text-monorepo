@@ -172,6 +172,17 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             # SQLite and other databases don't support REFRESH MATERIALIZED VIEW
             await self._session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
 
+    async def refresh_centroids_view_concurrent(self) -> None:
+        """Refresh the materialized view concurrently.
+
+        This allows reads to continue during the refresh and avoids locking the table.
+        It requires a unique index on the MV, which is created in the migration.
+        """
+        with contextlib.suppress(Exception):
+            # Use CONCURRENTLY for background scheduled refreshes
+            # This is critical to avoid locking the MV during updates
+            await self._session.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
+
     async def get_unclustered(self, tenant_id: str):
         """Return media identities not yet assigned to any cluster."""
         tenant_uuid = _coerce_uuid(tenant_id)

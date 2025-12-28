@@ -223,8 +223,9 @@ async def test_cluster_unclustered_identities_refreshes_centroids_between_chunks
 
     await cluster_service.cluster_unclustered_identities(str(tenant.id))
 
-    # At least once between chunks + once at the end.
-    assert refresh_calls["count"] >= 2
+    # [Optimized] Sync refresh removed, so count should be 0.
+    # The scheduled background refresh handles this now.
+    assert refresh_calls["count"] == 0
 
 
 @pytest.mark.asyncio

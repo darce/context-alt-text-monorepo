@@ -236,7 +236,6 @@ async def cluster_unclustered_identities(
         chunk_size = get_chunk_size(processed)
         chunk = remaining_identities[:chunk_size]
         remaining_identities = remaining_identities[chunk_size:]
-        centroids_dirty = False
 
         logger.info(
             "[clustering] chunk_processing job_id=%s processed=%d/%d chunk_size=%d",
@@ -289,7 +288,6 @@ async def cluster_unclustered_identities(
 
             if decision.outcome == AssignmentOutcome.ACCEPT:
                 await assignment_writer.persist_assignment(decision, batch_mode=True)
-                centroids_dirty = True
                 accept_count += 1
                 accepted_ids.add(candidate.identity.id)
                 logger.info(
@@ -347,7 +345,6 @@ async def cluster_unclustered_identities(
                         similarities=similarities,
                         algorithm=graph_discovery.algorithm_name,
                     )
-                    centroids_dirty = True
                     clusters_created += 1
                     logger.info(
                         "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
@@ -364,7 +361,6 @@ async def cluster_unclustered_identities(
                     similarities=similarities,
                     algorithm=graph_discovery.algorithm_name,
                 )
-                centroids_dirty = True
                 clusters_created += 1
                 logger.info(
                     "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
@@ -386,18 +382,19 @@ async def cluster_unclustered_identities(
         )
         if hac_created > 0:
             clusters_created += hac_created
-            centroids_dirty = True
 
         processed += len(chunk)
         clustering_job.processed_identities = processed
         clustering_job.progress = (processed / total_identities) if total_identities else 1.0
         await session.flush()
 
-        # Refresh between chunks so CentroidDiscovery can see centroids for clusters created/updated earlier.
-        if remaining_identities and centroids_dirty:
-            refresh = getattr(assignment_writer, "refresh_centroids_view", None)
-            if callable(refresh):
-                await refresh()
+    # Refresh between chunks so CentroidDiscovery can see centroids for clusters created/updated earlier.
+    # [Optimized] We rely on the scheduled background refresh (every 60s) to update the MV.
+    # This avoids locking the view during the clustering job.
+    # if remaining_identities and centroids_dirty:
+    #     refresh = getattr(assignment_writer, "refresh_centroids_view", None)
+    #     if callable(refresh):
+    #         await refresh()
 
     # Confirm all provisional representatives created in this batch
     try:
@@ -408,9 +405,10 @@ async def cluster_unclustered_identities(
         logger.warning("[clustering] Failed to confirm provisional representatives: %s", exc)
 
     # Refresh centroids view if possible (keeps centroid discovery inputs current in future batches)
-    refresh = getattr(assignment_writer, "refresh_centroids_view", None)
-    if callable(refresh):
-        await refresh()
+    # [Optimized] Removed per-batch refresh.
+    # refresh = getattr(assignment_writer, "refresh_centroids_view", None)
+    # if callable(refresh):
+    #     await refresh()
 
     logger.info(
         "[clustering] batch_complete job_id=%s accepted=%d suggested=%d rejected=%d new_clusters=%d",

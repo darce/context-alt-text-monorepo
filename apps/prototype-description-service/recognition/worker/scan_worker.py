@@ -47,6 +47,7 @@ class ScanWorkerConfig:
     max_concurrency: int = 5
     stale_after_seconds: int = 600
     max_attempts: int = 3
+    mv_refresh_interval_seconds: int = 60
 
 
 class ScanWorker:
@@ -84,6 +85,8 @@ class ScanWorker:
                 self._detector = StubFaceDetector()
                 self._generator = StubEmbeddingGenerator()
 
+        self._last_mv_refresh_time: datetime = datetime.min.replace(tzinfo=UTC)
+
     async def __aenter__(self) -> ScanWorker:
         """Prepare worker resources."""
         return self
@@ -107,6 +110,8 @@ class ScanWorker:
                 repo = SqlAlchemyScanQueueRepository(session)
 
                 now = datetime.now(tz=UTC)
+                await self._refresh_mv_if_needed(session, now)
+
                 if await self._process_pending_clustering_jobs(session=session, now=now):
                     await session.commit()
                     should_sleep = True
@@ -281,6 +286,7 @@ class ScanWorker:
             assignment_writer=cluster_service.assignment_writer,
             cluster_repo=cluster_service.assignment_writer._clusters,
             cluster_service=cluster_service,
+            source_cluster_id=_coerce_optional_str(job.payload.get("source_cluster_id")),
         )
         await self._ensure_job_context(session=session, job=job)
         completed = int(result_counts.get("clusters_recomputed", 0))
@@ -360,6 +366,26 @@ class ScanWorker:
     def _build_scan_service(self, session: AsyncSession) -> ScanService:
         """Create a ScanService bound to the provided session."""
         return ScanService(session=session, detector=self._detector, generator=self._generator)
+
+    async def _refresh_mv_if_needed(self, session: AsyncSession, now: datetime) -> None:
+        """Periodically refresh the cluster centroids materialized view."""
+        elapsed = (now - self._last_mv_refresh_time).total_seconds()
+        if elapsed < self._config.mv_refresh_interval_seconds:
+            return
+
+        logger.info("[worker] Refreshing centroids MV (elapsed=%.1fs)", elapsed)
+        try:
+            from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
+
+            cluster_repo = SqlAlchemyClusterRepository(session)
+            await cluster_repo.refresh_centroids_view_concurrent()
+            self._last_mv_refresh_time = now
+            await session.commit()
+        except Exception:
+            logger.exception("[worker] Failed to refresh centroids MV")
+            # Don't update _last_mv_refresh_time so we retry next cycle,
+            # but maybe backoff/limit retries logic is needed if it fails persistently?
+            # For now, let it retry next loop.
 
     async def _ensure_job_context(self, *, session: AsyncSession, job: IdentityClusteringJob) -> None:
         """Reassert tenant context before updating clustering job rows."""

@@ -66,7 +66,7 @@ describe('ClusterEditForm', () => {
     fireEvent.click(suggestion);
     
     expect(onLabelChange).toHaveBeenCalledWith('Person B');
-    await waitFor(() => expect(onSave).toHaveBeenCalled());
+    await waitFor(() => expect(onSave).toHaveBeenCalledWith('Person B'));
   });
 
   it('is disabled when isPending is true', () => {

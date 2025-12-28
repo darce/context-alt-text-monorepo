@@ -21,12 +21,13 @@ import type {
   CreateClusterForIdentityResponse,
 } from './types';
 
-export const updateClusterLabel = async (clusterId: string, label: string): Promise<void> => {
+export const updateClusterLabel = async (clusterId: string, label: string, signal?: AbortSignal): Promise<void> => {
   const url = `${stripTrailingSlash(getEndpoint('workbenchRecognitionClusters'))}/${clusterId}`;
   await fetchApi(url, {
     method: 'PATCH',
     body: { label },
     restNonce: getConfig().nonce,
+    signal,
   });
 };
 
@@ -34,16 +35,21 @@ export const mergeCluster = async (
   sourceId: string,
   targetClusterId: string,
   targetLabel?: string,
+  signal?: AbortSignal,
 ): Promise<MergeClusterResponse> => {
   const url = `${stripTrailingSlash(getEndpoint('workbenchRecognitionClusters'))}/${sourceId}/merge`;
   return fetchApi<MergeClusterResponse>(url, {
     method: 'POST',
     body: { target_cluster_id: targetClusterId, target_label: targetLabel },
     restNonce: getConfig().nonce,
+    signal,
   });
 };
 
-export const listRecognitionClusters = async (params: ClusterListParams = {}): Promise<ClusterSummary[]> => {
+export const listRecognitionClusters = async (
+  params: ClusterListParams = {},
+  signal?: AbortSignal,
+): Promise<ClusterSummary[]> => {
   const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
   const url = new URL(base, window.location.origin);
   if (params.limit) {
@@ -59,6 +65,7 @@ export const listRecognitionClusters = async (params: ClusterListParams = {}): P
   return fetchApi<ClusterSummary[]>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
+    signal,
   });
 };
 
@@ -80,7 +87,10 @@ export const fetchClusterLabels = async (): Promise<string[]> => {
   });
 };
 
-export const reassignClusterIdentity = async (request: ReassignClusterIdentityRequest): Promise<void> => {
+export const reassignClusterIdentity = async (
+  request: ReassignClusterIdentityRequest,
+  signal?: AbortSignal,
+): Promise<void> => {
   let base: string;
   let needsReassignSuffix = true;
 
@@ -109,6 +119,7 @@ export const reassignClusterIdentity = async (request: ReassignClusterIdentityRe
     method: 'POST',
     body,
     restNonce: getConfig().nonce,
+    signal,
   });
 };
 
@@ -165,6 +176,7 @@ export const splitCluster = async (
 
 export const createClusterForIdentity = async (
   request: CreateClusterForIdentityRequest,
+  signal?: AbortSignal,
 ): Promise<CreateClusterForIdentityResponse> => {
   const base = getEndpoint(
     'workbenchRecognitionCreateClusterForIdentity',
@@ -182,6 +194,7 @@ export const createClusterForIdentity = async (
       label: request.label,
     },
     restNonce: getConfig().nonce,
+    signal,
   });
 };
 

@@ -36,7 +36,7 @@ export const InlineSuggestionPrompt = ({
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
   // Fetch top suggestion for this identity
   const { data: suggestions, isLoading } = useQuery({
-    queryKey: ['identity-suggestions', identityId, 'inline'],
+    queryKey: ['inline-suggestions', identityId],
     queryFn: () => fetchIdentitySuggestions(identityId, 1), // Only fetch top 1
     staleTime: 60000, // Cache for 1 minute
     enabled: Boolean(identityId),

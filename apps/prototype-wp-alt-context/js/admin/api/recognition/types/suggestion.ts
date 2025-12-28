@@ -13,15 +13,15 @@ export interface PendingSuggestion {
   identity_id: string;
   suggested_cluster_id: string;
   representative_similarity: number;
-  avg_member_similarity: number;
-  confidence_score: number;
-  resolution: string;
-  created_at: string;
-  resolved_at: string | null;
+  avg_member_similarity?: number;
+  confidence_score?: number;
+  resolution?: string;
+  created_at?: string;
+  resolved_at?: string | null;
   // Enriched fields (from include_details=true)
-  cluster_label: string | null;
-  cluster_identity_count: number | null;
-  identity_media_id: number | null;
+  cluster_label?: string | null;
+  cluster_identity_count?: number | null;
+  identity_media_id?: number | null;
 }
 
 export interface PendingSuggestionsResponse {

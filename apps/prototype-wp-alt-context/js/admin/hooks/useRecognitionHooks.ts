@@ -39,6 +39,12 @@ export const useScanStatus = (jobId: string | null, enabled = true) =>
     queryFn: () => fetchScanStatus(jobId!),
     refetchInterval: (query) =>
       query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+    retry: (failureCount, error) => {
+      if (error.message.includes('404')) {
+        return false;
+      }
+      return failureCount < 3;
+    },
   });
 
 export const useCancelScanJobs = (options?: UseMutationOptions<JobStatusResponse[], Error, string[], unknown>) =>
@@ -56,6 +62,12 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
         enabled: Boolean(jobId) && enabled,
         refetchInterval: (query) =>
           query.state.data?.status === 'running' || query.state.data?.status === 'pending' ? 1500 : false,
+        retry: (failureCount, error) => {
+          if (error.message.includes('404')) {
+            return false;
+          }
+          return failureCount < 3;
+        },
       }),
     ),
   });

@@ -19,7 +19,7 @@ interface ClusterEditFormProps {
   /** Whether a mutation is in progress */
   isPending: boolean;
   /** Called when save button is clicked */
-  onSave: () => void;
+  onSave: (labelOverride?: string) => void;
   /** Called when cancel button is clicked */
   onCancel: () => void;
 }
@@ -90,8 +90,7 @@ export const ClusterEditForm = ({
                 className="acx-identity-cluster__suggestion-item"
                 onClick={() => {
                   onLabelChange(option.label);
-                  // Trigger save matching the user's intent to Curate
-                  setTimeout(onSave, 0);
+                  onSave(option.label);
                 }}
               >
                 <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
@@ -112,7 +111,7 @@ export const ClusterEditForm = ({
         <button 
           type="button" 
           className="acx-identity-cluster__save" 
-          onClick={onSave} 
+          onClick={() => onSave()} 
           disabled={isPending || !labelInput.trim()}
         >
           {isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
@@ -121,7 +120,6 @@ export const ClusterEditForm = ({
           type="button" 
           className="acx-identity-cluster__cancel" 
           onClick={onCancel}
-          disabled={isPending}
         >
           {__('Cancel', 'alt-context')}
         </button>

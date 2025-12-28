@@ -195,9 +195,10 @@ async def remove_identity_from_cluster(
             recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
             if callable(recompute_centroid):
                 await recompute_centroid(cluster_id)
-            refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
-            if callable(refresh_view):
-                await refresh_view()
+            # [Optimized] We rely on the scheduled background refresh
+            # refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+            # if callable(refresh_view):
+            #     await refresh_view()
 
         # Broadcast cluster change
         broadcaster = get_event_broadcaster()
@@ -284,9 +285,10 @@ async def create_cluster_for_identity(
     updated.user_confirmed = True
     updated = await cluster_repo.update(updated)
 
-    refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
-    if callable(refresh_view):
-        await refresh_view()
+    # [Optimized] We rely on the scheduled background refresh
+    # refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
+    # if callable(refresh_view):
+    #     await refresh_view()
 
     logger.info(
         "[curation] CREATED cluster_id=%s label='%s' identity=%s media_id=%s tenant_id=%s user_action=manual_create",

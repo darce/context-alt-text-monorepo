@@ -113,3 +113,18 @@ async def test_update_job_message_persists_message() -> None:
 
     assert updated.message == "Queueing 0/1 items"
     assert repo.jobs[job.id].message == "Queueing 0/1 items"
+
+
+@pytest.mark.asyncio
+async def test_queue_curation_followup_includes_merge_cleanup_payload() -> None:
+    service = _make_service()
+
+    job = await service.queue_curation_followup(
+        tenant_id="tenant-1",
+        cluster_ids=["cluster-1"],
+        source_cluster_id="cluster-source",
+    )
+
+    assert job.type is JobType.CURATION
+    assert job.payload
+    assert job.payload["source_cluster_id"] == "cluster-source"

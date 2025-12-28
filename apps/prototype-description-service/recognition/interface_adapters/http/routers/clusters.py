@@ -271,15 +271,23 @@ async def merge_cluster(
         tenant_id=request.tenant_id,
         target_cluster_id=request.target_cluster_id,
         target_label=request.target_label,
+        defer_recompute=True,
     )
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
-    # Schedule best-effort retry matching in background
-    background_tasks.add_task(run_background_retry, request.tenant_id, request.target_cluster_id)
-
-    # Refresh suggestions for the target cluster
-    background_tasks.add_task(run_background_refresh_suggestions, request.tenant_id, request.target_cluster_id)
+    # Queue curation job for deferred work (replaces background tasks)
+    job_service = await get_job_service(
+        session=session,
+        tenant_id=request.tenant_id,
+        cluster_service_builder=lambda _tid: cluster_service,
+        scan_service_builder=None,
+    )
+    await job_service.queue_curation_followup(
+        tenant_id=request.tenant_id,
+        cluster_ids=[request.target_cluster_id],
+        source_cluster_id=cluster_id,
+    )
 
     return cluster
 

@@ -37,6 +37,9 @@ class NullClusterRepo(ClusterRepository):
     async def refresh_centroids_view(self) -> None:
         return None
 
+    async def refresh_centroids_view_concurrent(self) -> None:
+        return None
+
     async def get_unclustered(self, tenant_id: str):
         return []
 

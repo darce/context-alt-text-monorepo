@@ -63,6 +63,10 @@ class ClusterRepository(Protocol):
         """Refresh the materialized view for cluster centroids."""
         ...
 
+    async def refresh_centroids_view_concurrent(self) -> None:
+        """Refresh the materialized view concurrently."""
+        ...
+
     # Clustering helpers
     async def get_unclustered(self, tenant_id: str) -> Sequence[MediaIdentity]: ...
 

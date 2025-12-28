@@ -88,6 +88,19 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
     assert target.id in call["cluster_ids"]
 
 
+def test_merge_cluster_same_target_does_not_queue_followup(api_client, tenant_id, fake_cluster_service, fake_job_service):
+    target = seed_cluster(fake_cluster_service, tenant_id, label="target")
+
+    resp = api_client.post(
+        f"/recognition/clusters/{target.id}/merge",
+        json={"tenant_id": tenant_id, "target_cluster_id": target.id, "target_label": "merged"},
+    )
+
+    assert resp.status_code == 200
+    curation_calls = [c for c in fake_job_service.calls if c["method"] == "queue_curation_followup"]
+    assert not curation_calls
+
+
 def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:
     cluster = seed_cluster(fake_cluster_service, tenant_id, label="target")
     starting_count = cluster.identity_count

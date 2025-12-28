@@ -9,29 +9,22 @@ Welcome to the Context Alt Text Monorepo documentation! This directory contains 
 ### Getting Started
 
 - **[Getting Started](getting-started.md)** - New contributor onboarding guide
-- **[WordPress Plugin README](../apps/wp-context-alt-text/README.md)** - Plugin quick start
-- **[Recognition Service README](../apps/recognition-service/README.md)** - Recognition service setup
+- **[WordPress Plugin README](../apps/prototype-wp-alt-context/README.md)** - Plugin quick start
+- **[Recognition Service README](../apps/prototype-description-service/README.md)** - Recognition service setup
+
+### Agentic Development (AI Agents Start Here)
+
+- **[BOOTSTRAP.md](agentic/BOOTSTRAP.md)** - 🚀 Single entry point for coding agents
+- **[Instructions](agentic/instructions.md)** - Engineering principles & standards
+- **[Context Maps](agentic/maps/)** - Domain-specific file references
+- **[Contracts](agentic/contracts/)** - API contracts between services
+- **[Diagrams](agentic/diagrams/)** - Architecture diagrams (Mermaid)
 
 ### Architecture & Design
 
 - **[Architecture Overview](architecture/)** - System design documents
-  - [Backend UML](architecture/backend-uml/) - Recognition service diagrams
-  - [Frontend UML](architecture/frontend-uml/) - WordPress plugin diagrams
-  - [Contracts](architecture/contracts/) - API contracts between services
-  - [Engineering Rules](architecture/rules/) - Principles, tasks, roadmaps
-
-### WordPress Plugin Docs
-
-- **[Configuration Guide](../apps/wp-context-alt-text/docs/configuration.md)** - Environment profiles, deployment
-- **[Development Guide](../apps/wp-context-alt-text/docs/development.md)** - Contributing, testing, code standards
-- **[API Reference](../apps/wp-context-alt-text/docs/api-reference.md)** - REST API endpoints
-- **[Troubleshooting](../apps/wp-context-alt-text/docs/troubleshooting.md)** - Common issues
-
-### Agentic Development
-
-- **[Prompts Index](PROMPTS_INDEX.md)** - Quick links for AI agents
-- **[Instructions](architecture/rules/instructions.md)** - Engineering principles
-- **[Tasks](architecture/rules/tasks.md)** - Current sprint backlog
+  - [ADR-001](architecture/ADR-001-face-identity-nomenclature.md) - Face identity nomenclature
+  - [Roadmaps](roadmaps/) - Project roadmaps
 
 ### Reference Materials
 
@@ -42,22 +35,28 @@ Welcome to the Context Alt Text Monorepo documentation! This directory contains 
 
 ## 🎯 What Goes Where?
 
-### Monorepo-Level Docs (Here)
+### Agentic Docs (`docs/agentic/`)
 
-- ✅ **System Architecture** - How services interact
-- ✅ **API Contracts** - Shared contracts between services
-- ✅ **Development Workflow** - Branching, commits, PRs
-- ✅ **Cross-Cutting Concerns** - Security, performance patterns
+- ✅ **BOOTSTRAP.md** — Agent entry point
+- ✅ **instructions.md** — Engineering principles
+- ✅ **contracts/** — API contracts (human-readable)
+- ✅ **diagrams/** — Architecture diagrams (Mermaid)
+- ✅ **maps/** — Context maps for each domain
+
+### Machine-Readable Schemas (`packages/shared-contracts/`)
+
+- ✅ **JSON Schemas** — For code generation (TS, PHP, Python)
+- ✅ **Sample payloads** — Example request/response data
 
 ### Project-Specific Docs
 
-**WordPress Plugin** (`apps/wp-context-alt-text/docs/`):
-- Configuration, development, API reference, troubleshooting
+**WordPress Plugin** (`apps/prototype-wp-alt-context/`):
 
-**Recognition Service** (`apps/recognition-service/`):
-- Setup, usage, deployment (in README)
+- Plugin-specific README and inline docs
 
-**Rule of Thumb:** If it's specific to one project, it goes in that project's docs. If it's architectural or cross-cutting, it belongs here.
+**Recognition Service** (`apps/prototype-description-service/`):
+
+- Service-specific README and inline docs
 
 ---
 
@@ -65,25 +64,32 @@ Welcome to the Context Alt Text Monorepo documentation! This directory contains 
 
 ```
 docs/
-├── README.md                      # This file - navigation hub
+├── README.md                     # This file - navigation hub
 ├── getting-started.md            # New contributor onboarding
-├── PROMPTS_INDEX.md              # Agentic development index
 ├── wp-plugin-literature-digest.md # WordPress development references
 │
-├── architecture/                 # System design & architecture
-│   ├── backend-uml/             # Recognition service diagrams
-│   ├── frontend-uml/            # WordPress plugin diagrams
-│   ├── contracts/               # API contracts
-│   └── rules/                   # Engineering principles, tasks, roadmaps
-│       ├── instructions.md      # Engineering principles
-│       ├── tasks.md             # Current sprint backlog
-│       ├── roadmap-v3.md        # MVP roadmap
-│       └── ...
+├── agentic/                      # 🤖 AI agent documentation hub
+│   ├── BOOTSTRAP.md              # Single entry point for agents
+│   ├── instructions.md           # Engineering principles & standards
+│   ├── contracts/                # API contracts (human-readable)
+│   ├── diagrams/                 # Architecture diagrams
+│   │   ├── system-overview.mmd
+│   │   ├── backend-uml/
+│   │   └── frontend-uml/
+│   ├── maps/                     # Context maps per domain
+│   │   ├── backend.md
+│   │   ├── frontend.md
+│   │   ├── php-plugin.md
+│   │   └── integration.md
+│   ├── rules/                    # Additional guidelines
+│   └── blackboard/               # Agent working memory
+│
+├── architecture/                 # Architecture decisions
+│   └── ADR-001-*.md              # Decision records
+│
+├── roadmaps/                     # Project roadmaps
 │
 └── literature/                   # Reference materials
-    ├── WordPress plugin Development.epub
-    ├── WordPress Plugin Development Cookbook.epub
-    └── extracted/               # Extracted book content
 ```
 
 ---
@@ -91,10 +97,10 @@ docs/
 ## 🚀 First Time Here?
 
 1. **New to the project?** Start with [getting-started.md](getting-started.md)
-2. **Working on WordPress plugin?** See [apps/wp-context-alt-text/README.md](../apps/wp-context-alt-text/README.md)
-3. **Working on recognition service?** See [apps/recognition-service/README.md](../apps/recognition-service/README.md)
-4. **Working with AI agent?** Check [PROMPTS_INDEX.md](PROMPTS_INDEX.md)
-5. **Need architecture overview?** Browse [architecture/](architecture/)
+2. **AI Agent?** Go to [agentic/BOOTSTRAP.md](agentic/BOOTSTRAP.md)
+3. **Working on WordPress plugin?** See [apps/prototype-wp-alt-context/README.md](../apps/prototype-wp-alt-context/README.md)
+4. **Working on recognition service?** See [apps/prototype-description-service/README.md](../apps/prototype-description-service/README.md)
+5. **Need architecture overview?** See [agentic/diagrams/system-overview.mmd](agentic/diagrams/system-overview.mmd)
 
 ---
 
@@ -102,12 +108,8 @@ docs/
 
 When updating documentation:
 
-- **Monorepo concerns** → Update files in this directory
-- **Plugin-specific** → Update `apps/wp-context-alt-text/docs/`
-- **Service-specific** → Update `apps/recognition-service/README.md`
-- **API changes** → Update both API reference and contracts
-- **Architecture changes** → Update UML diagrams and design docs
-
----
-
-Need help? Check [GitHub Discussions](https://github.com/darce/context-alt-text-monorepo/discussions) or open an issue!
+- **Agentic/architecture** → Update files in `docs/agentic/`
+- **Plugin-specific** → Update `apps/prototype-wp-alt-context/`
+- **Service-specific** → Update `apps/prototype-description-service/`
+- **API changes** → Update `docs/agentic/contracts/` and `packages/shared-contracts/`
+- **Diagram changes** → Update `docs/agentic/diagrams/`

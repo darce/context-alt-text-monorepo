@@ -214,7 +214,6 @@ describe('IdentityClusterList', () => {
       moved_identity_ids: ['identity-1'],
       target_identity_count: 2,
     });
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
     const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
     const cacheData: MediaIdentitiesResponse = {
@@ -230,6 +229,7 @@ describe('IdentityClusterList', () => {
     fireEvent.change(input, { target: { value: 'Erin McCleod' } });
     await waitFor(() => expect(input).toHaveValue('Erin McCleod'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
+    await user.click(await screen.findByRole('button', { name: /merge/i }));
 
     await waitFor(() =>
       expect(api.listRecognitionClusters).toHaveBeenCalledWith(
@@ -263,9 +263,6 @@ describe('IdentityClusterList', () => {
       { id: 'target-cluster', label: 'Existing Label', identity_count: 1 },
     ]);
 
-    // Mock window.confirm
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
-
     const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
 
     // ... setup cache ...
@@ -282,6 +279,7 @@ describe('IdentityClusterList', () => {
     fireEvent.change(input, { target: { value: 'Existing Label' } });
     await waitFor(() => expect(input).toHaveValue('Existing Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
+    await user.click(await screen.findByRole('button', { name: /merge/i }));
 
     await waitFor(() =>
       expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
@@ -309,7 +307,6 @@ describe('IdentityClusterList', () => {
     (api.listRecognitionClusters as Mock).mockResolvedValue([
       { id: 'target-cluster', label: 'Existing Label', identity_count: 1 },
     ]);
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
     const { client, user } = renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
     const cacheData: MediaIdentitiesResponse = {
@@ -325,15 +322,13 @@ describe('IdentityClusterList', () => {
     fireEvent.change(input, { target: { value: 'Existing Label' } });
     await waitFor(() => expect(input).toHaveValue('Existing Label'));
     await user.click(screen.getByRole('button', { name: /Save/i }));
+    await user.click(await screen.findByRole('button', { name: /merge/i }));
 
     await waitFor(() =>
       expect(api.mergeCluster).toHaveBeenCalledWith('cluster-1', 'target-cluster', 'Existing Label', expect.anything()),
     );
 
-    const closeButton = await screen.findByRole('button', { name: /Close/i });
-    await user.click(closeButton);
-
-    const undoButton = await screen.findByRole('button', { name: /Undo merge/i });
+    const undoButton = await screen.findByRole('button', { name: /Undo merge/i }, { timeout: 2000 });
     await user.click(undoButton);
 
     await waitFor(() =>

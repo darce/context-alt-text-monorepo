@@ -13,6 +13,16 @@ vi.mock('../../api/recognition', () => ({
   fetchScanStatus: vi.fn(),
 }));
 
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
+
 describe('useRecognitionJobHistory', () => {
   const fetchScanStatusMock = vi.mocked(fetchScanStatus);
 
@@ -33,14 +43,23 @@ describe('useRecognitionJobHistory', () => {
 
   it('records jobs and fetches their statuses', async () => {
     const { wrapper, queryClient } = createWrapper();
-    fetchScanStatusMock.mockResolvedValue({
+    const statusDeferred = createDeferred<{
+      id: string;
+      type: string;
+      status: string;
+      progress: { completed: number; total: number };
+      started_at: string;
+      finished_at: string;
+    }>();
+    fetchScanStatusMock.mockReturnValue(statusDeferred.promise);
+    const statusResponse = {
       id: 'job-1',
       type: 'analyze',
       status: 'completed',
       progress: { completed: 1, total: 1 },
       started_at: '2025-01-01T00:00:00Z',
       finished_at: '2025-01-01T00:00:01Z',
-    });
+    };
     const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
 
     act(() => {
@@ -49,6 +68,13 @@ describe('useRecognitionJobHistory', () => {
 
     expect(result.current.jobId).toBe('job-1');
     expect(result.current.jobHistory).toEqual(['job-1']);
+
+    await waitFor(() => expect(fetchScanStatusMock).toHaveBeenCalledWith('job-1'));
+
+    await act(async () => {
+      statusDeferred.resolve(statusResponse);
+      await statusDeferred.promise;
+    });
 
     await waitFor(() => {
       expect(result.current.jobStatuses['job-1']).toBe('completed');
@@ -60,11 +86,34 @@ describe('useRecognitionJobHistory', () => {
   it('hydrates from stored history and supports job selection', async () => {
     const { wrapper, queryClient } = createWrapper();
     window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
+    const statusDeferred = createDeferred<{
+      id: string;
+      type: string;
+      status: string;
+      progress: { completed: number; total: number };
+      started_at: string;
+      finished_at: string;
+    }>();
+    fetchScanStatusMock.mockReturnValue(statusDeferred.promise);
     const { result } = renderHook(() => useRecognitionJobHistory(), { wrapper });
 
     await waitFor(() => {
       expect(result.current.jobHistory).toEqual(['stored-job']);
       expect(result.current.jobId).toBe('stored-job');
+    });
+
+    await waitFor(() => expect(fetchScanStatusMock).toHaveBeenCalledWith('stored-job'));
+
+    await act(async () => {
+      statusDeferred.resolve({
+        id: 'stored-job',
+        type: 'analyze',
+        status: 'completed',
+        progress: { completed: 1, total: 1 },
+        started_at: '2025-01-01T00:00:00Z',
+        finished_at: '2025-01-01T00:00:01Z',
+      });
+      await statusDeferred.promise;
     });
 
     act(() => {

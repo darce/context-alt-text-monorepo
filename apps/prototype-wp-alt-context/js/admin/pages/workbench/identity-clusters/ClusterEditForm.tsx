@@ -3,7 +3,7 @@
  */
 
 import React, { useEffect, useRef } from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 
 import type { ComboboxOption } from '../../../../components/ui/combobox';
 
@@ -22,8 +22,12 @@ interface ClusterEditFormProps {
   saveLabel?: string;
   /** Called when save button is clicked */
   onSave: (labelOverride?: string) => void;
+  /** Called when a suggestion is confirmed */
+  onConfirmSuggestion?: (clusterId: string, label: string) => void;
   /** Called when cancel button is clicked */
   onCancel: () => void;
+  /** Called when a suggested match is rejected */
+  onRejectSuggestion?: (suggestionId: string) => void;
 }
 
 /**
@@ -37,7 +41,9 @@ export const ClusterEditForm = ({
   isPending,
   saveLabel,
   onSave,
+  onConfirmSuggestion,
   onCancel,
+  onRejectSuggestion,
 }: ClusterEditFormProps): React.JSX.Element => {
   const inputRef = useRef<HTMLInputElement>(null);
 
@@ -56,11 +62,8 @@ export const ClusterEditForm = ({
     }
   };
 
-  // Filter options based on input for the overlay
-  const filteredOptions = options.filter(opt => 
-    opt.label.toLowerCase().includes(labelInput.toLowerCase()) && 
-    opt.label.toLowerCase() !== labelInput.toLowerCase()
-  ).slice(0, 5);
+  // Display up to 5 options from the hook (which already handles search/filtering)
+  const displayedOptions = options.slice(0, 5);
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
 
@@ -72,7 +75,7 @@ export const ClusterEditForm = ({
           type="text"
           role="combobox"
           aria-autocomplete="list"
-          aria-expanded={filteredOptions.length > 0}
+          aria-expanded={displayedOptions.length > 0}
           aria-haspopup="listbox"
           className="acx-identity-cluster__label-input"
           value={labelInput}
@@ -83,30 +86,63 @@ export const ClusterEditForm = ({
           aria-label={__('Cluster label', 'alt-context')}
         />
         
-        {filteredOptions.length > 0 && !isPending && (
+        {displayedOptions.length > 0 && !isPending && (
           <div className="acx-identity-cluster__suggestions-overlay">
             <div className="acx-identity-cluster__suggestions-header">
               {__('Suggested', 'alt-context')}
             </div>
-            {filteredOptions.map((option) => (
-              <button
-                key={option.value}
-                type="button"
-                className="acx-identity-cluster__suggestion-item"
-                onClick={() => {
-                  onLabelChange(option.label);
-                  onSave(option.label);
-                }}
-              >
-                <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
-                {option.similarity !== undefined && (
-                  <span className={`acx-identity-cluster__match-score ${
-                    (option.similarity as number) >= 0.7 ? 'acx-identity-cluster__match-score--high' : 'acx-identity-cluster__match-score--medium'
-                  }`}>
-                    {Math.round((option.similarity as number) * 100)}%
-                  </span>
-                )}
-              </button>
+            {displayedOptions.map((option) => (
+              <div key={option.value} className="acx-identity-cluster__suggestion-row">
+                <button
+                  type="button"
+                  className="acx-identity-cluster__suggestion-item"
+                  onClick={() => {
+                    onLabelChange(option.label);
+                  }}
+                  title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
+                >
+                  <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
+                  {option.similarity !== undefined && (
+                    <span className={`acx-identity-cluster__match-score ${
+                      (option.similarity as number) >= 0.7 ? 'acx-identity-cluster__match-score--high' : 'acx-identity-cluster__match-score--medium'
+                    }`}>
+                      {Math.round((option.similarity as number) * 100)}%
+                    </span>
+                  )}
+                </button>
+                <div className="acx-identity-cluster__suggestion-actions">
+                  <button
+                    type="button"
+                    className="acx-identity-cluster__suggestion-confirm"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      if (onConfirmSuggestion) {
+                        onConfirmSuggestion(option.value, option.label);
+                      } else {
+                        onSave(option.label);
+                      }
+                    }}
+                    title={__('Confirm match', 'alt-context')}
+                    aria-label={__('Confirm match', 'alt-context')}
+                  >
+                    ✓
+                  </button>
+                  {!!option.suggestion_id && !!onRejectSuggestion && (
+                    <button
+                      type="button"
+                      className="acx-identity-cluster__suggestion-reject"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        onRejectSuggestion(option.suggestion_id as string);
+                      }}
+                      title={__('Reject suggestion', 'alt-context')}
+                      aria-label={__('Reject suggestion', 'alt-context')}
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              </div>
             ))}
           </div>
         )}

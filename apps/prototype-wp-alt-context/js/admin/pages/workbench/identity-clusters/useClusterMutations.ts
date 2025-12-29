@@ -15,6 +15,7 @@ import {
   revertMergeCluster,
   splitCluster,
   updateClusterLabel,
+  rejectSuggestion,
   type MediaIdentitiesResponse,
   type MergeClusterResponse,
 } from '../../../api/recognition';
@@ -311,6 +312,19 @@ export const useClusterMutations = ({
     },
   });
 
+  // Reject suggestion mutation
+  const rejectSuggestionMutation = useMutation({
+    mutationKey: ['reject-suggestion'],
+    mutationFn: (suggestionId: string) => rejectSuggestion(suggestionId),
+    onSuccess: () => {
+      void invalidateQueries();
+    },
+    onError: (err: unknown) => {
+      const message = err instanceof Error ? err.message : String(err);
+      onError?.(message);
+    },
+  });
+
   const isPending =
     renameMutation.isPending ||
     mergeMutation.isPending ||
@@ -318,7 +332,8 @@ export const useClusterMutations = ({
     reassignMutation.isPending ||
     assignToClusterMutation.isPending ||
     createClusterMutation.isPending ||
-    splitMutation.isPending;
+    splitMutation.isPending ||
+    rejectSuggestionMutation.isPending;
 
   return {
     // Mutations
@@ -333,6 +348,7 @@ export const useClusterMutations = ({
       createClusterMutation.mutate({ identityId, label, signal }),
     split: (clusterId: string, nClusters = 2, anchorIdentityId?: string) =>
       splitMutation.mutate({ clusterId, nClusters, anchorIdentityId }),
+    rejectSuggestion: (suggestionId: string) => rejectSuggestionMutation.mutate(suggestionId),
 
     // Loading states
     isPending,
@@ -343,5 +359,6 @@ export const useClusterMutations = ({
     isAssigning: assignToClusterMutation.isPending,
     isCreatingCluster: createClusterMutation.isPending,
     isSplitting: splitMutation.isPending,
+    isRejectingSuggestion: rejectSuggestionMutation.isPending,
   };
 };

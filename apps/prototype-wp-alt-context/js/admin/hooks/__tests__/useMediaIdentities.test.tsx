@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useMediaIdentities } from '../useMediaIdentities';
@@ -9,6 +9,16 @@ import * as recognitionApi from '../../api/recognition';
 vi.mock('../../api/recognition', () => ({
   fetchMediaIdentities: vi.fn(),
 }));
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
 
 describe('useMediaIdentities', () => {
   const createWrapper = () => {
@@ -28,12 +38,19 @@ describe('useMediaIdentities', () => {
   it('fetches identities when enabled and media IDs exist', async () => {
     const { wrapper, queryClient } = createWrapper();
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
-    fetchMediaIdentitiesMock.mockResolvedValue({ identities_by_media: {} });
+    const identitiesDeferred = createDeferred<{ identities_by_media: Record<string, unknown> }>();
+    fetchMediaIdentitiesMock.mockReturnValue(identitiesDeferred.promise);
 
     const { result } = renderHook(() => useMediaIdentities([1, 2], true), { wrapper });
 
+    await waitFor(() => expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([1, 2]));
+
+    await act(async () => {
+      identitiesDeferred.resolve({ identities_by_media: {} });
+      await identitiesDeferred.promise;
+    });
+
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([1, 2]);
 
     queryClient.clear();
   });

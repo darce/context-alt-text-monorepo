@@ -145,12 +145,40 @@ export const DebugMetricsPanel = ({ metrics }: DebugMetricsPanelProps): React.JS
             </>
           )}
 
+          {(metrics.representative_count !== undefined || metrics.pose_buckets) && (
+            <>
+              <div className="acx-debug-metrics__section-header">{__('Representatives', 'alt-context')}</div>
+              {metrics.representative_count !== undefined && (
+                <div className="acx-debug-metrics__row">
+                  <dt>{__('Reps', 'alt-context')}</dt>
+                  <dd>{metrics.representative_count}</dd>
+                </div>
+              )}
+              {metrics.pose_buckets && (
+                <div className="acx-debug-metrics__row">
+                  <dt>{__('Pose Diversity', 'alt-context')}</dt>
+                  <dd>
+                    {metrics.pose_buckets.filled}/{metrics.pose_buckets.total} {__('buckets', 'alt-context')}
+                  </dd>
+                </div>
+              )}
+            </>
+          )}
+
           {/* Face Metrics Section */}
           <div className="acx-debug-metrics__section-header">{__('Face Metrics', 'alt-context')}</div>
           <div className="acx-debug-metrics__row">
             <dt>{__('Pose', 'alt-context')}</dt>
             <dd className={`acx-debug-metrics__value--${poseQuality}`}>{poseLabel}</dd>
           </div>
+          {metrics.pose_buckets?.current_bucket && (
+            <div className="acx-debug-metrics__row">
+              <dt>{__('Bucket', 'alt-context')}</dt>
+              <dd>
+                ({metrics.pose_buckets.current_bucket[0]}, {metrics.pose_buckets.current_bucket[1]})
+              </dd>
+            </div>
+          )}
           <div className="acx-debug-metrics__row">
             <dt>{__('Age', 'alt-context')}</dt>
             <dd>{age.toFixed(1)}</dd>

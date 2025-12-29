@@ -5,21 +5,15 @@
  */
 
 import React from 'react';
-import { useQuery } from '@tanstack/react-query';
 
-import {
-  fetchIdentitySuggestions,
-  listRecognitionClusters,
-  type IdentitySuggestionsResponse,
-} from '../../../api/recognition';
+import type { ClusterSummary, IdentitySuggestionsResponse } from '../../../api/recognition';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
+import {
+  useClusterSuggestionsLoader,
+  type ClusterSuggestionsLoaderOptions,
+} from './useClusterSuggestionsLoader';
 
-interface UseClusterSuggestionsOptions {
-  /** Identity ID to fetch suggestions for */
-  identityId: string | undefined;
-  /** Whether to enable the suggestions query */
-  enabled: boolean;
-}
+interface UseClusterSuggestionsOptions extends ClusterSuggestionsLoaderOptions {}
 
 interface UseClusterSuggestionsReturn {
   /** Formatted options for Combobox */
@@ -30,49 +24,30 @@ interface UseClusterSuggestionsReturn {
   findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
 }
 
-/**
- * Hook for cluster label suggestions.
- *
- * Fetches:
- * 1. Similarity-based suggestions for the identity
- * 2. All existing cluster labels
- *
- * Returns formatted ComboboxOptions grouped by "Suggested" and "All Labels".
- */
-export const useClusterSuggestions = ({
-  identityId,
-  enabled,
-}: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
-  const pageSize = 500;
-  const maxPages = 20;
+export const selectClusterSuggestions = ({
+  identitySuggestions,
+  labelMatches,
+  labelInput = '',
+}: {
+  identitySuggestions?: IdentitySuggestionsResponse;
+  labelMatches?: ClusterSummary[];
+  labelInput?: string;
+}): ComboboxOption[] => {
+  const result: ComboboxOption[] = [];
+  const seen = new Set<string>();
+  const searchLower = labelInput.toLowerCase().trim();
 
-  // Fetch similarity suggestions when editing
-  const { data: identitySuggestions, isLoading: suggestionsLoading } = useQuery<IdentitySuggestionsResponse>({
-    queryKey: ['identity-suggestions', identityId],
-    queryFn: () => fetchIdentitySuggestions(identityId!, 5),
-    enabled: Boolean(identityId && enabled),
-    staleTime: 30000,
-  });
-
-  // Format options for Combobox
-  const options = React.useMemo<ComboboxOption[]>(() => {
-    const result: ComboboxOption[] = [];
-    const seen = new Set<string>();
-
-    // Sort suggestions by similarity (descending)
-    const sortedSuggestions = (identitySuggestions?.matches ?? []).sort((a, b) => b.similarity - a.similarity);
-
-    // Add suggestions first (higher priority)
-    sortedSuggestions.forEach((match) => {
+  // 1. Identity-based suggestions (filtered by current input)
+  (identitySuggestions?.matches ?? [])
+    .sort((a, b) => b.similarity - a.similarity)
+    .forEach((match) => {
       const normalizedLabel = match.label?.trim() ?? '';
-      if (!normalizedLabel) {
-        return;
-      }
-
+      if (!normalizedLabel) return;
       const key = normalizedLabel.toLowerCase();
-      if (seen.has(key)) {
-        return;
-      }
+
+      // Filter: label must match input if any provided
+      if (searchLower && !key.includes(searchLower)) return;
+      if (seen.has(key)) return;
 
       seen.add(key);
       result.push({
@@ -84,44 +59,77 @@ export const useClusterSuggestions = ({
       });
     });
 
-    return result;
-  }, [identitySuggestions]);
+  // 2. Label search matches (already filtered by API)
+  (labelMatches ?? []).forEach((cluster) => {
+    if (!cluster.label?.trim()) return;
+    const normalizedLabel = cluster.label.trim();
+    const key = normalizedLabel.toLowerCase();
+    if (seen.has(key)) return;
 
-  // Find cluster ID by label (case-insensitive) - checks suggestions first, then paged lookup
+    // Try to find similarity from identitySuggestions if this cluster label is also suggested for identity
+    const identityMatch = identitySuggestions?.matches?.find(
+      (match) => match.cluster_id === cluster.id || (match.label && match.label.toLowerCase() === key),
+    );
+
+    seen.add(key);
+    result.push({
+      value: cluster.id,
+      label: normalizedLabel,
+      group: 'All Labels',
+      similarity: identityMatch?.similarity,
+      identityCount: cluster.identity_count,
+    });
+  });
+
+  return result;
+};
+
+/**
+ * Hook for cluster label suggestions.
+ *
+ * Fetches:
+ * 1. Similarity-based suggestions for the identity
+ * 2. Label-based search results for existing clusters (debounced)
+ *
+ * Returns formatted ComboboxOptions grouped by "Suggested" and "All Labels".
+ */
+export const useClusterSuggestions = ({
+  identityId,
+  enabled,
+  labelInput = '',
+  debounceMs,
+}: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
+  const { identitySuggestions, labelMatches, isLoading, findClusterByLabel: findClusterByLabelRemote } =
+    useClusterSuggestionsLoader({
+      identityId,
+      enabled,
+      labelInput,
+      debounceMs,
+    });
+
+  const options = React.useMemo(
+    () => selectClusterSuggestions({ identitySuggestions, labelMatches, labelInput }),
+    [identitySuggestions, labelMatches, labelInput],
+  );
+
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
-      const normalizedLabel = label.toLowerCase();
+      const normalizedLabel = label.toLowerCase().trim();
+      if (!normalizedLabel) return null;
 
       const fromOptions = options.find((opt) => opt.label.toLowerCase() === normalizedLabel);
       if (fromOptions?.value) {
         return { id: fromOptions.value, label: fromOptions.label };
       }
 
-      for (let page = 0; page < maxPages; page += 1) {
-        const offset = page * pageSize;
-        const chunk = await listRecognitionClusters({ limit: pageSize, offset, labeled_only: true }, signal);
-        if (!chunk.length) {
-          return null;
-        }
-
-        const match = chunk.find((cluster) => cluster.label?.toLowerCase() === normalizedLabel);
-        if (match?.id && match.label) {
-          return { id: match.id, label: match.label };
-        }
-
-        if (chunk.length < pageSize) {
-          return null;
-        }
-      }
-
-      return null;
+      return findClusterByLabelRemote(label, signal);
     },
-    [maxPages, options, pageSize],
+    [options, findClusterByLabelRemote],
   );
 
   return {
     options,
-    isLoading: suggestionsLoading,
+    isLoading,
     findClusterByLabel,
   };
 };

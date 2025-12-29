@@ -44,6 +44,12 @@ export interface DebugMetrics {
   clustering_algorithm: string | null;
   similarity_threshold: number | null;
   match_similarity: number | null;
+  representative_count?: number;
+  pose_buckets?: {
+    filled: number;
+    total: number;
+    current_bucket?: [number, number];
+  };
 }
 
 export interface DetectedIdentity {

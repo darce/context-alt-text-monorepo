@@ -23,6 +23,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.events.broadcaster import get_event_broadcaster
+from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -81,9 +82,12 @@ async def list_clusters(
     offset: int = 0,
     include_outliers: bool = False,
     labeled_only: bool = False,
+    search: str | None = None,
 ) -> list[IdentityCluster]:
     """Return clusters for a tenant using the persistence layer."""
-    clusters = await cluster_repo.get_by_tenant(tenant_id, limit=limit, offset=offset, labeled_only=labeled_only)
+    clusters = await cluster_repo.get_by_tenant(
+        tenant_id, limit=limit, offset=offset, labeled_only=labeled_only, search=search
+    )
     for cluster in clusters:
         cluster.representatives = getattr(cluster, "representatives", []) or []
     if include_outliers:
@@ -226,6 +230,7 @@ async def create_cluster_for_identity(
     tenant_id: str,
     session: AsyncSession | None,
     assignment_writer: AssignmentWriter,
+    suggestion_service: SuggestionServiceProtocol | None = None,
 ) -> IdentityCluster:
     """Create a new user-labeled cluster containing a single identity."""
     if session is None:
@@ -290,14 +295,14 @@ async def create_cluster_for_identity(
     # if callable(refresh_view):
     #     await refresh_view()
 
-    logger.info(
-        "[curation] CREATED cluster_id=%s label='%s' identity=%s media_id=%s tenant_id=%s user_action=manual_create",
-        updated.id,
-        updated.label,
-        identity_id,
-        identity_model.media_id,
-        tenant_id,
-    )
+    # Resolve any pending suggestions for this identity
+    if suggestion_service and updated.id:
+        with contextlib.suppress(Exception):
+            await suggestion_service.resolve_for_identity_exclusive(
+                identity_id=identity_id,
+                accepted_cluster_id=updated.id,
+                reason="manual_curation",
+            )
 
     return updated
 
@@ -317,6 +322,7 @@ async def assign_outlier_to_cluster(
     similarity: float,
     session: AsyncSession | None,
     assignment_writer: AssignmentWriter,
+    suggestion_service: SuggestionServiceProtocol | None = None,
 ) -> IdentityCluster | None:
     """Manually assign an unclustered identity to an existing cluster."""
     cluster_repo: ClusterRepository = assignment_writer._clusters
@@ -397,6 +403,15 @@ async def assign_outlier_to_cluster(
     recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
     if callable(recompute_centroid):
         await recompute_centroid(target_cluster_id)
+
+    # Resolve any pending suggestions for this identity
+    if suggestion_service:
+        with contextlib.suppress(Exception):
+            await suggestion_service.resolve_for_identity_exclusive(
+                identity_id=identity_id,
+                accepted_cluster_id=target_cluster_id,
+                reason="manual_assign",
+            )
 
     # Broadcast suggestion refresh event
     broadcaster = get_event_broadcaster()

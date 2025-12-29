@@ -82,6 +82,15 @@ class SuggestionStub:
     async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None:
         self.suggestions.append((candidate, confidence))
 
+    async def resolve_for_identity_exclusive(
+        self,
+        *,
+        identity_id: str,
+        accepted_cluster_id: str,
+        reason: str | None = None,
+    ) -> int:
+        return 0
+
 
 @pytest.mark.asyncio
 async def test_representative_matcher_routes_through_gate() -> None:

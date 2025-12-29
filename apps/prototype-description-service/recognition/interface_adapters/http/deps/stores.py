@@ -15,7 +15,8 @@ from typing import Any
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityCluster, IdentityMember, MediaIdentity
+from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity
+from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.job import Job
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
 from recognition.shared.ids import generate_id
@@ -160,7 +161,7 @@ class MediaIdentityService:
     def __init__(self, session: AsyncSession) -> None:
         self._session = session
 
-    async def list_by_media_ids(self, tenant_id: str, media_ids: list[int]):
+    async def list_by_media_ids(self, tenant_id: str, media_ids: list[int], include_debug: bool = False):
         if not media_ids:
             return []
         # Left outer join with IdentityMember and IdentityCluster to get cluster info
@@ -177,11 +178,40 @@ class MediaIdentityService:
             .where(MediaIdentity.media_id.in_(media_ids))
         )
         rows = (await self._session.execute(stmt)).all()
-        return [
-            {
+        rep_stats: dict[str, dict[str, object]] = {}
+        pose_bucket_size = 0.0
+        max_total_buckets = 0
+
+        if include_debug:
+            settings = ClusteringSettings()
+            pose_bucket_size = settings.pose_bucket_size
+            max_total_buckets = settings.max_representatives_per_cluster + settings.pose_diversity_bonus
+            cluster_ids = {row.cluster_id for row in rows if row.cluster_id}
+            if cluster_ids:
+                rep_stmt = (
+                    select(
+                        IdentityClusterRepresentative.cluster_id,
+                        IdentityClusterRepresentative.pose_pitch,
+                        IdentityClusterRepresentative.pose_yaw,
+                    )
+                    .where(IdentityClusterRepresentative.cluster_id.in_(cluster_ids))
+                    .where(IdentityClusterRepresentative.tenant_id == uuid.UUID(str(tenant_id)))
+                )
+                rep_rows = (await self._session.execute(rep_stmt)).all()
+                for rep in rep_rows:
+                    cluster_key = str(rep.cluster_id)
+                    entry = rep_stats.setdefault(cluster_key, {"count": 0, "buckets": set()})
+                    entry["count"] = int(entry["count"]) + 1
+                    if rep.pose_pitch is not None and rep.pose_yaw is not None and pose_bucket_size:
+                        bucket = (int(rep.pose_pitch // pose_bucket_size), int(rep.pose_yaw // pose_bucket_size))
+                        entry["buckets"].add(bucket)
+        response: list[dict[str, object]] = []
+        for row in rows:
+            cluster_id = str(row.cluster_id) if row.cluster_id else None
+            payload: dict[str, object] = {
                 "identity_id": str(row.MediaIdentity.id),
                 "media_id": row.MediaIdentity.media_id,
-                "cluster_id": str(row.cluster_id) if row.cluster_id else None,
+                "cluster_id": cluster_id,
                 "cluster_label": row.cluster_label,
                 "is_auto_label": not row.user_confirmed if row.user_confirmed is not None else None,
                 "bbox": {
@@ -194,8 +224,49 @@ class MediaIdentityService:
                 "thumbnail_url": row.MediaIdentity.thumbnail_url,
                 "media_url": row.MediaIdentity.media_url,
             }
-            for row in rows
-        ]
+
+            if include_debug:
+                pose_pitch = row.MediaIdentity.pose_pitch
+                pose_yaw = row.MediaIdentity.pose_yaw
+                pose_roll = row.MediaIdentity.pose_roll
+                debug_metrics: dict[str, object] = {
+                    "pose": {
+                        "pitch": float(pose_pitch or 0),
+                        "yaw": float(pose_yaw or 0),
+                        "roll": float(pose_roll or 0),
+                    },
+                    "age": float(row.MediaIdentity.age or 0),
+                    "gender": "male" if row.MediaIdentity.gender == 1 else "female",
+                    "det_score": float(row.MediaIdentity.confidence),
+                    "bbox_area": int(row.MediaIdentity.bbox_width * row.MediaIdentity.bbox_height),
+                    "landmark_quality": float(row.MediaIdentity.quality_score or 1.0),
+                    "clustering_method": None,
+                    "clustering_algorithm": None,
+                    "similarity_threshold": None,
+                    "match_similarity": None,
+                }
+
+                if cluster_id:
+                    stats = rep_stats.get(cluster_id, {"count": 0, "buckets": set()})
+                    buckets = stats.get("buckets", set())
+                    current_bucket = None
+                    if pose_pitch is not None and pose_yaw is not None and pose_bucket_size:
+                        current_bucket = (
+                            int(pose_pitch // pose_bucket_size),
+                            int(pose_yaw // pose_bucket_size),
+                        )
+                    debug_metrics["representative_count"] = int(stats.get("count", 0))
+                    debug_metrics["pose_buckets"] = {
+                        "filled": len(buckets),
+                        "total": max_total_buckets,
+                        "current_bucket": current_bucket,
+                    }
+
+                payload["debug_metrics"] = debug_metrics
+
+            response.append(payload)
+
+        return response
 
 
 __all__ = [

@@ -47,8 +47,12 @@ def test_media_identities_endpoint(api_client, tenant_id, fake_media_identity_se
     resp = api_client.get(
         "/recognition/media/identities",
         headers={"X-Tenant-ID": tenant_id},
-        params=[("media_ids", 111)],
+        params=[("media_ids", 111), ("include_debug", "true")],
     )
 
     assert resp.status_code == 200
-    assert isinstance(resp.json(), list)
+    body = resp.json()
+    assert isinstance(body, list)
+    assert body
+    assert body[0]["debug_metrics"]["representative_count"] == 1
+    assert "pose_buckets" in body[0]["debug_metrics"]

@@ -35,7 +35,15 @@ class GateRepoStub(ClusterRepository):
     async def get_by_id(self, cluster_id: str):
         return None
 
-    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False):
+    async def get_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        labeled_only: bool = False,
+        search: str | None = None,
+    ):
         return []
 
     async def save(self, cluster):
@@ -132,6 +140,18 @@ class BlockRepoStub(IdentityClusterBlockRepository):
         self._blocked = blocked
         self.called = False
 
+    async def block(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        cluster_id: str,
+        reason: str | None = None,
+        created_by_user_id: int | None = None,
+        expires_at: datetime | None = None,
+    ):
+        raise NotImplementedError
+
     async def add_block(
         self,
         *,
@@ -178,6 +198,16 @@ class ConstraintRepoStub(IdentityConstraintRepository):
     def __init__(self, cannot_link: bool) -> None:
         self._cannot_link = cannot_link
         self.called = False
+
+    async def create_cannot_link(
+        self,
+        tenant_id: str,
+        identity_a: str,
+        identity_b: str,
+        source: str,
+        created_by_user_id: int | None = None,
+    ):
+        raise NotImplementedError
 
     async def create(
         self,

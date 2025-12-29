@@ -290,6 +290,14 @@ async def cluster_unclustered_identities(
                 await assignment_writer.persist_assignment(decision, batch_mode=True)
                 accept_count += 1
                 accepted_ids.add(candidate.identity.id)
+
+                # Resolve any pending suggestions (accept this cluster, reject others)
+                if suggestion_service:
+                    await suggestion_service.resolve_for_identity_exclusive(
+                        identity_id=candidate.identity.id,
+                        accepted_cluster_id=candidate.cluster_id,
+                        reason="auto_assignment",
+                    )
                 logger.info(
                     "[clustering] ACCEPTED job_id=%s identity=%s media_id=%s cluster=%s",
                     job_id,
@@ -339,13 +347,22 @@ async def cluster_unclustered_identities(
             final_result = await graph_discovery.discover(still_unclustered, {})
             for members, similarities in final_result.new_clusters:
                 if members:
-                    await assignment_writer.persist_new_cluster(
+                    cluster = await assignment_writer.persist_new_cluster(
                         tenant_id=tenant_id,
                         identities=members,
                         similarities=similarities,
                         algorithm=graph_discovery.algorithm_name,
                     )
                     clusters_created += 1
+
+                    # Resolve any pending suggestions for identities in this new cluster
+                    if suggestion_service:
+                        for member in members:
+                            await suggestion_service.resolve_for_identity_exclusive(
+                                identity_id=member.id,
+                                accepted_cluster_id=str(cluster.id),
+                                reason="auto_new_cluster",
+                            )
                     logger.info(
                         "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
                         job_id,
@@ -355,13 +372,22 @@ async def cluster_unclustered_identities(
 
         for members, similarities in new_cluster_proposals:
             if members:
-                await assignment_writer.persist_new_cluster(
+                cluster = await assignment_writer.persist_new_cluster(
                     tenant_id=tenant_id,
                     identities=members,
                     similarities=similarities,
                     algorithm=graph_discovery.algorithm_name,
                 )
                 clusters_created += 1
+
+                # Resolve any pending suggestions for identities in this new cluster
+                if suggestion_service:
+                    for member in members:
+                        await suggestion_service.resolve_for_identity_exclusive(
+                            identity_id=member.id,
+                            accepted_cluster_id=str(cluster.id),
+                            reason="auto_proposal_new_cluster",
+                        )
                 logger.info(
                     "[clustering] new_cluster job_id=%s identity_count=%d media_ids=%s",
                     job_id,

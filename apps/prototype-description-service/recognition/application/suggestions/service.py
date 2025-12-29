@@ -676,7 +676,7 @@ class SuggestionService:
             return None  # Not found
 
     async def reject(self, suggestion_id: str) -> AssignmentSuggestion | None:
-        """Mark a suggestion as rejected."""
+        """Mark a suggestion as rejected and create negative constraints."""
         try:
             suggestion = await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.REJECTED)
             if suggestion:
@@ -695,6 +695,26 @@ class SuggestionService:
                     suggestion_id=suggestion.id,
                     source="manual_reject",
                 )
+
+                # Create negative constraints to prevent future auto-assignment
+                if self._cluster_repository and self._constraint_repository:
+                    cluster = await self._cluster_repository.get_by_id(suggestion.cluster_id)
+                    if cluster and cluster.representative_identity_id:
+                        await self._constraint_repository.create_cannot_link(
+                            tenant_id=self._tenant_id,
+                            identity_a=suggestion.identity_id,
+                            identity_b=cluster.representative_identity_id,
+                            source="manual_reject",
+                        )
+
+                if self._block_repository:
+                    await self._block_repository.block(
+                        tenant_id=self._tenant_id,
+                        identity_id=suggestion.identity_id,
+                        cluster_id=suggestion.cluster_id,
+                        reason="manual_reject",
+                    )
+
             return suggestion
         except ValueError:
             logger.warning("[curation] Failed to reject suggestion_id=%s: Not found", suggestion_id)

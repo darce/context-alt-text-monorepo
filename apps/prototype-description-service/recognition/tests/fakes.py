@@ -154,7 +154,13 @@ class FakeClusterService:
         self.assignment_writer = SimpleNamespace(_clusters=_FakeClusterRepository(self))
 
     async def list_clusters(
-        self, tenant_id: str, limit: int, offset: int, include_outliers: bool = False, labeled_only: bool = False
+        self,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        include_outliers: bool = False,
+        labeled_only: bool = False,
+        search: str | None = None,
     ) -> list[ClusterResponse]:
         self.calls.append(
             {"method": "list_clusters", "tenant_id": tenant_id, "include_outliers": include_outliers, "limit": limit}

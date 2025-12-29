@@ -259,6 +259,7 @@ class ClusterService:
             session=self._session,
             assignment_writer=self.assignment_writer,
             suggestion_service=self.suggestion_service,
+            clustering_logger=self.logger,
         )
 
     async def get_identity_cluster_id(self, identity_id: str) -> str | None:
@@ -291,6 +292,8 @@ class ClusterService:
             recompute=recompute,
             tenant_id_for_logging=tenant_id_for_logging,
             media_id=media_id,
+            session=self._session,
+            clustering_logger=self.logger,
         )
 
     async def split_cluster(

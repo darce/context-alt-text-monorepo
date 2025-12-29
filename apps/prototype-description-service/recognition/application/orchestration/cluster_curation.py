@@ -20,6 +20,7 @@ import numpy as np
 from sqlalchemy import Select, exists, select
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from db.models import IdentityClusterRepresentative as RepModel
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.events.broadcaster import get_event_broadcaster
@@ -28,7 +29,8 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
-from recognition.observability import ClusteringLogger
+from recognition.observability import ClusteringLogger, CurationEventType
+from recognition.shared.similarity import compute_face_similarity
 
 logger = logging.getLogger(__name__)
 
@@ -177,6 +179,8 @@ async def remove_identity_from_cluster(
     recompute: bool = True,
     tenant_id_for_logging: str | None = None,
     media_id: int | None = None,
+    clustering_logger: ClusteringLogger | None = None,
+    session: AsyncSession | None = None,
 ) -> bool:
     """Remove an identity from its current cluster (make it an orphan)."""
     members = await member_repo.get_by_identity_id(identity_id)
@@ -192,17 +196,28 @@ async def remove_identity_from_cluster(
         if cluster and cluster.identity_count > 0:
             cluster.identity_count -= 1
             await cluster_repo.update(cluster)
+        # Check for representative refresh (Phase 3)
+        # Always check and remove stale rep, but only refresh if recompute is True
+        refreshed = False
+        if session and assignment_writer:
+            refreshed = await check_and_refresh_representatives(
+                cluster_id=cluster_id,
+                removed_identity_id=identity_id,
+                assignment_writer=assignment_writer,
+                session=session,
+                refresh=recompute,
+            )
+
         if assignment_writer and recompute:
             recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
-            if callable(recompute_reps):
+            # Only recompute if we didn't already trigger a refresh (or if generic recompute is needed)
+            # check_and_refresh_representatives calls refresh_representatives_for_cluster if true.
+            if not refreshed and callable(recompute_reps):
                 await recompute_reps(cluster_id)
+
             recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
             if callable(recompute_centroid):
                 await recompute_centroid(cluster_id)
-            # [Optimized] We rely on the scheduled background refresh
-            # refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
-            # if callable(refresh_view):
-            #     await refresh_view()
 
         # Broadcast cluster change
         broadcaster = get_event_broadcaster()
@@ -219,6 +234,14 @@ async def remove_identity_from_cluster(
         cluster_id,
         tenant_id_for_logging or "unknown",
     )
+
+    if clustering_logger and removed:
+        clustering_logger.log_curation_action(
+            action=CurationEventType.REMOVE_MEMBER,
+            identity_id=identity_id,
+            previous_cluster_id=cluster_id,
+            tenant_id=tenant_id_for_logging,
+        )
 
     return True
 
@@ -259,6 +282,7 @@ async def create_cluster_for_identity(
             assignment_writer=assignment_writer,
             tenant_id_for_logging=tenant_id,
             media_id=int(identity_model.media_id),
+            session=session,
         )
 
     identity = MediaIdentity(
@@ -323,6 +347,7 @@ async def assign_outlier_to_cluster(
     session: AsyncSession | None,
     assignment_writer: AssignmentWriter,
     suggestion_service: SuggestionServiceProtocol | None = None,
+    clustering_logger: ClusteringLogger | None = None,
 ) -> IdentityCluster | None:
     """Manually assign an unclustered identity to an existing cluster."""
     cluster_repo: ClusterRepository = assignment_writer._clusters
@@ -365,6 +390,8 @@ async def assign_outlier_to_cluster(
             recompute=True,  # Recompute source cluster's centroids
             tenant_id_for_logging=tenant_id,
             media_id=int(identity_model.media_id),
+            clustering_logger=clustering_logger,
+            session=session,
         )
 
     # Use idempotent add to prevent duplicate key errors on retry
@@ -404,6 +431,19 @@ async def assign_outlier_to_cluster(
     if callable(recompute_centroid):
         await recompute_centroid(target_cluster_id)
 
+    # If existing similarity is 0.0 (default), try to compute real similarity against reps
+    if similarity == 0.0:
+        try:
+            # Load identity embedding
+            identity_embedding_arr = np.asarray(identity_model.embedding, dtype=np.float32)
+            similarity = await compute_curation_similarity(
+                identity_embedding=identity_embedding_arr,
+                target_cluster_id=target_cluster_id,
+                session=session,
+            )
+        except Exception as exc:
+            logger.warning("Failed to compute curation similarity: %s", exc)
+
     # Resolve any pending suggestions for this identity
     if suggestion_service:
         with contextlib.suppress(Exception):
@@ -412,6 +452,14 @@ async def assign_outlier_to_cluster(
                 accepted_cluster_id=target_cluster_id,
                 reason="manual_assign",
             )
+    if clustering_logger:
+        clustering_logger.log_curation_action(
+            action=CurationEventType.ASSIGN_OUTLIER,
+            identity_id=identity_id,
+            target_cluster_id=target_cluster_id,
+            previous_cluster_id=source_cluster_id,
+            similarity=similarity,
+        )
 
     # Broadcast suggestion refresh event
     broadcaster = get_event_broadcaster()
@@ -422,3 +470,93 @@ async def assign_outlier_to_cluster(
     )
 
     return cluster
+
+
+async def compute_curation_similarity(
+    *,
+    identity_embedding: np.ndarray,
+    target_cluster_id: str,
+    session: AsyncSession,
+) -> float:
+    """Compute similarity between an identity and target cluster representatives.
+
+    Used during manual curation to log accurate similarity values instead of 0.0.
+
+    Args:
+        identity_embedding: 512-dim embedding vector of the identity
+        target_cluster_id: UUID of the cluster to compare against
+        session: Database session for loading representatives
+
+    Returns:
+        Maximum cosine similarity to any representative in target cluster.
+        Returns 0.0 if cluster has no representatives.
+
+    Raises:
+        ValueError: If cluster not found
+    """
+    result = await session.execute(select(RepModel).where(RepModel.cluster_id == uuid.UUID(target_cluster_id)))
+    reps = result.scalars().all()
+
+    if not reps:
+        return 0.0
+
+    max_sim = 0.0
+    for rep in reps:
+        # Each rep.embedding is a list or numpy array, convert to standard format
+        if rep.embedding is not None:
+            rep_embedding = np.asarray(rep.embedding, dtype=np.float32)
+            sim = compute_face_similarity(identity_embedding, rep_embedding)
+            max_sim = max(max_sim, sim)
+
+    return float(max_sim)
+
+
+async def check_and_refresh_representatives(
+    *,
+    cluster_id: str,
+    removed_identity_id: str,
+    assignment_writer: AssignmentWriter,
+    session: AsyncSession,
+    refresh: bool = True,
+) -> bool:
+    """Check if removed identity was a representative and trigger refresh if so.
+
+    Args:
+        cluster_id: Cluster the identity was removed from
+        removed_identity_id: Identity that was removed
+        assignment_writer: Writer for representative operations
+        session: Database session
+        refresh: Whether to trigger representative refresh (default: True)
+
+    Returns:
+        True if representative refresh was triggered, False otherwise.
+    """
+    # Check if identity was a representative
+    result = await session.execute(
+        select(RepModel).where(
+            RepModel.cluster_id == uuid.UUID(cluster_id),
+            RepModel.identity_id == uuid.UUID(removed_identity_id),
+        )
+    )
+    rep = result.scalar_one_or_none()
+
+    if rep is None:
+        return False
+
+    # Delete the stale representative
+    await session.delete(rep)
+    await session.flush()  # Ensure deletion applies before refresh logic reads reps
+
+    logger.info(
+        "[curation] REPRESENTATIVE_REMOVED identity=%s cluster=%s triggered_refresh=%s",
+        removed_identity_id,
+        cluster_id,
+        str(refresh).lower(),
+    )
+
+    if refresh:
+        # Trigger representative refresh for the cluster
+        await assignment_writer.refresh_representatives_for_cluster(cluster_id)
+        return True
+
+    return False

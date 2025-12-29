@@ -24,6 +24,8 @@ class CurationEventType(Enum):
     RENAME = "rename"
     MERGE = "merge"
     SPLIT = "split"
+    ASSIGN_OUTLIER = "assign_outlier"
+    REMOVE_MEMBER = "remove_member"
 
 
 @dataclass

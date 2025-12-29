@@ -352,6 +352,7 @@ async def cluster_unclustered_identities(
                         identities=members,
                         similarities=similarities,
                         algorithm=graph_discovery.algorithm_name,
+                        clustering_logger=clustering_logger,
                     )
                     clusters_created += 1
 
@@ -377,6 +378,7 @@ async def cluster_unclustered_identities(
                     identities=members,
                     similarities=similarities,
                     algorithm=graph_discovery.algorithm_name,
+                    clustering_logger=clustering_logger,
                 )
                 clusters_created += 1
 
@@ -405,6 +407,7 @@ async def cluster_unclustered_identities(
             constrained_hac=constrained_hac,
             hac_settings=hac_settings,
             assignment_writer=assignment_writer,
+            clustering_logger=clustering_logger,
         )
         if hac_created > 0:
             clusters_created += hac_created
@@ -503,6 +506,7 @@ async def _run_hac_refinement(
     constrained_hac: Any,
     hac_settings: Any,
     assignment_writer: AssignmentWriter,
+    clustering_logger: ClusteringLogger | None = None,
 ) -> int:
     """Run constrained HAC refinement on noise identities."""
     if not (
@@ -540,6 +544,7 @@ async def _run_hac_refinement(
                 identities=members,
                 similarities=[],  # HAC doesn't provide pairwise sims
                 algorithm="constrained_hac",
+                clustering_logger=clustering_logger,
             )
             clusters_created += 1
             logger.info(

@@ -747,3 +747,60 @@ async def test_provisional_representative_lifecycle(db_session, tenant) -> None:
     reps = await cluster_repo.get_all_representatives(cluster.id)
     assert len(reps) == 1
     assert reps[0].identity_id == str(model.id)
+
+
+@pytest.mark.asyncio
+async def test_persist_new_cluster_logs_per_identity(db_session, tenant) -> None:
+    """persist_new_cluster should log initial assignment for every member if logger provided."""
+    from unittest.mock import Mock
+
+    from recognition.observability import ClusteringLogger
+
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    writer = AssignmentWriter(ClusteringSettings(), cluster_repo, member_repo)
+
+    mock_logger = Mock(spec=ClusteringLogger)
+
+    identities = [make_identity(str(tenant.id)) for _ in range(2)]
+    # Ensure media_id is an integer string for the test helper, but the model conversion handles it
+    # make_identity uses uuid for media_id, so we need to be careful.
+    # actually make_identity sets media_id to uuid string.
+    # The logging signature expects int for media_id.
+    # Let's override media_ids to be parseable ints for this test or update make_identity?
+    # make_identity is defined in this file. It uses str(uuid.uuid4()).
+    # persist_new_cluster takes MediaIdentity objects.
+    # The logger signature requires media_id: int.
+    # So we should ensure our input identities have parseable media_ids.
+    identities[0].media_id = "101"
+    identities[1].media_id = "102"
+
+    similarities = [1.0, 0.95]
+
+    cluster = await writer.persist_new_cluster(
+        tenant_id=str(tenant.id),
+        identities=identities,
+        similarities=similarities,
+        algorithm="manual",
+        clustering_logger=mock_logger,
+    )
+
+    assert mock_logger.log_initial_assignment.call_count == 2
+
+    # Verify call arguments
+    call_args = mock_logger.log_initial_assignment.call_args_list
+
+    # First call
+    kwargs1 = call_args[0].kwargs
+    assert kwargs1["identity_id"] == identities[0].id
+    assert kwargs1["media_id"] == 101
+    assert kwargs1["cluster_id"] == cluster.id
+    assert kwargs1["similarity"] == 1.0
+    assert kwargs1["tenant_id"] == str(tenant.id)
+
+    # Second call
+    kwargs2 = call_args[1].kwargs
+    assert kwargs2["identity_id"] == identities[1].id
+    assert kwargs2["media_id"] == 102
+    assert kwargs2["cluster_id"] == cluster.id
+    assert kwargs2["similarity"] == 0.95

@@ -4,6 +4,7 @@ AssignmentWriter interface for persisting gate decisions (Phase 5).
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
 from collections.abc import Sequence
@@ -20,6 +21,7 @@ from recognition.domain.identity import MediaIdentity
 from recognition.domain.locator import IdentityLocator
 from recognition.domain.repositories import ClusterRepository, MemberData, MemberRepository
 from recognition.domain.representative import ClusterRepresentative
+from recognition.observability import ClusteringLogger
 from recognition.observability.recognition_runs import RecognitionRunContext
 from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
@@ -724,6 +726,7 @@ class AssignmentWriter:
         identities: list[MediaIdentity],
         similarities: list[float],
         algorithm: str = "graph",
+        clustering_logger: ClusteringLogger | None = None,
     ) -> IdentityCluster:
         """Create a new cluster for the provided identities."""
         if len(identities) != len(similarities):
@@ -753,6 +756,20 @@ class AssignmentWriter:
             similarities=similarities,
             algorithm=algorithm,
         )
+
+        # Log per-identity assignments
+        if clustering_logger:
+            for identity, similarity in zip(identities, similarities, strict=False):
+                with contextlib.suppress(Exception):
+                    media_id_int = int(identity.media_id) if identity.media_id else 0
+                    clustering_logger.log_initial_assignment(
+                        identity_id=identity.id,
+                        media_id=media_id_int,
+                        cluster_id=cluster.id,
+                        similarity=similarity,
+                        algorithm=algorithm,
+                        tenant_id=tenant_id,
+                    )
 
         # Create initial representative(s) using diversity-aware sampling (FPS)
         # to preserve "bridge" faces that connect different pose angles
@@ -794,6 +811,14 @@ class AssignmentWriter:
             cluster.representative_identity_id = representative_id
 
         return await self._clusters.update(cluster)
+
+    async def refresh_representatives_for_cluster(self, cluster_id: str) -> None:
+        """Trigger recomputation of representatives for a specific cluster.
+
+        Args:
+            cluster_id: The UUID of the cluster to refresh.
+        """
+        await self.recompute_representatives(cluster_id)
 
     async def assign_to_existing_cluster(
         self,

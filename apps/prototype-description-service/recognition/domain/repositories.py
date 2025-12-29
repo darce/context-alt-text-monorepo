@@ -38,6 +38,10 @@ class MemberData:
     similarity: float
 
 
+class ClusterNotFoundError(Exception):
+    """Raised when a requested cluster is not found."""
+
+
 class ClusterRepository(Protocol):
     """Abstract interface for reading and writing cluster data."""
 

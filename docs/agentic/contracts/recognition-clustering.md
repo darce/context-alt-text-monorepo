@@ -80,6 +80,7 @@ Query params:
 - `offset` (default 0)
 - `include_outliers` (default false)
 - `labeled_only` (default false)
+- `search` (optional substring filter for labels)
 
 Response: `ClusterResponse[]`.
 
@@ -227,6 +228,7 @@ Response: `SuggestionResponse`.
 Query params:
 - `tenant_id` (header or query)
 - `media_ids` (accepts `media_ids`, `media_ids[]`, or `media_ids[0]` style)
+- `include_debug` (optional)
 
 Response: array of identities with cluster metadata:
 
@@ -241,7 +243,21 @@ Response: array of identities with cluster metadata:
     "bbox": { "x": 45, "y": 60, "width": 120, "height": 120 },
     "confidence": 0.98,
     "thumbnail_url": "https://example.test/uploads/101-thumb.jpg",
-    "media_url": "https://example.test/uploads/101.jpg"
+    "media_url": "https://example.test/uploads/101.jpg",
+    "debug_metrics": {
+      "pose": { "pitch": 5.0, "yaw": -2.0, "roll": 1.0 },
+      "age": 32,
+      "gender": "female",
+      "det_score": 0.98,
+      "bbox_area": 14400,
+      "landmark_quality": 0.9,
+      "clustering_method": null,
+      "clustering_algorithm": null,
+      "similarity_threshold": null,
+      "match_similarity": null,
+      "representative_count": 3,
+      "pose_buckets": { "filled": 3, "total": 13, "current_bucket": [0, -1] }
+    }
   }
 ]
 ```

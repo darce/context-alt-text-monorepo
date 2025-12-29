@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { renderHook, waitFor } from '@testing-library/react';
+import { act, renderHook, waitFor } from '@testing-library/react';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
@@ -9,6 +9,16 @@ import * as recognitionApi from '../../api/recognition';
 vi.mock('../../api/recognition', () => ({
   fetchMediaIdentities: vi.fn(),
 }));
+
+const createDeferred = <T,>() => {
+  let resolve!: (value: T) => void;
+  let reject!: (reason?: unknown) => void;
+  const promise = new Promise<T>((res, rej) => {
+    resolve = res;
+    reject = rej;
+  });
+  return { promise, resolve, reject };
+};
 
 describe('useWorkbenchMedia', () => {
   const originalFetch = globalThis.fetch;
@@ -75,36 +85,61 @@ describe('useWorkbenchMedia', () => {
       totalPages: 1,
     };
 
-    const fetchMock = vi.fn().mockResolvedValue({
-      ok: true,
-      status: 200,
-      json: () => Promise.resolve(mediaResponse),
-    });
+    const fetchDeferred = createDeferred<{
+      ok: boolean;
+      status: number;
+      json: () => Promise<typeof mediaResponse>;
+    }>();
+    const jsonDeferred = createDeferred<typeof mediaResponse>();
+    const fetchMock = vi.fn().mockReturnValue(fetchDeferred.promise);
     globalThis.fetch = fetchMock as typeof fetch;
 
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
-    fetchMediaIdentitiesMock.mockResolvedValue({
-      identities_by_media: {
-        '11': [
-          {
-            identity_id: 'face-1',
-            media_id: 11,
-            cluster_id: 'cluster-1',
-            cluster_label: 'Riley',
-            is_auto_label: false,
-            bbox: { x: 0, y: 0, width: 10, height: 10 },
-            confidence: 0.9,
-            similarity: 0.85,
-          },
-        ],
-        '12': [],
-      },
-    });
+    const identitiesDeferred = createDeferred<{ identities_by_media: Record<string, unknown[]> }>();
+    fetchMediaIdentitiesMock.mockReturnValue(identitiesDeferred.promise);
 
     const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), { wrapper });
 
+    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
+
+    await act(async () => {
+      fetchDeferred.resolve({
+        ok: true,
+        status: 200,
+        json: () => jsonDeferred.promise,
+      });
+      await fetchDeferred.promise;
+    });
+
+    await act(async () => {
+      jsonDeferred.resolve(mediaResponse);
+      await jsonDeferred.promise;
+    });
+
+    await waitFor(() => expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([11, 12]));
+
+    await act(async () => {
+      identitiesDeferred.resolve({
+        identities_by_media: {
+          '11': [
+            {
+              identity_id: 'face-1',
+              media_id: 11,
+              cluster_id: 'cluster-1',
+              cluster_label: 'Riley',
+              is_auto_label: false,
+              bbox: { x: 0, y: 0, width: 10, height: 10 },
+              confidence: 0.9,
+              similarity: 0.85,
+            },
+          ],
+          '12': [],
+        },
+      });
+      await identitiesDeferred.promise;
+    });
+
     await waitFor(() => expect(result.current.isSuccess).toBe(true));
-    expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([11, 12]);
 
     const merged = result.current.itemsWithIdentities;
     expect(merged).toHaveLength(2);

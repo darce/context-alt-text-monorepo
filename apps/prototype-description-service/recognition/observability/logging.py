@@ -141,6 +141,47 @@ class ClusteringLogger:
             },
         )
 
+    def log_initial_assignment(
+        self,
+        *,
+        identity_id: str,
+        media_id: int,
+        cluster_id: str,
+        similarity: float,
+        algorithm: str,
+        tenant_id: str,
+    ) -> None:
+        """Log when an identity is first assigned to a newly created cluster.
+
+        This fills the logging gap where `persist_new_cluster` creates clusters
+        but doesn't emit per-identity assignment logs like the gate does for
+        existing clusters.
+
+        Args:
+            identity_id: UUID of the identity being assigned
+            media_id: WordPress media ID for traceability
+            cluster_id: UUID of the newly created cluster
+            similarity: Similarity to cluster centroid/seed (1.0 for first member)
+            algorithm: Clustering algorithm that created the cluster (e.g., "hdbscan")
+            tenant_id: Tenant UUID for multi-tenancy
+
+        Example log output:
+            [clustering] INITIAL_ASSIGNED identity=abc123 media_id=6643 cluster=def456
+            similarity=1.0000 algorithm=hdbscan tenant_id=xyz789
+        """
+        self.logger.info(
+            "clustering_initial_assignment",
+            extra={
+                "identity_id": identity_id,
+                "media_id": media_id,
+                "cluster_id": cluster_id,
+                "similarity": similarity,
+                "algorithm": algorithm,
+                "tenant_id": tenant_id,
+                "timestamp": datetime.now(tz=UTC).isoformat(),
+            },
+        )
+
     # ========================================================================
     # USER CURATION EVENT LOGGING
     # ========================================================================
@@ -274,3 +315,38 @@ class ClusteringLogger:
             },
         )
         return event_log
+
+    def log_curation_action(
+        self,
+        action: CurationEventType,
+        identity_id: str,
+        target_cluster_id: str | None = None,
+        previous_cluster_id: str | None = None,
+        similarity: float | None = None,
+        tenant_id: str | None = None,
+        details: dict[str, Any] | None = None,
+    ) -> None:
+        """Log a generic curation action (e.g., assignment, removal).
+
+        Args:
+            action: Type of curation event.
+            identity_id: Identity affected.
+            target_cluster_id: New cluster ID (if applicable).
+            previous_cluster_id: Old cluster ID (if applicable).
+            similarity: Similarity score (if applicable).
+            tenant_id: Tenant ID.
+            details: Additional metadata.
+        """
+        extra = {
+            "event_type": action.value,
+            "identity_id": identity_id,
+            "target_cluster_id": target_cluster_id,
+            "previous_cluster_id": previous_cluster_id,
+            "similarity": similarity,
+            "tenant_id": tenant_id,
+            "timestamp": datetime.now(tz=UTC).isoformat(),
+        }
+        if details:
+            extra.update(details)
+
+        self.logger.info("curation_event", extra=extra)

@@ -18,6 +18,8 @@ interface ClusterEditFormProps {
   isLoading: boolean;
   /** Whether a mutation is in progress */
   isPending: boolean;
+  /** Override label for the save button */
+  saveLabel?: string;
   /** Called when save button is clicked */
   onSave: (labelOverride?: string) => void;
   /** Called when cancel button is clicked */
@@ -33,6 +35,7 @@ export const ClusterEditForm = ({
   options,
   isLoading,
   isPending,
+  saveLabel,
   onSave,
   onCancel,
 }: ClusterEditFormProps): React.JSX.Element => {
@@ -58,6 +61,8 @@ export const ClusterEditForm = ({
     opt.label.toLowerCase().includes(labelInput.toLowerCase()) && 
     opt.label.toLowerCase() !== labelInput.toLowerCase()
   ).slice(0, 5);
+
+  const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
 
   return (
     <div className="acx-identity-cluster__edit">
@@ -114,7 +119,7 @@ export const ClusterEditForm = ({
           onClick={() => onSave()} 
           disabled={isPending || !labelInput.trim()}
         >
-          {isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context')}
+          {saveButtonLabel}
         </button>
         <button 
           type="button" 

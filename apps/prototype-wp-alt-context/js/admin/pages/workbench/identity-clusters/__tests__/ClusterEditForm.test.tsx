@@ -77,4 +77,9 @@ describe('ClusterEditForm', () => {
     expect(input).toBeDisabled();
     expect(saveButton).toBeDisabled();
   });
+
+  it('renders a custom save label when provided', () => {
+    render(<ClusterEditForm {...defaultProps} saveLabel="Saving queued" />);
+    expect(screen.getByText('Saving queued')).toBeInTheDocument();
+  });
 });

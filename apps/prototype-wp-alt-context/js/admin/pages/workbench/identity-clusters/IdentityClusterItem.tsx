@@ -19,7 +19,6 @@ import { DebugMetricsPanel } from './DebugMetricsPanel';
 import { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 import { AnchorSelectionModal } from './AnchorSelectionModal';
 import {
-  DialogClose,
   DialogContent,
   DialogDescription,
   DialogOverlay,
@@ -32,15 +31,14 @@ interface IdentityClusterItemProps {
   cluster: ClusterGroup;
 }
 
-type SaveDialogStatus = 'queued' | 'saved' | 'error';
 type SaveDialogAction = 'rename' | 'merge' | 'assign' | 'create';
 
-interface SaveDialogState {
+type SaveStatus = 'idle' | 'queued' | 'saved';
+
+interface ConfirmDialogState {
   open: boolean;
-  status: SaveDialogStatus;
   action: SaveDialogAction;
   label: string;
-  error?: string;
 }
 
 /**
@@ -69,8 +67,10 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
-  const [isSaving, setIsSaving] = React.useState(false);
-  const [saveDialog, setSaveDialog] = React.useState<SaveDialogState | null>(null);
+  const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle');
+  const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState | null>(null);
+  const confirmResolverRef = React.useRef<((confirmed: boolean) => void) | null>(null);
+  const saveStatusTimerRef = React.useRef<number | null>(null);
   const saveAbortRef = React.useRef<AbortController | null>(null);
 
   // State management
@@ -85,84 +85,79 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     onRevertSuccess,
   } = useClusterEditState({ derivedLabel });
 
-  const closeSaveDialog = React.useCallback(() => {
-    setSaveDialog(null);
+  const clearSaveStatusTimer = React.useCallback(() => {
+    if (saveStatusTimerRef.current === null) {
+      return;
+    }
+    window.clearTimeout(saveStatusTimerRef.current);
+    saveStatusTimerRef.current = null;
   }, []);
 
-  const queueSaveDialog = React.useCallback((action: SaveDialogAction, label: string) => {
-    setSaveDialog({
-      open: true,
-      status: 'queued',
-      action,
-      label,
-    });
+  const resetSaveStatus = React.useCallback(() => {
+    clearSaveStatusTimer();
+    setSaveStatus('idle');
+  }, [clearSaveStatusTimer]);
+
+  const queueSaveStatus = React.useCallback(() => {
+    clearSaveStatusTimer();
+    setSaveStatus('queued');
+  }, [clearSaveStatusTimer]);
+
+  const resolveConfirmDialog = React.useCallback((confirmed: boolean) => {
+    const resolver = confirmResolverRef.current;
+    confirmResolverRef.current = null;
+    setConfirmDialog(null);
+    if (resolver) {
+      resolver(confirmed);
+    }
   }, []);
 
   const updateSaveDialog = React.useCallback((action: SaveDialogAction, label: string) => {
-    setSaveDialog((prev) =>
-      prev
-        ? {
-            ...prev,
-            action,
-            label,
-          }
-        : {
-            open: true,
-            status: 'queued',
-            action,
-            label,
-          },
-    );
+    return new Promise<boolean>((resolve) => {
+      confirmResolverRef.current = resolve;
+      setConfirmDialog({ open: true, action, label });
+    });
   }, []);
 
-  const markSaveSuccess = React.useCallback(() => {
-    setSaveDialog((prev) => (prev ? { ...prev, status: 'saved', error: undefined } : prev));
-  }, []);
-
-  const markSaveError = React.useCallback((message: string) => {
-    setSaveDialog((prev) =>
-      prev
-        ? { ...prev, status: 'error', error: message }
-        : {
-            open: true,
-            status: 'error',
-            action: 'rename',
-            label: '',
-            error: message,
-          },
-    );
-  }, []);
-
-  const handleSaveDialogOpenChange = React.useCallback(
+  const handleConfirmDialogOpenChange = React.useCallback(
     (open: boolean) => {
       if (!open) {
-        closeSaveDialog();
+        resolveConfirmDialog(false);
       }
     },
-    [closeSaveDialog],
+    [resolveConfirmDialog],
   );
 
-  React.useEffect(() => {
-    if (saveDialog?.status !== 'saved') {
-      return;
-    }
-    const timer = window.setTimeout(() => {
-      setSaveDialog(null);
-    }, 1200);
-    return () => window.clearTimeout(timer);
-  }, [saveDialog?.status]);
+  const handleConfirmAccept = React.useCallback(() => {
+    resolveConfirmDialog(true);
+  }, [resolveConfirmDialog]);
+
+  const handleConfirmCancel = React.useCallback(() => {
+    resolveConfirmDialog(false);
+  }, [resolveConfirmDialog]);
+
+  const markSaveSuccess = React.useCallback(
+    (onSuccess: () => void) => {
+      clearSaveStatusTimer();
+      setSaveStatus('saved');
+      saveStatusTimerRef.current = window.setTimeout(() => {
+        onSuccess();
+        setSaveStatus('idle');
+        saveStatusTimerRef.current = null;
+      }, 1200);
+    },
+    [clearSaveStatusTimer],
+  );
 
   const handleSaveSuccess = React.useCallback(() => {
     saveAbortRef.current = null;
-    onSaveSuccess();
-    markSaveSuccess();
+    markSaveSuccess(onSaveSuccess);
   }, [markSaveSuccess, onSaveSuccess]);
 
   const handleMergeSuccess = React.useCallback(
     (result: MergeClusterResponse) => {
       saveAbortRef.current = null;
-      onMergeSuccess(result);
-      markSaveSuccess();
+      markSaveSuccess(() => onMergeSuccess(result));
     },
     [markSaveSuccess, onMergeSuccess],
   );
@@ -171,9 +166,9 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     (message: string) => {
       saveAbortRef.current = null;
       setError(message);
-      markSaveError(message);
+      resetSaveStatus();
     },
-    [markSaveError, setError],
+    [resetSaveStatus, setError],
   );
 
   // Suggestions
@@ -199,22 +194,24 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   });
 
   React.useEffect(() => {
-    if (!mutations.isPending) {
-      setIsSaving(false);
-    }
-  }, [mutations.isPending]);
-
-  React.useEffect(() => () => saveAbortRef.current?.abort(), []);
+    return () => {
+      saveAbortRef.current?.abort();
+      clearSaveStatusTimer();
+      if (confirmResolverRef.current) {
+        confirmResolverRef.current(false);
+        confirmResolverRef.current = null;
+      }
+    };
+  }, [clearSaveStatusTimer]);
 
   const handleCancel = React.useCallback(() => {
     if (saveAbortRef.current) {
       saveAbortRef.current.abort();
       saveAbortRef.current = null;
     }
-    setIsSaving(false);
-    closeSaveDialog();
+    resetSaveStatus();
     cancelEditing();
-  }, [cancelEditing, closeSaveDialog]);
+  }, [cancelEditing, resetSaveStatus]);
 
   // Callback for accepting inline suggestion prompt
   const handleSuggestionConfirm = React.useCallback(
@@ -228,7 +225,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
 
   // Handle save (rename or merge)
   const handleSave = async (labelOverride?: string) => {
-    if (isSaving || mutations.isPending) {
+    if (saveStatus !== 'idle' || mutations.isPending) {
       return;
     }
     // Allow save for regular clusters with canEdit, or for singletons searching for matches
@@ -255,38 +252,33 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     const abortController = new AbortController();
     saveAbortRef.current = abortController;
 
-    queueSaveDialog('rename', trimmed);
-    setIsSaving(true);
+    queueSaveStatus();
     let mutationStarted = false;
     try {
       const match = await findClusterByLabel(trimmed, abortController.signal);
       if (abortController.signal.aborted) {
-        closeSaveDialog();
+        resetSaveStatus();
         return;
       }
 
       if (match && match.label.toLowerCase() === (cluster.label ?? '').toLowerCase()) {
         // No change
         cancelEditing();
-        closeSaveDialog();
+        resetSaveStatus();
         return;
       }
 
       if (match) {
         // Label exists - merge or assign
         const action: SaveDialogAction = canSearchForMatch ? 'assign' : 'merge';
-        updateSaveDialog(action, match.label);
-        const confirmMessage = canSearchForMatch
-          ? __('Assign this identity to "' + match.label + '"?', 'alt-context')
-          : __('Merge this cluster into existing "' + match.label + '"?', 'alt-context');
-
-        if (!window.confirm(confirmMessage)) {
-          closeSaveDialog();
+        const confirmed = await updateSaveDialog(action, match.label);
+        if (!confirmed) {
+          resetSaveStatus();
           return;
         }
 
         if (abortController.signal.aborted) {
-          closeSaveDialog();
+          resetSaveStatus();
           return;
         }
 
@@ -304,8 +296,6 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         }
       } else {
         // New label
-        const action: SaveDialogAction = editableClusterId ? 'rename' : 'create';
-        updateSaveDialog(action, trimmed);
         if (editableClusterId) {
           // Regular cluster with ID: rename
           mutationStarted = true;
@@ -318,21 +308,21 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         } else {
           const message = __('Cannot create cluster: no identity ID', 'alt-context');
           setError(message);
-          markSaveError(message);
+          resetSaveStatus();
         }
       }
     } catch (err) {
       if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
-        closeSaveDialog();
+        resetSaveStatus();
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
       setError(message);
-      markSaveError(message);
+      resetSaveStatus();
     } finally {
       if (!mutationStarted) {
-        setIsSaving(false);
         saveAbortRef.current = null;
+        resetSaveStatus();
       }
     }
   };
@@ -377,49 +367,35 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     [cluster.clusterId, mutations],
   );
 
-  const saveDialogCopy = React.useMemo(() => {
-    if (!saveDialog) {
+  const saveButtonLabel = React.useMemo(() => {
+    if (saveStatus === 'saved') {
+      return __('Saved', 'alt-context');
+    }
+    if (mutations.isPending) {
+      return __('Saving…', 'alt-context');
+    }
+    if (saveStatus === 'queued') {
+      return __('Saving queued', 'alt-context');
+    }
+    return __('Save', 'alt-context');
+  }, [mutations.isPending, saveStatus]);
+
+  const confirmDialogCopy = React.useMemo(() => {
+    if (!confirmDialog) {
       return null;
     }
 
-    const fallbackLabel = __('this change', 'alt-context');
-    const labelText = saveDialog.label || fallbackLabel;
-    const actionLabel = (() => {
-      switch (saveDialog.action) {
-        case 'merge':
-          return sprintf(__('Merge into "%s"', 'alt-context'), labelText);
-        case 'assign':
-          return sprintf(__('Assign to "%s"', 'alt-context'), labelText);
-        case 'create':
-          return sprintf(__('Create "%s"', 'alt-context'), labelText);
-        default:
-          return sprintf(__('Save "%s"', 'alt-context'), labelText);
-      }
-    })();
-
-    if (saveDialog.status === 'error') {
-      return {
-        title: __('Save failed', 'alt-context'),
-        description:
-          saveDialog.error || __('We could not save this change. Please try again.', 'alt-context'),
-      };
-    }
-
-    if (saveDialog.status === 'saved') {
-      return {
-        title: __('Saved', 'alt-context'),
-        description: sprintf(__('%s is saved.', 'alt-context'), actionLabel),
-      };
-    }
-
+    const fallbackLabel = __('this cluster', 'alt-context');
+    const labelText = confirmDialog.label || fallbackLabel;
+    const isAssign = confirmDialog.action === 'assign';
     return {
-      title: __('Saving queued', 'alt-context'),
-      description: sprintf(
-        __('%s is queued. You can keep working while we save.', 'alt-context'),
-        actionLabel,
-      ),
+      title: isAssign ? __('Assign identity', 'alt-context') : __('Confirm merge', 'alt-context'),
+      description: isAssign
+        ? sprintf(__('Assign this identity to "%s"?', 'alt-context'), labelText)
+        : sprintf(__('Merge this cluster into existing "%s"?', 'alt-context'), labelText),
+      confirmLabel: isAssign ? __('Assign', 'alt-context') : __('Merge', 'alt-context'),
     };
-  }, [saveDialog]);
+  }, [confirmDialog]);
 
   return (
     <div className="acx-identity-cluster">
@@ -467,7 +443,8 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
             onLabelChange={setLabel}
             options={options}
             isLoading={suggestionsLoading}
-            isPending={mutations.isPending || isSaving}
+            isPending={mutations.isPending || saveStatus !== 'idle'}
+            saveLabel={saveButtonLabel}
             onSave={(labelOverride) => void handleSave(labelOverride)}
             onCancel={handleCancel}
           />
@@ -494,25 +471,21 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         onSelectAnchor={handleAnchorSelect}
       />
 
-      {saveDialog && saveDialogCopy && (
-        <DialogRoot open={saveDialog.open} onOpenChange={handleSaveDialogOpenChange}>
+      {confirmDialog && confirmDialogCopy && (
+        <DialogRoot open={confirmDialog.open} onOpenChange={handleConfirmDialogOpenChange}>
           <DialogPortal>
             <DialogOverlay />
             <DialogContent>
               <div className="acx-queue-modal">
-                <DialogTitle>{saveDialogCopy.title}</DialogTitle>
-                <DialogDescription>{saveDialogCopy.description}</DialogDescription>
+                <DialogTitle>{confirmDialogCopy.title}</DialogTitle>
+                <DialogDescription>{confirmDialogCopy.description}</DialogDescription>
                 <div className="acx-queue-modal__actions">
-                  {saveDialog.status === 'queued' && (
-                    <button type="button" className="button" onClick={handleCancel}>
-                      {__('Cancel save', 'alt-context')}
-                    </button>
-                  )}
-                  <DialogClose asChild>
-                    <button type="button" className="button">
-                      {__('Close', 'alt-context')}
-                    </button>
-                  </DialogClose>
+                  <button type="button" className="button" onClick={handleConfirmCancel}>
+                    {__('Cancel', 'alt-context')}
+                  </button>
+                  <button type="button" className="button button-primary" onClick={handleConfirmAccept}>
+                    {confirmDialogCopy.confirmLabel}
+                  </button>
                 </div>
               </div>
             </DialogContent>

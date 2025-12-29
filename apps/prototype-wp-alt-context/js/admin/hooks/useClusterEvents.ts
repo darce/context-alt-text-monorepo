@@ -54,7 +54,12 @@ export function useClusterEvents(tenantId: string, enabled = true): void {
           void queryClient.invalidateQueries({ queryKey: ['identity-suggestions'] });
         }
 
-        if (eventType === 'cluster_updated' || eventType === 'cluster_merged' || eventType === 'cluster_split' || eventType === 'suggestions_updated') {
+        if (
+          eventType === 'cluster_updated' ||
+          eventType === 'cluster_merged' ||
+          eventType === 'cluster_split' ||
+          eventType === 'suggestions_updated'
+        ) {
           void queryClient.invalidateQueries({ queryKey: ['clusters'] });
           void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
           void queryClient.invalidateQueries({ queryKey: ['recognition-cluster'] });

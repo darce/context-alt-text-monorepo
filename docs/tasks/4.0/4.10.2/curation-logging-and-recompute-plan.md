@@ -24,7 +24,7 @@ sequenceDiagram
     participant Logger as ClusteringLogger
     participant Repo as ClusterRepository
 
-    rect rgba(3, 6, 20, 0.2)
+    rect rgb(240, 240, 245)
     Note over User,Logger: Issue 1: Initial Assignment Logging Gap
     User->>API: POST /clusters (trigger clustering)
     API->>Writer: persist_new_cluster(identities)
@@ -33,7 +33,7 @@ sequenceDiagram
     Note over Logger: NEW: Per-identity INITIAL_ASSIGNED logs
     end
 
-    rect rgba(230, 255, 230, 0.14)
+    rect rgb(230, 255, 230)
     Note over User,Repo: Issue 2: Live Similarity on Curation
     User->>UI: clicks "Move to: Talvi"
     UI->>API: POST /clusters/reassign
@@ -44,7 +44,7 @@ sequenceDiagram
     Curation->>Logger: log ASSIGNED with real similarity
     end
 
-    rect rgba(230, 240, 255, 0.1)
+    rect rgb(230, 240, 255)
     Note over Curation,Writer: Issue 3: Representative Refresh
     Curation->>Curation: check if removed identity was representative
     alt Was Representative
@@ -53,7 +53,7 @@ sequenceDiagram
     end
     end
 
-    rect rgba(255, 245, 230, 0.21)
+    rect rgb(255, 245, 230)
     Note over User,UI: Issue 4: UI Terminology
     User->>UI: sees "Remove from Cluster" (not "Wrong Person")
     User->>UI: sees "Move to: [dropdown]"
@@ -436,43 +436,47 @@ async def remove_identity_from_cluster(
 
 ### Phase 0: Scaffolding
 
-- [ ] Add `log_initial_assignment` signature to `ClusteringLogger`
-- [ ] Add `compute_curation_similarity` signature to `cluster_curation.py`
-- [ ] Add `check_and_refresh_representatives` signature to `cluster_curation.py`
-- [ ] Add `refresh_representatives_for_cluster` signature to `AssignmentWriter`
-- [ ] Commit scaffolding
+- [x] Add `log_initial_assignment` signature to `ClusteringLogger`
+- [x] Add `compute_curation_similarity` signature to `cluster_curation.py`
+- [x] Add `check_and_refresh_representatives` signature to `cluster_curation.py`
+- [x] Add `refresh_representatives_for_cluster` signature to `AssignmentWriter`
+- [x] Commit scaffolding
 
 ### Phase 1: Initial Assignment Logging
 
-- [ ] Write failing test: `test_persist_new_cluster_logs_per_identity`
-- [ ] Implement `log_initial_assignment` in `ClusteringLogger`
-- [ ] Add `clustering_logger` param to `persist_new_cluster`
-- [ ] Pass logger from `incremental_clustering.py` callers
-- [ ] Verify logs in test run
-- [ ] Commit
+- [x] Write failing test: `test_persist_new_cluster_logs_per_identity`
+- [x] Implement `log_initial_assignment` in `ClusteringLogger`
+- [x] Add `clustering_logger` param to `persist_new_cluster`
+- [x] Pass logger from `incremental_clustering.py` callers
+- [x] Verify logs in test run
+- [x] Commit
 
 ### Phase 2: Live Similarity Computation
 
-- [ ] Write failing test: `test_assign_outlier_computes_real_similarity`
-- [ ] Implement `compute_curation_similarity`
-- [ ] Update `assign_outlier_to_cluster` to call it
-- [ ] Verify log shows non-zero similarity
-- [ ] Commit
+- [x] Write failing test: `test_assign_outlier_computes_real_similarity`
+- [x] Implement `compute_curation_similarity`
+- [x] Update `assign_outlier_to_cluster` to call it
+- [x] Verify log shows non-zero similarity
+- [x] Commit
 
 ### Phase 3: Representative Refresh
 
-- [ ] Write failing test: `test_remove_representative_triggers_refresh`
-- [ ] Implement `check_and_refresh_representatives`
-- [ ] Implement `refresh_representatives_for_cluster` in `AssignmentWriter`
-- [ ] Update `remove_identity_from_cluster` to call check
-- [ ] Verify `REPRESENTATIVE_REMOVED` log appears
-- [ ] Commit
+- [x] Write failing test: `test_remove_representative_triggers_refresh`
+- [x] Implement `check_and_refresh_representatives`
+- [x] Implement `refresh_representatives_for_cluster` in `AssignmentWriter`
+- [x] Update `remove_identity_from_cluster` to call check
+  > ✅ `remove_identity_from_cluster` now calls `check_and_refresh_representatives` with session/logger. The `refresh` param controls whether re presentation refresh is triggered (`recompute=True`) or only logging occurs (`recompute=False`, used by `reassign_identity`).
+- [x] Wire `ClusterService.remove_identity_from_cluster` to forward `session` + logger
+  > ✅ `ClusterService.remove_identity_from_cluster` (lines 272-297) correctly passes `self._session` and `self.logger` to the orchestration function.
+- [x] Verify `REPRESENTATIVE_REMOVED` log appears
+  > ✅ Test coverage: `test_remove_representative_triggers_refresh` (recompute=True, triggered_refresh=true) and `test_remove_representative_deferred_recompute` (recompute=False, triggered_refresh=false).
+- [x] Commit
 
 ### Phase 4: UI Terminology
 
-- [ ] Update button labels in `IdentityClusterItem.tsx`
-- [ ] Update any related test assertions
-- [ ] Commit
+- [x] Update button labels in `IdentityClusterItem.tsx`
+- [x] Update any related test assertions
+- [x] Commit
 
 ### Phase 5: Verification
 

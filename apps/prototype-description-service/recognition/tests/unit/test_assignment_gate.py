@@ -27,7 +27,15 @@ class NoopRepository(ClusterRepository):
     async def get_by_id(self, cluster_id: str):
         return None
 
-    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False):
+    async def get_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        labeled_only: bool = False,
+        search: str | None = None,
+    ):
         return []
 
     async def save(self, cluster):

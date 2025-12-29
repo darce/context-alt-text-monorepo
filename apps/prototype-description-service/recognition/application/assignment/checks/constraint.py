@@ -42,6 +42,11 @@ class ConstraintCheck(AssignmentCheck):
         )
 
         if is_blocked:
-            return CheckResult(passed=False, reason="Constraint violation: CANNOT_LINK")
+            return CheckResult(
+                passed=False,
+                is_fatal=True,
+                should_reject=True,
+                reason="Constraint violation: CANNOT_LINK",
+            )
 
         return CheckResult(passed=True)

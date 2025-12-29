@@ -14,6 +14,7 @@ from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
 from recognition.interface_adapters.http.routers import clusters as clusters_router
+from recognition.interface_adapters.http.routers import media as media_router
 from recognition.interface_adapters.http.routers import suggestions as suggestions_router
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.shared.ids import generate_id
@@ -209,8 +210,16 @@ class FakeMediaIdentity:
         self.media_id = media_id
         self.identity_id = identity_id
         self.cluster_id = cluster_id
-        self.bbox = {"w": 1, "h": 1}
+        self.bbox = {"width": 1, "height": 1, "x": 0, "y": 0}
         self.confidence = 0.99
+        self.thumbnail_url = "http://example.test/thumb.jpg"
+        self.media_url = "http://example.test/media.jpg"
+        self.pose_pitch = 10.0
+        self.pose_yaw = -5.0
+        self.pose_roll = 0.0
+        self.age = 30
+        self.gender = 1
+        self.quality_score = 0.9
 
 
 class FakeMediaIdentityService:
@@ -220,8 +229,47 @@ class FakeMediaIdentityService:
     def add_identity(self, media_id: int, identity_id: str, cluster_id: str | None = None) -> None:
         self.identities.append(FakeMediaIdentity(media_id, identity_id, cluster_id))
 
-    async def list_by_media_ids(self, tenant_id: str, media_ids: list[int]) -> list[FakeMediaIdentity]:
-        return [mi for mi in self.identities if mi.media_id in media_ids]
+    async def list_by_media_ids(
+        self, tenant_id: str, media_ids: list[int], include_debug: bool = False
+    ) -> list[dict[str, object]]:
+        media_id_set = {int(value) for value in media_ids}
+        results = []
+        for identity in self.identities:
+            if identity.media_id not in media_id_set:
+                continue
+            payload: dict[str, object] = {
+                "identity_id": identity.identity_id,
+                "media_id": identity.media_id,
+                "cluster_id": identity.cluster_id,
+                "cluster_label": None,
+                "is_auto_label": True,
+                "bbox": identity.bbox,
+                "confidence": identity.confidence,
+                "thumbnail_url": identity.thumbnail_url,
+                "media_url": identity.media_url,
+            }
+            if include_debug:
+                payload["debug_metrics"] = {
+                    "pose": {
+                        "pitch": identity.pose_pitch,
+                        "yaw": identity.pose_yaw,
+                        "roll": identity.pose_roll,
+                    },
+                    "age": identity.age,
+                    "gender": "male" if identity.gender == 1 else "female",
+                    "det_score": identity.confidence,
+                    "bbox_area": identity.bbox["width"] * identity.bbox["height"],
+                    "landmark_quality": identity.quality_score,
+                    "clustering_method": None,
+                    "clustering_algorithm": None,
+                    "similarity_threshold": None,
+                    "match_similarity": None,
+                    "representative_count": 1,
+                    "pose_buckets": {"filled": 1, "total": 13, "current_bucket": (0, 0)},
+                }
+            results.append(payload)
+
+        return results
 
 
 class FakeClusterForRepo:
@@ -366,10 +414,11 @@ def api_client(
     monkeypatch.setattr(dependencies, "get_suggestion_service", _fake_suggestion_service)
     monkeypatch.setattr(suggestions_router, "get_suggestion_service", _fake_suggestion_service)
 
-    async def _fake_media_identity_service(**_kwargs):
+    async def _fake_media_identity_service():
         return fake_media_identity_service
 
     monkeypatch.setattr(dependencies, "get_media_identity_service", _fake_media_identity_service)
+    app.dependency_overrides[media_router.get_media_identity_service] = _fake_media_identity_service
 
     return TestClient(app)
 

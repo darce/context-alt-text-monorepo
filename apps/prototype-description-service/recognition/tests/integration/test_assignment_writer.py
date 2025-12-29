@@ -376,6 +376,176 @@ async def test_should_not_upgrade_user_selected_representative(db_session, tenan
 
 
 @pytest.mark.asyncio
+async def test_logs_novel_pose_above_cap(db_session, tenant, caplog) -> None:
+    """Logs NOVEL_POSE_ABOVE_CAP when adding a representative above the base cap."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    settings = ClusteringSettings(max_representatives_per_cluster=1, pose_bucket_size=10.0)
+    writer = AssignmentWriter(settings, cluster_repo, member_repo)
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Pose Cluster",
+            is_labeled=False,
+            identity_count=1,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+
+    # Seed one representative in the base bucket (0,0).
+    rep_embedding = np.zeros(512, dtype=np.float32)
+    rep_embedding[0] = 1.0
+    rep_model = _make_media_identity_model(str(tenant.id), rep_embedding, confidence=0.6, media_id=401)
+    rep_model.pose_pitch = 0.0
+    rep_model.pose_yaw = 0.0
+    db_session.add(rep_model)
+    await db_session.flush()
+
+    await cluster_repo.add_representative(
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster.id,
+            identity_id=str(rep_model.id),
+            embedding=rep_embedding,
+            created_at=datetime.now(tz=UTC),
+            tenant_id=str(tenant.id),
+            quality_score=0.4,
+            pose_pitch=0.0,
+            pose_yaw=0.0,
+        )
+    )
+
+    # Candidate with a novel pose bucket (2,2).
+    candidate_embedding = np.zeros(512, dtype=np.float32)
+    candidate_embedding[1] = 1.0
+    candidate_model = _make_media_identity_model(str(tenant.id), candidate_embedding, confidence=0.95, media_id=402)
+    candidate_model.pose_pitch = 25.0
+    candidate_model.pose_yaw = 25.0
+    candidate_model.bbox_width = 200
+    candidate_model.bbox_height = 200
+    db_session.add(candidate_model)
+    await db_session.flush()
+
+    candidate_identity = MediaIdentity(
+        id=str(candidate_model.id),
+        tenant_id=str(tenant.id),
+        media_id=str(candidate_model.media_id),
+        embedding=np.array(candidate_model.embedding, dtype=np.float32),
+        confidence=candidate_model.confidence,
+        bbox_width=candidate_model.bbox_width,
+        bbox_height=candidate_model.bbox_height,
+        pose_pitch=candidate_model.pose_pitch,
+        pose_yaw=candidate_model.pose_yaw,
+        pose_roll=candidate_model.pose_roll,
+    )
+
+    decision = AssignmentDecision(
+        outcome=AssignmentOutcome.ACCEPT,
+        candidate=AssignmentCandidate(
+            identity=candidate_identity,
+            identity_vector=candidate_identity.extract_face_embedding(),
+            cluster_id=cluster.id,
+            discovery_method=DiscoveryMethod.REPRESENTATIVE,
+            discovery_similarity=0.95,
+        ),
+        checks_passed=[],
+        checks_failed=[],
+    )
+
+    with caplog.at_level("INFO"):
+        await writer.persist_assignment(decision)
+
+    assert "[pose_bucket] NOVEL_POSE_ABOVE_CAP" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_logs_quality_upgrade(db_session, tenant, caplog) -> None:
+    """Logs QUALITY_UPGRADE when a higher-quality identity replaces a representative."""
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+    settings = ClusteringSettings(pose_bucket_size=10.0)
+    writer = AssignmentWriter(settings, cluster_repo, member_repo)
+
+    cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Upgrade Cluster",
+            is_labeled=False,
+            identity_count=1,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+
+    rep_embedding = np.zeros(512, dtype=np.float32)
+    rep_embedding[0] = 1.0
+    rep_model = _make_media_identity_model(str(tenant.id), rep_embedding, confidence=0.2, media_id=501)
+    rep_model.pose_pitch = 0.0
+    rep_model.pose_yaw = 0.0
+    rep_model.bbox_width = 10
+    rep_model.bbox_height = 10
+    db_session.add(rep_model)
+    await db_session.flush()
+
+    await cluster_repo.add_representative(
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster.id,
+            identity_id=str(rep_model.id),
+            embedding=rep_embedding,
+            created_at=datetime.now(tz=UTC),
+            tenant_id=str(tenant.id),
+            quality_score=0.1,
+            pose_pitch=0.0,
+            pose_yaw=0.0,
+        )
+    )
+
+    candidate_embedding = np.zeros(512, dtype=np.float32)
+    candidate_embedding[1] = 1.0
+    candidate_model = _make_media_identity_model(str(tenant.id), candidate_embedding, confidence=0.99, media_id=502)
+    candidate_model.pose_pitch = 2.0
+    candidate_model.pose_yaw = 2.0
+    candidate_model.bbox_width = 200
+    candidate_model.bbox_height = 200
+    db_session.add(candidate_model)
+    await db_session.flush()
+
+    candidate_identity = MediaIdentity(
+        id=str(candidate_model.id),
+        tenant_id=str(tenant.id),
+        media_id=str(candidate_model.media_id),
+        embedding=np.array(candidate_model.embedding, dtype=np.float32),
+        confidence=candidate_model.confidence,
+        bbox_width=candidate_model.bbox_width,
+        bbox_height=candidate_model.bbox_height,
+        pose_pitch=candidate_model.pose_pitch,
+        pose_yaw=candidate_model.pose_yaw,
+        pose_roll=candidate_model.pose_roll,
+    )
+
+    decision = AssignmentDecision(
+        outcome=AssignmentOutcome.ACCEPT,
+        candidate=AssignmentCandidate(
+            identity=candidate_identity,
+            identity_vector=candidate_identity.extract_face_embedding(),
+            cluster_id=cluster.id,
+            discovery_method=DiscoveryMethod.REPRESENTATIVE,
+            discovery_similarity=0.99,
+        ),
+        checks_passed=[],
+        checks_failed=[],
+    )
+
+    with caplog.at_level("INFO"):
+        await writer.persist_assignment(decision)
+
+    assert "[pose_bucket] QUALITY_UPGRADE" in caplog.text
+
+
+@pytest.mark.asyncio
 async def test_recompute_representatives_preserves_pinned_and_best_quality(db_session, tenant) -> None:
     """recompute_representatives should keep pinned reps and best-per-bucket reps."""
     cluster_repo = SqlAlchemyClusterRepository(db_session)

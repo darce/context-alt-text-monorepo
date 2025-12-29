@@ -599,7 +599,7 @@ describe('IdentityClusterList', () => {
     await actFlow(async () => {
       setMediaIdentitiesCache(client, cacheData);
 
-      const wrongPersonButton = screen.getByText('Wrong person', { selector: 'button' });
+      const wrongPersonButton = screen.getByText('Remove from Cluster', { selector: 'button' });
       expect(wrongPersonButton).toBeInTheDocument();
 
       await user.click(wrongPersonButton);
@@ -620,7 +620,7 @@ describe('IdentityClusterList', () => {
 
     await renderWithClient(<IdentityClusterList identities={[member1, member2]} mediaId={1} />);
 
-    expect(screen.queryByRole('button', { name: /wrong person/i })).not.toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /remove from cluster/i })).not.toBeInTheDocument();
   });
 
   it('allows splitting a cluster', async () => {

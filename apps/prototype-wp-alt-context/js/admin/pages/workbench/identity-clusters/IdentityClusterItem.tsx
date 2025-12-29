@@ -445,7 +445,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     if (
       window.confirm(
         __(
-          'Are you sure this is not the correct person? This will remove these items from the cluster.',
+          'Are you sure you want to remove this from the cluster?',
           'alt-context',
         ),
       )

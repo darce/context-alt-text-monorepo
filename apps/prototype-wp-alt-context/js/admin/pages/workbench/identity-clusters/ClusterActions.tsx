@@ -64,7 +64,7 @@ export const ClusterActions = ({
       </button>
       {canReject && (
         <button type="button" className="acx-identity-cluster__action" onClick={onWrongPerson} disabled={isPending}>
-          {__('Wrong person', 'alt-context')}
+          {__('Remove from Cluster', 'alt-context')}
         </button>
       )}
       {canSplit && (

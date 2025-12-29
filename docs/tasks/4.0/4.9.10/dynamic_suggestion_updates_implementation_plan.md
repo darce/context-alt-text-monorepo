@@ -38,14 +38,14 @@ This plan addresses both issues:
 
 ### Not Yet Implemented (remaining gaps)
 
-| Item                                 | Source Document                              | This Plan Section                                                           |
-| ------------------------------------ | -------------------------------------------- | --------------------------------------------------------------------------- |
-| Metadata-only `update_cluster`       | metrics.md §"Edit Label Behavior"            | §6.1                                                                        |
-| Split → FALSE_POSITIVE logging       | metrics.md §"Split Behavior"                 | §6.2                                                                        |
-| `GET /clusters/top-unlabeled`        | metrics.md §"Curate Top Clusters"            | §6.3 ✅ (endpoint only)                                                     |
-| Top Clusters Curation UI             | User feedback                                | See `top_clusters_curation_ui_implementation_plan.md`                       |
-| `_should_upgrade_representative`     | metrics.md §"Representative Quality Upgrade" | Deferred to `representative_lifecycle_implementation_plan.md`               |
-| UI: Replace Combobox with text input | UX feedback                                  | §6.4                                                                        |
+| Item                                 | Source Document                              | This Plan Section                                             |
+| ------------------------------------ | -------------------------------------------- | ------------------------------------------------------------- |
+| Metadata-only `update_cluster`       | metrics.md §"Edit Label Behavior"            | §6.1                                                          |
+| Split → FALSE_POSITIVE logging       | metrics.md §"Split Behavior"                 | §6.2                                                          |
+| `GET /clusters/top-unlabeled`        | metrics.md §"Curate Top Clusters"            | §6.3 ✅ (endpoint only)                                       |
+| Top Clusters Curation UI             | User feedback                                | See `top_clusters_curation_ui_implementation_plan.md`         |
+| `_should_upgrade_representative`     | metrics.md §"Representative Quality Upgrade" | Deferred to `representative_lifecycle_implementation_plan.md` |
+| UI: Replace Combobox with text input | UX feedback                                  | §6.4                                                          |
 
 ---
 

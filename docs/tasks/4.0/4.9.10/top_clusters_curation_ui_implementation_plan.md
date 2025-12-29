@@ -20,11 +20,11 @@ The current `CurateTopClustersPrompt` component is a passive guidance prompt tha
 
 ### Current State
 
-| Component | Current Behavior | Gap |
-|-----------|-----------------|-----|
-| `CurateTopClustersPrompt` | Read-only list of top unlabeled clusters | No inline editing or actions |
-| `InlineSuggestionPrompt` | Shows "Is this X?" with Yes/No buttons | Only appears for identities with suggestions |
-| `SuggestionReviewPanel` | Lists pending suggestions with actions | Not prominently surfaced in main workflow |
+| Component                 | Current Behavior                         | Gap                                          |
+| ------------------------- | ---------------------------------------- | -------------------------------------------- |
+| `CurateTopClustersPrompt` | Read-only list of top unlabeled clusters | No inline editing or actions                 |
+| `InlineSuggestionPrompt`  | Shows "Is this X?" with Yes/No buttons   | Only appears for identities with suggestions |
+| `SuggestionReviewPanel`   | Lists pending suggestions with actions   | Not prominently surfaced in main workflow    |
 
 ### User Feedback
 
@@ -36,24 +36,24 @@ The current `CurateTopClustersPrompt` component is a passive guidance prompt tha
 
 ### 3.1 Functional Requirements
 
-| ID | Requirement | Priority |
-|----|-------------|----------|
-| F1 | Display top N unlabeled clusters in an expandable panel | Must |
-| F2 | Allow inline label editing for each cluster | Must |
-| F3 | Show cluster member thumbnails when expanded | Must |
-| F4 | Allow removal of incorrectly clustered identities | Must |
-| F5 | Show pending suggestions with confirm/reject buttons | Must |
-| F6 | Persist across page navigation (panel state) | Should |
-| F7 | Batch operations (label multiple, dismiss multiple) | Could |
+| ID  | Requirement                                             | Priority |
+| --- | ------------------------------------------------------- | -------- |
+| F1  | Display top N unlabeled clusters in an expandable panel | Must     |
+| F2  | Allow inline label editing for each cluster             | Must     |
+| F3  | Show cluster member thumbnails when expanded            | Must     |
+| F4  | Allow removal of incorrectly clustered identities       | Must     |
+| F5  | Show pending suggestions with confirm/reject buttons    | Must     |
+| F6  | Persist across page navigation (panel state)            | Should   |
+| F7  | Batch operations (label multiple, dismiss multiple)     | Could    |
 
 ### 3.2 Non-Functional Requirements
 
-| ID | Requirement | Priority |
-|----|-------------|----------|
-| NF1 | Panel loads in < 500ms | Must |
-| NF2 | Actions provide immediate visual feedback | Must |
-| NF3 | Accessible keyboard navigation | Must |
-| NF4 | Mobile-responsive layout | Should |
+| ID  | Requirement                               | Priority |
+| --- | ----------------------------------------- | -------- |
+| NF1 | Panel loads in < 500ms                    | Must     |
+| NF2 | Actions provide immediate visual feedback | Must     |
+| NF3 | Accessible keyboard navigation            | Must     |
+| NF4 | Mobile-responsive layout                  | Should   |
 
 ---
 
@@ -158,6 +158,7 @@ TopClustersCurationPanel (new)
 #### 5.1.1 Enhanced `/clusters/top-unlabeled` Response
 
 **Current Response**:
+
 ```json
 {
   "id": "uuid",
@@ -168,6 +169,7 @@ TopClustersCurationPanel (new)
 ```
 
 **Enhanced Response** (add `members` and `suggestions`):
+
 ```json
 {
   "id": "uuid",
@@ -202,7 +204,7 @@ TopClustersCurationPanel (new)
 ```python
 class TopUnlabeledClusterResponse(BaseModel):
     """Enhanced response for top unlabeled clusters with members and suggestions."""
-    
+
     id: str
     label: str | None
     identity_count: int
@@ -230,7 +232,7 @@ async def get_top_unlabeled_clusters_detailed(
 ```python
 class BatchRemoveIdentitiesRequest(BaseModel):
     """Request to remove multiple identities from a cluster."""
-    
+
     cluster_id: str
     identity_ids: list[str]
     reason: str = "wrong_person"  # For logging
@@ -238,7 +240,7 @@ class BatchRemoveIdentitiesRequest(BaseModel):
 
 class BatchRemoveIdentitiesResponse(BaseModel):
     """Response after batch identity removal."""
-    
+
     removed_count: int
     cluster_id: str
     new_identity_count: int
@@ -259,21 +261,21 @@ async def batch_remove_identities(
 
 #### 5.2.1 New Components
 
-| Component | Purpose | File |
-|-----------|---------|------|
-| `TopClustersCurationPanel` | Main container panel | `TopClustersCurationPanel.tsx` |
-| `ClusterCurationCard` | Individual cluster with inline editing | `ClusterCurationCard.tsx` |
-| `MemberGallery` | Expandable member grid with removal | `MemberGallery.tsx` |
-| `MemberThumbnail` | Single member with remove button | `MemberThumbnail.tsx` |
-| `SuggestionPromptList` | List of pending suggestions | `SuggestionPromptList.tsx` |
+| Component                  | Purpose                                | File                           |
+| -------------------------- | -------------------------------------- | ------------------------------ |
+| `TopClustersCurationPanel` | Main container panel                   | `TopClustersCurationPanel.tsx` |
+| `ClusterCurationCard`      | Individual cluster with inline editing | `ClusterCurationCard.tsx`      |
+| `MemberGallery`            | Expandable member grid with removal    | `MemberGallery.tsx`            |
+| `MemberThumbnail`          | Single member with remove button       | `MemberThumbnail.tsx`          |
+| `SuggestionPromptList`     | List of pending suggestions            | `SuggestionPromptList.tsx`     |
 
 #### 5.2.2 New Hooks
 
-| Hook | Purpose | File |
-|------|---------|------|
-| `useTopUnlabeledClusters` | Fetch detailed top clusters | `useTopUnlabeledClusters.ts` |
-| `useBatchRemoveIdentities` | Mutation for batch removal | `useBatchRemoveIdentities.ts` |
-| `usePendingSuggestions` | Fetch suggestions with actions | `usePendingSuggestions.ts` |
+| Hook                       | Purpose                        | File                          |
+| -------------------------- | ------------------------------ | ----------------------------- |
+| `useTopUnlabeledClusters`  | Fetch detailed top clusters    | `useTopUnlabeledClusters.ts`  |
+| `useBatchRemoveIdentities` | Mutation for batch removal     | `useBatchRemoveIdentities.ts` |
+| `usePendingSuggestions`    | Fetch suggestions with actions | `usePendingSuggestions.ts`    |
 
 #### 5.2.3 Component Implementation
 
@@ -282,18 +284,18 @@ async def batch_remove_identities(
 ```tsx
 /**
  * Interactive panel for curating top unlabeled clusters.
- * 
+ *
  * Provides wholesale cluster labeling without page navigation,
  * with ability to remove incorrectly clustered identities.
  */
 
-import React, { useState } from 'react';
-import { __, _n, sprintf } from '@wordpress/i18n';
-import { useQuery } from '@tanstack/react-query';
+import React, { useState } from "react";
+import { __, _n, sprintf } from "@wordpress/i18n";
+import { useQuery } from "@tanstack/react-query";
 
-import { ClusterCurationCard } from './ClusterCurationCard';
-import { SuggestionPromptList } from './SuggestionPromptList';
-import type { TopUnlabeledCluster } from '../../../api/recognition/types';
+import { ClusterCurationCard } from "./ClusterCurationCard";
+import { SuggestionPromptList } from "./SuggestionPromptList";
+import type { TopUnlabeledCluster } from "../../../api/recognition/types";
 
 interface TopClustersCurationPanelProps {
   /** Tenant ID for API scoping */
@@ -310,13 +312,15 @@ export const TopClustersCurationPanel = ({
   defaultCollapsed = false,
 }: TopClustersCurationPanelProps): React.JSX.Element | null => {
   const [isCollapsed, setIsCollapsed] = useState(defaultCollapsed);
-  const [expandedClusterId, setExpandedClusterId] = useState<string | null>(null);
+  const [expandedClusterId, setExpandedClusterId] = useState<string | null>(
+    null
+  );
 
   const { data: clusters, isLoading } = useQuery<TopUnlabeledCluster[]>({
-    queryKey: ['clusters', 'top-unlabeled', 'detailed', tenantId, limit],
+    queryKey: ["clusters", "top-unlabeled", "detailed", tenantId, limit],
     queryFn: async () => {
       // Fetch from /clusters/top-unlabeled/detailed
-      throw new Error('TODO: Implement API call');
+      throw new Error("TODO: Implement API call");
     },
     staleTime: 30000,
   });
@@ -334,16 +338,16 @@ export const TopClustersCurationPanel = ({
         aria-expanded={!isCollapsed}
       >
         <span className="acx-top-clusters-panel__title">
-          {__('Quick Cluster Curation', 'alt-context')}
+          {__("Quick Cluster Curation", "alt-context")}
         </span>
         <span className="acx-top-clusters-panel__badge">
           {sprintf(
-            _n('%d cluster', '%d clusters', clusters.length, 'alt-context'),
+            _n("%d cluster", "%d clusters", clusters.length, "alt-context"),
             clusters.length
           )}
         </span>
         <span className="acx-top-clusters-panel__toggle">
-          {isCollapsed ? '▼' : '▲'}
+          {isCollapsed ? "▼" : "▲"}
         </span>
       </button>
 
@@ -355,7 +359,7 @@ export const TopClustersCurationPanel = ({
                 key={cluster.id}
                 cluster={cluster}
                 isExpanded={expandedClusterId === cluster.id}
-                onToggleExpand={() => 
+                onToggleExpand={() =>
                   setExpandedClusterId(
                     expandedClusterId === cluster.id ? null : cluster.id
                   )
@@ -379,13 +383,13 @@ export const TopClustersCurationPanel = ({
  * Card for curating a single cluster with inline editing and member management.
  */
 
-import React, { useState } from 'react';
-import { __, sprintf } from '@wordpress/i18n';
-import { useMutation, useQueryClient } from '@tanstack/react-query';
+import React, { useState } from "react";
+import { __, sprintf } from "@wordpress/i18n";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
 
-import { ClusterPreview } from './ClusterPreview';
-import { MemberGallery } from './MemberGallery';
-import type { TopUnlabeledCluster } from '../../../api/recognition/types';
+import { ClusterPreview } from "./ClusterPreview";
+import { MemberGallery } from "./MemberGallery";
+import type { TopUnlabeledCluster } from "../../../api/recognition/types";
 
 interface ClusterCurationCardProps {
   cluster: TopUnlabeledCluster;
@@ -398,32 +402,34 @@ export const ClusterCurationCard = ({
   isExpanded,
   onToggleExpand,
 }: ClusterCurationCardProps): React.JSX.Element => {
-  const [labelInput, setLabelInput] = useState('');
-  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(new Set());
+  const [labelInput, setLabelInput] = useState("");
+  const [selectedMembers, setSelectedMembers] = useState<Set<string>>(
+    new Set()
+  );
   const queryClient = useQueryClient();
 
   // Label update mutation
   const labelMutation = useMutation({
-    mutationKey: ['update-cluster-label', cluster.id],
+    mutationKey: ["update-cluster-label", cluster.id],
     mutationFn: async (label: string) => {
       // PATCH /clusters/{id}
-      throw new Error('TODO: Implement');
+      throw new Error("TODO: Implement");
     },
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['clusters'] });
+      void queryClient.invalidateQueries({ queryKey: ["clusters"] });
     },
   });
 
   // Batch remove mutation
   const removeMutation = useMutation({
-    mutationKey: ['remove-identities', cluster.id],
+    mutationKey: ["remove-identities", cluster.id],
     mutationFn: async (identityIds: string[]) => {
       // POST /clusters/{id}/remove-identities
-      throw new Error('TODO: Implement');
+      throw new Error("TODO: Implement");
     },
     onSuccess: () => {
       setSelectedMembers(new Set());
-      void queryClient.invalidateQueries({ queryKey: ['clusters'] });
+      void queryClient.invalidateQueries({ queryKey: ["clusters"] });
     },
   });
 
@@ -464,9 +470,9 @@ export const ClusterCurationCard = ({
             type="text"
             value={labelInput}
             onChange={(e) => setLabelInput(e.target.value)}
-            placeholder={__('Enter name...', 'alt-context')}
+            placeholder={__("Enter name...", "alt-context")}
             className="acx-cluster-curation-card__input"
-            onKeyDown={(e) => e.key === 'Enter' && handleSave()}
+            onKeyDown={(e) => e.key === "Enter" && handleSave()}
           />
 
           <button
@@ -475,7 +481,9 @@ export const ClusterCurationCard = ({
             onClick={handleSave}
             disabled={!labelInput.trim() || labelMutation.isPending}
           >
-            {labelMutation.isPending ? __('Saving...', 'alt-context') : __('Save', 'alt-context')}
+            {labelMutation.isPending
+              ? __("Saving...", "alt-context")
+              : __("Save", "alt-context")}
           </button>
         </div>
 
@@ -484,9 +492,13 @@ export const ClusterCurationCard = ({
           className="acx-cluster-curation-card__expand"
           onClick={onToggleExpand}
           aria-expanded={isExpanded}
-          aria-label={isExpanded ? __('Collapse', 'alt-context') : __('Expand', 'alt-context')}
+          aria-label={
+            isExpanded
+              ? __("Collapse", "alt-context")
+              : __("Expand", "alt-context")
+          }
         >
-          {isExpanded ? '▲' : '▼'}
+          {isExpanded ? "▲" : "▼"}
         </button>
       </div>
 
@@ -494,7 +506,7 @@ export const ClusterCurationCard = ({
       {cluster.top_suggestions.length > 0 && (
         <div className="acx-cluster-curation-card__suggestions">
           <span className="acx-cluster-curation-card__suggestions-label">
-            {__('Suggested:', 'alt-context')}
+            {__("Suggested:", "alt-context")}
           </span>
           {cluster.top_suggestions.map((s) => (
             <button
@@ -531,10 +543,10 @@ export const ClusterCurationCard = ({
  * Expandable gallery of cluster members with selection for removal.
  */
 
-import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import React from "react";
+import { __, sprintf } from "@wordpress/i18n";
 
-import type { ClusterMember } from '../../../api/recognition/types';
+import type { ClusterMember } from "../../../api/recognition/types";
 
 interface MemberGalleryProps {
   members: ClusterMember[];
@@ -555,7 +567,7 @@ export const MemberGallery = ({
     <div className="acx-member-gallery">
       <div className="acx-member-gallery__header">
         <span>
-          {sprintf(__('Members (%d):', 'alt-context'), members.length)}
+          {sprintf(__("Members (%d):", "alt-context"), members.length)}
         </span>
         {selectedIds.size > 0 && (
           <button
@@ -565,8 +577,11 @@ export const MemberGallery = ({
             disabled={isRemoving}
           >
             {isRemoving
-              ? __('Removing...', 'alt-context')
-              : sprintf(__('Remove selected (%d)', 'alt-context'), selectedIds.size)}
+              ? __("Removing...", "alt-context")
+              : sprintf(
+                  __("Remove selected (%d)", "alt-context"),
+                  selectedIds.size
+                )}
           </button>
         )}
       </div>
@@ -577,14 +592,16 @@ export const MemberGallery = ({
             key={member.identity_id}
             type="button"
             className={`acx-member-gallery__item ${
-              selectedIds.has(member.identity_id) ? 'acx-member-gallery__item--selected' : ''
+              selectedIds.has(member.identity_id)
+                ? "acx-member-gallery__item--selected"
+                : ""
             }`}
             onClick={() => onToggle(member.identity_id)}
             aria-pressed={selectedIds.has(member.identity_id)}
             aria-label={
               selectedIds.has(member.identity_id)
-                ? __('Deselect for removal', 'alt-context')
-                : __('Select for removal', 'alt-context')
+                ? __("Deselect for removal", "alt-context")
+                : __("Select for removal", "alt-context")
             }
           >
             <img
@@ -610,16 +627,16 @@ export const MemberGallery = ({
  * List of pending suggestions with confirm/reject buttons.
  */
 
-import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
-import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import React from "react";
+import { __, sprintf } from "@wordpress/i18n";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 
 import {
   fetchPendingSuggestions,
   acceptSuggestion,
   rejectSuggestion,
   type PendingSuggestion,
-} from '../../../api/recognition';
+} from "../../../api/recognition";
 
 interface SuggestionPromptListProps {
   tenantId: string;
@@ -633,7 +650,7 @@ export const SuggestionPromptList = ({
   const queryClient = useQueryClient();
 
   const { data, isLoading } = useQuery({
-    queryKey: ['pending-suggestions', tenantId, limit],
+    queryKey: ["pending-suggestions", tenantId, limit],
     queryFn: () => fetchPendingSuggestions(limit, 0),
     staleTime: 30000,
   });
@@ -641,15 +658,15 @@ export const SuggestionPromptList = ({
   const acceptMutation = useMutation({
     mutationFn: acceptSuggestion,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['pending-suggestions'] });
-      void queryClient.invalidateQueries({ queryKey: ['clusters'] });
+      void queryClient.invalidateQueries({ queryKey: ["pending-suggestions"] });
+      void queryClient.invalidateQueries({ queryKey: ["clusters"] });
     },
   });
 
   const rejectMutation = useMutation({
     mutationFn: rejectSuggestion,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['pending-suggestions'] });
+      void queryClient.invalidateQueries({ queryKey: ["pending-suggestions"] });
     },
   });
 
@@ -665,8 +682,10 @@ export const SuggestionPromptList = ({
   return (
     <div className="acx-suggestion-prompt-list">
       <h4 className="acx-suggestion-prompt-list__title">
-        💡 {__('Pending Suggestions', 'alt-context')}
-        <span className="acx-suggestion-prompt-list__count">({totalCount})</span>
+        💡 {__("Pending Suggestions", "alt-context")}
+        <span className="acx-suggestion-prompt-list__count">
+          ({totalCount})
+        </span>
       </h4>
 
       <div className="acx-suggestion-prompt-list__items">
@@ -679,8 +698,11 @@ export const SuggestionPromptList = ({
             />
             <div className="acx-suggestion-prompt-item__content">
               <span className="acx-suggestion-prompt-item__question">
-                {__('Is this', 'alt-context')}{' '}
-                <strong>{suggestion.cluster_label ?? __('Unknown', 'alt-context')}</strong>?
+                {__("Is this", "alt-context")}{" "}
+                <strong>
+                  {suggestion.cluster_label ?? __("Unknown", "alt-context")}
+                </strong>
+                ?
               </span>
               <span className="acx-suggestion-prompt-item__similarity">
                 {Math.round(suggestion.representative_similarity * 100)}%
@@ -692,18 +714,18 @@ export const SuggestionPromptList = ({
                 className="button button-primary button-small"
                 onClick={() => acceptMutation.mutate(suggestion.id)}
                 disabled={isPending}
-                aria-label={__('Yes, confirm suggestion', 'alt-context')}
+                aria-label={__("Yes, confirm suggestion", "alt-context")}
               >
-                ✓ {__('Yes', 'alt-context')}
+                ✓ {__("Yes", "alt-context")}
               </button>
               <button
                 type="button"
                 className="button button-small"
                 onClick={() => rejectMutation.mutate(suggestion.id)}
                 disabled={isPending}
-                aria-label={__('No, reject suggestion', 'alt-context')}
+                aria-label={__("No, reject suggestion", "alt-context")}
               >
-                ✗ {__('No', 'alt-context')}
+                ✗ {__("No", "alt-context")}
               </button>
             </div>
           </div>
@@ -712,7 +734,7 @@ export const SuggestionPromptList = ({
 
       {totalCount > suggestions.length && (
         <a href="#suggestions" className="acx-suggestion-prompt-list__view-all">
-          {sprintf(__('View all %d suggestions', 'alt-context'), totalCount)}
+          {sprintf(__("View all %d suggestions", "alt-context"), totalCount)}
         </a>
       )}
     </div>
@@ -1066,15 +1088,15 @@ export interface BatchRemoveIdentitiesResponse {
 
 ## 8. Files Summary
 
-| File | Type | Description |
-|------|------|-------------|
-| `clusters.py` | Modify | Add detailed top-unlabeled and batch-remove endpoints |
-| `TopClustersCurationPanel.tsx` | New | Main curation panel component |
-| `ClusterCurationCard.tsx` | New | Individual cluster card with editing |
-| `MemberGallery.tsx` | New | Expandable member grid with removal |
-| `SuggestionPromptList.tsx` | New | Pending suggestions with Yes/No buttons |
-| `_top-clusters-panel.scss` | New | Styles for all new components |
-| `types/cluster.ts` | Modify | Add new TypeScript interfaces |
+| File                           | Type   | Description                                           |
+| ------------------------------ | ------ | ----------------------------------------------------- |
+| `clusters.py`                  | Modify | Add detailed top-unlabeled and batch-remove endpoints |
+| `TopClustersCurationPanel.tsx` | New    | Main curation panel component                         |
+| `ClusterCurationCard.tsx`      | New    | Individual cluster card with editing                  |
+| `MemberGallery.tsx`            | New    | Expandable member grid with removal                   |
+| `SuggestionPromptList.tsx`     | New    | Pending suggestions with Yes/No buttons               |
+| `_top-clusters-panel.scss`     | New    | Styles for all new components                         |
+| `types/cluster.ts`             | Modify | Add new TypeScript interfaces                         |
 
 ---
 

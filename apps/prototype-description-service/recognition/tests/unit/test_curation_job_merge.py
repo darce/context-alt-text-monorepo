@@ -8,8 +8,8 @@ from unittest.mock import AsyncMock, Mock
 import pytest
 
 from recognition.application.orchestration.curation_job import run_curation_job
-from recognition.domain.cluster import IdentityCluster
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import ClusterRepository
 
 

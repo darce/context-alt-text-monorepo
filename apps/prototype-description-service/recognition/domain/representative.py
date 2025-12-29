@@ -6,6 +6,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+from typing import Any
 
 import numpy as np
 
@@ -29,3 +30,4 @@ class ClusterRepresentative:
     image_phash: str | None = None
     is_user_selected: bool = False  # User pinned this rep
     is_provisional: bool = False  # Added during batch, pending confirmation
+    debug_metrics: dict[str, Any] | None = None

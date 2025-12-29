@@ -142,6 +142,7 @@ class ClusterService:
         offset: int = 0,
         include_outliers: bool = False,
         labeled_only: bool = False,
+        search: str | None = None,
     ):
         """Return clusters for a tenant using the persistence layer."""
         return await list_clusters_op(
@@ -152,6 +153,7 @@ class ClusterService:
             offset=offset,
             include_outliers=include_outliers,
             labeled_only=labeled_only,
+            search=search,
         )
 
     async def update_cluster(
@@ -206,6 +208,7 @@ class ClusterService:
             tenant_id=tenant_id,
             session=self._session,
             assignment_writer=self.assignment_writer,
+            suggestion_service=self.suggestion_service,
         )
 
     async def merge_cluster(
@@ -255,6 +258,7 @@ class ClusterService:
             similarity=similarity,
             session=self._session,
             assignment_writer=self.assignment_writer,
+            suggestion_service=self.suggestion_service,
         )
 
     async def get_identity_cluster_id(self, identity_id: str) -> str | None:

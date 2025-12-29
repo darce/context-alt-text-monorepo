@@ -118,11 +118,16 @@ export const useClusterEditState = ({ derivedLabel }: UseClusterEditStateOptions
   });
 
   // Sync label input when derived label changes (e.g., after external update)
-  React.useEffect(() => {
-    if (!state.isEditing) {
-      dispatch({ type: 'SET_LABEL', label: derivedLabel ?? '' });
+  React.useLayoutEffect(() => {
+    if (state.isEditing) {
+      return;
     }
-  }, [derivedLabel, state.isEditing]);
+    const nextLabel = derivedLabel ?? '';
+    if (state.labelInput === nextLabel) {
+      return;
+    }
+    dispatch({ type: 'SET_LABEL', label: nextLabel });
+  }, [derivedLabel, state.isEditing, state.labelInput]);
 
   const startEditing = React.useCallback(() => {
     dispatch({ type: 'START_EDIT', initialLabel: derivedLabel ?? '' });

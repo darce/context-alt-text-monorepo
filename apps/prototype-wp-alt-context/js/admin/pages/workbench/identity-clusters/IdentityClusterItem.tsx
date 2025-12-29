@@ -27,6 +27,9 @@ import {
   DialogTitle,
 } from '../../../../components/ui/dialog';
 
+const SAVE_SUCCESS_DELAY_MS = 1200;
+const MATCH_DEBOUNCE_MS = 300;
+
 interface IdentityClusterItemProps {
   cluster: ClusterGroup;
 }
@@ -68,10 +71,13 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   const anchorIdentityId = representative?.identity_id;
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle');
+  const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
+  const confirmDialogRef = React.useRef<ConfirmDialogState | null>(null);
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState | null>(null);
   const confirmResolverRef = React.useRef<((confirmed: boolean) => void) | null>(null);
   const saveStatusTimerRef = React.useRef<number | null>(null);
   const saveAbortRef = React.useRef<AbortController | null>(null);
+  const matchAbortRef = React.useRef<AbortController | null>(null);
 
   // State management
   const {
@@ -144,7 +150,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         onSuccess();
         setSaveStatus('idle');
         saveStatusTimerRef.current = null;
-      }, 1200);
+      }, SAVE_SUCCESS_DELAY_MS);
     },
     [clearSaveStatusTimer],
   );
@@ -179,6 +185,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   } = useClusterSuggestions({
     identityId: anchorIdentityId,
     enabled: editState.isEditing,
+    labelInput: editState.labelInput,
   });
 
   // Mutations
@@ -196,6 +203,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   React.useEffect(() => {
     return () => {
       saveAbortRef.current?.abort();
+      matchAbortRef.current?.abort();
       clearSaveStatusTimer();
       if (confirmResolverRef.current) {
         confirmResolverRef.current(false);
@@ -203,6 +211,39 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       }
     };
   }, [clearSaveStatusTimer]);
+
+  // Proactive matching while typing
+  React.useEffect(() => {
+    if (!editState.isEditing) {
+      setMatchedCluster(null);
+      return;
+    }
+
+    const trimmed = editState.labelInput.trim();
+    const currentLabel = cluster.label ?? '';
+    if (!trimmed || trimmed.toLowerCase() === currentLabel.toLowerCase()) {
+      setMatchedCluster(null);
+      return;
+    }
+
+    const runMatch = async () => {
+      matchAbortRef.current?.abort();
+      const abortController = new AbortController();
+      matchAbortRef.current = abortController;
+
+      try {
+        const match = await findClusterByLabel(trimmed, abortController.signal);
+        if (!abortController.signal.aborted) {
+          setMatchedCluster(match);
+        }
+      } catch {
+        // Ignore
+      }
+    };
+
+    const timer = window.setTimeout(runMatch, MATCH_DEBOUNCE_MS);
+    return () => window.clearTimeout(timer);
+  }, [editState.isEditing, editState.labelInput, cluster.label, findClusterByLabel]);
 
   const handleCancel = React.useCallback(() => {
     if (saveAbortRef.current) {
@@ -213,14 +254,102 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     cancelEditing();
   }, [cancelEditing, resetSaveStatus]);
 
-  // Callback for accepting inline suggestion prompt
-  const handleSuggestionConfirm = React.useCallback(
+  const isDangerousMerge = React.useCallback(
     (clusterId: string) => {
-      if (anchorIdentityId) {
-        mutations.assignToCluster(anchorIdentityId, clusterId);
+      const targetMemberCount = (options.find((option) => option.value === clusterId)?.identityCount ?? 0) as number;
+      return targetMemberCount >= 5;
+    },
+    [options],
+  );
+
+  const runMatchedAction = React.useCallback(
+    async (match: { id: string; label: string }, abortController: AbortController) => {
+      const action: SaveDialogAction = canSearchForMatch ? 'assign' : 'merge';
+
+      if (isDangerousMerge(match.id)) {
+        const confirmed = await updateSaveDialog(action, match.label);
+        if (!confirmed) {
+          return false;
+        }
+      }
+
+      if (abortController.signal.aborted) {
+        return false;
+      }
+
+      if (editableClusterId) {
+        mutations.merge(match.id, match.label, abortController.signal);
+        return true;
+      }
+
+      for (const member of cluster.members) {
+        mutations.assignToCluster(member.identity_id, match.id, abortController.signal);
+      }
+      return true;
+    },
+    [
+      canSearchForMatch,
+      cluster.members,
+      editableClusterId,
+      isDangerousMerge,
+      mutations,
+      updateSaveDialog,
+    ],
+  );
+
+  const handleConfirmSuggestion = React.useCallback(
+    async (clusterId: string, label: string) => {
+      if (saveStatus !== 'idle' || mutations.isPending) {
+        return;
+      }
+      if (!canEdit && !canSearchForMatch) {
+        return;
+      }
+
+      if (saveAbortRef.current) {
+        saveAbortRef.current.abort();
+      }
+      const abortController = new AbortController();
+      saveAbortRef.current = abortController;
+      queueSaveStatus();
+      let mutationStarted = false;
+
+      try {
+        const currentLabel = cluster.label ?? '';
+        if (label.toLowerCase() === currentLabel.toLowerCase()) {
+          cancelEditing();
+          resetSaveStatus();
+          return;
+        }
+
+        mutationStarted = await runMatchedAction({ id: clusterId, label }, abortController);
+      } catch (err) {
+        if (err && typeof err === 'object' && 'name' in err && (err as { name: string }).name === 'AbortError') {
+          resetSaveStatus();
+          return;
+        }
+        const message = err instanceof Error ? err.message : String(err);
+        setError(message);
+        resetSaveStatus();
+      } finally {
+        if (!mutationStarted) {
+          saveAbortRef.current = null;
+          resetSaveStatus();
+        }
       }
     },
-    [anchorIdentityId, mutations],
+    [
+      cancelEditing,
+      canEdit,
+      canSearchForMatch,
+      cluster.label,
+      mutations.isPending,
+      queueSaveStatus,
+      resetSaveStatus,
+      runMatchedAction,
+      saveStatus,
+      setError,
+    ],
   );
 
   // Handle save (rename or merge)
@@ -255,9 +384,13 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     queueSaveStatus();
     let mutationStarted = false;
     try {
-      const match = await findClusterByLabel(trimmed, abortController.signal);
+      // Use cached match if available and still valid, otherwise fetch
+      let match = matchedCluster;
+      if (!match || match.label.toLowerCase() !== trimmed.toLowerCase()) {
+        match = await findClusterByLabel(trimmed, abortController.signal);
+      }
+      
       if (abortController.signal.aborted) {
-        resetSaveStatus();
         return;
       }
 
@@ -269,30 +402,10 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       }
 
       if (match) {
-        // Label exists - merge or assign
-        const action: SaveDialogAction = canSearchForMatch ? 'assign' : 'merge';
-        const confirmed = await updateSaveDialog(action, match.label);
-        if (!confirmed) {
+        mutationStarted = await runMatchedAction(match, abortController);
+        if (!mutationStarted) {
           resetSaveStatus();
           return;
-        }
-
-        if (abortController.signal.aborted) {
-          resetSaveStatus();
-          return;
-        }
-
-        if (editableClusterId) {
-          // Regular cluster: merge by cluster ID
-          mutationStarted = true;
-          mutations.merge(match.id, match.label, abortController.signal);
-        } else {
-          // No cluster ID: assign all members to target cluster
-          // This handles both singletons and unclustered groups
-          mutationStarted = true;
-          for (const member of cluster.members) {
-            mutations.assignToCluster(member.identity_id, match.id, abortController.signal);
-          }
         }
       } else {
         // New label
@@ -367,19 +480,6 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     [cluster.clusterId, mutations],
   );
 
-  const saveButtonLabel = React.useMemo(() => {
-    if (saveStatus === 'saved') {
-      return __('Saved', 'alt-context');
-    }
-    if (mutations.isPending) {
-      return __('Saving…', 'alt-context');
-    }
-    if (saveStatus === 'queued') {
-      return __('Saving queued', 'alt-context');
-    }
-    return __('Save', 'alt-context');
-  }, [mutations.isPending, saveStatus]);
-
   const confirmDialogCopy = React.useMemo(() => {
     if (!confirmDialog) {
       return null;
@@ -397,8 +497,19 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     };
   }, [confirmDialog]);
 
+  const saveLabel = React.useMemo(() => {
+    if (saveStatus === 'queued') return __('Saving…', 'alt-context');
+    if (saveStatus === 'saved') return __('Saved!', 'alt-context');
+    if (matchedCluster) {
+      return canSearchForMatch
+        ? sprintf(__('Assign to %s', 'alt-context'), matchedCluster.label)
+        : sprintf(__('Merge with %s', 'alt-context'), matchedCluster.label);
+    }
+    return undefined;
+  }, [saveStatus, matchedCluster, canSearchForMatch]);
+
   return (
-    <div className="acx-identity-cluster">
+    <div className={`acx-identity-cluster ${editState.isEditing ? 'acx-identity-cluster--editing' : ''}`}>
       <ClusterPreview representative={representative} memberCount={cluster.members.length} />
 
       <div className="acx-identity-cluster__info">
@@ -431,7 +542,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
             {!cluster.label && anchorIdentityId && (
               <InlineSuggestionPrompt
                 identityId={anchorIdentityId}
-                onConfirm={handleSuggestionConfirm}
+                onConfirm={handleConfirmSuggestion}
                 onReject={startEditing}
                 isPending={mutations.isPending}
               />
@@ -444,9 +555,11 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
             options={options}
             isLoading={suggestionsLoading}
             isPending={mutations.isPending || saveStatus !== 'idle'}
-            saveLabel={saveButtonLabel}
             onSave={(labelOverride) => void handleSave(labelOverride)}
+            onConfirmSuggestion={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
             onCancel={handleCancel}
+            onRejectSuggestion={(suggestionId) => mutations.rejectSuggestion(suggestionId)}
+            saveLabel={saveLabel}
           />
         )}
       </div>

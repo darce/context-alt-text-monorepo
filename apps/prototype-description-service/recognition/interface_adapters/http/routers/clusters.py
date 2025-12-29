@@ -149,6 +149,7 @@ async def list_clusters(
     offset: int = Query(0),
     include_outliers: bool = Query(False),
     labeled_only: bool = Query(False),
+    search: str | None = Query(None),
     cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> list[ClusterResponse]:
     """List clusters with paging."""
@@ -161,6 +162,7 @@ async def list_clusters(
         offset=offset,
         include_outliers=include_outliers,
         labeled_only=labeled_only,
+        search=search,
     )
 
 

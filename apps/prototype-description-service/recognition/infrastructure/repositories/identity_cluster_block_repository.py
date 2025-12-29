@@ -23,6 +23,26 @@ class SqlAlchemyIdentityClusterBlockRepository(IdentityClusterBlockRepository):
         self._session = session
         self._tenant_id = tenant_id
 
+    async def block(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        cluster_id: str,
+        reason: str | None = None,
+        created_by_user_id: int | None = None,
+        expires_at: datetime | None = None,
+    ) -> IdentityClusterBlock:
+        """Persist a new block preventing auto-assignment."""
+        return await self.add_block(
+            tenant_id=tenant_id,
+            identity_id=identity_id,
+            blocked_cluster_id=cluster_id,
+            reason=reason,
+            created_by_user_id=created_by_user_id,
+            expires_at=expires_at,
+        )
+
     async def add_block(
         self,
         *,

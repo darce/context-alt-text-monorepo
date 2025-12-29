@@ -29,3 +29,22 @@ class SuggestionServiceProtocol(Protocol):
     async def refresh_for_cluster(self, cluster_id: str) -> int:
         """Refresh suggestions for a whole cluster."""
         ...
+
+    async def resolve_for_identity(
+        self,
+        identity_id: str,
+        cluster_id: str,
+        resolution: str,
+        source: str = "manual_curation",
+    ) -> bool:
+        """Accept or reject a single suggestion for an identity."""
+        ...
+
+    async def resolve_for_identity_exclusive(
+        self,
+        identity_id: str,
+        accepted_cluster_id: str,
+        reason: str = "manual_assign",
+    ) -> int:
+        """Accept one assignment and reject all other suggestions for an identity."""
+        ...

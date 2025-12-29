@@ -248,6 +248,7 @@ class AssignmentWriter:
         self._clusters = cluster_repository
         self._members = member_repository
         self._run_context = run_context
+        self._last_rep_count: int | None = None
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.
@@ -343,8 +344,18 @@ class AssignmentWriter:
         reason: str,
         is_provisional: bool = False,
         is_user_selected: bool = False,
+        existing_rep_count: int | None = None,
     ) -> ClusterRepresentative:
         """Create and persist a representative, emitting events."""
+        if existing_rep_count is not None:
+            max_reps = self._settings.max_representatives_per_cluster
+            if existing_rep_count >= max_reps and "novel_pose" in reason:
+                logger.info(
+                    "[pose_bucket] NOVEL_POSE_ABOVE_CAP cluster=%s identity=%s current_reps=%d",
+                    cluster_id,
+                    identity.id,
+                    existing_rep_count,
+                )
         quality = _compute_identity_quality(identity, self._settings)
         rep = ClusterRepresentative(
             id=str(uuid.uuid4()),
@@ -423,6 +434,7 @@ class AssignmentWriter:
                 identity=decision.candidate.identity,
                 reason=reason,
                 is_provisional=batch_mode,
+                existing_rep_count=self._last_rep_count,
             )
 
             if is_upgrade and self._run_context:
@@ -464,6 +476,7 @@ class AssignmentWriter:
         # Optimize: fetch all reps once
         existing_reps = await self._clusters.get_all_representatives(cluster_id)
         current_count = len(existing_reps)
+        self._last_rep_count = current_count
 
         # 1. Check for upgrade opportunity (replace lower quality rep in same pose bucket)
         upgrade_target = _find_upgradeable_representative(
@@ -479,9 +492,15 @@ class AssignmentWriter:
                 return False
 
             await self._clusters.remove_representative(upgrade_target.id)
+            logger.info(
+                "[pose_bucket] QUALITY_UPGRADE cluster=%s old_identity=%s new_identity=%s quality_diff=%.3f",
+                cluster_id,
+                upgrade_target.identity_id,
+                decision.candidate.identity.id,
+                _compute_identity_quality(decision.candidate.identity, self._settings)
+                - (upgrade_target.quality_score or 0),
+            )
             self._last_decision_was_upgrade = True
-            self._last_decision_was_novel_pose = False
-            return True  # Add new one in its place
 
         self._last_decision_was_upgrade = False
 
@@ -814,6 +833,7 @@ class AssignmentWriter:
                     cluster_id=cluster_id,
                     identity=identity,
                     reason="diverse_addition",
+                    existing_rep_count=current_count,
                 )
 
         # Update member count

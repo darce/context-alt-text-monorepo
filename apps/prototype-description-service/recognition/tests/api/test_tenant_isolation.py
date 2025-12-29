@@ -31,6 +31,7 @@ def _tenant_validation_client() -> TestClient:
                     offset: int,
                     include_outliers: bool = False,
                     labeled_only: bool = False,
+                    search: str | None = None,
                 ):
                     return []
 
@@ -103,6 +104,7 @@ def test_query_param_tenant_fallback(monkeypatch) -> None:
                     offset: int,
                     include_outliers: bool = False,
                     labeled_only: bool = False,
+                    search: str | None = None,
                 ):
                     collected["service_tenant"] = tenant_id
                     return []
@@ -179,6 +181,7 @@ def test_session_context_cleared_after_request(monkeypatch) -> None:
                     offset: int,
                     include_outliers: bool = False,
                     labeled_only: bool = False,
+                    search: str | None = None,
                 ):
                     events.append(("list", tenant_id, session_dep.current_tenant))
                     return []

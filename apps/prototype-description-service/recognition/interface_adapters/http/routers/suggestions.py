@@ -64,6 +64,7 @@ async def list_suggestions(
         if cluster:
             matches.append(
                 ClusterSuggestionMatch(
+                    suggestion_id=suggestion.id,
                     cluster_id=suggestion.cluster_id,
                     label=cluster.label or f"cluster-{suggestion.cluster_id[:8]}",
                     similarity=suggestion.representative_similarity,

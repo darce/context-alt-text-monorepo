@@ -50,7 +50,15 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         model = result.scalar_one_or_none()
         return self._to_domain(model) if model else None
 
-    async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False):
+    async def get_by_tenant(
+        self,
+        tenant_id: str,
+        *,
+        limit: int = 100,
+        offset: int = 0,
+        labeled_only: bool = False,
+        search: str | None = None,
+    ):
         """Fetch clusters for a tenant, with representatives eagerly loaded for discovery."""
         stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
@@ -64,6 +72,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         if labeled_only:
             stmt = stmt.where(ClusterModel.label.isnot(None))
             stmt = stmt.where(ClusterModel.user_confirmed.is_(True))
+
+        if search:
+            stmt = stmt.where(ClusterModel.label.ilike(f"%{search}%"))
+
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
@@ -447,12 +459,53 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         if "representatives" in state.dict:
             # Relationship was eagerly loaded, safe to access
             model_reps = model.representatives
+            representative_count = len(model_reps)
+
+            # Compute pose buckets summary for the whole cluster
+            filled_buckets = set()
+            bucket_size = 30.0  # Default from ClusteringSettings
+            for r in model_reps:
+                if r.identity:
+                    pitch = r.identity.pose_pitch
+                    yaw = r.identity.pose_yaw
+                    if pitch is not None and yaw is not None:
+                        filled_buckets.add((int(pitch // bucket_size), int(yaw // bucket_size)))
+
             for rep in model_reps:
-                # Extract media_id from identity if loaded, otherwise None
+                # Extract debug metrics from identity if loaded
                 rep_state = instance_state(rep)
+                debug_metrics = None
                 media_id = None
                 if "identity" in rep_state.dict and rep.identity:
-                    media_id = rep.identity.media_id
+                    identity = rep.identity
+                    media_id = identity.media_id
+                    debug_metrics = {
+                        "pose": {
+                            "pitch": float(identity.pose_pitch or 0),
+                            "yaw": float(identity.pose_yaw or 0),
+                            "roll": float(identity.pose_roll or 0),
+                        },
+                        "age": float(identity.age or 0),
+                        "gender": "male" if identity.gender == 1 else "female",
+                        "det_score": float(identity.confidence),
+                        "bbox_area": int(identity.bbox_width * identity.bbox_height),
+                        "landmark_quality": float(identity.quality_score or 1.0),
+                        "clustering_method": None,
+                        "clustering_algorithm": None,
+                        "similarity_threshold": None,
+                        "match_similarity": None,
+                        "representative_count": representative_count,
+                        "pose_buckets": {
+                            "filled": len(filled_buckets),
+                            "total": 13,  # 10 base + 3 bonus
+                            "current_bucket": (
+                                int(identity.pose_pitch // bucket_size),
+                                int(identity.pose_yaw // bucket_size),
+                            )
+                            if identity.pose_pitch is not None and identity.pose_yaw is not None
+                            else None,
+                        },
+                    }
                 domain_reps.append(
                     ClusterRepresentative(
                         id=str(rep.id),
@@ -466,6 +519,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         media_id=media_id,
                         is_user_selected=bool(rep.is_user_selected),
                         is_provisional=bool(rep.is_provisional),
+                        debug_metrics=debug_metrics,
                     )
                 )
 

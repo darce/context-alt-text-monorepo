@@ -277,27 +277,18 @@ async def merge_cluster(
         if callable(refresh_view):
             await refresh_view()
 
-    # Log the merge event before deletion for audit trail
-    if clustering_logger:
-        with contextlib.suppress(Exception):
-            clustering_logger.log_cluster_merged(
-                source_cluster_id=source_cluster_id,
-                target_cluster_id=target_cluster_id,
-                moved_count=moved,
-                tenant_id=tenant_id,
-            )
-
-    logger.info(
-        "[curation] MERGED source_cluster=%s source_label='%s' target_cluster=%s target_label='%s' moved_count=%d "
-        "tenant_id=%s user_action=manual_merge deferred=%s",
-        source_cluster_id,
-        source.label,
-        target_cluster_id,
-        target.label,
-        moved,
-        tenant_id,
-        defer_recompute,
-    )
+        # Resolve any pending suggestions for identities moved into the target cluster
+        if suggestion_service:
+            with contextlib.suppress(Exception):
+                members = await member_repo.get_by_cluster(target_cluster_id)
+                for member in members:
+                    # We only need to check identities that were recently moved,
+                    # but resolve_for_identity_exclusive already checks for pending status.
+                    await suggestion_service.resolve_for_identity_exclusive(
+                        identity_id=str(member.identity_id),
+                        accepted_cluster_id=target_cluster_id,
+                        reason="manual_merge",
+                    )
 
     # Broadcast merge event
     broadcaster = get_event_broadcaster()

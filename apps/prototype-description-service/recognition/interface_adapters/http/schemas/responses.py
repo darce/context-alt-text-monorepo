@@ -5,7 +5,7 @@ Response schemas for recognition HTTP API.
 from __future__ import annotations
 
 from datetime import datetime
-from typing import Literal
+from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
@@ -37,6 +37,39 @@ class IdentityResponse(BaseModel):
         return _validate_uuid(v)
 
 
+class PoseResponse(BaseModel):
+    """Pose angles for a detected identity."""
+
+    pitch: float
+    yaw: float
+    roll: float
+
+
+class PoseBucketResponse(BaseModel):
+    """Pose bucket summary for debug displays."""
+
+    filled: int
+    total: int
+    current_bucket: tuple[int, int] | None = None
+
+
+class DetectedIdentityDebugExtras(BaseModel):
+    """Debug-only fields returned when include_debug=true."""
+
+    pose: PoseResponse
+    age: float
+    gender: Literal["female", "male"]
+    det_score: float
+    bbox_area: int
+    landmark_quality: float
+    clustering_method: str | None = None
+    clustering_algorithm: str | None = None
+    similarity_threshold: float | None = None
+    match_similarity: float | None = None
+    representative_count: int | None = None
+    pose_buckets: PoseBucketResponse | None = None
+
+
 class RepresentativeResponse(BaseModel):
     """Cluster representative details."""
 
@@ -46,6 +79,7 @@ class RepresentativeResponse(BaseModel):
     media_id: str | int
     thumb_url: str | None = None
     is_pinned: bool = Field(False, alias="is_user_selected")
+    debug_metrics: dict[str, Any] | None = None
 
     @field_validator("id")
     @classmethod
@@ -97,6 +131,7 @@ class SuggestionResponse(BaseModel):
 class ClusterSuggestionMatch(BaseModel):
     """A suggested cluster match for an identity (frontend-compatible format)."""
 
+    suggestion_id: str | None = None
     cluster_id: str
     label: str
     similarity: float

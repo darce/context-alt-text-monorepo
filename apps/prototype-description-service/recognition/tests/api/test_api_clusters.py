@@ -88,7 +88,9 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
     assert target.id in call["cluster_ids"]
 
 
-def test_merge_cluster_same_target_does_not_queue_followup(api_client, tenant_id, fake_cluster_service, fake_job_service):
+def test_merge_cluster_same_target_does_not_queue_followup(
+    api_client, tenant_id, fake_cluster_service, fake_job_service
+):
     target = seed_cluster(fake_cluster_service, tenant_id, label="target")
 
     resp = api_client.post(

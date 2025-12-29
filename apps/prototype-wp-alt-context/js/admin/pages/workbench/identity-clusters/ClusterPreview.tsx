@@ -19,10 +19,7 @@ interface ClusterPreviewProps {
  * Displays the cluster's representative thumbnail with an optional count badge.
  * The thumbnail shows the face cropped from the original image using InsightFace bbox.
  */
-export const ClusterPreview = ({
-  representative,
-  memberCount,
-}: ClusterPreviewProps): React.JSX.Element => {
+export const ClusterPreview = ({ representative, memberCount }: ClusterPreviewProps): React.JSX.Element => {
   const hasValidThumbnail = representative?.media_url && representative?.bbox;
 
   return (

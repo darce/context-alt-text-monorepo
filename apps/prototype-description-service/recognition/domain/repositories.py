@@ -51,6 +51,7 @@ class ClusterRepository(Protocol):
         limit: int = 100,
         offset: int = 0,
         labeled_only: bool = False,
+        search: str | None = None,
     ) -> list[IdentityCluster]: ...
 
     async def save(self, cluster: IdentityCluster) -> IdentityCluster: ...
@@ -262,6 +263,19 @@ class IdentityClusterBlock:
 class IdentityClusterBlockRepository(Protocol):
     """Abstract interface for identity-cluster block persistence."""
 
+    async def block(
+        self,
+        *,
+        tenant_id: str,
+        identity_id: str,
+        cluster_id: str,
+        reason: str | None = None,
+        created_by_user_id: int | None = None,
+        expires_at: datetime | None = None,
+    ) -> IdentityClusterBlock:
+        """Persist a new block preventing auto-assignment."""
+        ...
+
     async def add_block(
         self,
         *,
@@ -272,7 +286,7 @@ class IdentityClusterBlockRepository(Protocol):
         created_by_user_id: int | None = None,
         expires_at: datetime | None = None,
     ) -> IdentityClusterBlock:
-        """Persist a new block preventing auto-assignment."""
+        """Persist a new block (Legacy name)."""
         ...
 
     async def remove_block(
@@ -412,6 +426,17 @@ class JobRepository(Protocol):
 
 class IdentityConstraintRepository(Protocol):
     """Protocol for identity constraint persistence."""
+
+    async def create_cannot_link(
+        self,
+        tenant_id: str,
+        identity_a: str,
+        identity_b: str,
+        source: str,
+        created_by_user_id: int | None = None,
+    ) -> IdentityConstraint:
+        """Create a new pairwise CANNOT_LINK constraint."""
+        ...
 
     async def create(
         self,

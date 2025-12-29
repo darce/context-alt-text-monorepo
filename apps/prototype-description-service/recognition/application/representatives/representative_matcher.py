@@ -62,6 +62,12 @@ class RepresentativeMatcher:
                     assignment_candidate.cluster_id,
                     assignment_candidate.discovery_similarity,
                 )
+                if self.suggestion_service:
+                    await self.suggestion_service.resolve_for_identity_exclusive(
+                        identity_id=assignment_candidate.identity.id,
+                        accepted_cluster_id=assignment_candidate.cluster_id,
+                        reason="auto_assignment_matcher",
+                    )
                 rep = await self.add_representative_embedding(
                     assignment_candidate.cluster_id, assignment_candidate.identity
                 )

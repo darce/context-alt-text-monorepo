@@ -31,4 +31,4 @@ async def list_media_identities(
             ids = [int(v) for k, v in qp.multi_items() if k.startswith("media_ids[") and v.isdigit()]
     if service is None or not ids:
         return []
-    return await service.list_by_media_ids(tenant_id, ids)
+    return await service.list_by_media_ids(tenant_id, ids, include_debug=bool(include_debug))

@@ -214,3 +214,57 @@ async def test_refresh_for_identity_creates_suggestion_for_band() -> None:
 
     assert len(suggestions) == 1
     suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_reject_creates_blocks_and_constraints() -> None:
+    tenant_id = "tenant-1"
+    suggestion_id = "s-1"
+    identity_id = "identity-1"
+    cluster_id = "cluster-1"
+    rep_identity_id = "rep-identity-1"
+
+    suggestion_repo = AsyncMock(spec=SuggestionRepository)
+    suggestion = AssignmentSuggestion(
+        id=suggestion_id,
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        representative_similarity=0.8,
+        member_similarity=0.8,
+        status=SuggestionStatus.REJECTED,
+        created_at=datetime.now(tz=UTC),
+    )
+    suggestion_repo.update_status.return_value = suggestion
+
+    cluster_repo = AsyncMock(spec=ClusterRepository)
+    cluster_repo.get_by_id.return_value = type(
+        "Cluster", (), {"id": cluster_id, "representative_identity_id": rep_identity_id}
+    )()
+
+    block_repo = AsyncMock()
+    constraint_repo = AsyncMock()
+
+    service = SuggestionService(
+        suggestion_repo,
+        tenant_id=tenant_id,
+        cluster_repository=cluster_repo,
+        block_repository=block_repo,
+        constraint_repository=constraint_repo,
+    )
+
+    result = await service.reject(suggestion_id)
+
+    assert result == suggestion
+    suggestion_repo.update_status.assert_awaited_once_with(tenant_id, suggestion_id, SuggestionStatus.REJECTED)
+    block_repo.block.assert_awaited_once_with(
+        tenant_id=tenant_id,
+        identity_id=identity_id,
+        cluster_id=cluster_id,
+        reason="manual_reject",
+    )
+    constraint_repo.create_cannot_link.assert_awaited_once_with(
+        tenant_id=tenant_id,
+        identity_a=identity_id,
+        identity_b=rep_identity_id,
+        source="manual_reject",
+    )

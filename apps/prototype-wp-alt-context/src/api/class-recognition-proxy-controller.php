@@ -368,6 +368,7 @@ class RecognitionProxyController {
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$limit = absint( $request->get_param( 'limit' ) ?? 50 );
 		$limit = min( $limit, 500 ); // Cap to reasonable maximum
+		$search = sanitize_text_field( (string) $request->get_param( 'search' ) );
 
 		$query = array(
 			'tenant_id'    => $this->get_tenant_id(),
@@ -375,6 +376,9 @@ class RecognitionProxyController {
 			'offset'       => absint( $request->get_param( 'offset' ) ?? 0 ),
 			'labeled_only' => $request->get_param( 'labeled_only' ) === 'true' ? 'true' : null,
 		);
+		if ( '' !== $search ) {
+			$query['search'] = $search;
+		}
 
 		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
 	}

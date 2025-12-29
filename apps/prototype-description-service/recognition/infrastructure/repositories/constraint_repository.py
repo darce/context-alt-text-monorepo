@@ -43,6 +43,24 @@ class SqlAlchemyConstraintRepository(IdentityConstraintRepository):
             created_by_user_id=model.created_by_user_id,
         )
 
+    async def create_cannot_link(
+        self,
+        tenant_id: str,
+        identity_a: str,
+        identity_b: str,
+        source: str,
+        created_by_user_id: int | None = None,
+    ) -> IdentityConstraint:
+        """Create a new pairwise CANNOT_LINK constraint."""
+        return await self.create(
+            tenant_id=tenant_id,
+            identity_a=identity_a,
+            identity_b=identity_b,
+            constraint_type=ConstraintType.CANNOT_LINK.value,
+            source=source,
+            created_by_user_id=created_by_user_id,
+        )
+
     async def create(
         self,
         tenant_id: str,

@@ -18,9 +18,11 @@ export interface ClusterListParams {
   limit?: number;
   offset?: number;
   labeled_only?: boolean;
+  search?: string;
 }
 
 export interface ClusterSuggestion {
+  suggestion_id?: string;
   cluster_id: string;
   label: string;
   similarity: number;
@@ -112,6 +114,16 @@ export interface CreateClusterForIdentityResponse {
   label: string;
   identity_id: string;
   message: string;
+}
+
+import type { DebugMetrics } from './identity';
+
+export interface ClusterRepresentative {
+  id: string;
+  media_id: number;
+  thumb_url?: string;
+  is_pinned?: boolean;
+  debug_metrics?: DebugMetrics | null;
 }
 
 export interface PinRepresentativeRequest {

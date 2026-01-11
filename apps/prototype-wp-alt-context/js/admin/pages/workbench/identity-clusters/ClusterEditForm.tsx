@@ -37,7 +37,6 @@ export const ClusterEditForm = ({
   labelInput,
   onLabelChange,
   options,
-  isLoading,
   isPending,
   saveLabel,
   onSave,
@@ -85,12 +84,10 @@ export const ClusterEditForm = ({
           disabled={isPending}
           aria-label={__('Cluster label', 'alt-context')}
         />
-        
+
         {displayedOptions.length > 0 && !isPending && (
           <div className="acx-identity-cluster__suggestions-overlay">
-            <div className="acx-identity-cluster__suggestions-header">
-              {__('Suggested', 'alt-context')}
-            </div>
+            <div className="acx-identity-cluster__suggestions-header">{__('Suggested', 'alt-context')}</div>
             {displayedOptions.map((option) => (
               <div key={option.value} className="acx-identity-cluster__suggestion-row">
                 <button
@@ -103,9 +100,13 @@ export const ClusterEditForm = ({
                 >
                   <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
                   {option.similarity !== undefined && (
-                    <span className={`acx-identity-cluster__match-score ${
-                      (option.similarity as number) >= 0.7 ? 'acx-identity-cluster__match-score--high' : 'acx-identity-cluster__match-score--medium'
-                    }`}>
+                    <span
+                      className={`acx-identity-cluster__match-score ${
+                        (option.similarity as number) >= 0.7
+                          ? 'acx-identity-cluster__match-score--high'
+                          : 'acx-identity-cluster__match-score--medium'
+                      }`}
+                    >
                       {Math.round((option.similarity as number) * 100)}%
                     </span>
                   )}
@@ -149,19 +150,15 @@ export const ClusterEditForm = ({
       </div>
 
       <div className="acx-identity-cluster__edit-actions">
-        <button 
-          type="button" 
-          className="acx-identity-cluster__save" 
-          onClick={() => onSave()} 
+        <button
+          type="button"
+          className="acx-identity-cluster__save"
+          onClick={() => onSave()}
           disabled={isPending || !labelInput.trim()}
         >
           {saveButtonLabel}
         </button>
-        <button 
-          type="button" 
-          className="acx-identity-cluster__cancel" 
-          onClick={onCancel}
-        >
+        <button type="button" className="acx-identity-cluster__cancel" onClick={onCancel}>
           {__('Cancel', 'alt-context')}
         </button>
       </div>

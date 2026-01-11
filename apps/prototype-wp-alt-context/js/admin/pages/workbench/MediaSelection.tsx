@@ -218,7 +218,7 @@ const renderRows = ({
             </p>
             <p className="acx-media-selection__media-alt">{item.altText ?? __('No alt text yet', 'alt-context')}</p>
           </a>
-          <IdentityClusterList identities={item.identities ?? []} mediaId={item.id} />
+          <IdentityClusterList identities={item.identities ?? []} />
         </td>
         <td>
           {item.tags.length === 0 ? (

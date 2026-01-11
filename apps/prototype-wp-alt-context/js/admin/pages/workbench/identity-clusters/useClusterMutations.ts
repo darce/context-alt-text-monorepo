@@ -86,7 +86,7 @@ export const useClusterMutations = ({
   const queryClient = useQueryClient();
 
   // Invalidate and refetch queries after mutations
-  const invalidateQueries = async () => {
+  const invalidateQueries = () => {
     void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     void queryClient.invalidateQueries({ queryKey: ['cluster-labels'] });
     void queryClient.invalidateQueries({ queryKey: ['clusters'] });

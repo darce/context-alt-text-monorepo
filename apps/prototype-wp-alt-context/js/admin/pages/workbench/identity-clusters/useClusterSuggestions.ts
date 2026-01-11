@@ -8,12 +8,9 @@ import React from 'react';
 
 import type { ClusterSummary, IdentitySuggestionsResponse } from '../../../api/recognition';
 import type { ComboboxOption } from '../../../../components/ui/combobox';
-import {
-  useClusterSuggestionsLoader,
-  type ClusterSuggestionsLoaderOptions,
-} from './useClusterSuggestionsLoader';
+import { useClusterSuggestionsLoader, type ClusterSuggestionsLoaderOptions } from './useClusterSuggestionsLoader';
 
-interface UseClusterSuggestionsOptions extends ClusterSuggestionsLoaderOptions {}
+type UseClusterSuggestionsOptions = ClusterSuggestionsLoaderOptions;
 
 interface UseClusterSuggestionsReturn {
   /** Formatted options for Combobox */
@@ -42,12 +39,18 @@ export const selectClusterSuggestions = ({
     .sort((a, b) => b.similarity - a.similarity)
     .forEach((match) => {
       const normalizedLabel = match.label?.trim() ?? '';
-      if (!normalizedLabel) return;
+      if (!normalizedLabel) {
+        return;
+      }
       const key = normalizedLabel.toLowerCase();
 
       // Filter: label must match input if any provided
-      if (searchLower && !key.includes(searchLower)) return;
-      if (seen.has(key)) return;
+      if (searchLower && !key.includes(searchLower)) {
+        return;
+      }
+      if (seen.has(key)) {
+        return;
+      }
 
       seen.add(key);
       result.push({
@@ -61,10 +64,14 @@ export const selectClusterSuggestions = ({
 
   // 2. Label search matches (already filtered by API)
   (labelMatches ?? []).forEach((cluster) => {
-    if (!cluster.label?.trim()) return;
+    if (!cluster.label?.trim()) {
+      return;
+    }
     const normalizedLabel = cluster.label.trim();
     const key = normalizedLabel.toLowerCase();
-    if (seen.has(key)) return;
+    if (seen.has(key)) {
+      return;
+    }
 
     // Try to find similarity from identitySuggestions if this cluster label is also suggested for identity
     const identityMatch = identitySuggestions?.matches?.find(
@@ -99,13 +106,17 @@ export const useClusterSuggestions = ({
   labelInput = '',
   debounceMs,
 }: UseClusterSuggestionsOptions): UseClusterSuggestionsReturn => {
-  const { identitySuggestions, labelMatches, isLoading, findClusterByLabel: findClusterByLabelRemote } =
-    useClusterSuggestionsLoader({
-      identityId,
-      enabled,
-      labelInput,
-      debounceMs,
-    });
+  const {
+    identitySuggestions,
+    labelMatches,
+    isLoading,
+    findClusterByLabel: findClusterByLabelRemote,
+  } = useClusterSuggestionsLoader({
+    identityId,
+    enabled,
+    labelInput,
+    debounceMs,
+  });
 
   const options = React.useMemo(
     () => selectClusterSuggestions({ identitySuggestions, labelMatches, labelInput }),
@@ -115,7 +126,9 @@ export const useClusterSuggestions = ({
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
       const normalizedLabel = label.toLowerCase().trim();
-      if (!normalizedLabel) return null;
+      if (!normalizedLabel) {
+        return null;
+      }
 
       const fromOptions = options.find((opt) => opt.label.toLowerCase() === normalizedLabel);
       if (fromOptions?.value) {

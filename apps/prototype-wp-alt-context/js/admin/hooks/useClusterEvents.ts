@@ -13,7 +13,7 @@ import { stripTrailingSlash } from '../utils/http';
  * @param tenantId - Tenant ID for scoping
  * @param enabled - Whether to connect
  */
-export function useClusterEvents(tenantId: string, enabled = true): void {
+export const useClusterEvents = (tenantId: string, enabled = true): void => {
   const queryClient = useQueryClient();
 
   useEffect(() => {
@@ -23,7 +23,7 @@ export function useClusterEvents(tenantId: string, enabled = true): void {
 
     let base: string;
     try {
-      base = getEndpoint('workbenchRecognitionClusters');
+      base = getEndpoint('recognitionClusters');
     } catch {
       return;
     }
@@ -41,7 +41,7 @@ export function useClusterEvents(tenantId: string, enabled = true): void {
 
     const handleEvent = (event: MessageEvent) => {
       try {
-        const data = JSON.parse(event.data);
+        const data = JSON.parse(event.data as string) as { event_type: string };
         const eventType = data.event_type;
 
         // Invalidate relevant queries based on event type
@@ -78,4 +78,4 @@ export function useClusterEvents(tenantId: string, enabled = true): void {
       eventSource.close();
     };
   }, [tenantId, enabled, queryClient]);
-}
+};

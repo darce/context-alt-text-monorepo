@@ -22,7 +22,7 @@ import type {
 } from './types';
 
 export const updateClusterLabel = async (clusterId: string, label: string, signal?: AbortSignal): Promise<void> => {
-  const url = `${stripTrailingSlash(getEndpoint('workbenchRecognitionClusters'))}/${clusterId}`;
+  const url = `${stripTrailingSlash(getEndpoint('recognitionClusters'))}/${clusterId}`;
   await fetchApi(url, {
     method: 'PATCH',
     body: { label },
@@ -37,7 +37,7 @@ export const mergeCluster = async (
   targetLabel?: string,
   signal?: AbortSignal,
 ): Promise<MergeClusterResponse> => {
-  const url = `${stripTrailingSlash(getEndpoint('workbenchRecognitionClusters'))}/${sourceId}/merge`;
+  const url = `${stripTrailingSlash(getEndpoint('recognitionClusters'))}/${sourceId}/merge`;
   return fetchApi<MergeClusterResponse>(url, {
     method: 'POST',
     body: { target_cluster_id: targetClusterId, target_label: targetLabel },
@@ -50,7 +50,7 @@ export const listRecognitionClusters = async (
   params: ClusterListParams = {},
   signal?: AbortSignal,
 ): Promise<ClusterSummary[]> => {
-  const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
+  const base = getEndpoint('recognitionClusters');
   const url = new URL(base, window.location.origin);
   if (params.limit) {
     url.searchParams.set('limit', String(params.limit));
@@ -73,7 +73,7 @@ export const listRecognitionClusters = async (
 };
 
 export const getRecognitionCluster = async (clusterId: string): Promise<ClusterSummary> => {
-  const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
+  const base = getEndpoint('recognitionClusters');
   const url = `${stripTrailingSlash(base)}/${clusterId}`;
 
   return fetchApi<ClusterSummary>(url, {
@@ -83,8 +83,8 @@ export const getRecognitionCluster = async (clusterId: string): Promise<ClusterS
 };
 
 export const fetchClusterLabels = async (): Promise<string[]> => {
-  const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
-  return fetchApi<string[]>(`${stripTrailingSlash(base)}/labels`, {
+  const base = getEndpoint('recognitionClusterLabels');
+  return fetchApi<string[]>(stripTrailingSlash(base), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -94,23 +94,8 @@ export const reassignClusterIdentity = async (
   request: ReassignClusterIdentityRequest,
   signal?: AbortSignal,
 ): Promise<void> => {
-  let base: string;
-  let needsReassignSuffix = true;
-
-  try {
-    // Try the dedicated reassign endpoint first (already includes /reassign)
-    base = getEndpoint('workbenchRecognitionReassignIdentity');
-    needsReassignSuffix = false;
-  } catch {
-    // Fallback to clusters endpoint (needs /reassign suffix)
-    try {
-      base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
-    } catch {
-      throw new Error('Cluster reassignment endpoint is not configured.');
-    }
-  }
-
-  const url = needsReassignSuffix ? `${stripTrailingSlash(base)}/reassign` : stripTrailingSlash(base);
+  const base = getEndpoint('recognitionReassignIdentity');
+  const url = stripTrailingSlash(base);
   const body: Record<string, unknown> = {
     identity_id: request.identityId,
     target_cluster_id: request.targetClusterId ?? null,
@@ -134,7 +119,7 @@ export const reassignClusterFace = (request: ReassignClusterFaceRequest): Promis
   });
 
 export const revertMergeCluster = async (request: RevertMergeRequest): Promise<RevertMergeResponse> => {
-  const base = getEndpoint('workbenchRecognitionRevertMerge', 'recognitionRevertMerge');
+  const base = getEndpoint('recognitionRevertMerge');
   return fetchApi<RevertMergeResponse>(base, {
     method: 'POST',
     body: {
@@ -155,7 +140,7 @@ export const splitCluster = async (
   clusterId: string,
   request: SplitClusterRequest = {},
 ): Promise<SplitClusterResponse | AsyncSplitClusterResponse> => {
-  const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
+  const base = getEndpoint('recognitionClusters');
   const { nClusters = 0, anchorIdentityId, splitMode, mode } = request;
   const body: Record<string, unknown> = {
     tenant_id: getConfig().tenant_id,
@@ -181,14 +166,8 @@ export const createClusterForIdentity = async (
   request: CreateClusterForIdentityRequest,
   signal?: AbortSignal,
 ): Promise<CreateClusterForIdentityResponse> => {
-  const base = getEndpoint(
-    'workbenchRecognitionCreateClusterForIdentity',
-    'workbenchRecognitionClusters',
-    'workbenchFaceClusters',
-    'recognitionClusters',
-  );
-  // If we got the specific endpoint, use it directly; otherwise append path
-  const url = base.includes('create-for-identity') ? base : `${stripTrailingSlash(base)}/create-for-identity`;
+  const base = getEndpoint('recognitionCreateClusterForIdentity');
+  const url = stripTrailingSlash(base);
 
   return fetchApi<CreateClusterForIdentityResponse>(url, {
     method: 'POST',
@@ -206,7 +185,7 @@ export const pinRepresentative = async (
   representativeId: string,
   isPinned: boolean,
 ): Promise<void> => {
-  const base = getEndpoint('workbenchRecognitionClusters', 'workbenchFaceClusters', 'recognitionClusters');
+  const base = getEndpoint('recognitionClusters');
   const url = `${stripTrailingSlash(base)}/${clusterId}/representatives/${representativeId}/pin`;
   await fetchApi(url, {
     method: 'PATCH',

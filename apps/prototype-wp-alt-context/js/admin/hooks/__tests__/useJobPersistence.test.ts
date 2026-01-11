@@ -1,0 +1,86 @@
+import { renderHook, act } from '@testing-library/react';
+import { useJobPersistence } from '../useJobPersistence';
+
+describe('useJobPersistence', () => {
+  const STORAGE_KEY = 'acx_active_jobs';
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  it('hydrates empty state when nothing is in localStorage', () => {
+    const { result } = renderHook(() => useJobPersistence());
+    expect(result.current.activeJobs).toEqual([]);
+  });
+
+  it('adds and persists a job', () => {
+    const { result } = renderHook(() => useJobPersistence());
+
+    act(() => {
+      result.current.addJob('job-1', 'scan', 10);
+    });
+
+    expect(result.current.activeJobs).toHaveLength(1);
+    expect(result.current.activeJobs[0]).toMatchObject({
+      id: 'job-1',
+      type: 'scan',
+      totalItems: 10,
+    });
+    expect(result.current.activeJobs[0].startedAt).toBeDefined();
+
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]') as { id: string }[];
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.id).toBe('job-1');
+  });
+
+  it('removes a job', () => {
+    const { result } = renderHook(() => useJobPersistence());
+
+    act(() => {
+      result.current.addJob('job-1', 'scan', 10);
+      result.current.addJob('job-2', 'clustering', 20);
+    });
+
+    act(() => {
+      result.current.removeJob('job-1');
+    });
+
+    expect(result.current.activeJobs).toHaveLength(1);
+    expect(result.current.activeJobs[0].id).toBe('job-2');
+
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]') as { id: string }[];
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.id).toBe('job-2');
+  });
+
+  it('hydrates from localStorage on mount', () => {
+    const initialJobs = [{ id: 'job-1', type: 'scan', startedAt: Date.now(), totalItems: 10 }];
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(initialJobs));
+
+    const { result } = renderHook(() => useJobPersistence());
+    expect(result.current.activeJobs).toEqual(initialJobs);
+  });
+
+  it('purges stale jobs (> 1 hour) on mount', () => {
+    const now = Date.now();
+    const staleTime = now - (3600 * 1000 + 1); // 1 hour + 1ms ago
+    const freshJob = { id: 'fresh', type: 'scan', startedAt: now, totalItems: 10 };
+    const staleJob = { id: 'stale', type: 'clustering', startedAt: staleTime, totalItems: 20 };
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify([freshJob, staleJob]));
+
+    const { result } = renderHook(() => useJobPersistence());
+
+    expect(result.current.activeJobs).toHaveLength(1);
+    expect(result.current.activeJobs[0].id).toBe('fresh');
+
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]') as { id: string }[];
+    expect(stored).toHaveLength(1);
+    expect(stored[0]?.id).toBe('fresh');
+  });
+});

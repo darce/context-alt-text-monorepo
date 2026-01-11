@@ -27,13 +27,6 @@ configure({
     });
     return result;
   },
-  advanceTimersWrapper: async (callback) => {
-    let result: unknown;
-    await act(async () => {
-      result = await callback();
-    });
-    return result;
-  },
 });
 
 class TestResizeObserver {

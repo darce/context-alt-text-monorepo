@@ -21,13 +21,11 @@ interface CurateTopClustersPromptProps {
 /**
  * Displays a prompt to curated top unlabeled clusters if suggestions are lacking.
  */
-export const CurateTopClustersPrompt = ({
-  tenantId,
-}: CurateTopClustersPromptProps): React.JSX.Element | null => {
+export const CurateTopClustersPrompt = ({ tenantId }: CurateTopClustersPromptProps): React.JSX.Element | null => {
   const { data: topClusters, isLoading } = useQuery<ClusterSummary[]>({
     queryKey: ['clusters', 'top-unlabeled', tenantId],
     queryFn: async () => {
-      const base = getEndpoint('workbenchRecognitionClusters');
+      const base = getEndpoint('recognitionClusters');
       const url = `${base}/top-unlabeled?limit=3&tenant_id=${tenantId}`;
       return fetchApi<ClusterSummary[]>(url, {
         restNonce: getConfig().nonce,
@@ -43,11 +41,12 @@ export const CurateTopClustersPrompt = ({
   return (
     <div className="acx-identity-curation-prompt">
       <div className="acx-identity-curation-prompt__content">
-        <h4 className="acx-identity-curation-prompt__title">
-          {__('Help improve suggestions', 'alt-context')}
-        </h4>
+        <h4 className="acx-identity-curation-prompt__title">{__('Help improve suggestions', 'alt-context')}</h4>
         <p className="acx-identity-curation-prompt__description">
-          {__('Labeling these large clusters first will help the system suggest names for other people automatically.', 'alt-context')}
+          {__(
+            'Labeling these large clusters first will help the system suggest names for other people automatically.',
+            'alt-context',
+          )}
         </p>
         <ul className="acx-identity-curation-prompt__list">
           {topClusters.map((cluster) => (
@@ -56,7 +55,7 @@ export const CurateTopClustersPrompt = ({
               <span className="acx-identity-curation-prompt__meta">
                 {sprintf(
                   _n('%d face', '%d faces', cluster.identity_count || 0, 'alt-context'),
-                  cluster.identity_count || 0
+                  cluster.identity_count || 0,
                 )}
               </span>
             </li>

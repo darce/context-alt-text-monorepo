@@ -79,7 +79,9 @@ export const useClusterSuggestionsLoader = ({
   const findClusterByLabel = React.useCallback(
     async (label: string, signal?: AbortSignal): Promise<{ id: string; label: string } | null> => {
       const normalizedLabel = label.toLowerCase().trim();
-      if (!normalizedLabel) return null;
+      if (!normalizedLabel) {
+        return null;
+      }
 
       try {
         const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal);

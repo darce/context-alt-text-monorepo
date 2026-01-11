@@ -27,7 +27,7 @@ describe('ClusterEditForm', () => {
     const onLabelChange = vi.fn();
     render(<ClusterEditForm {...defaultProps} onLabelChange={onLabelChange} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    
+
     fireEvent.change(input, { target: { value: 'New Label' } });
     expect(onLabelChange).toHaveBeenCalledWith('New Label');
   });
@@ -36,7 +36,7 @@ describe('ClusterEditForm', () => {
     const onSave = vi.fn();
     render(<ClusterEditForm {...defaultProps} onSave={onSave} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    
+
     fireEvent.keyDown(input, { key: 'Enter', code: 'Enter' });
     expect(onSave).toHaveBeenCalled();
   });
@@ -45,14 +45,14 @@ describe('ClusterEditForm', () => {
     const onCancel = vi.fn();
     render(<ClusterEditForm {...defaultProps} onCancel={onCancel} />);
     const input = screen.getByDisplayValue('Test Cluster');
-    
+
     fireEvent.keyDown(input, { key: 'Escape', code: 'Escape' });
     expect(onCancel).toHaveBeenCalled();
   });
 
   it('shows suggestions overlay when typing a partial match', () => {
     render(<ClusterEditForm {...defaultProps} labelInput="Per" />);
-    
+
     expect(screen.getByText('Person A')).toBeInTheDocument();
     expect(screen.getByText('95%')).toBeInTheDocument();
   });
@@ -70,7 +70,7 @@ describe('ClusterEditForm', () => {
         onConfirmSuggestion={onConfirmSuggestion}
       />,
     );
-    
+
     // Clicking the suggestion item only changes label
     const suggestion = screen.getByText('Person B');
     fireEvent.click(suggestion);
@@ -87,7 +87,7 @@ describe('ClusterEditForm', () => {
     render(<ClusterEditForm {...defaultProps} isPending={true} />);
     const input = screen.getByDisplayValue('Test Cluster');
     const saveButton = screen.getByText('Saving…');
-    
+
     expect(input).toBeDisabled();
     expect(saveButton).toBeDisabled();
   });
@@ -110,7 +110,7 @@ describe('ClusterEditForm', () => {
         labelInput="P"
         options={optionsWithSuggestion}
         onRejectSuggestion={onRejectSuggestion}
-      />
+      />,
     );
 
     const rejectButton = screen.getByRole('button', { name: /reject/i });

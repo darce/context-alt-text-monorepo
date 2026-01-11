@@ -13,6 +13,8 @@ import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
+import { useJobPersistence } from '../hooks/useJobPersistence';
+import { useJobProgressStream } from '../hooks/useJobProgressStream';
 import { MediaSelection } from './workbench/MediaSelection';
 import { SuggestionReviewPanel } from './workbench/identity-clusters';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
@@ -21,16 +23,18 @@ interface AltContextAdminConfig {
   nonce: string;
   endpoints: {
     workbenchMedia: string;
-    workbenchRecognitionAnalyze?: string;
-    workbenchRecognitionJobs?: string;
-    workbenchRecognitionCluster?: string;
-    workbenchRecognitionClusters?: string;
-    workbenchFaceScan?: string;
-    workbenchFaceClusters?: string;
     recognitionAnalyze: string;
     recognitionJobs: string;
     recognitionCluster: string;
     recognitionClusters: string;
+    recognitionClusterLabels: string;
+    recognitionTrainingStage: string;
+    recognitionMediaIdentities: string;
+    recognitionReassignIdentity: string;
+    recognitionIdentitySuggestions: string;
+    recognitionSuggestions: string;
+    recognitionRevertMerge: string;
+    recognitionCreateClusterForIdentity: string;
   };
 }
 
@@ -87,7 +91,8 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [activeSection, setActiveSection] = useState<WorkbenchTab>(TAB_IDS.scan);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [activeJobIds, setActiveJobIds] = useState<string[]>([]);
+  const { activeJobs, addJob, removeJob } = useJobPersistence();
+  const activeJobIds = useMemo(() => activeJobs.map((j) => j.id), [activeJobs]);
   const [isWaitingForScanCompletion, setIsWaitingForScanCompletion] = useState(false);
   const [isCancellingScan, setIsCancellingScan] = useState(false);
   const queryClient = useQueryClient();
@@ -107,20 +112,22 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const mediaItems = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
   const totalPages = mediaData?.totalPages ?? 1;
   const totalCount = mediaData?.total ?? 0;
+  const hasIdentities = mediaItems.length > 0;
   const allPageRowsChecked = isPageFullySelected(mediaItems);
   const identityQuery = mediaQuery.identitiesQuery;
 
   const scanMutation = useScanIdentities({
     onMutate: () => {
       setScanError(null);
-      setActiveJobIds([]);
+      activeJobIds.forEach((id) => removeJob(id));
       setIsWaitingForScanCompletion(false);
     },
     onSuccess: (data) => {
       const jobIds = data.map((job) => job.id).filter((id): id is string => Boolean(id));
       if (jobIds.length > 0) {
         rememberJob(jobIds[0]);
-        setActiveJobIds(jobIds);
+        const totalItems = data[0].progress?.total ?? 0;
+        jobIds.forEach((id) => addJob(id, 'scan', totalItems));
       }
       setIsWaitingForScanCompletion(true);
 
@@ -136,6 +143,11 @@ export const WorkbenchPage = (): React.JSX.Element => {
   });
   const clusterMutation = useClusterIdentities({
     onSuccess: (data) => {
+      if (data.id && data.status === 'pending') {
+        // This is an async job
+        addJob(data.id, 'clustering', data.total_identities_clustered || 0);
+        return;
+      }
       setClusterMessage(
         sprintf(
           __('Created %d clusters for %d identities.', 'alt-context'),
@@ -152,7 +164,40 @@ export const WorkbenchPage = (): React.JSX.Element => {
     },
   });
 
-  const { scanStatusQuery, multiScanStatus } = useCombinedScanStatus(jobId, activeJobIds);
+  // Track jobs by type for proper phase derivation
+  const latestScanJob = useMemo(() => {
+    const scanJobs = activeJobs.filter((j) => j.type === 'scan');
+    return scanJobs[scanJobs.length - 1] ?? null;
+  }, [activeJobs]);
+  const latestClusterJob = useMemo(() => {
+    const clusterJobs = activeJobs.filter((j) => j.type === 'clustering');
+    return clusterJobs[clusterJobs.length - 1] ?? null;
+  }, [activeJobs]);
+
+  // Derive current phase from which jobs exist (clustering takes precedence if both exist)
+  const currentPhase = useMemo(() => {
+    if (latestClusterJob) {
+      return 'clustering' as const;
+    }
+    if (latestScanJob) {
+      return 'scanning' as const;
+    }
+    return 'idle' as const;
+  }, [latestScanJob, latestClusterJob]);
+
+  // Use appropriate job for SSE based on current phase
+  const latestJobId = useMemo(() => {
+    return currentPhase === 'clustering' ? (latestClusterJob?.id ?? null) : (latestScanJob?.id ?? null);
+  }, [currentPhase, latestScanJob, latestClusterJob]);
+  const {
+    progress: sseProgress,
+    status: sseStatus,
+    isOnline,
+    etaSeconds,
+    isPrimary,
+  } = useJobProgressStream(latestJobId);
+
+  const { scanStatusQuery } = useCombinedScanStatus(jobId, []); // Use for history polling, not active jobs
 
   const cancelMutation = useCancelScanJobs({
     onMutate: () => {
@@ -160,7 +205,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
     },
     onSuccess: () => {
       setIsWaitingForScanCompletion(false);
-      setActiveJobIds([]);
+      activeJobIds.forEach((id) => removeJob(id));
       void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
     onError: (error) => {
@@ -176,19 +221,29 @@ export const WorkbenchPage = (): React.JSX.Element => {
   });
 
   const scanStatusText = useMemo(() => {
-    if (clusterMutation.isPending) {
+    if (clusterMutation.isPending || sseStatus === 'clustering') {
+      if (sseProgress && sseStatus === 'clustering') {
+        return sprintf(__('Clustering %d/%d identities…', 'alt-context'), sseProgress.completed, sseProgress.total);
+      }
       return __('Clustering faces…', 'alt-context');
     }
 
     if (activeJobIds.length > 0) {
-      const completed = multiScanStatus.filter((q) => q.data?.status === 'completed').length;
-      const failed = multiScanStatus.filter((q) => q.data?.status === 'failed').length;
-      const total = activeJobIds.length;
-
-      if (completed + failed === total) {
+      if (sseStatus === 'completed') {
         return 'completed';
       }
-      return sprintf(__('Processing %d/%d batches…', 'alt-context'), completed + failed, total);
+      if (sseStatus === 'failed') {
+        return 'failed';
+      }
+
+      // Prefer message from query if it's the same job and has a message
+      const latestQueryData = scanStatusQuery.data;
+      if (latestQueryData?.id === latestJobId && latestQueryData.message) {
+        return latestQueryData.message;
+      }
+
+      // For multi-job, the hook tracks the latest; we could aggregate if needed
+      return sseStatus === 'pending' ? __('Starting scan…', 'alt-context') : __('Processing media…', 'alt-context');
     }
     const statusMessage = scanStatusQuery.data?.message;
     const statusValue = scanStatusQuery.data?.status;
@@ -198,31 +253,36 @@ export const WorkbenchPage = (): React.JSX.Element => {
     return statusValue ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
   }, [
     activeJobIds,
-    multiScanStatus,
-    scanStatusQuery.data?.message,
-    scanStatusQuery.data?.status,
+    sseStatus,
+    scanStatusQuery.data,
+    latestJobId,
     scanMutation.isPending,
     clusterMutation.isPending,
+    sseProgress,
   ]);
 
   const scanProgress = useMemo(() => {
     if (activeJobIds.length === 0) {
       return scanStatusQuery.data?.progress ?? null;
     }
-    const totals = multiScanStatus.reduce(
-      (acc, query) => {
-        const progress = query.data?.progress;
-        if (!progress) {
-          return acc;
-        }
-        acc.completed += progress.completed ?? 0;
-        acc.total += progress.total ?? 0;
-        return acc;
-      },
-      { completed: 0, total: 0 },
-    );
-    return totals.total > 0 ? totals : null;
-  }, [activeJobIds.length, multiScanStatus, scanStatusQuery.data?.progress]);
+
+    // For batched scans, aggregate totalItems from all scan jobs
+    const scanJobs = activeJobs.filter((j) => j.type === 'scan');
+    if (scanJobs.length > 1 && sseProgress) {
+      // Aggregate: total = sum of all job totals, completed = estimate based on jobs done
+      const totalItems = scanJobs.reduce((sum, j) => sum + j.totalItems, 0);
+      // Use SSE progress from current job, scale to overall
+      const currentJobIndex = scanJobs.findIndex((j) => j.id === latestScanJob?.id);
+      const completedJobs = currentJobIndex >= 0 ? currentJobIndex : 0;
+      const completedFromPriorJobs = scanJobs.slice(0, completedJobs).reduce((sum, j) => sum + j.totalItems, 0);
+      return {
+        completed: completedFromPriorJobs + sseProgress.completed,
+        total: totalItems,
+      };
+    }
+
+    return sseProgress;
+  }, [activeJobIds.length, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress]);
 
   const isScanRunning = useMemo(() => {
     if (scanMutation.isPending || isWaitingForScanCompletion) {
@@ -230,7 +290,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
     }
 
     if (activeJobIds.length > 0) {
-      return multiScanStatus.some((query) => query.data?.status === 'pending' || query.data?.status === 'running');
+      return sseStatus === 'pending' || sseStatus === 'running';
     }
 
     const status = scanStatusQuery.data?.status;
@@ -239,7 +299,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
     scanMutation.isPending,
     isWaitingForScanCompletion,
     activeJobIds.length,
-    multiScanStatus,
+    sseStatus,
     scanStatusQuery.data?.status,
   ]);
 
@@ -249,21 +309,46 @@ export const WorkbenchPage = (): React.JSX.Element => {
     }
   }, [scanStatusQuery.data?.status, queryClient]);
 
+  // Handle scan job completion → trigger clustering
   useEffect(() => {
     if (!isWaitingForScanCompletion || activeJobIds.length === 0) {
       return;
     }
 
-    const allCompleted = multiScanStatus.every(
-      (query) => query.data?.status === 'completed' || query.data?.status === 'failed',
-    );
+    const completed = sseStatus === 'completed' || sseStatus === 'failed';
 
-    if (allCompleted && multiScanStatus.length === activeJobIds.length) {
+    if (completed && latestScanJob) {
       setIsWaitingForScanCompletion(false);
+      // Remove ALL completed scan jobs (batched scans create multiple jobs)
+      activeJobs.filter((j) => j.type === 'scan').forEach((j) => removeJob(j.id));
+      // Trigger clustering
       clusterMutation.mutate();
       void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     }
-  }, [multiScanStatus, activeJobIds, isWaitingForScanCompletion, clusterMutation, queryClient]);
+  }, [
+    sseStatus,
+    activeJobIds,
+    activeJobs,
+    latestScanJob,
+    isWaitingForScanCompletion,
+    clusterMutation,
+    queryClient,
+    removeJob,
+  ]);
+
+  // Handle clustering job completion → remove from active jobs
+  useEffect(() => {
+    if (!latestClusterJob) {
+      return;
+    }
+
+    const clusteringCompleted = sseStatus === 'completed' || sseStatus === 'failed';
+    if (clusteringCompleted && currentPhase === 'clustering') {
+      removeJob(latestClusterJob.id);
+      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
+      void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
+    }
+  }, [sseStatus, currentPhase, latestClusterJob, queryClient, removeJob]);
 
   const statusMessage = useMemo(() => {
     if (mediaQuery.isFetching) {
@@ -334,6 +419,16 @@ export const WorkbenchPage = (): React.JSX.Element => {
         </TabsList>
 
         <div className="acx-workbench__panels">
+          {!isOnline && (
+            <div className="acx-notice acx-notice--warning">
+              {__('Network connection lost. Reconnecting…', 'alt-context')}
+            </div>
+          )}
+          {!isPrimary && !!latestJobId && (
+            <div className="acx-notice acx-notice--info">
+              {__('This job is being processed in another tab.', 'alt-context')}
+            </div>
+          )}
           <TabsContent
             value={TAB_IDS.scan}
             className="acx-workbench__panel"
@@ -346,14 +441,17 @@ export const WorkbenchPage = (): React.JSX.Element => {
             <ScanActionPanel
               selectedCount={selectedMedia.length}
               onScanFaces={handleScanFaces}
-              onCancelScan={isScanRunning ? handleCancelScan : undefined}
+              onCancelScan={handleCancelScan}
               isScanning={isScanRunning}
               isCancelling={isCancellingScan}
               statusText={scanStatusText}
-              jobId={jobId}
+              jobId={latestJobId ?? jobId}
               errorMessage={scanError}
               progress={scanProgress}
+              etaSeconds={etaSeconds}
+              isSynced={!isPrimary && !!latestJobId}
             />
+            {!isScanRunning && !hasIdentities && !scanMutation.isPending && <NoMediaPanel />}
             <SuggestionReviewPanel />
             <MediaSelection
               items={mediaItems}
@@ -404,9 +502,15 @@ export const WorkbenchPage = (): React.JSX.Element => {
               jobId={jobId}
               status={scanStatusText}
               onCluster={handleClusterFaces}
-              isClustering={clusterMutation.isPending}
+              isClustering={
+                clusterMutation.isPending ||
+                (activeJobIds.length > 0 && (sseStatus === 'pending' || sseStatus === 'running'))
+              }
               clusterMessage={clusterMessage}
               onViewClusters={() => window.location.assign(rosterClustersUrl())}
+              progress={scanProgress}
+              etaSeconds={etaSeconds}
+              isSynced={!isPrimary && !!latestJobId}
             />
             <RecentJobsPanel
               jobs={jobHistory}
@@ -421,3 +525,9 @@ export const WorkbenchPage = (): React.JSX.Element => {
     </section>
   );
 };
+
+const NoMediaPanel = () => (
+  <div className="acx-apply-panel acx-apply-panel--empty">
+    <p>{__('No media items to analyze. Check your filters or upload more images.', 'alt-context')}</p>
+  </div>
+);

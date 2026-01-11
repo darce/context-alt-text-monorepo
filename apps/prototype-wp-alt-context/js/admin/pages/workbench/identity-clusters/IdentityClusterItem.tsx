@@ -72,7 +72,6 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
   const [saveStatus, setSaveStatus] = React.useState<SaveStatus>('idle');
   const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
-  const confirmDialogRef = React.useRef<ConfirmDialogState | null>(null);
   const [confirmDialog, setConfirmDialog] = React.useState<ConfirmDialogState | null>(null);
   const confirmResolverRef = React.useRef<((confirmed: boolean) => void) | null>(null);
   const saveStatusTimerRef = React.useRef<number | null>(null);
@@ -241,7 +240,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       }
     };
 
-    const timer = window.setTimeout(runMatch, MATCH_DEBOUNCE_MS);
+    const timer = window.setTimeout(() => void runMatch(), MATCH_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [editState.isEditing, editState.labelInput, cluster.label, findClusterByLabel]);
 
@@ -287,14 +286,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       }
       return true;
     },
-    [
-      canSearchForMatch,
-      cluster.members,
-      editableClusterId,
-      isDangerousMerge,
-      mutations,
-      updateSaveDialog,
-    ],
+    [canSearchForMatch, cluster.members, editableClusterId, isDangerousMerge, mutations, updateSaveDialog],
   );
 
   const handleConfirmSuggestion = React.useCallback(
@@ -389,7 +381,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       if (!match || match.label.toLowerCase() !== trimmed.toLowerCase()) {
         match = await findClusterByLabel(trimmed, abortController.signal);
       }
-      
+
       if (abortController.signal.aborted) {
         return;
       }
@@ -442,14 +434,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
 
   // Handle "Wrong person" action
   const handleWrongPerson = () => {
-    if (
-      window.confirm(
-        __(
-          'Are you sure you want to remove this from the cluster?',
-          'alt-context',
-        ),
-      )
-    ) {
+    if (window.confirm(__('Are you sure you want to remove this from the cluster?', 'alt-context'))) {
       // Send only representative ID per requirements (backend will handle cluster implications)
       if (representative?.identity_id) {
         mutations.reassign([representative.identity_id]);
@@ -498,8 +483,12 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   }, [confirmDialog]);
 
   const saveLabel = React.useMemo(() => {
-    if (saveStatus === 'queued') return __('Saving…', 'alt-context');
-    if (saveStatus === 'saved') return __('Saved!', 'alt-context');
+    if (saveStatus === 'queued') {
+      return __('Saving…', 'alt-context');
+    }
+    if (saveStatus === 'saved') {
+      return __('Saved!', 'alt-context');
+    }
     if (matchedCluster) {
       return canSearchForMatch
         ? sprintf(__('Assign to %s', 'alt-context'), matchedCluster.label)
@@ -542,7 +531,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
             {!cluster.label && anchorIdentityId && (
               <InlineSuggestionPrompt
                 identityId={anchorIdentityId}
-                onConfirm={handleConfirmSuggestion}
+                onConfirm={(clusterId, label) => void handleConfirmSuggestion(clusterId, label)}
                 onReject={startEditing}
                 isPending={mutations.isPending}
               />

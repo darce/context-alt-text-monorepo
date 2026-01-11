@@ -11,7 +11,6 @@ export type {
   AnalyzeResponse,
   JobProgress,
   JobStatusResponse,
-  ScanStatus,
   ClusterResponse,
   RepresentativeBounds,
   BoundingBox,

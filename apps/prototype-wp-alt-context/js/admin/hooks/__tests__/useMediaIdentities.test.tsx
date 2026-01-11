@@ -38,7 +38,7 @@ describe('useMediaIdentities', () => {
   it('fetches identities when enabled and media IDs exist', async () => {
     const { wrapper, queryClient } = createWrapper();
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
-    const identitiesDeferred = createDeferred<{ identities_by_media: Record<string, unknown> }>();
+    const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
     fetchMediaIdentitiesMock.mockReturnValue(identitiesDeferred.promise);
 
     const { result } = renderHook(() => useMediaIdentities([1, 2], true), { wrapper });

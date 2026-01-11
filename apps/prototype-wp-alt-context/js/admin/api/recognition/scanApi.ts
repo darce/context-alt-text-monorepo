@@ -51,14 +51,11 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
     body.cluster_id = request.clusterId;
   }
 
-  return fetchApi<AnalyzeResponse>(
-    getEndpoint('workbenchRecognitionAnalyze', 'workbenchFaceScan', 'recognitionAnalyze'),
-    {
-      method: 'POST',
-      body,
-      restNonce: getConfig().nonce,
-    },
-  );
+  return fetchApi<AnalyzeResponse>(getEndpoint('recognitionAnalyze'), {
+    method: 'POST',
+    body,
+    restNonce: getConfig().nonce,
+  });
 };
 
 export const scanFacesBatched = async (request: AnalyzeRequest): Promise<AnalyzeResponse[]> => {
@@ -77,7 +74,7 @@ export const scanFacesBatched = async (request: AnalyzeRequest): Promise<Analyze
 };
 
 export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse> => {
-  const base = getEndpoint('workbenchRecognitionJobs', 'recognitionJobs');
+  const base = getEndpoint('recognitionJobs');
   const separator = base.endsWith('/') ? '' : '/';
 
   return fetchApi<JobStatusResponse>(`${base}${separator}${jobId}`, {
@@ -87,7 +84,7 @@ export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse>
 };
 
 export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> => {
-  const base = getEndpoint('workbenchRecognitionJobs', 'recognitionJobs');
+  const base = getEndpoint('recognitionJobs');
   const separator = base.endsWith('/') ? '' : '/';
 
   return fetchApi<JobStatusResponse>(`${base}${separator}${jobId}${separator}cancel`, {
@@ -96,17 +93,14 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
   });
 };
 
-export const clusterFaces = async (): Promise<ClusterResponse> => {
+export const clusterFaces = async (mode: 'sync' | 'async' = 'async'): Promise<ClusterResponse> => {
   const tenantId = getConfig().tenant_id;
-  return fetchApi<ClusterResponse>(
-    getEndpoint('workbenchRecognitionCluster', 'workbenchFaceClusters', 'recognitionCluster'),
-    {
-      method: 'POST',
-      body: {
-        tenant_id: tenantId,
-        mode: 'sync',
-      },
-      restNonce: getConfig().nonce,
+  return fetchApi<ClusterResponse>(getEndpoint('recognitionCluster'), {
+    method: 'POST',
+    body: {
+      tenant_id: tenantId,
+      mode,
     },
-  );
+    restNonce: getConfig().nonce,
+  });
 };

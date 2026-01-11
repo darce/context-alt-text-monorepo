@@ -13,21 +13,21 @@ import type {
   SuggestionActionResponse,
 } from './types';
 
-type PendingSuggestionApiResponse = {
+interface PendingSuggestionApiResponse {
   id: string;
   identity_id: string;
   cluster_id: string;
   rep_similarity: number;
   member_similarity: number | null;
   status: string;
-};
+}
 
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
     return { identities_by_media: {} };
   }
 
-  const endpoint = getEndpoint('workbenchRecognitionMediaIdentities');
+  const endpoint = getEndpoint('recognitionMediaIdentities');
   const url = new URL(endpoint, window.location.origin);
   mediaIds.forEach((id) => {
     url.searchParams.append('media_ids[]', String(id));
@@ -51,7 +51,7 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
  * returned have already passed the backend's similarity threshold.
  */
 export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Promise<IdentitySuggestionsResponse> => {
-  const base = getEndpoint('workbenchRecognitionIdentitySuggestions', 'recognitionIdentitySuggestions');
+  const base = getEndpoint('recognitionIdentitySuggestions');
   const normalized = stripTrailingSlash(base);
   const url = new URL(`${normalized}/${identityId}/suggestions`, window.location.origin);
   url.searchParams.set('top_k', String(topK));
@@ -67,7 +67,7 @@ export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Pr
  * These are borderline matches that need human confirmation.
  */
 export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<PendingSuggestionsResponse> => {
-  const base = getEndpoint('workbenchRecognitionSuggestions', 'recognitionSuggestions');
+  const base = getEndpoint('recognitionSuggestions');
   const url = new URL(base, window.location.origin);
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
@@ -106,12 +106,8 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
  * Accept a suggestion - assign the identity to the suggested cluster.
  */
 export const acceptSuggestion = async (suggestionId: string): Promise<SuggestionActionResponse> => {
-  const base = getEndpoint('workbenchRecognitionSuggestions', 'recognitionSuggestions');
+  const base = getEndpoint('recognitionSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
-  const tenantId = getConfig().tenant_id;
-  if (tenantId) {
-    url.searchParams.set('tenant_id', tenantId);
-  }
 
   return fetchApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
@@ -123,12 +119,8 @@ export const acceptSuggestion = async (suggestionId: string): Promise<Suggestion
  * Reject a suggestion - identity stays in its current cluster/singleton.
  */
 export const rejectSuggestion = async (suggestionId: string): Promise<SuggestionActionResponse> => {
-  const base = getEndpoint('workbenchRecognitionSuggestions', 'recognitionSuggestions');
+  const base = getEndpoint('recognitionSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/reject`, window.location.origin);
-  const tenantId = getConfig().tenant_id;
-  if (tenantId) {
-    url.searchParams.set('tenant_id', tenantId);
-  }
 
   return fetchApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',

@@ -45,8 +45,8 @@ describe('useRecognitionJobHistory', () => {
     const { wrapper, queryClient } = createWrapper();
     const statusDeferred = createDeferred<{
       id: string;
-      type: string;
-      status: string;
+      type: 'analyze' | 'clustering' | 'curation' | 'split';
+      status: 'pending' | 'running' | 'completed' | 'failed';
       progress: { completed: number; total: number };
       started_at: string;
       finished_at: string;
@@ -54,8 +54,8 @@ describe('useRecognitionJobHistory', () => {
     fetchScanStatusMock.mockReturnValue(statusDeferred.promise);
     const statusResponse = {
       id: 'job-1',
-      type: 'analyze',
-      status: 'completed',
+      type: 'analyze' as const,
+      status: 'completed' as const,
       progress: { completed: 1, total: 1 },
       started_at: '2025-01-01T00:00:00Z',
       finished_at: '2025-01-01T00:00:01Z',
@@ -88,8 +88,8 @@ describe('useRecognitionJobHistory', () => {
     window.localStorage.setItem('acx-recognition-jobs', JSON.stringify(['stored-job']));
     const statusDeferred = createDeferred<{
       id: string;
-      type: string;
-      status: string;
+      type: 'analyze' | 'clustering' | 'curation' | 'split';
+      status: 'pending' | 'running' | 'completed' | 'failed';
       progress: { completed: number; total: number };
       started_at: string;
       finished_at: string;

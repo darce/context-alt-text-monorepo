@@ -11,11 +11,10 @@ import type {
   ClusterSuggestionsLoaderResult,
 } from '../identity-clusters/useClusterSuggestionsLoader';
 
-const useClusterSuggestionsLoaderMock = vi.hoisted(
-  () => vi.fn<ClusterSuggestionsLoaderResult, [ClusterSuggestionsLoaderOptions]>(),
-);
+const useClusterSuggestionsLoaderMock = vi.hoisted(() => vi.fn<() => ClusterSuggestionsLoaderResult>());
 
-let defaultFindClusterByLabel: ReturnType<typeof vi.fn>;
+type FindClusterByLabel = (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+let defaultFindClusterByLabel: ReturnType<typeof vi.fn<FindClusterByLabel>>;
 let findClusterDeferreds: Deferred<{ id: string; label: string } | null>[] = [];
 
 // Mock ResizeObserver for Radix UI
@@ -41,39 +40,38 @@ window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
 // Mock EventSource for useClusterEvents
 class MockEventSource {
-  onmessage: any = null;
-  onerror: any = null;
+  onmessage: ((event: MessageEvent) => void) | null = null;
+  onerror: ((event: Event) => void) | null = null;
   close = vi.fn();
   static CONNECTING = 0;
   static OPEN = 1;
   static CLOSED = 2;
-  constructor(_url: string) {}
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  constructor(_url: string) {
+    // Empty constructor
+  }
 }
 
 const setupMocks = () => {
   // Mock AltContextAdmin config
-  (window as any).AltContextAdmin = {
+  (window as unknown as { AltContextAdmin: object }).AltContextAdmin = {
     nonce: 'test-nonce',
     endpoints: {
-      recognition: 'http://localhost:8000',
       recognitionClusters: 'http://localhost:8000/clusters',
-      workbenchFaceClusters: 'http://localhost:8000/clusters',
-      workbenchRecognitionClusters: 'http://localhost:8000/clusters',
-      workbenchRecognitionReassignIdentity: 'http://localhost:8000/reassign-identity',
+      recognitionReassignIdentity: 'http://localhost:8000/reassign-identity',
       recognitionRevertMerge: 'http://localhost:8000/revert-merge',
-      workbenchRecognitionRevertMerge: 'http://localhost:8000/revert-merge',
-      workbenchRecognitionCreateClusterForIdentity: 'http://localhost:8000/create-for-identity',
-      recognitionFaceSuggestions: 'http://localhost:8000/suggestions',
-      workbenchRecognitionFaceSuggestions: 'http://localhost:8000/suggestions',
+      recognitionCreateClusterForIdentity: 'http://localhost:8000/create-for-identity',
+      recognitionSuggestions: 'http://localhost:8000/suggestions',
     },
     tenant_id: 'test-tenant',
   };
 
-  window.EventSource = MockEventSource as any;
+  window.EventSource = MockEventSource as unknown as typeof EventSource;
 };
 
 vi.mock('../identity-clusters/useClusterSuggestionsLoader', () => ({
-  useClusterSuggestionsLoader: (options: ClusterSuggestionsLoaderOptions) => useClusterSuggestionsLoaderMock(options),
+  // eslint-disable-next-line @typescript-eslint/no-unused-vars
+  useClusterSuggestionsLoader: (_options: ClusterSuggestionsLoaderOptions) => useClusterSuggestionsLoaderMock(),
 }));
 
 vi.mock('../../../api/recognition', () => ({
@@ -91,12 +89,11 @@ const renderWithClient = async (ui: React.ReactElement) => {
     defaultOptions: { queries: { retry: false } },
   });
   const user = userEvent.setup({
-    advanceTimers: async (ms: number) => {
-      await vi.advanceTimersByTimeAsync(ms);
-    },
+    advanceTimers: (ms: number) => vi.advanceTimersByTimeAsync(ms),
   });
   const utils = render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
-  return { client, user, ...utils };
+  // Return async to allow await at call site for consistency
+  return Promise.resolve({ client, user, ...utils });
 };
 
 const setMediaIdentitiesCache = (client: QueryClient, data: MediaIdentitiesResponse) => {
@@ -116,11 +113,11 @@ const baseIdentity = {
   thumbnail_url: null,
 };
 
-type Deferred<T> = {
+interface Deferred<T> {
   promise: Promise<T>;
   resolve: (value: T) => void;
   reject: (reason?: unknown) => void;
-};
+}
 
 const SAVE_SUCCESS_DELAY_MS = 1200;
 
@@ -170,14 +167,12 @@ const actFlow = async (callback: () => Promise<void> | void) => {
 };
 
 const waitForEditClosed = async () => {
-  await waitFor(
-    () => expect(screen.queryByRole('combobox')).not.toBeInTheDocument(),
-    { timeout: 2000 },
-  );
+  await waitFor(() => expect(screen.queryByRole('combobox')).not.toBeInTheDocument(), { timeout: 2000 });
 };
 
 const getSaveButton = () => screen.getByRole('button', { name: /save|merge with|assign to/i });
 
+/* eslint-disable @typescript-eslint/require-await */
 describe('IdentityClusterList', () => {
   beforeEach(() => {
     vi.useFakeTimers();
@@ -211,14 +206,14 @@ describe('IdentityClusterList', () => {
   });
 
   it('renders placeholder when no identities exist', async () => {
-    await renderWithClient(<IdentityClusterList identities={[]} mediaId={1} />);
+    await renderWithClient(<IdentityClusterList identities={[]} />);
     expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
   });
 
   it('allows renaming a manually labeled cluster', async () => {
     const updateDeferred = createDeferred<unknown>();
     (api.updateClusterLabel as Mock).mockReturnValue(updateDeferred.promise);
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
@@ -271,7 +266,7 @@ describe('IdentityClusterList', () => {
       is_auto_label: true,
     };
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[autoIdentity]} mediaId={1} />);
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[autoIdentity]} />);
 
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
@@ -331,7 +326,7 @@ describe('IdentityClusterList', () => {
     };
     useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
 
-    const { user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
     await actFlow(async () => {
       await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })), 0);
@@ -380,7 +375,7 @@ describe('IdentityClusterList', () => {
       target_identity_count: 2,
     };
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [baseIdentity],
@@ -400,7 +395,8 @@ describe('IdentityClusterList', () => {
     expect(input).toHaveValue('Erin McCleod');
 
     await actFlow(async () => {
-      await runWithTimers(() => {}, 350);
+      // Wait for debounce timer
+      await runWithTimers(() => undefined, 350);
       await resolveDeferred(matchDeferreds[0], { id: existingCluster.id, label: existingCluster.label });
     });
 
@@ -430,7 +426,16 @@ describe('IdentityClusterList', () => {
       moved_identity_ids: ['identity-1'],
       target_identity_count: 2,
     };
-    const existingClusters = [{ id: 'target-cluster', label: 'Existing Label', identity_count: 1 }];
+    const existingClusters = [
+      {
+        id: 'target-cluster',
+        label: 'Existing Label',
+        identity_count: 1,
+        member_ids: ['identity-1'],
+        representative_identity: { media_id: 1, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+        sample_identities: [],
+      },
+    ];
     const loaderResult = {
       identitySuggestions: { matches: [] },
       labelMatches: existingClusters,
@@ -439,7 +444,7 @@ describe('IdentityClusterList', () => {
     };
     useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
     // ... setup cache ...
     const cacheData: MediaIdentitiesResponse = {
@@ -495,7 +500,16 @@ describe('IdentityClusterList', () => {
       target_cluster_id: 'target-cluster',
       target_identity_count: 1,
     };
-    const existingClusters = [{ id: 'target-cluster', label: 'Existing Label', identity_count: 1 }];
+    const existingClusters = [
+      {
+        id: 'target-cluster',
+        label: 'Existing Label',
+        identity_count: 1,
+        member_ids: ['identity-1'],
+        representative_identity: { media_id: 1, bbox: { x: 0, y: 0, width: 100, height: 100 } },
+        sample_identities: [],
+      },
+    ];
     const loaderResult = {
       identitySuggestions: { matches: [] },
       labelMatches: existingClusters,
@@ -504,7 +518,7 @@ describe('IdentityClusterList', () => {
     };
     useClusterSuggestionsLoaderMock.mockReturnValue(loaderResult);
 
-    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} mediaId={1} />);
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [baseIdentity],
@@ -549,10 +563,9 @@ describe('IdentityClusterList', () => {
         sourceLabel: 'Cluster 1',
       }),
     );
-    await waitFor(
-      () => expect(screen.queryByRole('button', { name: /undo merge/i })).not.toBeInTheDocument(),
-      { timeout: 2000 },
-    );
+    await waitFor(() => expect(screen.queryByRole('button', { name: /undo merge/i })).not.toBeInTheDocument(), {
+      timeout: 2000,
+    });
   });
 
   it('renders face thumbnail when media_url is provided', async () => {
@@ -561,7 +574,7 @@ describe('IdentityClusterList', () => {
       media_url: 'https://example.com/photo.jpg',
     };
 
-    await renderWithClient(<IdentityClusterList identities={[identityWithMediaUrl]} mediaId={1} />);
+    await renderWithClient(<IdentityClusterList identities={[identityWithMediaUrl]} />);
     const image = screen.getByRole('img', { name: /detected identity thumbnail/i });
     expect(image).toHaveAttribute('src', 'https://example.com/photo.jpg');
   });
@@ -571,7 +584,7 @@ describe('IdentityClusterList', () => {
       ...baseIdentity,
       cluster_label: null,
     };
-    const { user } = await renderWithClient(<IdentityClusterList identities={[unlabeled]} mediaId={1} />);
+    const { user } = await renderWithClient(<IdentityClusterList identities={[unlabeled]} />);
     await actFlow(async () => {
       await runWithTimers(() => user.click(screen.getByRole('button', { name: /cluster-clust/i })), 350);
     });
@@ -588,9 +601,7 @@ describe('IdentityClusterList', () => {
     vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
     // 1. Singleton case - button should be visible
-    const { client, user, unmount } = await renderWithClient(
-      <IdentityClusterList identities={[baseIdentity]} mediaId={1} />,
-    );
+    const { client, user, unmount } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
         '1': [baseIdentity],
@@ -618,7 +629,7 @@ describe('IdentityClusterList', () => {
     const member1 = { ...baseIdentity, identity_id: '1', cluster_id: 'c1', cluster_label: 'Startrek' };
     const member2 = { ...baseIdentity, identity_id: '2', cluster_id: 'c1', cluster_label: 'Startrek' };
 
-    await renderWithClient(<IdentityClusterList identities={[member1, member2]} mediaId={1} />);
+    await renderWithClient(<IdentityClusterList identities={[member1, member2]} />);
 
     expect(screen.queryByRole('button', { name: /remove from cluster/i })).not.toBeInTheDocument();
   });
@@ -634,7 +645,7 @@ describe('IdentityClusterList', () => {
     };
 
     const { client, user } = await renderWithClient(
-      <IdentityClusterList identities={[baseIdentity, secondIdentity]} mediaId={1} />,
+      <IdentityClusterList identities={[baseIdentity, secondIdentity]} />,
     );
     const cacheData: MediaIdentitiesResponse = {
       identities_by_media: {
@@ -648,10 +659,7 @@ describe('IdentityClusterList', () => {
 
     await screen.findByRole('dialog');
     await actFlow(async () => {
-      await runWithTimers(
-        () => user.click(screen.getByRole('button', { name: /use face from media #1/i })),
-        50,
-      );
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })), 50);
       await resolveDeferred(splitDeferred, { moved_count: 5 });
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

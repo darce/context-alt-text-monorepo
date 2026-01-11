@@ -22,7 +22,7 @@ export default tseslint.config(
     files: sharedFiles,
     languageOptions: {
       parserOptions: {
-        projectService: true,
+        project: './tsconfig.type-check.json',
         tsconfigRootDir: import.meta.dirname,
       },
     },

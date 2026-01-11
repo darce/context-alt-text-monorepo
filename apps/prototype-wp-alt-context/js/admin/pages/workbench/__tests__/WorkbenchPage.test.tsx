@@ -8,6 +8,8 @@ import { useWorkbenchMedia } from '../../../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../../../hooks/useMediaSelectionState';
 import { useRecognitionJobHistory } from '../../../hooks/useRecognitionJobHistory';
 import { useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
+import { useJobPersistence } from '../../../hooks/useJobPersistence';
+import { useJobProgressStream } from '../../../hooks/useJobProgressStream';
 import {
   useScanIdentities,
   useScanStatus,
@@ -18,7 +20,7 @@ import {
 } from '../../../hooks/useRecognitionHooks';
 
 // Mock AltContextAdmin config
-(window as any).AltContextAdmin = {
+(window as unknown as { AltContextAdmin: object }).AltContextAdmin = {
   nonce: 'test-nonce',
   endpoints: {
     recognition: 'http://localhost:8000',
@@ -26,6 +28,16 @@ import {
   },
   tenant_id: 'test-tenant',
 };
+
+// Mock EventSource for SSE
+class MockEventSource {
+  onmessage: ((ev: MessageEvent) => void) | null = null;
+  onerror: ((ev: Event) => void) | null = null;
+  addEventListener = vi.fn();
+  removeEventListener = vi.fn();
+  close = vi.fn();
+}
+(window as unknown as { EventSource: typeof MockEventSource }).EventSource = MockEventSource;
 
 vi.mock('../../../hooks/useWorkbenchMedia', () => ({
   useWorkbenchMedia: vi.fn(),
@@ -41,6 +53,14 @@ vi.mock('../../../hooks/useRecognitionJobHistory', () => ({
 
 vi.mock('../../../hooks/useWorkbenchFilters', () => ({
   useWorkbenchFilters: vi.fn(),
+}));
+
+vi.mock('../../../hooks/useJobPersistence', () => ({
+  useJobPersistence: vi.fn(),
+}));
+
+vi.mock('../../../hooks/useJobProgressStream', () => ({
+  useJobProgressStream: vi.fn(),
 }));
 
 vi.mock('../../../hooks/useRecognitionHooks', () => ({
@@ -87,6 +107,8 @@ describe('WorkbenchPage', () => {
   const mockUseClusterIdentities = vi.mocked(useClusterIdentities);
   const mockUseMultiScanStatus = vi.mocked(useMultiScanStatus);
   const mockUseCombinedScanStatus = vi.mocked(useCombinedScanStatus);
+  const mockUseJobPersistence = vi.mocked(useJobPersistence);
+  const mockUseJobProgressStream = vi.mocked(useJobProgressStream);
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
@@ -162,6 +184,20 @@ describe('WorkbenchPage', () => {
         refetch: prefetchIdentities,
       },
     } as unknown as ReturnType<typeof useWorkbenchMedia>);
+
+    mockUseJobPersistence.mockReturnValue({
+      activeJobs: [],
+      addJob: vi.fn(),
+      removeJob: vi.fn(),
+    });
+
+    mockUseJobProgressStream.mockReturnValue({
+      progress: null,
+      status: 'pending',
+      isOnline: true,
+      etaSeconds: null,
+      isPrimary: true,
+    });
 
     mockUseMediaSelectionState.mockReturnValue({
       selection: { '11': true },

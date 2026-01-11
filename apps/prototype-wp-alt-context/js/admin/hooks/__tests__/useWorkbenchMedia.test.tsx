@@ -43,6 +43,14 @@ describe('useWorkbenchMedia', () => {
         recognitionJobs: '/wp-json/acx/v1/recognition/jobs',
         recognitionCluster: '/wp-json/acx/v1/recognition/cluster',
         recognitionClusters: '/wp-json/acx/v1/recognition/clusters',
+        recognitionClusterLabels: '/wp-json/acx/v1/recognition/cluster-labels',
+        recognitionTrainingStage: '/wp-json/acx/v1/recognition/training-stage',
+        recognitionMediaIdentities: '/wp-json/acx/v1/recognition/media-identities',
+        recognitionReassignIdentity: '/wp-json/acx/v1/recognition/reassign-identity',
+        recognitionIdentitySuggestions: '/wp-json/acx/v1/recognition/identity-suggestions',
+        recognitionSuggestions: '/wp-json/acx/v1/recognition/suggestions',
+        recognitionRevertMerge: '/wp-json/acx/v1/recognition/revert-merge',
+        recognitionCreateClusterForIdentity: '/wp-json/acx/v1/recognition/create-cluster-for-identity',
       },
     };
   });
@@ -95,7 +103,7 @@ describe('useWorkbenchMedia', () => {
     globalThis.fetch = fetchMock as typeof fetch;
 
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
-    const identitiesDeferred = createDeferred<{ identities_by_media: Record<string, unknown[]> }>();
+    const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
     fetchMediaIdentitiesMock.mockReturnValue(identitiesDeferred.promise);
 
     const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), { wrapper });

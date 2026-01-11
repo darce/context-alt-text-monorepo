@@ -10,6 +10,8 @@ interface ScanActionPanelProps {
   jobId?: string | null;
   errorMessage?: string | null;
   progress?: { completed: number; total: number } | null;
+  etaSeconds?: number | null;
+  isSynced?: boolean;
 }
 
 export const ScanActionPanel = ({
@@ -22,6 +24,8 @@ export const ScanActionPanel = ({
   jobId,
   errorMessage,
   progress,
+  etaSeconds,
+  isSynced,
 }: ScanActionPanelProps): React.JSX.Element => (
   <div className="acx-apply-panel">
     <p>
@@ -66,6 +70,12 @@ export const ScanActionPanel = ({
           max={progress.total}
           aria-label={__('Scan progress', 'alt-context')}
         />
+        {typeof etaSeconds === 'number' && (
+          <p className="acx-apply-panel__eta">
+            {sprintf(__('Remaining: %s', 'alt-context'), formatDuration(etaSeconds))}
+          </p>
+        )}
+        {isSynced && <p className="acx-apply-panel__synced">{__('Synced', 'alt-context')}</p>}
       </>
     )}
     {errorMessage && <p className="acx-apply-panel__status acx-apply-panel__status--error">{errorMessage}</p>}
@@ -102,6 +112,9 @@ interface ConfirmPanelProps {
   isClustering: boolean;
   clusterMessage?: string | null;
   onViewClusters: () => void;
+  progress?: { completed: number; total: number } | null;
+  etaSeconds?: number | null;
+  isSynced?: boolean;
 }
 
 export const ConfirmPanel = ({
@@ -111,6 +124,9 @@ export const ConfirmPanel = ({
   isClustering,
   clusterMessage,
   onViewClusters,
+  progress,
+  etaSeconds,
+  isSynced,
 }: ConfirmPanelProps) => (
   <div className="acx-apply-panel">
     <p>{__('Review the most recent recognition job and cluster the detected embeddings.', 'alt-context')}</p>
@@ -128,6 +144,25 @@ export const ConfirmPanel = ({
     <button type="button" className="acx-link-button" onClick={onViewClusters} disabled={!jobId}>
       {__('Open clusters in roster', 'alt-context')}
     </button>
+    {progress && progress.total > 0 && (
+      <>
+        <p className="acx-apply-panel__status">
+          {sprintf(__('Progress: %d/%d', 'alt-context'), progress.completed, progress.total)}
+        </p>
+        <progress
+          className="acx-apply-panel__progress"
+          value={Math.min(progress.completed, progress.total)}
+          max={progress.total}
+          aria-label={__('Clustering progress', 'alt-context')}
+        />
+        {etaSeconds !== null && etaSeconds !== undefined && (
+          <p className="acx-apply-panel__eta">
+            {sprintf(__('Remaining: %s', 'alt-context'), formatDuration(etaSeconds))}
+          </p>
+        )}
+        {isSynced && <p className="acx-apply-panel__synced">{__('Synced', 'alt-context')}</p>}
+      </>
+    )}
     {clusterMessage && <p className="acx-apply-panel__status">{clusterMessage}</p>}
   </div>
 );
@@ -176,3 +211,15 @@ export const mediaEditUrl = (mediaId: number): string =>
 
 export const rosterClustersUrl = (): string =>
   `${window.location.origin}/wp-admin/admin.php?page=alt-context-roster&tab=clusters`;
+
+const formatDuration = (seconds: number): string => {
+  if (seconds < 60) {
+    return sprintf(_n('%d second', '%d seconds', seconds, 'alt-context'), seconds);
+  }
+  const minutes = Math.floor(seconds / 60);
+  const remainingSeconds = seconds % 60;
+  if (remainingSeconds === 0) {
+    return sprintf(_n('%d minute', '%d minutes', minutes, 'alt-context'), minutes);
+  }
+  return sprintf(__('%d min %d sec', 'alt-context'), minutes, remainingSeconds);
+};

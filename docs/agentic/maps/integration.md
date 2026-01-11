@@ -16,13 +16,14 @@
 
 ```
 WordPress Frontend (React)
-    ↓ fetch('/wp-json/acx/v1/workbench/recognition/...')
-WordPress PHP (RecognitionProxyController)
+    ↓ fetch('/wp-json/acx/v1/recognition/...')
+    ↓ OR EventSource('/wp-json/acx/v1/recognition/jobs/{id}/stream') for SSE
+WordPress PHP (RecognitionController)
     ↓ Inject tenant_id, forward with API key
 Recognition Service (FastAPI)
-    ↓ Process, return JSON
+    ↓ Process, return JSON or SSE stream
 WordPress PHP
-    ↓ Return to frontend
+    ↓ Return to frontend (or proxy SSE)
 React UI (update state)
 ```
 
@@ -95,7 +96,7 @@ See [contracts/security.md](contracts/security.md) for full details.
 
 ### Debug cross-service issue
 
-1. Check WP REST response: `/wp-json/acx/v1/workbench/recognition/...`
+1. Check WP REST response: `/wp-json/acx/v1/recognition/...`
 2. Check Recognition Service logs (FastAPI)
 3. Verify `tenant_id` matches between systems
 4. Check API key is valid and has write access

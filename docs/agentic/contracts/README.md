@@ -8,7 +8,7 @@ Human-readable documentation of the live integration between WordPress plugin an
 
 | File                                   | Description                                                                 |
 | -------------------------------------- | --------------------------------------------------------------------------- |
-| [clustering-api.md](clustering-api.md) | Workbench recognition endpoints (`/wp-json/acx/v1/workbench/recognition/*`) |
+| [clustering-api.md](clustering-api.md) | Recognition endpoints (`/wp-json/acx/v1/recognition/*`) |
 
 ### Recognition Service (FastAPI)
 
@@ -58,7 +58,7 @@ $tenant_id = md5(get_site_url());  // 32-char hex string
 ### Request Flow
 
 ```
-React UI → WP REST API → RecognitionProxyController → FastAPI → PostgreSQL
+React UI → WP REST API → RecognitionController → FastAPI → PostgreSQL
 ```
 
 The WordPress plugin injects `tenant_id` and forwards requests to the recognition service.

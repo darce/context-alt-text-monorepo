@@ -1,0 +1,43 @@
+---
+title: Job Progress Streaming (v4.10.3)
+---
+sequenceDiagram
+    participant Tab1 as Browser Tab (Primary)
+    participant Tab2 as Browser Tab (Observer)
+    participant BC as BroadcastChannel
+    participant WP as WordPress REST
+    participant API as FastAPI
+    participant Worker as ScanWorker
+    participant DB as PostgreSQL
+
+    Note over Tab1,Tab2: Multi-Tab Coordination
+    Tab1->>BC: PING_PRIMARY
+    Tab1->>Tab1: Assume primary (no PONG)
+    Tab2->>BC: PING_PRIMARY
+    Tab1->>BC: PONG_PRIMARY
+    Tab2->>Tab2: Become observer
+
+    Note over Tab1,API: SSE Connection (Primary Only)
+    Tab1->>WP: GET /recognition/jobs/{id}/stream
+    WP->>API: Forward with X-Tenant-ID
+    
+    loop Every 100ms
+        Worker->>DB: Update job progress
+        API->>DB: Poll job status
+        alt Progress changed
+            API-->>Tab1: SSE: progress event
+            Tab1->>BC: JOB_PROGRESS broadcast
+            BC-->>Tab2: Receive progress
+        end
+    end
+
+    Note over Worker,DB: Job Completion
+    Worker->>DB: Set status=completed
+    API-->>Tab1: SSE: done event
+    Tab1->>BC: JOB_PROGRESS (final)
+    BC-->>Tab2: Receive completion
+
+    Note over Tab1,Tab2: Primary Closes
+    Tab1->>BC: PRIMARY_CLOSING
+    Tab2->>Tab2: Become primary
+    Tab2->>WP: New SSE connection

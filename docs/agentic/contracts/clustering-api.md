@@ -1,22 +1,22 @@
 ---
-title: Workbench Recognition REST API
+title: Recognition REST API (WordPress Proxy)
 status: draft
 owners:
   - plugin-platform
   - recognition-service
-description: WordPress REST endpoints used by the Workbench UI. These proxy to /recognition on the FastAPI service.
+description: WordPress REST endpoints used by the admin UI. These proxy to /recognition on the FastAPI service.
 ---
 
-# Workbench Recognition REST API
+# Recognition REST API (WordPress Proxy)
 
 These endpoints are provided by the WordPress plugin (`apps/prototype-wp-alt-context`).
 They require a valid WP REST nonce header (`X-WP-Nonce`) and `manage_options`
 capability. The plugin injects `tenant_id` (md5 of the site URL) and forwards
 requests to the recognition service (`/recognition/*`).
 
-Base path: `/wp-json/acx/v1/workbench/recognition`
+Base path: `/wp-json/acx/v1/recognition`
 
-## POST /workbench/recognition/analyze
+## POST /recognition/analyze
 
 Queue a recognition job for attachment IDs.
 
@@ -46,15 +46,21 @@ Notes:
 - The plugin resolves `media_ids` to `{media_id, media_url}` before forwarding.
 - Batch limits are tier-based (default max 50 for free tier).
 
-## GET /workbench/recognition/jobs/{job_id}
+## GET /recognition/jobs/{job_id}
 
 Poll job status (proxy to `/recognition/jobs/{job_id}`).
 
-## POST /workbench/recognition/jobs/{job_id}/cancel
+## GET /recognition/jobs/{job_id}/stream
+
+Stream job progress via SSE. Emits `progress` events with `{ completed, total, status }`
+and a terminal `done` event with `{ status }`. The WordPress proxy polls job status
+and forwards events to the client.
+
+## POST /recognition/jobs/{job_id}/cancel
 
 Cancel a running scan job (proxy to `/recognition/jobs/{job_id}/cancel`).
 
-## POST /workbench/recognition/cluster
+## POST /recognition/cluster
 
 Trigger clustering for unclustered identities (proxy to `/recognition/clustering/jobs`).
 
@@ -73,7 +79,7 @@ Response (sync mode):
 }
 ```
 
-## GET /workbench/recognition/clusters
+## GET /recognition/clusters
 
 List clusters.
 
@@ -106,7 +112,7 @@ Response (array of clusters):
 ]
 ```
 
-## GET /workbench/recognition/media-identities
+## GET /recognition/media-identities
 
 Return identities grouped by `media_id`.
 
@@ -150,7 +156,7 @@ Response:
 }
 ```
 
-## POST /workbench/recognition/clusters/reassign
+## POST /recognition/clusters/reassign
 
 Reassign an identity to a different cluster, or remove it from its cluster.
 
@@ -175,7 +181,7 @@ Response (proxy to `/recognition/clusters/reassign`):
 }
 ```
 
-## PATCH /workbench/recognition/clusters/{cluster_id}
+## PATCH /recognition/clusters/{cluster_id}
 
 Update cluster label.
 
@@ -187,7 +193,7 @@ Request body:
 
 Response: `ClusterResponse`.
 
-## POST /workbench/recognition/clusters/{source_id}/merge
+## POST /recognition/clusters/{source_id}/merge
 
 Merge a source cluster into a target.
 
@@ -199,7 +205,7 @@ Request body:
 
 Response: `ClusterResponse` for the target cluster.
 
-## POST /workbench/recognition/clusters/{cluster_id}/split
+## POST /recognition/clusters/{cluster_id}/split
 
 Split a cluster using hierarchical clustering.
 
@@ -235,7 +241,7 @@ Response (async):
 }
 ```
 
-## POST /workbench/recognition/clusters/create-for-identity
+## POST /recognition/clusters/create-for-identity
 
 Create a new labeled cluster for a single identity.
 
@@ -256,7 +262,7 @@ Response:
 }
 ```
 
-## GET /workbench/recognition/identities/{identity_id}/suggestions
+## GET /recognition/identities/{identity_id}/suggestions
 
 List suggested clusters for an identity.
 
@@ -275,7 +281,7 @@ Response:
 }
 ```
 
-## GET /workbench/recognition/suggestions
+## GET /recognition/suggestions
 
 List pending suggestions.
 
@@ -298,8 +304,8 @@ Response:
 ]
 ```
 
-## POST /workbench/recognition/suggestions/{suggestion_id}/accept
-## POST /workbench/recognition/suggestions/{suggestion_id}/reject
+## POST /recognition/suggestions/{suggestion_id}/accept
+## POST /recognition/suggestions/{suggestion_id}/reject
 
 Accept or reject a suggestion. Response mirrors `SuggestionResponse`.
 
@@ -308,9 +314,9 @@ Accept or reject a suggestion. Response mirrors `SuggestionResponse`.
 The following proxy routes exist in WordPress but the backend endpoints are not
 implemented in the recognition service yet (expect 404 until wired):
 
-- `GET /workbench/recognition/clusters/labels`
-- `GET /workbench/recognition/training-stage`
-- `POST /workbench/recognition/clusters/revert-merge`
+- `GET /recognition/clusters/labels`
+- `GET /recognition/training-stage`
+- `POST /recognition/clusters/revert-merge`
 
 The recognition service does support representative pinning, but the WordPress
 proxy does not currently expose it.

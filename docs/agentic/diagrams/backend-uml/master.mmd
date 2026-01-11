@@ -13,7 +13,7 @@ flowchart LR
     subgraph Client["WordPress Workbench"]
         direction TB
         AdminUI["ENTRY: Admin SPA"]
-        WPProxy["ENTRY: WP REST proxy<br/>/wp-json/acx/v1/workbench/recognition/*"]
+        WPProxy["ENTRY: WP REST proxy<br/>/wp-json/acx/v1/recognition/*"]
     end
 
     subgraph API["Recognition API (FastAPI)"]

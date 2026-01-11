@@ -22,18 +22,24 @@ recognition/
 │   │   ├── clusters.py          # CRUD for clusters
 │   │   ├── suggestions.py       # Accept/reject suggestions
 │   │   ├── media.py             # Media identity queries
+│   │   ├── jobs.py              # SSE progress streaming
 │   │   └── diagnostics.py       # Health & observability
-│   └── deps/                    # Dependency injection
+│   └── dependencies.py          # Dependency injection
 ├── application/                 # Use cases / orchestration
 │   ├── scan/                    # Scan queue service
-│   ├── orchestration/           # Cluster service
+│   ├── orchestration/           # Cluster service, incremental clustering
+│   ├── assignment/              # Assignment gate + checks (WELL-STRUCTURED)
+│   ├── discovery/               # Representative, centroid, graph discovery
+│   ├── clustering/              # HAC, representative-only clustering
 │   └── suggestions/             # Suggestion service
 ├── domain/                      # Core business entities
 │   ├── entities/                # Identity, Cluster, Member
-│   └── value_objects/           # Embedding, BoundingBox
-└── infrastructure/              # External adapters
-    ├── repositories/            # SQLAlchemy repos
-    └── embedding/               # InsightFace wrapper
+│   └── repositories.py          # Repository protocols
+├── infrastructure/              # External adapters
+│   ├── repositories/            # SQLAlchemy repos
+│   └── embedding/               # InsightFace wrapper
+└── worker/                      # Background job processing
+    └── scan_worker.py           # Scan + clustering job handler
 ```
 
 ## Test Entry Points
@@ -62,8 +68,18 @@ recognition/
 ### Modify clustering logic
 
 1. Entry: `recognition/application/orchestration/cluster_service.py`
-2. Discovery: `recognition/domain/discovery/`
-3. Assignment: `recognition/domain/assignment/`
+2. Discovery: `recognition/application/discovery/`
+3. Assignment: `recognition/application/assignment/` (gate + checks)
+4. Clustering: `recognition/application/clustering/`
+
+### Modify assignment validation
+
+The assignment module is **well-structured** with Strategy pattern:
+
+1. `assignment/gate.py` — Orchestrates checks
+2. `assignment/checks/` — Individual validation rules (confidence, constraint, block)
+3. `assignment/candidate.py` — Input dataclass
+4. `assignment/decision.py` — Output dataclass (ACCEPT/SUGGEST/REJECT)
 
 ### Database changes
 

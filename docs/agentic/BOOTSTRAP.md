@@ -69,8 +69,8 @@ Entry: apps/prototype-description-service/api/
 
 ```
 Context: docs/agentic/maps/frontend.md
-Tests: apps/prototype-wp-alt-context/js/
-Entry: apps/prototype-wp-alt-context/js/src/
+Tests: apps/prototype-wp-alt-context/js/admin/hooks/__tests__/
+Entry: apps/prototype-wp-alt-context/js/admin/
 ```
 
 ### Database/Schema Changes
@@ -103,9 +103,15 @@ docs/agentic/                    # ← YOU ARE HERE
 │   ├── frontend.md
 │   ├── php-plugin.md
 │   └── integration.md
-└── blackboard/                  # Agent working memory
-    ├── current_task_state.md
-    └── implementation_plan.md
+└── rules/                       # Additional guidelines
+    └── RADIX_UI_COMPONENT_GUIDE.md
+
+docs/tasks/                      # Active task breakdowns
+├── 4.0/4.10.3/                  # Current version tasks
+│   ├── task.md                  # Implementation checklist
+│   ├── cleanup.md               # Code quality issues
+│   └── batch-processing-resilience-plan.md
+└── README.md
 
 packages/shared-contracts/       # Machine-readable schemas (JSON Schema)
 ├── schemas/                     # Code generators consume these
@@ -120,6 +126,7 @@ packages/shared-contracts/       # Machine-readable schemas (JSON Schema)
 # Backend (Python)
 cd apps/prototype-description-service
 pytest recognition/tests/api/        # API tests
+pytest recognition/tests/integration/ # Integration tests (DB)
 pytest recognition/tests/unit/       # Unit tests
 ruff check . && mypy .               # Lint + types
 
@@ -139,12 +146,14 @@ composer phpstan                     # Static analysis
 
 ## 📊 Context Value Hierarchy
 
-| Asset            | Cold Start Value | When to Use                                   |
-| ---------------- | ---------------- | --------------------------------------------- |
-| **Contracts**    | 🔥 Highest       | Cross-boundary work, API changes              |
-| **Python Tests** | 🔥 High          | Service implementation, behavior verification |
-| **UML Diagrams** | 🌤️ Medium        | Architecture understanding, flow questions    |
-| **PHP Tests**    | 🌙 Low           | Currently scaffolding only                    |
+| Asset                 | Cold Start Value | When to Use                                   |
+| --------------------- | ---------------- | --------------------------------------------- |
+| **Contracts**         | 🔥 Highest       | Cross-boundary work, API changes              |
+| **Python API Tests**  | 🔥 High          | Service implementation, behavior verification |
+| **Integration Tests** | 🔥 High          | Database patterns, RLS, repository queries    |
+| **Frontend Hooks**    | 🌤️ Medium        | Job state, SSE, multi-tab coordination        |
+| **UML Diagrams**      | 🌤️ Medium        | Architecture understanding, flow questions    |
+| **PHP Tests**         | 🌙 Low           | Currently scaffolding only                    |
 
 ---
 
@@ -155,3 +164,4 @@ composer phpstan                     # Static analysis
 3. **No Fabricated Data** — Never invent metrics or benchmark numbers
 4. **Greenfield Policy** — No backward compatibility needed, clean rewrites preferred
 5. **Conventional Commits** — `feat:`, `fix:`, `docs:`, `test:`, `refactor:`, `chore:`
+6. **Check Active Tasks** — See `docs/tasks/` for current implementation plans

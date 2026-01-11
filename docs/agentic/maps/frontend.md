@@ -15,32 +15,42 @@
 ## Component Architecture
 
 ```
-js/src/admin/
-├── App.tsx                      # Router + providers
+js/admin/
+├── App.tsx                      # Router + providers + QueryClient
 ├── pages/                       # Route-level components
 │   ├── DashboardPage.tsx        # Coverage stats, quick actions
-│   ├── WorkbenchPage.tsx        # Media + clustering UI
+│   ├── WorkbenchPage.tsx        # Media + clustering UI (primary)
 │   └── RosterPage.tsx           # Identity management
 ├── components/                  # Reusable UI components
 │   ├── clusters/                # Cluster cards, lists
 │   ├── media/                   # Media grid, selection
 │   └── shared/                  # Buttons, dialogs, etc.
-├── hooks/                       # React Query hooks
+├── hooks/                       # React Query hooks + state management
 │   ├── useRecognitionHooks.ts   # Scan, cluster operations
 │   ├── useMediaIdentities.ts    # Media identity queries
-│   └── useJobHistory.ts         # Job polling
+│   ├── useJobProgressStream.ts  # SSE progress (v4.10.3+)
+│   ├── useJobPersistence.ts     # localStorage job tracking (v4.10.3+)
+│   └── useJobCoordination.ts    # Multi-tab BroadcastChannel (v4.10.3+)
 └── api/                         # Typed API clients
     ├── scanApi.ts               # POST /analyze
     ├── clusterApi.ts            # Cluster CRUD
-    └── identityApi.ts           # Identity queries
+    └── recognition/types/       # Shared TypeScript types
 ```
+
+## New Hooks (v4.10.3)
+
+| Hook                    | Purpose                                       |
+| ----------------------- | --------------------------------------------- |
+| `useJobProgressStream`  | SSE connection for real-time progress updates |
+| `useJobPersistence`     | Persist job IDs to localStorage for refresh   |
+| `useJobCoordination`    | BroadcastChannel for multi-tab sync           |
 
 ## Test Entry Points
 
 | Scope       | Path                           | When to Use                     |
 | ----------- | ------------------------------ | ------------------------------- |
-| Component   | `js/src/**/*.test.tsx`         | UI behavior, user interactions  |
-| Hook        | `js/src/admin/hooks/*.test.ts` | Data fetching, state management |
+| Component   | `js/**/*.test.tsx`             | UI behavior, user interactions  |
+| Hook        | `js/admin/hooks/__tests__/`    | Data fetching, state management |
 | Integration | `js/tests/`                    | Full page flows                 |
 
 ## Key Diagrams
@@ -61,7 +71,7 @@ js/src/admin/
 
 ### Add a new page
 
-1. Create page component in `js/src/admin/pages/`
+1. Create page component in `js/admin/pages/`
 2. Add route in `App.tsx`
 3. Create hooks for data fetching in `hooks/`
 4. Write component tests

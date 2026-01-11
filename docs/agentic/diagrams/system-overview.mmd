@@ -17,8 +17,9 @@ flowchart TB
         
         subgraph Hooks["React Hooks"]
             useRecognition["useRecognitionHooks"]
-            useJobHistory["useRecognitionJobHistory"]
+            useJobHistory["useJobProgressStream"]
             useMediaIdentities["useMediaIdentities"]
+            useJobCoord["useJobCoordination"]
         end
         
         subgraph ApiClient["TypeScript API Client"]

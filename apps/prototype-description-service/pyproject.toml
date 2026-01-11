@@ -27,6 +27,7 @@ dependencies = [
     # ONNX runtime for inference (required by insightface)
     "onnxruntime>=1.16.0",
     "imagehash>=4.3.0",
+    "sse-starlette>=2.0.0,<3.0.0",
 ]
 
 [tool.setuptools]
@@ -162,6 +163,9 @@ ignore_missing_imports = true
 ignore_errors = true
 
 [tool.pytest.ini_options]
+markers = [
+    "integration: marks tests as integration tests (require database)",
+]
 norecursedirs = [
     "apps/archived-recognition-service",
     "apps/prototype-description-service/archived-recognition.4.2.3",

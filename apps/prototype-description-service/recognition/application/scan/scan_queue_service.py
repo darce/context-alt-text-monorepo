@@ -166,7 +166,7 @@ class ScanQueueService:
             await self._repository.mark_job_running(job_id=job_id, started_at=now)
         return items
 
-    async def refresh_job_progress(self, *, job_id: uuid.UUID) -> None:
+    async def refresh_job_progress(self, *, job_id: uuid.UUID) -> bool:
         """Recompute job progress and finalize job status when appropriate.
 
         Rules:
@@ -175,6 +175,9 @@ class ScanQueueService:
         - when no pending/processing remain:
           - fail if any failed items exist
           - otherwise complete
+
+        Returns:
+            True if the job was just completed successfully, False otherwise.
         """
         counts = await self._repository.get_job_item_status_counts(job_id=job_id)
         terminal = ("completed", "failed", "skipped", "cancelled")
@@ -196,8 +199,11 @@ class ScanQueueService:
                 await self._repository.fail_job(
                     job_id=job_id, completed_at=now, error_message="one or more items failed"
                 )
+                return False
             else:
                 await self._repository.complete_job(job_id=job_id, completed_at=now)
+                return True
+        return False
 
     async def cancel_scan_job(self, *, job_id: uuid.UUID) -> int:
         """Cancel any pending items for a scan job.
@@ -207,6 +213,8 @@ class ScanQueueService:
         """
         now = datetime.now(tz=UTC)
         cancelled = await self._repository.cancel_pending_items(job_id=job_id, cancelled_at=now)
+
         await self.refresh_job_progress(job_id=job_id)
+
         await self._repository.fail_job(job_id=job_id, completed_at=now, error_message="canceled")
         return cancelled

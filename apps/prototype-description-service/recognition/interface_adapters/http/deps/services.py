@@ -320,6 +320,20 @@ async def get_scan_queue_service_optional(
     return ScanQueueService(SqlAlchemyScanQueueRepository(session))
 
 
+async def get_scan_queue_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAlchemyScanQueueRepository:
+    """Return a scan queue repository backed by the current session."""
+    return SqlAlchemyScanQueueRepository(session)
+
+
+async def get_job_repo(
+    session: AsyncSession = Depends(get_session),
+) -> SqlAlchemyJobRepository:
+    """Return a general job repository backed by the current session."""
+    return SqlAlchemyJobRepository(session)
+
+
 async def get_job_service(
     session: AsyncSession | None = None,
     tenant_id: str | None = None,
@@ -390,6 +404,8 @@ __all__ = [
     "get_scan_queue_service_factory",
     "get_scan_queue_service",
     "get_scan_queue_service_optional",
+    "get_scan_queue_repo",
+    "get_job_repo",
     "get_job_service",
     "get_job_service_dependency",
     "get_persisted_job_service",

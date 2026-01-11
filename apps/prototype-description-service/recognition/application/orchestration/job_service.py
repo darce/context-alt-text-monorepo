@@ -7,7 +7,6 @@ from collections.abc import Iterable
 
 from recognition.domain.job import Job, JobStatus, JobType, SplitJobPayload
 from recognition.domain.repositories import JobRepository
-from recognition.infrastructure.repositories.cancelable_jobs import is_canceled
 from recognition.shared.ids import generate_id
 
 
@@ -144,38 +143,6 @@ class JobService:
         job = await self._get_or_raise(job_id)
         job.fail("canceled")
         return await self.repository.update(job)
-
-    async def process_analyze_job(self, job_id: str, tenant_id: str, media_ids: Iterable[str]) -> Job:
-        """Background-friendly wrapper to process analyze job by ID."""
-        media_ids_list = list(media_ids)
-        job = await self._get_or_raise(job_id)
-        job.progress_total = len(media_ids_list)
-        job = await self.start_job(job.id)
-        try:
-            if is_canceled(job.id):
-                return await self.fail_job(job.id, "canceled")
-            if self.scan_service:
-                await self.scan_service.analyze_media(tenant_id, media_ids_list)
-            job = await self.update_progress(job.id, completed=len(media_ids_list), total=len(media_ids_list))
-            return await self.complete_job(job.id)
-        except Exception as exc:
-            return await self.fail_job(job.id, str(exc))
-
-    async def process_clustering_job(self, job_id: str, tenant_id: str) -> Job:
-        """Background-friendly wrapper to process clustering job by ID."""
-        job = await self._get_or_raise(job_id)
-        job.progress_total = max(job.progress_total, 1)
-        job = await self.start_job(job.id)
-        try:
-            if is_canceled(job.id):
-                return await self.fail_job(job.id, "canceled")
-            result = await self.cluster_service.cluster_unclustered_identities(tenant_id, job_id=job_id)
-            completed = getattr(result, "completed", 1) or 1
-            total = getattr(result, "total", completed) or completed
-            job = await self.update_progress(job.id, completed=completed, total=total)
-            return await self.complete_job(job.id)
-        except Exception as exc:
-            return await self.fail_job(job.id, str(exc))
 
     async def process_curation_job(
         self,

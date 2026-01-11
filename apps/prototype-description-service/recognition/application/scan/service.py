@@ -7,7 +7,7 @@ import uuid
 from collections.abc import Iterable
 from datetime import UTC, datetime
 
-from sqlalchemy import delete
+from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, MediaIdentity
@@ -99,57 +99,36 @@ class ScanService:
         if scan_job is None:
             raise RuntimeError(f"scan job not found: {job_id}")
 
-        media_int_ids = [_extract_media_id(mid) for mid in media_ids_list]
+        [_extract_media_id(mid) for mid in media_ids_list]
 
-        # Delete old identities for these media items
-        await self._session.execute(
-            delete(MediaIdentity).where(
-                MediaIdentity.tenant_id == tenant_uuid,
-                MediaIdentity.media_id.in_(media_int_ids),
-            )
-        )
+        # Group detections by media_id to process them per image for ID recycling
+        detections_by_media: dict[int, list[FaceDetection]] = {}
+        source_to_media_id_int = {s: _extract_media_id(str(m)) for s, m in source_to_media_id.items()}
 
-        # Generate embeddings if needed
-        detections_needing_embeddings = [d for d in detections if d.embedding is None]
-        if detections_needing_embeddings:
-            face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
-            embeddings: list[EmbeddingResult] = await self._generator.generate(face_bytes)
-            for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
-                det.embedding = result.embedding
-
-        media_rows = []
         for det in detections:
-            if det.embedding is None:
-                logger.warning("Skipping detection without embedding: %s", str(det.media_id)[:50])
-                continue
-            original_media_id = source_to_media_id.get(det.media_id, det.media_id)
-            media_url = (
-                det.media_id
-                if str(det.media_id).startswith(("http://", "https://"))
-                else f"http://example.test/{det.media_id}.jpg"
+            mid_int = source_to_media_id_int.get(det.media_id, _extract_media_id(str(det.media_id)))
+            if mid_int not in detections_by_media:
+                detections_by_media[mid_int] = []
+            detections_by_media[mid_int].append(det)
+
+        total_persisted = 0
+        for mid_int, dets in detections_by_media.items():
+            # Use specific URL if available from sources
+            url = None
+            for s, m_int in source_to_media_id_int.items():
+                if m_int == mid_int and s.startswith(("http://", "https://")):
+                    url = s
+                    break
+
+            total_persisted += await self._persist_identities(
+                tenant_uuid=tenant_uuid,
+                media_id=mid_int,
+                detections=dets,
+                media_url=url,
             )
-            media_rows.append(
-                MediaIdentity(
-                    tenant_id=tenant_uuid,
-                    media_id=_extract_media_id(str(original_media_id)),
-                    media_url=media_url,
-                    bbox_x=int(det.bbox[0]),
-                    bbox_y=int(det.bbox[1]),
-                    bbox_width=int(det.bbox[2] - det.bbox[0]),
-                    bbox_height=int(det.bbox[3] - det.bbox[1]),
-                    confidence=float(det.confidence),
-                    embedding=det.embedding.tolist(),
-                    pose_pitch=det.pose_pitch,
-                    pose_yaw=det.pose_yaw,
-                    pose_roll=det.pose_roll,
-                    age=det.age,
-                    gender=det.gender,
-                )
-            )
-        self._session.add_all(media_rows)
 
         scan_job.processed_media = len(media_ids_list)
-        scan_job.identities_detected = len(media_rows)
+        scan_job.identities_detected = total_persisted
         scan_job.status = "completed"
         scan_job.completed_at = datetime.now(tz=UTC)
         await self._session.commit()
@@ -187,44 +166,97 @@ class ScanService:
     ) -> int:
         """Process a single media item and persist detected identities.
 
-        This method is designed for the async queue worker. It does not create or update
-        an `IdentityScanJob` row; it only updates `MediaIdentity` rows for the provided media id.
-
-        Args:
-            tenant_id: Tenant identifier.
-            media_id: Integer media identifier to associate with persisted identities.
-            media_url: Source URL (or identifier) used by the detector.
-
-        Returns:
-            Number of identities persisted for this media item.
+        Uses 'Identity ID Recycling' to preserve existing UUIDs for the same faces,
+        which ensures that cluster labels and memberships are not lost during re-scans.
         """
         tenant_uuid = uuid.UUID(str(tenant_id))
-
-        await self._session.execute(
-            delete(MediaIdentity).where(
-                MediaIdentity.tenant_id == tenant_uuid,
-                MediaIdentity.media_id == int(media_id),
-            )
+        detections: list[FaceDetection] = await self._detector.detect([media_url])
+        return await self._persist_identities(
+            tenant_uuid=tenant_uuid,
+            media_id=media_id,
+            detections=detections,
+            media_url=media_url,
         )
 
-        detections: list[FaceDetection] = await self._detector.detect([media_url])
+    async def _persist_identities(
+        self,
+        *,
+        tenant_uuid: uuid.UUID,
+        media_id: int,
+        detections: list[FaceDetection],
+        media_url: str | None = None,
+    ) -> int:
+        """Helper to persist detections with Identity ID Recycling."""
+        # 1. Fetch existing identities for this media item
+        stmt = select(MediaIdentity).where(
+            MediaIdentity.tenant_id == tenant_uuid,
+            MediaIdentity.media_id == int(media_id),
+        )
+        result = await self._session.execute(stmt)
+        existing_identities = list(result.scalars().all())
 
+        # 2. Generate embeddings if needed
         detections_needing_embeddings = [d for d in detections if d.embedding is None]
         if detections_needing_embeddings:
             face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
             embeddings: list[EmbeddingResult] = await self._generator.generate(face_bytes)
-            for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
-                det.embedding = result.embedding
+            for det, emb_result in zip(detections_needing_embeddings, embeddings, strict=False):
+                det.embedding = emb_result.embedding
 
-        media_rows = []
-        for det in detections:
+        # 3. Match new detections to existing identities using BBOX IOU
+        matched: list[tuple[MediaIdentity, FaceDetection]] = []
+        unmatched_new: list[FaceDetection] = list(detections)
+        orphaned_old: list[MediaIdentity] = list(existing_identities)
+
+        for old in existing_identities:
+            if not unmatched_new:
+                break
+
+            best_iou = 0.0
+            best_det_idx = -1
+            old_bbox = (old.bbox_x, old.bbox_y, old.bbox_x + old.bbox_width, old.bbox_y + old.bbox_height)
+
+            for idx, det in enumerate(unmatched_new):
+                iou = _compute_iou(old_bbox, det.bbox)
+                if iou > best_iou:
+                    best_iou = iou
+                    best_det_idx = idx
+
+            if best_iou > 0.5:
+                matched.append((old, unmatched_new.pop(best_det_idx)))
+                orphaned_old.remove(old)
+
+        # 4. Update matched identities (preserves PK/UUID)
+        for old_row, det in matched:
             if det.embedding is None:
                 continue
-            media_rows.append(
+            old_row.bbox_x = int(det.bbox[0])
+            old_row.bbox_y = int(det.bbox[1])
+            old_row.bbox_width = int(det.bbox[2] - det.bbox[0])
+            old_row.bbox_height = int(det.bbox[3] - det.bbox[1])
+            old_row.confidence = float(det.confidence)
+            old_row.embedding = det.embedding.tolist()
+            old_row.pose_pitch = det.pose_pitch
+            old_row.pose_yaw = det.pose_yaw
+            old_row.pose_roll = det.pose_roll
+            old_row.age = det.age
+            old_row.gender = det.gender
+            old_row.image_phash = det.image_phash
+            old_row.updated_at = datetime.now(tz=UTC)
+
+        # 5. Insert new detections
+        new_rows = []
+        default_url = f"http://example.test/{media_id}.jpg"
+        final_url = media_url or default_url
+
+        for det in unmatched_new:
+            if det.embedding is None:
+                continue
+            new_rows.append(
                 MediaIdentity(
                     tenant_id=tenant_uuid,
                     media_id=int(media_id),
-                    media_url=str(media_url),
+                    media_url=str(final_url),
                     bbox_x=int(det.bbox[0]),
                     bbox_y=int(det.bbox[1]),
                     bbox_width=int(det.bbox[2] - det.bbox[0]),
@@ -239,10 +271,15 @@ class ScanService:
                     image_phash=det.image_phash,
                 )
             )
+        self._session.add_all(new_rows)
 
-        self._session.add_all(media_rows)
+        # 6. Delete orphaned
+        if orphaned_old:
+            for orphan in orphaned_old:
+                await self._session.delete(orphan)
+
         await self._session.flush()
-        return len(media_rows)
+        return len(matched) + len(new_rows)
 
 
 def _extract_media_id(value: str) -> int:
@@ -250,6 +287,30 @@ def _extract_media_id(value: str) -> int:
     if digits:
         return int(digits[-6:])
     return abs(hash(value)) % 1_000_000
+
+
+def _compute_iou(bbox1: tuple[float, float, float, float], bbox2: tuple[float, float, float, float]) -> float:
+    """Compute Intersection over Union (IoU) of two bounding boxes.
+
+    Boxes are (x1, y1, x2, y2).
+    """
+    x_left = max(bbox1[0], bbox2[0])
+    y_top = max(bbox1[1], bbox2[1])
+    x_right = min(bbox1[2], bbox2[2])
+    y_bottom = min(bbox1[3], bbox2[3])
+
+    if x_right < x_left or y_bottom < y_top:
+        return 0.0
+
+    intersection_area = (x_right - x_left) * (y_bottom - y_top)
+    bbox1_area = (bbox1[2] - bbox1[0]) * (bbox1[3] - bbox1[1])
+    bbox2_area = (bbox2[2] - bbox2[0]) * (bbox2[3] - bbox2[1])
+
+    union_area = float(bbox1_area + bbox2_area - intersection_area)
+    if union_area <= 0:
+        return 0.0
+
+    return intersection_area / union_area
 
 
 __all__ = ["ScanService"]

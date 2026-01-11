@@ -170,6 +170,10 @@ class SessionStub:
     def begin(self):
         return self._Tx(self)
 
+    async def get(self, _model, _id):
+        """Return None to simulate no existing job."""
+        return None
+
     async def execute(self, _stmt):
         self.execute_called = True
 

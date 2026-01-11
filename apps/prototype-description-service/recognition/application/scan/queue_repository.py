@@ -166,3 +166,6 @@ class ScanQueueRepository(Protocol):
 
     async def get_job_item_identities_detected(self, *, job_id: uuid.UUID) -> int:
         """Return total identities_detected sum for completed items in a job."""
+
+    async def get_job_tenant_id(self, *, job_id: uuid.UUID) -> uuid.UUID | None:
+        """Return the tenant_id for a scan job, or None if not found."""

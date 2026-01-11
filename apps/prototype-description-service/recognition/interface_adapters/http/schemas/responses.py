@@ -194,14 +194,6 @@ class CreateClusterForIdentityResponse(BaseModel):
         return _validate_uuid(v)
 
 
-class HealthResponse(BaseModel):
-    """Recognition service health response."""
-
-    service: str = "recognition"
-    status: str = "ok"
-    version: str | None = None
-
-
 class ConnectionPoolStats(BaseModel):
     """Connection pool statistics for monitoring.
 
@@ -287,7 +279,6 @@ __all__ = [
     "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",
     "HealthCheckResponse",
-    "HealthResponse",
     "IdentityResponse",
     "IdentitySuggestionsResponse",
     "JobProgressResponse",

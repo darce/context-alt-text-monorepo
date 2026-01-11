@@ -12,16 +12,18 @@ import uuid
 from datetime import UTC, datetime
 
 import asyncpg
-from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, status
+from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
 from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
+from sse_starlette.sse import EventSourceResponse
 
 from db.settings import get_database_settings
 from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.domain.job import JobType
 from recognition.interface_adapters.http.dependencies import (
+    get_job_repo,
     get_job_service_dependency,
     get_optional_session,
     get_scan_queue_service_factory,
@@ -253,6 +255,86 @@ async def get_job_status(
             return _job_to_response(domain_job)
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+
+@router.get("/jobs/{job_id}/stream")
+async def stream_job_progress(
+    job_id: str,
+    tenant_id: str = Header(alias="X-Tenant-ID"),
+    job_repo=Depends(get_job_repo),
+) -> EventSourceResponse:
+    """Stream real-time job progress via SSE.
+
+    Args:
+        job_id: UUID of the job to track.
+        tenant_id: Tenant ID for RLS scoping.
+        job_repo: Repository for job status lookups.
+
+    Returns:
+        SSE response streaming progress events.
+    """
+    import asyncio
+    import time
+
+    async def event_generator():
+        last_completed = -1
+        last_emit = 0
+        last_heartbeat = time.time()
+
+        try:
+            while True:
+                # Poll DB for latest job state via general job repo
+                job = await job_repo.get(job_id)
+                if not job:
+                    yield {"event": "error", "data": "Job not found"}
+                    break
+
+                current_completed = job.progress_completed
+                total = job.progress_total
+                job_status = job.status.value
+
+                now = time.time()
+                # Yield if:
+                # 1. Progress changed
+                # 2. 500ms passed since last yield AND we have some progress
+                # 3. 15s passed (heartbeat)
+                should_yield = (
+                    current_completed != last_completed
+                    or (now - last_emit > 0.5 and current_completed > 0)
+                    or (now - last_heartbeat > 15)
+                )
+
+                if should_yield:
+                    yield {
+                        "event": "progress",
+                        "data": json.dumps(
+                            {
+                                "completed": current_completed,
+                                "total": total,
+                                "status": job_status,
+                            }
+                        ),
+                    }
+                    last_completed = current_completed
+                    last_emit = now
+                    last_heartbeat = now
+
+                if job_status in ("completed", "failed"):
+                    yield {
+                        "event": "done",
+                        "data": json.dumps({"status": job_status}),
+                    }
+                    break
+
+                await asyncio.sleep(0.1)  # 100ms polling for smooth UI
+        except asyncio.CancelledError:
+            # Client disconnected
+            pass
+        except Exception as exc:
+            logger.exception("Error in SSE stream for job %s", job_id)
+            yield {"event": "error", "data": str(exc)}
+
+    return EventSourceResponse(event_generator())
 
 
 @router.post("/jobs/{job_id}/cancel", response_model=JobStatusResponse)

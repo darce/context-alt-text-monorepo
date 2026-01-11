@@ -137,8 +137,10 @@ async def create_clustering_job(
             total_identities_clustered=completed,
         )
 
+    # Async mode: create a pending job for background worker to process
+    # The generic /recognition/jobs/{id}/stream endpoint handles all job types
     job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
-    job = await job_service.start_job(job.id)
+    # Do NOT start the job - leave it in pending state for worker to pick up
     return _job_to_clustering_response(job)
 
 

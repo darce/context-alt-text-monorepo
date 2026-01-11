@@ -206,7 +206,11 @@ class ScanWorker:
         await self._refresh_job_progress(affected_jobs)
 
     async def _refresh_job_progress(self, job_ids: set[uuid.UUID]) -> None:
-        """Recompute progress for affected scan jobs."""
+        """Recompute progress for affected scan jobs.
+
+        When a scan job successfully completes, automatically creates a clustering
+        job for the same tenant so identities get clustered without manual intervention.
+        """
         if not job_ids:
             return
         async with self._session_factory() as session:
@@ -214,7 +218,27 @@ class ScanWorker:
             repo = SqlAlchemyScanQueueRepository(session)
             queue = ScanQueueService(repo)
             for job_id in job_ids:
-                await queue.refresh_job_progress(job_id=job_id)
+                completed = await queue.refresh_job_progress(job_id=job_id)
+                if completed:
+                    # Auto-create a clustering job for this tenant
+                    tenant_id = await repo.get_job_tenant_id(job_id=job_id)
+                    if tenant_id:
+                        logger.info(
+                            "[worker] Scan job %s completed, auto-creating clustering job for tenant %s",
+                            job_id,
+                            tenant_id,
+                        )
+                        clustering_job = IdentityClusteringJob(
+                            tenant_id=tenant_id,
+                            job_type="clustering",
+                            status="pending",
+                            progress=0.0,
+                            total_identities=0,
+                            processed_identities=0,
+                            message="Auto-triggered after scan completion",
+                            payload={},
+                        )
+                        session.add(clustering_job)
             await session.commit()
 
     async def _handle_item_failure(
@@ -234,7 +258,7 @@ class ScanWorker:
         stmt = (
             select(IdentityClusteringJob)
             .where(IdentityClusteringJob.status == "pending")
-            .where(IdentityClusteringJob.job_type.in_(["curation", "split"]))
+            .where(IdentityClusteringJob.job_type.in_(["clustering", "curation", "split"]))
             .order_by(IdentityClusteringJob.created_at.asc())
             .with_for_update(skip_locked=True)
             .limit(1)
@@ -254,6 +278,8 @@ class ScanWorker:
                 await self._handle_split_job(job=job, session=session)
             elif job.job_type == "curation":
                 await self._handle_curation_job(job=job, session=session)
+            elif job.job_type == "clustering":
+                await self._handle_clustering_job(job=job, session=session)
             else:
                 await self._ensure_job_context(session=session, job=job)
                 job.status = "failed"
@@ -294,6 +320,34 @@ class ScanWorker:
         job.processed_identities = completed
         job.total_identities = total
         job.progress = _compute_progress(completed, total)
+        job.status = "completed"
+        job.completed_at = datetime.now(tz=UTC)
+        await session.flush()
+
+    async def _handle_clustering_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
+        """Execute a standard clustering job."""
+        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
+
+        async def _progress_callback(completed: int, total: int):
+            # We need a fresh session or just flush to the current one?
+            # Since we are in the middle of a transaction, we can just flush.
+            # However, the SSE stream polls the DB.
+            job.processed_identities = completed
+            job.total_identities = total
+            job.progress = _compute_progress(completed, total)
+            await session.flush()
+
+        result = await cluster_service.cluster_unclustered_identities(
+            tenant_id=str(job.tenant_id),
+            job_id=str(job.id),
+            progress_callback=_progress_callback,
+            commit=False,  # Worker handles commit
+        )
+
+        await self._ensure_job_context(session=session, job=job)
+        job.processed_identities = result.completed
+        job.total_identities = result.total
+        job.progress = 1.0
         job.status = "completed"
         job.completed_at = datetime.now(tz=UTC)
         await session.flush()

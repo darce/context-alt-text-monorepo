@@ -424,6 +424,11 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         result = await self._session.execute(stmt)
         return int(result.scalar() or 0)
 
+    async def get_job_tenant_id(self, *, job_id: uuid.UUID) -> uuid.UUID | None:
+        stmt = select(IdentityScanJob.tenant_id).where(IdentityScanJob.id == job_id)
+        result = await self._session.execute(stmt)
+        return result.scalar_one_or_none()
+
 
 def _to_item(row: IdentityScanJobItem) -> ScanQueueItem:
     return ScanQueueItem(

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -112,7 +113,14 @@ class ClusterService:
             self.constrained_hac = None
             self.hac_settings = None
 
-    async def cluster_unclustered_identities(self, tenant_id: str, job_id: str | None = None, *, commit: bool = True):
+    async def cluster_unclustered_identities(
+        self,
+        tenant_id: str,
+        job_id: str | None = None,
+        *,
+        progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
+        commit: bool = True,
+    ):
         """Cluster any identities not yet assigned to a cluster."""
         return await cluster_unclustered_identities_op(
             tenant_id=tenant_id,
@@ -127,6 +135,7 @@ class ClusterService:
             clustering_logger=self.logger,
             constrained_hac=self.constrained_hac,
             hac_settings=self.hac_settings,
+            progress_callback=progress_callback,
             commit=commit,
         )
 

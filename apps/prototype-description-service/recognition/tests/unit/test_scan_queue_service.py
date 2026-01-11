@@ -33,14 +33,16 @@ async def test_refresh_job_progress_completes_when_all_items_done(db_session, te
     await repo.mark_job_running(job_id=job_id, started_at=datetime.now(tz=UTC))
 
     await repo.mark_item_completed(item_id=claimed[0].id, completed_at=datetime.now(tz=UTC), identities_detected=1)
-    await queue.refresh_job_progress(job_id=job_id)
+    completed = await queue.refresh_job_progress(job_id=job_id)
+    assert completed is False  # Not all items done yet
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.processed_media == 1
     assert job.identities_detected == 1
     assert job.status in {"pending", "running", "completed"}
 
     await repo.mark_item_completed(item_id=claimed[1].id, completed_at=datetime.now(tz=UTC), identities_detected=2)
-    await queue.refresh_job_progress(job_id=job_id)
+    completed = await queue.refresh_job_progress(job_id=job_id)
+    assert completed is True  # All items done, job completed successfully
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.processed_media == 2
     assert job.identities_detected == 3
@@ -59,7 +61,8 @@ async def test_refresh_job_progress_fails_when_any_item_failed(db_session, tenan
     claimed = await repo.claim_pending_items(tenant_id=tenant.id, job_id=job_id, limit=1, now=datetime.now(tz=UTC))
     assert len(claimed) == 1
     await repo.mark_item_failed(item_id=claimed[0].id, completed_at=datetime.now(tz=UTC), error_message="boom")
-    await queue.refresh_job_progress(job_id=job_id)
+    completed = await queue.refresh_job_progress(job_id=job_id)
+    assert completed is False  # Job failed, not successfully completed
 
     job = (await db_session.execute(select(IdentityScanJob).where(IdentityScanJob.id == job_id))).scalar_one()
     assert job.status == "failed"

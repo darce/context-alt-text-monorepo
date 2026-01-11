@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from typing import Any
@@ -80,6 +81,7 @@ async def cluster_unclustered_identities(
     clustering_logger: ClusteringLogger | None = None,
     constrained_hac: Any | None = None,
     hac_settings: Any | None = None,
+    progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
     commit: bool = True,
 ) -> ClusterJobResult:
     """Cluster any identities not yet assigned to a cluster."""
@@ -135,7 +137,16 @@ async def cluster_unclustered_identities(
         total_identities=0,
         processed_identities=0,
     )
-    session.add(clustering_job)
+    # Check if job already exists (e.g., created by worker or API), otherwise create it
+    existing_job = await session.get(IdentityClusteringJob, job_uuid)
+    if existing_job is not None:
+        # Update existing job
+        existing_job.status = "running"
+        existing_job.started_at = started_at
+        existing_job.progress = 0.0
+        clustering_job = existing_job
+    else:
+        session.add(clustering_job)
     await session.flush()
     job_label = str(clustering_job.id)
 
@@ -416,6 +427,9 @@ async def cluster_unclustered_identities(
         clustering_job.processed_identities = processed
         clustering_job.progress = (processed / total_identities) if total_identities else 1.0
         await session.flush()
+
+        if progress_callback:
+            await progress_callback(processed, total_identities)
 
     # Refresh between chunks so CentroidDiscovery can see centroids for clusters created/updated earlier.
     # [Optimized] We rely on the scheduled background refresh (every 60s) to update the MV.

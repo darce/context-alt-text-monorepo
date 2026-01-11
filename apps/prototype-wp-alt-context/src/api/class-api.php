@@ -5,7 +5,6 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 use AltContext\Api\RecognitionController;
-use AltContext\Api\RecognitionProxyController;
 use WP_Error;
 use WP_Query;
 use WP_REST_Request;
@@ -72,9 +71,6 @@ class Api {
 				'permission_callback' => array( $this, 'can_manage_roster' ),
 			)
 		);
-
-		$recognitionProxy = new RecognitionProxyController();
-		$recognitionProxy->register_routes();
 
 		$this->recognitionController->register_routes();
 	}

@@ -260,6 +260,16 @@ class AssignmentWriter:
         """
         self._run_context = context
 
+    @property
+    def cluster_repository(self) -> ClusterRepository:
+        """Expose the cluster repository for orchestration and tests."""
+        return self._clusters
+
+    @property
+    def member_repository(self) -> MemberRepository:
+        """Expose the member repository for orchestration and tests."""
+        return self._members
+
     def _emit_cluster_created_event(
         self,
         *,

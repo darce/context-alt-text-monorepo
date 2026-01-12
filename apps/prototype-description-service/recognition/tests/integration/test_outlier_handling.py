@@ -14,8 +14,8 @@ from recognition.interface_adapters.http import dependencies
 async def test_outliers_included_when_requested(db_session, tenant) -> None:
     """Outlier clusters (label=-1/noise) should be surfaced when include_outliers=true."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     # Persist a normal cluster with one member
     cluster = await cluster_repo.save(

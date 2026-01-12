@@ -166,9 +166,36 @@ class AssignmentDecision(Base):
     )
 
 
+class ClusteringFeedback(Base):
+    __tablename__ = "clustering_feedback"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    identity_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    cluster_id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), nullable=False)
+    decision_type: Mapped[str | None] = mapped_column(String(20))
+    similarity_at_decision: Mapped[float | None] = mapped_column(Float)
+    user_action: Mapped[str | None] = mapped_column(String(20))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    experiment_id: Mapped[str | None] = mapped_column(String(64))
+    variant: Mapped[str | None] = mapped_column(String(64))
+
+    tenant: Mapped[Tenant] = relationship()
+
+    __table_args__ = (
+        Index("idx_clustering_feedback_tenant", "tenant_id"),
+        Index("idx_clustering_feedback_identity", "identity_id"),
+        Index("idx_clustering_feedback_cluster", "cluster_id"),
+        Index("idx_clustering_feedback_action", "user_action"),
+    )
+
+
 __all__ = [
     "RecognitionRun",
     "RecognitionEvent",
     "ClusteringJobReport",
     "AssignmentDecision",
+    "ClusteringFeedback",
 ]

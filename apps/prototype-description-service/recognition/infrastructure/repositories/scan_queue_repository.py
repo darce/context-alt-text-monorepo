@@ -6,16 +6,14 @@ import logging
 import uuid
 from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime, timedelta
-from typing import Any
-from typing import cast as typing_cast
 
-from sqlalchemy import Integer, Select, func, select, text, update
-from sqlalchemy import cast as sa_cast
-from sqlalchemy.engine import CursorResult
+from sqlalchemy import Select, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityScanJob, IdentityScanJobItem
 from recognition.application.scan.queue_repository import ScanQueueItem, ScanQueueRepository
+from recognition.shared.db.dialect import is_postgres, timestamp_as_epoch
+from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 logger = logging.getLogger(__name__)
 
@@ -164,16 +162,14 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         if limit <= 0:
             return []
 
-        dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
-        if getattr(dialect, "name", "").startswith("postgres"):
+        if is_postgres(self._session):
             return await self._claim_pending_items_postgres(tenant_id=tenant_id, job_id=job_id, limit=limit, now=now)
         return await self._claim_pending_items_generic(tenant_id=tenant_id, job_id=job_id, limit=limit, now=now)
 
     async def claim_pending_items_any(self, *, limit: int, now: datetime) -> list[ScanQueueItem]:
         if limit <= 0:
             return []
-        dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
-        if getattr(dialect, "name", "").startswith("postgres"):
+        if is_postgres(self._session):
             return await self._claim_pending_items_any_postgres(limit=limit, now=now)
         return await self._claim_pending_items_any_generic(limit=limit, now=now)
 
@@ -187,8 +183,7 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         if stale_after_seconds <= 0:
             return 0
 
-        dialect = getattr(getattr(self._session, "bind", None), "dialect", None)
-        if getattr(dialect, "name", "").startswith("postgres"):
+        if is_postgres(self._session):
             stale_before = now - timedelta(seconds=stale_after_seconds)
             reclaim_sql = text(
                 """
@@ -201,12 +196,12 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
                   AND attempts < :max_attempts
                 """
             )
-            result = await self._session.execute(
+            result = await execute_dml(
+                self._session,
                 reclaim_sql,
                 {"stale_before": stale_before, "max_attempts": max_attempts},
             )
-            cursor = typing_cast(CursorResult[Any], result)
-            return int(cursor.rowcount or 0)
+            return get_rowcount(result)
 
         stale_before_ts = now.timestamp() - stale_after_seconds
         reclaim_stmt = (
@@ -214,14 +209,13 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
             .where(
                 IdentityScanJobItem.status == "processing",
                 IdentityScanJobItem.started_at.is_not(None),
-                sa_cast(func.strftime("%s", IdentityScanJobItem.started_at), Integer) < int(stale_before_ts),
+                timestamp_as_epoch(IdentityScanJobItem.started_at, self._session) < int(stale_before_ts),
                 IdentityScanJobItem.attempts < max_attempts,
             )
             .values(status="pending", started_at=None)
         )
-        result = await self._session.execute(reclaim_stmt)
-        cursor = typing_cast(CursorResult[Any], result)
-        return int(cursor.rowcount or 0)
+        result = await execute_dml(self._session, reclaim_stmt)
+        return get_rowcount(result)
 
     async def _claim_pending_items_generic(
         self,
@@ -399,13 +393,13 @@ class SqlAlchemyScanQueueRepository(ScanQueueRepository):
         )
 
     async def cancel_pending_items(self, *, job_id: uuid.UUID, cancelled_at: datetime) -> int:
-        result = await self._session.execute(
+        result = await execute_dml(
+            self._session,
             update(IdentityScanJobItem)
             .where(IdentityScanJobItem.job_id == job_id, IdentityScanJobItem.status == "pending")
-            .values(status="cancelled", completed_at=cancelled_at)
+            .values(status="cancelled", completed_at=cancelled_at),
         )
-        cursor = typing_cast(CursorResult[Any], result)
-        return int(cursor.rowcount or 0)
+        return get_rowcount(result)
 
     async def get_job_item_status_counts(self, *, job_id: uuid.UUID) -> dict[str, int]:
         stmt = (

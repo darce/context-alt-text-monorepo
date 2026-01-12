@@ -198,9 +198,6 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
 
         Returns:
             Count of suggestions updated.
-
-        Raises:
-            NotImplementedError: Until bulk update behavior is defined.
         """
         if not suggestion_ids:
             return 0
@@ -238,9 +235,6 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
 
         Returns:
             The created or updated suggestion.
-
-        Raises:
-            NotImplementedError: Until upsert behavior is defined.
         """
         tenant_uuid = _coerce_uuid(tenant_id)
         identity_uuid = _coerce_uuid(payload.identity_id)

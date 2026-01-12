@@ -112,6 +112,18 @@ class ClusteringSettings(BaseModel):
         default=0.85,
         description="Discovery threshold for candidate matching.",
     )
+    complete_link_threshold: float = Field(
+        default=0.65,
+        description="Complete-link minimum similarity required to validate expansion.",
+    )
+    complete_link_min_coverage: float = Field(
+        default=0.85,
+        description="Fraction of members that must pass complete-link threshold.",
+    )
+    complete_link_enabled: bool = Field(
+        default=True,
+        description="Enable complete-link verification during graph expansion.",
+    )
     complete_link_min_floor: float = Field(
         default=0.80,
         description="Minimum similarity any representative must meet.",

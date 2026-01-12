@@ -30,8 +30,8 @@ def mock_member_repo() -> AsyncMock:
 @pytest.fixture
 def mock_writer(mock_cluster_repo: AsyncMock, mock_member_repo: AsyncMock) -> Mock:
     writer = Mock(spec=AssignmentWriter)
-    writer._clusters = mock_cluster_repo
-    writer._members = mock_member_repo
+    writer.cluster_repository = mock_cluster_repo
+    writer.member_repository = mock_member_repo
     # Mock the recompute methods
     writer.recompute_centroid = AsyncMock()
     writer.recompute_representatives = AsyncMock()

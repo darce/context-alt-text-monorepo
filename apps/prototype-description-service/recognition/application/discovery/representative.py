@@ -12,8 +12,8 @@ import numpy as np
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.discovery.base import DiscoveryAlgorithm
 from recognition.application.settings import ClusteringSettings
+from recognition.application.similarity import SimilaritySearch
 from recognition.domain.identity import MediaIdentity
-from recognition.shared.similarity import normalize_face_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -30,6 +30,7 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
             settings: Threshold configuration for representative matching.
         """
         self.settings = settings
+        self._search = SimilaritySearch(settings)
 
     async def discover(
         self,
@@ -62,28 +63,67 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
             self.settings.similarity_threshold,
         )
 
+        if not representatives_by_cluster:
+            return []
+
+        query_embeddings = [identity.face_vector for identity in identities]
+        best_matches = self._search.find_best_matches(
+            query_embeddings,
+            representatives_by_cluster,
+            min_similarity=0.0,
+        )
+
+        labeled_representatives = {
+            cluster_id: reps for cluster_id, reps in representatives_by_cluster.items() if cluster_id in labeled_ids
+        }
+        if labeled_representatives:
+            labeled_matches = self._search.find_best_matches(
+                query_embeddings,
+                labeled_representatives,
+                min_similarity=0.0,
+            )
+        else:
+            labeled_matches = [None for _ in query_embeddings]
+
         candidates: list[AssignmentCandidate] = []
-        # Track best similarities for debugging
         best_similarities: list[tuple[str, str | None, float]] = []
-        for identity in identities:
-            face_vec = identity.face_vector
-            best_cluster, best_sim = self._find_best_match(face_vec, representatives_by_cluster, labeled_ids)
+        high_confidence_threshold = self.settings.complete_link_min_floor
+
+        for identity, best_match, labeled_match in zip(identities, best_matches, labeled_matches, strict=False):
+            best_cluster = best_match.cluster_id if best_match else None
+            best_sim = best_match.similarity if best_match else 0.0
             best_similarities.append((identity.id, best_cluster, best_sim))
-            if best_cluster and best_sim >= self.settings.similarity_threshold:
+
+            labeled_cluster = labeled_match.cluster_id if labeled_match else None
+            labeled_sim = labeled_match.similarity if labeled_match else 0.0
+
+            selected_cluster: str | None
+            selected_sim: float
+            if best_cluster and best_sim >= high_confidence_threshold:
+                selected_cluster = best_cluster
+                selected_sim = best_sim
+            elif labeled_cluster:
+                selected_cluster = labeled_cluster
+                selected_sim = labeled_sim
+            else:
+                selected_cluster = best_cluster
+                selected_sim = best_sim
+
+            if selected_cluster and selected_sim >= self.settings.similarity_threshold:
                 candidates.append(
                     AssignmentCandidate(
                         identity=identity,
-                        identity_vector=face_vec,
-                        cluster_id=best_cluster,
+                        identity_vector=identity.face_vector,
+                        cluster_id=selected_cluster,
                         discovery_method=self.discovery_method,
-                        discovery_similarity=best_sim,
+                        discovery_similarity=selected_sim,
                     )
                 )
                 logger.debug(
                     "[RepresentativeDiscovery] MATCHED identity %s -> cluster %s with similarity %.4f",
                     identity.id,
-                    best_cluster,
-                    best_sim,
+                    selected_cluster,
+                    selected_sim,
                 )
 
         # Log sample of best similarities when no candidates found
@@ -102,54 +142,3 @@ class RepresentativeDiscovery(DiscoveryAlgorithm):
             "[RepresentativeDiscovery] Completed: %d candidates from %d identities", len(candidates), len(identities)
         )
         return candidates
-
-    def _find_best_match(
-        self,
-        face_vector: np.ndarray,
-        representatives_by_cluster: dict[str, list[np.ndarray]],
-        labeled_cluster_ids: set[str],
-    ) -> tuple[str | None, float]:
-        """Identify the best matching cluster for a face embedding.
-
-        Logic:
-        1. Find global best match (highest similarity).
-        2. Find best labeled match (highest similarity among labeled clusters).
-        3. If global best is HIGH CONFIDENCE (>= complete_link_min_floor): Use it (Auto-Accept).
-        4. Else (Suggestion Range): Prefer best LABELED match if available.
-        """
-        best_cluster: str | None = None
-        best_similarity = 0.0
-
-        best_labeled_cluster: str | None = None
-        best_labeled_similarity = 0.0
-
-        for cluster_id, representatives in representatives_by_cluster.items():
-            for rep in representatives:
-                rep_vec = normalize_face_embedding(np.asarray(rep, dtype=np.float32))
-                similarity = float(np.dot(face_vector, rep_vec))
-
-                # Update global best
-                if similarity > best_similarity:
-                    best_similarity = similarity
-                    best_cluster = cluster_id
-
-                # Update labeled best
-                if cluster_id in labeled_cluster_ids and similarity > best_labeled_similarity:
-                    best_labeled_similarity = similarity
-                    best_labeled_cluster = cluster_id
-
-        # Decision Logic
-        high_confidence_threshold = self.settings.complete_link_min_floor
-
-        # 1. High Confidence -> Auto-Assign (Label doesn't matter)
-        if best_similarity >= high_confidence_threshold:
-            return best_cluster, best_similarity
-
-        # 2. Low Confidence (Suggestion) -> Prefer Labeled Cluster
-        if best_labeled_cluster and best_labeled_similarity > 0:
-            # If we have a labeled match, use it instead of the unlabeled one
-            # even if the unlabeled one score is higher (within suggestion range)
-            return best_labeled_cluster, best_labeled_similarity
-
-        # 3. No Labeled Match -> Return Unlabeled (or None if below threshold)
-        return best_cluster, best_similarity

@@ -23,8 +23,8 @@ async def test_build_cluster_service_wires_sqlalchemy_repositories(db_session, t
 
     assert isinstance(service, ClusterService)
     assert isinstance(service.assignment_writer, AssignmentWriter)
-    assert isinstance(service.assignment_writer._clusters, SqlAlchemyClusterRepository)
-    assert isinstance(service.assignment_writer._members, SqlAlchemyMemberRepository)
+    assert isinstance(service.assignment_writer.cluster_repository, SqlAlchemyClusterRepository)
+    assert isinstance(service.assignment_writer.member_repository, SqlAlchemyMemberRepository)
     assert isinstance(service.logger, ClusteringLogger)
     # Gate now uses simplified checks (MaturityCheck, CompleteLinkCheck, MemberDistributionCheck removed)
     assert {type(check) for check in service.gate.checks} == {
@@ -40,5 +40,5 @@ async def test_get_cluster_service_uses_sqlalchemy_factory(db_session, tenant) -
     service = await dependencies.get_cluster_service(session=db_session, tenant_id=str(tenant.id))
 
     assert isinstance(service, ClusterService)
-    assert isinstance(service.assignment_writer._clusters, SqlAlchemyClusterRepository)
-    assert isinstance(service.assignment_writer._members, SqlAlchemyMemberRepository)
+    assert isinstance(service.assignment_writer.cluster_repository, SqlAlchemyClusterRepository)
+    assert isinstance(service.assignment_writer.member_repository, SqlAlchemyMemberRepository)

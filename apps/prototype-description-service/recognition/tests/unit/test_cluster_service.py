@@ -22,6 +22,7 @@ from recognition.application.orchestration import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
+from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.observability import ClusteringLogger, DecisionType
 from recognition.shared.ids import generate_id
 
@@ -77,7 +78,14 @@ class GateStub(AssignmentGate):
 
 
 class WriterStub(AssignmentWriter):
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        *,
+        cluster_repository: ClusterRepository | None = None,
+        member_repository: MemberRepository | None = None,
+    ) -> None:
+        self._clusters = cast(ClusterRepository, cluster_repository)
+        self._members = cast(MemberRepository, member_repository)
         self.assigned: list[AssignmentDecision] = []
         self.created_clusters: list[tuple[str, list[MediaIdentity], list[float], str]] = []
         self.refresh_called = False
@@ -204,7 +212,6 @@ async def test_cluster_unclustered_identities_skips_existing_cluster_fetch_when_
     """cluster_unclustered_identities should not fetch existing clusters when there is nothing to process."""
     settings = make_settings()
     gate = GateStub([AssignmentOutcome.ACCEPT])
-    writer = WriterStub()
     sugg = SuggestionStub()
     session = SessionStub()
 
@@ -217,6 +224,7 @@ async def test_cluster_unclustered_identities_skips_existing_cluster_fetch_when_
             return []
 
     cluster_repo = ClusterRepoStub()
+    writer = WriterStub(cluster_repository=cluster_repo)
 
     service = ClusterService(
         gate=gate,
@@ -228,8 +236,6 @@ async def test_cluster_unclustered_identities_skips_existing_cluster_fetch_when_
         logger=None,
         session=cast(Any, session),
     )
-    service.assignment_writer._clusters = cast(Any, cluster_repo)
-
     tenant_id = str(uuid.uuid4())
     result = await service.cluster_unclustered_identities(tenant_id)
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 from unittest.mock import AsyncMock
 
@@ -10,12 +9,11 @@ import numpy as np
 import pytest
 
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
-from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.service import SuggestionService
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, SuggestionRepository
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 
 
 def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:
@@ -145,75 +143,6 @@ async def test_resolve_for_identity_exclusive_accepts_and_rejects() -> None:
     assert updated == 2
     suggestion_repo.update_status.assert_awaited_once_with(tenant_id, "s-1", SuggestionStatus.ACCEPTED)
     suggestion_repo.bulk_update_status.assert_awaited_once()
-
-
-@pytest.mark.asyncio
-async def test_refresh_for_identity_creates_suggestion_for_band() -> None:
-    tenant_id = str(uuid.uuid4())
-    cluster_id = str(uuid.uuid4())
-    identity_id = str(uuid.uuid4())
-
-    suggestion_repo = AsyncMock(spec=SuggestionRepository)
-    suggestion_repo.upsert_by_identity_cluster.return_value = AssignmentSuggestion(
-        id="s-1",
-        identity_id=identity_id,
-        cluster_id=cluster_id,
-        representative_similarity=0.75,
-        member_similarity=0.75,
-        status=SuggestionStatus.PENDING,
-        created_at=datetime.now(tz=UTC),
-    )
-
-    class ClusterRepoStub:
-        async def get_labeled_with_representatives(self, *_args, **_kwargs):
-            rep_vec = np.array([0.75, np.sqrt(1 - 0.75**2)], dtype=np.float32)
-            cluster = IdentityCluster(
-                id=cluster_id,
-                tenant_id=tenant_id,
-                label="Avery Rhodes",
-                is_labeled=True,
-                identity_count=5,
-                user_confirmed=True,
-                created_at=None,
-            )
-            return [(cluster, [type("Rep", (), {"embedding": rep_vec})()])]
-
-    class SessionStub:
-        async def get(self, _model, _identity_id):
-            return type(
-                "IdentityModel",
-                (),
-                {
-                    "id": uuid.UUID(identity_id),
-                    "tenant_id": uuid.UUID(tenant_id),
-                    "media_id": "media-1",
-                    "embedding": np.array([1.0, 0.0], dtype=np.float32),
-                    "confidence": 0.9,
-                    "bbox_width": 1,
-                    "bbox_height": 1,
-                },
-            )()
-
-    settings = ClusteringSettings(
-        similarity_threshold=0.8,
-        suggestion_floor=0.7,
-        suggestion_ceiling=0.8,
-    )
-    service = SuggestionService(
-        suggestion_repo,
-        tenant_id=tenant_id,
-        cluster_repository=ClusterRepoStub(),
-        session=SessionStub(),
-        settings=settings,
-    )
-
-    suggestions = await service.refresh_for_identity(
-        identity_id=identity_id,
-        reason=SuggestionRefreshReason.MANUAL_SPLIT,
-    )
-
-    assert len(suggestions) == 1
-    suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
 
 
 @pytest.mark.asyncio

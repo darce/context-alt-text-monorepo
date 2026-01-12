@@ -7,7 +7,7 @@ from uuid import uuid4
 import numpy as np
 import pytest
 
-from recognition.application.clustering.constrained_hac import ConstrainedHAC
+from recognition.application.clustering.constrained_hac import ConstrainedHAC, _apply_constraint_to_matrix
 from recognition.application.settings.clustering import HACSettings
 from recognition.domain.constraints import ConstraintSource, ConstraintType, IdentityConstraint
 
@@ -115,3 +115,33 @@ class TestConstrainedHAC:
 
         # With CANNOT_LINK, dist becomes 10.0 -> split
         assert result[id_a] != result[id_b]
+
+
+def _make_constraint(identity_a, identity_b, constraint_type):  # noqa: ANN001
+    return IdentityConstraint(
+        id=uuid4(),
+        tenant_id=uuid4(),
+        identity_a=identity_a,
+        identity_b=identity_b,
+        constraint_type=constraint_type,
+        source=ConstraintSource.MERGE,
+        created_at=datetime.now(UTC),
+    )
+
+
+def test_apply_constraint_ignores_missing_ids() -> None:
+    dist = np.array([[0.0, 0.2], [0.2, 0.0]], dtype=np.float32)
+    original = dist.copy()
+    _apply_constraint_to_matrix(dist, _make_constraint(uuid4(), uuid4(), ConstraintType.MUST_LINK), {}, penalty=10.0)
+    np.testing.assert_allclose(dist, original)
+
+
+def test_apply_constraint_updates_matrix() -> None:
+    id_a, id_b = uuid4(), uuid4()
+    id_map = {id_a: 0, id_b: 1}
+    dist = np.array([[0.0, 0.2], [0.2, 0.0]], dtype=np.float32)
+    _apply_constraint_to_matrix(dist, _make_constraint(id_a, id_b, ConstraintType.MUST_LINK), id_map, penalty=0.9)
+    assert dist[0, 1] == 0.0
+    dist = np.array([[0.0, 0.2], [0.2, 0.0]], dtype=np.float32)
+    _apply_constraint_to_matrix(dist, _make_constraint(id_a, id_b, ConstraintType.CANNOT_LINK), id_map, penalty=0.9)
+    assert dist[0, 1] == 0.9

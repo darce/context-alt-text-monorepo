@@ -20,7 +20,7 @@ from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
 from recognition.application.events.broadcaster import get_event_broadcaster
-from recognition.application.orchestration.cluster_curation import update_cluster
+from recognition.application.orchestration.curation import update_cluster
 from recognition.application.orchestration.protocols import SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
@@ -28,6 +28,7 @@ from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
 from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import normalize_face_embedding
+from recognition.shared.tenant import coerce_tenant_uuid
 
 logger = logging.getLogger(__name__)
 
@@ -47,8 +48,8 @@ async def post_merge_retry_matching(
     if session is None:
         return
 
-    cluster_repo: ClusterRepository = assignment_writer._clusters
-    member_repo: MemberRepository = assignment_writer._members
+    cluster_repo: ClusterRepository = assignment_writer.cluster_repository
+    member_repo: MemberRepository = assignment_writer.member_repository
 
     reps = await cluster_repo.get_all_representatives(target_cluster_id)
     if not reps:
@@ -152,7 +153,7 @@ async def post_merge_retry_matching(
 
     # 2) Try high-confidence matches from remaining unclustered identities.
     try:
-        tenant_uuid = uuid.UUID(str(tenant_id))
+        tenant_uuid = coerce_tenant_uuid(tenant_id)
     except ValueError:
         tenant_uuid = None
 
@@ -232,8 +233,8 @@ async def merge_cluster(
     defer_recompute: bool = False,
 ) -> IdentityCluster | None:
     """Merge a source cluster into a target cluster by reassigning members."""
-    cluster_repo: ClusterRepository = assignment_writer._clusters
-    member_repo: MemberRepository = assignment_writer._members
+    cluster_repo: ClusterRepository = assignment_writer.cluster_repository
+    member_repo: MemberRepository = assignment_writer.member_repository
 
     source = await cluster_repo.get_by_id(source_cluster_id)
     target = await cluster_repo.get_by_id(target_cluster_id)
@@ -266,16 +267,9 @@ async def merge_cluster(
     # Logic for MUST_LINK creation should be moved to curation_job if needed.
 
     if not defer_recompute:
-        recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
-        if callable(recompute_reps):
-            await recompute_reps(target_cluster_id)
-        recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
-        if callable(recompute_centroid):
-            await recompute_centroid(target_cluster_id)
-
-        refresh_view = getattr(assignment_writer, "refresh_centroids_view", None)
-        if callable(refresh_view):
-            await refresh_view()
+        await assignment_writer.recompute_representatives(target_cluster_id)
+        await assignment_writer.recompute_centroid(target_cluster_id)
+        await assignment_writer.refresh_centroids_view()
 
         # Resolve any pending suggestions for identities moved into the target cluster
         if suggestion_service:

@@ -111,13 +111,13 @@ async def test_run_curation_job_creates_merge_must_link_constraint() -> None:
 
     constraint_repo = Mock()
     constraint_repo.create = AsyncMock()
-    suggestion_service = Mock()
-    suggestion_service.refresh_for_cluster = AsyncMock()
+    suggestion_refresh_service = Mock()
+    suggestion_refresh_service.refresh_for_cluster = AsyncMock()
 
     cluster_service = Mock()
     cluster_service.constraint_repository = constraint_repo
     cluster_service.retry_matching = AsyncMock()
-    cluster_service.suggestion_service = suggestion_service
+    cluster_service.suggestion_refresh_service = suggestion_refresh_service
 
     await run_curation_job(
         tenant_id=tenant_id,
@@ -131,5 +131,5 @@ async def test_run_curation_job_creates_merge_must_link_constraint() -> None:
 
     constraint_repo.create.assert_awaited_once()
     cluster_service.retry_matching.assert_awaited_once_with(target_cluster_id=target_cluster_id, tenant_id=tenant_id)
-    suggestion_service.refresh_for_cluster.assert_awaited_once_with(target_cluster_id)
+    suggestion_refresh_service.refresh_for_cluster.assert_awaited_once_with(target_cluster_id)
     mock_repo.delete.assert_awaited_once_with(source_cluster_id)

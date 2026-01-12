@@ -11,9 +11,10 @@ from datetime import UTC, datetime
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 
 from db.session import async_session_factory
-from recognition.application.suggestions.service import SuggestionRefreshReason
+from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.config.security import get_security_settings
 from recognition.domain.job import JobType, SplitJobPayload
+from recognition.domain.suggestion import SuggestionRefreshReason
 from recognition.infrastructure.repositories import SqlAlchemyIdentityClusterBlockRepository
 from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
@@ -21,6 +22,7 @@ from recognition.interface_adapters.http.dependencies import (
     get_cluster_service_builder,
     get_job_service,
     get_session,
+    get_suggestion_refresh_service,
     get_suggestion_service,
     require_auth,
     require_write_access,
@@ -54,47 +56,6 @@ from recognition.shared.ids import generate_id
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth)])
-
-
-async def run_background_retry(tenant_id: str, cluster_id: str) -> None:
-    """Execute post-merge matching retry in a background task with fresh session."""
-    try:
-        async with async_session_factory() as session:
-            # We don't pass settings here, defaulting to env vars which is fine for background tasks
-            cluster_service = await build_cluster_service(session=session, tenant_id=tenant_id)
-            await cluster_service.retry_matching(target_cluster_id=cluster_id, tenant_id=tenant_id)
-    except Exception as exc:
-        _logger.exception("Background merge retry failed for cluster %s: %s", cluster_id, exc)
-
-
-async def run_background_surface_suggestions(tenant_id: str, cluster_id: str) -> None:
-    """Surface suggestions for newly labeled clusters with a fresh session."""
-    try:
-        async with async_session_factory() as session:
-            cluster_service = await build_cluster_service(session=session, tenant_id=tenant_id)
-            surface_fn = getattr(cluster_service.suggestion_service, "surface_for_newly_labeled_cluster", None)
-            if callable(surface_fn):
-                await surface_fn(cluster_id)
-    except Exception as exc:
-        _logger.exception(
-            "Background suggestion surfacing failed for cluster %s: %s",
-            cluster_id,
-            exc,
-        )
-
-
-async def run_background_refresh_suggestions(tenant_id: str, cluster_id: str) -> None:
-    """Refresh suggestions for a cluster with a fresh session."""
-    try:
-        async with async_session_factory() as session:
-            cluster_service = await build_cluster_service(session=session, tenant_id=tenant_id)
-            await cluster_service.suggestion_service.refresh_for_cluster(cluster_id)
-    except Exception as exc:
-        _logger.exception(
-            "Background suggestion refresh failed for cluster %s: %s",
-            cluster_id,
-            exc,
-        )
 
 
 @router.post("/clustering/jobs", response_model=ClusteringJobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -205,7 +166,7 @@ async def update_cluster(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
-    cluster_repo = cluster_service.assignment_writer._clusters
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
     old_cluster = await cluster_repo.get_by_id(cluster_id)
     was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
 
@@ -218,7 +179,13 @@ async def update_cluster(
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
     if label and not was_user_confirmed:
-        background_tasks.add_task(run_background_surface_suggestions, request.tenant_id, cluster_id)
+        background_tasks.add_task(
+            run_background_surface_suggestions,
+            request.tenant_id,
+            cluster_id,
+            session_factory=async_session_factory,
+            cluster_service_builder=build_cluster_service,
+        )
     return cluster
 
 
@@ -365,9 +332,9 @@ async def split_cluster(
     )
 
     # Refresh suggestions for affected clusters
-    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
+    suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
     for cid in [cluster_id, *new_ids]:
-        await suggestion_service.refresh_for_cluster(cid)
+        await suggestion_refresh_service.refresh_for_cluster(cid)
 
     return response_obj
 
@@ -388,8 +355,6 @@ async def reassign_identity(
     When reassigning to a cluster, any pending suggestion for that identity+cluster
     is automatically marked as accepted.
     """
-    from recognition.interface_adapters.http.dependencies import get_suggestion_service
-
     validate_entity_id(request.identity_id, field_name="identity_id")
     if request.target_cluster_id:
         validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
@@ -436,12 +401,11 @@ async def reassign_identity(
                 cluster_id=request.target_cluster_id,
                 resolution="accepted",
             )
-        refresh_for_identity = getattr(suggestion_service, "refresh_for_identity", None)
-        if callable(refresh_for_identity):
-            await refresh_for_identity(
-                identity_id=request.identity_id,
-                reason=SuggestionRefreshReason.MANUAL_ASSIGN,
-            )
+        suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
+        await suggestion_refresh_service.refresh_for_identity(
+            identity_id=request.identity_id,
+            reason=SuggestionRefreshReason.MANUAL_ASSIGN,
+        )
     else:
         # Remove from current cluster (make orphan)
         await cluster_service.remove_identity_from_cluster(request.identity_id, recompute=False)
@@ -461,7 +425,7 @@ async def reassign_identity(
                     from recognition.infrastructure.repositories import SqlAlchemyConstraintRepository
 
                     # We need the cluster's representative to anchor the constraint
-                    cluster_repo = cluster_service.assignment_writer._clusters
+                    cluster_repo = cluster_service.assignment_writer.cluster_repository
                     source_cluster = await cluster_repo.get_by_id(source_cluster_id)
 
                     if source_cluster and source_cluster.representative_identity_id:
@@ -499,18 +463,17 @@ async def reassign_identity(
                 cluster_id=source_cluster_id,
                 resolution="rejected",
             )
-        refresh_for_identity = getattr(suggestion_service, "refresh_for_identity", None)
-        if callable(refresh_for_identity):
-            await refresh_for_identity(
-                identity_id=request.identity_id,
-                reason=SuggestionRefreshReason.WRONG_PERSON,
-            )
+        suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
+        await suggestion_refresh_service.refresh_for_identity(
+            identity_id=request.identity_id,
+            reason=SuggestionRefreshReason.WRONG_PERSON,
+        )
 
         # Refresh suggestions for the affected clusters
         if source_cluster_id:
-            await suggestion_service.refresh_for_cluster(source_cluster_id)
+            await suggestion_refresh_service.refresh_for_cluster(source_cluster_id)
         if request.target_cluster_id:
-            await suggestion_service.refresh_for_cluster(request.target_cluster_id)
+            await suggestion_refresh_service.refresh_for_cluster(request.target_cluster_id)
 
     return ReassignIdentityResponse(
         identity_id=request.identity_id,
@@ -544,8 +507,8 @@ async def assign_outlier(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster or identity not found")
 
     # Refresh suggestions for the target cluster
-    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
-    await suggestion_service.refresh_for_cluster(cluster_id)
+    suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
+    await suggestion_refresh_service.refresh_for_cluster(cluster_id)
 
     return cluster
 

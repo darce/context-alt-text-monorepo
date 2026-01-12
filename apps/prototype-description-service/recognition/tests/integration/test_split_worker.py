@@ -17,8 +17,8 @@ from recognition.worker.scan_worker import ScanWorker, ScanWorkerConfig
 async def test_worker_executes_split_job(db_session, tenant) -> None:
     """Worker should execute split jobs and update status."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     embedding_a = [0.0] * 512
     embedding_a[0] = 1.0

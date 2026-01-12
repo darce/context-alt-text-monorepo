@@ -177,7 +177,7 @@ class JobService:
                 tenant_id=tenant_id,
                 cluster_ids=cluster_ids_list,
                 assignment_writer=self.cluster_service.assignment_writer,
-                cluster_repo=self.cluster_service.assignment_writer._clusters,
+                cluster_repo=self.cluster_service.assignment_writer.cluster_repository,
                 cluster_service=self.cluster_service,
                 source_cluster_id=source_cluster_id,
             )

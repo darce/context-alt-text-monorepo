@@ -11,23 +11,21 @@ from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefres
 
 
 class SuggestionServiceProtocol(Protocol):
-    """Protocol for creating and managing assignment suggestions."""
+    """Protocol for creating and resolving assignment suggestions."""
 
     async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None:
         """Create a suggestion record for later human review."""
         ...
 
-    async def refresh_for_identity(
+    async def update_scores(
         self,
+        suggestion_id: str,
         *,
-        identity_id: str,
-        reason: SuggestionRefreshReason,
-    ) -> list[AssignmentSuggestion]:
-        """Refresh suggestions for a specific identity."""
-        ...
-
-    async def refresh_for_cluster(self, cluster_id: str) -> int:
-        """Refresh suggestions for a whole cluster."""
+        representative_similarity: float,
+        member_similarity: float | None = None,
+        confidence_score: float | None = None,
+    ) -> AssignmentSuggestion | None:
+        """Update similarity/confidence metrics for an existing suggestion."""
         ...
 
     async def resolve_for_identity(
@@ -47,4 +45,25 @@ class SuggestionServiceProtocol(Protocol):
         reason: str = "manual_assign",
     ) -> int:
         """Accept one assignment and reject all other suggestions for an identity."""
+        ...
+
+
+class SuggestionRefreshServiceProtocol(Protocol):
+    """Protocol for refreshing and surfacing suggestions."""
+
+    async def refresh_for_identity(
+        self,
+        *,
+        identity_id: str,
+        reason: SuggestionRefreshReason,
+    ) -> list[AssignmentSuggestion]:
+        """Refresh suggestions for a specific identity."""
+        ...
+
+    async def refresh_for_cluster(self, cluster_id: str) -> int:
+        """Refresh suggestions for a whole cluster."""
+        ...
+
+    async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
+        """Surface suggestions after a cluster is user-labeled."""
         ...

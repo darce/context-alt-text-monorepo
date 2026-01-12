@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import asyncio
 import logging
-import uuid
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
@@ -17,22 +16,19 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from db.models import IdentityClusteringJob
-from db.tenant_context import enable_rls_bypass, set_tenant_context
+from db.tenant_context import enable_rls_bypass
 from recognition.application.embedding.detector import FaceDetectorProtocol, InsightFaceFaceDetector, StubFaceDetector
 from recognition.application.embedding.generator import (
     EmbeddingGeneratorProtocol,
     InsightFaceEmbeddingGenerator,
     StubEmbeddingGenerator,
 )
-from recognition.application.orchestration.curation_job import run_curation_job
-from recognition.application.orchestration.job_service import JobService
 from recognition.application.scan.queue_repository import ScanQueueItem
-from recognition.application.scan.scan_queue_service import ScanQueueService
-from recognition.application.scan.service import ScanService
 from recognition.config import get_settings as get_recognition_settings
-from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
-from recognition.interface_adapters.http.dependencies import build_cluster_service
+from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
+from recognition.worker.handlers.scan import ScanItemHandler
+from recognition.worker.handlers.utils import ensure_job_context
 
 logger = logging.getLogger(__name__)
 
@@ -86,6 +82,18 @@ class ScanWorker:
                 self._generator = StubEmbeddingGenerator()
 
         self._last_mv_refresh_time: datetime = datetime.min.replace(tzinfo=UTC)
+        self._scan_handler = ScanItemHandler(
+            session_factory=self._session_factory,
+            detector=self._detector,
+            generator=self._generator,
+            max_attempts=self._config.max_attempts,
+            max_concurrency=self._config.max_concurrency,
+        )
+        self._job_handlers = {
+            "split": SplitJobHandler(),
+            "curation": CurationJobHandler(),
+            "clustering": ClusteringJobHandler(),
+        }
 
     async def __aenter__(self) -> ScanWorker:
         """Prepare worker resources."""
@@ -142,117 +150,7 @@ class ScanWorker:
         *,
         claimed: list[ScanQueueItem],
     ) -> None:
-        if not claimed:
-            return
-
-        affected_jobs = {item.job_id for item in claimed}
-        max_concurrency = max(1, self._config.max_concurrency)
-        semaphore = asyncio.Semaphore(min(max_concurrency, len(claimed)))
-
-        async def _process_item(item: ScanQueueItem) -> None:
-            request_id = uuid.uuid4()
-            async with semaphore, self._session_factory() as session:
-                await enable_rls_bypass(session)
-                repo = SqlAlchemyScanQueueRepository(session)
-                scan_service = self._build_scan_service(session)
-                now = datetime.now(tz=UTC)
-                logger.info(
-                    "[worker] START scan_item request_id=%s job_id=%s item_id=%s media_id=%s",
-                    request_id,
-                    item.job_id,
-                    item.id,
-                    item.media_id,
-                )
-                try:
-                    identities_detected = await scan_service.process_media_item(
-                        tenant_id=str(item.tenant_id),
-                        media_id=item.media_id,
-                        media_url=item.media_url,
-                    )
-                    await repo.mark_item_completed(
-                        item_id=item.id,
-                        completed_at=now,
-                        identities_detected=identities_detected,
-                    )
-                    await session.commit()
-                    logger.info(
-                        "[worker] COMPLETE scan_item request_id=%s job_id=%s item_id=%s identities=%s",
-                        request_id,
-                        item.job_id,
-                        item.id,
-                        identities_detected,
-                    )
-                except Exception as exc:  # pragma: no cover
-                    error_message = str(exc)
-                    await self._handle_item_failure(
-                        repo=repo,
-                        item=item,
-                        now=now,
-                        error_message=error_message,
-                    )
-                    await session.commit()
-                    logger.exception(
-                        "[worker] FAIL scan_item request_id=%s job_id=%s item_id=%s",
-                        request_id,
-                        item.job_id,
-                        item.id,
-                    )
-
-        results = await asyncio.gather(*(_process_item(item) for item in claimed), return_exceptions=True)
-        for result in results:
-            if isinstance(result, Exception):
-                logger.error("[worker] scan_item task failed", exc_info=result)
-
-        await self._refresh_job_progress(affected_jobs)
-
-    async def _refresh_job_progress(self, job_ids: set[uuid.UUID]) -> None:
-        """Recompute progress for affected scan jobs.
-
-        When a scan job successfully completes, automatically creates a clustering
-        job for the same tenant so identities get clustered without manual intervention.
-        """
-        if not job_ids:
-            return
-        async with self._session_factory() as session:
-            await enable_rls_bypass(session)
-            repo = SqlAlchemyScanQueueRepository(session)
-            queue = ScanQueueService(repo)
-            for job_id in job_ids:
-                completed = await queue.refresh_job_progress(job_id=job_id)
-                if completed:
-                    # Auto-create a clustering job for this tenant
-                    tenant_id = await repo.get_job_tenant_id(job_id=job_id)
-                    if tenant_id:
-                        logger.info(
-                            "[worker] Scan job %s completed, auto-creating clustering job for tenant %s",
-                            job_id,
-                            tenant_id,
-                        )
-                        clustering_job = IdentityClusteringJob(
-                            tenant_id=tenant_id,
-                            job_type="clustering",
-                            status="pending",
-                            progress=0.0,
-                            total_identities=0,
-                            processed_identities=0,
-                            message="Auto-triggered after scan completion",
-                            payload={},
-                        )
-                        session.add(clustering_job)
-            await session.commit()
-
-    async def _handle_item_failure(
-        self,
-        *,
-        repo: SqlAlchemyScanQueueRepository,
-        item: ScanQueueItem,
-        now: datetime,
-        error_message: str,
-    ) -> None:
-        if item.attempts < self._config.max_attempts:
-            await repo.release_item_for_retry(item_id=item.id, error_message=error_message)
-            return
-        await repo.mark_item_failed(item_id=item.id, completed_at=now, error_message=error_message)
+        await self._scan_handler.process_items(claimed=claimed)
 
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
         stmt = (
@@ -268,158 +166,29 @@ class ScanWorker:
         if job is None:
             return False
 
-        await self._ensure_job_context(session=session, job=job)
+        await ensure_job_context(session=session, job=job)
         job.status = "running"
         job.started_at = now
         await session.flush()
 
         try:
-            if job.job_type == "split":
-                await self._handle_split_job(job=job, session=session)
-            elif job.job_type == "curation":
-                await self._handle_curation_job(job=job, session=session)
-            elif job.job_type == "clustering":
-                await self._handle_clustering_job(job=job, session=session)
-            else:
-                await self._ensure_job_context(session=session, job=job)
+            handler = self._job_handlers.get(job.job_type)
+            if handler is None:
+                await ensure_job_context(session=session, job=job)
                 job.status = "failed"
                 job.error_message = f"unsupported job_type: {job.job_type}"
                 job.completed_at = datetime.now(tz=UTC)
                 await session.flush()
+            else:
+                await handler.handle(job, session)
             return True
         except Exception as exc:  # pragma: no cover
-            await self._ensure_job_context(session=session, job=job)
+            await ensure_job_context(session=session, job=job)
             job.status = "failed"
             job.error_message = str(exc)
             job.completed_at = datetime.now(tz=UTC)
             await session.flush()
             return True
-
-    async def _handle_curation_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
-        cluster_ids = _coerce_str_list(job.payload.get("cluster_ids") if job.payload else None)
-        if not cluster_ids:
-            await self._ensure_job_context(session=session, job=job)
-            job.status = "failed"
-            job.error_message = "missing cluster ids"
-            job.completed_at = datetime.now(tz=UTC)
-            await session.flush()
-            return
-
-        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
-        result_counts = await run_curation_job(
-            tenant_id=str(job.tenant_id),
-            cluster_ids=cluster_ids,
-            assignment_writer=cluster_service.assignment_writer,
-            cluster_repo=cluster_service.assignment_writer._clusters,
-            cluster_service=cluster_service,
-            source_cluster_id=_coerce_optional_str(job.payload.get("source_cluster_id")),
-        )
-        await self._ensure_job_context(session=session, job=job)
-        completed = int(result_counts.get("clusters_recomputed", 0))
-        total = max(int(job.total_identities or 0), len(cluster_ids))
-        job.processed_identities = completed
-        job.total_identities = total
-        job.progress = _compute_progress(completed, total)
-        job.status = "completed"
-        job.completed_at = datetime.now(tz=UTC)
-        await session.flush()
-
-    async def _handle_clustering_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
-        """Execute a standard clustering job."""
-        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
-
-        async def _progress_callback(completed: int, total: int):
-            # We need a fresh session or just flush to the current one?
-            # Since we are in the middle of a transaction, we can just flush.
-            # However, the SSE stream polls the DB.
-            job.processed_identities = completed
-            job.total_identities = total
-            job.progress = _compute_progress(completed, total)
-            await session.flush()
-
-        result = await cluster_service.cluster_unclustered_identities(
-            tenant_id=str(job.tenant_id),
-            job_id=str(job.id),
-            progress_callback=_progress_callback,
-            commit=False,  # Worker handles commit
-        )
-
-        await self._ensure_job_context(session=session, job=job)
-        job.processed_identities = result.completed
-        job.total_identities = result.total
-        job.progress = 1.0
-        job.status = "completed"
-        job.completed_at = datetime.now(tz=UTC)
-        await session.flush()
-
-    async def _handle_split_job(self, *, job: IdentityClusteringJob, session: AsyncSession) -> None:
-        """Execute a split job.
-
-        Args:
-            job: Job with split payload.
-            session: Active database session.
-
-        Raises:
-            ValueError: If payload is invalid.
-        """
-        payload = job.payload or {}
-        cluster_id_value = payload.get("cluster_id")
-        if not cluster_id_value:
-            raise ValueError("Split job missing cluster_id")
-
-        cluster_id = str(cluster_id_value)
-        n_clusters = _coerce_int(payload.get("n_clusters"), default=0)
-        anchor_identity_id = _coerce_optional_str(payload.get("anchor_identity_id"))
-        split_mode = _coerce_optional_str(payload.get("split_mode"))
-
-        logger.info(
-            "[worker] START split_job job_id=%s cluster_id=%s n_clusters=%d tenant_id=%s",
-            job.id,
-            cluster_id,
-            n_clusters,
-            job.tenant_id,
-        )
-
-        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
-        new_ids, counts = await cluster_service.split_cluster(
-            cluster_id=cluster_id,
-            n_clusters=n_clusters,
-            anchor_identity_id=anchor_identity_id,
-            split_mode=split_mode,
-            recompute=False,
-        )
-
-        if new_ids:
-            job_service = JobService(
-                repository=SqlAlchemyJobRepository(session),
-                cluster_service=cluster_service,
-                scan_service=None,
-            )
-            await job_service.queue_curation_followup(
-                tenant_id=str(job.tenant_id),
-                cluster_ids=[cluster_id, *new_ids],
-            )
-
-        await self._ensure_job_context(session=session, job=job)
-        total = max(1, len(new_ids))
-        job.processed_identities = total
-        job.total_identities = total
-        job.progress = _compute_progress(total, total)
-        job.status = "completed"
-        job.message = f"Split complete: created {len(new_ids)} clusters"
-        job.completed_at = datetime.now(tz=UTC)
-        await session.flush()
-
-        logger.info(
-            "[worker] COMPLETE split_job job_id=%s new_clusters=%s moved_counts=%s",
-            job.id,
-            new_ids,
-            counts,
-        )
-
-    def _build_scan_service(self, session: AsyncSession) -> ScanService:
-        """Create a ScanService bound to the provided session."""
-        return ScanService(session=session, detector=self._detector, generator=self._generator)
 
     async def _refresh_mv_if_needed(self, session: AsyncSession, now: datetime) -> None:
         """Periodically refresh the cluster centroids materialized view."""
@@ -440,50 +209,6 @@ class ScanWorker:
             # Don't update _last_mv_refresh_time so we retry next cycle,
             # but maybe backoff/limit retries logic is needed if it fails persistently?
             # For now, let it retry next loop.
-
-    async def _ensure_job_context(self, *, session: AsyncSession, job: IdentityClusteringJob) -> None:
-        """Reassert tenant context before updating clustering job rows."""
-        await set_tenant_context(session, job.tenant_id)
-        await enable_rls_bypass(session)
-
-
-def _compute_progress(completed: int, total: int) -> float:
-    if total <= 0:
-        return 0.0
-    return min(1.0, completed / total)
-
-
-def _coerce_str_list(value: object) -> list[str]:
-    if not isinstance(value, list):
-        return []
-    results: list[str] = []
-    for item in value:
-        if isinstance(item, str):
-            results.append(item)
-        elif isinstance(item, uuid.UUID):
-            results.append(str(item))
-    return results
-
-
-def _coerce_optional_str(value: object) -> str | None:
-    if value is None:
-        return None
-    return str(value)
-
-
-def _coerce_int(value: object, *, default: int) -> int:
-    if value is None:
-        return default
-    if isinstance(value, bool):
-        return int(value)
-    if isinstance(value, (int, float)):
-        return int(value)
-    if isinstance(value, (str, bytes, bytearray)):
-        try:
-            return int(value)
-        except ValueError:
-            return default
-    return default
 
 
 async def _main() -> None:

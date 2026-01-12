@@ -290,6 +290,43 @@ const handleChange = (newA: number) => {
 };
 ```
 
+### Hook Architecture Anti-Patterns
+
+```tsx
+// BAD: "God Hook" (>150 lines, multiple concerns)
+const useEverything = () => {
+  // Mutations, derived state, SSE tracking, status text, progress aggregation...
+  const [state1, setState1] = useState();
+  const [state2, setState2] = useState();
+  // ... 20 more hooks
+  return { mutation1, mutation2, phase, status, progress, isOnline, ... };
+};
+
+// GOOD: Compose focused hooks
+const useScanMutation = (options) => useMutation({...});
+const useJobPhase = (activeJobs) => useMemo(() => derivePhase(activeJobs), [activeJobs]);
+const useStatusText = (phase, progress) => useMemo(() => formatStatus(phase, progress), [phase, progress]);
+
+const useJobStateMachine = () => {
+  const scan = useScanMutation();
+  const phase = useJobPhase(scan.activeJobs);
+  const status = useStatusText(phase, scan.progress);
+  return { scan: scan.mutate, phase, status };
+};
+```
+
+**Signs of a God Hook:**
+- More than 150 lines
+- More than 5 `useState` calls
+- More than 3 `useEffect` calls
+- Returns more than 8 values
+- Mixes mutation orchestration with derived state
+
+**Refactoring strategy:**
+1. Extract each `useMemo` into a focused hook
+2. Group related mutations into a single hook
+3. Keep the "orchestration" hook thin (compose, don't implement)
+
 ### Data Fetching
 
 Use React Query for all API calls:

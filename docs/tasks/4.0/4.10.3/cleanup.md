@@ -2342,9 +2342,13 @@ class RepresentativeCache:
         )
 ```
 
-**C. Approximate Nearest Neighbor (ANN) for Large Scale**
+**C. Approximate Nearest Neighbor (ANN) for Large Scale — POST-MVP**
 
-For >10k representatives, use FAISS or Annoy:
+> ⚠️ **Deferred to post-MVP**: Brute-force `np.dot()` handles 10k vectors in ~2ms.
+> FAISS adds C++ build complexity and index maintenance overhead.
+> Revisit only when monitoring shows >10k representatives per tenant.
+
+For >50k representatives, consider FAISS or Annoy:
 
 ```python
 # recognition/application/similarity/ann.py
@@ -2394,19 +2398,19 @@ def select_search_strategy(identity_count: int, cluster_count: int, total_reps: 
 
 1. Benchmark current brute-force on 100, 1000, 10000 identities
 2. Implement `batch_similarity_matrix()` as drop-in replacement
-3. Add `RepresentativeCache` for pre-normalization
+3. Add `RepresentativeCache` for pre-normalization ✅ (done in Phase 4)
 4. Benchmark improvement (expect 10-50x for batch vectorized)
-5. Add FAISS integration for large-scale deployments
-6. Add scale-based strategy selection
+5. Add monitoring hook when representative count exceeds threshold
+6. ~~Add FAISS integration~~ — Deferred to post-MVP (premature optimization)
 
 **Success Metrics**:
 
-| Metric                             | Before | After              |
-| ---------------------------------- | ------ | ------------------ |
-| 1000 identities × 500 reps latency | ~2s    | <50ms (vectorized) |
-| Normalization calls per search     | n × m  | 0 (cached)         |
-| Memory for 10k reps                | Dicts  | Contiguous ndarray |
-| Large-scale (100k reps) support    | No     | Yes (FAISS)        |
+| Metric                             | Before | After                    |
+| ---------------------------------- | ------ | ------------------------ |
+| 1000 identities × 500 reps latency | ~2s    | <50ms (vectorized)       |
+| Normalization calls per search     | n × m  | 0 (cached) ✅            |
+| Memory for 10k reps                | Dicts  | Contiguous ndarray ✅    |
+| Large-scale (100k reps) support    | No     | Post-MVP if metrics show |
 
 ---
 
@@ -2427,77 +2431,519 @@ def select_search_strategy(identity_count: int, cluster_count: int, total_reps: 
 
 **Implementation**:
 
-**A. Complete-Link Verification**
+**A. Complete-Link Verification (#32)**
+
+Location: `recognition/application/discovery/graph/verification.py`
 
 ```python
-# recognition/application/clustering/verification.py
+# recognition/application/discovery/graph/verification.py
+"""Complete-link verification for graph expansion stage."""
+
 import numpy as np
+from collections.abc import Sequence
+
+from recognition.shared.similarity import normalize_face_embedding
+
 
 def verify_complete_link(
     candidate_embedding: np.ndarray,
-    cluster_member_embeddings: list[np.ndarray],
-    min_threshold: float,
-) -> tuple[bool, float]:
-    """Verify candidate matches ALL cluster members above threshold.
+    cluster_member_embeddings: Sequence[np.ndarray],
+    *,
+    min_similarity: float,
+    min_coverage: float = 1.0,  # 1.0 = must pass for ALL members (complete-link)
+) -> tuple[bool, float, float]:
+    """Verify candidate has sufficient similarity to ALL cluster members.
 
-    This prevents transitive closure problems by ensuring the new
-    member is genuinely similar to every existing member.
+    This prevents transitive chaining where:
+    A→B (0.85), B→C (0.82), C→D (0.78) chains A-D even though A-D = 0.50
 
     Args:
-        candidate_embedding: Face embedding to verify
-        cluster_member_embeddings: All embeddings in target cluster
-        min_threshold: Minimum similarity required to each member
+        candidate_embedding: The identity we want to add
+        cluster_member_embeddings: All current members of target cluster
+        min_similarity: Minimum required similarity to each member
+        min_coverage: Fraction of members that must pass (1.0 = all)
 
     Returns:
-        (passes, min_similarity) - whether all links pass and the worst score
+        (passed, min_sim, coverage_ratio)
     """
     if not cluster_member_embeddings:
-        return True, 1.0
+        return True, 1.0, 1.0
 
-    min_sim = 1.0
+    candidate_vec = normalize_face_embedding(
+        np.asarray(candidate_embedding, dtype=np.float32)
+    )
+
+    similarities: list[float] = []
     for member_emb in cluster_member_embeddings:
-        sim = float(np.dot(candidate_embedding, member_emb))
-        min_sim = min(min_sim, sim)
-        if sim < min_threshold:
-            return False, min_sim
+        member_vec = normalize_face_embedding(
+            np.asarray(member_emb, dtype=np.float32)
+        )
+        sim = float(np.dot(candidate_vec, member_vec))
+        similarities.append(sim)
 
-    return True, min_sim
+    min_sim = min(similarities)
+    passing = sum(1 for s in similarities if s >= min_similarity)
+    coverage = passing / len(similarities)
+
+    # Pass if coverage met AND minimum similarity is within 90% of threshold
+    passed = coverage >= min_coverage and min_sim >= (min_similarity * 0.9)
+
+    return passed, min_sim, coverage
+
+
+def batch_verify_complete_link(
+    candidate_embeddings: Sequence[np.ndarray],
+    cluster_member_embeddings: Sequence[np.ndarray],
+    *,
+    min_similarity: float,
+) -> np.ndarray:
+    """Batch verification returning boolean mask.
+
+    Returns:
+        Boolean array of shape (n_candidates,) indicating pass/fail.
+    """
+    if not cluster_member_embeddings:
+        return np.ones(len(candidate_embeddings), dtype=bool)
+
+    # Normalize all vectors
+    candidates = np.stack([
+        normalize_face_embedding(np.asarray(c, dtype=np.float32))
+        for c in candidate_embeddings
+    ])
+    members = np.stack([
+        normalize_face_embedding(np.asarray(m, dtype=np.float32))
+        for m in cluster_member_embeddings
+    ])
+
+    # Compute all pairwise similarities: (n_candidates, n_members)
+    sim_matrix = candidates @ members.T
+
+    # Complete-link: minimum similarity to any member must exceed threshold
+    min_sims = np.min(sim_matrix, axis=1)
+
+    return min_sims >= min_similarity
 ```
 
-**B. Adaptive Threshold from User Feedback**
+**Threshold Values** (add to `ClusteringSettings`):
 
 ```python
-# recognition/application/clustering/adaptive.py
-from dataclasses import dataclass
+# recognition/application/settings.py
+class ClusteringSettings(BaseSettings):
+    # Existing
+    similarity_threshold: float = 0.72
+    anchor_discovery_threshold: float = 0.68
 
-@dataclass
-class FeedbackStats:
-    """Statistics from user confirmation/rejection of suggestions."""
-    confirmed_at_similarity: list[float]  # Similarities of confirmed suggestions
-    rejected_at_similarity: list[float]   # Similarities of rejected suggestions
-
-    def optimal_threshold(self, false_positive_tolerance: float = 0.05) -> float:
-        """Compute threshold that achieves target false positive rate.
-
-        Uses confirmed suggestions as positive examples and
-        rejected suggestions as negative examples.
-        """
-        if not self.confirmed_at_similarity or not self.rejected_at_similarity:
-            return 0.75  # Default
-
-        # Find threshold where rejection rate drops below tolerance
-        all_sims = sorted(set(self.confirmed_at_similarity + self.rejected_at_similarity))
-
-        for threshold in all_sims:
-            fp = sum(1 for s in self.rejected_at_similarity if s >= threshold)
-            fp_rate = fp / len(self.rejected_at_similarity)
-            if fp_rate <= false_positive_tolerance:
-                return threshold
-
-        return max(all_sims)  # Conservative: use highest seen similarity
+    # New for complete-link
+    complete_link_threshold: float = 0.65  # Slightly lower than similarity_threshold
+    complete_link_min_coverage: float = 0.85  # 85% of members must pass
+    complete_link_enabled: bool = True  # Feature flag
 ```
 
-**C. Two-Stage Clustering**
+**Integration in GraphDiscovery expansion stage**:
+
+```python
+# In graph/discovery.py - after candidate generation
+if self.settings.complete_link_enabled and candidate.cluster_id:
+    cluster_members = await self._get_cluster_embeddings(candidate.cluster_id)
+
+    passed, min_sim, coverage = verify_complete_link(
+        candidate.identity.face_vector,
+        cluster_members,
+        min_similarity=self.settings.complete_link_threshold,
+        min_coverage=self.settings.complete_link_min_coverage,
+    )
+
+    if not passed:
+        logger.info(
+            "[GraphDiscovery] Complete-link REJECTED identity=%s cluster=%s "
+            "min_sim=%.3f coverage=%.2f",
+            candidate.identity.id, candidate.cluster_id, min_sim, coverage,
+        )
+        # Demote to suggestion instead of auto-accept
+        candidate.discovery_similarity = min_sim
+        continue
+```
+
+**Unit Tests** (add 2-3 focused tests):
+
+```python
+# tests/unit/test_complete_link_verification.py
+import numpy as np
+import pytest
+from recognition.application.discovery.graph.verification import verify_complete_link
+
+def test_empty_cluster_always_passes():
+    passed, min_sim, coverage = verify_complete_link(
+        np.array([1.0, 0.0]), [], min_similarity=0.8
+    )
+    assert passed is True
+    assert min_sim == 1.0
+
+def test_must_link_all_members():
+    candidate = np.array([1.0, 0.0])
+    members = [
+        np.array([0.9, 0.1]),  # Similar
+        np.array([0.5, 0.5]),  # Less similar
+    ]
+    passed, min_sim, _ = verify_complete_link(
+        candidate, members, min_similarity=0.8
+    )
+    assert passed is False  # Second member fails
+
+def test_cannot_link_blocked_pairs():
+    candidate = np.array([1.0, 0.0])
+    members = [np.array([0.95, 0.05])]  # Very similar
+    passed, min_sim, _ = verify_complete_link(
+        candidate, members, min_similarity=0.7
+    )
+    assert passed is True
+```
+
+---
+
+**B. Adaptive Threshold from User Feedback (#32b)**
+
+**Data Model for Feedback History**:
+
+```python
+# db/models.py - new table
+class ClusteringFeedback(Base):
+    """User feedback on clustering decisions for adaptive learning."""
+    __tablename__ = "clustering_feedback"
+
+    id = Column(UUID, primary_key=True)
+    tenant_id = Column(UUID, ForeignKey("tenants.id"), nullable=False)
+    identity_id = Column(UUID, nullable=False)
+    cluster_id = Column(UUID, nullable=False)
+    decision_type = Column(String)  # "accept", "suggest", "reject"
+    similarity_at_decision = Column(Float)
+    user_action = Column(String)  # "confirmed", "rejected", "moved", "split"
+    created_at = Column(DateTime)
+
+    # A/B test tracking
+    experiment_id = Column(String, nullable=True)  # e.g., "threshold_v2"
+    variant = Column(String, nullable=True)  # e.g., "control", "treatment_a"
+```
+
+**Adaptive Threshold Service**:
+
+```python
+# recognition/application/settings/adaptive.py
+from dataclasses import dataclass
+import numpy as np
+
+@dataclass
+class AdaptiveThresholdResult:
+    threshold: float
+    source: str  # "default", "tenant_learned", "experiment"
+    confidence: float  # How confident we are in this threshold
+    sample_size: int
+
+
+class AdaptiveThresholdService:
+    """Learn optimal thresholds from user feedback."""
+
+    MINIMUM_SAMPLES = 50  # Require 50+ feedback events before learning
+
+    def __init__(self, session: AsyncSession, default_threshold: float = 0.72):
+        self._session = session
+        self._default = default_threshold
+
+    async def get_threshold(
+        self,
+        tenant_id: str,
+        experiment_id: str | None = None,
+    ) -> AdaptiveThresholdResult:
+        """Get optimal threshold for tenant, possibly in an experiment."""
+
+        # Check if tenant is in an active experiment
+        if experiment_id:
+            variant = await self._get_experiment_variant(tenant_id, experiment_id)
+            if variant:
+                return AdaptiveThresholdResult(
+                    threshold=variant.threshold,
+                    source=f"experiment:{experiment_id}:{variant.name}",
+                    confidence=1.0,
+                    sample_size=0,
+                )
+
+        # Try to learn from tenant's feedback history
+        learned = await self._learn_from_feedback(tenant_id)
+        if learned and learned.sample_size >= self.MINIMUM_SAMPLES:
+            return learned
+
+        return AdaptiveThresholdResult(
+            threshold=self._default,
+            source="default",
+            confidence=0.5,
+            sample_size=0,
+        )
+
+    async def _learn_from_feedback(self, tenant_id: str) -> AdaptiveThresholdResult | None:
+        """Learn threshold from confirmed/rejected decisions."""
+
+        # Query feedback where user confirmed suggestions
+        confirmed = await self._session.execute(
+            select(ClusteringFeedback.similarity_at_decision)
+            .where(ClusteringFeedback.tenant_id == uuid.UUID(tenant_id))
+            .where(ClusteringFeedback.user_action == "confirmed")
+            .where(ClusteringFeedback.decision_type == "suggest")
+        )
+        confirmed_sims = [row[0] for row in confirmed.all()]
+
+        # Query feedback where user rejected/moved
+        rejected = await self._session.execute(
+            select(ClusteringFeedback.similarity_at_decision)
+            .where(ClusteringFeedback.tenant_id == uuid.UUID(tenant_id))
+            .where(ClusteringFeedback.user_action.in_(["rejected", "moved", "split"]))
+        )
+        rejected_sims = [row[0] for row in rejected.all()]
+
+        if len(confirmed_sims) < 20 or len(rejected_sims) < 10:
+            return None
+
+        # Find threshold that maximizes separation
+        min_confirmed = min(confirmed_sims)
+        max_rejected = max(rejected_sims)
+
+        if min_confirmed > max_rejected:
+            # Clean separation exists
+            optimal = (min_confirmed + max_rejected) / 2
+            confidence = (min_confirmed - max_rejected) / 0.3
+        else:
+            # Overlap exists, use conservative approach
+            optimal = np.percentile(confirmed_sims, 10)
+            confidence = 0.6
+
+        return AdaptiveThresholdResult(
+            threshold=float(np.clip(optimal, 0.60, 0.85)),  # Safety bounds
+            source="tenant_learned",
+            confidence=min(confidence, 1.0),
+            sample_size=len(confirmed_sims) + len(rejected_sims),
+        )
+```
+
+---
+
+**C. A/B Testing Configuration**
+
+```python
+# recognition/application/settings/experiments.py
+from dataclasses import dataclass
+from datetime import datetime
+
+@dataclass
+class ExperimentVariant:
+    name: str
+    threshold: float
+    weight: float  # Traffic allocation (0.0-1.0)
+
+@dataclass
+class Experiment:
+    id: str
+    variants: list[ExperimentVariant]
+    start_date: datetime
+    end_date: datetime | None
+
+ACTIVE_EXPERIMENTS: dict[str, Experiment] = {
+    "threshold_v2_jan2026": Experiment(
+        id="threshold_v2_jan2026",
+        variants=[
+            ExperimentVariant("control", threshold=0.72, weight=0.5),
+            ExperimentVariant("aggressive", threshold=0.68, weight=0.25),
+            ExperimentVariant("conservative", threshold=0.78, weight=0.25),
+        ],
+        start_date=datetime(2026, 1, 15),
+        end_date=datetime(2026, 2, 15),
+    ),
+}
+```
+
+---
+
+**D. UI Indicator for Development**
+
+During development, show which algorithm/threshold is being used:
+
+```tsx
+// js/admin/components/ExperimentBadge.tsx
+interface ExperimentBadgeProps {
+  source: string; // From AdaptiveThresholdResult.source
+  threshold: number;
+  showInDev?: boolean;
+}
+
+export function ExperimentBadge({
+  source,
+  threshold,
+  showInDev = true,
+}: ExperimentBadgeProps) {
+  // Only show in development or when explicitly enabled
+  if (!showInDev && process.env.NODE_ENV === "production") {
+    return null;
+  }
+
+  const getBadgeStyle = () => {
+    if (source.startsWith("experiment:")) {
+      const variant = source.split(":")[2];
+      return (
+        {
+          control: "bg-gray-100 text-gray-700",
+          aggressive: "bg-orange-100 text-orange-700",
+          conservative: "bg-blue-100 text-blue-700",
+        }[variant] || "bg-purple-100 text-purple-700"
+      );
+    }
+    if (source === "tenant_learned") return "bg-green-100 text-green-700";
+    return "bg-gray-50 text-gray-500";
+  };
+
+  const getLabel = () => {
+    if (source.startsWith("experiment:")) {
+      const [, expId, variant] = source.split(":");
+      return `🧪 ${variant} (${threshold.toFixed(2)})`;
+    }
+    if (source === "tenant_learned") {
+      return `📊 Learned (${threshold.toFixed(2)})`;
+    }
+    return `Default (${threshold.toFixed(2)})`;
+  };
+
+  return (
+    <span
+      className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium ${getBadgeStyle()}`}
+      title={`Threshold source: ${source}`}
+    >
+      {getLabel()}
+    </span>
+  );
+}
+```
+
+**UI Integration in Cluster Views**:
+
+```tsx
+// In ClusterDetail.tsx header or SuggestionCard.tsx
+function ClusterDetailHeader({ cluster, thresholdInfo }: Props) {
+  return (
+    <div className="flex items-center gap-2">
+      <h2>{cluster.label}</h2>
+      {/* Show experiment badge during development */}
+      <ExperimentBadge
+        source={thresholdInfo.source}
+        threshold={thresholdInfo.threshold}
+        showInDev={true}
+      />
+    </div>
+  );
+}
+```
+
+**API Response Enhancement**:
+
+```python
+# Include threshold metadata in clustering/suggestion responses
+class ClusteringMetadata(BaseModel):
+    threshold_used: float
+    threshold_source: str  # "default" | "tenant_learned" | "experiment:..."
+    algorithm: str
+
+class SuggestionResponse(BaseModel):
+    suggestion: Suggestion
+    metadata: ClusteringMetadata  # For UI badge display
+```
+
+---
+
+**E. #31 Integration: Batch Vectorized Search**
+
+**Location Decision**: Wire into both `graph/` and `representative.py` via enhanced `SimilaritySearch`.
+
+```python
+# recognition/application/similarity/batch.py
+"""Batch vectorized similarity search for high-throughput matching."""
+
+import numpy as np
+from recognition.shared.similarity import normalize_face_embedding
+
+
+def batch_similarity_matrix(
+    queries: np.ndarray,  # Shape: (n_queries, dim)
+    representatives: np.ndarray,  # Shape: (n_reps, dim)
+    *,
+    normalize: bool = True,
+) -> np.ndarray:
+    """Compute similarity matrix between queries and representatives.
+
+    Returns:
+        Shape (n_queries, n_reps) with cosine similarities.
+    """
+    if queries.size == 0 or representatives.size == 0:
+        return np.empty((len(queries), len(representatives)), dtype=np.float32)
+
+    if normalize:
+        queries = np.stack([normalize_face_embedding(q) for q in queries])
+        representatives = np.stack([normalize_face_embedding(r) for r in representatives])
+
+    # Single matrix multiply — O(n*m*d) but highly optimized
+    return queries @ representatives.T
+```
+
+**Strategy Switch** (add to `SimilaritySearch`):
+
+```python
+# recognition/application/similarity/search.py - enhanced
+class SimilaritySearch:
+    """Find best matching clusters with automatic strategy selection."""
+
+    BATCH_THRESHOLD = 10  # Use batch when >= 10 queries
+
+    def find_best_matches(
+        self,
+        query_embeddings: list[np.ndarray],
+        representatives_by_cluster: Mapping[str, Sequence[np.ndarray] | np.ndarray],
+        *,
+        min_similarity: float | None = None,
+    ) -> list[MatchResult | None]:
+        """Find best match for multiple queries, auto-selecting strategy."""
+
+        threshold = min_similarity or self._settings.similarity_threshold
+
+        if len(query_embeddings) < self.BATCH_THRESHOLD:
+            # Brute force for small batches (avoid matrix setup overhead)
+            return [
+                self.find_best_match(q, representatives_by_cluster, min_similarity=threshold)
+                for q in query_embeddings
+            ]
+
+        # Batch vectorized for larger sets
+        return self._batch_search(query_embeddings, representatives_by_cluster, threshold)
+```
+
+**Integration Points**:
+
+```python
+# 1. graph/discovery.py - use for noise rescue
+if noise_identities and anchor_embeddings:
+    search = SimilaritySearch(self.settings)
+    matches = search.find_best_matches(
+        [identity.face_vector for identity, _ in noise_identities],
+        anchor_embeddings,
+        min_similarity=self.settings.anchor_discovery_threshold,
+    )
+
+# 2. representative.py - use for main discovery
+search = SimilaritySearch(self.settings)
+matches = search.find_best_matches(
+    [identity.face_vector for identity in identities],
+    representatives_by_cluster,
+    min_similarity=self.settings.similarity_threshold,
+)
+```
+
+---
+
+**F. Two-Stage Clustering**
 
 ```python
 # recognition/application/clustering/two_stage.py
@@ -3037,6 +3483,191 @@ class SuggestionRefreshService:
 
 ---
 
+### 39. GraphDiscovery Has Deep Nesting in `discover()` Method
+
+**File**: `recognition/application/discovery/graph/discovery.py`  
+**Lines**: 73-221 (148 lines)
+
+**Problem**: The `discover()` method has 4-5 levels of nested conditionals:
+
+```python
+for _label, items in grouped.items():                    # Level 1
+    group_anchors = [...]
+    if not new_members_with_vecs:                        # Level 2
+        continue
+    if group_anchors:                                    # Level 2
+        target_cluster_id = resolve_anchor_conflict(...)
+        ...
+    else:
+        if not inject_anchors and anchor_embeddings:     # Level 3
+            target_cluster_id, similarity = ...
+    if target_cluster_id and similarity >= threshold:    # Level 2
+        for member, member_vec in new_members_with_vecs: # Level 3
+            candidates.append(...)
+    else:
+        ...
+
+if noise_identities and anchor_embeddings:               # Level 1
+    for identity, face_vec in noise_identities:          # Level 2
+        best_cluster, best_sim = ...
+        if best_cluster and best_sim >= threshold:       # Level 3
+            candidates.append(...)
+        else:
+            new_clusters.append(...)
+elif noise_identities:                                   # Level 1
+    for identity, _ in noise_identities:                 # Level 2
+        new_clusters.append(...)
+```
+
+**Impact**:
+
+- Cognitive complexity ~18 (recommended max: 10)
+- Hard to test individual branches
+- Logic interleaved with data transformation
+
+**Implementation — Refactor with Early Returns and Extracted Helpers**:
+
+```python
+# graph/discovery.py — refactored approach
+
+async def discover(self, identities, anchor_embeddings, inject_anchors=True) -> GraphDiscoveryResult:
+    """Generate candidates and new-cluster groups via graph algorithms."""
+    if not identities:
+        return GraphDiscoveryResult([], [])
+
+    # Phase 1: Prepare inputs
+    anchors, anchor_vecs = self._build_anchor_set(anchor_embeddings, inject_anchors)
+    combined_identities, combined_vectors = self._combine_inputs(identities, anchors, anchor_vecs)
+
+    # Phase 2: Run clustering
+    algorithm = select_algorithm(algorithm=self.algorithm, settings=self.settings)
+    labels = algorithm.cluster(combined_vectors, cast(list[MediaIdentity], combined_identities))
+
+    # Phase 3: Process grouped results
+    grouped = group_by_label(combined_identities, combined_vectors, labels)
+    candidates, new_clusters = self._process_groups(grouped, anchor_embeddings, inject_anchors)
+
+    # Phase 4: Handle noise points
+    noise = self._extract_noise(combined_identities, combined_vectors, labels)
+    noise_candidates, noise_clusters = self._process_noise(noise, anchor_embeddings)
+    candidates.extend(noise_candidates)
+    new_clusters.extend(noise_clusters)
+
+    self._log_results(algorithm, labels, candidates, new_clusters, identities, anchors)
+    return GraphDiscoveryResult(candidates, new_clusters)
+
+
+def _process_groups(
+    self,
+    grouped: dict[int, list[tuple[MediaIdentity | AnchorIdentity, np.ndarray]]],
+    anchor_embeddings: dict[str, list[np.ndarray]],
+    inject_anchors: bool,
+) -> tuple[list[AssignmentCandidate], list[tuple[list[MediaIdentity], list[float]]]]:
+    """Process clustered groups into candidates or new clusters."""
+    candidates: list[AssignmentCandidate] = []
+    new_clusters: list[tuple[list[MediaIdentity], list[float]]] = []
+
+    for _label, items in grouped.items():
+        result = self._process_single_group(items, anchor_embeddings, inject_anchors)
+        if result is None:
+            continue
+        group_candidates, group_new_cluster = result
+        candidates.extend(group_candidates)
+        if group_new_cluster:
+            new_clusters.append(group_new_cluster)
+
+    return candidates, new_clusters
+
+
+def _process_single_group(
+    self,
+    items: list[tuple[MediaIdentity | AnchorIdentity, np.ndarray]],
+    anchor_embeddings: dict[str, list[np.ndarray]],
+    inject_anchors: bool,
+) -> tuple[list[AssignmentCandidate], tuple[list[MediaIdentity], list[float]] | None] | None:
+    """Process a single cluster group. Returns None if empty."""
+    group_anchors = [item for item, _ in items if isinstance(item, AnchorIdentity)]
+    members_with_vecs = [(item, vec) for item, vec in items if isinstance(item, MediaIdentity)]
+
+    if not members_with_vecs:
+        return None
+
+    target, similarity = self._resolve_target_cluster(
+        group_anchors, members_with_vecs, items, anchor_embeddings, inject_anchors
+    )
+
+    threshold = (
+        self.settings.anchor_discovery_threshold if group_anchors
+        else self.settings.similarity_threshold
+    )
+
+    if target and similarity >= threshold:
+        candidates = [
+            self._build_candidate(member, vec, target, similarity, bool(group_anchors))
+            for member, vec in members_with_vecs
+        ]
+        return candidates, None
+
+    # No match — propose new cluster
+    members = [m for m, _ in members_with_vecs]
+    member_vecs = [v for _, v in members_with_vecs]
+    similarities = compute_member_similarities(member_vecs)
+    return [], (members, similarities)
+
+
+def _process_noise(
+    self,
+    noise: list[tuple[MediaIdentity, np.ndarray]],
+    anchor_embeddings: dict[str, list[np.ndarray]],
+) -> tuple[list[AssignmentCandidate], list[tuple[list[MediaIdentity], list[float]]]]:
+    """Process noise points — try anchor match or create singletons."""
+    if not noise:
+        return [], []
+
+    candidates: list[AssignmentCandidate] = []
+    new_clusters: list[tuple[list[MediaIdentity], list[float]]] = []
+
+    for identity, face_vec in noise:
+        if anchor_embeddings:
+            best_cluster, best_sim = match_single_to_anchors(face_vec, anchor_embeddings)
+            if best_cluster and best_sim >= self.settings.anchor_discovery_threshold:
+                candidates.append(self._build_candidate(
+                    identity, face_vec, best_cluster, best_sim, anchor_linked=True
+                ))
+                continue
+
+        # No anchor match — singleton
+        new_clusters.append(([identity], [1.0]))
+
+    return candidates, new_clusters
+```
+
+**Key Refactoring Techniques**:
+
+1. **Extract Phase Methods** — `_build_anchor_set()`, `_combine_inputs()`, `_process_groups()`, `_process_noise()`
+2. **Early Continue** — Skip empty groups immediately
+3. **Single-Responsibility Helpers** — `_resolve_target_cluster()`, `_build_candidate()`
+4. **Flatten Noise Handling** — Unified path with early continue for matched noise
+
+**Methodology**:
+
+1. Extract pure helpers first (no behavior change)
+2. Add unit tests for each helper
+3. Refactor main method to use helpers
+4. Verify integration tests pass
+
+**Success Metrics**:
+
+| Metric                  | Before | After |
+| ----------------------- | ------ | ----- |
+| Max nesting depth       | 5      | 2     |
+| Cognitive complexity    | ~18    | ~8    |
+| `discover()` lines      | 148    | ~40   |
+| Testable helper methods | 0      | 5     |
+| Branches in main method | 8+     | 3     |
+
+---
+
 ## Architecture Summary
 
 ### Module Relationships (Validated)
@@ -3090,91 +3721,92 @@ Organized by **logical execution order** (dependencies first).
 
 ### Phase 1: 🔴 Critical Fixes (Do First)
 
-| #   | Task                                               | File(s)                                | Risk |
-| --- | -------------------------------------------------- | -------------------------------------- | ---- |
-| 0   | Fix infinite request loop on suggestions 500 error | `SuggestionReviewPanel.tsx`, `App.tsx` | Low  |
-| 1   | Fix stale closure in `useJobProgressStream.ts`     | `useJobProgressStream.ts`              | Low  |
-| 4   | Fix stale progress in done handler                 | `useJobProgressStream.ts`              | Low  |
-| 2   | Remove unused imports in `test_cancel_labels.py`   | `test_cancel_labels.py`                | Low  |
-| 3   | Refactor private member access in tests            | Various test files                     | Low  |
+| Done | #   | Task                                               | File(s)                                | Risk |
+| ---- | --- | -------------------------------------------------- | -------------------------------------- | ---- |
+| [x]  | 0   | Fix infinite request loop on suggestions 500 error | `SuggestionReviewPanel.tsx`, `App.tsx` | Low  |
+| [x]  | 1   | Fix stale closure in `useJobProgressStream.ts`     | `useJobProgressStream.ts`              | Low  |
+| [x]  | 4   | Fix stale progress in done handler                 | `useJobProgressStream.ts`              | Low  |
+| [x]  | 2   | Remove unused imports in `test_cancel_labels.py`   | `test_cancel_labels.py`                | Low  |
+| [x]  | 3   | Refactor private member access in tests            | Various test files                     | Low  |
 
 ### Phase 2: 🔧 Foundation (Shared Utilities)
 
 Establish helpers used by later phases.
 
-| #   | Task                                           | File(s)                | Risk |
-| --- | ---------------------------------------------- | ---------------------- | ---- |
-| 18  | Create typed `get_rowcount()` helper           | `shared/db/helpers.py` | Low  |
-| 21  | Create typed helper for `CursorResult` casting | `shared/db/helpers.py` | Low  |
-| 20  | Centralize dialect-specific SQL handling       | `shared/db/dialect.py` | Low  |
-| 24  | Centralize tenant UUID coercion                | `shared/tenant.py`     | Low  |
+| Done | #   | Task                                           | File(s)                | Risk |
+| ---- | --- | ---------------------------------------------- | ---------------------- | ---- |
+| [x]  | 18  | Create typed `get_rowcount()` helper           | `shared/db/helpers.py` | Low  |
+| [x]  | 21  | Create typed helper for `CursorResult` casting | `shared/db/helpers.py` | Low  |
+| [x]  | 20  | Centralize dialect-specific SQL handling       | `shared/db/dialect.py` | Low  |
+| [x]  | 24  | Centralize tenant UUID coercion                | `shared/tenant.py`     | Low  |
 
 ### Phase 3: 🔒 Encapsulation (Public Accessors)
 
 Fix private member access before refactoring modules.
 
-| #   | Task                                              | File(s)                  | Risk |
-| --- | ------------------------------------------------- | ------------------------ | ---- |
-| 22  | Add public accessors to `AssignmentWriter`        | `assignment_writer.py`   | Low  |
-| 36  | Add public `get_members()` to `ClusterRepository` | `cluster_repository.py`  | Low  |
-| 23  | Create helper functions for `getattr` patterns    | `shared/`                | Low  |
-| 35  | Replace `getattr` hacks with public method calls  | `suggestions/service.py` | Low  |
+| Done | #   | Task                                              | File(s)                  | Risk |
+| ---- | --- | ------------------------------------------------- | ------------------------ | ---- |
+| [x]  | 22  | Add public accessors to `AssignmentWriter`        | `assignment_writer.py`   | Low  |
+| [x]  | 36  | Add public `get_members()` to `ClusterRepository` | `cluster_repository.py`  | Low  |
+| [x]  | 23  | Create helper functions for `getattr` patterns    | `shared/`                | Low  |
+| [x]  | 35  | Replace `getattr` hacks with public method calls  | `suggestions/service.py` | Low  |
 
 ### Phase 4: 🔄 Shared Services (High-Impact Deduplication)
 
-| #   | Task                                                    | Impact                      | Risk   |
-| --- | ------------------------------------------------------- | --------------------------- | ------ |
-| 29  | Create shared `SimilaritySearch` service                | **Eliminates 9 duplicates** | Medium |
-| 31  | Add `RepresentativeCache` for pre-normalized embeddings | Performance                 | Medium |
-| 38  | Reuse `AssignmentGate` in suggestion refresh logic      | Consistency                 | Medium |
+| Done | #   | Task                                                    | Impact                      | Risk   |
+| ---- | --- | ------------------------------------------------------- | --------------------------- | ------ |
+| [x]  | 29  | Create shared `SimilaritySearch` service                | **Eliminates 9 duplicates** | Medium |
+| [x]  | 31  | Add `RepresentativeCache` for pre-normalized embeddings | Performance                 | Medium |
+| [x]  | 38  | Reuse `AssignmentGate` in suggestion refresh logic      | Consistency                 | Medium |
 
 ### Phase 5: 📦 Module Splits (Backend)
 
-| #   | Task                                                      | Lines → Target              | Risk   |
-| --- | --------------------------------------------------------- | --------------------------- | ------ |
-| 16  | Split `incremental_clustering.py` into focused modules    | 432 → <150 each             | Medium |
-| 25  | Split `cluster_curation.py` into focused modules          | 265 → <100 each             | Medium |
-| 26  | Split `cluster_split.py` into focused modules             | 178 → <80 each              | Medium |
-| 30  | Split `graph.py` into focused modules                     | 482 → <150 each             | Medium |
-| 33  | Split `SuggestionService` — extract refresh orchestration | 758 → <300                  | Medium |
-| 34  | Reduce `SuggestionService` to thin persistence facade     | —                           | Medium |
-| 15  | Extract router business logic to service/task modules     | `analyze.py`, `clusters.py` | Medium |
-| 19  | Extract job handlers from `scan_worker.py`                | 170 → <80                   | Medium |
+| Done | #   | Task                                                      | Lines → Target              | Risk   |
+| ---- | --- | --------------------------------------------------------- | --------------------------- | ------ |
+| [x]  | 16  | Split `incremental_clustering.py` into focused modules    | 432 → <150 each             | Medium |
+| [x]  | 25  | Split `cluster_curation.py` into focused modules          | 265 → <100 each             | Medium |
+| [x]  | 26  | Split `cluster_split.py` into focused modules             | 178 → <80 each              | Medium |
+| [x]  | 30  | Split `graph.py` into focused modules                     | 482 → <150 each             | Medium |
+| [x]  | 33  | Split `SuggestionService` — extract refresh orchestration | 758 → <300                  | Medium |
+| [x]  | 34  | Reduce `SuggestionService` to thin persistence facade     | —                           | Medium |
+| [x]  | 15  | Extract router business logic to service/task modules     | `analyze.py`, `clusters.py` | Medium |
+| [x]  | 19  | Extract job handlers from `scan_worker.py`                | 170 → <80                   | Medium |
 
 ### Phase 6: 🧩 Clustering Layer Refactoring
 
-| #   | Task                                                             | File(s)                             | Risk |
-| --- | ---------------------------------------------------------------- | ----------------------------------- | ---- |
-| 27  | Extract `_find_best_match()` from `RepresentativeOnlyClustering` | `representative_only_clustering.py` | Low  |
-| 28  | Extract constraint penalty logic to standalone function          | `constrained_hac.py`                | Low  |
+| Done | #   | Task                                                             | File(s)                             | Risk |
+| ---- | --- | ---------------------------------------------------------------- | ----------------------------------- | ---- |
+| [x]  | 27  | Extract `_find_best_match()` from `RepresentativeOnlyClustering` | `representative_only_clustering.py` | Low  |
+| [x]  | 28  | Extract constraint penalty logic to standalone function          | `constrained_hac.py`                | Low  |
 
 ### Phase 7: 🎨 Frontend Architecture
 
-| #   | Task                                                          | File(s)                                | Risk   |
-| --- | ------------------------------------------------------------- | -------------------------------------- | ------ |
-| 8   | Add global QueryClient defaults (retry, refetchOnWindowFocus) | `App.tsx`                              | Low    |
-| 9   | Remove duplicate `JobProgress` definition from hook           | `useJobProgressStream.ts`, `types/`    | Low    |
-| 10  | Reconcile `shared-contracts` schemas with frontend types      | `packages/shared-contracts/`, frontend | Medium |
-| 11  | Document cluster type transformation boundary                 | Docs + code comments                   | Low    |
-| 12  | Normalize config values in `getConfig()`                      | `config.ts`                            | Low    |
-| 13  | Create `queryKeys` factory for consistent cache invalidation  | `queryKeys.ts`                         | Low    |
-| 14  | Extract job state machine from WorkbenchPage                  | `WorkbenchPage.tsx`                    | Medium |
+| Done | #   | Task                                                          | File(s)                                | Risk   |
+| ---- | --- | ------------------------------------------------------------- | -------------------------------------- | ------ |
+| [x]  | 8   | Add global QueryClient defaults (retry, refetchOnWindowFocus) | `App.tsx`                              | Low    |
+| [x]  | 9   | Remove duplicate `JobProgress` definition from hook           | `useJobProgressStream.ts`, `types/`    | Low    |
+| [x]  | 10  | Reconcile `shared-contracts` schemas with frontend types      | `packages/shared-contracts/`, frontend | Medium |
+| [x]  | 11  | Document cluster type transformation boundary                 | Docs + code comments                   | Low    |
+| [x]  | 12  | Normalize config values in `getConfig()`                      | `config.ts`                            | Low    |
+| [x]  | 13  | Create `queryKeys` factory for consistent cache invalidation  | `queryKeys.ts`                         | Low    |
+| [x]  | 14  | Extract job state machine from WorkbenchPage                  | `WorkbenchPage.tsx`                    | Medium |
 
 ### Phase 8: 🔬 Discovery Performance & Accuracy
 
-| #   | Task                                               | File(s)      | Risk   |
-| --- | -------------------------------------------------- | ------------ | ------ |
-| 31  | Implement batch vectorized similarity search       | `discovery/` | Medium |
-| 32  | Add complete-link verification for expansion stage | `graph.py`   | Medium |
-| 32  | Implement adaptive threshold from user feedback    | `discovery/` | High   |
+| Done | #   | Task                                                    | File(s)                 | Risk   |
+| ---- | --- | ------------------------------------------------------- | ----------------------- | ------ |
+| [x]  | 31  | Implement batch vectorized similarity search            | `similarity/batch.py`   | Medium |
+| [x]  | 32  | Add complete-link verification for expansion stage      | `graph/verification.py` | Medium |
+| [x]  | 32b | Implement adaptive threshold from user feedback         | `settings/adaptive.py`  | High   |
+| [x]  | 39  | Reduce GraphDiscovery nesting with early-return/extract | `graph/discovery.py`    | Low    |
 
 ### Phase 9: 🟢 Deferred / Low Priority
 
-| #   | Task                                                    | Notes          |
-| --- | ------------------------------------------------------- | -------------- |
-| 5   | Create test utilities to reduce `as unknown as` mocking | Nice-to-have   |
-| 6   | Add leader election for multi-tab coordination          | Complex, defer |
-| 17  | Implement or remove TODO protocol methods               | Cleanup        |
+| Done | #   | Task                                                    | Notes          |
+| ---- | --- | ------------------------------------------------------- | -------------- |
+| [x]  | 5   | Create test utilities to reduce `as unknown as` mocking | Nice-to-have   |
+| [x]  | 6   | Add leader election for multi-tab coordination          | Complex, defer |
+| [x]  | 17  | Implement or remove TODO protocol methods               | Cleanup        |
 
 ---
 

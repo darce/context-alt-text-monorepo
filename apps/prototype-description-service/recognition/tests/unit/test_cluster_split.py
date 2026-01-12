@@ -5,7 +5,7 @@ from __future__ import annotations
 import uuid
 
 from db.models import MediaIdentity as MediaIdentityModel
-from recognition.application.orchestration.cluster_split import _force_anchor_split
+from recognition.application.orchestration.split.anchor import force_anchor_split
 
 
 def _make_identity(identity_id: uuid.UUID, media_id: int, embedding: list[float]) -> MediaIdentityModel:
@@ -33,7 +33,7 @@ def test_force_anchor_split_produces_two_groups_when_all_similar() -> None:
     other_a = _make_identity(uuid.uuid4(), 2, [0.9, 0.1])
     other_b = _make_identity(uuid.uuid4(), 3, [0.8, 0.2])
 
-    result = _force_anchor_split(
+    result = force_anchor_split(
         [anchor, other_a, other_b],
         str(anchor_id),
         similarity_floor=0.95,
@@ -50,7 +50,7 @@ def test_force_anchor_split_keeps_similar_identities_with_anchor() -> None:
     similar = _make_identity(uuid.uuid4(), 2, [0.9, 0.1])
     dissimilar = _make_identity(uuid.uuid4(), 3, [0.0, 1.0])
 
-    result = _force_anchor_split(
+    result = force_anchor_split(
         [anchor, similar, dissimilar],
         str(anchor_id),
         similarity_floor=0.8,
@@ -70,7 +70,7 @@ def test_force_anchor_split_moves_farthest_identity_when_all_above_threshold() -
     close = _make_identity(uuid.uuid4(), 2, [0.98, 0.05])
     farthest = _make_identity(uuid.uuid4(), 3, [0.8, 0.2])
 
-    result = _force_anchor_split(
+    result = force_anchor_split(
         [anchor, close, farthest],
         str(anchor_id),
         similarity_floor=0.6,

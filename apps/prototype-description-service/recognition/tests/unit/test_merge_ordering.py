@@ -14,14 +14,14 @@ async def test_merge_cluster_deletes_source_last():
     """
     # Mocks
     mock_assignment_writer = Mock()
-    mock_assignment_writer._clusters = AsyncMock()
-    mock_assignment_writer._members = AsyncMock()
+    mock_assignment_writer.cluster_repository = AsyncMock()
+    mock_assignment_writer.member_repository = AsyncMock()
     mock_assignment_writer.recompute_representatives = AsyncMock()
     mock_assignment_writer.recompute_centroid = AsyncMock()
     mock_assignment_writer.refresh_centroids_view = AsyncMock()
 
-    mock_cluster_repo = mock_assignment_writer._clusters
-    mock_member_repo = mock_assignment_writer._members
+    mock_cluster_repo = mock_assignment_writer.cluster_repository
+    mock_member_repo = mock_assignment_writer.member_repository
 
     # Setup data
     source_cluster = IdentityCluster(

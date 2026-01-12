@@ -21,38 +21,41 @@ if TYPE_CHECKING:
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentGate
 from recognition.application.discovery import CentroidDiscovery, GraphDiscovery, RepresentativeDiscovery
-from recognition.application.orchestration.cluster_curation import (
-    assign_outlier_to_cluster as assign_outlier_to_cluster_op,
-)
-from recognition.application.orchestration.cluster_curation import (
-    create_cluster_for_identity as create_cluster_for_identity_op,
-)
-from recognition.application.orchestration.cluster_curation import (
-    get_identity_cluster_id as get_identity_cluster_id_op,
-)
-from recognition.application.orchestration.cluster_curation import (
-    list_clusters as list_clusters_op,
-)
-from recognition.application.orchestration.cluster_curation import (
-    remove_identity_from_cluster as remove_identity_from_cluster_op,
-)
-from recognition.application.orchestration.cluster_curation import (
-    update_cluster as update_cluster_op,
-)
 from recognition.application.orchestration.cluster_merge import (
     merge_cluster as merge_cluster_op,
 )
 from recognition.application.orchestration.cluster_merge import (
     post_merge_retry_matching as post_merge_retry_matching_op,
 )
-from recognition.application.orchestration.cluster_split import split_cluster as split_cluster_op
+from recognition.application.orchestration.curation import (
+    assign_outlier_to_cluster as assign_outlier_to_cluster_op,
+)
+from recognition.application.orchestration.curation import (
+    create_cluster_for_identity as create_cluster_for_identity_op,
+)
+from recognition.application.orchestration.curation import (
+    get_identity_cluster_id as get_identity_cluster_id_op,
+)
+from recognition.application.orchestration.curation import (
+    list_clusters as list_clusters_op,
+)
+from recognition.application.orchestration.curation import (
+    remove_identity_from_cluster as remove_identity_from_cluster_op,
+)
+from recognition.application.orchestration.curation import (
+    update_cluster as update_cluster_op,
+)
 from recognition.application.orchestration.incremental_clustering import (
     cluster_unclustered_identities as cluster_unclustered_identities_op,
 )
 from recognition.application.orchestration.incremental_clustering import (
     get_chunk_size as get_chunk_size_op,
 )
-from recognition.application.orchestration.protocols import SuggestionServiceProtocol
+from recognition.application.orchestration.protocols import (
+    SuggestionRefreshServiceProtocol,
+    SuggestionServiceProtocol,
+)
+from recognition.application.orchestration.split import split_cluster as split_cluster_op
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings.clustering import HACSettings
 from recognition.domain.cluster import IdentityCluster
@@ -77,6 +80,7 @@ class ClusterService:
         graph_discovery: GraphDiscovery,
         assignment_writer: AssignmentWriter,
         suggestion_service: SuggestionServiceProtocol,
+        suggestion_refresh_service: SuggestionRefreshServiceProtocol | None = None,
         block_repository: IdentityClusterBlockRepository | None = None,
         constraint_repository: IdentityConstraintRepository | None = None,
         hac_settings: HACSettings | None = None,
@@ -92,6 +96,7 @@ class ClusterService:
         self.graph_discovery = graph_discovery
         self.assignment_writer = assignment_writer
         self.suggestion_service = suggestion_service
+        self.suggestion_refresh_service = suggestion_refresh_service
         self.block_repository = block_repository
         self.constraint_repository = constraint_repository
         self.logger = logger
@@ -122,10 +127,13 @@ class ClusterService:
         commit: bool = True,
     ):
         """Cluster any identities not yet assigned to a cluster."""
+        if self._session is None:
+            raise RuntimeError("cluster_unclustered_identities requires an active session")
+        session = self._session
         return await cluster_unclustered_identities_op(
             tenant_id=tenant_id,
             job_id=job_id,
-            session=self._session,
+            session=session,
             gate=self.gate,
             representative_discovery=self.representative_discovery,
             centroid_discovery=self.centroid_discovery,
@@ -155,7 +163,7 @@ class ClusterService:
     ):
         """Return clusters for a tenant using the persistence layer."""
         return await list_clusters_op(
-            cluster_repo=self.assignment_writer._clusters,
+            cluster_repo=self.assignment_writer.cluster_repository,
             session=self._session,
             tenant_id=tenant_id,
             limit=limit,
@@ -180,7 +188,7 @@ class ClusterService:
         """
         was_user_confirmed = False
         if surface_suggestions:
-            cluster_repo = self.assignment_writer._clusters
+            cluster_repo = self.assignment_writer.cluster_repository
             old_cluster = await cluster_repo.get_by_id(cluster_id)
             was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
 
@@ -194,7 +202,7 @@ class ClusterService:
 
         # If cluster just became user-labeled, surface suggestions
         if surface_suggestions and result and label and not was_user_confirmed:
-            surface_fn = getattr(self.suggestion_service, "surface_for_newly_labeled_cluster", None)
+            surface_fn = getattr(self.suggestion_refresh_service, "surface_for_newly_labeled_cluster", None)
             if callable(surface_fn):
                 try:
                     surfaced = await surface_fn(cluster_id)
@@ -274,14 +282,14 @@ class ClusterService:
     async def get_identity_cluster_id(self, identity_id: str) -> str | None:
         """Get the cluster ID that an identity currently belongs to."""
         return await get_identity_cluster_id_op(
-            member_repo=self.assignment_writer._members,
+            member_repo=self.assignment_writer.member_repository,
             identity_id=identity_id,
         )
 
     async def remove_identity_from_cluster(self, identity_id: str, recompute: bool = True) -> bool:
         """Remove an identity from its current cluster (make it an orphan)."""
-        tenant_id_for_logging = getattr(self.assignment_writer._members, "_tenant_id", None) or getattr(
-            self.assignment_writer._members, "tenant_id", None
+        tenant_id_for_logging = getattr(self.assignment_writer.member_repository, "_tenant_id", None) or getattr(
+            self.assignment_writer.member_repository, "tenant_id", None
         )
         media_id = None
         if self._session is not None:
@@ -295,8 +303,8 @@ class ClusterService:
                     media_id = int(model.media_id)
         return await remove_identity_from_cluster_op(
             identity_id=identity_id,
-            member_repo=self.assignment_writer._members,
-            cluster_repo=self.assignment_writer._clusters,
+            member_repo=self.assignment_writer.member_repository,
+            cluster_repo=self.assignment_writer.cluster_repository,
             assignment_writer=self.assignment_writer,
             recompute=recompute,
             tenant_id_for_logging=tenant_id_for_logging,
@@ -320,10 +328,10 @@ class ClusterService:
             anchor_identity_id=anchor_identity_id,
             split_mode=split_mode,
             session=self._session,
-            cluster_repo=self.assignment_writer._clusters,
-            member_repo=self.assignment_writer._members,
+            cluster_repo=self.assignment_writer.cluster_repository,
+            member_repo=self.assignment_writer.member_repository,
             block_repo=self.block_repository,
-            suggestion_service=self.suggestion_service,
+            suggestion_refresh_service=self.suggestion_refresh_service,
             assignment_writer=self.assignment_writer,
             recompute=recompute,
             clustering_logger=self.logger,

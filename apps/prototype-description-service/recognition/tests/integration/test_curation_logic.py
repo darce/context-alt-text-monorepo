@@ -7,7 +7,7 @@ from sqlalchemy import select
 
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
-from recognition.application.orchestration.cluster_curation import CurationEventType
+from recognition.observability import CurationEventType
 
 
 @pytest.mark.asyncio
@@ -75,7 +75,7 @@ async def test_reassign_identity_between_clusters(
     assert cluster_b.identity_count == 1
 
     # Check membership A
-    members_a = await cluster_service.assignment_writer._members.get_by_cluster(cluster_a.id)
+    members_a = await cluster_service.assignment_writer.member_repository.get_by_cluster(cluster_a.id)
     assert len(members_a) == 1
     assert members_a[0].identity_id == id1
 
@@ -93,17 +93,17 @@ async def test_reassign_identity_between_clusters(
     assert updated_b.identity_count == 2  # id2 + id1
 
     # Verify id1 is in B
-    members_b = await cluster_service.assignment_writer._members.get_by_cluster(cluster_b.id)
+    members_b = await cluster_service.assignment_writer.member_repository.get_by_cluster(cluster_b.id)
     member_ids_b = {m.identity_id for m in members_b}
     assert id1 in member_ids_b
     assert id2 in member_ids_b
 
     # Verify id1 is NOT in A
-    members_a_after = await cluster_service.assignment_writer._members.get_by_cluster(cluster_a.id)
+    members_a_after = await cluster_service.assignment_writer.member_repository.get_by_cluster(cluster_a.id)
     assert len(members_a_after) == 0
 
     # Verify Cluster A count updated (re-fetch)
-    cluster_a_updated = await cluster_service.assignment_writer._clusters.get_by_id(cluster_a.id)
+    cluster_a_updated = await cluster_service.assignment_writer.cluster_repository.get_by_id(cluster_a.id)
     assert cluster_a_updated.identity_count == 0
 
     # (Optional) Verify DB constraint didn't raise UniqueViolationError
@@ -209,10 +209,10 @@ async def test_assign_outlier_computes_real_similarity(
     # 4. Verify log call
     # log_decision is called inside assign_outlier_to_cluster (or via gate/writer logic?)
     # Actually, assign_outlier_to_cluster calls writer.persist_assignment or similar?
-    # Wait, cluster_curation.py logic:
+    # Wait, curation/cluster_mutations.py logic:
     # It logs "CURATION_ASSIGNED" via logger.info (standard logger) OR clustering_logger?
     # The existing code uses `self._logger.info` in `ClusteringLogger.log_decision`?
-    # No, `cluster_curation.py` uses module level `logger = logging.getLogger(__name__)`.
+    # No, `cluster_mutations.py` uses module level `logger = logging.getLogger(__name__)`.
     # And it calls `clustering_logger.log_curation_action`.
 
     assert mock_logger.log_curation_action.called
@@ -298,7 +298,7 @@ async def test_remove_representative_triggers_refresh(
     # - id2 might be promoted to rep (depending on recompute logic, usually recompute picks best)
 
     # Check members
-    members = await cluster_service.assignment_writer._members.get_by_cluster(cluster.id)
+    members = await cluster_service.assignment_writer.member_repository.get_by_cluster(cluster.id)
     member_ids = {m.identity_id for m in members}
     assert id1 not in member_ids
     assert id2 in member_ids

@@ -20,8 +20,8 @@ from recognition.interface_adapters.http.schemas.responses import AsyncSplitClus
 async def test_async_split_returns_202_with_job_id(db_session, tenant) -> None:
     """Async split should return 202 Accepted with job_id."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     embedding_a = [0.0] * 512
     embedding_a[0] = 1.0

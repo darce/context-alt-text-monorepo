@@ -6,12 +6,10 @@ from __future__ import annotations
 
 import uuid
 from datetime import UTC, datetime
-from typing import Any, cast
 
 from sqlalchemy import insert, or_, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Insert
 
@@ -23,6 +21,7 @@ from recognition.domain.constraints import (
     canonical_order,
 )
 from recognition.domain.repositories import IdentityConstraintRepository
+from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 
 class SqlAlchemyConstraintRepository(IdentityConstraintRepository):
@@ -96,8 +95,8 @@ class SqlAlchemyConstraintRepository(IdentityConstraintRepository):
         else:
             stmt = insert(ConstraintModel).values(**values)
 
-        result = cast(CursorResult[Any], await self.session.execute(stmt))
-        if result.rowcount == 0:
+        result = await execute_dml(self.session, stmt)
+        if get_rowcount(result) == 0:
             existing = await self.get(tenant_id, str(id_a), str(id_b))
             if existing:
                 return existing

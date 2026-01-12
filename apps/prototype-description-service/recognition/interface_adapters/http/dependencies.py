@@ -38,6 +38,7 @@ from recognition.interface_adapters.http.deps.services import (
     get_scan_service_builder,
     get_settings,
     get_shared_insightface_adapter,
+    get_suggestion_refresh_service,
     get_suggestion_service,
 )
 
@@ -70,6 +71,7 @@ __all__ = [
     "get_settings",
     "get_shared_insightface_adapter",
     "get_suggestion_service",
+    "get_suggestion_refresh_service",
     "get_cluster_repository",
     "get_observability_repository",
     "get_media_identity_service",

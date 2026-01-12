@@ -34,7 +34,7 @@ class AssignmentCheck(ABC):
         Returns:
             bool: True if the check should execute for the candidate.
         """
-        raise NotImplementedError("TODO: Determine if check is enabled")
+        ...
 
     @abstractmethod
     async def evaluate(self, candidate: AssignmentCandidate) -> CheckResult:
@@ -45,8 +45,5 @@ class AssignmentCheck(ABC):
 
         Returns:
             CheckResult: Pass/fail outcome and metadata.
-
-        Raises:
-            NotImplementedError: Always, until the check logic is implemented.
         """
-        raise NotImplementedError("TODO: Evaluate assignment check")
+        ...

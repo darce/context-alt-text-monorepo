@@ -6,17 +6,13 @@ from __future__ import annotations
 
 import logging
 import uuid
-from datetime import UTC, datetime
 
-import numpy as np
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import MediaIdentity as MediaIdentityModel
 from db.models import RecognitionRun
 from recognition.application.assignment import AssignmentCandidate
-from recognition.application.settings import ClusteringSettings
-from recognition.config import get_settings as get_recognition_settings
+from recognition.application.suggestions.eligibility import is_eligible_cluster
 from recognition.domain.repositories import (
     ClusterRepository,
     IdentityClusterBlockRepository,
@@ -24,9 +20,8 @@ from recognition.domain.repositories import (
     SuggestionCreateData,
     SuggestionRepository,
 )
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
 from recognition.observability.recognition_runs import RecognitionRunContext
-from recognition.shared.similarity import compute_face_similarity, extract_face_embedding
 
 logger = logging.getLogger(__name__)
 
@@ -42,7 +37,6 @@ class SuggestionService:
         *,
         session: AsyncSession | None = None,
         run_context: RecognitionRunContext | None = None,
-        settings: ClusteringSettings | None = None,
         block_repository: IdentityClusterBlockRepository | None = None,
         constraint_repository: IdentityConstraintRepository | None = None,
     ) -> None:
@@ -51,7 +45,6 @@ class SuggestionService:
         self._cluster_repository = cluster_repository
         self._session = session
         self._run_context = run_context
-        self._settings = settings or get_recognition_settings().clustering
         self._block_repository = block_repository
         self._constraint_repository = constraint_repository
 
@@ -117,27 +110,6 @@ class SuggestionService:
             return
         self._run_context = RecognitionRunContext(session=self._session, tenant_id=tenant_uuid, run_id=run_id)
 
-    def _is_eligible_cluster(self, cluster) -> bool:
-        """Check if a cluster is eligible for suggestions.
-
-        Eligible clusters must verify:
-        1. Tenant match (if service is tenant-scoped)
-        2. User labeled (not auto-generated)
-        3. User confirmed (explicitly curated)
-        """
-        if self._tenant_id and cluster.tenant_id.lower() != self._tenant_id.lower():
-            logger.info("[suggestions] Skipping suggestion: tenant mismatch cluster_id=%s", cluster.id)
-            return False
-
-        if not cluster.user_confirmed or not cluster.label or cluster.label.startswith("cluster-"):
-            logger.info(
-                "[suggestions] Skipping suggestion: cluster not user-labeled cluster_id=%s",
-                cluster.id,
-            )
-            return False
-
-        return True
-
     async def create(
         self, candidate: AssignmentCandidate, confidence: float | None = None
     ) -> AssignmentSuggestion | None:
@@ -152,7 +124,7 @@ class SuggestionService:
                 logger.info("[suggestions] Skipping suggestion: cluster not found cluster_id=%s", candidate.cluster_id)
                 return None
 
-            if not self._is_eligible_cluster(cluster):
+            if not is_eligible_cluster(cluster, self._tenant_id):
                 return None
 
         similarity = candidate.discovery_similarity
@@ -187,394 +159,6 @@ class SuggestionService:
         except ValueError:
             logger.warning("[suggestions] Failed to update scores: suggestion_id=%s not found", suggestion_id)
             return None
-
-    async def refresh_for_identity(
-        self,
-        *,
-        identity_id: str,
-        reason: SuggestionRefreshReason,
-    ) -> list[AssignmentSuggestion]:
-        """Recompute suggestion candidates for a single identity.
-
-        Args:
-            identity_id: Identity UUID string to refresh suggestions for.
-            reason: Trigger reason for the refresh.
-
-        Returns:
-            List of refreshed suggestions (pending state).
-
-        Raises:
-            NotImplementedError: Until refresh logic is implemented.
-        """
-        if self._session is None or self._cluster_repository is None:
-            return []
-
-        try:
-            tenant_uuid = uuid.UUID(str(self._tenant_id))
-            identity_uuid = uuid.UUID(str(identity_id))
-        except ValueError:
-            return []
-
-        model = await self._session.get(MediaIdentityModel, identity_uuid)
-        if model is None or model.tenant_id != tenant_uuid or model.embedding is None:
-            return []
-
-        identity_embedding = extract_face_embedding(np.asarray(model.embedding, dtype=np.float32))
-        if identity_embedding.size == 0:
-            return []
-
-        now = datetime.now(tz=UTC)
-        suggestions: list[AssignmentSuggestion] = []
-        clusters_with_reps = await self._cluster_repository.get_labeled_with_representatives(self._tenant_id)
-        if not clusters_with_reps:
-            return []
-
-        for cluster, reps in clusters_with_reps:
-            if not self._is_eligible_cluster(cluster):
-                continue
-
-            if not cluster.id:
-                continue
-            cluster_id = cluster.id
-
-            if self._block_repository is not None and await self._block_repository.is_blocked(
-                tenant_id=self._tenant_id,
-                identity_id=identity_id,
-                cluster_id=cluster_id,
-            ):
-                continue
-
-            # Skip clusters with cannot-link constraints (Phase 3 constraint-aware suggestions)
-            if self._constraint_repository is not None:
-                member_repo = getattr(self._cluster_repository, "_member_repo", None)
-                if member_repo is not None:
-                    try:
-                        members = await member_repo.get_by_cluster(cluster_id)
-                        member_ids = [str(m.identity_id) for m in members]
-                        violates = await self._constraint_repository.has_cannot_link(
-                            tenant_id=str(tenant_uuid),
-                            identity_id=str(identity_uuid),
-                            cluster_member_ids=member_ids,
-                        )
-                        if violates:
-                            logger.debug(
-                                "[suggestions] Skipping cluster due to cannot-link constraint: cluster_id=%s identity_id=%s",
-                                cluster_id,
-                                identity_id,
-                            )
-                            continue
-                    except Exception as e:
-                        logger.warning("[suggestions] Error checking constraints: %s", e)
-
-            if not reps:
-                continue
-
-            best_similarity = 0.0
-            for rep in reps:
-                rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
-                similarity = compute_face_similarity(identity_embedding, rep_vec)
-                best_similarity = max(best_similarity, similarity)
-
-            if best_similarity < self._settings.suggestion_floor:
-                continue
-            if best_similarity >= self._settings.suggestion_ceiling:
-                continue
-
-            payload = SuggestionCreateData(
-                identity_id=identity_id,
-                cluster_id=cluster_id,
-                representative_similarity=best_similarity,
-                member_similarity=best_similarity,
-                confidence_score=best_similarity,
-                source=reason.value,
-                refreshed_at=now,
-            )
-            suggestion = await self._repository.upsert_by_identity_cluster(self._tenant_id, payload)
-            suggestions.append(suggestion)
-            logger.info(
-                "[suggestions] REFRESHED identity_id=%s cluster_id=%s similarity=%.3f reason=%s",
-                identity_id,
-                cluster_id,
-                best_similarity,
-                reason.value,
-            )
-
-        if suggestions:
-            logger.info(
-                "[suggestions] refresh_for_identity completed: identity_id=%s reason=%s suggestions_count=%d",
-                identity_id,
-                reason.value,
-                len(suggestions),
-            )
-        else:
-            logger.debug(
-                "[suggestions] refresh_for_identity: no suggestions created identity_id=%s reason=%s",
-                identity_id,
-                reason.value,
-            )
-
-        return suggestions
-
-    async def refresh_for_cluster(self, cluster_id: str) -> int:
-        """Refresh similarity scores for all pending suggestions targeting a cluster.
-
-        Called after cluster structural changes (merge, assignment, representative
-        recomputation) to ensure suggestion scores reflect current representatives.
-
-        Args:
-            cluster_id: Cluster UUID string whose suggestions need refreshing.
-
-        Returns:
-            Number of suggestions refreshed.
-        """
-        if self._session is None or self._cluster_repository is None:
-            return 0
-
-        # Fetch current representatives for the cluster
-        cluster = await self._cluster_repository.get_by_id(cluster_id)
-        if not cluster:
-            logger.warning("[suggestions] refresh_for_cluster: cluster not found cluster_id=%s", cluster_id)
-            return 0
-
-        reps = await self._cluster_repository.get_all_representatives(cluster_id)
-        if not reps:
-            logger.info("[suggestions] refresh_for_cluster: no representatives cluster_id=%s", cluster_id)
-            return 0
-
-        rep_embeddings = [np.asarray(getattr(r, "embedding", r), dtype=np.float32) for r in reps]
-
-        # Fetch all pending suggestions for this cluster
-        suggestions = await self._repository.get_by_cluster(self._tenant_id, cluster_id)
-        pending = [s for s in suggestions if s.status == SuggestionStatus.PENDING]
-
-        if not pending:
-            return 0
-
-        refreshed = 0
-        datetime.now(tz=UTC)
-
-        for suggestion in pending:
-            try:
-                identity_uuid = uuid.UUID(str(suggestion.identity_id))
-            except ValueError:
-                continue
-
-            model = await self._session.get(MediaIdentityModel, identity_uuid)
-            if model is None or model.embedding is None:
-                continue
-
-            identity_embedding = extract_face_embedding(np.asarray(model.embedding, dtype=np.float32))
-            if identity_embedding.size == 0:
-                continue
-
-            # Compute best similarity against current representatives
-            best_similarity = 0.0
-            for rep_vec in rep_embeddings:
-                similarity = compute_face_similarity(identity_embedding, rep_vec)
-                best_similarity = max(best_similarity, similarity)
-
-            old_similarity = suggestion.representative_similarity
-            delta = best_similarity - old_similarity
-            new_status = suggestion.status
-
-            # Update if score changed significantly (avoid churn)
-            if abs(delta) > 0.01:
-                await self._repository.update_scores(
-                    self._tenant_id,
-                    suggestion.id,
-                    representative_similarity=best_similarity,
-                    member_similarity=best_similarity,
-                    confidence_score=best_similarity,
-                )
-
-                # Check for automatic transitions
-                if best_similarity >= self._settings.suggestion_ceiling:
-                    new_status = SuggestionStatus.ACCEPTED
-                elif best_similarity < self._settings.suggestion_floor:
-                    new_status = SuggestionStatus.REJECTED
-
-                if new_status != suggestion.status:
-                    await self._repository.update_status(self._tenant_id, suggestion.id, status=new_status)
-
-                    # Emit auto-transition events for metrics
-                    if self._run_context:
-                        event_type = (
-                            "suggestion_auto_accepted"
-                            if new_status == SuggestionStatus.ACCEPTED
-                            else "suggestion_auto_rejected"
-                        )
-                        self._run_context.add_event(
-                            event_type=event_type,
-                            identity_id=suggestion.identity_id,
-                            cluster_id=cluster_id,
-                            payload={
-                                "suggestion_id": suggestion.id,
-                                "similarity": float(best_similarity),
-                                "old_similarity": float(old_similarity),
-                                "delta": float(delta),
-                            },
-                        )
-
-                logger.info(
-                    "[suggestions] refresh_result cluster_id=%s identity_id=%s "
-                    "old_sim=%.4f new_sim=%.4f delta=%+.4f status=%s updated=true",
-                    cluster_id,
-                    suggestion.identity_id,
-                    old_similarity,
-                    best_similarity,
-                    delta,
-                    new_status.value,
-                )
-                refreshed += 1
-            else:
-                # Still log the result even if not "refreshed" (significant delta)
-                # to track stability and small improvements
-                logger.debug(
-                    "[suggestions] refresh_skipping cluster_id=%s identity_id=%s delta=%.4f (below threshold)",
-                    cluster_id,
-                    suggestion.identity_id,
-                    delta,
-                )
-
-        logger.info(
-            "[suggestions] refresh_for_cluster_complete cluster_id=%s refreshed=%d",
-            cluster_id,
-            refreshed,
-        )
-        return refreshed
-
-    async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
-        """Create suggestions for identities in unlabeled clusters that match a newly-labeled cluster.
-
-        Called when a cluster is renamed/user-confirmed. Scans identities in auto-labeled clusters
-        and creates suggestions if they match the newly-labeled cluster above threshold.
-
-        Args:
-            cluster_id: The newly-labeled cluster UUID string.
-
-        Returns:
-            Number of suggestions created.
-        """
-        if self._session is None or self._cluster_repository is None:
-            return 0
-
-        # Get the target cluster and verify it's now user-labeled
-        cluster = await self._cluster_repository.get_by_id(cluster_id)
-        if not cluster or not cluster.user_confirmed or not cluster.label:
-            logger.debug(
-                "[suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=%s",
-                cluster_id,
-            )
-            return 0
-
-        # Get representatives for similarity comparison
-        reps = await self._cluster_repository.get_all_representatives(cluster_id)
-        if not reps:
-            logger.info(
-                "[suggestions] surface_for_newly_labeled_cluster: no representatives cluster_id=%s",
-                cluster_id,
-            )
-            return 0
-
-        rep_embeddings = [np.asarray(getattr(r, "embedding", r), dtype=np.float32) for r in reps]
-
-        # Get all clusters to find unlabeled ones
-        all_clusters = await self._cluster_repository.get_by_tenant(self._tenant_id, limit=1000)
-        unlabeled_clusters = [
-            c
-            for c in all_clusters
-            if c.id != cluster_id and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
-        ]
-
-        if not unlabeled_clusters:
-            logger.debug("[suggestions] surface_for_newly_labeled_cluster: no unlabeled clusters to scan")
-            return 0
-
-        created = 0
-        now = datetime.now(tz=UTC)
-
-        for unlabeled_cluster in unlabeled_clusters:
-            if not unlabeled_cluster.id:
-                continue
-
-            # Get member identities for this unlabeled cluster
-            member_repo = getattr(self._cluster_repository, "_member_repo", None)
-            if not member_repo:
-                continue
-
-            members = await member_repo.get_by_cluster(unlabeled_cluster.id)
-            for member in members:
-                identity_id = str(member.identity_id)
-
-                # Check if already blocked
-                if self._block_repository is not None and await self._block_repository.is_blocked(
-                    tenant_id=self._tenant_id,
-                    identity_id=identity_id,
-                    cluster_id=cluster_id,
-                ):
-                    continue
-
-                # Get identity embedding
-                try:
-                    identity_uuid = uuid.UUID(identity_id)
-                except ValueError:
-                    continue
-
-                model = await self._session.get(MediaIdentityModel, identity_uuid)
-                if model is None or model.embedding is None:
-                    continue
-
-                identity_embedding = extract_face_embedding(np.asarray(model.embedding, dtype=np.float32))
-                if identity_embedding.size == 0:
-                    continue
-
-                # Compute similarity against target cluster representatives
-                best_similarity = 0.0
-                for rep_vec in rep_embeddings:
-                    similarity = compute_face_similarity(identity_embedding, rep_vec)
-                    best_similarity = max(best_similarity, similarity)
-
-                # Check thresholds
-                if best_similarity < self._settings.suggestion_floor:
-                    continue
-                if best_similarity >= self._settings.suggestion_ceiling:
-                    continue
-
-                # Create/update suggestion
-                payload = SuggestionCreateData(
-                    identity_id=identity_id,
-                    cluster_id=cluster_id,
-                    representative_similarity=best_similarity,
-                    member_similarity=best_similarity,
-                    confidence_score=best_similarity,
-                    source="cluster_labeled",
-                    refreshed_at=now,
-                )
-                await self._repository.upsert_by_identity_cluster(self._tenant_id, payload)
-                created += 1
-
-                logger.info(
-                    "[suggestions] SURFACED identity_id=%s cluster_id=%s cluster_label='%s' similarity=%.3f source=cluster_labeled",
-                    identity_id,
-                    cluster_id,
-                    cluster.label,
-                    best_similarity,
-                )
-
-        if created > 0:
-            logger.info(
-                "[suggestions] surface_for_newly_labeled_cluster completed: cluster_id=%s cluster_label='%s' suggestions_created=%d",
-                cluster_id,
-                cluster.label,
-                created,
-            )
-        else:
-            logger.debug(
-                "[suggestions] surface_for_newly_labeled_cluster: no matches found cluster_id=%s",
-                cluster_id,
-            )
-
-        return created
 
     async def resolve_for_identity_exclusive(
         self,

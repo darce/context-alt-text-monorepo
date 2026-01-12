@@ -18,7 +18,8 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
 
 from db.models import IdentityCluster as ClusterModel
-from db.models import IdentityClusterRepresentative, IdentityMember, MediaIdentity
+from db.models import IdentityClusterRepresentative, MediaIdentity
+from db.models import IdentityMember as IdentityMemberModel
 from db.settings import get_database_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
@@ -28,7 +29,9 @@ from recognition.domain.maturity import (
     compute_maturity_level,
 )
 from recognition.domain.repositories import ClusterRepository
+from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
+from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 _DB_SETTINGS = get_database_settings()
 
@@ -201,7 +204,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         stmt = (
             select(MediaIdentity)
             .where(MediaIdentity.tenant_id == tenant_uuid)
-            .where(~exists(select(IdentityMember.id).where(IdentityMember.identity_id == MediaIdentity.id)))
+            .where(~exists(select(IdentityMemberModel.id).where(IdentityMemberModel.identity_id == MediaIdentity.id)))
         )
         result = await self._session.execute(stmt)
         identities = result.scalars().all()
@@ -305,9 +308,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(IdentityClusterRepresentative.is_provisional.is_(True))
             .values(is_provisional=False)
         )
-        result = await self._session.execute(stmt)
+        result = await execute_dml(self._session, stmt)
         await self._session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
+        return get_rowcount(result)
 
     async def confirm_all_provisional_reps(self, tenant_id: str) -> int:
         """Mark all provisional representatives for a tenant as confirmed."""
@@ -319,9 +322,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(IdentityClusterRepresentative.is_provisional.is_(True))
             .values(is_provisional=False)
         )
-        result = await self._session.execute(stmt)
+        result = await execute_dml(self._session, stmt)
         await self._session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
+        return get_rowcount(result)
 
     async def cleanup_orphaned_provisional_reps(self, tenant_id: str) -> int:
         """Remove provisional reps from clusters with no active batch."""
@@ -329,9 +332,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             IdentityClusterRepresentative.tenant_id == _coerce_uuid(tenant_id),
             IdentityClusterRepresentative.is_provisional.is_(True),
         )
-        result = await self._session.execute(stmt)
+        result = await execute_dml(self._session, stmt)
         await self._session.flush()
-        return int(result.rowcount)  # type: ignore[attr-defined]
+        return get_rowcount(result)
 
     async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
         """Fetch maturity information for a cluster."""
@@ -376,8 +379,8 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """Return embeddings for members of the cluster."""
         stmt = (
             select(MediaIdentity.embedding)
-            .join(IdentityMember, IdentityMember.identity_id == MediaIdentity.id)
-            .where(IdentityMember.cluster_id == _coerce_uuid(cluster_id))
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
         )
         result = await self._session.execute(stmt)
         return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
@@ -386,15 +389,33 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         """Return identity records for all members of a cluster."""
         stmt: Select[tuple[MediaIdentity]] = (
             select(MediaIdentity)
-            .join(IdentityMember, IdentityMember.identity_id == MediaIdentity.id)
-            .where(IdentityMember.cluster_id == _coerce_uuid(cluster_id))
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
         )
         result = await self._session.execute(stmt)
         return [self._to_domain_identity(model) for model in result.scalars().all()]
 
+    async def get_members(self, cluster_id: str) -> list[DomainMember]:
+        """Return member records for a cluster."""
+        stmt: Select[tuple[IdentityMemberModel]] = select(IdentityMemberModel).where(
+            IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id)
+        )
+        result = await self._session.execute(stmt)
+        return [
+            DomainMember(
+                id=str(member.id),
+                cluster_id=str(member.cluster_id),
+                identity_id=str(member.identity_id),
+                similarity=float(member.similarity),
+                tenant_id=str(member.tenant_id) if member.tenant_id else None,
+                assigned_at=member.assigned_at,
+            )
+            for member in result.scalars().all()
+        ]
+
     async def assign_identity_to_cluster(self, identity: DomainIdentity, cluster_id: str) -> None:
         """Persist a membership between an identity and cluster."""
-        member = IdentityMember(
+        member = IdentityMemberModel(
             tenant_id=_coerce_uuid(identity.tenant_id),
             cluster_id=_coerce_uuid(cluster_id),
             identity_id=_coerce_uuid(identity.id),

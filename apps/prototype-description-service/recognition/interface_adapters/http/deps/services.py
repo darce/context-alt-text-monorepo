@@ -13,6 +13,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 from fastapi import Depends
 from sqlalchemy import text
@@ -27,6 +28,7 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config import get_settings as get_recognition_settings
 from recognition.infrastructure.repositories import (
@@ -55,6 +57,9 @@ from recognition.observability.visualization import ClusterVisualizer
 
 logger = logging.getLogger(__name__)
 
+if TYPE_CHECKING:
+    from recognition.infrastructure.embeddings import InsightFaceAdapter
+
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
@@ -62,11 +67,11 @@ def get_settings() -> ClusteringSettings:
     return get_recognition_settings().clustering
 
 
-_SHARED_ADAPTER = None
+_SHARED_ADAPTER: InsightFaceAdapter | None = None
 _ADAPTER_LOCK = asyncio.Lock()
 
 
-async def get_shared_insightface_adapter():
+async def get_shared_insightface_adapter() -> InsightFaceAdapter:
     """Return a singleton InsightFaceAdapter to avoid reloading models."""
     global _SHARED_ADAPTER
     if _SHARED_ADAPTER is None:
@@ -88,15 +93,44 @@ async def get_suggestion_service(
     tenant = tenant_id or ""
     repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
     cluster_repo = SqlAlchemyClusterRepository(session)
+    SqlAlchemyMemberRepository(session, tenant_id=tenant)
     block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant)
     constraint_repo = SqlAlchemyConstraintRepository(session)
-    settings = get_settings()
     return SuggestionService(
         repo,
         tenant_id=tenant,
         cluster_repository=cluster_repo,
         session=session,
+        block_repository=block_repo,
+        constraint_repository=constraint_repo,
+    )
+
+
+async def get_suggestion_refresh_service(
+    session: AsyncSession = Depends(get_session), tenant_id: str | None = Depends(get_tenant_id_optional)
+) -> SuggestionRefreshService:
+    """Suggestion refresh service scoped to the tenant."""
+    tenant = tenant_id or ""
+    repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
+    cluster_repo = SqlAlchemyClusterRepository(session)
+    member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant)
+    block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant)
+    constraint_repo = SqlAlchemyConstraintRepository(session)
+    settings = get_settings()
+    gate = AssignmentGate(
         settings=settings,
+        cluster_repository=cluster_repo,
+        block_repository=block_repo,
+        constraint_repository=constraint_repo,
+        member_repository=member_repo,
+    )
+    return SuggestionRefreshService(
+        repo,
+        tenant_id=tenant,
+        cluster_repository=cluster_repo,
+        session=session,
+        settings=settings,
+        gate=gate,
         block_repository=block_repo,
         constraint_repository=constraint_repo,
     )
@@ -149,14 +183,31 @@ async def build_cluster_service(
     assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo)
     constraint_repo = SqlAlchemyConstraintRepository(session)
 
+    gate = AssignmentGate(
+        settings=settings,
+        cluster_repository=cluster_repo,
+        block_repository=block_repo,
+        constraint_repository=constraint_repo,
+        member_repository=member_repo,
+    )
+
     suggestion_repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant_id)
     suggestion_service = SuggestionService(
         suggestion_repo,
         tenant_id=tenant_id,
         cluster_repository=cluster_repo,
         session=session,
-        settings=settings,
         block_repository=block_repo,
+    )
+    suggestion_refresh_service = SuggestionRefreshService(
+        suggestion_repo,
+        tenant_id=tenant_id,
+        cluster_repository=cluster_repo,
+        session=session,
+        settings=settings,
+        gate=gate,
+        block_repository=block_repo,
+        constraint_repository=constraint_repo,
     )
 
     charts_dir = Path("logs") / "charts"
@@ -167,18 +218,13 @@ async def build_cluster_service(
     hac_settings = HACSettings()
 
     return ClusterService(
-        gate=AssignmentGate(
-            settings=settings,
-            cluster_repository=cluster_repo,
-            block_repository=block_repo,
-            constraint_repository=constraint_repo,
-            member_repository=member_repo,
-        ),
+        gate=gate,
         representative_discovery=RepresentativeDiscovery(settings=settings),
         centroid_discovery=CentroidDiscovery(settings=settings),
         graph_discovery=GraphDiscovery(settings=settings, algorithm=None),
         assignment_writer=assignment_writer,
         suggestion_service=suggestion_service,
+        suggestion_refresh_service=suggestion_refresh_service,
         block_repository=block_repo,
         constraint_repository=constraint_repo,
         hac_settings=hac_settings,

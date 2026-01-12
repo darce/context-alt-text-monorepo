@@ -18,6 +18,7 @@ class DiscoveryMethod(Enum):
     REPRESENTATIVE = "representative"
     CENTROID = "centroid"
     GRAPH = "graph"
+    SUGGESTION_REFRESH = "suggestion_refresh"
 
 
 @dataclass

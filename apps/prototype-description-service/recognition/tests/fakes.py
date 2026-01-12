@@ -8,6 +8,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.repositories import IdentityMember
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.shared.ids import generate_id
 
@@ -43,6 +44,9 @@ class _FakeClusterRepository:
         if not cluster:
             return None
         return _FakeClusterRecord(cluster)
+
+    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
+        return []
 
 
 class FakeJobRepository:
@@ -151,7 +155,8 @@ class FakeClusterService:
         self.clusters = clusters or []
         self.calls: list[dict[str, object]] = []
         self.identity_cluster_map: dict[str, str] = {}
-        self.assignment_writer = SimpleNamespace(_clusters=_FakeClusterRepository(self))
+        self.assignment_writer = SimpleNamespace(cluster_repository=_FakeClusterRepository(self))
+        self.suggestion_refresh_service = None
 
     async def list_clusters(
         self,

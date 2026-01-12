@@ -13,14 +13,18 @@ from datetime import UTC, datetime
 
 import asyncpg
 from fastapi import APIRouter, BackgroundTasks, Depends, Header, HTTPException, Query, status
-from sqlalchemy import text
 from sqlalchemy.exc import ProgrammingError
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 from sse_starlette.sse import EventSourceResponse
 
-from db.settings import get_database_settings
 from db.tenant_context import clear_tenant_context, ensure_tenant_exists, set_tenant_context
 from recognition.application.scan.scan_queue_service import ScanQueueService
+from recognition.application.tasks.scan import (
+    chain_populate_and_process,
+    extract_media_id,
+    max_batch_for_tier,
+    scan_worker_available,
+)
 from recognition.domain.job import JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_repo,
@@ -28,65 +32,18 @@ from recognition.interface_adapters.http.dependencies import (
     get_optional_session,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,
+    get_shared_insightface_adapter,
     require_auth,
     require_write_access,
 )
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
 from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest, _validate_uuid
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
+from recognition.shared.db.dialect import is_postgres
 
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth)])
-
-_DB_SETTINGS = get_database_settings()
-_DEFAULT_TIER_BATCH_LIMITS: dict[str, int] = {
-    "free": 50,
-    "pro": 500,
-    "business": 2000,
-    "enterprise": 10000,
-}
-
-
-def _load_tier_batch_limits() -> dict[str, int]:
-    """Load tier batch limits from env or defaults.
-
-    Environment:
-        RECOGNITION_TIER_BATCH_LIMITS_JSON
-            JSON object mapping tier -> max items per batch.
-            Example: {"free":50,"pro":500,"business":2000,"enterprise":10000}
-    """
-    raw = os.getenv("RECOGNITION_TIER_BATCH_LIMITS_JSON")
-    if not raw:
-        return dict(_DEFAULT_TIER_BATCH_LIMITS)
-
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError:
-        return dict(_DEFAULT_TIER_BATCH_LIMITS)
-
-    if not isinstance(decoded, dict):
-        return dict(_DEFAULT_TIER_BATCH_LIMITS)
-
-    limits: dict[str, int] = {}
-    for tier, default in _DEFAULT_TIER_BATCH_LIMITS.items():
-        value = decoded.get(tier, default)
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = default
-        limits[tier] = parsed if parsed > 0 else default
-
-    return limits
-
-
-_TIER_BATCH_LIMITS = _load_tier_batch_limits()
-
-
-def _max_batch_for_tier(tier: str | None) -> int:
-    """Return maximum media items per analyze request for a given tier."""
-    normalized = (tier or "free").strip().lower()
-    return _TIER_BATCH_LIMITS.get(normalized, _TIER_BATCH_LIMITS["free"])
 
 
 @router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -113,7 +70,8 @@ async def analyze_media(
         if not media_ids:
             raise HTTPException(status_code=status.HTTP_422_UNPROCESSABLE_ENTITY, detail="media_ids are required")
         media_ids = [_validate_uuid(mid) for mid in media_ids]
-        if session is not None and hasattr(session, "execute") and _is_postgres_session(session):
+        inline_processing = os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1"
+        if session is not None and hasattr(session, "execute") and is_postgres(session):
             try:
                 tenant_uuid = uuid.UUID(str(request.tenant_id))
                 # Auto-provision tenant if it doesn't exist (first-use provisioning)
@@ -121,9 +79,7 @@ async def analyze_media(
                 await set_tenant_context(session, tenant_uuid)
             except Exception as exc:  # pragma: no cover - validation should handle
                 raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id") from exc
-            if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") != "1" and not await _scan_worker_available(
-                session
-            ):
+            if not inline_processing and not await scan_worker_available(session):
                 raise HTTPException(
                     status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
                     detail="Scan worker unavailable. Start the scan worker or enable inline processing.",
@@ -138,11 +94,11 @@ async def analyze_media(
         if request.media_items:
             media_items = [(int(item.media_id), str(item.media_url)) for item in request.media_items]
         else:
-            media_items = [(_extract_media_id(mid), str(mid)) for mid in media_sources]
+            media_items = [(extract_media_id(mid), str(mid)) for mid in media_sources]
 
         if getattr(auth, "enabled", False) and not getattr(auth, "is_admin", False):
             tier = getattr(auth, "rate_limit_tier", None)
-            max_batch = _max_batch_for_tier(tier)
+            max_batch = max_batch_for_tier(tier)
             if len(media_items) > max_batch:
                 raise HTTPException(
                     status_code=status.HTTP_400_BAD_REQUEST,
@@ -171,28 +127,21 @@ async def analyze_media(
         session_factory: async_sessionmaker[AsyncSession] | None = None
         # Only use request-bound factory for testing (SQLite/in-memory)
         # For Postgres, use the default factory to get fresh connections from the pool
-        if session is not None and getattr(session, "bind", None) is not None and not _is_postgres_session(session):
+        if session is not None and getattr(session, "bind", None) is not None and not is_postgres(session):
             session_factory = async_sessionmaker(bind=session.bind, expire_on_commit=False)
 
-        async def _chain_populate_and_process():
-            """Chain populate and process to ensure order and conserve connections."""
-            await _populate_scan_job_items_async(
-                tenant_id=str(request.tenant_id),
-                job_id=str(job_id),
-                media_items=media_items,
-                scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
-                session_factory=session_factory,
-            )
-            if os.environ.get("RECOGNITION_ASYNC_ANALYZE_INLINE", "0") == "1":
-                await _process_scan_job_inline(
-                    tenant_id=str(request.tenant_id),
-                    job_id=str(job_id),
-                    media_ids=media_ids,
-                    media_sources=media_sources,
-                    session_factory=session_factory,
-                )
-
-        background_tasks.add_task(_chain_populate_and_process)
+        background_tasks.add_task(
+            chain_populate_and_process,
+            tenant_id=str(request.tenant_id),
+            job_id=str(job_id),
+            media_items=media_items,
+            media_ids=media_ids,
+            media_sources=media_sources,
+            scan_queue=scan_queue if not isinstance(scan_queue, ScanQueueService) else None,
+            session_factory=session_factory,
+            inline_processing=inline_processing,
+            adapter_provider=get_shared_insightface_adapter if inline_processing else None,
+        )
 
         total = len(media_items)
         progress = JobProgressResponse(completed=0, total=total)
@@ -215,7 +164,7 @@ async def analyze_media(
         logger.exception("Unexpected error in analyze_media: %s", exc)
         raise HTTPException(status_code=status.HTTP_501_NOT_IMPLEMENTED, detail=str(exc)) from exc
     finally:
-        if session is not None and hasattr(session, "execute") and tenant_uuid and _is_postgres_session(session):
+        if session is not None and hasattr(session, "execute") and tenant_uuid and is_postgres(session):
             with contextlib.suppress(Exception):
                 await clear_tenant_context(session)
 
@@ -239,7 +188,7 @@ async def get_job_status(
 
     if session is not None:
         # Set tenant context for RLS
-        if tenant_id and _is_postgres_session(session):
+        if tenant_id and is_postgres(session):
             try:
                 tenant_uuid = uuid.UUID(str(tenant_id))
                 await ensure_tenant_exists(session, tenant_uuid)
@@ -349,7 +298,7 @@ async def cancel_job(
     """Cancel a long-running job."""
     # Prefer canceling persisted scan jobs when a DB session is available.
     if session is not None and scan_queue is not None:
-        if tenant_id and _is_postgres_session(session):
+        if tenant_id and is_postgres(session):
             with contextlib.suppress(Exception):
                 tenant_uuid = uuid.UUID(str(tenant_id))
                 await ensure_tenant_exists(session, tenant_uuid)
@@ -364,7 +313,7 @@ async def cancel_job(
             if domain_job:
                 return _job_to_response(domain_job)
         finally:
-            if tenant_id and _is_postgres_session(session):
+            if tenant_id and is_postgres(session):
                 with contextlib.suppress(Exception):
                     await clear_tenant_context(session)
 
@@ -372,186 +321,10 @@ async def cancel_job(
     return _job_to_response(job)
 
 
-def _extract_media_id(value: str) -> int:
-    """Convert short ID into an integer media identifier."""
-    digits = "".join(ch for ch in value if ch.isdigit())
-    if digits:
-        return int(digits[-6:])
-    return abs(hash(value)) % 1_000_000
-
-
-async def _process_scan_job_inline(
-    *,
-    tenant_id: str,
-    job_id: str,
-    media_ids: list[str] | None,
-    media_sources: list[str],
-    session_factory: async_sessionmaker[AsyncSession] | None = None,
-) -> None:
-    """Inline processor used in tests/dev to keep integration tests deterministic.
-
-    Production should run a dedicated worker process instead.
-    """
-    from db.tenant_context import set_tenant_context
-
-    if session_factory is None:
-        from db.session import async_session_factory as default_session_factory
-
-        session_factory = default_session_factory
-
-    # Prepare services OUTSIDE the DB session to avoid holding connections during load
-    from recognition.config import get_settings as get_recognition_settings
-
-    settings = get_recognition_settings()
-    runtime_mode = settings.runtime_mode
-
-    if runtime_mode == "test":
-        from recognition.application.embedding.detector import StubFaceDetector
-        from recognition.application.embedding.generator import StubEmbeddingGenerator
-
-        detector = StubFaceDetector()
-        generator = StubEmbeddingGenerator()
-    else:
-        try:
-            from recognition.application.embedding.detector import InsightFaceFaceDetector
-            from recognition.application.embedding.generator import InsightFaceEmbeddingGenerator
-            from recognition.interface_adapters.http.dependencies import get_shared_insightface_adapter
-
-            # Use shared adapter to avoid reloading the model (20-30s + memory)
-            # This handles locking and initialization internally
-            adapter = await get_shared_insightface_adapter()
-
-            detector = InsightFaceFaceDetector(adapter)
-            generator = InsightFaceEmbeddingGenerator(adapter)
-        except ImportError:
-            from recognition.application.embedding.detector import StubFaceDetector
-            from recognition.application.embedding.generator import StubEmbeddingGenerator
-
-            logger.warning("InsightFace not installed, using stub detectors.")
-            detector = StubFaceDetector()
-            generator = StubEmbeddingGenerator()
-
-    # 1. Mark Running (Short transaction)
-    async with session_factory() as session:
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        await set_tenant_context(session, tenant_uuid)
-
-        from recognition.application.scan.service import ScanService
-
-        scan_service = ScanService(session=session)
-        await scan_service.mark_job_running(uuid.UUID(str(job_id)))
-
-    # 2. Inference (No DB connection)
-    sources_list = list(media_sources) if media_sources else (list(media_ids) if media_ids else [])
-    detections = await detector.detect(sources_list)
-
-    # Generate embeddings if specific detector didn't provide them (e.g. stub or some configs)
-    from recognition.application.embedding.generator import EmbeddingResult
-
-    detections_needing_embeddings = [d for d in detections if d.embedding is None]
-    if detections_needing_embeddings:
-        face_bytes = [str(det.media_id).encode() for det in detections_needing_embeddings]
-        embeddings: list[EmbeddingResult] = await generator.generate(face_bytes)
-        for det, result in zip(detections_needing_embeddings, embeddings, strict=False):
-            det.embedding = result.embedding
-
-    # 3. Save Results (Short transaction)
-    async with session_factory() as session:
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        await set_tenant_context(session, tenant_uuid)
-
-        # We need generator instance here just to satisfy init, even if logic was done above
-        scan_service = ScanService(
-            session=session,
-            detector=detector,
-            generator=generator,
-        )
-
-        await scan_service.save_job_results(
-            job_id=uuid.UUID(str(job_id)),
-            tenant_id=str(tenant_id),
-            media_ids=media_ids or [],
-            media_sources=media_sources,
-            detections=detections,
-        )
-
-
-async def _populate_scan_job_items_async(
-    *,
-    tenant_id: str,
-    job_id: str,
-    media_items: list[tuple[int, str]],
-    scan_queue: ScanQueueService | None = None,
-    session_factory: async_sessionmaker[AsyncSession] | None = None,
-) -> None:
-    """Populate scan job items outside the request context."""
-    if scan_queue is not None:
-        await scan_queue.populate_scan_job_items(
-            job_id=uuid.UUID(str(job_id)),
-            tenant_id=uuid.UUID(str(tenant_id)),
-            media_items=media_items,
-        )
-        return
-
-    from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
-
-    if session_factory is None:
-        from db.session import async_session_factory as default_session_factory
-
-        session_factory = default_session_factory
-
-    async with session_factory() as session:
-        tenant_uuid = uuid.UUID(str(tenant_id))
-        await set_tenant_context(session, tenant_uuid)
-        try:
-            repo = SqlAlchemyScanQueueRepository(session)
-            queue = ScanQueueService(repo)
-            await queue.populate_scan_job_items(
-                job_id=uuid.UUID(str(job_id)),
-                tenant_id=tenant_uuid,
-                media_items=media_items,
-                commit_hook=session.commit,
-            )
-            await session.commit()
-        finally:
-            with contextlib.suppress(Exception):
-                await clear_tenant_context(session)
-
-
 # _job_to_response is imported from job_utils for shared use across routers
-
-
 def _is_insufficient_privilege(exc: ProgrammingError) -> bool:
     """Detect RLS/permission errors from asyncpg/SQLAlchemy."""
     cause = exc.orig if hasattr(exc, "orig") else None
     if isinstance(cause, asyncpg.InsufficientPrivilegeError):
         return True
     return "InsufficientPrivilege" in str(exc)
-
-
-def _is_postgres_session(session) -> bool:
-    """Return True when session is backed by PostgreSQL."""
-    bind = getattr(session, "bind", None)
-    dialect = getattr(bind, "dialect", None) if bind else None
-    name = getattr(dialect, "name", "")
-    return name.startswith("postgres")
-
-
-async def _scan_worker_available(session: AsyncSession) -> bool:
-    """Return True when a scan worker connection is visible."""
-    try:
-        result = await session.execute(
-            text(
-                """
-                SELECT 1
-                FROM pg_stat_activity
-                WHERE datname = current_database()
-                  AND application_name = :app_name
-                LIMIT 1
-                """
-            ),
-            {"app_name": "scan_worker"},
-        )
-        return result.scalar_one_or_none() is not None
-    except Exception:
-        return False

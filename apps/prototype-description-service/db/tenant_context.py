@@ -13,17 +13,7 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import engine
-
-
-def _is_sqlite(session: AsyncSession) -> bool:
-    """Check if the session is using SQLite (no RLS support)."""
-    bind = getattr(session, "bind", None)
-    if bind is None:
-        return False
-    dialect = getattr(bind, "dialect", None)
-    if dialect is None:
-        return False
-    return getattr(dialect, "name", "") == "sqlite"
+from recognition.shared.db.dialect import is_sqlite
 
 
 async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url: str | None = None) -> None:
@@ -55,7 +45,7 @@ async def ensure_tenant_exists(session: AsyncSession, tenant_id: UUID, site_url:
 async def set_tenant_context(session: AsyncSession, tenant_id: UUID) -> None:
     """Set app.current_tenant for the current session/transaction."""
     # SQLite doesn't support RLS or session variables - skip for test environments
-    if _is_sqlite(session):
+    if is_sqlite(session):
         return
 
     tenant_value = str(tenant_id).replace("'", "''")
@@ -90,7 +80,7 @@ async def clear_tenant_context(session: AsyncSession) -> None:
     RLS variables.
     """
     # SQLite doesn't support RLS or session variables - skip for test environments
-    if _is_sqlite(session):
+    if is_sqlite(session):
         return
     with contextlib.suppress(Exception):
         await session.execute(text("RESET app.current_tenant"))
@@ -100,7 +90,7 @@ async def clear_tenant_context(session: AsyncSession) -> None:
 async def enable_rls_bypass(session: AsyncSession) -> None:
     """Temporarily disable RLS policies for maintenance operations."""
     # SQLite doesn't support RLS - skip for test environments
-    if _is_sqlite(session):
+    if is_sqlite(session):
         return
 
     try:
@@ -117,7 +107,7 @@ async def enable_rls_bypass(session: AsyncSession) -> None:
 async def disable_rls_bypass(session: AsyncSession) -> None:
     """Reset RLS bypass flag."""
     # SQLite doesn't support RLS - skip for test environments
-    if _is_sqlite(session):
+    if is_sqlite(session):
         return
 
     try:

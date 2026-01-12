@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 
 import recognition.application.discovery.graph as graph_module
+import recognition.application.discovery.graph.selection as graph_selection
 from recognition.application.assignment.candidate import AssignmentCandidate, DiscoveryMethod
 from recognition.application.discovery.graph import GraphAlgorithm, GraphDiscovery
 from recognition.application.settings import ClusteringSettings
@@ -129,7 +130,7 @@ async def test_graph_discovery_selects_hdbscan(monkeypatch) -> None:
 
     import recognition.infrastructure.clustering as clustering_module
 
-    monkeypatch.setattr(graph_module.GraphDiscovery, "_hdbscan_available", staticmethod(lambda: True))
+    monkeypatch.setattr(graph_selection, "hdbscan_available", lambda: True)
     monkeypatch.setattr(clustering_module, "HdbscanGraphAlgorithm", lambda **_: StubAlgorithm("hdbscan"))
 
     settings = make_settings(threshold=0.8, hdbscan_max_batch_size=3)

@@ -16,7 +16,7 @@ from recognition.application.settings import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.maturity import ClusterMaturityInfo
-from recognition.domain.repositories import ClusterRepository
+from recognition.domain.repositories import ClusterRepository, IdentityMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.ids import generate_id
 
@@ -66,6 +66,9 @@ class NoopRepository(ClusterRepository):
         raise NotImplementedError
 
     async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
+        raise NotImplementedError
+
+    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
     async def save_cluster(self, cluster):

@@ -41,6 +41,22 @@ AnchorEmbeddings = dict[UUID, list[np.ndarray]]
 CreateSuggestionFn = Callable[[UUID, UUID, float, float], Awaitable[None]]
 
 
+def _find_best_match(
+    embedding: np.ndarray,
+    representatives: AnchorEmbeddings,
+) -> tuple[UUID | None, float]:
+    """Return the best matching cluster and similarity for an embedding."""
+    best_cluster_id: UUID | None = None
+    best_similarity = 0.0
+    for cluster_id, rep_embeddings in representatives.items():
+        for rep_emb in rep_embeddings:
+            similarity = float(np.dot(embedding, rep_emb))
+            if similarity > best_similarity:
+                best_similarity = similarity
+                best_cluster_id = cluster_id
+    return best_cluster_id, best_similarity
+
+
 class RepresentativeOnlyClustering:
     """
     Simple sequential clustering using only representative matching.
@@ -138,15 +154,7 @@ class RepresentativeOnlyClustering:
                 identity_embedding = identity_embedding / norm
 
             # Find best matching representative
-            best_cluster_id: UUID | None = None
-            best_similarity = 0.0
-
-            for cluster_id, rep_embeddings in local_representatives.items():
-                for rep_emb in rep_embeddings:
-                    similarity = float(np.dot(identity_embedding, rep_emb))
-                    if similarity > best_similarity:
-                        best_similarity = similarity
-                        best_cluster_id = cluster_id
+            best_cluster_id, best_similarity = _find_best_match(identity_embedding, local_representatives)
 
             # Check if we have a high-confidence match (auto-assign)
             if best_cluster_id and best_similarity >= self.high_confidence_threshold:

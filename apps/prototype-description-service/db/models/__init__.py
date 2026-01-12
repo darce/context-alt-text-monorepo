@@ -27,6 +27,7 @@ from db.models.jobs import (
 )
 from db.models.observability import (
     AssignmentDecision,
+    ClusteringFeedback,
     ClusteringJobReport,
     RecognitionEvent,
     RecognitionRun,
@@ -52,6 +53,7 @@ __all__ = [
     "RecognitionEvent",
     "ClusteringJobReport",
     "AssignmentDecision",
+    "ClusteringFeedback",
     # Constraints
     "IdentitySuggestion",
     "IdentityClusterBlock",

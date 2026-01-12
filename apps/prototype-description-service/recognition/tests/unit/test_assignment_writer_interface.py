@@ -61,6 +61,9 @@ class NullClusterRepo(ClusterRepository):
     async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
         return []
 
+    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
+        return []
+
     async def assign_identity_to_cluster(self, identity: MediaIdentity, cluster_id: str) -> None:
         return None
 

@@ -96,6 +96,10 @@ class ClusterRepository(Protocol):
         """Fetch identities that are members of a cluster."""
         ...
 
+    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
+        """Fetch member records for a cluster."""
+        ...
+
     async def assign_identity_to_cluster(self, identity: MediaIdentity, cluster_id: str) -> None: ...
 
     async def add_representative(self, representative: ClusterRepresentative) -> None: ...
@@ -123,11 +127,8 @@ class ClusterRepository(Protocol):
 
         Returns:
             List of (cluster, representatives) tuples.
-
-        Raises:
-            NotImplementedError: Until implemented.
         """
-        raise NotImplementedError("TODO: get_labeled_with_representatives")
+        ...
 
     async def get_top_unlabeled(
         self,
@@ -386,11 +387,8 @@ class SuggestionRepository(Protocol):
 
         Returns:
             Count of suggestions updated.
-
-        Raises:
-            NotImplementedError: Until implemented by concrete repositories.
         """
-        raise NotImplementedError("TODO: implement bulk_update_status")
+        ...
 
     async def upsert_by_identity_cluster(
         self,
@@ -405,11 +403,8 @@ class SuggestionRepository(Protocol):
 
         Returns:
             The created or updated suggestion.
-
-        Raises:
-            NotImplementedError: Until implemented by concrete repositories.
         """
-        raise NotImplementedError("TODO: implement upsert_by_identity_cluster")
+        ...
 
 
 class JobRepository(Protocol):
@@ -467,7 +462,7 @@ class IdentityConstraintRepository(Protocol):
         Notes:
             Implementations may return the existing constraint if one already exists.
         """
-        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+        ...
 
     async def get(
         self,
@@ -485,7 +480,7 @@ class IdentityConstraintRepository(Protocol):
         Returns:
             Constraint if exists, None otherwise.
         """
-        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+        ...
 
     async def get_all_for_identity(
         self,
@@ -501,11 +496,11 @@ class IdentityConstraintRepository(Protocol):
         Returns:
             List of constraints where identity_id is either a or b.
         """
-        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+        ...
 
     async def get_all(self, tenant_id: str) -> list[IdentityConstraint]:
         """Get all constraints for a tenant."""
-        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+        ...
 
     async def has_cannot_link(
         self,
@@ -523,4 +518,4 @@ class IdentityConstraintRepository(Protocol):
         Returns:
             True if any cannot-link constraint exists.
         """
-        raise NotImplementedError("TODO: Implement in SqlAlchemyConstraintRepository")
+        ...

@@ -12,7 +12,7 @@ import pytest
 
 from db.models import Tenant
 from recognition.domain.cluster import IdentityCluster
-from recognition.domain.repositories import ClusterRepository
+from recognition.domain.repositories import ClusterRepository, IdentityMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
@@ -42,6 +42,9 @@ class DummyClusterRepository(ClusterRepository):
         raise NotImplementedError
 
     async def delete(self, cluster_id: str) -> None:
+        raise NotImplementedError
+
+    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
 

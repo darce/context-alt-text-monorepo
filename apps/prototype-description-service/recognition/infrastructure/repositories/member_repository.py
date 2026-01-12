@@ -9,12 +9,10 @@ from __future__ import annotations
 import asyncio
 import uuid
 from datetime import datetime
-from typing import Any, cast
 
 from sqlalchemy import Select, insert, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.dialects.sqlite import insert as sqlite_insert
-from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Insert
@@ -23,6 +21,7 @@ from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity
 from db.settings import get_database_settings
 from recognition.domain.repositories import IdentityMember, MemberRepository
+from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 _DB_SETTINGS = get_database_settings()
 
@@ -117,8 +116,8 @@ class SqlAlchemyMemberRepository(MemberRepository):
         else:
             stmt = insert(MemberModel).values(**values)
 
-        result = cast(CursorResult[Any], await self._session.execute(stmt))
-        if result.rowcount == 0:
+        result = await execute_dml(self._session, stmt)
+        if get_rowcount(result) == 0:
             return None
 
         model = await self._session.get(MemberModel, member_id)
@@ -182,9 +181,9 @@ class SqlAlchemyMemberRepository(MemberRepository):
         last_error: DBAPIError | None = None
         for attempt in range(max_attempts):
             try:
-                result = await self._session.execute(stmt)
+                result = await execute_dml(self._session, stmt)
                 await self._session.flush()
-                return int(result.rowcount)  # type: ignore[attr-defined]
+                return get_rowcount(result)
             except DBAPIError as exc:
                 last_error = exc
                 if _is_deadlock_error(exc) and attempt < max_attempts - 1:

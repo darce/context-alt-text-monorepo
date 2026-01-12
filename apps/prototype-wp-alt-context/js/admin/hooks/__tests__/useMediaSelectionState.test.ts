@@ -11,6 +11,8 @@ const buildItem = (overrides: Partial<WorkbenchMediaItem> = {}): WorkbenchMediaI
   thumbnailUrl: overrides.thumbnailUrl ?? null,
   mimeType: overrides.mimeType ?? 'image/jpeg',
   editUrl: overrides.editUrl ?? '/wp-admin/post.php?post=1&action=edit',
+  updatedAt: overrides.updatedAt ?? '2025-01-01T00:00:00Z',
+  dimensions: overrides.dimensions ?? { width: 1200, height: 800 },
   tags: overrides.tags ?? [],
 });
 

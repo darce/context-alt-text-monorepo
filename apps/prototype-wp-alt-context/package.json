@@ -18,10 +18,12 @@
     "arch:verbose": "node scripts/check-architecture-compliance.js --tips --verbose",
     "check:all": "npm run lint:fix && npm run format:fix && npm run typecheck && npm run arch:verbose && npm run test",
     "typecheck": "tsc --noEmit --project tsconfig.type-check.json",
+    "generate:contracts": "json-schema-to-typescript ../../packages/shared-contracts/schemas/*.json -o js/admin/api/generated",
     "nuke": "rm -rf node_modules public && npm install && npm run build"
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@tanstack/eslint-plugin-query": "^5.90.0",
     "@testing-library/jest-dom": "^6.5.0",
     "@testing-library/react": "^16.3.1",
     "@testing-library/user-event": "^14.6.1",
@@ -31,6 +33,8 @@
     "eslint-plugin-react": "^7.37.5",
     "eslint-plugin-react-hooks": "^7.0.1",
     "jsdom": "^22.1.0",
+    "json-schema-to-typescript": "^14.0.6",
+    "msw": "^2.7.0",
     "prettier": "^3.6.2",
     "prettier-plugin-curly": "^0.4.1",
     "sass": "^1.80.6",

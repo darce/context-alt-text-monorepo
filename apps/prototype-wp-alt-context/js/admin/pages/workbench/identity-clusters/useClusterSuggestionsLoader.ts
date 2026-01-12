@@ -7,6 +7,7 @@
 import React from 'react';
 import { useQuery } from '@tanstack/react-query';
 
+import { queryKeys } from '../../../api/queryKeys';
 import {
   fetchIdentitySuggestions,
   listRecognitionClusters,
@@ -57,14 +58,14 @@ export const useClusterSuggestionsLoader = ({
   }, [labelInput, debounceMs, enabled]);
 
   const { data: identitySuggestions, isLoading: suggestionsLoading } = useQuery<IdentitySuggestionsResponse>({
-    queryKey: ['identity-suggestions', identityId],
+    queryKey: queryKeys.suggestions.identityFor(identityId),
     queryFn: () => fetchIdentitySuggestions(identityId!, 5),
     enabled: Boolean(identityId && enabled),
     staleTime: 30000,
   });
 
   const { data: labelMatches, isLoading: labelMatchesLoading } = useQuery({
-    queryKey: ['cluster-label-search', debouncedValue],
+    queryKey: queryKeys.clusters.labelSearch(debouncedValue),
     queryFn: () =>
       listRecognitionClusters({
         limit: 20,

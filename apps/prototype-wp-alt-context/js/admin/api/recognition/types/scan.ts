@@ -4,6 +4,10 @@
  * These types match the backend JobStatusResponse schema exactly.
  */
 
+import type { JobProgress, RecognitionJob } from '../../generated';
+
+export type { JobProgress, RecognitionJob };
+
 export interface AnalyzeRequest {
   mediaIds: number[];
   sensitivity?: 'standard' | 'high';
@@ -11,32 +15,16 @@ export interface AnalyzeRequest {
 }
 
 /**
- * Progress tracking for a job.
- */
-export interface JobProgress {
-  completed: number;
-  total: number;
-}
-
-/**
  * Response from POST /recognition/analyze
  * Matches backend JobStatusResponse schema.
  */
-export interface AnalyzeResponse {
-  id: string;
-  type: 'analyze' | 'clustering' | 'curation' | 'split';
-  status: 'pending' | 'running' | 'completed' | 'failed';
-  progress: JobProgress | null;
-  started_at: string;
-  finished_at: string | null;
-  message?: string | null;
-}
+export type AnalyzeResponse = RecognitionJob;
 
 /**
  * Response from GET /recognition/jobs/{job_id}
  * Same structure as AnalyzeResponse.
  */
-export type JobStatusResponse = AnalyzeResponse;
+export type JobStatusResponse = RecognitionJob;
 
 /**
  * Response from POST /recognition/clustering/jobs

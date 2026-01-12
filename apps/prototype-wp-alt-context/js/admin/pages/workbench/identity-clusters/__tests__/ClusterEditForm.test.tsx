@@ -18,8 +18,8 @@ describe('ClusterEditForm', () => {
 
   it('renders with initial label and autofocus', () => {
     render(<ClusterEditForm {...defaultProps} />);
-    const input = screen.getByDisplayValue('Test Cluster') as HTMLInputElement;
-    expect(input.value).toBe(defaultProps.labelInput);
+    const input = screen.getByDisplayValue('Test Cluster');
+    expect((input as HTMLInputElement).value).toBe(defaultProps.labelInput);
     expect(document.activeElement).toBe(input);
   });
 

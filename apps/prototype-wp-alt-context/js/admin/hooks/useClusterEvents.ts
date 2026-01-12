@@ -5,6 +5,7 @@
 import { useEffect } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { getEndpoint, getConfig } from '../api/config';
+import { queryKeys } from '../api/queryKeys';
 import { stripTrailingSlash } from '../utils/http';
 
 /**
@@ -51,7 +52,7 @@ export const useClusterEvents = (tenantId: string, enabled = true): void => {
           eventType === 'cluster_split' ||
           eventType === 'cluster_updated'
         ) {
-          void queryClient.invalidateQueries({ queryKey: ['identity-suggestions'] });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.identity() });
         }
 
         if (
@@ -60,9 +61,7 @@ export const useClusterEvents = (tenantId: string, enabled = true): void => {
           eventType === 'cluster_split' ||
           eventType === 'suggestions_updated'
         ) {
-          void queryClient.invalidateQueries({ queryKey: ['clusters'] });
-          void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
-          void queryClient.invalidateQueries({ queryKey: ['recognition-cluster'] });
+          void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
         }
       } catch (err) {
         console.error('Failed to parse cluster event:', err);

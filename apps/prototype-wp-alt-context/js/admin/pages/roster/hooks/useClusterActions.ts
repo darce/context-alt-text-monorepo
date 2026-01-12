@@ -1,6 +1,7 @@
 import { useMemo } from 'react';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { queryKeys } from '../../../api/queryKeys';
 import type { AnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
 import { reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
@@ -22,7 +23,7 @@ export const useClusterActions = ({
     mutationFn: (variables) =>
       reassignClusterIdentity({ identityId: variables.faceId, targetClusterId: variables.targetClusterId }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
     onSettled: onReassignSettled,
   });
@@ -34,7 +35,7 @@ export const useClusterActions = ({
   >({
     mutationFn: ({ cluster, mediaIds }) => scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id }),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
     onSettled: onRescanSettled,
   });
@@ -48,8 +49,8 @@ export const useClusterActions = ({
           newEntryName: variables.newEntryName,
         }),
       onSuccess: () => {
-        void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
-        void queryClient.invalidateQueries({ queryKey: ['roster-entries'] });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+        void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
       },
       onSettled: onCommitSettled,
     },

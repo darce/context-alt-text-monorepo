@@ -5,6 +5,7 @@ import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { IdentityClusterList } from '../identity-clusters';
 import * as api from '../../../api/recognition';
+import { queryKeys } from '../../../api/queryKeys';
 import type { MediaIdentitiesResponse } from '../../../api/recognition';
 import type {
   ClusterSuggestionsLoaderOptions,
@@ -97,7 +98,7 @@ const renderWithClient = async (ui: React.ReactElement) => {
 };
 
 const setMediaIdentitiesCache = (client: QueryClient, data: MediaIdentitiesResponse) => {
-  client.setQueryData(['media-identities', [1]], data);
+  client.setQueryData(queryKeys.media.identitiesByIds([1]), data);
 };
 
 const baseIdentity = {
@@ -250,7 +251,7 @@ describe('IdentityClusterList', () => {
       expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-1', 'New Label', expect.anything()),
     );
 
-    const updated = client.getQueryData<MediaIdentitiesResponse>(['media-identities', [1]]);
+    const updated = client.getQueryData<MediaIdentitiesResponse>(queryKeys.media.identitiesByIds([1]));
     expect(updated?.identities_by_media['1'][0].cluster_label).toBe('New Label');
     expect(updated?.identities_by_media['1'][0].is_auto_label).toBe(false);
   });
@@ -303,7 +304,7 @@ describe('IdentityClusterList', () => {
       expect(api.updateClusterLabel).toHaveBeenCalledWith('cluster-auto', 'Person A', expect.anything()),
     );
 
-    const updated = client.getQueryData<MediaIdentitiesResponse>(['media-identities', [1]]);
+    const updated = client.getQueryData<MediaIdentitiesResponse>(queryKeys.media.identitiesByIds([1]));
     expect(updated?.identities_by_media['1'][0].cluster_label).toBe('Person A');
     expect(updated?.identities_by_media['1'][0].is_auto_label).toBe(false);
   });

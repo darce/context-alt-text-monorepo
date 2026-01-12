@@ -7,6 +7,7 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
+import { queryKeys } from '../../../api/queryKeys';
 import {
   fetchPendingSuggestions,
   acceptSuggestion,
@@ -69,19 +70,20 @@ export const SuggestionReviewPanel = (): React.JSX.Element | null => {
   const queryClient = useQueryClient();
 
   // Fetch pending suggestions
-  const { data, isLoading } = useQuery({
-    queryKey: ['pending-suggestions'],
+  const { data, isLoading, isError, refetch } = useQuery({
+    queryKey: queryKeys.suggestions.pending(),
     queryFn: () => fetchPendingSuggestions(10, 0),
-    refetchInterval: 30000, // Refresh every 30s
+    refetchInterval: (query) => (query.state.status === 'error' ? false : 30000),
+    retry: 1,
   });
 
   // Accept mutation
   const acceptMutation = useMutation({
     mutationFn: acceptSuggestion,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['pending-suggestions'] });
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
-      void queryClient.invalidateQueries({ queryKey: ['clusters'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },
   });
 
@@ -89,17 +91,12 @@ export const SuggestionReviewPanel = (): React.JSX.Element | null => {
   const rejectMutation = useMutation({
     mutationFn: rejectSuggestion,
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: ['pending-suggestions'] });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
     },
   });
 
   const suggestions = data?.suggestions ?? [];
   const totalCount = data?.total ?? 0;
-
-  // Don't render if no suggestions
-  if (!isLoading && suggestions.length === 0) {
-    return null;
-  }
 
   if (isLoading) {
     return (
@@ -107,6 +104,22 @@ export const SuggestionReviewPanel = (): React.JSX.Element | null => {
         <p>{__('Loading suggestions...', 'alt-context')}</p>
       </div>
     );
+  }
+
+  if (isError) {
+    return (
+      <div className="acx-suggestion-panel acx-suggestion-panel--error">
+        <p>{__('Failed to load suggestions.', 'alt-context')}</p>
+        <button type="button" className="button" onClick={() => void refetch()}>
+          {__('Retry', 'alt-context')}
+        </button>
+      </div>
+    );
+  }
+
+  // Don't render if no suggestions
+  if (suggestions.length === 0) {
+    return null;
   }
 
   return (

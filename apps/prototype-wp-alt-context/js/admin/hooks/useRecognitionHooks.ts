@@ -20,6 +20,7 @@ import {
   type ClusterSummary,
   type JobStatusResponse,
 } from '../api/recognition';
+import { queryKeys } from '../api/queryKeys';
 
 export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse[], Error, number[], unknown>) =>
   useMutation<AnalyzeResponse[], Error, number[]>({
@@ -34,7 +35,7 @@ export const useScanIdentities = (options?: UseMutationOptions<AnalyzeResponse[]
 
 export const useScanStatus = (jobId: string | null, enabled = true) =>
   useQuery<JobStatusResponse>({
-    queryKey: ['recognition-status', jobId],
+    queryKey: queryKeys.jobs.status(jobId),
     enabled: Boolean(jobId) && enabled,
     queryFn: () => fetchScanStatus(jobId!),
     refetchInterval: (query) =>
@@ -57,7 +58,7 @@ export const useMultiScanStatus = (jobIds: string[], enabled = true) =>
   useQueries({
     queries: jobIds.map(
       (jobId): UseQueryOptions<JobStatusResponse, Error> => ({
-        queryKey: ['recognition-status', jobId],
+        queryKey: queryKeys.jobs.status(jobId),
         queryFn: () => fetchScanStatus(jobId),
         enabled: Boolean(jobId) && enabled,
         refetchInterval: (query) =>
@@ -97,14 +98,14 @@ export const useClusterIdentities = (options?: UseMutationOptions<ClusterRespons
 
 export const useRecognitionClusters = (params: ClusterListParams = {}) =>
   useQuery<ClusterSummary[]>({
-    queryKey: ['recognition-clusters', params],
+    queryKey: queryKeys.clusters.list(params),
     queryFn: () => listRecognitionClusters(params),
     refetchInterval: 30_000,
   });
 
 export const useRecognitionCluster = (clusterId: string | null, enabled = true) =>
   useQuery<ClusterSummary>({
-    queryKey: ['recognition-cluster', clusterId],
+    queryKey: queryKeys.clusters.detail(clusterId),
     enabled: Boolean(clusterId) && enabled,
     queryFn: () => getRecognitionCluster(clusterId!),
     staleTime: 30_000,

@@ -1,6 +1,6 @@
 import { renderHook, act } from '@testing-library/react';
 import { useJobCoordination } from '../useJobCoordination';
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 
 // Mock BroadcastChannel
 class MockBroadcastChannel {
@@ -23,14 +23,27 @@ describe('useJobCoordination', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.useFakeTimers();
+    vi.spyOn(Math, 'random').mockReturnValue(0);
   });
 
-  it('should start as primary if no one else is around', () => {
+  afterEach(() => {
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('elects primary after randomized backoff when no primary responds', () => {
     const { result } = renderHook(() => useJobCoordination(jobId));
+    expect(result.current.isPrimary).toBe(false);
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
     expect(result.current.isPrimary).toBe(true);
   });
 
-  it('should yield primary status if PONG_PRIMARY received from another tab', () => {
+  it('stays observer if another tab responds as primary', () => {
     const { result } = renderHook(() => useJobCoordination(jobId));
 
     // Simulate someone else responding to PING_PRIMARY
@@ -43,10 +56,14 @@ describe('useJobCoordination', () => {
       }
     });
 
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
     expect(result.current.isPrimary).toBe(false);
   });
 
-  it('should become primary if existing primary is closing', () => {
+  it('becomes primary after a handoff when the primary closes', () => {
     const { result } = renderHook(() => useJobCoordination(jobId));
 
     // Simulate becoming an observer first
@@ -70,11 +87,20 @@ describe('useJobCoordination', () => {
       }
     });
 
+    act(() => {
+      vi.advanceTimersByTime(1500);
+    });
+
     expect(result.current.isPrimary).toBe(true);
   });
 
-  it('should respond to PING_PRIMARY if it is primary', () => {
+  it('responds to PING_PRIMARY when it is the primary', () => {
     const { result } = renderHook(() => useJobCoordination(jobId));
+
+    act(() => {
+      vi.runOnlyPendingTimers();
+    });
+
     expect(result.current.isPrimary).toBe(true);
 
     const channel = result.current.channel as unknown as MockBroadcastChannel;

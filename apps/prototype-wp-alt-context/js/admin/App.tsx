@@ -5,7 +5,15 @@ import { DashboardPage } from './pages/DashboardPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 
-const queryClient = new QueryClient();
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: 1,
+      retryDelay: (attemptIndex) => Math.min(1000 * 2 ** attemptIndex, 30000),
+      refetchOnWindowFocus: false,
+    },
+  },
+});
 const DEFAULT_ROUTE: RoutePath = '/dashboard';
 
 export const App = (): React.JSX.Element => {

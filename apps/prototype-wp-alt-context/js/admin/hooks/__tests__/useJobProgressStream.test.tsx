@@ -1,0 +1,107 @@
+import { act, renderHook, waitFor } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+
+import { useJobProgressStream } from '../useJobProgressStream';
+import { useJobCoordination } from '../useJobCoordination';
+
+vi.mock('../useJobCoordination', () => ({
+  useJobCoordination: vi.fn(),
+}));
+
+class MockEventSource {
+  static instances: MockEventSource[] = [];
+  static CLOSED = 2;
+
+  onerror: ((event: Event) => void) | null = null;
+  readyState = 1;
+  private listeners = new Map<string, Set<(event: MessageEvent) => void>>();
+
+  constructor(readonly url: string) {
+    MockEventSource.instances.push(this);
+  }
+
+  addEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    const existing = this.listeners.get(type) ?? new Set();
+    existing.add(listener);
+    this.listeners.set(type, existing);
+  }
+
+  removeEventListener(type: string, listener: (event: MessageEvent) => void): void {
+    this.listeners.get(type)?.delete(listener);
+  }
+
+  close(): void {
+    this.readyState = MockEventSource.CLOSED;
+  }
+
+  emit(type: string, payload: unknown): void {
+    const event = new MessageEvent(type, { data: JSON.stringify(payload) });
+    this.listeners.get(type)?.forEach((listener) => listener(event));
+  }
+}
+
+describe('useJobProgressStream', () => {
+  const useJobCoordinationMock = vi.mocked(useJobCoordination);
+
+  beforeEach(() => {
+    MockEventSource.instances = [];
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      endpoints: {
+        recognitionJobs: 'http://localhost/recognition/jobs',
+      },
+    } as unknown as NonNullable<Window['AltContextAdmin']>;
+    useJobCoordinationMock.mockReturnValue({ isPrimary: true, channel: null });
+    globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
+  });
+
+  it('opens a single EventSource for progress updates', async () => {
+    renderHook(() => useJobProgressStream('job-123'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('progress', { completed: 1, total: 5, status: 'running' });
+      source.emit('progress', { completed: 2, total: 5, status: 'running' });
+      source.emit('progress', { completed: 3, total: 5, status: 'running' });
+    });
+
+    expect(MockEventSource.instances).toHaveLength(1);
+  });
+
+  it('uses the latest progress when a job completes', async () => {
+    const postMessage = vi.fn();
+    useJobCoordinationMock.mockReturnValue({
+      isPrimary: true,
+      channel: { postMessage } as unknown as BroadcastChannel,
+    });
+
+    const { result } = renderHook(() => useJobProgressStream('job-456'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('progress', { completed: 3, total: 10, status: 'running' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.progress).toEqual({ completed: 3, total: 10 });
+    });
+
+    act(() => {
+      source.emit('done', { status: 'completed' });
+    });
+
+    await waitFor(() => {
+      expect(result.current.progress).toEqual({ completed: 10, total: 10 });
+      expect(result.current.status).toBe('completed');
+    });
+
+    expect(postMessage).toHaveBeenCalledWith({
+      type: 'JOB_PROGRESS',
+      payload: { progress: { completed: 10, total: 10 }, status: 'completed', etaSeconds: null },
+    });
+  });
+});

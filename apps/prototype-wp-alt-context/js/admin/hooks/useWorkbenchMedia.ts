@@ -2,19 +2,13 @@ import { useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useMediaIdentities } from './useMediaIdentities';
+import type { WorkbenchMediaItem as WorkbenchMediaItemSchema } from '../api/generated';
+import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse, type DetectedIdentity } from '../api/recognition';
 
-interface WorkbenchMediaItem {
-  id: number;
-  title: string;
-  altText: string | null;
-  status: 'missing' | 'complete';
-  thumbnailUrl: string | null;
-  mimeType: string;
-  editUrl: string;
-  tags: string[];
+type WorkbenchMediaItem = WorkbenchMediaItemSchema & {
   identities?: DetectedIdentity[];
-}
+};
 
 interface WorkbenchMediaResponse {
   items: WorkbenchMediaItem[];
@@ -83,7 +77,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) =>
   const queryClient = useQueryClient();
 
   const mediaQuery = useQuery<WorkbenchMediaResponse, Error>({
-    queryKey: ['workbench-media', { page, perPage, search }],
+    queryKey: queryKeys.media.workbenchPage({ page, perPage, search }),
     queryFn: () => fetchWorkbenchMedia({ page, perPage, search }),
     placeholderData: (previousData) => previousData,
     enabled,
@@ -111,7 +105,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) =>
     }
 
     let canceled = false;
-    const nextKey = ['workbench-media', { page: nextPage, perPage, search }] as const;
+    const nextKey = queryKeys.media.workbenchPage({ page: nextPage, perPage, search });
     const prefetchNextPage = async (): Promise<void> => {
       const nextData = await queryClient.fetchQuery<WorkbenchMediaResponse>({
         queryKey: nextKey,
@@ -126,7 +120,7 @@ export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) =>
         return;
       }
       await queryClient.prefetchQuery<MediaIdentitiesResponse>({
-        queryKey: ['media-identities', nextMediaIds],
+        queryKey: queryKeys.media.identitiesByIds(nextMediaIds),
         queryFn: () => fetchMediaIdentities(nextMediaIds),
       });
     };

@@ -1,10 +1,6 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useJobCoordination } from './useJobCoordination';
-
-export interface JobProgress {
-  completed: number;
-  total: number;
-}
+import type { JobProgress } from '../api/recognition/types/scan';
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'clustering';
 
@@ -27,7 +23,8 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   const [status, setStatus] = useState<JobStatus>('pending');
   const [isOnline, setIsOnline] = useState(navigator.onLine);
   const [etaSeconds, setEtaSeconds] = useState<number | null>(null);
-  const [startTime, setStartTime] = useState<number | null>(null);
+  const startTimeRef = useRef<number | null>(null);
+  const progressRef = useRef<JobProgress | null>(null);
 
   const { isPrimary, channel } = useJobCoordination(jobId);
 
@@ -49,7 +46,8 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     setProgress(null);
     setStatus('pending');
     setEtaSeconds(null);
-    setStartTime(null);
+    startTimeRef.current = null;
+    progressRef.current = null;
   }, [jobId]);
 
   // Handle incoming broadcasted events for non-primary tabs
@@ -73,6 +71,10 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     channel.addEventListener('message', handleMessage);
     return () => channel.removeEventListener('message', handleMessage);
   }, [channel, isPrimary]);
+
+  useEffect(() => {
+    progressRef.current = progress;
+  }, [progress]);
 
   useEffect(() => {
     if (!jobId || !isOnline || !isPrimary) {
@@ -105,19 +107,17 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
 
         // Calculate new state
         const now = Date.now();
-        let newStartTime = startTime;
         const newProgress: JobProgress = { completed: data.completed, total: data.total };
         let newEta: number | null = null;
 
         // Initialize start time on first progress
-        if (!newStartTime && data.completed > 0) {
-          newStartTime = now;
-          setStartTime(now);
+        if (!startTimeRef.current && data.completed > 0) {
+          startTimeRef.current = now;
         }
 
         // Calculate ETA
-        if (newStartTime && data.completed > 0 && data.completed < data.total) {
-          const elapsedMs = now - newStartTime;
+        if (startTimeRef.current && data.completed > 0 && data.completed < data.total) {
+          const elapsedMs = now - startTimeRef.current;
           const itemsProcessed = data.completed;
           const rate = itemsProcessed / elapsedMs;
           const remainingItems = data.total - data.completed;
@@ -126,6 +126,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         }
 
         // Update local state
+        progressRef.current = newProgress;
         setProgress(newProgress);
         setStatus(data.status);
         setEtaSeconds(newEta);
@@ -150,14 +151,20 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       }
       try {
         const data = JSON.parse(e.data as string) as { status: JobStatus };
+        const latestProgress = progressRef.current;
+        const finalProgress =
+          latestProgress && data.status === 'completed'
+            ? { completed: latestProgress.total, total: latestProgress.total }
+            : latestProgress;
         setStatus(data.status);
+        setProgress(finalProgress ?? null);
         setEtaSeconds(null);
 
         // Broadcast completion
         channel?.postMessage({
           type: 'JOB_PROGRESS',
           payload: {
-            progress: progress,
+            progress: finalProgress ?? null,
             status: data.status,
             etaSeconds: null,
           },
@@ -209,7 +216,7 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     };
 
     return () => closeAndCleanup();
-  }, [jobId, isOnline, isPrimary, channel, startTime, progress]);
+  }, [jobId, isOnline, isPrimary, channel]);
 
   return { progress, status, isOnline, etaSeconds, isPrimary };
 };

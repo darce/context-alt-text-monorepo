@@ -11,6 +11,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { fetchApi } from '../../../utils/http';
 import { getEndpoint, getConfig } from '../../../api/config';
+import { queryKeys } from '../../../api/queryKeys';
 import type { ClusterSummary } from '../../../api/recognition/types';
 
 interface CurateTopClustersPromptProps {
@@ -23,7 +24,7 @@ interface CurateTopClustersPromptProps {
  */
 export const CurateTopClustersPrompt = ({ tenantId }: CurateTopClustersPromptProps): React.JSX.Element | null => {
   const { data: topClusters, isLoading } = useQuery<ClusterSummary[]>({
-    queryKey: ['clusters', 'top-unlabeled', tenantId],
+    queryKey: queryKeys.clusters.topUnlabeled(tenantId),
     queryFn: async () => {
       const base = getEndpoint('recognitionClusters');
       const url = `${base}/top-unlabeled?limit=3&tenant_id=${tenantId}`;

@@ -1,13 +1,8 @@
 import { fetchApi, stripTrailingSlash } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
+import type { RosterEntry } from './generated';
 
-export interface RosterEntry {
-  id: number;
-  name: string;
-  tags: string[];
-  cluster_count: number;
-  updated_at: string;
-}
+export type { RosterEntry } from './generated';
 
 export const listRosterEntries = async (): Promise<RosterEntry[]> => {
   const endpoint = getEndpoint('rosterEntries');

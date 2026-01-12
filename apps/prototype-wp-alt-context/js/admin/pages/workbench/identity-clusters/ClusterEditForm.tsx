@@ -66,6 +66,33 @@ export const ClusterEditForm = ({
 
   const saveButtonLabel = saveLabel ?? (isPending ? __('Saving…', 'alt-context') : __('Save', 'alt-context'));
 
+  const handleSuggestionSelect = React.useCallback(
+    (label: string) => () => {
+      onLabelChange(label);
+    },
+    [onLabelChange],
+  );
+
+  const handleConfirmSuggestionClick = React.useCallback(
+    (option: ComboboxOption) => (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      if (onConfirmSuggestion) {
+        onConfirmSuggestion(option.value, option.label);
+      } else {
+        onSave(option.label);
+      }
+    },
+    [onConfirmSuggestion, onSave],
+  );
+
+  const handleRejectSuggestionClick = React.useCallback(
+    (suggestionId: string) => (event: React.MouseEvent<HTMLButtonElement>) => {
+      event.stopPropagation();
+      onRejectSuggestion?.(suggestionId);
+    },
+    [onRejectSuggestion],
+  );
+
   return (
     <div className="acx-identity-cluster__edit">
       <div className="acx-identity-cluster__input-wrapper">
@@ -93,9 +120,7 @@ export const ClusterEditForm = ({
                 <button
                   type="button"
                   className="acx-identity-cluster__suggestion-item"
-                  onClick={() => {
-                    onLabelChange(option.label);
-                  }}
+                  onClick={handleSuggestionSelect(option.label)}
                   title={sprintf(__('Use label "%s"', 'alt-context'), option.label)}
                 >
                   <span className="acx-identity-cluster__suggestion-label">{option.label}</span>
@@ -115,14 +140,7 @@ export const ClusterEditForm = ({
                   <button
                     type="button"
                     className="acx-identity-cluster__suggestion-confirm"
-                    onClick={(e) => {
-                      e.stopPropagation();
-                      if (onConfirmSuggestion) {
-                        onConfirmSuggestion(option.value, option.label);
-                      } else {
-                        onSave(option.label);
-                      }
-                    }}
+                    onClick={handleConfirmSuggestionClick(option)}
                     title={__('Confirm match', 'alt-context')}
                     aria-label={__('Confirm match', 'alt-context')}
                   >
@@ -132,10 +150,7 @@ export const ClusterEditForm = ({
                     <button
                       type="button"
                       className="acx-identity-cluster__suggestion-reject"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        onRejectSuggestion(option.suggestion_id as string);
-                      }}
+                      onClick={handleRejectSuggestionClick(option.suggestion_id as string)}
                       title={__('Reject suggestion', 'alt-context')}
                       aria-label={__('Reject suggestion', 'alt-context')}
                     >

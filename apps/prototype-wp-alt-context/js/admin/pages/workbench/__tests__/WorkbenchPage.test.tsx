@@ -3,8 +3,16 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { queryKeys } from '../../../api/queryKeys';
+import type {
+  AnalyzeResponse,
+  ClusterResponse,
+  JobStatusResponse,
+  MediaIdentitiesResponse,
+} from '../../../api/recognition';
+import { createMockMutation, createMockQuery } from '../../../test-utils/mockHooks';
 import { WorkbenchPage } from '../../WorkbenchPage';
-import { useWorkbenchMedia } from '../../../hooks/useWorkbenchMedia';
+import { useWorkbenchMedia, type WorkbenchMediaResponse } from '../../../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../../../hooks/useMediaSelectionState';
 import { useRecognitionJobHistory } from '../../../hooks/useRecognitionJobHistory';
 import { useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
@@ -88,6 +96,8 @@ describe('WorkbenchPage', () => {
     thumbnailUrl: null,
     mimeType: 'image/jpeg',
     editUrl: '#',
+    updatedAt: '2025-01-01T00:00:00Z',
+    dimensions: { width: 800, height: 600 },
     tags: [] as string[],
     identities: [],
   };
@@ -112,47 +122,34 @@ describe('WorkbenchPage', () => {
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
-      return {
-        mutate: (mediaIds: number[]) => {
-          // React Query 5.90+ callbacks have additional context arguments
-          const mockContext = {} as never;
-          options?.onMutate?.(mediaIds, mockContext);
-          if (outcome === 'success') {
-            options?.onSuccess?.(
-              [
-                {
-                  id: 'job-123',
-                  type: 'analyze' as const,
-                  status: 'pending' as const,
-                  progress: { completed: 0, total: mediaIds.length },
-                  started_at: new Date().toISOString(),
-                  finished_at: null,
-                },
-              ],
-              mediaIds,
-              undefined,
-              mockContext,
-            );
-          } else {
-            options?.onError?.(new Error('Scan failed'), mediaIds, undefined, mockContext);
-          }
-        },
-        mutateAsync: vi.fn(),
-        isPending: false,
-        isIdle: true,
-        isSuccess: false,
-        isError: false,
-        reset: vi.fn(),
-        status: 'idle',
-        data: undefined,
-        error: null,
-        variables: undefined,
-        context: undefined,
-        failureCount: 0,
-        failureReason: null,
-        submittedAt: 0,
-        isPaused: false,
-      } as unknown as ReturnType<typeof useScanIdentities>;
+      const mutate = (mediaIds: number[]) => {
+        // React Query 5.90+ callbacks have additional context arguments
+        const mockContext = {} as never;
+        options?.onMutate?.(mediaIds, mockContext);
+        if (outcome === 'success') {
+          options?.onSuccess?.(
+            [
+              {
+                id: 'job-123',
+                type: 'analyze' as const,
+                status: 'pending' as const,
+                progress: { completed: 0, total: mediaIds.length },
+                started_at: new Date().toISOString(),
+                finished_at: null,
+              },
+            ],
+            mediaIds,
+            undefined,
+            mockContext,
+          );
+        } else {
+          options?.onError?.(new Error('Scan failed'), mediaIds, undefined, mockContext);
+        }
+      };
+
+      return createMockMutation<AnalyzeResponse[], Error, number[]>({
+        mutate,
+      });
     });
   };
 
@@ -170,20 +167,21 @@ describe('WorkbenchPage', () => {
     selectJob.mockClear();
     clearHistory.mockClear();
 
-    mockUseWorkbenchMedia.mockReturnValue({
+    const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
       data: { items: [baseMediaItem], total: 1, totalPages: 1 },
-      itemsWithIdentities: [baseMediaItem],
       isFetching: false,
       isError: false,
       refetch: vi.fn(),
-      identityQuery: undefined,
-      identitiesQuery: {
+    });
+
+    mockUseWorkbenchMedia.mockReturnValue({
+      ...mediaQuery,
+      itemsWithIdentities: [baseMediaItem],
+      identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
         data: { identities_by_media: {} },
-        isLoading: false,
-        isError: false,
         refetch: prefetchIdentities,
-      },
-    } as unknown as ReturnType<typeof useWorkbenchMedia>);
+      }),
+    });
 
     mockUseJobPersistence.mockReturnValue({
       activeJobs: [],
@@ -225,23 +223,8 @@ describe('WorkbenchPage', () => {
       handleSearchChange: vi.fn(),
     });
 
-    mockUseScanStatus.mockReturnValue({
-      data: {
-        id: 'job-initial',
-        type: 'analyze' as const,
-        status: 'completed' as const,
-        progress: { completed: 1, total: 1 },
-        started_at: new Date().toISOString(),
-        finished_at: new Date().toISOString(),
-      },
-      isFetching: false,
-      refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useScanStatus>);
-
-    mockUseMultiScanStatus.mockReturnValue([]);
-
-    mockUseCombinedScanStatus.mockReturnValue({
-      scanStatusQuery: {
+    mockUseScanStatus.mockReturnValue(
+      createMockQuery<JobStatusResponse>({
         data: {
           id: 'job-initial',
           type: 'analyze' as const,
@@ -250,21 +233,40 @@ describe('WorkbenchPage', () => {
           started_at: new Date().toISOString(),
           finished_at: new Date().toISOString(),
         },
-        isFetching: false,
         refetch: vi.fn(),
-      } as unknown as ReturnType<typeof useScanStatus>,
+      }),
+    );
+
+    mockUseMultiScanStatus.mockReturnValue([]);
+
+    mockUseCombinedScanStatus.mockReturnValue({
+      scanStatusQuery: createMockQuery<JobStatusResponse>({
+        data: {
+          id: 'job-initial',
+          type: 'analyze' as const,
+          status: 'completed' as const,
+          progress: { completed: 1, total: 1 },
+          started_at: new Date().toISOString(),
+          finished_at: new Date().toISOString(),
+        },
+        refetch: vi.fn(),
+      }),
       multiScanStatus: [],
     });
 
-    mockUseCancelScanJobs.mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-    } as unknown as ReturnType<typeof useCancelScanJobs>);
+    mockUseCancelScanJobs.mockReturnValue(
+      createMockMutation<JobStatusResponse[], Error, string[]>({
+        mutate: vi.fn(),
+        isPending: false,
+      }),
+    );
 
-    mockUseClusterIdentities.mockReturnValue({
-      mutate: vi.fn(),
-      isPending: false,
-    } as unknown as ReturnType<typeof useClusterIdentities>);
+    mockUseClusterIdentities.mockReturnValue(
+      createMockMutation<ClusterResponse, Error, void>({
+        mutate: vi.fn(),
+        isPending: false,
+      }),
+    );
   });
 
   it('surfaces scan errors in the UI', async () => {
@@ -274,7 +276,7 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Analyze selected media/i }));
     expect(await screen.findByText('Scan failed')).toBeInTheDocument();
     expect(rememberJob).not.toHaveBeenCalled();
-    expect(queryClient.getQueryCache().find({ queryKey: ['media-identities'] })).toBeUndefined();
+    expect(queryClient.getQueryCache().findAll({ queryKey: queryKeys.media.identities() })).toHaveLength(0);
   });
 
   it('records successful scans and invalidates identity queries', () => {
@@ -286,13 +288,13 @@ describe('WorkbenchPage', () => {
     fireEvent.click(screen.getByRole('button', { name: /Analyze selected media/i }));
 
     expect(rememberJob).toHaveBeenCalledWith('job-123');
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['media-identities'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
   });
 
   it('refreshes identities automatically when a job completes', () => {
     setupScanMutation('success');
     mockUseCombinedScanStatus.mockReturnValue({
-      scanStatusQuery: {
+      scanStatusQuery: createMockQuery<JobStatusResponse>({
         data: {
           id: 'job-initial',
           type: 'analyze' as const,
@@ -301,9 +303,8 @@ describe('WorkbenchPage', () => {
           started_at: new Date().toISOString(),
           finished_at: new Date().toISOString(),
         },
-        isFetching: false,
         refetch: vi.fn(),
-      } as unknown as ReturnType<typeof useScanStatus>,
+      }),
       multiScanStatus: [],
     });
 
@@ -311,12 +312,12 @@ describe('WorkbenchPage', () => {
     const invalidateSpy = vi.spyOn(queryClient, 'invalidateQueries');
 
     renderWorkbench(queryClient);
-    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: ['media-identities'] });
+    expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.media.identities() });
   });
 
   it('uses backend job messages when available', () => {
     mockUseCombinedScanStatus.mockReturnValue({
-      scanStatusQuery: {
+      scanStatusQuery: createMockQuery<JobStatusResponse>({
         data: {
           id: 'job-initial',
           type: 'analyze' as const,
@@ -326,9 +327,8 @@ describe('WorkbenchPage', () => {
           finished_at: null,
           message: 'Queueing 0/2 items',
         },
-        isFetching: false,
         refetch: vi.fn(),
-      } as unknown as ReturnType<typeof useScanStatus>,
+      }),
       multiScanStatus: [],
     });
 

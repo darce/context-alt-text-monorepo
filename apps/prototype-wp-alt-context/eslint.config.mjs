@@ -2,6 +2,7 @@ import js from '@eslint/js';
 import reactPlugin from 'eslint-plugin-react';
 import reactHooksPlugin from 'eslint-plugin-react-hooks';
 import tseslint from 'typescript-eslint';
+import queryPlugin from '@tanstack/eslint-plugin-query';
 
 const sharedFiles = ['js/**/*.{ts,tsx}', '.storybook/**/*.{ts,tsx}'];
 
@@ -29,6 +30,7 @@ export default tseslint.config(
     plugins: {
       react: reactPlugin,
       'react-hooks': reactHooksPlugin,
+      '@tanstack/query': queryPlugin,
     },
     settings: {
       react: {
@@ -40,6 +42,9 @@ export default tseslint.config(
       'func-style': ['error', 'expression', { allowArrowFunctions: true }],
       'react-hooks/rules-of-hooks': 'error',
       'react-hooks/exhaustive-deps': 'warn',
+      '@tanstack/query/exhaustive-deps': 'error',
+      '@tanstack/query/no-unstable-deps': 'error',
+      '@tanstack/query/stable-query-client': 'error',
     },
   },
   {

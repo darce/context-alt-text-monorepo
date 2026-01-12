@@ -132,7 +132,7 @@ async def test_reassign_removal_refreshes_suggestions(
     api_client,
     tenant_id,
     fake_cluster_service,
-    fake_suggestion_service,
+    fake_suggestion_refresh_service,
 ) -> None:
     identity_id = str(uuid.uuid4())
     cluster = seed_cluster(fake_cluster_service, tenant_id, label="source")
@@ -149,16 +149,16 @@ async def test_reassign_removal_refreshes_suggestions(
     )
 
     assert resp.status_code == 200
-    assert len(fake_suggestion_service.refresh_calls) >= 2
+    assert len(fake_suggestion_refresh_service.refresh_calls) >= 2
 
     # Check for identity refresh
-    identity_refreshes = [c for c in fake_suggestion_service.refresh_calls if c[0] == identity_id]
+    identity_refreshes = [c for c in fake_suggestion_refresh_service.refresh_calls if c[0] == identity_id]
     assert identity_refreshes, "Identity refresh not found"
     id_ref_id, id_ref_reason = identity_refreshes[0]
     assert getattr(id_ref_reason, "value", str(id_ref_reason)) == "wrong_person"
 
     # Check for cluster refresh
-    cluster_refreshes = [c for c in fake_suggestion_service.refresh_calls if c[0] == cluster.id]
+    cluster_refreshes = [c for c in fake_suggestion_refresh_service.refresh_calls if c[0] == cluster.id]
     assert cluster_refreshes, "Cluster refresh not found"
     cl_ref_id, cl_ref_reason = cluster_refreshes[0]
     assert cl_ref_reason == "cluster_refresh"

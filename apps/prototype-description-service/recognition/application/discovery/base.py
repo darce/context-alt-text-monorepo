@@ -28,8 +28,5 @@ class DiscoveryAlgorithm(ABC):
 
         Returns:
             Discovery-specific result. Most algorithms return a list of AssignmentCandidate.
-
-        Raises:
-            NotImplementedError: Always, until algorithm is implemented.
         """
-        raise NotImplementedError("TODO: Implement discovery algorithm")
+        ...

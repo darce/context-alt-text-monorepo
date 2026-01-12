@@ -28,6 +28,7 @@ from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.service import SuggestionService
 from recognition.domain.maturity import ClusterMaturityInfo
+from recognition.domain.repositories import IdentityMember
 from recognition.infrastructure.clustering.hdbscan_adapter import HdbscanGraphAlgorithm
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
@@ -159,6 +160,9 @@ class FakeClusterRepository:
         return []
 
     async def get_member_embeddings(self, cluster_id: str):
+        return []
+
+    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         return []
 
     async def assign_identity_to_cluster(self, identity, cluster_id: str) -> None:  # noqa: ANN001

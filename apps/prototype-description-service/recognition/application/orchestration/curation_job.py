@@ -46,13 +46,9 @@ async def run_curation_job(
         unique_cluster_ids,
     )
 
-    recompute_reps = getattr(assignment_writer, "recompute_representatives", None)
-    recompute_centroid = getattr(assignment_writer, "recompute_centroid", None)
     for cluster_id in unique_cluster_ids:
-        if callable(recompute_reps):
-            await recompute_reps(cluster_id)
-        if callable(recompute_centroid):
-            await recompute_centroid(cluster_id)
+        await assignment_writer.recompute_representatives(cluster_id)
+        await assignment_writer.recompute_centroid(cluster_id)
 
     identities_clustered = 0
     if run_incremental_clustering and cluster_service is not None:
@@ -98,7 +94,9 @@ async def run_curation_job(
             )
 
         try:
-            await cluster_service.suggestion_service.refresh_for_cluster(target_cluster_id)
+            refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
+            if refresh_service is not None:
+                await refresh_service.refresh_for_cluster(target_cluster_id)
         except Exception as exc:
             logger.warning(
                 "[curation_job] refresh_for_cluster failed tenant_id=%s cluster_id=%s: %s",

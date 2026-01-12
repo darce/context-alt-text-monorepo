@@ -16,8 +16,8 @@ from recognition.interface_adapters.http import dependencies
 async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) -> None:
     """Merging should move members to target and remove the source cluster."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     target = await cluster_repo.save(
         IdentityCluster(
@@ -68,7 +68,7 @@ async def test_merge_reassigns_members_and_deletes_source(db_session, tenant) ->
 async def test_label_update_sets_confirmation_flags(db_session, tenant) -> None:
     """Updating label should mark cluster as labeled/confirmed."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
 
     cluster = await cluster_repo.save(
         IdentityCluster(
@@ -94,8 +94,8 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
     """Merge should trigger representative and centroid recomputation hooks."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     assignment_writer = cluster_service.assignment_writer
-    cluster_repo = assignment_writer._clusters
-    member_repo = assignment_writer._members
+    cluster_repo = assignment_writer.cluster_repository
+    member_repo = assignment_writer.member_repository
 
     target = await cluster_repo.save(
         IdentityCluster(
@@ -148,8 +148,8 @@ async def test_create_cluster_for_identity_creates_labeled_cluster_with_member_a
 ) -> None:
     """Manual create should produce a labeled, confirmed singleton cluster with membership and representatives."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     embedding = [0.0] * 512
     embedding[0] = 1.0
@@ -232,8 +232,8 @@ async def test_cluster_unclustered_identities_refreshes_centroids_between_chunks
 async def test_split_cluster_preserves_user_label_for_representative_group(db_session, tenant) -> None:
     """Split should keep the user label with the representative's group."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     embedding_a = [0.0] * 512
     embedding_a[0] = 1.0
@@ -327,8 +327,8 @@ async def test_split_cluster_preserves_user_label_for_representative_group(db_se
 async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> None:
     """Split should keep the user label on the anchor identity's group."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     embedding_a = [0.0] * 512
     embedding_a[0] = 1.0
@@ -418,8 +418,8 @@ async def test_split_cluster_keeps_label_on_anchor_group(db_session, tenant) -> 
 async def test_split_cluster_forces_two_groups_with_anchor(db_session, tenant) -> None:
     """Split should force two groups when an anchor is provided and faces are similar."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     embedding = [0.0] * 512
     embedding[0] = 1.0
@@ -488,8 +488,8 @@ async def test_split_cluster_forces_two_groups_with_anchor(db_session, tenant) -
 async def test_split_cluster_blocks_moved_identities(db_session, tenant) -> None:
     """Split should block moved identities from rejoining the original cluster."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
     block_repo = SqlAlchemyIdentityClusterBlockRepository(db_session, tenant_id=str(tenant.id))
 
     embedding = [0.0] * 512
@@ -570,7 +570,7 @@ async def test_pin_representative(db_session, tenant) -> None:
     from recognition.domain.representative import ClusterRepresentative
 
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
 
     cluster = await cluster_repo.save(
         IdentityCluster(

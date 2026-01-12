@@ -1,5 +1,4 @@
 import uuid
-from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import select
@@ -19,8 +18,8 @@ async def test_cancel_scan_preserves_cluster_labels(db_session, tenant) -> None:
     """Verification: Identity ID Recycling should preserve memberships during re-scans."""
     # 1. Setup
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     # Initialize ScanService (uses StubFaceDetector by default)
     scan_service = ScanService(session=db_session)
@@ -114,8 +113,8 @@ async def test_analyze_media_preserves_cluster_membership(db_session, tenant) ->
     # 1. Setup
     scan_service = ScanService(session=db_session)
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    cluster_repo = cluster_service.assignment_writer._clusters
-    member_repo = cluster_service.assignment_writer._members
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
 
     media_id = 67890
     media_url = "http://example.test/67890.jpg"

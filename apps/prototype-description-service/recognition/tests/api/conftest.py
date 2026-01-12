@@ -136,7 +136,6 @@ class FakeSuggestionService:
 
     def __init__(self) -> None:
         self.suggestions: dict[str, FakeSuggestion] = {}
-        self.refresh_calls: list[tuple[str, object]] = []
 
     async def list_for_identity(self, identity_id: str) -> list[FakeSuggestion]:
         return [s for s in self.suggestions.values() if s.identity_id == identity_id]
@@ -191,18 +190,28 @@ class FakeSuggestionService:
             resolved += 1
         return resolved
 
+    async def list_pending(self, limit: int = 50, offset: int = 0) -> list[FakeSuggestion]:
+        items = list(self.suggestions.values())
+        return items[offset : offset + limit]
+
+
+class FakeSuggestionRefreshService:
+    """In-memory suggestion refresh service used by API tests."""
+
+    def __init__(self) -> None:
+        self.refresh_calls: list[tuple[str, object]] = []
+
     async def refresh_for_identity(self, *, identity_id: str, reason) -> list[FakeSuggestion]:
         self.refresh_calls.append((identity_id, reason))
         return []
 
     async def refresh_for_cluster(self, cluster_id: str) -> list[FakeSuggestion]:
-        # Track calls for verification if needed
         self.refresh_calls.append((cluster_id, "cluster_refresh"))
         return []
 
-    async def list_pending(self, limit: int = 50, offset: int = 0) -> list[FakeSuggestion]:
-        items = list(self.suggestions.values())
-        return items[offset : offset + limit]
+    async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
+        self.refresh_calls.append((cluster_id, "surface_new_label"))
+        return 0
 
 
 class FakeMediaIdentity:
@@ -297,6 +306,9 @@ class FakeClusterRepository:
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
 
+    async def get_members(self, cluster_id: str):
+        return []
+
     async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[FakeClusterForRepo]:
         unlabeled = [c for c in self.clusters.values() if not c.label]
         sorted_clusters = sorted(unlabeled, key=lambda c: c.identity_count, reverse=True)
@@ -321,6 +333,11 @@ def fake_job_service() -> FakeJobService:
 @pytest.fixture
 def fake_suggestion_service() -> FakeSuggestionService:
     return FakeSuggestionService()
+
+
+@pytest.fixture
+def fake_suggestion_refresh_service() -> FakeSuggestionRefreshService:
+    return FakeSuggestionRefreshService()
 
 
 @pytest.fixture
@@ -352,6 +369,7 @@ def api_client(
     fake_cluster_repository: FakeClusterRepository,
     fake_job_service: FakeJobService,
     fake_suggestion_service: FakeSuggestionService,
+    fake_suggestion_refresh_service: FakeSuggestionRefreshService,
     fake_scan_service: FakeScanService,
     fake_scan_queue_service: FakeScanQueueService,
     fake_media_identity_service: FakeMediaIdentityService,
@@ -381,6 +399,9 @@ def api_client(
     async def suggestion_service_dep(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_service
 
+    async def suggestion_refresh_service_dep(session=None, tenant_id=None):  # noqa: ANN001
+        return fake_suggestion_refresh_service
+
     async def _no_observability_repo():
         return None
 
@@ -390,6 +411,7 @@ def api_client(
     app.dependency_overrides[dependencies.get_cluster_repository] = cluster_repo_dep
     app.dependency_overrides[dependencies.get_job_service_dependency] = job_service_dep
     app.dependency_overrides[dependencies.get_suggestion_service] = suggestion_service_dep
+    app.dependency_overrides[dependencies.get_suggestion_refresh_service] = suggestion_refresh_service_dep
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[get_tenant_id] = lambda: tenant_id
     app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: fake_scan_queue_service
@@ -411,8 +433,14 @@ def api_client(
     async def _fake_suggestion_service(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_service
 
+    async def _fake_suggestion_refresh_service(session=None, tenant_id=None):  # noqa: ANN001
+        return fake_suggestion_refresh_service
+
     monkeypatch.setattr(dependencies, "get_suggestion_service", _fake_suggestion_service)
     monkeypatch.setattr(suggestions_router, "get_suggestion_service", _fake_suggestion_service)
+    monkeypatch.setattr(clusters_router, "get_suggestion_service", _fake_suggestion_service)
+    monkeypatch.setattr(dependencies, "get_suggestion_refresh_service", _fake_suggestion_refresh_service)
+    monkeypatch.setattr(clusters_router, "get_suggestion_refresh_service", _fake_suggestion_refresh_service)
 
     async def _fake_media_identity_service():
         return fake_media_identity_service

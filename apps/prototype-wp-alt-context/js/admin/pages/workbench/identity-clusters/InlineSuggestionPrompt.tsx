@@ -9,6 +9,7 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { useQuery } from '@tanstack/react-query';
 
+import { queryKeys } from '../../../api/queryKeys';
 import { fetchIdentitySuggestions, type ClusterSuggestion } from '../../../api/recognition';
 
 interface InlineSuggestionPromptProps {
@@ -36,7 +37,7 @@ export const InlineSuggestionPrompt = ({
 }: InlineSuggestionPromptProps): React.JSX.Element | null => {
   // Fetch top suggestion for this identity
   const { data: suggestions, isLoading } = useQuery({
-    queryKey: ['inline-suggestions', identityId],
+    queryKey: queryKeys.suggestions.inlineFor(identityId),
     queryFn: () => fetchIdentitySuggestions(identityId, 1), // Only fetch top 1
     staleTime: 60000, // Cache for 1 minute
     enabled: Boolean(identityId),

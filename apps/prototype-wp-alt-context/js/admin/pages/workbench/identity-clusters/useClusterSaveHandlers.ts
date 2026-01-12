@@ -1,0 +1,52 @@
+/**
+ * Composed hook for save/confirm handlers in the cluster edit flow.
+ */
+
+import type { MutableRefObject } from 'react';
+
+import type { ComboboxOption } from '../../../../components/ui/combobox';
+import type { ClusterGroup } from './types';
+import type { SaveDialogAction } from './useClusterConfirmDialog';
+import type { SaveStatus } from './useClusterSaveStatus';
+import { useClusterConfirmSuggestion } from './useClusterConfirmSuggestion';
+import { useClusterSaveAction } from './useClusterSaveAction';
+
+interface ClusterSaveMutations {
+  isPending: boolean;
+  merge: (targetClusterId: string, targetLabel?: string, signal?: AbortSignal) => void;
+  assignToCluster: (identityId: string, targetClusterId: string, signal?: AbortSignal) => void;
+  rename: (label: string, signal?: AbortSignal) => void;
+  createClusterForIdentity: (identityId: string, label: string, signal?: AbortSignal) => void;
+}
+
+interface UseClusterSaveHandlersOptions {
+  clusterLabel: string | null;
+  members: ClusterGroup['members'];
+  editableClusterId: string | null;
+  anchorIdentityId?: string;
+  canEdit: boolean;
+  canSearchForMatch: boolean;
+  labelInput: string;
+  matchedCluster: { id: string; label: string } | null;
+  options: ComboboxOption[];
+  saveStatus: SaveStatus;
+  mutations: ClusterSaveMutations;
+  findClusterByLabel: (label: string, signal?: AbortSignal) => Promise<{ id: string; label: string } | null>;
+  requestConfirm: (action: SaveDialogAction, label: string) => Promise<boolean>;
+  cancelEditing: () => void;
+  setError: (message: string) => void;
+  queueSaveStatus: () => void;
+  resetSaveStatus: () => void;
+  saveAbortRef: MutableRefObject<AbortController | null>;
+}
+
+export const useClusterSaveHandlers = (options: UseClusterSaveHandlersOptions) => {
+  const { handleConfirmSuggestion } = useClusterConfirmSuggestion(options);
+  const { handleSave, handleCancel } = useClusterSaveAction(options);
+
+  return {
+    handleCancel,
+    handleConfirmSuggestion,
+    handleSave,
+  };
+};

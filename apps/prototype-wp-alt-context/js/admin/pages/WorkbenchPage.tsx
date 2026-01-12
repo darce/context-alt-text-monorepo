@@ -1,20 +1,12 @@
-import React, { useMemo, useState, useEffect } from 'react';
+import React, { useMemo, useState } from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
-import { useQueryClient } from '@tanstack/react-query';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import {
-  useCancelScanJobs,
-  useClusterIdentities,
-  useScanIdentities,
-  useCombinedScanStatus,
-} from '../hooks/useRecognitionHooks';
+import { useJobStateMachine } from '../hooks/useJobStateMachine';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
-import { useJobPersistence } from '../hooks/useJobPersistence';
-import { useJobProgressStream } from '../hooks/useJobProgressStream';
 import { MediaSelection } from './workbench/MediaSelection';
 import { SuggestionReviewPanel } from './workbench/identity-clusters';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
@@ -91,11 +83,6 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [activeSection, setActiveSection] = useState<WorkbenchTab>(TAB_IDS.scan);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const { activeJobs, addJob, removeJob } = useJobPersistence();
-  const activeJobIds = useMemo(() => activeJobs.map((j) => j.id), [activeJobs]);
-  const [isWaitingForScanCompletion, setIsWaitingForScanCompletion] = useState(false);
-  const [isCancellingScan, setIsCancellingScan] = useState(false);
-  const queryClient = useQueryClient();
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
@@ -116,38 +103,35 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const allPageRowsChecked = isPageFullySelected(mediaItems);
   const identityQuery = mediaQuery.identitiesQuery;
 
-  const scanMutation = useScanIdentities({
-    onMutate: () => {
+  const {
+    isScanRunning,
+    isCancellingScan,
+    statusText,
+    scanProgress,
+    etaSeconds,
+    isOnline,
+    isPrimary,
+    latestJobId,
+    activeJobIds,
+    scan,
+    cancelScan: performCancel,
+    cluster: performCluster,
+  } = useJobStateMachine({
+    jobId,
+    onScanStart: () => {
       setScanError(null);
-      activeJobIds.forEach((id) => removeJob(id));
-      setIsWaitingForScanCompletion(false);
     },
-    onSuccess: (data) => {
-      const jobIds = data.map((job) => job.id).filter((id): id is string => Boolean(id));
+    onScanComplete: (jobIds) => {
       if (jobIds.length > 0) {
         rememberJob(jobIds[0]);
-        const totalItems = data[0].progress?.total ?? 0;
-        jobIds.forEach((id) => addJob(id, 'scan', totalItems));
       }
-      setIsWaitingForScanCompletion(true);
-
       setClusterMessage(null);
       setActiveSection(TAB_IDS.confirm);
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
-    onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : __('Recognition job failed. Please try again.', 'alt-context');
+    onScanError: (message) => {
       setScanError(message);
     },
-  });
-  const clusterMutation = useClusterIdentities({
-    onSuccess: (data) => {
-      if (data.id && data.status === 'pending') {
-        // This is an async job
-        addJob(data.id, 'clustering', data.total_identities_clustered || 0);
-        return;
-      }
+    onClusterComplete: (data) => {
       setClusterMessage(
         sprintf(
           __('Created %d clusters for %d identities.', 'alt-context'),
@@ -155,200 +139,11 @@ export const WorkbenchPage = (): React.JSX.Element => {
           data.total_identities_clustered,
         ),
       );
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
     },
-    onError: (error) => {
-      const message =
-        error instanceof Error ? error.message : __('Clustering failed. Please try again.', 'alt-context');
+    onClusterError: (message) => {
       setScanError(message);
     },
   });
-
-  // Track jobs by type for proper phase derivation
-  const latestScanJob = useMemo(() => {
-    const scanJobs = activeJobs.filter((j) => j.type === 'scan');
-    return scanJobs[scanJobs.length - 1] ?? null;
-  }, [activeJobs]);
-  const latestClusterJob = useMemo(() => {
-    const clusterJobs = activeJobs.filter((j) => j.type === 'clustering');
-    return clusterJobs[clusterJobs.length - 1] ?? null;
-  }, [activeJobs]);
-
-  // Derive current phase from which jobs exist (clustering takes precedence if both exist)
-  const currentPhase = useMemo(() => {
-    if (latestClusterJob) {
-      return 'clustering' as const;
-    }
-    if (latestScanJob) {
-      return 'scanning' as const;
-    }
-    return 'idle' as const;
-  }, [latestScanJob, latestClusterJob]);
-
-  // Use appropriate job for SSE based on current phase
-  const latestJobId = useMemo(() => {
-    return currentPhase === 'clustering' ? (latestClusterJob?.id ?? null) : (latestScanJob?.id ?? null);
-  }, [currentPhase, latestScanJob, latestClusterJob]);
-  const {
-    progress: sseProgress,
-    status: sseStatus,
-    isOnline,
-    etaSeconds,
-    isPrimary,
-  } = useJobProgressStream(latestJobId);
-
-  const { scanStatusQuery } = useCombinedScanStatus(jobId, []); // Use for history polling, not active jobs
-
-  const cancelMutation = useCancelScanJobs({
-    onMutate: () => {
-      setIsCancellingScan(true);
-    },
-    onSuccess: () => {
-      setIsWaitingForScanCompletion(false);
-      activeJobIds.forEach((id) => removeJob(id));
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
-    },
-    onError: (error) => {
-      const message =
-        error instanceof Error
-          ? error.message
-          : __('Unable to cancel recognition job. Please try again.', 'alt-context');
-      setScanError(message);
-    },
-    onSettled: () => {
-      setIsCancellingScan(false);
-    },
-  });
-
-  const scanStatusText = useMemo(() => {
-    if (clusterMutation.isPending || sseStatus === 'clustering') {
-      if (sseProgress && sseStatus === 'clustering') {
-        return sprintf(__('Clustering %d/%d identities…', 'alt-context'), sseProgress.completed, sseProgress.total);
-      }
-      return __('Clustering faces…', 'alt-context');
-    }
-
-    if (activeJobIds.length > 0) {
-      if (sseStatus === 'completed') {
-        return 'completed';
-      }
-      if (sseStatus === 'failed') {
-        return 'failed';
-      }
-
-      // Prefer message from query if it's the same job and has a message
-      const latestQueryData = scanStatusQuery.data;
-      if (latestQueryData?.id === latestJobId && latestQueryData.message) {
-        return latestQueryData.message;
-      }
-
-      // For multi-job, the hook tracks the latest; we could aggregate if needed
-      return sseStatus === 'pending' ? __('Starting scan…', 'alt-context') : __('Processing media…', 'alt-context');
-    }
-    const statusMessage = scanStatusQuery.data?.message;
-    const statusValue = scanStatusQuery.data?.status;
-    if (statusMessage && statusValue !== 'completed' && statusValue !== 'failed') {
-      return statusMessage;
-    }
-    return statusValue ?? (scanMutation.isPending ? __('Starting scan…', 'alt-context') : undefined);
-  }, [
-    activeJobIds,
-    sseStatus,
-    scanStatusQuery.data,
-    latestJobId,
-    scanMutation.isPending,
-    clusterMutation.isPending,
-    sseProgress,
-  ]);
-
-  const scanProgress = useMemo(() => {
-    if (activeJobIds.length === 0) {
-      return scanStatusQuery.data?.progress ?? null;
-    }
-
-    // For batched scans, aggregate totalItems from all scan jobs
-    const scanJobs = activeJobs.filter((j) => j.type === 'scan');
-    if (scanJobs.length > 1 && sseProgress) {
-      // Aggregate: total = sum of all job totals, completed = estimate based on jobs done
-      const totalItems = scanJobs.reduce((sum, j) => sum + j.totalItems, 0);
-      // Use SSE progress from current job, scale to overall
-      const currentJobIndex = scanJobs.findIndex((j) => j.id === latestScanJob?.id);
-      const completedJobs = currentJobIndex >= 0 ? currentJobIndex : 0;
-      const completedFromPriorJobs = scanJobs.slice(0, completedJobs).reduce((sum, j) => sum + j.totalItems, 0);
-      return {
-        completed: completedFromPriorJobs + sseProgress.completed,
-        total: totalItems,
-      };
-    }
-
-    return sseProgress;
-  }, [activeJobIds.length, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress]);
-
-  const isScanRunning = useMemo(() => {
-    if (scanMutation.isPending || isWaitingForScanCompletion) {
-      return true;
-    }
-
-    if (activeJobIds.length > 0) {
-      return sseStatus === 'pending' || sseStatus === 'running';
-    }
-
-    const status = scanStatusQuery.data?.status;
-    return status === 'pending' || status === 'running';
-  }, [
-    scanMutation.isPending,
-    isWaitingForScanCompletion,
-    activeJobIds.length,
-    sseStatus,
-    scanStatusQuery.data?.status,
-  ]);
-
-  useEffect(() => {
-    if (scanStatusQuery.data?.status === 'completed') {
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
-    }
-  }, [scanStatusQuery.data?.status, queryClient]);
-
-  // Handle scan job completion → trigger clustering
-  useEffect(() => {
-    if (!isWaitingForScanCompletion || activeJobIds.length === 0) {
-      return;
-    }
-
-    const completed = sseStatus === 'completed' || sseStatus === 'failed';
-
-    if (completed && latestScanJob) {
-      setIsWaitingForScanCompletion(false);
-      // Remove ALL completed scan jobs (batched scans create multiple jobs)
-      activeJobs.filter((j) => j.type === 'scan').forEach((j) => removeJob(j.id));
-      // Trigger clustering
-      clusterMutation.mutate();
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
-    }
-  }, [
-    sseStatus,
-    activeJobIds,
-    activeJobs,
-    latestScanJob,
-    isWaitingForScanCompletion,
-    clusterMutation,
-    queryClient,
-    removeJob,
-  ]);
-
-  // Handle clustering job completion → remove from active jobs
-  useEffect(() => {
-    if (!latestClusterJob) {
-      return;
-    }
-
-    const clusteringCompleted = sseStatus === 'completed' || sseStatus === 'failed';
-    if (clusteringCompleted && currentPhase === 'clustering') {
-      removeJob(latestClusterJob.id);
-      void queryClient.invalidateQueries({ queryKey: ['media-identities'] });
-      void queryClient.invalidateQueries({ queryKey: ['recognition-clusters'] });
-    }
-  }, [sseStatus, currentPhase, latestClusterJob, queryClient, removeJob]);
 
   const statusMessage = useMemo(() => {
     if (mediaQuery.isFetching) {
@@ -374,7 +169,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
       return;
     }
 
-    scanMutation.mutate(mediaIds);
+    scan(mediaIds);
   };
 
   const handleCancelScan = (): void => {
@@ -382,7 +177,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
     if (targets.length === 0) {
       return;
     }
-    cancelMutation.mutate(targets);
+    performCancel(targets);
   };
 
   const handleSelectJobFromHistory = (id: string): void => {
@@ -391,7 +186,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   };
 
   const handleClusterFaces = (): void => {
-    clusterMutation.mutate();
+    performCluster();
   };
 
   const scanSection = WORKBENCH_SECTIONS[0];
@@ -444,14 +239,14 @@ export const WorkbenchPage = (): React.JSX.Element => {
               onCancelScan={handleCancelScan}
               isScanning={isScanRunning}
               isCancelling={isCancellingScan}
-              statusText={scanStatusText}
+              statusText={statusText}
               jobId={latestJobId ?? jobId}
               errorMessage={scanError}
               progress={scanProgress}
               etaSeconds={etaSeconds}
               isSynced={!isPrimary && !!latestJobId}
             />
-            {!isScanRunning && !hasIdentities && !scanMutation.isPending && <NoMediaPanel />}
+            {!isScanRunning && !hasIdentities && !isScanRunning && <NoMediaPanel />}
             <SuggestionReviewPanel />
             <MediaSelection
               items={mediaItems}
@@ -500,11 +295,10 @@ export const WorkbenchPage = (): React.JSX.Element => {
             <p>{confirmSection.body}</p>
             <ConfirmPanel
               jobId={jobId}
-              status={scanStatusText}
+              status={statusText}
               onCluster={handleClusterFaces}
               isClustering={
-                clusterMutation.isPending ||
-                (activeJobIds.length > 0 && (sseStatus === 'pending' || sseStatus === 'running'))
+                isScanRunning // Simplified, logic is in hook
               }
               clusterMessage={clusterMessage}
               onViewClusters={() => window.location.assign(rosterClustersUrl())}

@@ -76,6 +76,8 @@ describe('useWorkbenchMedia', () => {
           thumbnailUrl: null,
           mimeType: 'image/jpeg',
           editUrl: '#',
+          updatedAt: '2025-01-01T00:00:00Z',
+          dimensions: { width: 1200, height: 800 },
           tags: [],
         },
         {
@@ -86,6 +88,8 @@ describe('useWorkbenchMedia', () => {
           thumbnailUrl: null,
           mimeType: 'image/jpeg',
           editUrl: '#',
+          updatedAt: '2025-01-02T00:00:00Z',
+          dimensions: { width: 640, height: 480 },
           tags: [],
         },
       ],

@@ -78,7 +78,7 @@ If a task seems to require external changes, STOP and propose an alternative wit
 > [!IMPORTANT]
 > This is a **greenfield project** with NO production users and NO existing data that must be preserved.
 
-- **No Data Migrations**: Storage surfaces (database tables, options, caches) are disposable. 
+- **No Data Migrations**: Storage surfaces (database tables, options, caches) are disposable.
 - **Baseline Only**: All schema changes must be applied directly to the baseline migration file ([001_identity_schema.py](file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-description-service/db/migrations/versions/001_identity_schema.py)).
 - **Clean Rewrites**: Prefer clean rewrites of logic and schema over backward-compatibility shims.
 - **No Feature Flags**: Full latitude to delete experimental features. Prefer removal over long-lived feature flags.
@@ -86,6 +86,20 @@ If a task seems to require external changes, STOP and propose an alternative wit
 ### Remove Over Flag
 
 Delete-over-flag is the default. Re-introduce features behind tests only when truly needed.
+
+### Naming Convention: acx\_\* Prefix
+
+> [!WARNING]
+> The `cat_*` prefix (e.g., `cat_roster_entries`, `wp cat-roster`) is **legacy** from a previous implementation.
+>
+> Current prefixes are:
+>
+> - **WordPress options/meta**: `acx_*` (e.g., `acx_roster_entries`)
+> - **REST API namespace**: `acx/v1/`
+> - **PHP namespace**: `AltContext\`
+> - **Text domain / slug**: `alt-context`
+>
+> If you encounter `cat_*` references in documentation, they may be outdated.
 
 ---
 
@@ -316,6 +330,7 @@ const useJobStateMachine = () => {
 ```
 
 **Signs of a God Hook:**
+
 - More than 150 lines
 - More than 5 `useState` calls
 - More than 3 `useEffect` calls
@@ -323,6 +338,7 @@ const useJobStateMachine = () => {
 - Mixes mutation orchestration with derived state
 
 **Refactoring strategy:**
+
 1. Extract each `useMemo` into a focused hook
 2. Group related mutations into a single hook
 3. Keep the "orchestration" hook thin (compose, don't implement)
@@ -381,10 +397,28 @@ const { data, isLoading, error, refetch } = useQuery({
 # Use pyenv for Python version + virtualenv management
 pyenv shell description-service
 
-# Install dependencies
+# Full setup (recommended) - handles platform-specific dependencies
 cd apps/prototype-description-service
-pip install -e ".[dev,local]"  # dev tools + local ONNX runtime
+make setup
 ```
+
+The `make setup` command runs `scripts/setup.sh`, which:
+
+- Installs core dependencies from `pyproject.toml`
+- Detects macOS Apple Silicon and uses specialized build flags for `insightface`
+- Falls back to standard pip install on Linux
+
+**Alternative: Core dependencies only (no face detection)**
+
+```bash
+make install  # Faster, skips insightface
+```
+
+> [!IMPORTANT]
+> **Never use `pip install <package>` directly.** All Python dependencies MUST be added to `pyproject.toml` and installed via `make setup` or `make install`. This ensures reproducible environments and version control of dependencies.
+
+> [!NOTE]
+> **macOS Apple Silicon users**: The `insightface` package requires special SDK flags to compile. This is handled automatically by `make setup`. Do NOT try to install `insightface` directly via pip.
 
 **Architecture:**
 
@@ -485,6 +519,133 @@ async def get_cluster(
 
 - 80% overall minimum
 - 95% on critical pipelines (recognition, clustering)
+
+---
+
+## MCP/LSP Tooling for Agents
+
+> [!IMPORTANT]
+> **Agents MUST use MCP tools** when available for code intelligence tasks. This includes searching code, finding definitions, tracing API endpoints, and getting diagnostics. Direct grep/file reading should only be used when MCP is unavailable.
+
+This monorepo includes a unified MCP (Model Context Protocol) server that provides code intelligence tools for agents working across all parts of the codebase.
+
+### Quick Start
+
+```bash
+# From monorepo root - start the unified MCP server
+~/.pyenv/versions/description-service/bin/python scripts/mcp/unified_server.py
+```
+
+### Client Support and Fallbacks
+
+MCP tools require an MCP-capable client (e.g., Gemini for VS Code). GitHub Copilot MCP support is
+version/feature-flag dependent; if `mcp.servers` is shown as an unknown setting, MCP is not enabled for
+your Copilot build and MCP tools are unavailable there. When MCP is unavailable, use `.agent/workflows/`
+as manual runbooks and direct shell commands (rg, make targets, etc.). When MCP is available, use MCP
+tools for code intelligence tasks.
+
+#### MCP Availability Checklist
+
+MCP is available only when **all** of the following are true:
+
+- An MCP-capable client is in use with MCP enabled (e.g., Gemini for VS Code).
+- The unified MCP server is running locally.
+- The client can access the server process (local permissions/path).
+- The workspace is the same repo root as the server `cwd`.
+
+If any of these are false (e.g., Copilot, Codex CLI, or no server running), MCP tools are unavailable.
+
+### Installation
+
+**Backend (Python):**
+
+```bash
+cd apps/prototype-description-service
+make setup  # Installs fastmcp + all dependencies
+```
+
+**Frontend (TypeScript):**
+
+```bash
+cd apps/prototype-wp-alt-context
+npm install  # Includes TypeScript LSP dependencies
+```
+
+**PHP:** No additional installation required. The unified MCP server uses ripgrep and PHPStan (already in composer dependencies).
+
+### Available MCP Tools (18 total)
+
+Tools are prefixed with `mcp_context-alt-t_` when invoked by agents.
+
+| Category        | Tool                   | Args                                      | When to Use                                   |
+| --------------- | ---------------------- | ----------------------------------------- | --------------------------------------------- |
+| **Search**      | `search_code`          | `query`, `language?`, `path?`             | Find code patterns across monorepo            |
+|                 | `find_definition`      | `symbol`, `language?`                     | Locate symbol definitions                     |
+|                 | `semantic_search`      | `query`, `language?`, `limit?`            | Natural language search (keyword fallback)    |
+| **Navigation**  | `read_file`            | `file_path`, `start_line?`, `end_line?`   | Read file with line numbers                   |
+|                 | `list_directory`       | `dir_path?`                               | Browse directory structure                    |
+| **Context**     | `get_context_map`      | `domain`                                  | Load backend/frontend/php/integration context |
+|                 | `get_api_contract`     | `contract_name?`                          | Load API contract (default: clustering-api)   |
+|                 | `get_instructions`     | (none)                                    | Load engineering instructions                 |
+| **Cross-Layer** | `trace_api_endpoint`   | `endpoint`                                | Trace endpoint across PHP→Python→TS           |
+| **Diagnostics** | `get_diagnostics`      | `file_path`                               | Run ruff/eslint/phpstan on file               |
+|                 | `get_type_info`        | `file_path`, `line`, `character`, `lang?` | Get type info via Pyright/tsc                 |
+| **React/TS**    | `find_react_component` | `component_name`                          | Find React component definitions              |
+|                 | `find_react_hook`      | `hook_name`                               | Find custom React hooks                       |
+|                 | `list_frontend_tests`  | `component?`                              | List test files by component                  |
+| **PHP/WP**      | `find_wp_action`       | `action_name`                             | Find add_action/do_action calls               |
+|                 | `find_wp_rest_route`   | `route`                                   | Find register_rest_route calls                |
+|                 | `find_php_class`       | `class_name`                              | Find PHP class definitions                    |
+| **Debug**       | `debug_subprocess`     | (none)                                    | Test subprocess timing                        |
+
+**Example usage in agent context:**
+
+```
+# Search for ClusterService in Python files
+mcp_context-alt-t_search_code(query="ClusterService", language="python")
+
+# Trace an API endpoint across all layers
+mcp_context-alt-t_trace_api_endpoint(endpoint="/clusters")
+
+# Get diagnostics for a file
+mcp_context-alt-t_get_diagnostics(file_path="apps/prototype-description-service/api/main.py")
+```
+
+### Optional MCP Servers
+
+- **Pylance MCP**: Not required for this repo. The unified MCP server already provides Python type info via Pyright/tsc. Use Pylance locally for editor features, but it does not add MCP-only capabilities here.
+- **Prisma MCP**: Only useful if the codebase uses Prisma (`schema.prisma`). This monorepo does not, so Prisma MCP is not recommended.
+
+### Slash Commands (Workflows)
+
+Agents can use slash commands defined in `.agent/workflows/` to execute standardized multi-step workflows. These optimize token usage by encoding common operations.
+
+| Command             | Description                            |
+| ------------------- | -------------------------------------- |
+| `/context-backend`  | Load backend Python context            |
+| `/context-frontend` | Load frontend React/TS context         |
+| `/test-unit`        | Run Python unit tests                  |
+| `/test-integration` | Run integration tests (requires DB)    |
+| `/lint`             | All linters (ruff/mypy/eslint/phpstan) |
+| `/check-all`        | Full CI validation                     |
+| `/scaffold`         | Create new service/component skeleton  |
+| `/api-trace`        | Trace endpoint across PHP→Python→TS    |
+| `/db-reset`         | Reset dev database (DESTRUCTIVE)       |
+| `/db-migrate`       | Run Alembic migrations                 |
+| `/db-rollback`      | Rollback last migration                |
+| `/db-query`         | Run ad-hoc SQL via `db_shell.sh`       |
+| `/db-schema`        | Show database schema                   |
+| `/git-status`       | Atomic commit suggestions by feature   |
+
+### WordPress Development MCP
+
+For WordPress plugin development, the following resources are available:
+
+- **Automattic MCP Adapter**: [github.com/Automattic/wordpress-mcp](https://github.com/Automattic/wordpress-mcp) — Exposes WordPress REST API to AI agents
+- **WP MCP Boilerplate**: For creating custom MCP tools that interact with WordPress functions
+- **Abilities API**: WordPress.org plugin for defining custom AI-accessible abilities
+
+Our unified MCP server includes PHP-specific tools (`find_wp_action`, `find_wp_rest_route`, `find_php_class`) that help navigate the WordPress plugin codebase without requiring a separate WordPress instance.
 
 ---
 
@@ -589,7 +750,7 @@ interface RecognitionApi {
 
 // Fake for unit tests (in tests/fakes.ts)
 export const createFakeRecognitionApi = (
-  initialClusters: Cluster[] = []
+  initialClusters: Cluster[] = [],
 ): RecognitionApi => {
   const clusters = new Map(initialClusters.map((c) => [c.id, c]));
   return {

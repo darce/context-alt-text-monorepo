@@ -1,8 +1,10 @@
-.PHONY: help test lint format check clean install typecheck serve stop
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp
 
 # Default target
 help:
 	@echo "Available commands:"
+	@echo "  make setup      - Full setup (deps + face detection, platform-aware)"
+	@echo "  make install    - Install core dependencies only"
 	@echo "  make serve      - Start the development server + scan worker"
 	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
@@ -11,9 +13,13 @@ help:
 	@echo "  make format     - Auto-fix code formatting"
 	@echo "  make test       - Run pytest"
 	@echo "  make ci         - Format code and run all checks"
-	@echo "  make install    - Install dependencies"
 	@echo "  make clean      - Remove cache and build files"
 	@echo "  make reset      - Drop and recreate the local database"
+	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
+
+# Start MCP server (delegates to root Makefile)
+mcp:
+	@cd ../.. && make mcp-start
 
 # Start development server
 serve:
@@ -60,9 +66,13 @@ test:
 # Auto-fix and test (for CI)
 ci: format typecheck test
 
-# Install dependencies
+# Install core dependencies only (no face detection)
 install:
-	@pip install -e ".[dev,local]"
+	@pip install -e ".[dev]"
+
+# Full setup with platform-aware face detection
+setup:
+	@./scripts/setup.sh
 
 # Clean cache and build artifacts
 clean:

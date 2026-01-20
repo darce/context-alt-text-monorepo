@@ -2,11 +2,15 @@
 
 Cross-project scripts and integration tests for the entire monorepo.
 
-## Purpose
+## Directory Structure
 
-This directory contains **monorepo-wide automation** that spans multiple applications or packages. These scripts are not specific to any single app.
-
-## Contents
+```
+scripts/
+├── README.md                   # This file
+├── local-wp-cli.sh             # WordPress CLI wrapper for Local by Flywheel
+└── mcp/
+    └── unified_server.py       # Unified MCP server for all codebases
+```
 
 - **`smoke-test-local-integration.sh`** - End-to-end integration test
 

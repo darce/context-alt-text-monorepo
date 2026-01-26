@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import uuid
+from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
 
 import numpy as np
@@ -77,6 +78,85 @@ class SuggestionRefreshService:
             pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=str(model.image_phash) if model.image_phash is not None else None,
         )
+
+    async def _find_best_cluster_match(
+        self,
+        identity: MediaIdentity,
+        exclude_cluster_ids: set[str] | None = None,
+        *,
+        representatives_by_cluster: Mapping[str, Sequence[np.ndarray] | np.ndarray] | None = None,
+    ) -> tuple[str, float] | None:
+        """Find the best cluster match for an identity. Returns (cluster_id, similarity)."""
+        if representatives_by_cluster is None:
+            if self._cluster_repository is None:
+                return None
+
+            clusters_with_reps = await self._cluster_repository.get_labeled_with_representatives(self._tenant_id)
+            if not clusters_with_reps:
+                return None
+
+            reps_by_cluster: dict[str, list[np.ndarray]] = {}
+            for cluster, reps in clusters_with_reps:
+                if not is_eligible_cluster(cluster, self._tenant_id):
+                    continue
+
+                if not cluster.id:
+                    continue
+                cluster_id = cluster.id
+                if exclude_cluster_ids and cluster_id in exclude_cluster_ids:
+                    continue
+                if not reps:
+                    continue
+
+                reps_by_cluster[cluster_id] = [
+                    np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps
+                ]
+
+            representatives_by_cluster = reps_by_cluster
+
+        if not representatives_by_cluster:
+            return None
+
+        match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
+        if match is None:
+            return None
+
+        return match.cluster_id, match.similarity
+
+    async def _create_or_update_suggestion(
+        self,
+        identity_id: str,
+        cluster_id: str,
+        similarity: float,
+        reason: SuggestionRefreshReason,
+        *,
+        confidence_score: float | None = None,
+        refreshed_at: datetime | None = None,
+    ) -> AssignmentSuggestion:
+        """Create a new suggestion or update existing one."""
+        if refreshed_at is None:
+            refreshed_at = datetime.now(tz=UTC)
+        if confidence_score is None:
+            confidence_score = similarity
+
+        payload = SuggestionCreateData(
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            representative_similarity=similarity,
+            member_similarity=similarity,
+            confidence_score=confidence_score,
+            source=reason.value,
+            refreshed_at=refreshed_at,
+        )
+        suggestion = await self._repository.upsert_by_identity_cluster(self._tenant_id, payload)
+        logger.info(
+            "[suggestions] REFRESHED identity_id=%s cluster_id=%s similarity=%.3f reason=%s",
+            identity_id,
+            cluster_id,
+            similarity,
+            reason.value,
+        )
+        return suggestion
 
     async def refresh_for_identity(
         self,
@@ -173,24 +253,15 @@ class SuggestionRefreshService:
                 if match.similarity >= self._settings.suggestion_ceiling:
                     continue
 
-            payload = SuggestionCreateData(
+            suggestion = await self._create_or_update_suggestion(
                 identity_id=identity_id,
                 cluster_id=cluster_id,
-                representative_similarity=match.similarity,
-                member_similarity=match.similarity,
                 confidence_score=confidence_score,
-                source=reason.value,
+                similarity=match.similarity,
+                reason=reason,
                 refreshed_at=now,
             )
-            suggestion = await self._repository.upsert_by_identity_cluster(self._tenant_id, payload)
             suggestions.append(suggestion)
-            logger.info(
-                "[suggestions] REFRESHED identity_id=%s cluster_id=%s similarity=%.3f reason=%s",
-                identity_id,
-                cluster_id,
-                match.similarity,
-                reason.value,
-            )
 
         if suggestions:
             logger.info(
@@ -244,10 +315,10 @@ class SuggestionRefreshService:
                 continue
 
             identity = self._build_identity(model)
-            match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
+            match = await self._find_best_cluster_match(identity, representatives_by_cluster=representatives_by_cluster)
             if match is None:
                 continue
-            best_similarity = match.similarity
+            _cluster_id, best_similarity = match
 
             old_similarity = suggestion.representative_similarity
             delta = best_similarity - old_similarity

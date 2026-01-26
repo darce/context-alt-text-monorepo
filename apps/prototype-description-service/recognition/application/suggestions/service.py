@@ -20,7 +20,7 @@ from recognition.domain.repositories import (
     SuggestionCreateData,
     SuggestionRepository,
 )
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionDetails, SuggestionStatus
 from recognition.observability.recognition_runs import RecognitionRunContext
 
 logger = logging.getLogger(__name__)
@@ -304,9 +304,9 @@ class SuggestionService:
             logger.warning("[curation] Failed to reject suggestion_id=%s: Not found", suggestion_id)
             return None  # Not found
 
-    async def list_pending(self, limit: int = 50, offset: int = 0) -> list[AssignmentSuggestion]:
-        """List pending suggestions for the service tenant."""
-        return await self._repository.list_pending(self._tenant_id, limit, offset)
+    async def list_pending(self, limit: int = 50, offset: int = 0) -> list[SuggestionDetails]:
+        """List pending suggestions with identity + cluster details for the service tenant."""
+        return await self._repository.list_pending_with_details(self._tenant_id, limit, offset)
 
     async def resolve_for_identity(self, identity_id: str, cluster_id: str, resolution: str = "accepted") -> int:
         """Resolve pending suggestions for an identity+cluster combination.

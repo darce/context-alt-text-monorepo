@@ -22,7 +22,6 @@ from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.tasks.scan import (
     chain_populate_and_process,
     extract_media_id,
-    max_batch_for_tier,
     scan_worker_available,
 )
 from recognition.domain.job import JobType
@@ -96,14 +95,7 @@ async def analyze_media(
         else:
             media_items = [(extract_media_id(mid), str(mid)) for mid in media_sources]
 
-        if getattr(auth, "enabled", False) and not getattr(auth, "is_admin", False):
-            tier = getattr(auth, "rate_limit_tier", None)
-            max_batch = max_batch_for_tier(tier)
-            if len(media_items) > max_batch:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail=(f"Batch size {len(media_items)} exceeds limit {max_batch} for tier '{(tier or 'free')}'."),
-                )
+        # NOTE: Tier-based batch limits removed for MVP (see progress-tracking-investigation-2026-01-20.md)
 
         # Use injected scan_queue if available (for tests), otherwise create from factory
         if scan_queue is None:

@@ -6,10 +6,12 @@
 
 These guides document specific subsystem behaviors (legacy reference material):
 
+> [!WARNING]
+> Some guides reference the legacy `cat_*` prefix. Current prefix is `acx_*`. See [instructions.md](/docs/agentic/instructions.md#naming-convention-acx_-prefix).
+
 | Guide                                                              | Description                                           |
 | ------------------------------------------------------------------ | ----------------------------------------------------- |
-| [roster_taxonomy_guide.md](roster_taxonomy_guide.md)               | Roster taxonomy system, WP-CLI commands               |
-| [roster_cli_quick_reference.md](roster_cli_quick_reference.md)     | Quick reference for roster CLI                        |
+| [roster_taxonomy_guide.md](roster_taxonomy_guide.md)               | Roster taxonomy system                                |
 | [roster_auto_matching.md](roster_auto_matching.md)                 | Auto-matching behavior                                |
 | [roster_auto_resolve_behavior.md](roster_auto_resolve_behavior.md) | Auto-resolve behavior                                 |
 | [roster_nuclear_reset_guide.md](roster_nuclear_reset_guide.md)     | Development reset command                             |

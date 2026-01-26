@@ -2,7 +2,7 @@
 classDiagram
     %% =======================================================================
     %% WORDPRESS PLUGIN FRONTEND V4.2.4 - CLASS DIAGRAM
-    %% Updated: December 6, 2025
+    %% Updated: January 24, 2026
     %% TypeScript/React component architecture
     %% =======================================================================
 
@@ -91,10 +91,11 @@ classDiagram
     }
     
     class identityApi {
-        +getMediaIdentities(tenantId: string, mediaIds?: string[]) Promise~MediaIdentity[]~
-        +getSuggestions(tenantId: string, params?: ListParams) Promise~Suggestion[]~
-        +acceptSuggestion(suggestionId: string) Promise~Suggestion~
-        +rejectSuggestion(suggestionId: string) Promise~Suggestion~
+        +fetchMediaIdentities(mediaIds: number[]) Promise~MediaIdentitiesResponse~
+        +fetchIdentitySuggestions(identityId: string, topK?: number) Promise~IdentitySuggestionsResponse~
+        +fetchPendingSuggestions(limit?: number, offset?: number) Promise~PendingSuggestionsResponse~
+        +acceptSuggestion(suggestionId: string) Promise~SuggestionResponse~
+        +rejectSuggestion(suggestionId: string) Promise~SuggestionResponse~
     }
 
     %% ---------------------------------------------------------------------------
@@ -185,13 +186,44 @@ classDiagram
         +representatives: MediaIdentity[]
     }
     
-    class Suggestion {
+    class PendingSuggestion {
         +id: string
-        +identityId: string
-        +clusterId: string
-        +repSimilarity: float
-        +memberSimilarity: float
+        +identity_id: string
+        +suggested_cluster_id: string
+        +representative_similarity: float
+        +avg_member_similarity: float?
+        +confidence_score: float?
+        +resolution: string?
+        +created_at: string?
+        +resolved_at: string | null
+        +cluster_label: string | null
+        +cluster_identity_count: number | null
+        +identity_media_url: string | null
+        +identity_thumbnail_url: string | null
+        +representative_media_url: string | null
+        +representative_thumbnail_url: string | null
+    }
+
+    class PendingSuggestionsResponse {
+        +suggestions: PendingSuggestion[]
+        +total: number
+        +limit: number
+        +offset: number
+    }
+
+    class SuggestionResponse {
+        +id: string
+        +identity_id: string
+        +cluster_id: string
+        +rep_similarity: float
+        +member_similarity: float | null
         +status: 'pending' | 'accepted' | 'rejected'
+        +cluster_label: string | null
+        +cluster_identity_count: number | null
+        +identity_media_url: string | null
+        +identity_thumbnail_url: string | null
+        +representative_media_url: string | null
+        +representative_thumbnail_url: string | null
     }
     
     class Job {
@@ -211,8 +243,8 @@ classDiagram
     }
 
     Cluster --> MediaIdentity : contains representatives
-    Suggestion --> MediaIdentity : references
-    Suggestion --> Cluster : references
+    PendingSuggestion --> MediaIdentity : references
+    PendingSuggestion --> Cluster : references
 
     %% ---------------------------------------------------------------------------
     %% PHP PROXY LAYER

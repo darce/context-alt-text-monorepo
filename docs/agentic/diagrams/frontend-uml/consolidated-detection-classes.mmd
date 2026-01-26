@@ -80,15 +80,21 @@ class PendingSuggestion {
   +identity_id: string
   +suggested_cluster_id: string
   +representative_similarity: number
-  +avg_member_similarity: number
-  +confidence_score: number
-  +priority: int
-  +resolution: string
-  +created_at: string
-  +resolved_at: string?
-  +cluster_label: string?
-  +cluster_member_count: int?
-  +identity_media_id: int?
+  +avg_member_similarity: number?
+  +confidence_score: number?
+  +resolution: string?
+  +created_at: string?
+  +resolved_at: string | null
+  +cluster_label: string | null
+  +cluster_identity_count: number | null
+  +identity_media_id: number | null
+  +identity_media_url: string | null
+  +identity_thumbnail_url: string | null
+  +identity_bbox: BoundingBox | null
+  +representative_media_id: number | null
+  +representative_media_url: string | null
+  +representative_thumbnail_url: string | null
+  +representative_bbox: BoundingBox | null
 }
 
 class TrainingStageResponse {

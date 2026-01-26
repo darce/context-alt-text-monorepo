@@ -9,11 +9,11 @@ Example:
 from __future__ import annotations
 
 import argparse
-import json
 import itertools
+import json
 import sys
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Sequence
 
 import numpy as np
 from sqlalchemy import String, bindparam, text
@@ -132,15 +132,14 @@ def main() -> None:
             rows = fetch_embeddings(session, args.media_ids, args.cluster_id)
 
     if not rows:
-        print(f"No embeddings found for media_ids={args.media_ids}. "
-              "Ensure the IDs exist and the DB has data (use --with-sample-data when resetting).")
+        print(
+            f"No embeddings found for media_ids={args.media_ids}. "
+            "Ensure the IDs exist and the DB has data (use --with-sample-data when resetting)."
+        )
         return
 
     if len(rows) < 2:
-        print(
-            f"Only found {len(rows)} embedding(s) for media_ids={args.media_ids}; "
-            "need at least two to compare."
-        )
+        print(f"Only found {len(rows)} embedding(s) for media_ids={args.media_ids}; need at least two to compare.")
         return
 
     for row in rows:
@@ -158,9 +157,7 @@ def main() -> None:
     print(f"Found {len(rows)} media identities:\n")
     for row in rows:
         centroid_norm_str = (
-            f" centroid_norm={row['centroid_norm']:.4f}"
-            if row["centroid_norm"] is not None
-            else " centroid=missing"
+            f" centroid_norm={row['centroid_norm']:.4f}" if row["centroid_norm"] is not None else " centroid=missing"
         )
         emb_norm_str = f" emb_norm={row['embedding_norm']:.4f}"
         print(

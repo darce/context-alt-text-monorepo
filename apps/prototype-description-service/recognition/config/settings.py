@@ -27,7 +27,8 @@ class InsightFaceSettings(BaseModel):
     """Settings for InsightFace face detection and embedding."""
 
     model_name: str = Field(default="buffalo_l", description="InsightFace model to use.")
-    device: str = Field(default="auto", description="Device: 'auto', 'cpu', 'cuda', 'mps'.")
+    # NOTE: Changed from "auto" to "cpu" to bypass CoreML compilation errors on macOS
+    device: str = Field(default="cpu", description="Device: 'auto', 'cpu', 'cuda', 'mps'.")
     cache_dir: Path = Field(default=Path.home() / ".insightface" / "models", description="Model cache directory.")
     providers: list[str] = Field(default_factory=list, description="ONNX providers (empty = auto-detect).")
     det_thresh: float = Field(default=0.5, description="Face detection confidence threshold.")

@@ -12,12 +12,13 @@ from datetime import UTC, datetime
 
 from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.orm import joinedload
 
+from db.models import IdentityCluster, MediaIdentity
 from db.models import IdentitySuggestion as SuggestionModel
-from db.models import MediaIdentity
 from db.settings import get_database_settings
 from recognition.domain.repositories import SuggestionCreateData, SuggestionRepository
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, FaceBox, SuggestionDetails, SuggestionStatus
 
 _DB_SETTINGS = get_database_settings()
 
@@ -141,6 +142,46 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
+    def _build_bbox(self, identity: MediaIdentity | None) -> FaceBox | None:
+        if identity is None:
+            return None
+        if None in (identity.bbox_x, identity.bbox_y, identity.bbox_width, identity.bbox_height):
+            return None
+        return FaceBox(
+            x=int(identity.bbox_x),
+            y=int(identity.bbox_y),
+            width=int(identity.bbox_width),
+            height=int(identity.bbox_height),
+        )
+
+    def _to_details(self, model: SuggestionModel) -> SuggestionDetails:
+        identity: MediaIdentity | None = model.identity
+        cluster: IdentityCluster | None = model.suggested_cluster
+        representative: MediaIdentity | None = cluster.representative_identity if cluster else None
+
+        return SuggestionDetails(
+            id=str(model.id),
+            identity_id=str(model.identity_id),
+            cluster_id=str(model.suggested_cluster_id),
+            representative_similarity=float(model.representative_similarity),
+            member_similarity=float(model.avg_member_similarity),
+            status=str(model.resolution),
+            cluster_label=cluster.label if cluster else None,
+            cluster_identity_count=int(cluster.identity_count)
+            if cluster and cluster.identity_count is not None
+            else None,
+            identity_media_id=int(identity.media_id) if identity and identity.media_id is not None else None,
+            identity_media_url=identity.media_url if identity else None,
+            identity_thumbnail_url=identity.thumbnail_url if identity else None,
+            identity_bbox=self._build_bbox(identity),
+            representative_media_id=int(representative.media_id)
+            if representative and representative.media_id is not None
+            else None,
+            representative_media_url=representative.media_url if representative else None,
+            representative_thumbnail_url=representative.thumbnail_url if representative else None,
+            representative_bbox=self._build_bbox(representative),
+        )
+
     async def get_by_cluster(self, tenant_id: str, cluster_id: str) -> list[AssignmentSuggestion]:
         """Fetch suggestions for a cluster, scoped to tenant."""
         stmt: Select[tuple[SuggestionModel]] = (
@@ -182,6 +223,23 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         )
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
+
+    async def list_pending_with_details(self, tenant_id: str, limit: int, offset: int) -> list[SuggestionDetails]:
+        """Return pending suggestions with identity + cluster details."""
+        stmt: Select[tuple[SuggestionModel]] = (
+            select(SuggestionModel)
+            .where(SuggestionModel.tenant_id == _coerce_uuid(tenant_id))
+            .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
+            .order_by(SuggestionModel.created_at.desc())
+            .offset(offset)
+            .limit(limit)
+            .options(
+                joinedload(SuggestionModel.identity),
+                joinedload(SuggestionModel.suggested_cluster).joinedload(IdentityCluster.representative_identity),
+            )
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_details(model) for model in result.scalars().all()]
 
     async def bulk_update_status(
         self,

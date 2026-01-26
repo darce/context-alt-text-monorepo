@@ -46,6 +46,17 @@ class ClusteringJobRequest(BaseModel):
         return _validate_uuid(v)
 
 
+class RecoverOrphansRequest(BaseModel):
+    """Request to re-cluster orphaned identities."""
+
+    tenant_id: str
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class PatchClusterRequest(BaseModel):
     """Request to update cluster attributes."""
 
@@ -182,6 +193,7 @@ class PinRepresentativeRequest(BaseModel):
 __all__ = [
     "AnalyzeRequest",
     "ClusteringJobRequest",
+    "RecoverOrphansRequest",
     "AssignOutlierRequest",
     "CreateClusterForIdentityRequest",
     "MergeClusterRequest",

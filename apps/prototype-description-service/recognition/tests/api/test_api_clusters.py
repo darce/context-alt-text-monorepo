@@ -35,6 +35,30 @@ def test_clustering_job_sync_returns_completed_status(api_client, tenant_id) -> 
     assert body["progress"]["total"] == body["progress"]["completed"]
 
 
+def test_recover_orphans_returns_summary(api_client, tenant_id, fake_cluster_service, monkeypatch) -> None:
+    class Result:
+        total = 4
+        accepted = 2
+        suggested = 1
+        rejected = 1
+        clusters_created = 2
+
+    async def _fake_recover(_tenant_id, *_args, **_kwargs):
+        return Result()
+
+    monkeypatch.setattr(fake_cluster_service, "cluster_unclustered_identities", _fake_recover)
+
+    resp = api_client.post("/recognition/clusters/recover-orphans", json={"tenant_id": tenant_id})
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["orphans_found"] == 4
+    assert body["recovered"] == 2
+    assert body["suggested"] == 1
+    assert body["rejected"] == 1
+    assert body["clusters_created"] == 2
+
+
 def test_list_clusters_returns_seeded_data(api_client, tenant_id, fake_cluster_service) -> None:
     seeded = seed_cluster(fake_cluster_service, tenant_id)
 

@@ -174,7 +174,18 @@ class FakeClusterRepository:
     async def remove_representative(self, representative_id: str) -> None:
         return None
 
-    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+    async def get_maturity_info(
+        self,
+        cluster_id: str,
+        *,
+        settings=None,  # noqa: ANN001
+    ) -> ClusterMaturityInfo | None:
+        return None
+
+    async def get_curriculum_t(self, cluster_id: str) -> float | None:
+        return None
+
+    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
         return None
 
 

@@ -98,6 +98,12 @@ class IdentityCluster(Base):
     identity_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     roster_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
     similarity_threshold: Mapped[float | None] = mapped_column(Float)
+    curriculum_t: Mapped[float] = mapped_column(Float, nullable=False, server_default=text("0.0"))
+    curriculum_t_updated_at: Mapped[datetime | None] = mapped_column(
+        TIMESTAMP(timezone=True),
+        server_default=func.now(),
+        onupdate=func.now(),
+    )
     clustering_algorithm: Mapped[str] = mapped_column(
         String(50), nullable=False, server_default=text("'cosine_similarity'")
     )

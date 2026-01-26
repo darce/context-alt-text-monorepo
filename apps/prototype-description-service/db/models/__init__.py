@@ -9,6 +9,7 @@ This package provides domain-specific model modules:
 """
 
 from db.models.constraints import (
+    ClusterMergeSuggestion,
     IdentityClusterBlock,
     IdentityConstraint,
     IdentitySuggestion,
@@ -56,6 +57,7 @@ __all__ = [
     "ClusteringFeedback",
     # Constraints
     "IdentitySuggestion",
+    "ClusterMergeSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
 ]

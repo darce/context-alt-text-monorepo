@@ -86,8 +86,9 @@ abstract class TestCase extends PHPUnitTestCase
 
     /**
      * Queue an HTTP response for wp_remote_* functions.
+     * Can be an array (success) or WP_Error (failure).
      */
-    protected function queueHttpResponse(array $response): void
+    protected function queueHttpResponse(array|\WP_Error $response): void
     {
         if (!isset($GLOBALS['__ac_http_queue'])) {
             $GLOBALS['__ac_http_queue'] = [];

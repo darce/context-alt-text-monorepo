@@ -4,9 +4,6 @@
          beStrictAboutChangesToGlobalState="false"
          beStrictAboutOutputDuringTests="false">
     <testsuites>
-        <testsuite name="Alt Context Plugin Tests">
-            <directory>tests/Unit</directory>
-        </testsuite>
         <testsuite name="Unit">
             <directory>tests/Unit</directory>
         </testsuite>

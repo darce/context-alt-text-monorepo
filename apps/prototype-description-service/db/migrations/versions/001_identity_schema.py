@@ -24,6 +24,7 @@ TENANT_TABLES = [
     "identity_cluster_representatives",
     "identity_clustering_jobs",
     "identity_suggestions",
+    "cluster_merge_suggestions",
     "identity_cluster_blocks",
     "identity_constraints",
     "recognition_runs",
@@ -41,6 +42,7 @@ def upgrade() -> None:
         "tenants",
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("site_url", sa.String(length=255), nullable=False, unique=True),
+        sa.Column("next_person_number", sa.Integer(), nullable=False, server_default=sa.text("1")),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column(
             "updated_at",
@@ -124,6 +126,12 @@ def upgrade() -> None:
         sa.Column("identity_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("roster_id", sa.dialects.postgresql.UUID(as_uuid=True)),
         sa.Column("similarity_threshold", sa.Float()),
+        sa.Column("curriculum_t", sa.Float(), nullable=False, server_default=sa.text("0.0")),
+        sa.Column(
+            "curriculum_t_updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+        ),
         sa.Column(
             "clustering_algorithm",
             sa.String(length=50),
@@ -416,6 +424,54 @@ def upgrade() -> None:
             "identity_id",
             "suggested_cluster_id",
             name="unique_identity_suggestion",
+        ),
+    )
+
+    op.create_table(
+        "cluster_merge_suggestions",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "cluster_a_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column(
+            "cluster_b_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("identity_clusters.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("similarity", sa.Float(), nullable=False),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("refreshed_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("source", sa.String(length=50), nullable=True),
+        sa.Column(
+            "resolution",
+            sa.String(length=20),
+            nullable=False,
+            server_default=sa.text("'pending'"),
+        ),
+        sa.CheckConstraint(
+            "similarity >= 0 AND similarity <= 1",
+            name="cluster_merge_similarity_range",
+        ),
+        sa.CheckConstraint(
+            "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
+            name="cluster_merge_valid_resolution",
+        ),
+        sa.CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
+        sa.UniqueConstraint(
+            "cluster_a_id",
+            "cluster_b_id",
+            name="unique_cluster_merge_suggestion",
         ),
     )
 
@@ -730,6 +786,27 @@ def upgrade() -> None:
         ["tenant_id", "id"],
     )
     op.create_index(
+        "idx_cluster_merge_suggestions_tenant",
+        "cluster_merge_suggestions",
+        ["tenant_id"],
+    )
+    op.create_index(
+        "idx_cluster_merge_suggestions_cluster_a",
+        "cluster_merge_suggestions",
+        ["cluster_a_id"],
+    )
+    op.create_index(
+        "idx_cluster_merge_suggestions_cluster_b",
+        "cluster_merge_suggestions",
+        ["cluster_b_id"],
+    )
+    op.create_index(
+        "idx_cluster_merge_suggestions_pending",
+        "cluster_merge_suggestions",
+        ["tenant_id", "similarity"],
+        postgresql_where=sa.text("resolution = 'pending'"),
+    )
+    op.create_index(
         "idx_identity_cluster_blocks_identity",
         "identity_cluster_blocks",
         ["tenant_id", "identity_id"],
@@ -974,6 +1051,10 @@ def downgrade() -> None:
     op.drop_index("idx_identity_suggestions_cluster", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_identity", table_name="identity_suggestions")
     op.drop_index("idx_identity_suggestions_tenant", table_name="identity_suggestions")
+    op.drop_index("idx_cluster_merge_suggestions_pending", table_name="cluster_merge_suggestions")
+    op.drop_index("idx_cluster_merge_suggestions_cluster_b", table_name="cluster_merge_suggestions")
+    op.drop_index("idx_cluster_merge_suggestions_cluster_a", table_name="cluster_merge_suggestions")
+    op.drop_index("idx_cluster_merge_suggestions_tenant", table_name="cluster_merge_suggestions")
     op.drop_index("idx_identity_cluster_blocks_cluster", table_name="identity_cluster_blocks")
     op.drop_index("idx_identity_cluster_blocks_identity", table_name="identity_cluster_blocks")
     op.drop_index("idx_recognition_events_cluster", table_name="recognition_events")
@@ -992,6 +1073,7 @@ def downgrade() -> None:
     op.drop_table("recognition_events")
     op.drop_table("recognition_runs")
     op.drop_table("identity_cluster_blocks")
+    op.drop_table("cluster_merge_suggestions")
     op.drop_table("identity_suggestions")
     op.drop_table("identity_scan_job_items")
     op.drop_table("identity_scan_jobs")

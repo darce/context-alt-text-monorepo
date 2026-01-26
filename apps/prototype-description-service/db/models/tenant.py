@@ -10,17 +10,20 @@ from db.models.base_imports import (
     Base,
     ForeignKey,
     Index,
+    Integer,
     Mapped,
     String,
     datetime,
     func,
     mapped_column,
     relationship,
+    text,
     uuid,
 )
 
 if TYPE_CHECKING:
     from db.models.constraints import (
+        ClusterMergeSuggestion,
         IdentityClusterBlock,
         IdentitySuggestion,
     )
@@ -35,6 +38,7 @@ class Tenant(Base):
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     site_url: Mapped[str] = mapped_column(String(255), unique=True, nullable=False)
+    next_person_number: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("1"))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -45,6 +49,9 @@ class Tenant(Base):
         back_populates="tenant", cascade="all, delete-orphan"
     )
     identity_suggestions: Mapped[list[IdentitySuggestion]] = relationship(
+        back_populates="tenant", cascade="all, delete-orphan"
+    )
+    cluster_merge_suggestions: Mapped[list[ClusterMergeSuggestion]] = relationship(
         back_populates="tenant", cascade="all, delete-orphan"
     )
     identity_cluster_blocks: Mapped[list[IdentityClusterBlock]] = relationship(

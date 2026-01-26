@@ -115,6 +115,55 @@ class IdentitySuggestion(Base):
     )
 
 
+class ClusterMergeSuggestion(Base):
+    """Cluster-to-cluster merge suggestion awaiting user confirmation."""
+
+    __tablename__ = "cluster_merge_suggestions"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    cluster_a_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+    cluster_b_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("identity_clusters.id", ondelete="CASCADE"), nullable=False
+    )
+
+    similarity: Mapped[float] = mapped_column(Float, nullable=False)
+
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    resolved_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    refreshed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
+    source: Mapped[str | None] = mapped_column(String(50))
+
+    resolution: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'pending'"))
+
+    tenant: Mapped[Tenant] = relationship(back_populates="cluster_merge_suggestions")
+    cluster_a: Mapped[IdentityCluster] = relationship(foreign_keys=[cluster_a_id])
+    cluster_b: Mapped[IdentityCluster] = relationship(foreign_keys=[cluster_b_id])
+
+    __table_args__ = (
+        CheckConstraint("similarity >= 0 AND similarity <= 1", name="cluster_merge_similarity_range"),
+        CheckConstraint(
+            "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
+            name="cluster_merge_valid_resolution",
+        ),
+        CheckConstraint("cluster_a_id < cluster_b_id", name="cluster_merge_canonical_order"),
+        UniqueConstraint("cluster_a_id", "cluster_b_id", name="unique_cluster_merge_suggestion"),
+        Index("idx_cluster_merge_suggestions_tenant", "tenant_id"),
+        Index("idx_cluster_merge_suggestions_cluster_a", "cluster_a_id"),
+        Index("idx_cluster_merge_suggestions_cluster_b", "cluster_b_id"),
+        Index(
+            "idx_cluster_merge_suggestions_pending",
+            "tenant_id",
+            "similarity",
+            postgresql_where=text("resolution = 'pending'"),
+        ),
+    )
+
+
 class IdentityClusterBlock(Base):
     """Negative constraint preventing identity from joining a cluster."""
 
@@ -175,6 +224,7 @@ class IdentityConstraint(Base):
 
 __all__ = [
     "IdentitySuggestion",
+    "ClusterMergeSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
 ]

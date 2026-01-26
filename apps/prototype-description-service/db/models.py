@@ -21,6 +21,7 @@ from db.models import (
     ClusterCentroid,
     ClusteringFeedback,
     ClusteringJobReport,
+    ClusterMergeSuggestion,
     IdentityCluster,
     IdentityClusterBlock,
     IdentityClusteringJob,
@@ -53,6 +54,7 @@ __all__ = [
     "AssignmentDecision",
     "ClusteringFeedback",
     "IdentitySuggestion",
+    "ClusterMergeSuggestion",
     "IdentityClusterBlock",
     "IdentityConstraint",
 ]

@@ -16,7 +16,9 @@ export interface NormalizedConfig {
   devMode: boolean;
 }
 
-const DEFAULT_MAX_MEDIA_PER_BATCH = 50;
+// NOTE: Batch limits removed for MVP. Previously 50, now set high to disable chunking.
+// See docs/tasks/4.0/4.11.0/progress-tracking-investigation-2026-01-20.md
+const DEFAULT_MAX_MEDIA_PER_BATCH = 10000;
 
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
@@ -78,3 +80,13 @@ export const getEndpoint = (primary: string, ...fallbacks: string[]): string => 
 
   throw new Error(`Endpoint ${primary} is not configured.`);
 };
+
+declare global {
+  interface Window {
+    AltContextAdmin?: ApiConfig;
+    wpApiSettings?: {
+      root: string;
+      nonce: string;
+    };
+  }
+}

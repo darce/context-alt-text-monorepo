@@ -24,8 +24,7 @@ const getTenantLimits = (): TenantLimits => {
   const config = getConfig();
   const tier: TenantTier = isTenantTier(config.tier) ? config.tier : 'free';
 
-  const rawMax = Number(config.maxMediaPerBatch ?? 50);
-  const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : 50;
+  const maxMediaPerBatch = config.maxMediaPerBatch;
 
   return { maxMediaPerBatch, tier };
 };

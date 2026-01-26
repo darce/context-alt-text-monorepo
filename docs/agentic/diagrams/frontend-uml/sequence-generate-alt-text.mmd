@@ -13,8 +13,8 @@ sequenceDiagram
     WPAPI->>RecSvc: /recognition/suggestions/{id}/accept
     RecSvc->>DB: set resolution='accepted'; resolved_at=now
     RecSvc->>RecSvc: assign_identity_to_cluster()
-    RecSvc-->>WPAPI: SuggestionActionResponse
-    WPAPI-->>Hooks: resolution=accepted
+    RecSvc-->>WPAPI: SuggestionResponse
+    WPAPI-->>Hooks: status=accepted
     Hooks->>Hooks: invalidate queries ['recognition-clusters','recognition-suggestions','identity-suggestions']
     Hooks-->>UI: update list + toast
     UI-->>Admin: Show updated badge + cluster counts

@@ -5,14 +5,14 @@ sequenceDiagram
     %% =======================================================================
     %% WORDPRESS PLUGIN - COMPLETE WORKFLOW
     %% From media selection to cluster labeling (Frontend perspective)
-    %% Updated: December 6, 2025
+    %% Updated: January 24, 2026
     %% =======================================================================
     
     actor Admin
     participant WB as WorkbenchPage
     participant MS as MediaSelection
     participant Hook as useRecognitionHooks
-    participant API as scanApi/clusterApi
+    participant API as scanApi/clusterApi/identityApi
     participant PHP as RecognitionProxyController
     participant Backend as Recognition Service
     
@@ -116,11 +116,12 @@ sequenceDiagram
     %% ===== PHASE 5: HANDLE SUGGESTIONS =====
     Note over Admin,Backend: Phase 5: Review Suggestions (Optional)
     
-    WB->>API: getSuggestions(tenantId)
+    WB->>API: fetchPendingSuggestions(limit, offset)
     API->>PHP: GET /recognition/suggestions
     PHP->>Backend: GET /recognition/suggestions
-    Backend-->>PHP: Suggestion[]
-    PHP-->>API: Response
+    Backend-->>PHP: SuggestionResponse[]
+    PHP-->>API: SuggestionResponse[]
+    API-->>WB: PendingSuggestionsResponse
     WB-->>Admin: Display suggestion panel
     
     alt Accept Suggestion
@@ -128,16 +129,16 @@ sequenceDiagram
         WB->>API: acceptSuggestion(suggestionId)
         API->>PHP: POST /recognition/suggestions/{id}/accept
         PHP->>Backend: POST /recognition/suggestions/{id}/accept
-        Backend-->>PHP: Updated suggestion
-        PHP-->>API: Response
+        Backend-->>PHP: SuggestionResponse
+        PHP-->>API: SuggestionResponse
         WB-->>Admin: Move to cluster, update counts
     else Reject Suggestion
         Admin->>WB: Click "Reject"
         WB->>API: rejectSuggestion(suggestionId)
         API->>PHP: POST /recognition/suggestions/{id}/reject
         PHP->>Backend: POST /recognition/suggestions/{id}/reject
-        Backend-->>PHP: Updated suggestion
-        PHP-->>API: Response
+        Backend-->>PHP: SuggestionResponse
+        PHP-->>API: SuggestionResponse
         WB-->>Admin: Remove from pending list
     end
     

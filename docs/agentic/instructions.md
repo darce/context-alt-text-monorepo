@@ -520,6 +520,27 @@ async def get_cluster(
 - 80% overall minimum
 - 95% on critical pipelines (recognition, clustering)
 
+**Database Shell:**
+
+Use `scripts/db_shell.sh` for all database queries during development:
+
+```bash
+# Connect as app user (RLS-enabled)
+./scripts/db_shell.sh
+
+# Connect as admin (bypasses RLS)
+./scripts/db_shell.sh --admin
+
+# Run a query directly
+./scripts/db_shell.sh --admin -c "SELECT * FROM identity_clusters LIMIT 5;"
+
+# Disable pager for scripted queries
+PAGER=cat ./scripts/db_shell.sh --admin -c "SELECT table_name FROM information_schema.tables;"
+```
+
+> [!IMPORTANT]
+> **Agents MUST use `db_shell.sh`** for database queries instead of raw `psql` commands. This ensures correct credentials and connection settings are used.
+
 ---
 
 ## MCP/LSP Tooling for Agents
@@ -650,6 +671,138 @@ Our unified MCP server includes PHP-specific tools (`find_wp_action`, `find_wp_r
 ---
 
 ## Testing Standards
+
+### Test Writing Rules (TDD Best Practices)
+
+These rules ensure tests are deterministic, maintainable, and test behavior over implementation.
+
+#### 1. Deterministic Data Over Randomness
+
+```python
+# BAD: Random vectors make failures hard to reproduce
+embedding = np.random.rand(512)
+
+# GOOD: Fixed vectors with explicit values
+def fixed_embedding(dim: int = 512, value: float = 0.1) -> np.ndarray:
+    return np.full(dim, value, dtype=np.float32)
+
+# GOOD: If randomness is needed, seed locally
+rng = np.random.default_rng(seed=42)
+embedding = rng.random(512, dtype=np.float32)
+```
+
+#### 2. Explicit Synchronization Over Sleep
+
+```python
+# BAD: Timing-based waits are flaky
+await asyncio.sleep(0.05)
+assert subscriber.received_event
+
+# GOOD: Wait for explicit condition with timeout
+await asyncio.wait_for(event_queue.get(), timeout=1.0)
+```
+
+```tsx
+// BAD: Timer coupling is brittle
+vi.advanceTimersByTime(SAVE_SUCCESS_DELAY_MS);
+
+// GOOD: Wait for UI state changes
+await waitFor(() => expect(button).toHaveTextContent("Saved"));
+```
+
+#### 3. Behavioral Assertions Over Call Counts
+
+```python
+# BAD: Brittle coupling to internal calls
+mock_repo.recompute_centroid.assert_called_once()
+
+# GOOD: Assert observable outcomes
+assert cluster.identity_count == 5
+assert cluster.centroid_updated_at > original_timestamp
+
+# ACCEPTABLE: One or two critical side-effect assertions
+mock_event_bus.emit.assert_called_with(ClusterMergedEvent(...))
+```
+
+#### 4. Import Settings, Don't Hardcode
+
+```python
+# BAD: Magic numbers that can diverge from production
+assert result.threshold == 0.65
+
+# GOOD: Reference the source of truth
+from recognition.application.settings import ClusteringSettings
+
+settings = ClusteringSettings()
+assert result.threshold == settings.suggestion_floor
+```
+
+#### 5. Mock Async Side Effects in React Tests
+
+```tsx
+// BAD: Async updates after test ends cause act() warnings
+// (polling hooks, query invalidations continue running)
+
+// GOOD: Mock hooks that cause async side effects
+vi.mock("../hooks/useRecognitionHooks", async (importOriginal) => {
+  const actual = await importOriginal();
+  return {
+    ...actual,
+    useCombinedScanStatus: () => ({
+      scanStatusQuery: { data: null, isLoading: false },
+    }),
+  };
+});
+
+// GOOD: Cancel queries in afterEach
+afterEach(() => {
+  queryClient?.cancelQueries();
+  queryClient?.clear();
+  cleanup();
+});
+```
+
+#### 6. Light Integration Tests Validate Hook Wiring
+
+```tsx
+// Unit tests mock hooks heavily, which can mask wiring bugs.
+// Add one "integration-lite" test per major page that uses real hooks
+// with mocked network calls.
+
+describe("WorkbenchPage (integration-lite)", () => {
+  // Mock network, not hooks
+  vi.mock("../api/recognition", async () => {
+    const actual = await vi.importActual("../api/recognition");
+    return { ...actual, scanFacesBatched: vi.fn() };
+  });
+
+  it("scan action triggers query invalidation", async () => {
+    // Uses real useJobStateMachine, useScanMutation, etc.
+    // Only network calls are mocked
+  });
+});
+```
+
+#### 7. Exact Assertions in Integration Tests
+
+```python
+# BAD: Broad assertions allow regressions
+assert clusters_created >= 1
+
+# GOOD: Use deterministic fixtures for exact counts
+# (with fixed embeddings, cluster count is predictable)
+assert clusters_created == 3
+```
+
+#### 8. Test Mock Defaults Match Production Defaults
+
+```python
+# BAD: Mock returns different default than production
+repo.get_curriculum_t = AsyncMock(return_value=0.0)  # Production default is 0.5!
+
+# GOOD: Match production defaults explicitly
+repo.get_curriculum_t = AsyncMock(return_value=0.5)  # Matches schema default
+```
 
 ### Test Pyramid
 

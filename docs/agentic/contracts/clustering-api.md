@@ -79,6 +79,28 @@ Response (sync mode):
 }
 ```
 
+## POST /recognition/clusters/recover-orphans
+
+Re-cluster orphaned identities (proxy to `/recognition/clusters/recover-orphans`).
+
+Request body:
+
+```json
+{ "tenant_id": "..." }
+```
+
+Response:
+
+```json
+{
+  "orphans_found": 12,
+  "recovered": 8,
+  "suggested": 2,
+  "rejected": 2,
+  "clusters_created": 3
+}
+```
+
 ## GET /recognition/clusters
 
 List clusters.
@@ -299,7 +321,17 @@ Response:
     "cluster_id": "...",
     "rep_similarity": 0.92,
     "member_similarity": 0.92,
-    "status": "pending"
+    "status": "pending",
+    "cluster_label": "Alice",
+    "cluster_identity_count": 5,
+    "identity_media_id": 123,
+    "identity_media_url": "https://...",
+    "identity_thumbnail_url": "https://...",
+    "identity_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
+    "representative_media_id": 456,
+    "representative_media_url": "https://...",
+    "representative_thumbnail_url": "https://...",
+    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 }
   }
 ]
 ```

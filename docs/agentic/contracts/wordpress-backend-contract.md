@@ -695,10 +695,16 @@ WordPress should include correlation IDs in requests for distributed tracing.
 - **Endpoint**: `GET /recognition/training-stage?tenant_id=...`
 - **Response**: `{"cluster_count": 12, "stage": "growing", "suggested_threshold": 0.85}`
 
+### Recover Orphaned Identities
+
+- **Endpoint**: `POST /recognition/clusters/recover-orphans`
+- **Request**: `{"tenant_id": "..."}`
+- **Response**: `{"orphans_found": 12, "recovered": 8, "suggested": 2, "rejected": 2, "clusters_created": 3}`
+
 ### Suggestions Queue
 
 - **Endpoint**: `GET /recognition/suggestions?tenant_id=...&limit=10&offset=0`
-- **Response**: `[{"id": "...", "identity_id": "...", "cluster_id": "...", "status": "pending"}]`
+- **Response**: `[{"id": "...", "identity_id": "...", "cluster_id": "...", "status": "pending", "cluster_label": "..." }]`
 
 ### Media Identities
 

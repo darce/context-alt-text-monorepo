@@ -145,6 +145,68 @@ if (!class_exists('WP_REST_Request')) {
     }
 }
 
+if (!class_exists('WP_REST_Response')) {
+    class WP_REST_Response
+    {
+        /** @var mixed */
+        private $data;
+        /** @var int */
+        private $status;
+        /** @var array<string,string> */
+        private $headers = [];
+
+        /**
+         * @param mixed $data Response data.
+         * @param int $status HTTP status code.
+         * @param array<string,string> $headers HTTP headers.
+         */
+        public function __construct($data = null, int $status = 200, array $headers = [])
+        {
+            $this->data = $data;
+            $this->status = $status;
+            $this->headers = $headers;
+        }
+
+        /**
+         * @return mixed
+         */
+        public function get_data()
+        {
+            return $this->data;
+        }
+
+        public function set_data($data): void
+        {
+            $this->data = $data;
+        }
+
+        public function get_status(): int
+        {
+            return $this->status;
+        }
+
+        public function set_status(int $status): void
+        {
+            $this->status = $status;
+        }
+
+        /**
+         * @return array<string,string>
+         */
+        public function get_headers(): array
+        {
+            return $this->headers;
+        }
+
+        public function header(string $key, string $value, bool $replace = true): void
+        {
+            if ($replace || !isset($this->headers[$key])) {
+                $this->headers[$key] = $value;
+            }
+        }
+    }
+}
+
 if (!class_exists('WP_CLI_Command')) {
     class WP_CLI_Command {}
 }
@@ -198,6 +260,13 @@ if (!class_exists('WP_CLI')) {
                 'error' => [],
             ];
         }
+    }
+}
+
+if (!function_exists('absint')) {
+    function absint($value): int
+    {
+        return abs((int) $value);
     }
 }
 
@@ -461,6 +530,13 @@ if (!function_exists('current_user_can')) {
     }
 }
 
+if (!function_exists('get_current_user_id')) {
+    function get_current_user_id(): int
+    {
+        return isset($GLOBALS['__ac_current_user_id']) ? (int) $GLOBALS['__ac_current_user_id'] : 1;
+    }
+}
+
 if (!function_exists('get_post')) {
     function get_post($postId)
     {
@@ -550,6 +626,14 @@ if (!function_exists('sanitize_text_field')) {
         $value = (string) $value;
 
         return trim(strip_tags($value));
+    }
+}
+
+if (!function_exists('sanitize_key')) {
+    function sanitize_key($key)
+    {
+        $key = strtolower((string) $key);
+        return preg_replace('/[^a-z0-9_\-]/', '', $key);
     }
 }
 
@@ -1460,4 +1544,66 @@ if (!isset($GLOBALS['wpdb'])) {
     }
 
     $GLOBALS['wpdb'] = new WPDBStub();
+}
+
+if (!function_exists('flush_rewrite_rules')) {
+    /**
+     * Stub for flush_rewrite_rules.
+     *
+     * @param bool $hard Whether to flush hard rules (htaccess).
+     */
+    function flush_rewrite_rules($hard = true): void
+    {
+        // No-op in tests
+    }
+}
+
+if (!function_exists('get_site_url')) {
+    /**
+     * Stub for get_site_url.
+     *
+     * @param int|null $blog_id Site ID. Null for current site.
+     * @param string $path Path to append.
+     * @param string|null $scheme URL scheme.
+     * @return string Site URL.
+     */
+    function get_site_url($blog_id = null, string $path = '', $scheme = null): string
+    {
+        return 'http://example.com' . ($path ? '/' . ltrim($path, '/') : '');
+    }
+}
+
+if (!function_exists('untrailingslashit')) {
+    /**
+     * Remove trailing slash from string.
+     */
+    function untrailingslashit(string $value): string
+    {
+        return rtrim($value, '/\\');
+    }
+}
+
+if (!function_exists('esc_url_raw')) {
+    /**
+     * Sanitize a URL for database storage or redirect.
+     */
+    function esc_url_raw(string $url, $protocols = null): string
+    {
+        return $url; // Minimal stub - just pass through
+    }
+}
+
+if (!function_exists('add_query_arg')) {
+    /**
+     * Add query args to a URL.
+     */
+    function add_query_arg($args, string $url = ''): string
+    {
+        if (is_array($args)) {
+            $query = http_build_query($args);
+            $separator = strpos($url, '?') !== false ? '&' : '?';
+            return $url . $separator . $query;
+        }
+        return $url;
+    }
 }

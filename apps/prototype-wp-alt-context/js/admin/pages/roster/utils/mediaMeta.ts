@@ -1,3 +1,5 @@
+import { getConfig } from '../../../api/config';
+
 export interface MediaMeta {
   url: string | null;
   width?: number;
@@ -29,7 +31,17 @@ const getWpRestBase = (): string => {
   return `${window.location.origin}/wp-json`;
 };
 
-const getRestNonce = (): string | undefined => window.wpApiSettings?.nonce ?? window.AltContextAdmin?.nonce;
+const getRestNonce = (): string | undefined => {
+  if (window.wpApiSettings?.nonce) {
+    return window.wpApiSettings.nonce;
+  }
+
+  try {
+    return getConfig().nonce;
+  } catch {
+    return undefined;
+  }
+};
 
 const isWPMediaResponse = (payload: unknown): payload is WPMediaResponse =>
   Boolean(payload) && typeof payload === 'object';

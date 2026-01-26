@@ -3,6 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useJobProgressStream } from '../useJobProgressStream';
 import { useJobCoordination } from '../useJobCoordination';
+import { resetConfigCache } from '../../api/config';
 
 vi.mock('../useJobCoordination', () => ({
   useJobCoordination: vi.fn(),
@@ -51,6 +52,7 @@ describe('useJobProgressStream', () => {
         recognitionJobs: 'http://localhost/recognition/jobs',
       },
     } as unknown as NonNullable<Window['AltContextAdmin']>;
+    resetConfigCache();
     useJobCoordinationMock.mockReturnValue({ isPrimary: true, channel: null });
     globalThis.EventSource = MockEventSource as unknown as typeof EventSource;
   });

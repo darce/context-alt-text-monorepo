@@ -1,8 +1,10 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen } from '@testing-library/react';
+import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import type {
   AnalyzeResponse,
@@ -119,6 +121,7 @@ describe('WorkbenchPage', () => {
   const mockUseCombinedScanStatus = vi.mocked(useCombinedScanStatus);
   const mockUseJobPersistence = vi.mocked(useJobPersistence);
   const mockUseJobProgressStream = vi.mocked(useJobProgressStream);
+  let setCurrentPage: ReturnType<typeof vi.fn>;
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
@@ -163,9 +166,12 @@ describe('WorkbenchPage', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.clear();
+    resetConfigCache();
     rememberJob.mockClear();
     selectJob.mockClear();
     clearHistory.mockClear();
+    setCurrentPage = vi.fn();
 
     const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
       data: { items: [baseMediaItem], total: 1, totalPages: 1 },
@@ -219,7 +225,7 @@ describe('WorkbenchPage', () => {
       searchQuery: '',
       normalizedSearch: '',
       currentPage: 1,
-      setCurrentPage: vi.fn(),
+      setCurrentPage,
       handleSearchChange: vi.fn(),
     });
 
@@ -335,5 +341,43 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     expect(screen.getByText(/Queueing 0\/2 items/)).toBeInTheDocument();
+  });
+
+  it('hydrates media page size from localStorage', () => {
+    window.localStorage.setItem('acx-media-page-size', '50');
+    renderWorkbench();
+
+    const select = screen.getByLabelText('Images per page');
+    expect(select).toHaveValue('50');
+
+    expect(mockUseWorkbenchMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        perPage: 50,
+      }),
+    );
+  });
+
+  it('persists media page size selection and resets to page 1', async () => {
+    mockUseWorkbenchFilters.mockReturnValue({
+      searchQuery: '',
+      normalizedSearch: '',
+      currentPage: 2,
+      setCurrentPage,
+      handleSearchChange: vi.fn(),
+    });
+
+    renderWorkbench();
+
+    const select = screen.getByLabelText('Images per page');
+    const user = userEvent.setup();
+    await user.selectOptions(select, '100');
+
+    expect(window.localStorage.getItem('acx-media-page-size')).toBe('100');
+    expect(setCurrentPage).toHaveBeenCalledWith(1);
+    expect(mockUseWorkbenchMedia).toHaveBeenCalledWith(
+      expect.objectContaining({
+        perPage: 100,
+      }),
+    );
   });
 });

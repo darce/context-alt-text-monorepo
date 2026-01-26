@@ -21,6 +21,8 @@ interface Props {
   onToggleAll: (checked: boolean) => void;
   currentPage: number;
   totalPages: number;
+  perPage: number;
+  onPerPageChange: (perPage: number) => void;
   onPageChange: (page: number) => void;
   areAllPageRowsChecked: boolean;
   identityQuery: UseQueryResult<MediaIdentitiesResponse, Error>;
@@ -39,6 +41,8 @@ export const MediaSelection = ({
   onToggleAll,
   currentPage,
   totalPages,
+  perPage,
+  onPerPageChange,
   onPageChange,
   areAllPageRowsChecked,
   identityQuery,
@@ -79,7 +83,13 @@ export const MediaSelection = ({
           <tbody>{renderRows({ items, isLoading, onToggleRow, selection })}</tbody>
         </table>
 
-        <MediaSelectionPagination currentPage={currentPage} totalPages={totalPages} onPageChange={onPageChange} />
+        <MediaSelectionPagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          perPage={perPage}
+          onPerPageChange={onPerPageChange}
+          onPageChange={onPageChange}
+        />
       </div>
       {identityStatusMessage && (
         <div className="acx-identity-status">
@@ -137,26 +147,56 @@ const MediaSelectionToolbar = ({
 interface MediaSelectionPaginationProps {
   currentPage: number;
   totalPages: number;
+  perPage: number;
+  onPerPageChange: (perPage: number) => void;
   onPageChange: (page: number) => void;
 }
 
-const MediaSelectionPagination = ({ currentPage, totalPages, onPageChange }: MediaSelectionPaginationProps) => (
-  <div className="acx-media-selection__pagination" role="navigation" aria-label={__('Media pagination', 'alt-context')}>
-    <button type="button" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>
-      {__('Previous', 'alt-context')}
-    </button>
-    <span>
-      {__('Page', 'alt-context')} {currentPage} {__('of', 'alt-context')} {totalPages}
-    </span>
-    <button
-      type="button"
-      onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-      disabled={currentPage === totalPages}
-    >
-      {__('Next', 'alt-context')}
-    </button>
-  </div>
-);
+const MEDIA_PAGE_SIZES = [10, 50, 100] as const;
+
+const MediaSelectionPagination = ({
+  currentPage,
+  totalPages,
+  perPage,
+  onPerPageChange,
+  onPageChange,
+}: MediaSelectionPaginationProps) => {
+  const handlePerPageChange = (event: ChangeEvent<HTMLSelectElement>) => {
+    const selected = Number(event.target.value);
+    if (!Number.isFinite(selected)) {
+      return;
+    }
+    onPerPageChange(selected);
+  };
+
+  return (
+    <div className="acx-media-selection__pagination" role="navigation" aria-label={__('Media pagination', 'alt-context')}>
+      <button type="button" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>
+        {__('Previous', 'alt-context')}
+      </button>
+      <span>
+        {__('Page', 'alt-context')} {currentPage} {__('of', 'alt-context')} {totalPages}
+      </span>
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
+        disabled={currentPage === totalPages}
+      >
+        {__('Next', 'alt-context')}
+      </button>
+      <label className="acx-media-selection__page-size">
+        <span>{__('Images per page', 'alt-context')}</span>
+        <select value={perPage} onChange={handlePerPageChange} aria-label={__('Images per page', 'alt-context')}>
+          {MEDIA_PAGE_SIZES.map((size) => (
+            <option key={size} value={size}>
+              {size}
+            </option>
+          ))}
+        </select>
+      </label>
+    </div>
+  );
+};
 
 const renderRows = ({
   items,

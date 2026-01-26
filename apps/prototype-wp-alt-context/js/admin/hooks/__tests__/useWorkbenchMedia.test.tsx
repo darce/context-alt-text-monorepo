@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
 import * as recognitionApi from '../../api/recognition';
+import { resetConfigCache } from '../../api/config';
 
 vi.mock('../../api/recognition', () => ({
   fetchMediaIdentities: vi.fn(),
@@ -53,6 +54,7 @@ describe('useWorkbenchMedia', () => {
         recognitionCreateClusterForIdentity: '/wp-json/acx/v1/recognition/create-cluster-for-identity',
       },
     };
+    resetConfigCache();
   });
 
   afterEach(() => {

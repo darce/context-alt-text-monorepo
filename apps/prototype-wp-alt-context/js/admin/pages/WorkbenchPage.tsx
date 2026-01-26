@@ -1,4 +1,4 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
@@ -11,36 +11,28 @@ import { MediaSelection } from './workbench/MediaSelection';
 import { SuggestionReviewPanel } from './workbench/identity-clusters';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
 
-interface AltContextAdminConfig {
-  nonce: string;
-  endpoints: {
-    workbenchMedia: string;
-    recognitionAnalyze: string;
-    recognitionJobs: string;
-    recognitionCluster: string;
-    recognitionClusters: string;
-    recognitionClusterLabels: string;
-    recognitionTrainingStage: string;
-    recognitionMediaIdentities: string;
-    recognitionReassignIdentity: string;
-    recognitionIdentitySuggestions: string;
-    recognitionSuggestions: string;
-    recognitionRevertMerge: string;
-    recognitionCreateClusterForIdentity: string;
-  };
-}
+const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
+const DEFAULT_MEDIA_PAGE_SIZE = MEDIA_PAGE_SIZE_OPTIONS[0];
+const MEDIA_PAGE_SIZE_STORAGE_KEY = 'acx-media-page-size';
 
-declare global {
-  interface Window {
-    AltContextAdmin?: AltContextAdminConfig;
-    wpApiSettings?: {
-      root: string;
-      nonce: string;
-    };
+const getStoredMediaPageSize = (): number => {
+  if (typeof window === 'undefined') {
+    return DEFAULT_MEDIA_PAGE_SIZE;
   }
-}
 
-const MEDIA_PAGE_SIZE = 10;
+  try {
+    const stored = window.localStorage.getItem(MEDIA_PAGE_SIZE_STORAGE_KEY);
+    if (!stored) {
+      return DEFAULT_MEDIA_PAGE_SIZE;
+    }
+    const parsed = Number.parseInt(stored, 10);
+    return MEDIA_PAGE_SIZE_OPTIONS.includes(parsed as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])
+      ? parsed
+      : DEFAULT_MEDIA_PAGE_SIZE;
+  } catch {
+    return DEFAULT_MEDIA_PAGE_SIZE;
+  }
+};
 const TAB_IDS = {
   scan: 'scan',
   batch: 'batch',
@@ -83,6 +75,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [activeSection, setActiveSection] = useState<WorkbenchTab>(TAB_IDS.scan);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
+  const [perPage, setPerPage] = useState<number>(() => getStoredMediaPageSize());
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
@@ -90,7 +83,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
 
   const mediaQuery = useWorkbenchMedia({
     page: currentPage,
-    perPage: MEDIA_PAGE_SIZE,
+    perPage,
     search: normalizedSearch,
     enabled: activeSection === TAB_IDS.scan,
   });
@@ -189,6 +182,25 @@ export const WorkbenchPage = (): React.JSX.Element => {
     performCluster();
   };
 
+  const handlePerPageChange = (nextPerPage: number): void => {
+    if (!MEDIA_PAGE_SIZE_OPTIONS.includes(nextPerPage as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])) {
+      return;
+    }
+    setPerPage(nextPerPage);
+    setCurrentPage(1);
+  };
+
+  useEffect(() => {
+    if (typeof window === 'undefined') {
+      return;
+    }
+    try {
+      window.localStorage.setItem(MEDIA_PAGE_SIZE_STORAGE_KEY, String(perPage));
+    } catch {
+      // Ignore storage failures (private mode, quota, etc.).
+    }
+  }, [perPage]);
+
   const scanSection = WORKBENCH_SECTIONS[0];
   const batchSection = WORKBENCH_SECTIONS[1];
   const confirmSection = WORKBENCH_SECTIONS[2];
@@ -261,6 +273,8 @@ export const WorkbenchPage = (): React.JSX.Element => {
               onToggleAll={(checked) => toggleAll(mediaItems, checked)}
               currentPage={currentPage}
               totalPages={totalPages}
+              perPage={perPage}
+              onPerPageChange={handlePerPageChange}
               onPageChange={setCurrentPage}
               areAllPageRowsChecked={allPageRowsChecked}
               identityQuery={identityQuery}

@@ -54,6 +54,7 @@ apps/archived-wp-context-alt-text/**
 #docs/literature
 .DS_Store
 .vscode/settings.json
+.vscode/
 .env
 .env.*
 node_modules/
@@ -78,3 +79,6 @@ __pycache__/
 # pip install artifacts
 .eggs/
 *.egg-info/
+
+# MCP server logs
+logs/mcp-server*.log

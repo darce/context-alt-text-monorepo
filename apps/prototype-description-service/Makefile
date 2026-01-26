@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp logs-tail logs-rotate logs-clean logs-archive
 
 # Default target
 help:
@@ -16,6 +16,12 @@ help:
 	@echo "  make clean      - Remove cache and build files"
 	@echo "  make reset      - Drop and recreate the local database"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
+	@echo ""
+	@echo "Log Management:"
+	@echo "  make logs-tail    - Tail the main recognition log"
+	@echo "  make logs-rotate  - Rotate logs (current→.1→.2→...→.10)"
+	@echo "  make logs-clean   - Remove rotated logs (keep current)"
+	@echo "  make logs-archive - Archive and compress old logs"
 
 # Start MCP server (delegates to root Makefile)
 mcp:
@@ -80,3 +86,48 @@ clean:
 	@find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
 	@find . -type d -name "*.egg-info" -exec rm -rf {} + 2>/dev/null || true
 	@echo "✓ Cleaned cache files"
+
+# =============================================================================
+# Log Management
+# =============================================================================
+
+# Tail the main recognition log
+logs-tail:
+	@tail -f logs/recognition.log
+
+# Rotate logs (shift current to .1, .1 to .2, etc., keep 10 rotations)
+logs-rotate:
+	@echo "Rotating logs..."
+	@for log in logs/recognition.log logs/scan_worker.log; do \
+		if [ -f "$$log" ]; then \
+			for i in 9 8 7 6 5 4 3 2 1; do \
+				[ -f "$$log.$$i" ] && mv "$$log.$$i" "$$log.$$((i+1))"; \
+			done; \
+			mv "$$log" "$$log.1"; \
+			touch "$$log"; \
+			echo "  ✓ Rotated $$log"; \
+		fi; \
+	done
+	@echo "✓ Log rotation complete"
+
+# Remove rotated log files (keep current logs)
+logs-clean:
+	@echo "Removing rotated logs..."
+	@rm -f logs/*.log.[0-9]* 2>/dev/null || true
+	@rm -f logs/*_[0-9]*.log 2>/dev/null || true
+	@echo "✓ Rotated logs removed"
+	@echo "Remaining logs:"
+	@ls -lh logs/*.log 2>/dev/null || echo "  (no active logs)"
+
+# Archive old logs to compressed tarball
+logs-archive:
+	@echo "Archiving logs..."
+	@mkdir -p logs/archive
+	@ARCHIVE_NAME="logs/archive/logs_$$(date +%Y%m%d_%H%M%S).tar.gz"; \
+	if ls logs/*.log.[0-9]* logs/*_[0-9]*.log 1>/dev/null 2>&1; then \
+		tar -czf "$$ARCHIVE_NAME" logs/*.log.[0-9]* logs/*_[0-9]*.log 2>/dev/null && \
+		rm -f logs/*.log.[0-9]* logs/*_[0-9]*.log && \
+		echo "✓ Archived to $$ARCHIVE_NAME"; \
+	else \
+		echo "No rotated logs to archive"; \
+	fi

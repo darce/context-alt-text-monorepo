@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 from datetime import UTC, datetime
+from typing import TYPE_CHECKING
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -20,6 +21,9 @@ from recognition.worker.handlers.utils import (
     compute_progress,
     ensure_job_context,
 )
+
+if TYPE_CHECKING:
+    from recognition.application.orchestration.cluster_service import ClusterService
 
 logger = logging.getLogger(__name__)
 
@@ -60,8 +64,13 @@ class CurationJobHandler(JobHandler[IdentityClusteringJob]):
 class ClusteringJobHandler(JobHandler[IdentityClusteringJob]):
     """Handle clustering jobs."""
 
+    def __init__(self, cluster_service: ClusterService | None = None) -> None:
+        self._cluster_service = cluster_service
+
     async def handle(self, job: IdentityClusteringJob, session: AsyncSession) -> None:
-        cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
+        cluster_service = self._cluster_service
+        if cluster_service is None:
+            cluster_service = await build_cluster_service(session=session, tenant_id=str(job.tenant_id))
 
         async def progress_callback(completed: int, total: int):
             job.processed_identities = completed

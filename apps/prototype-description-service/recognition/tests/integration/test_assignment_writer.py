@@ -238,7 +238,7 @@ async def test_recompute_representatives_clears_and_rebuilds(db_session, tenant)
         )
     )
 
-    # Members: A (high conf), B (similar to A, high conf), C (orthogonal, low conf).
+    # Members: A (high conf), B (similar to A, lower conf), C (orthogonal, low conf).
     emb_a = np.zeros(512, dtype=np.float32)
     emb_a[0] = 1.0
     emb_b = np.zeros(512, dtype=np.float32)
@@ -249,7 +249,7 @@ async def test_recompute_representatives_clears_and_rebuilds(db_session, tenant)
     emb_c[1] = 1.0
 
     a = _make_media_identity_model(str(tenant.id), emb_a, confidence=0.99, media_id=101)
-    b = _make_media_identity_model(str(tenant.id), emb_b, confidence=0.98, media_id=102)
+    b = _make_media_identity_model(str(tenant.id), emb_b, confidence=0.70, media_id=102)
     c = _make_media_identity_model(str(tenant.id), emb_c, confidence=0.50, media_id=103)
     db_session.add_all([a, b, c])
     await db_session.flush()

@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 
+import numpy as np
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
@@ -18,10 +20,12 @@ from db.models import (
     RecognitionRun,
     Tenant,
 )
+from recognition.application.discovery.graph.algorithm import GraphAlgorithm
 from recognition.application.embedding.detector import StubFaceDetector
 from recognition.application.embedding.generator import StubEmbeddingGenerator
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
+from recognition.domain.identity import MediaIdentity as DomainMediaIdentity
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
@@ -55,6 +59,17 @@ def _make_client(session, tenant: Tenant) -> TestClient:
     return TestClient(app)
 
 
+class DeterministicGraphAlgorithm(GraphAlgorithm):
+    """Assign all embeddings to a single cluster to make outcomes deterministic."""
+
+    def cluster(
+        self,
+        embeddings: Sequence[np.ndarray],
+        identities: Sequence[DomainMediaIdentity] | None = None,
+    ) -> list[int]:
+        return [0] * len(embeddings)
+
+
 @pytest.mark.asyncio
 async def test_analyze_persists_media_identities(db_session, tenant) -> None:
     """POST /analyze should persist detected identities for the tenant."""
@@ -72,9 +87,11 @@ async def test_analyze_persists_media_identities(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clustering_job_creates_clusters_from_unclustered_identities(db_session, tenant) -> None:
+async def test_clustering_job_creates_clusters_from_unclustered_identities(db_session, tenant, monkeypatch) -> None:
     """Clustering job should create clusters and members for unclustered identities."""
     # Seed unclustered identities
+    embedding = [0.0] * 512
+    embedding[0] = 1.0
     identities = [
         MediaIdentity(
             tenant_id=tenant.id,
@@ -85,7 +102,7 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
             bbox_width=1,
             bbox_height=1,
             confidence=0.99,
-            embedding=[0.0] * 512,
+            embedding=embedding,
         ),
         MediaIdentity(
             tenant_id=tenant.id,
@@ -96,19 +113,32 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
             bbox_width=1,
             bbox_height=1,
             confidence=0.98,
-            embedding=[0.1] * 512,
+            embedding=embedding,
         ),
     ]
     db_session.add_all(identities)
     await db_session.commit()
 
+    async def _build_cluster_service(session, tenant_id: str):
+        cluster_service = await dependencies.build_cluster_service(session=session, tenant_id=tenant_id)
+        cluster_service.graph_discovery.set_algorithm(DeterministicGraphAlgorithm())
+        return cluster_service
+
+    import recognition.interface_adapters.http.routers.clusters as clusters_router
+
+    monkeypatch.setattr(clusters_router, "build_cluster_service", _build_cluster_service)
+
     client = _make_client(db_session, tenant)
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": str(tenant.id), "mode": "sync"})
 
     assert resp.status_code == 202
+    payload = resp.json()
+    assert payload["clusters_created"] == 1
+    assert payload["progress"]["completed"] == 2
+    assert payload["progress"]["total"] == 2
     clusters = (await db_session.execute(select(IdentityCluster))).scalars().all()
     members = (await db_session.execute(select(IdentityMember))).scalars().all()
-    assert len(clusters) >= 1
+    assert len(clusters) == 1
     assert len(members) == len(identities)
     assert {m.identity_id for m in members} == {identities[0].id, identities[1].id}
 

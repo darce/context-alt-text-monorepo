@@ -47,6 +47,12 @@ class DummyClusterRepository(ClusterRepository):
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
+    async def get_curriculum_t(self, cluster_id: str) -> float | None:
+        raise NotImplementedError
+
+    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
+        raise NotImplementedError
+
 
 def test_cluster_repository_is_protocol() -> None:
     """ClusterRepository must be a typing Protocol."""
@@ -55,7 +61,15 @@ def test_cluster_repository_is_protocol() -> None:
 
 def test_cluster_repository_methods_are_async() -> None:
     """All required methods should be async coroutine functions."""
-    for method_name in ("get_by_id", "get_by_tenant", "save", "update", "delete"):
+    for method_name in (
+        "get_by_id",
+        "get_by_tenant",
+        "save",
+        "update",
+        "delete",
+        "get_curriculum_t",
+        "set_curriculum_t",
+    ):
         method = getattr(DummyClusterRepository, method_name)
         assert inspect.iscoroutinefunction(method)
 
@@ -139,6 +153,25 @@ async def test_update_cluster_label(db_session, tenant) -> None:
     assert fetched is not None
     assert fetched.label == "Updated"
     assert fetched.is_labeled is True
+
+
+@pytest.mark.asyncio
+async def test_curriculum_bias_round_trip(db_session, tenant) -> None:
+    repo = SqlAlchemyClusterRepository(db_session)
+    cluster = IdentityCluster(
+        id=None,
+        tenant_id=str(tenant.id),
+        label="Bias Cluster",
+        is_labeled=True,
+        identity_count=0,
+        created_at=datetime.now(tz=UTC),
+    )
+
+    saved = await repo.save(cluster)
+    assert await repo.get_curriculum_t(saved.id) == 0.0
+
+    await repo.set_curriculum_t(saved.id, 0.42)
+    assert await repo.get_curriculum_t(saved.id) == pytest.approx(0.42, abs=0.0001)
 
 
 @pytest.mark.asyncio

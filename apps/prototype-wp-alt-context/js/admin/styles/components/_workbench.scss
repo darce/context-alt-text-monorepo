@@ -491,6 +491,10 @@
     color: var(--acx-color-text-secondary);
   }
 
+  &--empty {
+    text-align: center;
+  }
+
   &__title {
     display: flex;
     align-items: center;
@@ -531,12 +535,49 @@
 .acx-suggestion-card {
   display: flex;
   align-items: center;
+  flex-wrap: wrap;
   gap: var(--acx-space-12);
   padding: var(--acx-space-12);
   background-color: var(--acx-color-surface-alt);
   border: 1px solid var(--acx-color-border);
   border-radius: var(--acx-radius-md);
   min-width: 280px;
+
+  &__faces {
+    display: flex;
+    align-items: center;
+    gap: var(--acx-space-8);
+    flex-shrink: 0;
+  }
+
+  &__face {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--acx-space-4);
+    min-width: 0;
+  }
+
+  &__thumb {
+    display: block;
+
+    &--placeholder {
+      width: 48px;
+      height: 48px;
+      border-radius: 50%;
+      background-color: var(--acx-color-data-placeholder);
+    }
+  }
+
+  &__face-label {
+    max-width: 96px;
+    font-size: 0.7rem;
+    color: var(--acx-color-text-secondary);
+    text-align: center;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
 
   &__content {
     flex: 1;

@@ -5,6 +5,8 @@
   "scripts": {
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:php": "composer test",
+    "test:all": "npm run test && npm run test:php",
     "dev": "vite",
     "build": "vite build --mode production",
     "build:dev": "vite build --mode development",

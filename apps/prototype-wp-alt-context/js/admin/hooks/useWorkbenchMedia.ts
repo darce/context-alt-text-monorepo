@@ -2,6 +2,7 @@ import { useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useMediaIdentities } from './useMediaIdentities';
+import { getConfig, getEndpoint } from '../api/config';
 import type { WorkbenchMediaItem as WorkbenchMediaItemSchema } from '../api/generated';
 import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse, type DetectedIdentity } from '../api/recognition';
@@ -39,12 +40,10 @@ const isWorkbenchMediaResponse = (value: unknown): value is WorkbenchMediaRespon
   );
 
 const fetchWorkbenchMedia = async ({ page, perPage, search }: FetchParams): Promise<WorkbenchMediaResponse> => {
-  const config = window.AltContextAdmin;
-  if (!config?.endpoints?.workbenchMedia) {
-    throw new Error('Workbench media endpoint is not available.');
-  }
+  const config = getConfig();
+  const endpoint = getEndpoint('workbenchMedia');
 
-  const requestUrl = new URL(config.endpoints.workbenchMedia, window.location.origin);
+  const requestUrl = new URL(endpoint, window.location.origin);
   requestUrl.searchParams.set('page', String(page));
   requestUrl.searchParams.set('per_page', String(perPage));
   requestUrl.searchParams.set('status', 'missing');

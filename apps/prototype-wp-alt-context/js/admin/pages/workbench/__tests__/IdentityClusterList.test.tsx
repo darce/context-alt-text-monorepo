@@ -1,10 +1,11 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor, fireEvent } from '@testing-library/react';
+import { act, cleanup, render, screen, waitFor, fireEvent } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { IdentityClusterList } from '../identity-clusters';
 import * as api from '../../../api/recognition';
+import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import type { MediaIdentitiesResponse } from '../../../api/recognition';
 import type {
@@ -67,6 +68,7 @@ const setupMocks = () => {
     tenant_id: 'test-tenant',
   };
 
+  resetConfigCache();
   window.EventSource = MockEventSource as unknown as typeof EventSource;
 };
 
@@ -85,16 +87,23 @@ vi.mock('../../../api/recognition', () => ({
   splitCluster: vi.fn(),
 }));
 
+// Track active query client for cleanup
+let activeQueryClient: QueryClient | null = null;
+
 const renderWithClient = async (ui: React.ReactElement) => {
   const client = new QueryClient({
     defaultOptions: { queries: { retry: false } },
   });
+  activeQueryClient = client;
   const user = userEvent.setup({
     advanceTimers: (ms: number) => vi.advanceTimersByTimeAsync(ms),
   });
   const utils = render(<QueryClientProvider client={client}>{ui}</QueryClientProvider>);
-  // Return async to allow await at call site for consistency
-  return Promise.resolve({ client, user, ...utils });
+  // Flush initial render effects
+  await act(async () => {
+    await vi.advanceTimersByTimeAsync(0);
+  });
+  return { client, user, ...utils };
 };
 
 const setMediaIdentitiesCache = (client: QueryClient, data: MediaIdentitiesResponse) => {
@@ -121,6 +130,7 @@ interface Deferred<T> {
 }
 
 const SAVE_SUCCESS_DELAY_MS = 1200;
+const MATCH_DEBOUNCE_MS = 300;
 
 const createDeferred = <T,>() => {
   let resolve!: (value: T) => void;
@@ -132,14 +142,18 @@ const createDeferred = <T,>() => {
   return { promise, resolve, reject };
 };
 
-const resolveDeferred = async <T,>(deferred: Deferred<T>, value: T, advanceMs = 0) => {
-  deferred.resolve(value);
-  await deferred.promise;
+const flushTimers = async (advanceMs = 0) => {
   if (advanceMs > 0) {
     await vi.advanceTimersByTimeAsync(advanceMs);
   }
   await vi.advanceTimersByTimeAsync(0);
   await Promise.resolve();
+};
+
+const resolveDeferred = async <T,>(deferred: Deferred<T>, value: T, advanceMs = 0) => {
+  deferred.resolve(value);
+  await deferred.promise;
+  await flushTimers(advanceMs);
 };
 
 const resolveFindClusterDeferreds = async (value: { id: string; label: string } | null) => {
@@ -151,14 +165,13 @@ const resolveFindClusterDeferreds = async (value: { id: string; label: string } 
   }
 };
 
-const runWithTimers = async (callback: () => Promise<void> | void, ms: number) => {
+const runWithTimers = async (callback: () => Promise<void> | void, advanceMs = 0) => {
   await callback();
-  if (ms > 0) {
-    await vi.advanceTimersByTimeAsync(ms);
-  }
-  await vi.advanceTimersByTimeAsync(0);
-  await Promise.resolve();
+  await flushTimers(advanceMs);
 };
+
+const resolveSaveDeferred = async <T,>(deferred: Deferred<T>, value: T) =>
+  resolveDeferred(deferred, value, SAVE_SUCCESS_DELAY_MS);
 
 const actFlow = async (callback: () => Promise<void> | void) => {
   await act(async () => {
@@ -196,6 +209,13 @@ describe('IdentityClusterList', () => {
   });
 
   afterEach(async () => {
+    // Cancel in-flight queries to prevent async leaks between tests
+    if (activeQueryClient) {
+      activeQueryClient.cancelQueries();
+      activeQueryClient.clear();
+      activeQueryClient = null;
+    }
+
     await actFlow(async () => {
       await resolveFindClusterDeferreds(null);
     });
@@ -204,6 +224,7 @@ describe('IdentityClusterList', () => {
       await Promise.resolve();
     });
     vi.useRealTimers();
+    cleanup();
   });
 
   it('renders placeholder when no identities exist', async () => {
@@ -230,7 +251,7 @@ describe('IdentityClusterList', () => {
     });
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })), 0);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     });
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
@@ -240,9 +261,9 @@ describe('IdentityClusterList', () => {
     expect(input).toHaveValue('New Label');
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()), 1300);
+      await runWithTimers(() => user.click(getSaveButton()));
       await resolveFindClusterDeferreds(null);
-      await resolveDeferred(updateDeferred, {}, SAVE_SUCCESS_DELAY_MS);
+      await resolveSaveDeferred(updateDeferred, {});
     });
 
     await waitForEditClosed();
@@ -283,7 +304,7 @@ describe('IdentityClusterList', () => {
     });
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Name this person/i })), 0);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /Name this person/i })));
     });
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
@@ -293,9 +314,9 @@ describe('IdentityClusterList', () => {
     expect(input).toHaveValue('Person A');
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()), 1300);
+      await runWithTimers(() => user.click(getSaveButton()));
       await resolveFindClusterDeferreds(null);
-      await resolveDeferred(updateDeferred, {}, SAVE_SUCCESS_DELAY_MS);
+      await resolveSaveDeferred(updateDeferred, {});
     });
 
     await waitForEditClosed();
@@ -330,13 +351,13 @@ describe('IdentityClusterList', () => {
     const { user } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })), 0);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     });
     const input = screen.getByRole('combobox');
     await actFlow(async () => {
       await runWithTimers(() => {
         fireEvent.change(input, { target: { value: 'Ada' } });
-      }, 350);
+      });
       await resolveFindClusterDeferreds(null);
     });
 
@@ -387,7 +408,7 @@ describe('IdentityClusterList', () => {
     });
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })), 0);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     });
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
@@ -396,14 +417,19 @@ describe('IdentityClusterList', () => {
     expect(input).toHaveValue('Erin McCleod');
 
     await actFlow(async () => {
-      // Wait for debounce timer
-      await runWithTimers(() => undefined, 350);
-      await resolveDeferred(matchDeferreds[0], { id: existingCluster.id, label: existingCluster.label });
+      // Wait for debounce timer to trigger remote search
+      await flushTimers(MATCH_DEBOUNCE_MS);
+    });
+    await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
+    const matchDeferred = matchDeferreds[0];
+    expect(matchDeferred).toBeDefined();
+    await actFlow(async () => {
+      await resolveDeferred(matchDeferred!, { id: existingCluster.id, label: existingCluster.label });
     });
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()), 1300);
-      await resolveDeferred(mergeDeferred, mergeResult, SAVE_SUCCESS_DELAY_MS);
+      await runWithTimers(() => user.click(getSaveButton()));
+      await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitFor(() => expect(findClusterByLabelRemote).toHaveBeenCalled());
     await waitForEditClosed();
@@ -457,8 +483,13 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
+    // Wait for edit button to appear before clicking
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
+    });
+
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })), 0);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     });
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
@@ -468,8 +499,8 @@ describe('IdentityClusterList', () => {
     expect(input).toHaveValue('Existing Label');
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()), 1300);
-      await resolveDeferred(mergeDeferred, mergeResult, SAVE_SUCCESS_DELAY_MS);
+      await runWithTimers(() => user.click(getSaveButton()));
+      await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitForEditClosed();
 
@@ -529,8 +560,13 @@ describe('IdentityClusterList', () => {
       setMediaIdentitiesCache(client, cacheData);
     });
 
+    // Wait for edit button to appear before clicking
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /edit label/i })).toBeInTheDocument();
+    });
+
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })), 0);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /edit label/i })));
     });
     const input = screen.getByPlaceholderText(/enter a name/i);
     await actFlow(async () => {
@@ -540,8 +576,8 @@ describe('IdentityClusterList', () => {
     expect(input).toHaveValue('Existing Label');
 
     await actFlow(async () => {
-      await runWithTimers(() => user.click(getSaveButton()), 1300);
-      await resolveDeferred(mergeDeferred, mergeResult, SAVE_SUCCESS_DELAY_MS);
+      await runWithTimers(() => user.click(getSaveButton()));
+      await resolveSaveDeferred(mergeDeferred, mergeResult);
     });
     await waitForEditClosed();
 
@@ -575,9 +611,21 @@ describe('IdentityClusterList', () => {
       media_url: 'https://example.com/photo.jpg',
     };
 
-    await renderWithClient(<IdentityClusterList identities={[identityWithMediaUrl]} />);
-    const image = screen.getByRole('img', { name: /detected identity thumbnail/i });
-    expect(image).toHaveAttribute('src', 'https://example.com/photo.jpg');
+    const { client } = await renderWithClient(<IdentityClusterList identities={[identityWithMediaUrl]} />);
+    // Set cache to trigger re-render with identity data
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [identityWithMediaUrl],
+      },
+    };
+    await actFlow(async () => {
+      setMediaIdentitiesCache(client, cacheData);
+    });
+
+    await waitFor(() => {
+      const image = screen.getByRole('img', { name: /detected identity thumbnail/i });
+      expect(image).toHaveAttribute('src', 'https://example.com/photo.jpg');
+    });
   });
 
   it('allows clicking the unlabeled text to start editing', async () => {
@@ -585,9 +633,23 @@ describe('IdentityClusterList', () => {
       ...baseIdentity,
       cluster_label: null,
     };
-    const { user } = await renderWithClient(<IdentityClusterList identities={[unlabeled]} />);
+    const { client, user } = await renderWithClient(<IdentityClusterList identities={[unlabeled]} />);
+    // Set cache to ensure component renders with data
+    const cacheData: MediaIdentitiesResponse = {
+      identities_by_media: {
+        '1': [unlabeled],
+      },
+    };
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /cluster-clust/i })), 350);
+      setMediaIdentitiesCache(client, cacheData);
+    });
+
+    // Wait for the unlabeled button to appear and click it
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /cluster-clust/i })).toBeInTheDocument();
+    });
+    await actFlow(async () => {
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /cluster-clust/i })));
     });
     expect(screen.getByRole('combobox')).toBeInTheDocument();
     await actFlow(async () => {
@@ -610,10 +672,15 @@ describe('IdentityClusterList', () => {
     };
     await actFlow(async () => {
       setMediaIdentitiesCache(client, cacheData);
+    });
 
-      const wrongPersonButton = screen.getByText('Remove from Cluster', { selector: 'button' });
-      expect(wrongPersonButton).toBeInTheDocument();
+    // Wait for button to appear
+    await waitFor(() => {
+      expect(screen.getByText('Remove from Cluster', { selector: 'button' })).toBeInTheDocument();
+    });
 
+    const wrongPersonButton = screen.getByText('Remove from Cluster', { selector: 'button' });
+    await actFlow(async () => {
       await user.click(wrongPersonButton);
       await resolveDeferred(reassignDeferred, {});
     });
@@ -655,12 +722,20 @@ describe('IdentityClusterList', () => {
     };
     await actFlow(async () => {
       setMediaIdentitiesCache(client, cacheData);
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /split cluster/i })), 50);
+    });
+
+    // Wait for split button to appear
+    await waitFor(() => {
+      expect(screen.getByRole('button', { name: /split cluster/i })).toBeInTheDocument();
+    });
+
+    await actFlow(async () => {
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /split cluster/i })));
     });
 
     await screen.findByRole('dialog');
     await actFlow(async () => {
-      await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })), 50);
+      await runWithTimers(() => user.click(screen.getByRole('button', { name: /use face from media #1/i })));
       await resolveDeferred(splitDeferred, { moved_count: 5 });
     });
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument());

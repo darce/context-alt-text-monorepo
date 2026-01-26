@@ -21,5 +21,11 @@ export default defineConfig(({ mode }) => ({
     environment: 'jsdom',
     setupFiles: './vitest.setup.ts',
     globals: true,
+    pool: 'forks',
+    poolOptions: {
+      forks: {
+        singleFork: true, // Run all tests in a single fork to avoid startup timeouts
+      },
+    },
   },
 }));

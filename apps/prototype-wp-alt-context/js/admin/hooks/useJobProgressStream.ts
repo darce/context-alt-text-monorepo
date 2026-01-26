@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { useJobCoordination } from './useJobCoordination';
+import { getConfig, getEndpoint } from '../api/config';
 import type { JobProgress } from '../api/recognition/types/scan';
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'clustering';
@@ -81,10 +82,9 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       return;
     }
 
-    // Use absolute URL from config if available, otherwise relative
-    const apiBase = window.AltContextAdmin?.endpoints.recognitionJobs ?? '/wp-json/alt-context/v1/recognition/jobs';
+    const apiBase = getEndpoint('recognitionJobs');
     const url = new URL(`${apiBase}/${jobId}/stream`, window.location.origin);
-    const nonce = window.AltContextAdmin?.nonce;
+    const nonce = getConfig().nonce;
     if (nonce) {
       url.searchParams.set('_wpnonce', nonce);
     }

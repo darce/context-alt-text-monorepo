@@ -6,6 +6,7 @@ import uuid
 
 from fastapi.testclient import TestClient
 
+from recognition.domain.suggestion import SuggestionDetails
 from recognition.tests.api.conftest import FakeMediaIdentityService, seed_cluster
 
 
@@ -22,18 +23,14 @@ def test_analyze_accepts_media_items(api_client, tenant_id):
 
 def test_top_level_suggestions(api_client, tenant_id, fake_suggestion_service, fake_cluster_service):
     cluster = seed_cluster(fake_cluster_service, tenant_id)
-    fake_suggestion_service.suggestions["sugg-1"] = type(
-        "Fake",
-        (),
-        {
-            "id": "sugg-1",
-            "identity_id": "identity-1",
-            "cluster_id": cluster.id,
-            "status": type("S", (), {"value": "pending"})(),
-            "representative_similarity": 0.9,
-            "member_similarity": 0.9,
-        },
-    )()
+    fake_suggestion_service.suggestions["sugg-1"] = SuggestionDetails(
+        id="sugg-1",
+        identity_id="identity-1",
+        cluster_id=cluster.id,
+        representative_similarity=0.9,
+        member_similarity=0.9,
+        status="pending",
+    )
     resp = api_client.get(
         "/recognition/suggestions",
         headers={"X-Tenant-ID": tenant_id},

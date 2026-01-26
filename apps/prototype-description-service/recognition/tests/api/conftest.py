@@ -119,43 +119,99 @@ class FakeSuggestionStatus:
         self.value = value
 
 
-class FakeSuggestion:
-    """Minimal suggestion record for API contract tests."""
+class FakeFaceBox:
+    """Simple bounding box for suggestion detail payloads."""
 
-    def __init__(self, identity_id: str, cluster_id: str) -> None:
+    def __init__(self, x: int = 0, y: int = 0, width: int = 1, height: int = 1) -> None:
+        self.x = x
+        self.y = y
+        self.width = width
+        self.height = height
+
+
+class FakeSuggestion:
+    """Suggestion record with optional detail fields for API contract tests."""
+
+    def __init__(
+        self,
+        identity_id: str,
+        cluster_id: str,
+        *,
+        cluster_label: str | None = None,
+        cluster_identity_count: int | None = None,
+        identity_media_id: int | None = None,
+        identity_media_url: str | None = None,
+        identity_thumbnail_url: str | None = None,
+        identity_bbox: FakeFaceBox | None = None,
+        representative_media_id: int | None = None,
+        representative_media_url: str | None = None,
+        representative_thumbnail_url: str | None = None,
+        representative_bbox: FakeFaceBox | None = None,
+    ) -> None:
         self.id = str(uuid.uuid4())
         self.identity_id = identity_id
         self.cluster_id = cluster_id
         self.representative_similarity = 0.9
         self.member_similarity = 0.85
         self.status = FakeSuggestionStatus()
+        self.cluster_label = cluster_label
+        self.cluster_identity_count = cluster_identity_count
+        self.identity_media_id = identity_media_id
+        self.identity_media_url = identity_media_url
+        self.identity_thumbnail_url = identity_thumbnail_url
+        self.identity_bbox = identity_bbox
+        self.representative_media_id = representative_media_id
+        self.representative_media_url = representative_media_url
+        self.representative_thumbnail_url = representative_thumbnail_url
+        self.representative_bbox = representative_bbox
+
+    def as_details(self) -> SimpleNamespace:
+        """Return a detail-shaped suggestion with string status."""
+        return SimpleNamespace(
+            id=self.id,
+            identity_id=self.identity_id,
+            cluster_id=self.cluster_id,
+            representative_similarity=self.representative_similarity,
+            member_similarity=self.member_similarity,
+            status=self.status.value,
+            cluster_label=self.cluster_label,
+            cluster_identity_count=self.cluster_identity_count,
+            identity_media_id=self.identity_media_id,
+            identity_media_url=self.identity_media_url,
+            identity_thumbnail_url=self.identity_thumbnail_url,
+            identity_bbox=self.identity_bbox,
+            representative_media_id=self.representative_media_id,
+            representative_media_url=self.representative_media_url,
+            representative_thumbnail_url=self.representative_thumbnail_url,
+            representative_bbox=self.representative_bbox,
+        )
 
 
 class FakeSuggestionService:
     """In-memory suggestion service used by API tests."""
 
     def __init__(self) -> None:
-        self.suggestions: dict[str, FakeSuggestion] = {}
+        self.suggestions: dict[str, object] = {}
 
     async def list_for_identity(self, identity_id: str) -> list[FakeSuggestion]:
-        return [s for s in self.suggestions.values() if s.identity_id == identity_id]
+        return [s for s in self.suggestions.values() if isinstance(s, FakeSuggestion) and s.identity_id == identity_id]
 
     async def accept(self, suggestion_id: str) -> FakeSuggestion | None:
         suggestion = self.suggestions.get(suggestion_id)
-        if not suggestion:
+        if not isinstance(suggestion, FakeSuggestion):
             return None
         suggestion.status = FakeSuggestionStatus("accepted")
         return suggestion
 
     async def reject(self, suggestion_id: str) -> FakeSuggestion | None:
         suggestion = self.suggestions.get(suggestion_id)
-        if not suggestion:
+        if not isinstance(suggestion, FakeSuggestion):
             return None
         suggestion.status = FakeSuggestionStatus("rejected")
         return suggestion
 
-    async def create(self, identity_id: str, cluster_id: str) -> FakeSuggestion:
-        suggestion = FakeSuggestion(identity_id=identity_id, cluster_id=cluster_id)
+    async def create(self, identity_id: str, cluster_id: str, **kwargs) -> FakeSuggestion:  # noqa: ANN003
+        suggestion = FakeSuggestion(identity_id=identity_id, cluster_id=cluster_id, **kwargs)
         self.suggestions[suggestion.id] = suggestion
         return suggestion
 
@@ -167,6 +223,8 @@ class FakeSuggestionService:
     ) -> int:
         resolved = 0
         for suggestion in self.suggestions.values():
+            if not isinstance(suggestion, FakeSuggestion):
+                continue
             if suggestion.identity_id == identity_id and suggestion.cluster_id == cluster_id:
                 suggestion.status = FakeSuggestionStatus(resolution)
                 resolved += 1
@@ -181,6 +239,8 @@ class FakeSuggestionService:
     ) -> int:
         resolved = 0
         for suggestion in self.suggestions.values():
+            if not isinstance(suggestion, FakeSuggestion):
+                continue
             if suggestion.identity_id != identity_id:
                 continue
             if suggestion.cluster_id == accepted_cluster_id:
@@ -190,9 +250,15 @@ class FakeSuggestionService:
             resolved += 1
         return resolved
 
-    async def list_pending(self, limit: int = 50, offset: int = 0) -> list[FakeSuggestion]:
+    async def list_pending(self, limit: int = 50, offset: int = 0) -> list[object]:
         items = list(self.suggestions.values())
-        return items[offset : offset + limit]
+        pending: list[object] = []
+        for suggestion in items[offset : offset + limit]:
+            if isinstance(suggestion, FakeSuggestion):
+                pending.append(suggestion.as_details())
+            else:
+                pending.append(suggestion)
+        return pending
 
 
 class FakeSuggestionRefreshService:

@@ -39,6 +39,7 @@ from recognition.interface_adapters.http.schemas.requests import (
     PatchClusterRequest,
     PinRepresentativeRequest,
     ReassignIdentityRequest,
+    RecoverOrphansRequest,
     SplitClusterRequest,
 )
 from recognition.interface_adapters.http.schemas.responses import (
@@ -47,6 +48,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusterResponse,
     CreateClusterForIdentityResponse,
     JobProgressResponse,
+    OrphanRecoveryResponse,
     ReassignIdentityResponse,
     SplitClusterResponse,
 )
@@ -103,6 +105,31 @@ async def create_clustering_job(
     job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
     # Do NOT start the job - leave it in pending state for worker to pick up
     return _job_to_clustering_response(job)
+
+
+@router.post("/clusters/recover-orphans", response_model=OrphanRecoveryResponse)
+async def recover_orphan_identities(
+    request: RecoverOrphansRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+) -> OrphanRecoveryResponse:
+    """Re-cluster any orphaned identities for a tenant."""
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    try:
+        result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail=str(exc)) from exc
+
+    return OrphanRecoveryResponse(
+        orphans_found=int(getattr(result, "total", 0) or 0),
+        recovered=int(getattr(result, "accepted", 0) or 0),
+        suggested=int(getattr(result, "suggested", 0) or 0),
+        rejected=int(getattr(result, "rejected", 0) or 0),
+        clusters_created=int(getattr(result, "clusters_created", 0) or 0),
+    )
 
 
 @router.get("/clusters", response_model=list[ClusterResponse])

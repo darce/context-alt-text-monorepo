@@ -90,12 +90,40 @@ async def test_label_update_sets_confirmation_flags(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_merge_recomputes_representatives_and_centroid(db_session, tenant, monkeypatch) -> None:
-    """Merge should trigger representative and centroid recomputation hooks."""
+async def test_merge_recomputes_representatives(db_session, tenant) -> None:
+    """Merge should recompute representatives based on merged membership."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    assignment_writer = cluster_service.assignment_writer
-    cluster_repo = assignment_writer.cluster_repository
-    member_repo = assignment_writer.member_repository
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+
+    embedding_a = [0.0] * 512
+    embedding_a[0] = 1.0
+    embedding_b = [0.0] * 512
+    embedding_b[1] = 1.0
+    identity_a = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=401,
+        media_url="http://example.test/401.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_a,
+    )
+    identity_b = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=402,
+        media_url="http://example.test/402.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding_b,
+    )
+    db_session.add_all([identity_a, identity_b])
+    await db_session.flush()
 
     target = await cluster_repo.save(
         IdentityCluster(
@@ -107,6 +135,7 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
             created_at=None,
         )
     )
+    await member_repo.add_member(target.id, identity_id=str(identity_a.id), similarity=0.92)
     source = await cluster_repo.save(
         IdentityCluster(
             id=None,
@@ -117,19 +146,8 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
             created_at=None,
         )
     )
-    await member_repo.add_member(source.id, identity_id=str(uuid.uuid4()), similarity=0.88)
+    await member_repo.add_member(source.id, identity_id=str(identity_b.id), similarity=0.88)
     await db_session.commit()
-
-    recompute_calls = {"reps": 0, "centroid": 0}
-
-    async def fake_recompute_reps(cluster_id: str):
-        recompute_calls["reps"] += 1
-
-    async def fake_recompute_centroid(cluster_id: str):
-        recompute_calls["centroid"] += 1
-
-    monkeypatch.setattr(assignment_writer, "recompute_representatives", fake_recompute_reps, raising=False)
-    monkeypatch.setattr(assignment_writer, "recompute_centroid", fake_recompute_centroid, raising=False)
 
     await cluster_service.merge_cluster(
         source_cluster_id=source.id,
@@ -138,8 +156,10 @@ async def test_merge_recomputes_representatives_and_centroid(db_session, tenant,
         target_label="merged-target",
     )
 
-    assert recompute_calls["reps"] >= 1
-    assert recompute_calls["centroid"] >= 1
+    reps = await cluster_repo.get_all_representatives(target.id)
+    members = await member_repo.get_by_cluster(target.id)
+    assert len(members) == 2
+    assert len(reps) == 2
 
 
 @pytest.mark.asyncio

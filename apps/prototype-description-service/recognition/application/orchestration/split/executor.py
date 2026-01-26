@@ -5,6 +5,7 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
+from dataclasses import dataclass
 
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -27,6 +28,112 @@ from recognition.observability import ClusteringLogger, DecisionType
 from recognition.shared.ids import generate_id
 
 logger = logging.getLogger(__name__)
+
+
+@dataclass
+class SplitGroup:
+    label: int
+    identity_ids: list[str]
+    count: int
+    moved_media_ids: list[int]
+    new_cluster_id: str | None = None
+    new_cluster_label: str | None = None
+
+
+async def _create_split_clusters(
+    *,
+    original_cluster: IdentityCluster,
+    split_groups: list[SplitGroup],
+    label_assignments: dict[int, str],
+    cluster_repo: ClusterRepository,
+    original_cluster_id: str,
+) -> list[str]:
+    """Create new clusters for each split group. Returns new cluster IDs."""
+    new_cluster_ids: list[str] = []
+
+    for group in split_groups:
+        new_cluster_id = str(generate_id())
+        assigned_label = label_assignments.get(group.label)
+        unique_suffix = new_cluster_id[:4]
+        fallback_label = f"Split from {original_cluster_id[:8]} ({unique_suffix})"
+        next_label = assigned_label or fallback_label
+        new_cluster = IdentityCluster(
+            id=new_cluster_id,
+            tenant_id=original_cluster.tenant_id,
+            label=next_label,
+            identity_count=group.count,
+            is_labeled=bool(next_label),
+            user_confirmed=True,
+        )
+        await cluster_repo.save(new_cluster)
+        group.new_cluster_id = new_cluster_id
+        group.new_cluster_label = next_label
+        new_cluster_ids.append(new_cluster_id)
+
+    return new_cluster_ids
+
+
+async def _reassign_members(
+    *,
+    split_groups: list[SplitGroup],
+    new_cluster_ids: list[str],
+    member_repo: MemberRepository,
+    block_repo: IdentityClusterBlockRepository | None,
+    remaining_identity_ids: list[str],
+    tenant_id: str,
+    original_cluster_id: str,
+) -> None:
+    """Move members from original cluster to new clusters."""
+    for group, new_cluster_id in zip(split_groups, new_cluster_ids, strict=False):
+        for identity_id in group.identity_ids:
+            await member_repo.remove_by_identity_id(identity_id)
+            await member_repo.add_member(new_cluster_id, identity_id=identity_id, similarity=1.0)
+            if block_repo is not None:
+                await block_repo.add_block(
+                    tenant_id=tenant_id,
+                    identity_id=identity_id,
+                    blocked_cluster_id=original_cluster_id,
+                    reason="manual_split",
+                )
+
+        if block_repo is not None and remaining_identity_ids:
+            for identity_id in remaining_identity_ids:
+                await block_repo.add_block(
+                    tenant_id=tenant_id,
+                    identity_id=identity_id,
+                    blocked_cluster_id=new_cluster_id,
+                    reason="manual_split",
+                )
+
+
+async def _emit_split_events(
+    *,
+    original_cluster_id: str,
+    new_cluster_ids: list[str],
+    moved_counts: list[int],
+    tenant_id: str,
+    clustering_logger: ClusteringLogger | None,
+) -> None:
+    """Emit cluster_split events."""
+    if clustering_logger and new_cluster_ids:
+        with contextlib.suppress(Exception):
+            clustering_logger.log_cluster_split(
+                original_cluster_id=original_cluster_id,
+                new_cluster_ids=new_cluster_ids,
+                moved_counts=moved_counts,
+                tenant_id=tenant_id,
+            )
+
+    broadcaster = get_event_broadcaster()
+    await broadcaster.broadcast(
+        "cluster_split",
+        {
+            "original_cluster_id": original_cluster_id,
+            "new_cluster_ids": new_cluster_ids,
+            "moved_counts": moved_counts,
+        },
+        tenant_id=tenant_id,
+    )
 
 
 async def split_cluster(
@@ -172,11 +279,8 @@ async def split_cluster(
             original_cluster.is_labeled = bool(original_cluster.label)
             await cluster_repo.update(original_cluster)
 
-    new_cluster_ids: list[str] = []
-    moved_counts: list[int] = []
     remaining_identity_ids = [ids[i] for i, lbl in enumerate(labels) if lbl == largest_label]
-    moved_identity_ids_all: list[str] = []
-
+    split_groups: list[SplitGroup] = []
     for label, count in sorted_labels[1:]:
         identity_ids_for_group = [ids[i] for i, lbl in enumerate(labels) if lbl == label]
         moved_media_ids: list[int] = []
@@ -185,54 +289,48 @@ async def split_cluster(
             if media_id is not None:
                 moved_media_ids.append(int(media_id))
 
-        new_cluster_id = str(generate_id())
-        assigned_label = label_assignments.get(label)
-        unique_suffix = new_cluster_id[:4]
-        fallback_label = f"Split from {cluster_id[:8]} ({unique_suffix})"
-        next_label = assigned_label or fallback_label
-        new_cluster = IdentityCluster(
-            id=new_cluster_id,
-            tenant_id=original_cluster.tenant_id,
-            label=next_label,
-            identity_count=count,
-            is_labeled=bool(next_label),
-            user_confirmed=True,
+        split_groups.append(
+            SplitGroup(
+                label=label,
+                identity_ids=identity_ids_for_group,
+                count=count,
+                moved_media_ids=moved_media_ids,
+            )
         )
-        await cluster_repo.save(new_cluster)
 
-        for identity_id in identity_ids_for_group:
-            await member_repo.remove_by_identity_id(identity_id)
-            await member_repo.add_member(new_cluster_id, identity_id=identity_id, similarity=1.0)
-            if block_repo is not None:
-                await block_repo.add_block(
-                    tenant_id=original_cluster.tenant_id,
-                    identity_id=identity_id,
-                    blocked_cluster_id=cluster_id,
-                    reason="manual_split",
-                )
-            moved_identity_ids_all.append(identity_id)
-        if block_repo is not None and remaining_identity_ids:
-            for identity_id in remaining_identity_ids:
-                await block_repo.add_block(
-                    tenant_id=original_cluster.tenant_id,
-                    identity_id=identity_id,
-                    blocked_cluster_id=new_cluster_id,
-                    reason="manual_split",
-                )
+    new_cluster_ids = await _create_split_clusters(
+        original_cluster=original_cluster,
+        split_groups=split_groups,
+        label_assignments=label_assignments,
+        cluster_repo=cluster_repo,
+        original_cluster_id=cluster_id,
+    )
+    moved_counts = [group.count for group in split_groups]
+    moved_identity_ids_all = [identity_id for group in split_groups for identity_id in group.identity_ids]
 
-        new_cluster_ids.append(new_cluster_id)
-        moved_counts.append(count)
+    await _reassign_members(
+        split_groups=split_groups,
+        new_cluster_ids=new_cluster_ids,
+        member_repo=member_repo,
+        block_repo=block_repo,
+        remaining_identity_ids=remaining_identity_ids,
+        tenant_id=original_cluster.tenant_id,
+        original_cluster_id=cluster_id,
+    )
 
+    for group in split_groups:
+        if group.new_cluster_id is None or group.new_cluster_label is None:
+            continue
         logger.info(
             "Split cluster %s (%s): Created new cluster %s (%s) with %d identities "
             "moved_identity_ids=%s moved_media_ids=%s",
             cluster_id,
             original_cluster.label,
-            new_cluster_id,
-            next_label,
-            count,
-            identity_ids_for_group,
-            moved_media_ids,
+            group.new_cluster_id,
+            group.new_cluster_label,
+            group.count,
+            group.identity_ids,
+            group.moved_media_ids,
         )
 
     remaining_count = label_counts[largest_label]
@@ -270,15 +368,6 @@ async def split_cluster(
                     reason=SuggestionRefreshReason.MANUAL_SPLIT,
                 )
 
-    if clustering_logger and new_cluster_ids:
-        with contextlib.suppress(Exception):
-            clustering_logger.log_cluster_split(
-                original_cluster_id=cluster_id,
-                new_cluster_ids=new_cluster_ids,
-                moved_counts=moved_counts,
-                tenant_id=original_cluster.tenant_id,
-            )
-
     if clustering_logger:
         for identity_id in moved_identity_ids_all:
             with contextlib.suppress(Exception):
@@ -293,15 +382,12 @@ async def split_cluster(
                     },
                 )
 
-    broadcaster = get_event_broadcaster()
-    await broadcaster.broadcast(
-        "cluster_split",
-        {
-            "original_cluster_id": cluster_id,
-            "new_cluster_ids": new_cluster_ids,
-            "moved_counts": moved_counts,
-        },
+    await _emit_split_events(
+        original_cluster_id=cluster_id,
+        new_cluster_ids=new_cluster_ids,
+        moved_counts=moved_counts,
         tenant_id=original_cluster.tenant_id,
+        clustering_logger=clustering_logger,
     )
 
     return new_cluster_ids, moved_counts

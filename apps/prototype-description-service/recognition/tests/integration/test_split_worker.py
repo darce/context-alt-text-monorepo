@@ -115,4 +115,5 @@ async def test_worker_executes_split_job(db_session, tenant) -> None:
     assert refreshed.progress == 1.0
 
     clusters = await cluster_repo.get_by_tenant(str(tenant.id), limit=50)
-    assert len(clusters) > 1
+    assert len(clusters) == 2
+    assert sorted(cluster.identity_count for cluster in clusters) == [2, 2]

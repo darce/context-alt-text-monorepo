@@ -71,6 +71,32 @@ classDiagram
         +datetime? created_at
     }
 
+    class FaceBox {
+        +int x
+        +int y
+        +int width
+        +int height
+    }
+
+    class SuggestionDetails {
+        +str id
+        +str identity_id
+        +str cluster_id
+        +float representative_similarity
+        +float member_similarity
+        +str status
+        +str? cluster_label
+        +int? cluster_identity_count
+        +int? identity_media_id
+        +str? identity_media_url
+        +str? identity_thumbnail_url
+        +FaceBox? identity_bbox
+        +int? representative_media_id
+        +str? representative_media_url
+        +str? representative_thumbnail_url
+        +FaceBox? representative_bbox
+    }
+
     class SuggestionStatus {
         <<enumeration>>
         PENDING
@@ -85,6 +111,9 @@ classDiagram
     MediaIdentity "1" --> "0..*" AssignmentSuggestion : suggested
     AssignmentSuggestion "1" --> "1" IdentityCluster : target_cluster
     AssignmentSuggestion --> SuggestionStatus : status
+    AssignmentSuggestion ..> SuggestionDetails : enriches
+    SuggestionDetails --> FaceBox : identity_bbox
+    SuggestionDetails --> FaceBox : representative_bbox
 
     note for MediaIdentity "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
     note for MediaIdentity "Code anchors: recognition/domain/identity.py; recognition/domain/cluster.py; recognition/domain/representative.py; recognition/domain/suggestion.py"

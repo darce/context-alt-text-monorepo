@@ -3,9 +3,7 @@
 from __future__ import annotations
 
 import contextlib
-import json
 import logging
-import os
 import uuid
 from collections.abc import Awaitable, Callable
 from typing import TYPE_CHECKING
@@ -23,47 +21,9 @@ logger = logging.getLogger(__name__)
 if TYPE_CHECKING:
     from recognition.infrastructure.embeddings import InsightFaceAdapter
 
-_DEFAULT_TIER_BATCH_LIMITS: dict[str, int] = {
-    "free": 50,
-    "pro": 500,
-    "business": 2000,
-    "enterprise": 10000,
-}
 
-
-def load_tier_batch_limits() -> dict[str, int]:
-    """Load tier batch limits from env or defaults."""
-    raw = os.getenv("RECOGNITION_TIER_BATCH_LIMITS_JSON")
-    if not raw:
-        return dict(_DEFAULT_TIER_BATCH_LIMITS)
-
-    try:
-        decoded = json.loads(raw)
-    except json.JSONDecodeError:
-        return dict(_DEFAULT_TIER_BATCH_LIMITS)
-
-    if not isinstance(decoded, dict):
-        return dict(_DEFAULT_TIER_BATCH_LIMITS)
-
-    limits: dict[str, int] = {}
-    for tier, default in _DEFAULT_TIER_BATCH_LIMITS.items():
-        value = decoded.get(tier, default)
-        try:
-            parsed = int(value)
-        except (TypeError, ValueError):
-            parsed = default
-        limits[tier] = parsed if parsed > 0 else default
-
-    return limits
-
-
-_TIER_BATCH_LIMITS = load_tier_batch_limits()
-
-
-def max_batch_for_tier(tier: str | None) -> int:
-    """Return maximum media items per analyze request for a given tier."""
-    normalized = (tier or "free").strip().lower()
-    return _TIER_BATCH_LIMITS.get(normalized, _TIER_BATCH_LIMITS["free"])
+# NOTE: Tier-based batch limits removed for MVP. Business tier throttling
+# can be added post-MVP when needed. See docs/tasks/4.0/4.11.0/progress-tracking-investigation-2026-01-20.md
 
 
 def extract_media_id(value: str) -> int:

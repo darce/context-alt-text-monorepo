@@ -78,7 +78,7 @@ class ConstrainedHAC:
         dist_matrix = squareform(condensed_dist)
 
         # 2. Apply constraint penalties
-        constraints = await self.constraint_repo.get_all(tenant_id)
+        constraints = await self.constraint_repo.get_all(str(tenant_id))
 
         # Build index map for faster lookup
         id_to_idx = {uid: i for i, uid in enumerate(ids)}

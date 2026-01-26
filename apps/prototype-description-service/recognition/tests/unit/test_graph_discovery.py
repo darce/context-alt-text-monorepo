@@ -43,7 +43,6 @@ def make_settings(
         member_validation_avg_threshold=0.85,
         early_stage_suggestion_enabled=True,
         early_stage_high_confidence_threshold=0.9,
-        adaptive_threshold_maturity_point=5,
         hdbscan_max_batch_size=hdbscan_max_batch_size,
         anchor_discovery_threshold=anchor_discovery_threshold,
     )

@@ -29,7 +29,6 @@ def make_settings() -> ClusteringSettings:
         member_validation_avg_threshold=0.8,
         early_stage_suggestion_enabled=True,
         early_stage_high_confidence_threshold=0.9,
-        adaptive_threshold_maturity_point=1,
         hdbscan_max_batch_size=None,
     )
 

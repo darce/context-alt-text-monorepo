@@ -6,6 +6,7 @@ from recognition.application.assignment.quality import (
     compute_identity_quality,
     compute_quality_adjustment,
 )
+from recognition.domain.maturity import ClusterMaturityLevel
 
 
 class TestComputeIdentityQuality:
@@ -75,3 +76,7 @@ class TestComputeQualityAdjustment:
             assert adjustment < 0
         else:
             assert adjustment == pytest.approx(0.0, abs=0.001)
+
+    def test_adjustment_dampened_for_cold_clusters(self) -> None:
+        adjustment = compute_quality_adjustment(0.3, maturity=ClusterMaturityLevel.COLD)
+        assert adjustment == pytest.approx(0.0125, abs=0.0001)

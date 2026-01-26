@@ -1,10 +1,13 @@
 """
 Confidence-based validation for assignment candidates.
 
-Uses adaptive thresholds inspired by CurricularFace curriculum learning:
-- Early stage (few labeled clusters): Strict thresholds to avoid false positives
-- Developing stage: Thresholds gradually relax as clusters are validated
-- Mature stage (30+ labeled clusters): Base threshold reached, system is stable
+Uses adaptive thresholds with curriculum learning:
+- Cold stage (new clusters): Lenient thresholds to bootstrap growth
+- Developing stage: Thresholds remain lenient as curriculum_t increases
+- Mature stage (confirmed or 10+ members): Maturity adjustment tightens threshold
+
+The curriculum_t parameter (0→1) tracks the running average of accepted
+similarities and provides continuous leniency via: curriculum_adj = -0.05 * t
 """
 
 from __future__ import annotations
@@ -68,9 +71,39 @@ class ConfidenceCheck(AssignmentCheck):
                 },
             )
 
-        # 1. Compute Identity Quality Adjustment for the candidate
-        # We need detection metrics from the identity
         identity = candidate.identity
+
+        # 1. Get Cluster Maturity Adjustment + Curriculum Bias
+        maturity_level = ClusterMaturityLevel.COLD
+        maturity_adj = compute_maturity_adjustment(maturity_level, settings=self.settings.maturity)
+        maturity_level_name = "COLD (no_repo)"
+        curriculum_t = 0.0
+
+        if self.cluster_repository and candidate.cluster_id:
+            maturity_info = await self.cluster_repository.get_maturity_info(
+                candidate.cluster_id,
+                settings=self.settings.maturity,
+            )
+            if maturity_info:
+                maturity_level = maturity_info.level
+                maturity_adj = maturity_info.threshold_adjustment
+                maturity_level_name = maturity_level.name
+            else:
+                # Cluster not found or repo failed, treat as COLD
+                maturity_level = ClusterMaturityLevel.COLD
+                maturity_adj = compute_maturity_adjustment(maturity_level, settings=self.settings.maturity)
+                maturity_level_name = "COLD (fallback)"
+
+            # Get curriculum bias (EMA of accepted similarities)
+            curriculum_t = await self.cluster_repository.get_curriculum_t(str(candidate.cluster_id)) or 0.0
+
+        # Curriculum adjustment: continuous graduation based on learned match quality
+        # t=0 (cold, no history) → 0 adjustment
+        # t=0.9 (many high-quality matches) → -0.045 (more lenient)
+        curriculum_adj = self.settings.curriculum_coefficient * curriculum_t
+
+        # 2. Compute Identity Quality Adjustment for the candidate
+        # We need detection metrics from the identity
         quality_info = compute_identity_quality(
             confidence=identity.confidence,
             pose_pitch=identity.pose_pitch,
@@ -78,37 +111,18 @@ class ConfidenceCheck(AssignmentCheck):
             pose_roll=identity.pose_roll,
             bbox_width=identity.bbox_width,
             bbox_height=identity.bbox_height,
+            maturity=maturity_level,
         )
         quality_adj = quality_info.threshold_adjustment
-
-        # 2. Get Cluster Maturity Adjustment
-        maturity_adj = 0.0
-        maturity_level_name = "UNKNOWN"
-
-        if self.cluster_repository and candidate.cluster_id:
-            maturity_info = await self.cluster_repository.get_maturity_info(candidate.cluster_id)
-            if maturity_info:
-                maturity_adj = maturity_info.threshold_adjustment
-                maturity_level_name = maturity_info.level.name
-            else:
-                # Cluster not found or repo failed, treat as COLD
-                maturity_adj = compute_maturity_adjustment(ClusterMaturityLevel.COLD)
-                maturity_level_name = "COLD (fallback)"
-        else:
-            # No repo available, treat as COLD
-            maturity_adj = compute_maturity_adjustment(ClusterMaturityLevel.COLD)
-            maturity_level_name = "COLD (no_repo)"
 
         # 3. Compute Final Threshold + Suggestion Band
         base = self.settings.similarity_threshold
         suggestion_floor = self.settings.suggestion_floor
         suggestion_ceiling = self.settings.suggestion_ceiling
-        # "Strict to base" logic is replaced by "Base + Adjs"
-        # If adjustments are positive => stricter.
 
-        final_threshold = base + maturity_adj + quality_adj
-        adjusted_floor = suggestion_floor + maturity_adj + quality_adj
-        adjusted_ceiling = suggestion_ceiling + maturity_adj + quality_adj
+        final_threshold = base + maturity_adj + quality_adj + curriculum_adj
+        adjusted_floor = suggestion_floor + maturity_adj + quality_adj + curriculum_adj
+        adjusted_ceiling = suggestion_ceiling + maturity_adj + quality_adj + curriculum_adj
         if adjusted_floor > final_threshold:
             adjusted_floor = final_threshold
         similarity = candidate.discovery_similarity
@@ -119,6 +133,8 @@ class ConfidenceCheck(AssignmentCheck):
             "final_threshold": round(final_threshold, 4),
             "maturity_adj": maturity_adj,
             "quality_adj": quality_adj,
+            "curriculum_t": round(curriculum_t, 4),
+            "curriculum_adj": round(curriculum_adj, 4),
             "suggestion_floor": round(adjusted_floor, 4),
             "suggestion_ceiling": round(adjusted_ceiling, 4),
             "maturity_level": maturity_level_name,

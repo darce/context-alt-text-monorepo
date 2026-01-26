@@ -23,6 +23,7 @@ def mock_cluster_repo() -> AsyncMock:
     repo = AsyncMock(spec=ClusterRepository)
     repo.get_representative_count.return_value = 0
     repo.get_all_representatives.return_value = []
+    repo.get_curriculum_t.return_value = 0.5
     return repo
 
 
@@ -49,7 +50,7 @@ def writer(
 
 
 def _make_candidate(cluster_id: str, identity_id: str = "id-1") -> AssignmentCandidate:
-    vector = np.random.rand(512).astype(np.float32)
+    vector = _unit_vector(0)
     return AssignmentCandidate(
         identity=MediaIdentity(
             id=identity_id,
@@ -65,6 +66,12 @@ def _make_candidate(cluster_id: str, identity_id: str = "id-1") -> AssignmentCan
         discovery_method=DiscoveryMethod.REPRESENTATIVE,
         discovery_similarity=0.92,
     )
+
+
+def _unit_vector(index: int, length: int = 512) -> np.ndarray:
+    vec = np.zeros(length, dtype=np.float32)
+    vec[index] = 1.0
+    return vec
 
 
 @pytest.mark.asyncio
@@ -129,7 +136,7 @@ async def test_new_rep_triggers_centroid(
 ) -> None:
     """Test that adding a new representative triggers centroid recomputation."""
     cluster_id = str(uuid.uuid4())
-    val = np.random.rand(512).astype(np.float32)
+    val = _unit_vector(1)
     cluster = IdentityCluster(
         id=cluster_id,
         tenant_id="tenant-1",

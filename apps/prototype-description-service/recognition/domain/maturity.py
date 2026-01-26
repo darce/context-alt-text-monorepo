@@ -4,15 +4,19 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import IntEnum
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from recognition.application.settings.clustering import MaturitySettings
 
 
 class ClusterMaturityLevel(IntEnum):
     """Maturity level affecting adaptive threshold adjustments."""
 
-    COLD = 0  # identity_count=1, not confirmed
-    NASCENT = 1  # identity_count 2-5, not confirmed
+    COLD = 0  # Below nascent thresholds, not confirmed
+    NASCENT = 1  # Meets nascent thresholds, not confirmed
     CONFIRMED = 2  # user_confirmed=True
-    MATURE = 3  # identity_count>10 AND representative_count>=3
+    MATURE = 3  # Meets mature thresholds for members + representatives
 
 
 @dataclass(frozen=True, slots=True)
@@ -31,6 +35,7 @@ def compute_maturity_level(
     identity_count: int,
     representative_count: int,
     user_confirmed: bool,
+    settings: MaturitySettings,
 ) -> ClusterMaturityLevel:
     """Compute maturity level from cluster metrics.
 
@@ -38,6 +43,7 @@ def compute_maturity_level(
         identity_count: Number of members in the cluster.
         representative_count: Number of representatives.
         user_confirmed: Whether user has confirmed the cluster.
+        settings: Maturity settings.
 
     Returns:
         ClusterMaturityLevel enum value.
@@ -45,30 +51,34 @@ def compute_maturity_level(
     if user_confirmed:
         return ClusterMaturityLevel.CONFIRMED
 
-    if identity_count > 10 and representative_count >= 3:
+    if identity_count >= settings.mature_min_members and representative_count >= settings.mature_min_representatives:
         return ClusterMaturityLevel.MATURE
 
-    if identity_count > 1:
+    if identity_count >= settings.nascent_min_members:
         return ClusterMaturityLevel.NASCENT
 
     return ClusterMaturityLevel.COLD
 
 
-def compute_maturity_adjustment(level: ClusterMaturityLevel) -> float:
+def compute_maturity_adjustment(
+    level: ClusterMaturityLevel,
+    settings: MaturitySettings,
+) -> float:
     """Return threshold adjustment for a maturity level.
 
     Args:
         level: Cluster maturity level.
+        settings: Maturity settings.
 
     Returns:
         Float adjustment (positive = stricter, negative = more lenient).
     """
     match level:
         case ClusterMaturityLevel.COLD:
-            return 0.05
+            return settings.cold_adjustment
         case ClusterMaturityLevel.NASCENT:
-            return 0.02
+            return settings.nascent_adjustment
         case ClusterMaturityLevel.CONFIRMED:
-            return -0.02
+            return settings.confirmed_adjustment
         case ClusterMaturityLevel.MATURE:
-            return -0.03
+            return settings.mature_adjustment

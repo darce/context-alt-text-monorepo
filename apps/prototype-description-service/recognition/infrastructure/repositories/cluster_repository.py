@@ -8,11 +8,11 @@ from __future__ import annotations
 
 import contextlib
 import uuid
-from datetime import datetime
-from typing import Any
+from datetime import UTC, datetime
+from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from sqlalchemy import Select, delete, exists, func, select, text
+from sqlalchemy import Select, delete, exists, func, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
@@ -23,17 +23,16 @@ from db.models import IdentityMember as IdentityMemberModel
 from db.settings import get_database_settings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity as DomainIdentity
-from recognition.domain.maturity import (
-    ClusterMaturityInfo,
-    compute_maturity_adjustment,
-    compute_maturity_level,
-)
+from recognition.domain.maturity import ClusterMaturityInfo, compute_maturity_adjustment, compute_maturity_level
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 _DB_SETTINGS = get_database_settings()
+
+if TYPE_CHECKING:
+    from recognition.application.settings.clustering import MaturitySettings
 
 
 class SqlAlchemyClusterRepository(ClusterRepository):
@@ -336,7 +335,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         await self._session.flush()
         return get_rowcount(result)
 
-    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+    async def get_maturity_info(self, cluster_id: str, *, settings: MaturitySettings) -> ClusterMaturityInfo | None:
         """Fetch maturity information for a cluster."""
         stmt = (
             select(
@@ -364,8 +363,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             identity_count=identity_count,
             representative_count=representative_count,
             user_confirmed=user_confirmed,
+            settings=settings,
         )
-        adjustment = compute_maturity_adjustment(level)
+        adjustment = compute_maturity_adjustment(level, settings=settings)
 
         return ClusterMaturityInfo(
             level=level,
@@ -374,6 +374,23 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             user_confirmed=user_confirmed,
             threshold_adjustment=adjustment,
         )
+
+    async def get_curriculum_t(self, cluster_id: str) -> float | None:
+        """Fetch the curriculum bias parameter for a cluster."""
+        stmt = select(ClusterModel.curriculum_t).where(ClusterModel.id == _coerce_uuid(cluster_id))
+        result = await self._session.execute(stmt)
+        value = result.scalar_one_or_none()
+        return float(value) if value is not None else None
+
+    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
+        """Persist the curriculum bias parameter for a cluster."""
+        stmt = (
+            update(ClusterModel)
+            .where(ClusterModel.id == _coerce_uuid(cluster_id))
+            .values(curriculum_t=value, curriculum_t_updated_at=datetime.now(tz=UTC))
+        )
+        await self._session.execute(stmt)
+        await self._session.flush()
 
     async def get_member_embeddings(self, cluster_id: str):
         """Return embeddings for members of the cluster."""

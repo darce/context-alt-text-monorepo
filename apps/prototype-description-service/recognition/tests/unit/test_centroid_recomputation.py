@@ -22,6 +22,7 @@ def mock_cluster_repo() -> AsyncMock:
     repo = AsyncMock(spec=ClusterRepository)
     repo.get_representative_count.return_value = 0
     repo.get_all_representatives.return_value = []
+    repo.get_curriculum_t.return_value = 0.5
     # Default behavior for update if it exists
     return repo
 

@@ -114,7 +114,13 @@ class GateRepoStub(ClusterRepository):
     ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
         return []
 
-    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+    async def get_maturity_info(self, cluster_id: str, *, settings=None) -> ClusterMaturityInfo | None:  # noqa: ANN001
+        return None
+
+    async def get_curriculum_t(self, cluster_id: str) -> float | None:
+        return None
+
+    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
         return None
 
     async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
@@ -286,7 +292,6 @@ def make_settings() -> ClusteringSettings:
         suggestion_floor=0.5,
         suggestion_ceiling=0.75,
         early_stage_high_confidence_threshold=0.9,
-        adaptive_threshold_maturity_point=5,
         hdbscan_max_batch_size=None,
     )
 

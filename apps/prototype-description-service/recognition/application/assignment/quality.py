@@ -5,6 +5,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from recognition.application.settings import QualitySettings
+from recognition.domain.maturity import ClusterMaturityLevel
 
 # Default settings instance for backward compatibility
 _default_settings = QualitySettings()
@@ -30,6 +31,7 @@ def compute_identity_quality(
     bbox_width: int,
     bbox_height: int,
     settings: QualitySettings | None = None,
+    maturity: ClusterMaturityLevel | None = None,
 ) -> IdentityQualityInfo:
     """Compute identity quality score from detection metrics.
 
@@ -41,6 +43,7 @@ def compute_identity_quality(
         bbox_width: Bounding box width in pixels.
         bbox_height: Bounding box height in pixels.
         settings: Optional quality settings. Uses defaults if not provided.
+        maturity: Optional cluster maturity level to dampen adjustments.
 
     Returns:
         IdentityQualityInfo with computed score and adjustment.
@@ -64,13 +67,14 @@ def compute_identity_quality(
         confidence=confidence,
         pose_penalty=pose_penalty,
         size_factor=size_factor,
-        threshold_adjustment=compute_quality_adjustment(score, settings=s),
+        threshold_adjustment=compute_quality_adjustment(score, settings=s, maturity=maturity),
     )
 
 
 def compute_quality_adjustment(
     quality_score: float,
     settings: QualitySettings | None = None,
+    maturity: ClusterMaturityLevel | None = None,
 ) -> float:
     """Return threshold adjustment for a quality score.
 
@@ -84,10 +88,22 @@ def compute_quality_adjustment(
     s = settings or _default_settings
 
     if quality_score >= s.high_quality_threshold:
-        return s.high_quality_adjustment
-    if quality_score >= s.neutral_quality_threshold:
-        return s.neutral_quality_adjustment
-    if quality_score >= s.mediocre_quality_threshold:
-        return s.mediocre_quality_adjustment
+        base_adjustment = s.high_quality_adjustment
+    elif quality_score >= s.neutral_quality_threshold:
+        base_adjustment = s.neutral_quality_adjustment
+    elif quality_score >= s.mediocre_quality_threshold:
+        base_adjustment = s.mediocre_quality_adjustment
+    else:
+        base_adjustment = s.poor_quality_adjustment
 
-    return s.poor_quality_adjustment
+    if maturity is None:
+        return base_adjustment
+
+    dampening = {
+        ClusterMaturityLevel.COLD: 0.25,
+        ClusterMaturityLevel.NASCENT: 0.50,
+        ClusterMaturityLevel.CONFIRMED: 0.75,
+        ClusterMaturityLevel.MATURE: 1.0,
+    }
+
+    return base_adjustment * dampening.get(maturity, 1.0)

@@ -85,7 +85,13 @@ class NullClusterRepo(ClusterRepository):
     ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
         return []
 
-    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+    async def get_maturity_info(self, cluster_id: str, *, settings=None) -> ClusterMaturityInfo | None:  # noqa: ANN001
+        return None
+
+    async def get_curriculum_t(self, cluster_id: str) -> float | None:
+        return None
+
+    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
         return None
 
     async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:

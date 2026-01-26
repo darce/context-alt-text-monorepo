@@ -62,11 +62,12 @@ def make_maturity_info(level: ClusterMaturityLevel, adjustment: float) -> Cluste
 
 @pytest.mark.asyncio
 async def test_confidence_mature_cluster_high_quality() -> None:
-    """Mature cluster (-0.03) + High Quality (-0.05) -> Threshold relaxes significantly."""
+    """Mature cluster (-0.05) + High Quality (-0.05) -> Threshold relaxes significantly."""
     settings = make_settings()
     repo = Mock()
     # Mock maturity info: MATURE
-    repo.get_maturity_info = AsyncMock(return_value=make_maturity_info(ClusterMaturityLevel.MATURE, -0.03))
+    repo.get_maturity_info = AsyncMock(return_value=make_maturity_info(ClusterMaturityLevel.MATURE, -0.05))
+    repo.get_curriculum_t = AsyncMock(return_value=0.5)
 
     check = ConfidenceCheck(settings, repo)
 
@@ -74,64 +75,67 @@ async def test_confidence_mature_cluster_high_quality() -> None:
     candidate = make_candidate(similarity=0.68, confidence=0.99, bbox_size=200, pose_angle=0)
 
     # Base: 0.75
-    # Maturity Adj: -0.03
+    # Maturity Adj: -0.05
     # Quality Adj: -0.05 (for score > 0.9)
-    # Final Threshold: 0.75 - 0.08 = 0.67
+    # Curriculum Adj: -0.025 (t=0.5)
+    # Final Threshold: 0.75 - 0.125 = 0.625
 
     # Candidate similarity 0.68 should PASS
     result = await check.evaluate(candidate)
 
     assert result.passed is True
-    assert result.metadata["final_threshold"] == 0.67
-    assert result.metadata["maturity_adj"] == -0.03
+    assert result.metadata["final_threshold"] == 0.625
+    assert result.metadata["maturity_adj"] == -0.05
     assert result.metadata["quality_adj"] == -0.05
 
 
 @pytest.mark.asyncio
 async def test_confidence_cold_cluster_low_quality() -> None:
-    """Cold cluster (+0.05) + Low Quality (+0.05) -> Threshold tightens."""
+    """Cold cluster (0.0) + Low Quality (+0.0125) -> Threshold tightens."""
     settings = make_settings()
     repo = Mock()
     # Mock maturity info: COLD
-    repo.get_maturity_info = AsyncMock(return_value=make_maturity_info(ClusterMaturityLevel.COLD, 0.05))
+    repo.get_maturity_info = AsyncMock(return_value=make_maturity_info(ClusterMaturityLevel.COLD, 0.0))
+    repo.get_curriculum_t = AsyncMock(return_value=0.5)
 
     check = ConfidenceCheck(settings, repo)
 
     # Candidate: Low confidence (but still valid identity), small face
     # Note: Quality logic: small face (<50px) penalty.
-    candidate = make_candidate(similarity=0.80, confidence=0.8, bbox_size=40, pose_angle=0)
+    candidate = make_candidate(similarity=0.73, confidence=0.8, bbox_size=40, pose_angle=0)
 
     # Base: 0.75
-    # Maturity Adj: +0.05
-    # Quality Adj: +0.05 (for poor quality)
-    # Final Threshold: 0.75 + 0.10 = 0.85
+    # Maturity Adj: 0.0
+    # Quality Adj: +0.0125 (for poor quality, dampened by COLD)
+    # Curriculum Adj: -0.025 (t=0.5)
+    # Final Threshold: 0.75 - 0.0125 = 0.7375
 
-    # Candidate similarity 0.80 should FAIL
+    # Candidate similarity 0.73 should FAIL
     result = await check.evaluate(candidate)
 
     assert result.passed is False
-    assert result.metadata["final_threshold"] == 0.85
-    assert result.metadata["maturity_adj"] == 0.05
-    assert result.metadata["quality_adj"] == 0.05
+    assert result.metadata["final_threshold"] == 0.7375
+    assert result.metadata["maturity_adj"] == 0.0
+    assert result.metadata["quality_adj"] == pytest.approx(0.0125, abs=0.0001)
 
 
 @pytest.mark.asyncio
 async def test_confidence_no_repo_defaults_to_cold() -> None:
-    """If repository is missing, assume COLD cluster (+0.05)."""
+    """If repository is missing, assume COLD cluster (0.0)."""
     settings = make_settings()
     check = ConfidenceCheck(settings, None)
 
-    candidate = make_candidate(similarity=0.79, confidence=0.8, bbox_size=100)  # Neutral quality (0.0)
+    candidate = make_candidate(similarity=0.74, confidence=0.8, bbox_size=100)  # Neutral quality (0.0)
 
     # Base: 0.75
-    # Maturity Adj: +0.05 (Default COLD)
+    # Maturity Adj: 0.0 (Default COLD)
     # Quality Adj: 0.0 (Neutral)
-    # Final: 0.80
+    # Final: 0.75
 
-    # 0.79 should fail
+    # 0.74 should fail
     result = await check.evaluate(candidate)
     assert result.passed is False
-    assert result.metadata["final_threshold"] == 0.80
+    assert result.metadata["final_threshold"] == 0.75
     assert result.metadata["maturity_level"] == "COLD (no_repo)"
 
 
@@ -157,7 +161,7 @@ async def test_confidence_suggestion_band_returns_suggest() -> None:
         early_stage_suggestion_enabled=True,
     )
     check = ConfidenceCheck(settings, None)
-    candidate = make_candidate(similarity=0.75, confidence=0.9, bbox_size=100)
+    candidate = make_candidate(similarity=0.74, confidence=0.9, bbox_size=100)
 
     result = await check.evaluate(candidate)
 

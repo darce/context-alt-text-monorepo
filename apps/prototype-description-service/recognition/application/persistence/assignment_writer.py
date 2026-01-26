@@ -13,8 +13,11 @@ from datetime import UTC, datetime
 from typing import cast
 
 import numpy as np
+from sqlalchemy.ext.asyncio import AsyncSession
 
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
+from recognition.application.assignment.quality import compute_identity_quality as _compute_quality_info
+from recognition.application.labeling.auto_labeler import allocate_person_label, should_auto_label
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -68,9 +71,8 @@ def _normalize_embedding(embedding: np.ndarray) -> np.ndarray:
 def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSettings) -> float:
     """Compute quality score for a media identity.
 
-    Quality is computed from:
-    - Detection confidence (primary signal from InsightFace)
-    - Face size (larger faces = more reliable embeddings)
+    Delegates to the canonical compute_identity_quality in quality.py which
+    considers detection confidence, pose angles, and face size.
 
     Args:
         identity: MediaIdentity with confidence and bbox dimensions.
@@ -79,22 +81,16 @@ def _compute_identity_quality(identity: MediaIdentity, settings: ClusteringSetti
     Returns:
         Quality score between 0.0 and 1.0.
     """
-    quality_settings = settings.quality
-
-    # Detection score component
-    det_component = identity.confidence * quality_settings.detection_confidence_weight
-
-    # Face size component
-    bbox_area = identity.bbox_width * identity.bbox_height
-    if bbox_area > quality_settings.face_size_large_threshold:
-        size_score = quality_settings.face_size_large_score
-    elif bbox_area > quality_settings.face_size_medium_threshold:
-        size_score = quality_settings.face_size_medium_score
-    else:
-        size_score = quality_settings.face_size_small_score
-    size_component = size_score * quality_settings.face_size_weight
-
-    return round(det_component + size_component, 3)
+    info = _compute_quality_info(
+        confidence=identity.confidence,
+        pose_pitch=identity.pose_pitch,
+        pose_yaw=identity.pose_yaw,
+        pose_roll=identity.pose_roll,
+        bbox_width=identity.bbox_width,
+        bbox_height=identity.bbox_height,
+        settings=settings.quality,
+    )
+    return info.score
 
 
 def _select_diverse_representatives(
@@ -245,11 +241,13 @@ class AssignmentWriter:
         member_repository: MemberRepository,
         *,
         run_context: RecognitionRunContext | None = None,
+        session: AsyncSession | None = None,
     ) -> None:
         self._settings = settings
         self._clusters = cluster_repository
         self._members = member_repository
         self._run_context = run_context
+        self._session = session
         self._last_rep_count: int | None = None
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
@@ -466,6 +464,27 @@ class AssignmentWriter:
 
         cluster.identity_count += 1
         await self._clusters.update(cluster)
+
+        # Update curriculum bias (EMA of accepted similarities)
+        # This provides continuous threshold adaptation based on actual match quality
+        similarity = decision.candidate.discovery_similarity
+        await self._update_curriculum_t(decision.candidate.cluster_id, similarity)
+
+    async def _update_curriculum_t(self, cluster_id: str, similarity: float) -> None:
+        """Update the cluster's curriculum bias using EMA.
+
+        The curriculum parameter t tracks the running average of accepted similarities,
+        allowing thresholds to adapt based on actual match quality rather than
+        discrete maturity buckets.
+
+        Formula: t_new = α * r_k + (1 - α) * t_prev
+        Where α = 0.99 (fast adaptation to new observations)
+        """
+        alpha = 0.99
+        t_prev = await self._clusters.get_curriculum_t(cluster_id) or 0.0
+        t_new = alpha * similarity + (1 - alpha) * t_prev
+        t_new = max(0.0, min(1.0, t_new))  # Clamp to [0, 1]
+        await self._clusters.set_curriculum_t(cluster_id, t_new)
 
     async def refresh_centroids_view(self) -> None:
         """Trigger a refresh of the cluster centroids view."""
@@ -801,6 +820,36 @@ class AssignmentWriter:
             if new_centroid is not None:
                 cluster.centroid = new_centroid
                 await self._clusters.update(cluster)
+
+        if should_auto_label(
+            member_count=len(identities),
+            similarities=similarities,
+            algorithm=algorithm,
+            settings=self._settings.auto_label,
+        ):
+            if self._session is None:
+                logger.warning(
+                    "[auto_label] skipped: no session available cluster_id=%s tenant_id=%s",
+                    cluster.id,
+                    tenant_id,
+                )
+            else:
+                label = await allocate_person_label(
+                    tenant_id=tenant_id,
+                    session=self._session,
+                    prefix=self._settings.auto_label.prefix,
+                )
+                cluster.label = label
+                cluster.is_labeled = True
+                cluster = await self._clusters.update(cluster)
+                avg_similarity = sum(similarities) / len(similarities)
+                logger.info(
+                    "[auto_label] Applied label=%s cluster_id=%s members=%d avg_sim=%.3f",
+                    label,
+                    cluster.id,
+                    len(identities),
+                    avg_similarity,
+                )
 
         return cluster
 

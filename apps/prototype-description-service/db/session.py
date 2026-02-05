@@ -37,12 +37,16 @@ async_session_factory = async_sessionmaker(
 async def get_session() -> AsyncIterator[AsyncSession]:
     """Provide a scoped async SQLAlchemy session.
 
-    The caller is responsible for committing the transaction.
-    The session will be closed after the caller yields back.
+    The session auto-commits when the endpoint returns successfully.
+    On any exception the transaction is rolled back.
     """
     session = async_session_factory()
     try:
         yield session
+        await session.commit()
+    except Exception:
+        await session.rollback()
+        raise
     finally:
         await session.close()
 

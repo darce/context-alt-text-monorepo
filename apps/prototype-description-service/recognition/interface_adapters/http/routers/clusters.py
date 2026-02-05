@@ -262,6 +262,13 @@ async def update_cluster(
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
 
+    # Commit before returning the response so that any client-side refetch
+    # (triggered by invalidateQueries in onSuccess) sees the committed state.
+    # Without this, the commit runs in get_session() teardown which executes
+    # AFTER the response is sent, creating a race where refetches can read
+    # stale pre-commit data — causing intermittent label revert to UUID.
+    await session.commit()
+
     _t_update_done = _time.perf_counter()
     _logger.info(
         "PATCH /clusters/%s: update completed in %.3fs, label='%s' was_user_confirmed=%s",
@@ -320,6 +327,9 @@ async def create_cluster_for_identity(
     if not cluster or not cluster.id:
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Cluster creation failed")
 
+    # Commit before response so client refetches see committed state (see PATCH handler comment).
+    await session.commit()
+
     return CreateClusterForIdentityResponse(
         cluster_id=cluster.id,
         label=cluster.label or label,
@@ -367,6 +377,9 @@ async def merge_cluster(
             cluster_ids=[request.target_cluster_id],
             source_cluster_id=cluster_id,
         )
+
+    # Commit before response so client refetches see committed state (see PATCH handler comment).
+    await session.commit()
 
     return cluster
 
@@ -441,6 +454,9 @@ async def split_cluster(
     suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
     for cid in [cluster_id, *new_ids]:
         await suggestion_refresh_service.refresh_for_cluster(cid)
+
+    # Commit before response so client refetches see committed state (see PATCH handler comment).
+    await session.commit()
 
     return response_obj
 
@@ -581,6 +597,9 @@ async def reassign_identity(
         if request.target_cluster_id:
             await suggestion_refresh_service.refresh_for_cluster(request.target_cluster_id)
 
+    # Commit before response so client refetches see committed state (see PATCH handler comment).
+    await session.commit()
+
     return ReassignIdentityResponse(
         identity_id=request.identity_id,
         source_cluster_id=source_cluster_id,
@@ -615,6 +634,9 @@ async def assign_outlier(
     # Refresh suggestions for the target cluster
     suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
     await suggestion_refresh_service.refresh_for_cluster(cluster_id)
+
+    # Commit before response so client refetches see committed state (see PATCH handler comment).
+    await session.commit()
 
     return cluster
 

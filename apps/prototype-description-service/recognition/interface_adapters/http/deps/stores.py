@@ -16,6 +16,7 @@ from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity
+from recognition.application.assignment.quality import compute_identity_quality
 from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.job import Job
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
@@ -206,14 +207,23 @@ class MediaIdentityService:
                         bucket = (int(rep.pose_pitch // pose_bucket_size), int(rep.pose_yaw // pose_bucket_size))
                         entry["buckets"].add(bucket)
         response: list[dict[str, object]] = []
+        now = datetime.now(tz=UTC)
+        # Only show "Processing..." for identities created in the last 60 seconds
+        # that don't have a cluster yet. After 60s, treat as "Unlabeled" so users can act.
+        clustering_pending_window_seconds = 60
         for row in rows:
             cluster_id = str(row.cluster_id) if row.cluster_id else None
+            # Only pending if: no cluster AND created recently (within window)
+            created_at = row.MediaIdentity.created_at
+            age_seconds = (now - created_at).total_seconds() if created_at else float("inf")
+            clustering_pending = cluster_id is None and age_seconds < clustering_pending_window_seconds
             payload: dict[str, object] = {
                 "identity_id": str(row.MediaIdentity.id),
                 "media_id": row.MediaIdentity.media_id,
                 "cluster_id": cluster_id,
                 "cluster_label": row.cluster_label,
                 "is_auto_label": not row.user_confirmed if row.user_confirmed is not None else None,
+                "clustering_pending": clustering_pending,
                 "bbox": {
                     "width": row.MediaIdentity.bbox_width,
                     "height": row.MediaIdentity.bbox_height,
@@ -229,6 +239,17 @@ class MediaIdentityService:
                 pose_pitch = row.MediaIdentity.pose_pitch
                 pose_yaw = row.MediaIdentity.pose_yaw
                 pose_roll = row.MediaIdentity.pose_roll
+
+                # Compute quality on-the-fly from pose angles (not stale DB value)
+                quality_info = compute_identity_quality(
+                    confidence=row.MediaIdentity.confidence,
+                    pose_pitch=pose_pitch,
+                    pose_yaw=pose_yaw,
+                    pose_roll=pose_roll,
+                    bbox_width=row.MediaIdentity.bbox_width,
+                    bbox_height=row.MediaIdentity.bbox_height,
+                )
+
                 debug_metrics: dict[str, object] = {
                     "pose": {
                         "pitch": float(pose_pitch or 0),
@@ -239,7 +260,7 @@ class MediaIdentityService:
                     "gender": "male" if row.MediaIdentity.gender == 1 else "female",
                     "det_score": float(row.MediaIdentity.confidence),
                     "bbox_area": int(row.MediaIdentity.bbox_width * row.MediaIdentity.bbox_height),
-                    "landmark_quality": float(row.MediaIdentity.quality_score or 1.0),
+                    "landmark_quality": quality_info.score,
                     "clustering_method": None,
                     "clustering_algorithm": None,
                     "similarity_threshold": None,

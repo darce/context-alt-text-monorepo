@@ -377,3 +377,106 @@ async def test_remove_representative_deferred_recompute(
     result = await db_session.execute(select(RepModel).where(RepModel.cluster_id == uuid.UUID(cluster.id)))
     reps = result.scalars().all()
     assert len(reps) == 0, "Representative should be removed even if refresh wasn't triggered"
+
+
+@pytest.mark.asyncio
+async def test_manual_assign_increases_curriculum_t(cluster_service, db_session, tenant) -> None:
+    """Manual assign should make the target cluster more lenient."""
+    id1 = str(uuid.uuid4())
+    id2 = str(uuid.uuid4())
+
+    embedding = np.zeros(512, dtype=np.float32)
+    embedding[0] = 1.0
+
+    media1 = MediaIdentityModel(
+        id=uuid.UUID(id1),
+        tenant_id=tenant.id,
+        media_id=1,
+        media_url="http://example.com/1.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=100,
+        bbox_height=100,
+        embedding=embedding,
+        confidence=0.9,
+    )
+    media2 = MediaIdentityModel(
+        id=uuid.UUID(id2),
+        tenant_id=tenant.id,
+        media_id=2,
+        media_url="http://example.com/2.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=100,
+        bbox_height=100,
+        embedding=embedding,
+        confidence=0.9,
+    )
+    db_session.add_all([media1, media2])
+    await db_session.flush()
+
+    cluster = await cluster_service.create_cluster_for_identity(
+        identity_id=id1, label="Cluster A", tenant_id=str(tenant.id)
+    )
+
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    assert await cluster_repo.get_curriculum_t(cluster.id) == pytest.approx(0.0, abs=0.0001)
+
+    await cluster_service.assign_outlier_to_cluster(
+        identity_id=id2, target_cluster_id=cluster.id, tenant_id=str(tenant.id), similarity=0.9
+    )
+
+    updated = await cluster_repo.get_curriculum_t(cluster.id)
+    assert updated == pytest.approx(0.01, abs=0.0001)
+
+
+@pytest.mark.asyncio
+async def test_manual_remove_decreases_curriculum_t(cluster_service, db_session, tenant) -> None:
+    """Manual remove should make the source cluster stricter."""
+    id1 = str(uuid.uuid4())
+    id2 = str(uuid.uuid4())
+
+    embedding = np.zeros(512, dtype=np.float32)
+    embedding[0] = 1.0
+
+    media1 = MediaIdentityModel(
+        id=uuid.UUID(id1),
+        tenant_id=tenant.id,
+        media_id=1,
+        media_url="http://example.com/1.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=100,
+        bbox_height=100,
+        embedding=embedding,
+        confidence=0.9,
+    )
+    media2 = MediaIdentityModel(
+        id=uuid.UUID(id2),
+        tenant_id=tenant.id,
+        media_id=2,
+        media_url="http://example.com/2.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=100,
+        bbox_height=100,
+        embedding=embedding,
+        confidence=0.9,
+    )
+    db_session.add_all([media1, media2])
+    await db_session.flush()
+
+    cluster = await cluster_service.create_cluster_for_identity(
+        identity_id=id1, label="Cluster A", tenant_id=str(tenant.id)
+    )
+    await cluster_service.assign_outlier_to_cluster(
+        identity_id=id2, target_cluster_id=cluster.id, tenant_id=str(tenant.id), similarity=0.9
+    )
+
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    await cluster_repo.set_curriculum_t(cluster.id, 0.1)
+
+    await cluster_service.remove_identity_from_cluster(identity_id=id2)
+
+    updated = await cluster_repo.get_curriculum_t(cluster.id)
+    assert updated == pytest.approx(0.05, abs=0.0001)

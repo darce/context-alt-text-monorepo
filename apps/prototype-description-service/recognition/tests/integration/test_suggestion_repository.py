@@ -349,10 +349,9 @@ async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> N
 
     assert updated == 2
 
+    # get_by_cluster only returns pending suggestions, so rejected ones should NOT appear
     results = await repo.get_by_cluster(str(tenant.id), cluster.id)
-    statuses = {s.id: s.status for s in results}
-    assert statuses[suggestion_a.id] is SuggestionStatus.REJECTED
-    assert statuses[suggestion_b.id] is SuggestionStatus.REJECTED
+    assert len(results) == 0, "Rejected suggestions should not appear in pending results"
 
 
 @pytest.mark.asyncio

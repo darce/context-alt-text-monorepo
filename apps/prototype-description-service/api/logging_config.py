@@ -96,8 +96,10 @@ def configure_logging(level: str = "INFO") -> None:
     root.addHandler(console_handler)
 
     # File handler: detailed context with timestamps (skip during tests)
+    # Use WatchedFileHandler so external log rotation (make logs-rotate) works without restarting the server.
+    # WatchedFileHandler detects when the file is moved/rotated and reopens it automatically.
     if not is_test:
-        file_handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3)
+        file_handler = logging.handlers.WatchedFileHandler(LOG_FILE)
         file_handler.setLevel(getattr(logging, level.upper()))
         file_handler.setFormatter(ContextualFormatter("%(asctime)s %(levelname)s %(name)s - %(message)s"))
         file_handler.addFilter(recognition_filter)
@@ -121,8 +123,9 @@ def log_db_reset(message: str = "Database reset via reset_dev_db.sh") -> None:
     LOG_DIR.mkdir(exist_ok=True)
 
     # Create a dedicated handler that bypasses test detection
-    # since this is explicitly called from a shell script
-    handler = logging.handlers.RotatingFileHandler(LOG_FILE, maxBytes=5 * 1024 * 1024, backupCount=3)
+    # since this is explicitly called from a shell script.
+    # Use WatchedFileHandler for consistency with the main logger.
+    handler = logging.handlers.WatchedFileHandler(LOG_FILE)
     handler.setFormatter(logging.Formatter("%(asctime)s %(levelname)s %(name)s - %(message)s"))
 
     db_logger = logging.getLogger("db.reset")

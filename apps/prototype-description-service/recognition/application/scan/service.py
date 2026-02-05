@@ -239,6 +239,8 @@ class ScanService:
             old_row.pose_pitch = det.pose_pitch
             old_row.pose_yaw = det.pose_yaw
             old_row.pose_roll = det.pose_roll
+            if det.landmark_quality is not None:
+                old_row.quality_score = det.landmark_quality
             old_row.age = det.age
             old_row.gender = det.gender
             old_row.image_phash = det.image_phash
@@ -266,6 +268,7 @@ class ScanService:
                     pose_pitch=det.pose_pitch,
                     pose_yaw=det.pose_yaw,
                     pose_roll=det.pose_roll,
+                    quality_score=det.landmark_quality,
                     age=det.age,
                     gender=det.gender,
                     image_phash=det.image_phash,

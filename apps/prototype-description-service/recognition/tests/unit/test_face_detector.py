@@ -102,6 +102,7 @@ class TestInsightFaceFaceDetector:
         mock_face.pose = (5.0, -3.0, 1.0)
         mock_face.age = 30
         mock_face.gender = 1
+        mock_face.landmarks = np.array([[10.0, 12.0], [20.0, 18.0], [15.0, 25.0], [9.0, 30.0], [24.0, 33.0]])
         mock_adapter.detect_faces = AsyncMock(return_value=[mock_face])
 
         detector = InsightFaceFaceDetector(mock_adapter)
@@ -115,6 +116,8 @@ class TestInsightFaceFaceDetector:
         assert detections[0].pose_pitch == 5.0
         assert detections[0].age == 30
         assert detections[0].gender == 1
+        assert detections[0].landmark_quality is not None
+        assert 0.0 <= detections[0].landmark_quality <= 1.0
 
     @pytest.mark.asyncio
     async def test_fetches_url_sources(self) -> None:

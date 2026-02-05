@@ -22,6 +22,31 @@ class BboxResponse(BaseModel):
     h: int
 
 
+class FaceBoxResponse(BaseModel):
+    """Full bounding box response for face thumbnails."""
+
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+class ClusterMemberResponse(BaseModel):
+    """Cluster member with identity details for review panels.
+
+    Matches the frontend ClusterIdentity type with identity_id, media_id as int,
+    similarity, confidence, full bbox, and optional thumbnail_url.
+    """
+
+    identity_id: str
+    media_id: int
+    similarity: float
+    confidence: float
+    bbox: FaceBoxResponse
+    thumbnail_url: str | None = None
+    media_url: str | None = None
+
+
 class IdentityResponse(BaseModel):
     """Identity details returned from analysis."""
 
@@ -30,6 +55,7 @@ class IdentityResponse(BaseModel):
     media_id: str
     bbox: BboxResponse
     confidence: float
+    thumbnail_url: str | None = None
 
     @field_validator("id", "tenant_id", "media_id")
     @classmethod
@@ -105,11 +131,24 @@ class ClusterResponse(BaseModel):
     is_auto_label: bool
     identity_count: int
     representatives: list[RepresentativeResponse] = Field(default_factory=list)
+    suggested_label: str | None = None
+    suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
+    suggested_label_confidence: float | None = None
 
     @field_validator("id", "tenant_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
         return _validate_uuid(v)
+
+
+class OrphanRecoveryResponse(BaseModel):
+    """Summary of an orphan recovery run."""
+
+    orphans_found: int
+    recovered: int
+    suggested: int
+    rejected: int
+    clusters_created: int
 
 
 class SuggestionResponse(BaseModel):
@@ -121,8 +160,50 @@ class SuggestionResponse(BaseModel):
     rep_similarity: float
     member_similarity: float | None
     status: Literal["pending", "accepted", "rejected"]
+    cluster_label: str | None = None
+    cluster_identity_count: int | None = None
+    identity_media_id: int | None = None
+    identity_media_url: str | None = None
+    identity_thumbnail_url: str | None = None
+    identity_bbox: FaceBoxResponse | None = None
+    representative_media_id: int | None = None
+    representative_media_url: str | None = None
+    representative_thumbnail_url: str | None = None
+    representative_thumbnail_url: str | None = None
+    representative_bbox: FaceBoxResponse | None = None
+    suggested_label: str | None = None
+    suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
+    suggested_label_confidence: float | None = None
+    cluster_thumbnails: list[str] = Field(default_factory=list)
 
     @field_validator("id", "identity_id", "cluster_id")
+    @classmethod
+    def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class MergeSuggestionResponse(BaseModel):
+    """Merge suggestion details."""
+
+    id: str
+    cluster_a_id: str
+    cluster_b_id: str
+    similarity: float
+    status: Literal["pending", "accepted", "rejected"]
+    cluster_a_label: str | None = None
+    cluster_b_label: str | None = None
+    cluster_a_identity_count: int | None = None
+    cluster_b_identity_count: int | None = None
+    cluster_a_representative_media_id: int | None = None
+    cluster_a_representative_media_url: str | None = None
+    cluster_a_representative_thumbnail_url: str | None = None
+    cluster_a_representative_bbox: FaceBoxResponse | None = None
+    cluster_b_representative_media_id: int | None = None
+    cluster_b_representative_media_url: str | None = None
+    cluster_b_representative_thumbnail_url: str | None = None
+    cluster_b_representative_bbox: FaceBoxResponse | None = None
+
+    @field_validator("id", "cluster_a_id", "cluster_b_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
         return _validate_uuid(v)
@@ -154,6 +235,10 @@ class JobProgressResponse(BaseModel):
 
     completed: int
     total: int
+    phase: Literal["queued", "detecting", "clustering", "complete"] | None = None
+    images_processed: int | None = None
+    faces_found: int | None = None
+    clusters_created: int | None = None
 
 
 class JobStatusResponse(BaseModel):
@@ -287,5 +372,6 @@ __all__ = [
     "ReassignIdentityResponse",
     "RepresentativeResponse",
     "SplitClusterResponse",
+    "MergeSuggestionResponse",
     "SuggestionResponse",
 ]

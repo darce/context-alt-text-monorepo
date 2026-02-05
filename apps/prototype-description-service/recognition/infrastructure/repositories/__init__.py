@@ -8,6 +8,7 @@ from recognition.infrastructure.repositories.identity_cluster_block_repository i
 )
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.infrastructure.repositories.member_repository import SqlAlchemyMemberRepository
+from recognition.infrastructure.repositories.merge_suggestion_repository import SqlAlchemyMergeSuggestionRepository
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
 
@@ -17,6 +18,7 @@ __all__ = [
     "SqlAlchemyIdentityClusterBlockRepository",
     "SqlAlchemyMemberRepository",
     "SqlAlchemySuggestionRepository",
+    "SqlAlchemyMergeSuggestionRepository",
     "SqlAlchemyJobRepository",
     "SqlAlchemyApiKeyRepository",
     "SqlAlchemyScanQueueRepository",

@@ -4,6 +4,7 @@ Post-curation recompute job runner.
 
 from __future__ import annotations
 
+import contextlib
 import logging
 from collections.abc import Sequence
 
@@ -116,6 +117,17 @@ async def run_curation_job(
         logger.info("[curation_job] cleaning up merged source_cluster=%s", source_cluster_id)
         # Delete source cluster after recomputations are complete
         if cluster_repo:
+            merge_suggestion_service = (
+                getattr(cluster_service, "merge_suggestion_service", None) if cluster_service else None
+            )
+            delete_by_cluster = (
+                getattr(merge_suggestion_service, "delete_by_cluster", None) if merge_suggestion_service else None
+            )
+            if callable(delete_by_cluster):
+                with contextlib.suppress(Exception):
+                    await delete_by_cluster(tenant_id, source_cluster_id)
+                    if unique_cluster_ids:
+                        await delete_by_cluster(tenant_id, unique_cluster_ids[0])
             await cluster_repo.delete(source_cluster_id)
 
     return {

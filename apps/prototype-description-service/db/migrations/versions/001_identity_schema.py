@@ -981,7 +981,7 @@ def upgrade() -> None:
             END AS centroid,
             refreshed_at
         FROM cluster_embeddings
-        WHERE identity_count >= 2;
+        WHERE identity_count >= 1;
         """
     )
 

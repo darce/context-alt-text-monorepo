@@ -86,6 +86,7 @@ class MediaIdentity(Base):
 
 class IdentityCluster(Base):
     __tablename__ = "identity_clusters"
+    __allow_unmapped__ = True
 
     id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
     tenant_id: Mapped[uuid.UUID] = mapped_column(
@@ -144,6 +145,11 @@ class IdentityCluster(Base):
             postgresql_where=text("roster_id IS NOT NULL"),
         ),
     )
+
+    # Transient fields for API response population (not persisted)
+    suggested_label: str | None = None
+    suggested_label_source: str | None = None
+    suggested_label_confidence: float | None = None
 
 
 class ClusterCentroid(Base):

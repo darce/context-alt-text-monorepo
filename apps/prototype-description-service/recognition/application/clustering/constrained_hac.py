@@ -54,17 +54,24 @@ class ConstrainedHAC:
         self,
         tenant_id: UUID,
         embeddings: dict[UUID, np.ndarray],
+        *,
+        distance_threshold_override: float | None = None,
     ) -> dict[UUID, UUID]:
         """Apply HAC to embeddings with constraint penalties.
 
         Args:
             tenant_id: Tenant scope.
             embeddings: Map of identity ID -> embedding vector.
+            distance_threshold_override: If provided, use this threshold instead of settings.
 
         Returns:
             Map of identity ID -> new cluster ID (UUID).
         """
         if not embeddings:
+            return {}
+
+        # HAC requires at least 2 samples for pairwise distance computation
+        if len(embeddings) < 2:
             return {}
 
         ids = list(embeddings.keys())
@@ -90,7 +97,10 @@ class ConstrainedHAC:
         # Re-condense for linkage
         condensed_final = squareform(dist_matrix)
         linkage_matrix = linkage(condensed_final, method=self.settings.linkage_method)
-        labels = fcluster(linkage_matrix, t=self.settings.distance_threshold, criterion="distance")
+        threshold = (
+            distance_threshold_override if distance_threshold_override is not None else self.settings.distance_threshold
+        )
+        labels = fcluster(linkage_matrix, t=threshold, criterion="distance")
 
         # 4. Map labels to UUIDs
         # fcluster returns 1-based integers

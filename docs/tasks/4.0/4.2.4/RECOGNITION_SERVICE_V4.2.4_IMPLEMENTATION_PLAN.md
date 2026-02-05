@@ -7,6 +7,18 @@
 
 ---
 
+> **⚠️ POST-IMPLEMENTATION NOTE (February 2026)**
+>
+> This document is a **historical task tracker**. The following changes occurred after initial implementation:
+>
+> 1. **ChineseWhispersClustering removed** — HDBSCAN is now used for all batch sizes
+> 2. **MaturityCheck, CompleteLinkCheck, MemberDistributionCheck removed** — Assignment gate simplified to: `BlockCheck` → `ConstraintCheck` → `ConfidenceCheck`
+> 3. **UML diagrams moved** — Task-specific diagrams deleted; see `docs/agentic/diagrams/backend-uml/` for current architecture
+>
+> For current implementation state, see: `apps/prototype-description-service/recognition/application/assignment/gate.py`
+
+---
+
 ## Quick Navigation
 
 | Section                                                                        | Description                                                |
@@ -1639,9 +1651,9 @@ Below are the implementation details for each phase. The checklist above tracks 
 
 ### Phase 3 Details: Graph Algorithms & Deterministic Clustering
 
-> **Reference**: [ALGORITHM_EVALUATION.md](./ALGORITHM_EVALUATION.md) — HDBSCAN for ≤500, CW for >500  
+> **Reference**: [ALGORITHM_EVALUATION.md](./ALGORITHM_EVALUATION.md) — HDBSCAN (CW removed)  
 > **Reference**: [EMBEDDING_MODEL_EVALUATION.md](./EMBEDDING_MODEL_EVALUATION.md) — Face-only similarity enforcement  
-> **UML Reference**: `uml/class-diagram-recognition.mmd` lines 175-200 (GraphAlgorithm interface)
+> **Diagrams**: See `docs/agentic/diagrams/backend-uml/` for current architecture
 
 #### 3.1 HDBSCAN Implementation
 
@@ -1825,8 +1837,7 @@ def compute_face_similarity(a: np.ndarray, b: np.ndarray) -> float:
 
 **Goal**: Implement comprehensive logging and visualization for debugging and monitoring.
 
-> **UML Reference**: `uml/master_overview.mmd` — Observability Layer  
-> **UML Reference**: `uml/flowchart-assignment-gate.mmd` — Decision flow logging points
+> **Diagrams**: See `docs/agentic/diagrams/backend-uml/observability/` and `components/assignment-gate.mmd`
 
 #### 4.1 ClusteringLogger Implementation
 
@@ -2086,7 +2097,7 @@ async def cluster_unclustered_identities(self, tenant_id: str) -> ClusteringResu
 
 > **Dependency**: Requires Phase 5 repositories to wire real services.  
 > **Reference**: [recognition_service_api_plan.md](./recognition_service_api_plan.md) — Full API specification  
-> **UML Reference**: `uml/sequence-unified-assignment.mmd` — API → Service flow  
+> **Diagrams**: See `docs/agentic/diagrams/backend-uml/workflows/unified-assignment.mmd`  
 > **Contract**: All IDs use UUIDv7 internally, displayed as 22-char base64 in responses
 
 #### 6.1 Request/Response Schemas
@@ -2450,7 +2461,7 @@ app.include_router(suggestions.router, prefix="/recognition")
 **Goal**: Implement repository pattern for persisting cluster assignments to PostgreSQL using SQLAlchemy async.
 
 > **Critical Path**: Without this phase, clustering results are lost and API cannot wire real services.  
-> **UML Reference**: `uml/master_overview.mmd` — Infrastructure Layer  
+> **Diagrams**: See `docs/agentic/diagrams/backend-uml/persistence.mmd`  
 > **DB Reference**: `db/models.py` — Existing SQLAlchemy models
 
 #### 5.1 Repository Protocol Definitions

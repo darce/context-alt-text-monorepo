@@ -6,6 +6,18 @@
 
 ---
 
+> **⚠️ POST-IMPLEMENTATION NOTE (February 2026)**
+>
+> This document is a **historical evaluation**. Final implementation decisions:
+>
+> 1. **HDBSCAN selected** — Used for all batch sizes (not just ≤500)
+> 2. **Chinese Whispers removed** — Not implemented in final system
+> 3. **MaturityCheck, CompleteLinkCheck removed** — Simplified to `ConfidenceCheck` + `BlockCheck` + `ConstraintCheck`
+>
+> See `apps/prototype-description-service/recognition/infrastructure/clustering/hdbscan_adapter.py` for current implementation.
+
+---
+
 ## 🚨 CRITICAL BUG DISCOVERED: Metadata Dilution
 
 **Status**: FIXED in `centroid_utils.py` (December 1, 2025)

@@ -406,6 +406,19 @@ class SuggestionRefreshService:
         if self._session is None or self._cluster_repository is None:
             return 0
 
+        # Debug: try raw query
+        from sqlalchemy import text
+
+        raw_result = await self._session.execute(
+            text(f"SELECT id, label, user_confirmed FROM identity_clusters WHERE id = '{cluster_id}'")
+        )
+        raw_row = raw_result.fetchone()
+        logger.info(
+            "[suggestions] RAW SQL: cluster_id=%s raw_row=%s",
+            cluster_id,
+            raw_row,
+        )
+
         cluster = await self._cluster_repository.get_by_id(cluster_id)
         if not cluster or not cluster.user_confirmed or not cluster.label:
             logger.info(

@@ -290,8 +290,13 @@ class FakeSuggestionRefreshService:
         self.refresh_calls.append((cluster_id, "cluster_refresh"))
         return []
 
-    async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
-        self.refresh_calls.append((cluster_id, "surface_new_label"))
+    async def surface_for_newly_labeled_cluster(
+        self,
+        cluster_id: str,
+        *,
+        cluster_label: str | None = None,
+    ) -> int:
+        self.refresh_calls.append((cluster_id, "surface_new_label", cluster_label))
         return 0
 
 

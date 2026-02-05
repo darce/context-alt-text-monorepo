@@ -6,13 +6,18 @@ and that identity removal triggers recalibration.
 
 from __future__ import annotations
 
+import math
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
+import numpy as np
 import pytest
 
 from db.models import MediaIdentity as MediaIdentityModel
+from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories import SqlAlchemySuggestionRepository
 from recognition.interface_adapters.http import dependencies
 
@@ -161,3 +166,111 @@ async def test_identity_removal_triggers_suggestion_refresh(db_session, tenant) 
 
     # Verify mock was called with cluster ID
     mock_refresh.refresh_for_cluster.assert_awaited_with(cluster.id)
+
+
+@pytest.mark.asyncio
+async def test_background_surfacing_after_label_creates_suggestions(db_session, tenant) -> None:
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+
+    labeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+        )
+    )
+
+    rep_embedding = [0.0] * 512
+    rep_embedding[0] = 1.0
+    rep_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3001,
+        media_url="http://example.test/3001.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=120,
+        bbox_height=120,
+        confidence=0.99,
+        embedding=rep_embedding,
+    )
+    db_session.add(rep_identity)
+    await db_session.flush()
+    await member_repo.add_member(labeled_cluster.id, identity_id=str(rep_identity.id), similarity=0.9)
+
+    await cluster_repo.add_representative(
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=labeled_cluster.id,
+            identity_id=str(rep_identity.id),
+            embedding=np.asarray(rep_identity.embedding, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            tenant_id=str(tenant.id),
+        )
+    )
+
+    unlabeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+        )
+    )
+
+    match_component = math.sqrt(1.0 - 0.5**2)
+    candidate_embedding = [0.0] * 512
+    candidate_embedding[0] = 0.5
+    candidate_embedding[1] = match_component
+    candidate_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3002,
+        media_url="http://example.test/3002.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=48,
+        bbox_height=48,
+        confidence=0.5,
+        embedding=candidate_embedding,
+    )
+    db_session.add(candidate_identity)
+    await db_session.flush()
+    await member_repo.add_member(unlabeled_cluster.id, identity_id=str(candidate_identity.id), similarity=0.5)
+    await db_session.commit()
+
+    updated = await cluster_service.update_cluster(
+        labeled_cluster.id,
+        str(tenant.id),
+        label="Confirmed Label",
+        surface_suggestions=False,
+    )
+    assert updated is not None
+
+    @asynccontextmanager
+    async def _session_factory():
+        yield db_session
+
+    async def _builder(*, session, tenant_id):  # noqa: ANN001
+        return await dependencies.build_cluster_service(session=session, tenant_id=tenant_id)
+
+    await run_background_surface_suggestions(
+        str(tenant.id),
+        labeled_cluster.id,
+        "Confirmed Label",
+        session_factory=_session_factory,
+        cluster_service_builder=_builder,
+    )
+    await db_session.commit()
+
+    suggestions = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
+    assert any(
+        suggestion.identity_id == str(candidate_identity.id) and suggestion.cluster_id == labeled_cluster.id
+        for suggestion in suggestions
+    )

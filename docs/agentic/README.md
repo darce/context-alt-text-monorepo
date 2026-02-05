@@ -11,7 +11,8 @@ docs/agentic/
 ├── contracts/        # API contracts between services
 ├── diagrams/         # Architecture diagrams (Mermaid)
 ├── maps/             # Context maps (5-10 key files per domain)
-└── rules/            # Additional guidelines and patterns
+├── rules/            # Additional guidelines and patterns
+└── templates/        # Reusable templates (CURRENT_TASK.md, etc.)
 ```
 
 ## Quick Start for Agents
@@ -28,9 +29,11 @@ docs/agentic/
 | `diagrams/` | UML and architecture diagrams in Mermaid format |
 | `maps/` | Context maps with key entry points per domain |
 | `rules/` | Component patterns, UI guidelines |
+| `templates/` | Reusable templates for task tracking and documentation |
 
 ## Related
 
 - **Slash commands**: [.agent/workflows/](../../.agent/workflows/) — Executable workflows
 - **MCP server**: [scripts/mcp/unified_server.py](../../scripts/mcp/unified_server.py) — Code intelligence tools
 - **Active tasks**: [docs/tasks/](../tasks/) — Current implementation work
+- **Session state**: Use [templates/CURRENT_TASK.template.md](templates/CURRENT_TASK.template.md) for multi-session tasks

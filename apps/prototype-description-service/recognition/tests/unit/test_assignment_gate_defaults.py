@@ -90,6 +90,9 @@ class GateRepoStub(ClusterRepository):
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         return []
 
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
+        return []
+
     async def save_cluster(self, cluster):
         raise NotImplementedError
 

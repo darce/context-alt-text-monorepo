@@ -27,6 +27,15 @@ class JobType(str, Enum):
     SPLIT = "split"
 
 
+class JobPhase(str, Enum):
+    """High-level phase markers for progress reporting."""
+
+    QUEUED = "queued"
+    DETECTING = "detecting"
+    CLUSTERING = "clustering"
+    COMPLETE = "complete"
+
+
 class SplitJobPayload(BaseModel):
     """Payload for async split jobs.
 

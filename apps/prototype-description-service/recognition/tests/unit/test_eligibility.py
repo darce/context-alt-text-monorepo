@@ -27,24 +27,24 @@ def test_user_labeled_cluster_is_eligible() -> None:
     assert is_eligible_cluster(cluster, "tenant-1") is True
 
 
-def test_unlabeled_cluster_is_not_eligible() -> None:
+def test_unlabeled_cluster_is_eligible() -> None:
     cluster = SimpleNamespace(
         id="abc",
         tenant_id="tenant-1",
         label=None,
         user_confirmed=False,
     )
-    assert is_eligible_cluster(cluster, "tenant-1") is False
+    assert is_eligible_cluster(cluster, "tenant-1") is True
 
 
-def test_cluster_prefix_label_is_not_eligible() -> None:
+def test_cluster_prefix_label_is_eligible() -> None:
     cluster = SimpleNamespace(
         id="abc",
         tenant_id="tenant-1",
         label="cluster-abc123",
         user_confirmed=False,
     )
-    assert is_eligible_cluster(cluster, "tenant-1") is False
+    assert is_eligible_cluster(cluster, "tenant-1") is True
 
 
 def test_tenant_mismatch_is_not_eligible() -> None:

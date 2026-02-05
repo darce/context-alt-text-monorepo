@@ -5,10 +5,12 @@ from __future__ import annotations
 import uuid
 from dataclasses import dataclass
 from typing import Any, cast
+from unittest.mock import AsyncMock, Mock
 
 import numpy as np
 import pytest
 
+import recognition.application.orchestration.cluster_service as cluster_service_module
 from recognition.application.assignment import (
     AssignmentCandidate,
     AssignmentDecision,
@@ -199,6 +201,54 @@ class SessionStub:
     async def flush(self):
         return None
 
+    async def commit(self) -> None:
+        self.committed = True
+
+    async def rollback(self) -> None:
+        self.rolled_back = True
+
+
+@pytest.mark.asyncio
+async def test_cluster_unclustered_refreshes_centroids_before_merge_suggestions(monkeypatch) -> None:
+    """ClusterService should refresh centroids before generating merge suggestions."""
+    calls: list[str] = []
+
+    async def fake_cluster_unclustered_identities_op(**_kwargs):  # noqa: ANN001
+        return object()
+
+    monkeypatch.setattr(
+        cluster_service_module, "cluster_unclustered_identities_op", fake_cluster_unclustered_identities_op
+    )
+
+    async def _refresh_centroids_view() -> None:
+        calls.append("refresh")
+
+    async def _generate_for_tenant(_tenant_id: str) -> int:
+        calls.append("generate")
+        return 0
+
+    writer = Mock(spec=AssignmentWriter)
+    writer.refresh_centroids_view = AsyncMock(side_effect=_refresh_centroids_view)
+
+    merge_service = Mock()
+    merge_service.generate_for_tenant = AsyncMock(side_effect=_generate_for_tenant)
+
+    service = ClusterService(
+        gate=Mock(),
+        representative_discovery=Mock(),
+        centroid_discovery=Mock(),
+        graph_discovery=Mock(),
+        assignment_writer=writer,
+        suggestion_service=Mock(),
+        merge_suggestion_service=merge_service,
+        session=SessionStub(),
+        logger=None,
+    )
+
+    await service.cluster_unclustered_identities("tenant-1", commit=True)
+
+    assert calls == ["refresh", "generate"]
+
     async def commit(self):
         self.committed = True
 
@@ -220,6 +270,12 @@ async def test_cluster_unclustered_identities_skips_existing_cluster_fetch_when_
 
         async def get_by_tenant(self, tenant_id: str, *, limit: int = 100, offset: int = 0):
             self.called_with = tenant_id
+            return []
+
+        async def cleanup_orphaned_provisional_reps(self, *_args, **_kwargs) -> int:
+            return 0
+
+        async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
             return []
 
     cluster_repo = ClusterRepoStub()

@@ -52,6 +52,7 @@ from recognition.application.orchestration.incremental_clustering import (
     get_chunk_size as get_chunk_size_op,
 )
 from recognition.application.orchestration.protocols import (
+    MergeSuggestionServiceProtocol,
     SuggestionRefreshServiceProtocol,
     SuggestionServiceProtocol,
 )
@@ -59,7 +60,11 @@ from recognition.application.orchestration.split import split_cluster as split_c
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.application.settings.clustering import HACSettings
 from recognition.domain.cluster import IdentityCluster
-from recognition.domain.repositories import IdentityClusterBlockRepository, IdentityConstraintRepository
+from recognition.domain.repositories import (
+    ClusterRepository,
+    IdentityClusterBlockRepository,
+    IdentityConstraintRepository,
+)
 from recognition.observability import ClusteringLogger
 
 logger = logging.getLogger(__name__)
@@ -81,6 +86,7 @@ class ClusterService:
         assignment_writer: AssignmentWriter,
         suggestion_service: SuggestionServiceProtocol,
         suggestion_refresh_service: SuggestionRefreshServiceProtocol | None = None,
+        merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
         block_repository: IdentityClusterBlockRepository | None = None,
         constraint_repository: IdentityConstraintRepository | None = None,
         hac_settings: HACSettings | None = None,
@@ -97,6 +103,7 @@ class ClusterService:
         self.assignment_writer = assignment_writer
         self.suggestion_service = suggestion_service
         self.suggestion_refresh_service = suggestion_refresh_service
+        self.merge_suggestion_service = merge_suggestion_service
         self.block_repository = block_repository
         self.constraint_repository = constraint_repository
         self.logger = logger
@@ -118,6 +125,24 @@ class ClusterService:
             self.constrained_hac = None
             self.hac_settings = None
 
+    @property
+    def cluster_repository(self) -> ClusterRepository:
+        """Access the underlying cluster repository."""
+        return self.assignment_writer.cluster_repository
+
+    @property
+    def session(self) -> AsyncSession:
+        """Get the database session, raising if not configured.
+
+        Raises:
+            RuntimeError: If ClusterService was constructed without a session.
+        """
+        if self._session is None:
+            raise RuntimeError(
+                "ClusterService requires a database session for this operation. Pass session= to the constructor."
+            )
+        return self._session
+
     async def cluster_unclustered_identities(
         self,
         tenant_id: str,
@@ -127,25 +152,48 @@ class ClusterService:
         commit: bool = True,
     ):
         """Cluster any identities not yet assigned to a cluster."""
-        if self._session is None:
-            raise RuntimeError("cluster_unclustered_identities requires an active session")
-        session = self._session
-        return await cluster_unclustered_identities_op(
+        result = await cluster_unclustered_identities_op(
             tenant_id=tenant_id,
             job_id=job_id,
-            session=session,
+            session=self.session,  # Uses property with clear error
             gate=self.gate,
             representative_discovery=self.representative_discovery,
             centroid_discovery=self.centroid_discovery,
             graph_discovery=self.graph_discovery,
             assignment_writer=self.assignment_writer,
             suggestion_service=self.suggestion_service,
+            merge_suggestion_service=self.merge_suggestion_service,
             clustering_logger=self.logger,
             constrained_hac=self.constrained_hac,
             hac_settings=self.hac_settings,
             progress_callback=progress_callback,
             commit=commit,
         )
+
+        if commit and self.merge_suggestion_service is not None:
+            try:
+                await self.assignment_writer.refresh_centroids_view()
+                created = await self.merge_suggestion_service.generate_for_tenant(tenant_id)
+                singleton_created = 0
+                if self.constrained_hac and self.hac_settings:
+                    singleton_created = await self.merge_suggestion_service.generate_singleton_merge_suggestions(
+                        tenant_id,
+                        constrained_hac=self.constrained_hac,
+                        hac_settings=self.hac_settings,
+                    )
+                total_created = created + singleton_created
+                if total_created > 0:
+                    logger.info(
+                        "[merge_suggestions] queued=%d singleton_queued=%d tenant_id=%s",
+                        created,
+                        singleton_created,
+                        tenant_id,
+                    )
+                    await self.session.commit()
+            except Exception as exc:
+                logger.warning("[merge_suggestions] generation failed tenant_id=%s err=%s", tenant_id, exc)
+
+        return result
 
     @staticmethod
     def _get_chunk_size(total_processed: int) -> int:
@@ -162,7 +210,7 @@ class ClusterService:
         search: str | None = None,
     ):
         """Return clusters for a tenant using the persistence layer."""
-        return await list_clusters_op(
+        clusters = await list_clusters_op(
             cluster_repo=self.assignment_writer.cluster_repository,
             session=self._session,
             tenant_id=tenant_id,
@@ -172,6 +220,36 @@ class ClusterService:
             labeled_only=labeled_only,
             search=search,
         )
+
+        # Populate suggested_label fields for unlabeled clusters
+        # We attach these dynamically so Pydantic model_validate can pick them up
+        if not labeled_only:
+            from recognition.application.suggestions.label_inference import infer_suggested_label
+
+            for cluster in clusters:
+                if not cluster.label and self._session:
+                    try:
+                        suggestion = await infer_suggested_label(
+                            tenant_id=tenant_id, cluster_id=str(cluster.id), session=self._session
+                        )
+                        if suggestion:
+                            cluster.suggested_label = suggestion.label  # type: ignore[attr-defined]
+                            cluster.suggested_label_source = suggestion.source.value if suggestion.source else None  # type: ignore[attr-defined]
+                            cluster.suggested_label_confidence = suggestion.confidence  # type: ignore[attr-defined]
+                    except Exception as e:
+                        # Log error but don't break listing
+                        logger.warning("Failed to infer label for cluster %s: %s", cluster.id, e)
+
+        return clusters
+
+    async def get_cluster_members(self, cluster_id: str, tenant_id: str):
+        """Return all member identities for a cluster."""
+        # Ensure tenant ownership implicitly via repo RLS or explicit check?
+        # The repo methods usually filter by tenant if supported, but get_member_identities(cluster_id)
+        # assumes cluster_id is unique globally or we need to check tenant.
+        # But for now, we rely on the router to check tenant access before calling this.
+        # Ideally repo should check tenant.
+        return await self.cluster_repository.get_member_identities(cluster_id)
 
     async def update_cluster(
         self,
@@ -248,6 +326,7 @@ class ClusterService:
             assignment_writer=self.assignment_writer,
             suggestion_service=self.suggestion_service,
             gate=self.gate,
+            merge_suggestion_service=self.merge_suggestion_service,
             clustering_logger=self.logger,
             session=self._session,
             defer_recompute=defer_recompute,
@@ -291,6 +370,12 @@ class ClusterService:
         tenant_id_for_logging = getattr(self.assignment_writer.member_repository, "_tenant_id", None) or getattr(
             self.assignment_writer.member_repository, "tenant_id", None
         )
+
+        cluster_id = None
+        if self.suggestion_refresh_service:
+            # Capture cluster ID before removal so we can refresh suggestions for it
+            cluster_id = await self.get_identity_cluster_id(identity_id)
+
         media_id = None
         if self._session is not None:
             try:
@@ -301,7 +386,8 @@ class ClusterService:
                 model = await self._session.get(MediaIdentityModel, identity_uuid)
                 if model is not None:
                     media_id = int(model.media_id)
-        return await remove_identity_from_cluster_op(
+
+        result = await remove_identity_from_cluster_op(
             identity_id=identity_id,
             member_repo=self.assignment_writer.member_repository,
             cluster_repo=self.assignment_writer.cluster_repository,
@@ -312,6 +398,19 @@ class ClusterService:
             session=self._session,
             clustering_logger=self.logger,
         )
+
+        if result and cluster_id and self.suggestion_refresh_service:
+            try:
+                await self.suggestion_refresh_service.refresh_for_cluster(cluster_id)
+            except Exception as e:
+                logger.warning(
+                    "[curation] Failed to refresh suggestions after removing identity %s from cluster %s: %s",
+                    identity_id,
+                    cluster_id,
+                    e,
+                )
+
+        return result
 
     async def split_cluster(
         self,

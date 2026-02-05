@@ -29,6 +29,42 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+def _compute_detection_quality(
+    confidence: float,
+    pose_pitch: float | None,
+    pose_yaw: float | None,
+    pose_roll: float | None,
+    bbox: tuple[int, int, int, int],
+) -> float:
+    """Compute quality score from detection metrics.
+
+    Delegates to the canonical compute_identity_quality() to ensure consistency
+    between detection-time quality and clustering-time quality.
+
+    Args:
+        confidence: Detection confidence from the model (0-1).
+        pose_pitch: Head pitch angle in degrees (up/down).
+        pose_yaw: Head yaw angle in degrees (left/right).
+        pose_roll: Head roll angle in degrees (tilt).
+        bbox: Bounding box (x, y, width, height).
+
+    Returns:
+        Quality score in [0.0, 1.0]. Lower scores for extreme poses or low confidence.
+    """
+    # Import here to avoid circular dependency
+    from recognition.application.assignment.quality import compute_identity_quality
+
+    info = compute_identity_quality(
+        confidence=confidence,
+        pose_pitch=pose_pitch,
+        pose_yaw=pose_yaw,
+        pose_roll=pose_roll,
+        bbox_width=bbox[2],
+        bbox_height=bbox[3],
+    )
+    return info.score
+
+
 @dataclass
 class FaceDetection:
     """Detected face bounding box, confidence, and optional embedding for a media asset."""
@@ -44,6 +80,7 @@ class FaceDetection:
     age: int | None = None
     gender: int | None = None  # 0=female, 1=male
     image_phash: str | None = None
+    landmark_quality: float | None = None
 
 
 class FaceDetectorProtocol(ABC):
@@ -159,6 +196,20 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
             try:
                 faces = await self._adapter.detect_faces(image_bytes)
                 for face in faces:
+                    # Extract pose angles
+                    pose_pitch = face.pose[0] if face.pose else None
+                    pose_yaw = face.pose[1] if face.pose else None
+                    pose_roll = face.pose[2] if face.pose else None
+
+                    # Compute quality from detection metrics (confidence + pose + size)
+                    detection_quality = _compute_detection_quality(
+                        confidence=face.confidence,
+                        pose_pitch=pose_pitch,
+                        pose_yaw=pose_yaw,
+                        pose_roll=pose_roll,
+                        bbox=face.bbox,
+                    )
+
                     # Use the 512D face embedding directly (already unit normalized)
                     detections.append(
                         FaceDetection(
@@ -167,12 +218,13 @@ class InsightFaceFaceDetector(FaceDetectorProtocol):
                             confidence=face.confidence,
                             embedding=face.embedding_512,
                             # InsightFace metadata
-                            pose_pitch=face.pose[0] if face.pose else None,
-                            pose_yaw=face.pose[1] if face.pose else None,
-                            pose_roll=face.pose[2] if face.pose else None,
+                            pose_pitch=pose_pitch,
+                            pose_yaw=pose_yaw,
+                            pose_roll=pose_roll,
                             age=face.age,
                             gender=face.gender,
                             image_phash=image_phash,
+                            landmark_quality=detection_quality,
                         )
                     )
             except Exception as e:

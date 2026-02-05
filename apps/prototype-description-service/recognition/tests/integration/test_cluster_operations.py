@@ -207,10 +207,10 @@ async def test_create_cluster_for_identity_creates_labeled_cluster_with_member_a
 
 
 @pytest.mark.asyncio
-async def test_cluster_unclustered_identities_refreshes_centroids_between_chunks(
+async def test_cluster_unclustered_identities_refreshes_centroids_after_clustering(
     db_session, tenant, monkeypatch
 ) -> None:
-    """Chunked clustering should refresh centroids view so later chunks can use centroid discovery."""
+    """Clustering should refresh centroids before generating merge suggestions."""
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     assignment_writer = cluster_service.assignment_writer
 
@@ -243,9 +243,7 @@ async def test_cluster_unclustered_identities_refreshes_centroids_between_chunks
 
     await cluster_service.cluster_unclustered_identities(str(tenant.id))
 
-    # [Optimized] Sync refresh removed, so count should be 0.
-    # The scheduled background refresh handles this now.
-    assert refresh_calls["count"] == 0
+    assert refresh_calls["count"] == 1
 
 
 @pytest.mark.asyncio

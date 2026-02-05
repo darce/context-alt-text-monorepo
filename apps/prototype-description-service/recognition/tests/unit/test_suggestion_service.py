@@ -36,7 +36,7 @@ def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:
 
 
 @pytest.mark.asyncio
-async def test_create_skips_unlabeled_clusters() -> None:
+async def test_create_persists_for_unlabeled_clusters() -> None:
     tenant_id = "tenant-1"
     cluster_id = "cluster-1"
 
@@ -65,8 +65,8 @@ async def test_create_skips_unlabeled_clusters() -> None:
     service = SuggestionService(suggestion_repo, tenant_id=tenant_id, cluster_repository=cluster_repo)
     result = await service.create(_make_candidate(tenant_id, cluster_id))
 
-    assert result is None
-    suggestion_repo.create.assert_not_awaited()
+    assert result is suggestion_repo.create.return_value
+    suggestion_repo.create.assert_awaited_once()
 
 
 @pytest.mark.asyncio

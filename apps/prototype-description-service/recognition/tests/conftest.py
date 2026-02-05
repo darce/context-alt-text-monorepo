@@ -58,6 +58,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_clusters", Base.metadata),
             Table("identity_cluster_representatives", Base.metadata),
             Table("identity_members", Base.metadata),
+            Table("cluster_merge_suggestions", Base.metadata),
             Table("identity_cluster_blocks", Base.metadata),
             Table("identity_clustering_jobs", Base.metadata),
             Table("identity_scan_jobs", Base.metadata),
@@ -163,6 +164,9 @@ class FakeClusterRepository:
         return []
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
+        return []
+
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
         return []
 
     async def assign_identity_to_cluster(self, identity, cluster_id: str) -> None:  # noqa: ANN001

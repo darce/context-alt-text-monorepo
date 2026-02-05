@@ -29,6 +29,7 @@ from recognition.interface_adapters.http.dependencies import (
     get_job_repo,
     get_job_service_dependency,
     get_optional_session,
+    get_scan_queue_repo,
     get_scan_queue_service_factory,
     get_scan_queue_service_optional,
     get_shared_insightface_adapter,
@@ -136,7 +137,7 @@ async def analyze_media(
         )
 
         total = len(media_items)
-        progress = JobProgressResponse(completed=0, total=total)
+        progress = JobProgressResponse(completed=0, total=total, phase="queued", images_processed=0, faces_found=0)
         return JobStatusResponse(
             id=str(job_id),
             type=JobType.ANALYZE.value,
@@ -174,7 +175,12 @@ async def get_job_status(
     if job and hasattr(job, "status") and hasattr(job, "id"):
         if isinstance(job, JobStatusResponse):
             return job
-        return _job_to_response(job)
+        scan_repo = None
+        if session is not None:
+            from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+
+            scan_repo = SqlAlchemyScanQueueRepository(session)
+        return await _job_to_response(job, scan_repo=scan_repo)
 
     # Look up from database if we have a session
 
@@ -193,7 +199,10 @@ async def get_job_status(
         repo = SqlAlchemyJobRepository(session)
         domain_job = await repo.get(job_id)
         if domain_job:
-            return _job_to_response(domain_job)
+            from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+
+            scan_repo = SqlAlchemyScanQueueRepository(session)
+            return await _job_to_response(domain_job, scan_repo=scan_repo)
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -203,6 +212,7 @@ async def stream_job_progress(
     job_id: str,
     tenant_id: str = Header(alias="X-Tenant-ID"),
     job_repo=Depends(get_job_repo),
+    scan_repo=Depends(get_scan_queue_repo),
 ) -> EventSourceResponse:
     """Stream real-time job progress via SSE.
 
@@ -221,6 +231,7 @@ async def stream_job_progress(
         last_completed = -1
         last_emit = 0
         last_heartbeat = time.time()
+        last_phase: str | None = None
 
         try:
             while True:
@@ -230,17 +241,21 @@ async def stream_job_progress(
                     yield {"event": "error", "data": "Job not found"}
                     break
 
-                current_completed = job.progress_completed
-                total = job.progress_total
+                progress = await _job_to_response(job, scan_repo=scan_repo)
+                progress_payload = progress.progress.model_dump(exclude_none=True) if progress.progress else {}
                 job_status = job.status.value
+                current_completed = progress_payload.get("completed", job.progress_completed)
+                progress_payload.get("total", job.progress_total)
 
                 now = time.time()
                 # Yield if:
                 # 1. Progress changed
                 # 2. 500ms passed since last yield AND we have some progress
                 # 3. 15s passed (heartbeat)
+                phase = progress_payload.get("phase")
                 should_yield = (
                     current_completed != last_completed
+                    or phase != last_phase
                     or (now - last_emit > 0.5 and current_completed > 0)
                     or (now - last_heartbeat > 15)
                 )
@@ -250,20 +265,29 @@ async def stream_job_progress(
                         "event": "progress",
                         "data": json.dumps(
                             {
-                                "completed": current_completed,
-                                "total": total,
+                                "type": "scan_progress" if job.type is JobType.ANALYZE else "clustering_progress",
+                                "job_id": job.id,
                                 "status": job_status,
+                                **progress_payload,
                             }
                         ),
                     }
                     last_completed = current_completed
                     last_emit = now
                     last_heartbeat = now
+                    last_phase = phase
 
                 if job_status in ("completed", "failed"):
                     yield {
                         "event": "done",
-                        "data": json.dumps({"status": job_status}),
+                        "data": json.dumps(
+                            {
+                                "type": "scan_progress" if job.type is JobType.ANALYZE else "clustering_progress",
+                                "job_id": job.id,
+                                "status": job_status,
+                                **progress_payload,
+                            }
+                        ),
                     }
                     break
 
@@ -303,14 +327,17 @@ async def cancel_job(
             repo = SqlAlchemyJobRepository(session)
             domain_job = await repo.get(job_id)
             if domain_job:
-                return _job_to_response(domain_job)
+                from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
+
+                scan_repo = SqlAlchemyScanQueueRepository(session)
+                return await _job_to_response(domain_job, scan_repo=scan_repo)
         finally:
             if tenant_id and is_postgres(session):
                 with contextlib.suppress(Exception):
                     await clear_tenant_context(session)
 
     job = await job_service.cancel_job(job_id)
-    return _job_to_response(job)
+    return await _job_to_response(job)
 
 
 # _job_to_response is imported from job_utils for shared use across routers

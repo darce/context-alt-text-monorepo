@@ -114,3 +114,32 @@ def compute_member_similarities(member_vectors: Sequence[np.ndarray]) -> list[fl
         return []
     centroid = normalize_vector(np.mean(np.stack(member_vectors, axis=0), axis=0))
     return [float(np.dot(vec, centroid)) for vec in member_vectors]
+
+
+def validate_pairwise_similarities(
+    member_vectors: Sequence[np.ndarray],
+    min_similarity: float,
+) -> tuple[bool, float]:
+    """Validate that all pairs in a group meet minimum similarity threshold.
+
+    Args:
+        member_vectors: Sequence of embedding vectors for proposed cluster members.
+        min_similarity: Minimum cosine similarity required between all pairs.
+
+    Returns:
+        Tuple of (is_valid, minimum_pairwise_similarity).
+        - is_valid: True if all pairs meet the threshold (or there's only 1 member).
+        - minimum_pairwise_similarity: The lowest pairwise similarity found.
+    """
+    if len(member_vectors) <= 1:
+        return True, 1.0
+
+    min_sim = 1.0
+    for i in range(len(member_vectors)):
+        for j in range(i + 1, len(member_vectors)):
+            sim = float(np.dot(member_vectors[i], member_vectors[j]))
+            min_sim = min(min_sim, sim)
+            if sim < min_similarity:
+                return False, min_sim
+
+    return True, min_sim

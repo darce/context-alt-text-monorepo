@@ -46,13 +46,32 @@ async def run_background_surface_suggestions(
     cluster_service_builder: Callable[..., Awaitable[ClusterServiceProtocol]],
 ) -> None:
     """Surface suggestions for newly labeled clusters with a fresh session."""
+    import asyncio
+
+    # Small delay to ensure the main request's transaction has committed
+    await asyncio.sleep(0.5)
+    logger.info(
+        "[suggestions] Background surfacing starting for cluster_id=%s tenant_id=%s",
+        cluster_id,
+        tenant_id,
+    )
     try:
         async with session_factory() as session:
             cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
             refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
             surface_fn = getattr(refresh_service, "surface_for_newly_labeled_cluster", None)
             if callable(surface_fn):
-                await surface_fn(cluster_id)
+                surfaced = await surface_fn(cluster_id)
+                logger.info(
+                    "[suggestions] Background surfacing completed: cluster_id=%s surfaced=%d",
+                    cluster_id,
+                    surfaced,
+                )
+            else:
+                logger.warning(
+                    "[suggestions] Background surfacing: surface_fn not available for cluster_id=%s",
+                    cluster_id,
+                )
     except Exception as exc:
         logger.exception(
             "Background suggestion surfacing failed for cluster %s: %s",

@@ -45,11 +45,14 @@ from recognition.interface_adapters.http.schemas.requests import (
 from recognition.interface_adapters.http.schemas.responses import (
     AsyncSplitClusterResponse,
     ClusteringJobStatusResponse,
+    ClusterMemberResponse,
     ClusterResponse,
     CreateClusterForIdentityResponse,
+    FaceBoxResponse,
     JobProgressResponse,
     OrphanRecoveryResponse,
     ReassignIdentityResponse,
+    RepresentativeResponse,
     SplitClusterResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_label, validate_paging
@@ -162,7 +165,11 @@ async def get_top_unlabeled_clusters(
     limit: int = Query(10),
     repo=Depends(get_cluster_repository),
 ) -> list[ClusterResponse]:
-    """Fetch top unlabeled clusters by member count for bootstrapping suggestions."""
+    """Fetch top unlabeled clusters by member count for bootstrapping suggestions.
+
+    Includes cluster representatives with face thumbnails for display in the
+    suggestion panel.
+    """
     clusters = await repo.get_top_unlabeled(tenant_id, limit=limit)
     return [
         ClusterResponse(
@@ -173,8 +180,53 @@ async def get_top_unlabeled_clusters(
             is_auto_label=c.is_auto_label,
             identity_count=c.identity_count,
             user_confirmed=c.user_confirmed,
+            representatives=[
+                RepresentativeResponse(
+                    id=str(rep.id),
+                    media_id=rep.media_id or 0,
+                    is_pinned=rep.is_user_selected,
+                )
+                for rep in (c.representatives or [])
+            ],
         )
         for c in clusters
+    ]
+
+
+@router.get("/clusters/{cluster_id}/members", response_model=list[ClusterMemberResponse])
+async def list_cluster_members(
+    cluster_id: str,
+    tenant_id: str = Depends(get_tenant_id),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+) -> list[ClusterMemberResponse]:
+    """List all identities in a cluster with membership data.
+
+    Returns identity details combined with membership similarity scores,
+    formatted for the frontend ClusterReviewPanel.
+    """
+    validate_entity_id(cluster_id, field_name="cluster_id")
+    cluster_service = await cluster_service_builder(tenant_id)
+    cluster_repo = cluster_service.cluster_repository
+
+    # Get identities with their membership similarity in a single query
+    members_with_similarity = await cluster_repo.get_member_identities_with_similarity(cluster_id)
+
+    return [
+        ClusterMemberResponse(
+            identity_id=str(identity.id),
+            media_id=int(identity.media_id),
+            similarity=similarity,
+            confidence=float(identity.confidence),
+            bbox=FaceBoxResponse(
+                x=int(identity.bbox_x),
+                y=int(identity.bbox_y),
+                width=int(identity.bbox_width),
+                height=int(identity.bbox_height),
+            ),
+            thumbnail_url=identity.thumbnail_url,
+            media_url=identity.media_url,
+        )
+        for identity, similarity in members_with_similarity
     ]
 
 
@@ -435,7 +487,7 @@ async def reassign_identity(
         )
     else:
         # Remove from current cluster (make orphan)
-        await cluster_service.remove_identity_from_cluster(request.identity_id, recompute=False)
+        await cluster_service.remove_identity_from_cluster(request.identity_id, recompute=True)
         if source_cluster_id:
             if request.block_from_cluster:
                 block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=request.tenant_id)

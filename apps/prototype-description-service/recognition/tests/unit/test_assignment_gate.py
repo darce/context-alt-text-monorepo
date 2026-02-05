@@ -71,6 +71,9 @@ class NoopRepository(ClusterRepository):
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
+        raise NotImplementedError
+
     async def save_cluster(self, cluster):
         raise NotImplementedError
 

@@ -24,7 +24,7 @@ help:
 	@echo "  make mcp-stop     - Stop MCP server"
 	@echo "  make mcp-restart  - Restart MCP server"
 	@echo "  make mcp-status   - Check if MCP server is running"
-	@echo "  make mcp-run      - Run MCP server in foreground (debug)"
+	@echo "  make mcp-run      - Run MCP server in foreground
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all    - Run all checks (lint + types + tests)"
@@ -73,7 +73,7 @@ lint-all:
 	@cd apps/prototype-wp-alt-context && npm run lint --silent
 	@echo ""
 	@echo "=== Linting PHP (plugin) ==="
-	@cd apps/prototype-wp-alt-context && composer phpstan --quiet || true
+	@cd apps/prototype-wp-alt-context && composer cs-check || true
 	@echo ""
 	@echo "✅ Linting complete"
 

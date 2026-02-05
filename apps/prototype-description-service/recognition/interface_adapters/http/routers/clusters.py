@@ -239,6 +239,10 @@ async def update_cluster(
     session=Depends(get_session),
 ) -> ClusterResponse:
     """Update cluster label."""
+    import time as _time
+
+    _t_start = _time.perf_counter()
+
     label = validate_label(request.label)
     validate_entity_id(cluster_id, field_name="cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
@@ -257,7 +261,22 @@ async def update_cluster(
     )
     if not cluster:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+
+    _t_update_done = _time.perf_counter()
+    _logger.info(
+        "PATCH /clusters/%s: update completed in %.3fs, label='%s' was_user_confirmed=%s",
+        cluster_id,
+        _t_update_done - _t_start,
+        label,
+        was_user_confirmed,
+    )
+
     if label and not was_user_confirmed:
+        _logger.info(
+            "PATCH /clusters/%s: scheduling background suggestion surfacing for label='%s'",
+            cluster_id,
+            label,
+        )
         background_tasks.add_task(
             run_background_surface_suggestions,
             request.tenant_id,
@@ -266,6 +285,13 @@ async def update_cluster(
             session_factory=async_session_factory,
             cluster_service_builder=build_cluster_service,
         )
+
+    _t_response = _time.perf_counter()
+    _logger.info(
+        "PATCH /clusters/%s: returning response in %.3fs total",
+        cluster_id,
+        _t_response - _t_start,
+    )
     return cluster
 
 

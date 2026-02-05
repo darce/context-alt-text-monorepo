@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Any
 
@@ -66,6 +67,9 @@ class NoopRepository(ClusterRepository):
         raise NotImplementedError
 
     async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
+        raise NotImplementedError
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
         raise NotImplementedError
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:

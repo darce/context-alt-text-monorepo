@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from types import SimpleNamespace
 
@@ -295,8 +296,12 @@ class FakeSuggestionRefreshService:
         cluster_id: str,
         *,
         cluster_label: str | None = None,
+        candidate_cluster_ids: list[str] | None = None,
+        representatives_by_cluster: dict[str, list[object]] | None = None,
     ) -> int:
-        self.refresh_calls.append((cluster_id, "surface_new_label", cluster_label))
+        self.refresh_calls.append(
+            (cluster_id, "surface_new_label", cluster_label, candidate_cluster_ids, representatives_by_cluster)
+        )
         return 0
 
 
@@ -395,6 +400,9 @@ class FakeClusterRepository:
 
     async def get_members(self, cluster_id: str):
         return []
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]):
+        return {}
 
     async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
         return []

@@ -6,6 +6,18 @@
 
 ---
 
+> **⚠️ POST-IMPLEMENTATION NOTE (February 2026)**
+>
+> This document is a **historical evaluation**. Key implementation notes:
+>
+> 1. **Face-only similarity implemented** — `extract_face_embedding()` extracts first 512D for clustering
+> 2. **Chinese Whispers removed** — Only HDBSCAN is used for clustering
+> 3. **File paths may be stale** — See `recognition/shared/similarity.py` for current implementation
+>
+> See `apps/prototype-description-service/recognition/shared/similarity.py` for face-only extraction.
+
+---
+
 ## 🚨 CRITICAL BUG DISCOVERED: Metadata Dilution
 
 ### The Problem

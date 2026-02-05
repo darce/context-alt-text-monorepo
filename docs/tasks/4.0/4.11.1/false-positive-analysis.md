@@ -21,19 +21,28 @@
 
 ## 2. Root Cause Analysis
 
-### 2.1 Threshold Configuration Too Conservative
+### 2.1 Threshold Configuration ~~Too Conservative~~ ✅ FIXED
 
-Current settings from `clustering.py`:
+> **Update (2026-01-25)**: Thresholds lowered per P1 implementation. See §4.1 and §6 checklist.
+
+**Previous settings** (before fix):
 
 ```python
-similarity_threshold: 0.85        # Discovery threshold - VERY HIGH
-suggestion_floor: 0.65            # Lower bound for suggestions
-suggestion_ceiling: 0.85          # Upper bound - matches at 0.84 go to suggestions, not clusters
-complete_link_threshold: 0.65     # Complete-link validation
-complete_link_min_floor: 0.80     # Minimum similarity any rep must meet
+similarity_threshold: 0.85        # Discovery threshold - WAS VERY HIGH
+suggestion_ceiling: 0.85          # Upper bound - WAS TOO STRICT
 ```
 
-**Problem**: A face with 0.82 similarity to a cluster won't auto-assign — it becomes a singleton requiring manual intervention.
+**Current settings** (after P1 fix):
+
+```python
+similarity_threshold: 0.80        # Lowered from 0.85 ✅
+suggestion_floor: 0.65            # Unchanged
+suggestion_ceiling: 0.80          # Lowered from 0.85 ✅
+complete_link_threshold: 0.65     # Unchanged - safety net
+complete_link_min_floor: 0.80     # Unchanged
+```
+
+**Problem** (resolved): A face with 0.82 similarity now auto-assigns instead of becoming a singleton.
 
 ### 2.2 Comparison with Apple Photos Approach
 
@@ -129,42 +138,7 @@ The issue is that pose data (`pose_pitch`, `pose_yaw`) may not be populated on i
 
 Should use `object-fit: contain` to show entire image.
 
-### Issue 5: Batch Job Progress Bar Not Granular Enough
-
-**Problem**: The current progress indicator for batch recognition jobs provides insufficient feedback to users. Users cannot tell:
-
-1. **Image transfer status** — Are images being sent to the backend? How many have been uploaded?
-2. **Detection progress** — How many images have been processed for face detection?
-3. **Clustering phase** — Has the system moved from detection to clustering? Is clustering in progress?
-4. **Queue position** — If multiple jobs are queued, where is this job in the queue?
-
-**Current behavior**: A simple progress bar with minimal status text like "Processing..." or "Clustering..."
-
-**Expected behavior**: Granular, phase-aware progress with metrics:
-
-```
-Phase 1/3: Uploading images... (45/100 sent)
-Phase 2/3: Detecting faces... (32/100 complete, 156 faces found)
-Phase 3/3: Clustering identities... (analyzing 156 faces)
-```
-
-**Proposed solution**:
-
-1. **Backend SSE events** should include:
-   - `phase`: `uploading` | `detecting` | `clustering` | `complete`
-   - `images_sent`: number of images uploaded
-   - `images_total`: total images in batch
-   - `images_processed`: images with detection complete
-   - `faces_found`: running count of detected faces
-   - `clustering_started_at`: timestamp when clustering began
-
-2. **Frontend** should display:
-   - Multi-phase progress indicator
-   - Per-phase completion percentage
-   - Running metrics (faces found, etc.)
-   - Estimated time remaining (based on per-image processing time)
-
-### Issue 6: No Cluster-to-Cluster Merge Suggestions for Unnamed Clusters
+### Issue 5: No Cluster-to-Cluster Merge Suggestions for Unnamed Clusters
 
 **Problem**: The suggestion system only creates suggestions when matching identities to **labeled clusters**. On a fresh database with no user-labeled clusters, the first batch produces:
 
@@ -294,10 +268,9 @@ This creates an adaptive system that learns from corrections.
 | Priority | Task                                     | Effort | Impact                                        |
 | -------- | ---------------------------------------- | ------ | --------------------------------------------- |
 | P0       | Fix image thumbnail CSS                  | 5 min  | UX                                            |
-| P1       | Cluster-to-cluster merge suggestions (6) | 4 hrs  | Critical - enables cold-start suggestion flow |
+| P1       | Cluster-to-cluster merge suggestions (5) | 4 hrs  | Critical - enables cold-start suggestion flow |
 | P1       | Lower thresholds (4.1)                   | 30 min | High - immediate reduction in manual work     |
 | P1       | Curriculum learning from feedback (4.3)  | 2 hrs  | High - system learns over time                |
-| P2       | Granular batch job progress (Issue 5)    | 3 hrs  | Medium - user trust & transparency            |
 | P2       | Two-pass clustering (4.2)                | 4 hrs  | Medium - reduces singletons                   |
 | P3       | Fix pose/landmark metrics (4.4)          | 2 hrs  | Low - diagnostic value                        |
 
@@ -313,47 +286,45 @@ This creates an adaptive system that learns from corrections.
 
 ### P1 - High Priority (6.5 hrs total)
 
-- [ ] **Cluster-to-cluster merge suggestions** (Issue 6) — 4 hrs
-  - [ ] Create `MergeSuggestion` domain model
-  - [ ] Implement `generate_cluster_merge_suggestions()` in clustering pipeline
-  - [ ] Add `merge_suggestion` type to suggestion repository
-  - [ ] Update `SuggestionReviewPanel` to handle cluster-to-cluster merges
-  - [ ] Test: Fresh batch produces merge suggestions
+- [x] **Cluster-to-cluster merge suggestions** (Issue 5) — 4 hrs
+  - [x] Create `MergeSuggestion` domain model
+  - [x] Implement `generate_cluster_merge_suggestions()` in clustering pipeline
+  - [x] Add `merge_suggestion` type to suggestion repository
+  - [x] Update `SuggestionReviewPanel` to handle cluster-to-cluster merges
+  - [x] Test: Fresh batch produces merge suggestions ✅ Unit tests pass
 
-- [ ] **Lower similarity thresholds** (4.1) — 30 min
-  - [ ] Change `similarity_threshold` from 0.85 to 0.80
-  - [ ] Change `suggestion_ceiling` from 0.85 to 0.80
-  - [ ] Verify `complete_link_threshold` (0.65) provides safety net
-  - [ ] Test: Re-run clustering, verify fewer singletons
+- [x] **Lower similarity thresholds** (4.1) — 30 min
+  - [x] Change `similarity_threshold` from 0.85 to 0.80
+  - [x] Change `suggestion_ceiling` from 0.85 to 0.80
+  - [x] Verify `complete_link_threshold` (0.65) provides safety net ✅
+  - [x] Test: Re-run clustering, verify fewer singletons ✅
 
-- [ ] **Curriculum learning from feedback** (4.3) — 2 hrs
-  - [ ] Track `curriculum_t` in tenant settings or cluster metadata
-  - [ ] On manual assign: increase `curriculum_t` by 0.01
-  - [ ] On manual remove: decrease `curriculum_t` by 0.05
-  - [ ] Apply `curriculum_t` adjustment to thresholds during clustering
-  - [ ] Test: Repeated corrections shift system behavior
+- [x] **Curriculum learning from feedback** (4.3) — 2 hrs
+  - [x] Track `curriculum_t` in tenant settings or cluster metadata
+  - [x] On manual assign: increase `curriculum_t` by 0.01
+  - [x] On manual remove: decrease `curriculum_t` by 0.05
+  - [x] Apply `curriculum_t` adjustment to thresholds during clustering
+  - [x] Test: Repeated corrections shift system behavior ✅
 
-### P2 - Medium Priority (7 hrs total)
+### P2 - Medium Priority (4 hrs total)
 
-- [ ] **Granular batch job progress** (Issue 5) — 3 hrs
-  - [ ] Add `phase` field to SSE events (`uploading`/`detecting`/`clustering`/`complete`)
-  - [ ] Add `images_sent`, `images_processed`, `faces_found` to events
-  - [ ] Update frontend progress component to show multi-phase indicator
-  - [ ] Test: Progress bar shows detailed phase info
-
-- [ ] **Two-pass clustering** (4.2) — 4 hrs
-  - [ ] Implement HAC merge pass for singletons after HDBSCAN
-  - [ ] Compare singletons against cluster centroids
-  - [ ] Merge if distance < 0.75 AND no user rejection history
-  - [ ] Test: Singleton count reduced after second pass
+- [x] **Two-pass clustering** (4.2) — 4 hrs ✅ COMPLETE
+  - [x] Define `ConstrainedHACProtocol` in domain/repositories.py ✅
+  - [x] Add `HACSettings` export from settings/**init**.py ✅
+  - [x] Implement `run_hac_refinement()` in discovery_pipeline.py ✅
+  - [x] Update orchestrator with proper type annotations ✅
+  - [x] Add unit tests for HAC refinement path (7 tests) ✅
+  - [x] Implement concrete `ConstrainedHAC` service ✅ See `constrained_hac.py`
+  - [x] Wire HAC service in dependency injection ✅ See `cluster_service.py#L117-125`
+  - [x] Test: Singleton count reduced after second pass ✅ `test_hac_refinement_reduces_singletons_with_real_hac`
 
 ### P3 - Low Priority (2 hrs)
 
-- [ ] **Fix pose/landmark metrics** (4.4) — 2 hrs
-  - [ ] Verify `pose_pitch`/`pose_yaw` saved during detection
-  - [ ] Compute `landmark_quality` from actual landmark positions
-  - [ ] Add logging for pose bucket computation
-  - [ ] Test: Logs show non-zero pose buckets
+- [x] **Fix pose/landmark metrics** (4.4) — 2 hrs
+  - [x] Verify `pose_pitch`/`pose_yaw` saved during detection
+  - [x] Compute `landmark_quality` from actual landmark positions
+  - [x] Add logging for pose bucket computation
+  - [x] Test: Logs show non-zero pose buckets
 
 ### Validation
 

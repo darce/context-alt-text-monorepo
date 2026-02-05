@@ -53,7 +53,10 @@ recognition/
 ## Key Diagrams
 
 - [agent-quick-start.mmd](../diagrams/backend-uml/agent-quick-start.mmd) — Endpoint → Service → Repo routing
-- [workflows/complete-workflow.mmd](../diagrams/backend-uml/workflows/complete-workflow.mmd) — End-to-end flow
+- [hexagonal-map.mmd](../diagrams/backend-uml/hexagonal-map.mmd) — Directory-to-layer map
+- [workflows/recognize_faces.mmd](../diagrams/backend-uml/workflows/recognize_faces.mmd) — Analyze + scan queue processing
+- [workflows/image-to-cluster-happy-path.mmd](../diagrams/backend-uml/workflows/image-to-cluster-happy-path.mmd) — Happy path summary (image -> cluster)
+- [workflows/unified-assignment.mmd](../diagrams/backend-uml/workflows/unified-assignment.mmd) — Discovery + assignment gate flow
 - [domain/identity_domain.mmd](../diagrams/backend-uml/domain/identity_domain.mmd) — Core entity relationships
 
 ## Common Tasks

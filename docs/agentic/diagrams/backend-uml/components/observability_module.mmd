@@ -59,10 +59,12 @@ classDiagram
         RENAME
         MERGE
         SPLIT
+        ASSIGN_OUTLIER
+        REMOVE_MEMBER
     }
 
     class RecognitionRunContext {
-        +add_event(event_type, identity_id?, cluster_id?, payload?)
+        +add_event(event_type, identity_id?, cluster_id?, source_cluster_id?, target_cluster_id?, payload?)
     }
 
     class ObservabilityRepository {
@@ -89,3 +91,5 @@ classDiagram
 
     note for ClusteringLogger "Legend: ENTRY = external entrypoint; Dashed arrow = optional wiring."
     note for ObservabilityRepository "Code anchors: recognition/observability/logging.py; recognition/observability/persistence.py; recognition/observability/reports.py; recognition/observability/recognition_runs.py"
+    note for ClusteringLogger "Layer: observability (recognition/observability/*)"
+    note for ObservabilityRepository "Layer: observability persistence (db/models/observability.py)"

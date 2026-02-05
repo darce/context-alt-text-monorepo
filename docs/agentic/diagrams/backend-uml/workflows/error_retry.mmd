@@ -2,11 +2,13 @@
 title: Scan Job Error Path
 ---
 sequenceDiagram
-    participant Client as WordPress Plugin
+    participant Client as HTTP Client
     participant API as /recognition/analyze
     participant Queue as ScanQueueService
+    participant BG as BackgroundTasks (chain_populate_and_process)
     participant Worker as scan_worker.py
     participant ScanSvc as ScanService
+    participant JobRepo as JobRepository
     participant DB as PostgreSQL
     participant Logger as Logging
 
@@ -15,7 +17,10 @@ sequenceDiagram
 
     Client->>API: ENTRY: POST /recognition/analyze
     API->>Queue: create_scan_job_record()
-    Queue->>DB: INSERT identity_scan_jobs + identity_scan_job_items
+    Queue->>DB: INSERT identity_scan_jobs
+    API->>BG: add_task(chain_populate_and_process, job_id, media_items)
+    BG->>Queue: populate_scan_job_items_async(job_id, media_items)
+    Queue->>DB: INSERT identity_scan_job_items
     API-->>Client: 202 accepted {job_id}
 
     Worker->>DB: claim pending IdentityScanJobItem
@@ -37,6 +42,6 @@ sequenceDiagram
     end
 
     Client->>API: GET /recognition/jobs/{job_id}
-    API->>Queue: get job status
-    Queue->>DB: SELECT identity_scan_jobs
+    API->>JobRepo: get(job_id)
+    JobRepo->>DB: SELECT identity_scan_jobs
     API-->>Client: {status, progress, message}

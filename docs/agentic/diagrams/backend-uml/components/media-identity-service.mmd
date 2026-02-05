@@ -1,0 +1,69 @@
+flowchart TB
+    %% =======================================================================
+    %% MEDIA IDENTITY SERVICE: Query identities by media
+    %% Layer: interface_adapters (recognition/interface_adapters/http/deps/stores.py)
+    %% Note: This is a lightweight HTTP-layer service, not an application service
+    %% =======================================================================
+
+    subgraph Legend["Legend"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendNote["Note: MediaIdentityService lives in HTTP deps layer"]
+    end
+
+    subgraph HTTP["HTTP Boundary"]
+        GetIdentities["ENTRY: GET /recognition/media/{media_id}/identities\nGet faces detected in media"]
+        GetBatch["ENTRY: POST /recognition/media/identities\nBatch query by media_ids"]
+    end
+
+    subgraph MediaSvc["MediaIdentityService"]
+        direction TB
+        ListByMediaIds["list_by_media_ids(tenant_id, media_ids)\nFetch identities with cluster info"]
+        IncludeDebug["include_debug=true\nAdd pose buckets, rep counts"]
+    end
+
+    subgraph Query["Query Composition"]
+        direction TB
+        JoinMembers["LEFT JOIN identity_members\nGet cluster assignment"]
+        JoinClusters["LEFT JOIN identity_clusters\nGet label + user_confirmed"]
+        JoinReps["LEFT JOIN identity_cluster_representatives\nGet pose diversity stats"]
+    end
+
+    subgraph Response["Response Shape"]
+        direction TB
+        IdentityPayload["{\n  identity_id, media_id,\n  cluster_id, cluster_label,\n  is_auto_label,\n  bbox: {x, y, width, height},\n  confidence, quality_score\n}"]
+        DebugPayload["+ debug: {\n  pose_pitch, pose_yaw,\n  rep_count, bucket_count,\n  max_buckets\n}"]
+    end
+
+    subgraph DB["PostgreSQL + pgvector"]
+        IdentitiesTable["media_identities"]
+        MembersTable["identity_members"]
+        ClustersTable["identity_clusters"]
+        RepsTable["identity_cluster_representatives"]
+    end
+
+    %% HTTP -> Service
+    GetIdentities --> ListByMediaIds
+    GetBatch --> ListByMediaIds
+
+    %% Service -> Query
+    ListByMediaIds --> JoinMembers
+    JoinMembers --> IdentitiesTable
+    JoinMembers --> MembersTable
+    JoinMembers --> JoinClusters --> ClustersTable
+    IncludeDebug --> JoinReps --> RepsTable
+
+    %% Query -> Response
+    JoinClusters --> IdentityPayload
+    JoinReps --> DebugPayload
+
+    CodeAnchors["Code anchors:\nrecognition/interface_adapters/http/deps/stores.py:158\nrecognition/interface_adapters/http/routers/media.py"]
+    MediaSvc -.-> CodeAnchors
+
+    LayerNote["Layer: interface_adapters/http/deps\nThis is a query-focused HTTP dependency,\nnot an application service.\nConsider moving to application layer\nif business logic grows."]
+    MediaSvc -.-> LayerNote
+
+    %% Styling
+    style MediaSvc fill:#fce4ec,stroke:#c2185b,color:#880e4f
+    style Query fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style Response fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20

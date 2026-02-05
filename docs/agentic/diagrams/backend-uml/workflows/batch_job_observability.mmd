@@ -10,7 +10,7 @@ sequenceDiagram
     participant DB as PostgreSQL
     
     Note over Job,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
-    Note over Job,DB: Mini-map: ClusterService.cluster_unclustered_identities -> ClusteringLogger -> ObservabilityRepository, Code: recognition/application/orchestration/incremental_clustering.py | recognition/observability/logging.py | recognition/observability/persistence.py
+    Note over Job,DB: Mini-map: ClusterService.cluster_unclustered_identities -> ClusteringLogger -> ObservabilityRepository, Code: recognition/application/orchestration/clustering/orchestrator.py | recognition/observability/logging.py | recognition/observability/persistence.py
     
     %% Job Start
     Job->>Run: create_recognition_run()

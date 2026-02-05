@@ -11,7 +11,9 @@ flowchart TB
     subgraph api["FastAPI Surface (api/main.py)"]
         app_factory["create_app()"]
         routers["ENTRY: /recognition/* routers<br/>analyze, clusters, suggestions,<br/>media, diagnostics, events, health"]
-        auth_deps["Auth + tenant deps<br/>require_auth, get_tenant_id"]
+        sse_clusters["ENTRY: /recognition/clusters/events (SSE)"]
+        sse_jobs["ENTRY: /recognition/jobs/{id}/stream (SSE)"]
+        auth_deps["Auth + tenant deps<br/>require_auth, get_tenant_id, X-API-Key"]
     end
 
     subgraph services["Application Services"]
@@ -35,6 +37,12 @@ flowchart TB
         writer["AssignmentWriter"]
     end
 
+    subgraph realtime["Realtime + Observability"]
+        broadcaster["EventBroadcaster"]
+        clustering_logger["ClusteringLogger"]
+        obs_repo["ObservabilityRepository"]
+    end
+
     subgraph worker["Async Scan Worker"]
         scan_worker["scan_worker.py"]
         scan_service["ScanService"]
@@ -53,6 +61,8 @@ flowchart TB
     %% API wiring
     app_factory --> routers
     routers --> auth_deps
+    routers --> sse_clusters
+    routers --> sse_jobs
     routers --> scan_queue
     routers --> cluster_service
     routers --> suggestion_service
@@ -70,10 +80,13 @@ flowchart TB
     gate --> checks
     gate --> writer
     cluster_service --> suggestion_service
+    cluster_service --> clustering_logger
+    cluster_service -.-> broadcaster
 
     %% Worker pipeline
     scan_worker --> scan_queue
     scan_worker --> scan_service
+    scan_worker -.-> cluster_service
     scan_service --> detector
     scan_service --> generator
     detector --> insightface
@@ -87,10 +100,14 @@ flowchart TB
     media_service --> repos
     writer --> repos
     repos --> async_session --> postgres
+    clustering_logger -.-> obs_repo
+    obs_repo --> repos
 
     settings --> gate
     settings --> cluster_service
     settings --> writer
+    sse_clusters --> broadcaster
+    sse_jobs -.-> repos
 
     RouterCode["Code anchors:\napps/prototype-description-service/api/main.py\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/services.py\nrecognition/infrastructure/repositories/*"]
     routers -.-> RouterCode

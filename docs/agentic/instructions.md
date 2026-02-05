@@ -87,6 +87,58 @@ If a task seems to require external changes, STOP and propose an alternative wit
 
 Delete-over-flag is the default. Re-introduce features behind tests only when truly needed.
 
+### Consolidated Checklists in Task Documents
+
+All task/planning documents MUST consolidate checklists at the **bottom** of the document.
+
+**Why:**
+
+- Prevents checklist sprawl across sections
+- Single source of truth for progress tracking
+- Easier to scan completion status
+- Agents can read checklist state without parsing entire document
+
+**Structure:**
+
+```markdown
+# Task Document Title
+
+## Problem Statement
+
+(narrative content)
+
+## Proposed Solution
+
+(narrative content, code examples, diagrams)
+
+## Related Files
+
+(reference table)
+
+---
+
+# Consolidated Checklist
+
+## Phase 0: Scaffolding
+
+- [ ] Scaffold item 1
+- [ ] Scaffold item 2
+
+## Phase N: [Description]
+
+- [ ] Task 1
+- [ ] Task 2
+
+## Success Criteria
+
+- [ ] Criterion 1
+- [ ] Criterion 2
+```
+
+**Do NOT include time estimates** on phases. They are difficult to calculate accurately and add no value to implementation.
+
+**Enforcement:** Do not scatter `- [ ]` items throughout narrative sections. Move all to consolidated checklist.
+
 ### Naming Convention: acx\_\* Prefix
 
 > [!WARNING]
@@ -121,23 +173,39 @@ Delete-over-flag is the default. Re-introduce features behind tests only when tr
 - Add function/method signatures with complete type hints
 - Write comprehensive docstrings (Args, Returns, Raises, Examples)
 - Use `raise NotImplementedError("TODO: ...")` as initial body
-- Commit after scaffolding each class/function
+- **Verify scaffolds compile/type-check** before moving to implementation
+- Test scaffolding is required first: create test files, fixtures, and failing test stubs before any implementation
 
 **This applies to ALL new code**:
 
 - Backend: Python functions, classes, methods
 - Frontend: TypeScript functions, React components, hooks
 - Tests: Test function signatures and fixtures
+- Cross-layer contracts: Define API schemas in `docs/agentic/contracts/` before implementing endpoints
 
-**Why scaffolding first?**
+**Why scaffolding first? (Agentic Coding Rationale)**
 
-- Defines clear contracts before implementation details
-- Enables test-writing without implementation dependencies
-- Creates reviewable architecture (review signatures before logic)
-- Supports parallel development (multiple devs working on different functions)
-- Provides early feedback on API design
+| Benefit                        | Why It Matters for Agents                                                                                                                        |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Prevents context rot**       | Agent context windows are finite. Scaffolding while problem is fresh ensures contracts are defined before 50+ implementation files dilute focus. |
+| **Cheap reversibility**        | Changing a signature costs ~10 tokens; changing an implementation costs ~500. Get the API right first.                                           |
+| **Token-efficient references** | Agents can reference `ClusterService.merge()` signature without re-reading 200-line implementation.                                              |
+| **Parallel work enablement**   | Human can review API design in PR while agent implements. Multiple agents can work on different implementations once interfaces exist.           |
+| **Incremental verification**   | `mypy`/`tsc` on scaffolds catches type mismatches before implementation obscures them.                                                           |
+| **Cross-layer contracts**      | In monorepos (PHP↔Python↔TS), scaffolding both sides of an API boundary prevents integration drift.                                              |
 
-**Enforcement**: Task checklists MUST include a "Phase 0: Scaffolding" section that is completed before implementation phases.
+**Scaffolding Checklist (Definition of Done)**
+
+A scaffold is complete when:
+
+- [ ] All public function/method signatures exist with full type hints
+- [ ] Docstrings describe Args, Returns, Raises (no implementation details)
+- [ ] Bodies contain only `raise NotImplementedError("TODO: <specific task>")`
+- [ ] `PYENV_VERSION=description-service mypy .` from `apps/prototype-description-service/` (or `PYENV_VERSION=description-service mypy --config-file apps/prototype-description-service/pyproject.toml apps/prototype-description-service` from repo root) or `npm run type-check` (TS) passes with zero errors
+- [ ] Test file exists with `@pytest.mark.skip("scaffold")` or `it.todo()` stubs
+- [ ] Cross-layer contracts (if any) are documented in `docs/agentic/contracts/`
+
+**Enforcement**: Task checklists MUST include a "Phase 0: Scaffolding" section that is completed and verified before implementation phases begin.
 
 ### 3. Small Vertical Slices
 
@@ -444,7 +512,7 @@ make install  # Faster, skips insightface
 ruff check .              # Lint (pycodestyle, pyflakes, isort, bugbear, etc.)
 ruff format .             # Format (replaces black)
 ruff check --fix .        # Auto-fix safe issues
-mypy .                    # Type checking
+PYENV_VERSION=description-service mypy .  # Type checking (run from apps/prototype-description-service/)
 ```
 
 **Async Patterns:**
@@ -1096,6 +1164,70 @@ $clean_array = array_map('absint', $_POST['ids']);
 - Task breakdowns in `docs/tasks/{version}/`
 - Roadmaps in `docs/roadmaps/`
 
+### Implementation Plan Requirements
+
+All implementation plans in `docs/tasks/` MUST include:
+
+1. **Problem Statement** — What user-visible behavior needs to change
+2. **Current State Analysis** — What works, what's broken, what's missing
+3. **Patterns to Follow** — Code snippets showing the pattern to implement
+4. **Functions to Change** — Table with file paths, line numbers, and specific changes
+5. **Related Files** — Complete list of files that will be touched
+6. **Consolidated Task Checklist** — Phased checkboxes with time estimates:
+   - `### Completed` — Already done items
+   - `### Phase N: Description (~X min)` — Grouped by logical phase
+   - `### Stretch Goals` — Nice-to-haves that won't block completion
+
+**Example structure:**
+
+````markdown
+## Patterns to Follow
+
+### Backend: Repository Method Pattern
+
+```python
+# 1. Add method to Protocol
+# 2. Implement in SqlAlchemy adapter
+# 3. Add to Fake for tests
+```
+````
+
+## Functions to Change
+
+| File                                 | Line | Change                         |
+| ------------------------------------ | ---- | ------------------------------ |
+| `recognition/domain/repositories.py` | -    | Add `new_method()` to Protocol |
+| `recognition/infrastructure/...`     | ~50  | Implement `new_method()`       |
+
+## Consolidated Task Checklist
+
+### Completed
+
+- [x] Analyze current state
+
+### Phase 1: Scaffolding (~10 min)
+
+- [ ] Add method signature to Protocol
+- [ ] Add NotImplementedError stub
+
+### Phase 2: Implementation (~20 min)
+
+- [ ] Implement SqlAlchemy version
+- [ ] Implement Fake version
+
+### Phase 3: Tests (~15 min)
+
+- [ ] Unit test for happy path
+- [ ] Unit test for edge cases
+
+````
+
+**Why this structure?**
+- Enables incremental progress with clear checkpoints
+- Supports handoff between sessions
+- Makes time estimates visible for planning
+- Separates "must do" from "nice to have"
+
 ### Mermaid Diagrams
 
 - **`.mmd` files: raw Mermaid syntax only — NO code fences (` ```mermaid `)** — fencing breaks rendering
@@ -1136,7 +1268,7 @@ npm run lint         # ESLint + type check
 # Backend (Python) - run from apps/prototype-description-service/
 pyenv shell description-service  # Activate virtualenv
 pytest                           # Run tests
-mypy .                           # Type checking
+PYENV_VERSION=description-service mypy .  # Type checking (run from apps/prototype-description-service/)
 ruff check .                     # Linting (replaces flake8)
 ruff format .                    # Formatting (replaces black)
 ruff check --fix .               # Auto-fix linting issues
@@ -1145,7 +1277,7 @@ ruff check --fix .               # Auto-fix linting issues
 composer test        # PHPUnit
 composer phpstan     # Static analysis
 composer phpcs       # Code style
-```
+````
 
 ### Key Files
 

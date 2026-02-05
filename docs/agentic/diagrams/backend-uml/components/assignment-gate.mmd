@@ -1,4 +1,5 @@
 flowchart TD
+    %% Layer: application (recognition/application/assignment/*)
     subgraph Legend["Legend + Conventions"]
         direction TB
         LegendEntry["ENTRY: external entrypoint"]
@@ -29,7 +30,7 @@ flowchart TD
         BC -->|Blocked| Reject[REJECT<br/>blocked by user]
         BC -->|OK| CON
 
-        CON -->|Cannot link nonfatal| CONF
+        CON -->|Cannot link - fatal| Reject
         CON -->|OK| CONF
 
         CONF -->|Similarity >= threshold| Accept[ACCEPT]
@@ -48,6 +49,9 @@ flowchart TD
 
     GateCode["Code anchors:\nrecognition/application/assignment/gate.py\nrecognition/application/assignment/checks/block.py\nrecognition/application/assignment/checks/constraint.py\nrecognition/application/assignment/checks/confidence.py\nrecognition/application/persistence/assignment_writer.py\nrecognition/application/suggestions/service.py"]
     Gate -.-> GateCode
+
+    LayerNote["Layer: application (assignment + persistence)\nDomain types: recognition/domain/*"]
+    Gate -.-> LayerNote
     
     %% Styling (WCAG AA compliant - 4.5:1 text contrast, 3:1 graphical contrast)
     style Gate fill:#fff3e0,stroke:#bf360c,color:#bf360c

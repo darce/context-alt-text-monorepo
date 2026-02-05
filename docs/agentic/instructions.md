@@ -736,6 +736,65 @@ For WordPress plugin development, the following resources are available:
 
 Our unified MCP server includes PHP-specific tools (`find_wp_action`, `find_wp_rest_route`, `find_php_class`) that help navigate the WordPress plugin codebase without requiring a separate WordPress instance.
 
+### Session State with CURRENT_TASK.md
+
+For multi-session tasks, use a lightweight `CURRENT_TASK.md` file at the monorepo root to preserve context across agent sessions.
+
+**When to use:**
+
+- Tasks spanning multiple sessions (> 1 hour of work)
+- Complex debugging where findings need to be preserved
+- Multi-phase implementations with dependencies between phases
+- When conversation summary alone isn't sufficient
+
+**When NOT to use:**
+
+- Single-session tasks that complete quickly
+- Simple bug fixes or documentation updates
+- Tasks fully tracked by a `docs/tasks/` plan document
+
+**Workflow:**
+
+1. Copy template: `cp docs/agentic/templates/CURRENT_TASK.template.md CURRENT_TASK.md`
+2. Fill in objective, context, and initial task breakdown
+3. Update progress at end of each session
+4. Add session log entry with discoveries/blockers
+5. Delete file when task is complete
+
+**Template location:** [docs/agentic/templates/CURRENT_TASK.template.md](templates/CURRENT_TASK.template.md)
+
+**Key sections:**
+
+| Section | Purpose |
+|---------|---------|
+| **Objective** | 1-2 sentences so agent immediately knows the goal |
+| **Progress** | Checkboxes with `← ACTIVE` marker on current item |
+| **Key Files** | Table of relevant files with context-specific notes |
+| **Verification Commands** | Copy-paste commands to check current state |
+| **Next Agent Instructions** | Specific steps for the next session to pick up |
+| **Session Log** | Append-only log of what each session discovered |
+
+**Example usage:**
+
+```markdown
+## Progress
+
+### Completed
+- [x] Added batch fetch method to ClusterRepository
+- [x] Unit tests passing
+
+### In Progress
+- [ ] Integration test with real database ← **ACTIVE**
+
+### Remaining
+- [ ] Frontend investigation if UI hang persists
+```
+
+> [!TIP]
+> The `← ACTIVE` marker tells the next agent exactly where to resume without reading the entire file.
+
+**Gitignore consideration:** Add `CURRENT_TASK.md` to `.gitignore` if you don't want task state in version control. For team visibility, commit it.
+
 ---
 
 ## Testing Standards
@@ -1163,6 +1222,7 @@ $clean_array = array_map('absint', $_POST['ids']);
 - Architecture docs in `docs/architecture/`
 - Task breakdowns in `docs/tasks/{version}/`
 - Roadmaps in `docs/roadmaps/`
+- Use descriptive filenames for implementation plans and related docs (avoid generic names like `implementation-plan.md`; include the feature/context in the filename).
 
 ### Implementation Plan Requirements
 

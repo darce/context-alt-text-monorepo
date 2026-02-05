@@ -72,6 +72,60 @@ describe('useJobProgressStream', () => {
     expect(MockEventSource.instances).toHaveLength(1);
   });
 
+  it('stores phase and face metrics from progress events', async () => {
+    const { result } = renderHook(() => useJobProgressStream('job-metrics'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('progress', {
+        completed: 2,
+        total: 5,
+        status: 'running',
+        phase: 'detecting',
+        images_processed: 2,
+        faces_found: 8,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.progress).toEqual({
+        completed: 2,
+        total: 5,
+        phase: 'detecting',
+        images_processed: 2,
+        faces_found: 8,
+      });
+    });
+  });
+
+  it('stores clustering metrics from progress events', async () => {
+    const { result } = renderHook(() => useJobProgressStream('job-cluster'));
+
+    await waitFor(() => expect(MockEventSource.instances).toHaveLength(1));
+    const source = MockEventSource.instances[0];
+
+    act(() => {
+      source.emit('progress', {
+        completed: 1,
+        total: 4,
+        status: 'running',
+        phase: 'clustering',
+        clusters_created: 2,
+      });
+    });
+
+    await waitFor(() => {
+      expect(result.current.progress).toEqual({
+        completed: 1,
+        total: 4,
+        phase: 'clustering',
+        clusters_created: 2,
+      });
+    });
+  });
+
   it('uses the latest progress when a job completes', async () => {
     const postMessage = vi.fn();
     useJobCoordinationMock.mockReturnValue({

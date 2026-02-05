@@ -8,7 +8,7 @@ import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
 import { MediaSelection } from './workbench/MediaSelection';
-import { SuggestionReviewPanel } from './workbench/identity-clusters';
+import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from './workbench/identity-clusters';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
 
 const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
@@ -76,6 +76,8 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [perPage, setPerPage] = useState<number>(() => getStoredMediaPageSize());
+  const [activeLabelingClusterId, setActiveLabelingClusterId] = useState<string | null>(null);
+  const [activeReviewClusterId, setActiveReviewClusterId] = useState<string | null>(null);
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
@@ -259,7 +261,22 @@ export const WorkbenchPage = (): React.JSX.Element => {
               isSynced={!isPrimary && !!latestJobId}
             />
             {!isScanRunning && !hasIdentities && !isScanRunning && <NoMediaPanel />}
-            <SuggestionReviewPanel />
+            {activeReviewClusterId ? (
+              <ClusterReviewPanel clusterId={activeReviewClusterId} onClose={() => setActiveReviewClusterId(null)} />
+            ) : activeLabelingClusterId ? (
+              <ClusterLabelingPanel
+                clusterId={activeLabelingClusterId}
+                onClose={() => setActiveLabelingClusterId(null)}
+                onLabel={() => {
+                  setActiveLabelingClusterId(null);
+                }}
+              />
+            ) : (
+              <SuggestionReviewPanel
+                onLabel={(clusterId) => setActiveLabelingClusterId(clusterId)}
+                onReview={(clusterId) => setActiveReviewClusterId(clusterId)}
+              />
+            )}
             <MediaSelection
               items={mediaItems}
               isLoading={mediaQuery.isFetching}

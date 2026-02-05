@@ -42,6 +42,8 @@ export const useClusterLabelMutations = ({
     mutationKey: ['rename-cluster', clusterId],
     mutationFn: ({ label, signal }: { label: string; signal?: AbortSignal }) =>
       updateClusterLabel(clusterId!, label, signal),
+    // Don't retry on client errors like 409 Conflict (duplicate label)
+    retry: false,
     onMutate: async ({ label }) => {
       if (!clusterId) {
         return;
@@ -88,6 +90,8 @@ export const useClusterLabelMutations = ({
       }
       return mergeCluster(clusterId, targetClusterId, targetLabel, signal);
     },
+    // Don't retry on client errors
+    retry: false,
     onSuccess: (result) => {
       if (clusterId) {
         updateCachedClusterLabel(clusterId, result.target_label ?? '');
@@ -111,6 +115,8 @@ export const useClusterLabelMutations = ({
         movedIdentityIds: payload.moved_identity_ids,
         sourceLabel: payload.source_label ?? currentLabel ?? derivedLabel ?? null,
       }),
+    // Don't retry on client errors
+    retry: false,
     onSuccess: () => {
       invalidateQueries();
       onRevertSuccess?.();

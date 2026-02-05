@@ -16,6 +16,8 @@ export interface ClusterGroup {
   label: string | null;
   /** Whether the label was auto-generated */
   isAutoLabel: boolean;
+  /** True if any member is waiting for clustering to complete */
+  clusteringPending: boolean;
   /** Identities in this cluster */
   members: DetectedIdentity[];
 }

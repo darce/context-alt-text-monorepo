@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+import contextlib
 import logging
 import uuid
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 
@@ -13,6 +14,12 @@ from recognition.application.discovery import CentroidDiscovery, GraphDiscovery,
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.identity import MediaIdentity
 from recognition.observability import ClusteringLogger
+from recognition.shared.similarity import normalize_face_embedding
+
+if TYPE_CHECKING:
+    from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol
+    from recognition.application.settings import HACSettings
+    from recognition.domain.repositories import ConstrainedHACProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -112,8 +119,8 @@ async def run_hac_refinement(
     still_unclustered: list[MediaIdentity],
     tenant_id: str,
     job_id: str,
-    constrained_hac: Any,
-    hac_settings: Any,
+    constrained_hac: ConstrainedHACProtocol | None,
+    hac_settings: HACSettings | None,
     assignment_writer: AssignmentWriter,
     clustering_logger: ClusteringLogger | None = None,
 ) -> int:
@@ -121,6 +128,14 @@ async def run_hac_refinement(
     if not (
         constrained_hac and hac_settings and still_unclustered and len(still_unclustered) <= hac_settings.max_scope_size
     ):
+        return 0
+
+    # HAC requires at least 2 identities to compute pairwise distances
+    if len(still_unclustered) < 2:
+        logger.debug(
+            "[clustering] Skipping HAC refinement: need at least 2 identities, got %d",
+            len(still_unclustered),
+        )
         return 0
 
     logger.info(
@@ -159,3 +174,117 @@ async def run_hac_refinement(
                 [m.media_id for m in members],
             )
     return clusters_created
+
+
+async def run_singleton_hac_refinement(
+    *,
+    tenant_id: str,
+    constrained_hac: ConstrainedHACProtocol | None,
+    hac_settings: HACSettings | None,
+    assignment_writer: AssignmentWriter,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
+    clustering_logger: ClusteringLogger | None = None,
+) -> int:
+    """Run constrained HAC refinement on singleton clusters after HDBSCAN."""
+    logger.info("[clustering] singleton_hac_start tenant_id=%s", tenant_id)
+    if not (constrained_hac and hac_settings):
+        logger.info("[clustering] singleton_hac_skip reason=no_hac_configured")
+        return 0
+
+    cluster_repo = assignment_writer.cluster_repository
+    member_repo = assignment_writer.member_repository
+
+    singletons = await cluster_repo.get_singleton_identities(
+        tenant_id,
+        limit=hac_settings.max_scope_size,
+    )
+    logger.info("[clustering] singleton_hac_query singletons_found=%d", len(singletons))
+    if len(singletons) < 2:
+        logger.info("[clustering] singleton_hac_skip reason=not_enough_singletons count=%d", len(singletons))
+        return 0
+
+    embeddings_for_hac: dict[uuid.UUID, np.ndarray] = {}
+    identity_to_cluster: dict[uuid.UUID, str] = {}
+    for identity in singletons:
+        if not identity.cluster_id:
+            continue
+        try:
+            identity_uuid = uuid.UUID(identity.id)
+        except ValueError:
+            continue
+        embeddings_for_hac[identity_uuid] = normalize_face_embedding(np.asarray(identity.embedding, dtype=np.float32))
+        identity_to_cluster[identity_uuid] = identity.cluster_id
+
+    logger.info("[clustering] singleton_hac_prepared embeddings=%d", len(embeddings_for_hac))
+    if len(embeddings_for_hac) < 2:
+        logger.info("[clustering] singleton_hac_skip reason=not_enough_embeddings count=%d", len(embeddings_for_hac))
+        return 0
+
+    # Use more lenient threshold for singleton refinement
+    singleton_threshold = hac_settings.singleton_distance_threshold
+    logger.info(
+        "[clustering] singleton_hac_threshold distance=%.3f (similarity=%.1f%%)",
+        singleton_threshold,
+        (1 - singleton_threshold) * 100,
+    )
+    hac_clusters = await constrained_hac.refine_clusters(
+        tenant_id=uuid.UUID(tenant_id),
+        embeddings=embeddings_for_hac,
+        distance_threshold_override=singleton_threshold,
+    )
+    logger.info("[clustering] singleton_hac_refined groups=%d", len(set(hac_clusters.values())))
+
+    hac_groups: dict[uuid.UUID, list[uuid.UUID]] = {}
+    for identity_uuid, group_uuid in hac_clusters.items():
+        if identity_uuid in identity_to_cluster:
+            hac_groups.setdefault(group_uuid, []).append(identity_uuid)
+
+    # Count how many groups have 2+ identities (potential merges)
+    merge_candidates = sum(1 for ids in hac_groups.values() if len(ids) >= 2)
+    logger.info("[clustering] singleton_hac_groups total=%d merge_candidates=%d", len(hac_groups), merge_candidates)
+
+    merged_clusters = 0
+    for identities in hac_groups.values():
+        if len(identities) < 2:
+            continue
+        target_identity = identities[0]
+        target_cluster_id = identity_to_cluster.get(target_identity)
+        if not target_cluster_id:
+            continue
+
+        target_cluster = await cluster_repo.get_by_id(target_cluster_id)
+        if not target_cluster:
+            continue
+
+        moved_total = 0
+        for identity_uuid in identities[1:]:
+            source_cluster_id = identity_to_cluster.get(identity_uuid)
+            if not source_cluster_id or source_cluster_id == target_cluster_id:
+                continue
+            moved = await member_repo.move_members(source_cluster_id, target_cluster_id)
+            if moved:
+                moved_total += moved
+                merged_clusters += 1
+                delete_by_cluster = getattr(merge_suggestion_service, "delete_by_cluster", None)
+                if callable(delete_by_cluster):
+                    with contextlib.suppress(Exception):
+                        await delete_by_cluster(tenant_id, source_cluster_id)
+                        await delete_by_cluster(tenant_id, target_cluster_id)
+                await cluster_repo.delete(source_cluster_id)
+
+        if moved_total:
+            target_cluster.identity_count = (target_cluster.identity_count or 0) + moved_total
+            await cluster_repo.update(target_cluster)
+            await assignment_writer.recompute_representatives(target_cluster_id)
+            await assignment_writer.recompute_centroid(target_cluster_id)
+            logger.info(
+                "[clustering] singleton_hac_merge tenant_id=%s target_cluster=%s merged=%d",
+                tenant_id,
+                target_cluster_id,
+                moved_total,
+            )
+
+    if merged_clusters:
+        await assignment_writer.refresh_centroids_view()
+
+    return merged_clusters

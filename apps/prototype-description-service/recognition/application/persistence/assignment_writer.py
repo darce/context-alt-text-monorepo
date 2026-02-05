@@ -147,7 +147,17 @@ def _get_pose_bucket(identity: MediaIdentity | ClusterRepresentative, bucket_siz
     yaw = identity.pose_yaw
     if pitch is None or yaw is None:
         return None
-    return (int(pitch // bucket_size), int(yaw // bucket_size))
+    bucket = (int(pitch // bucket_size), int(yaw // bucket_size))
+    identity_ref = getattr(identity, "id", None) or getattr(identity, "identity_id", None)
+    logger.debug(
+        "[pose_bucket] identity=%s pitch=%.2f yaw=%.2f bucket=%s size=%.1f",
+        identity_ref,
+        pitch,
+        yaw,
+        bucket,
+        bucket_size,
+    )
+    return bucket
 
 
 def _is_novel_pose(

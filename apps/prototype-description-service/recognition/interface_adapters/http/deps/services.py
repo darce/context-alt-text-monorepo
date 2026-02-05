@@ -28,6 +28,7 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.application.scan.scan_queue_service import ScanQueueService
 from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
+from recognition.application.suggestions.merge_suggestions import MergeSuggestionService
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config import get_settings as get_recognition_settings
@@ -37,6 +38,7 @@ from recognition.infrastructure.repositories import (
     SqlAlchemyIdentityClusterBlockRepository,
     SqlAlchemyJobRepository,
     SqlAlchemyMemberRepository,
+    SqlAlchemyMergeSuggestionRepository,
     SqlAlchemyScanQueueRepository,
     SqlAlchemySuggestionRepository,
 )
@@ -180,7 +182,7 @@ async def build_cluster_service(
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant_id)
     block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant_id)
-    assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo)
+    assignment_writer = AssignmentWriter(settings, cluster_repo, member_repo, session=session)
     constraint_repo = SqlAlchemyConstraintRepository(session)
 
     gate = AssignmentGate(
@@ -209,6 +211,12 @@ async def build_cluster_service(
         block_repository=block_repo,
         constraint_repository=constraint_repo,
     )
+    merge_suggestion_repo = SqlAlchemyMergeSuggestionRepository(session)
+    merge_suggestion_service = MergeSuggestionService(
+        merge_suggestion_repo,
+        cluster_repository=cluster_repo,
+        settings=settings,
+    )
 
     charts_dir = Path("logs") / "charts"
 
@@ -225,6 +233,7 @@ async def build_cluster_service(
         assignment_writer=assignment_writer,
         suggestion_service=suggestion_service,
         suggestion_refresh_service=suggestion_refresh_service,
+        merge_suggestion_service=merge_suggestion_service,
         block_repository=block_repo,
         constraint_repository=constraint_repo,
         hac_settings=hac_settings,

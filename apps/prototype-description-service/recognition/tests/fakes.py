@@ -48,6 +48,9 @@ class _FakeClusterRepository:
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         return []
 
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
+        return []
+
 
 class FakeJobRepository:
     """In-memory job repository for orchestration tests."""

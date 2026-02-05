@@ -4,10 +4,14 @@ Shared protocols for the orchestration layer to avoid circular dependencies and 
 
 from __future__ import annotations
 
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from recognition.application.assignment import AssignmentCandidate
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason
+
+if TYPE_CHECKING:
+    from recognition.application.settings.clustering import HACSettings
+    from recognition.domain.repositories import ConstrainedHACProtocol
 
 
 class SuggestionServiceProtocol(Protocol):
@@ -66,4 +70,27 @@ class SuggestionRefreshServiceProtocol(Protocol):
 
     async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
         """Surface suggestions after a cluster is user-labeled."""
+        ...
+
+
+class MergeSuggestionServiceProtocol(Protocol):
+    """Protocol for generating cluster-to-cluster merge suggestions."""
+
+    async def generate_for_tenant(self, tenant_id: str) -> int:
+        """Generate merge suggestions for a tenant after clustering."""
+        ...
+
+    async def generate_singleton_merge_suggestions(
+        self,
+        tenant_id: str,
+        *,
+        constrained_hac: ConstrainedHACProtocol | None,
+        hac_settings: HACSettings | None,
+        limit: int = 1000,
+    ) -> int:
+        """Generate merge suggestions for singleton clusters using HAC."""
+        ...
+
+    async def delete_by_cluster(self, tenant_id: str, cluster_id: str) -> int:
+        """Delete pending merge suggestions involving the provided cluster."""
         ...

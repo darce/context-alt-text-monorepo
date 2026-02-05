@@ -6,6 +6,7 @@ from recognition.application.settings.adaptive import AdaptiveThresholdResult, A
 from recognition.application.settings.clustering import (
     AutoLabelSettings,
     ClusteringSettings,
+    HACSettings,
     MaturitySettings,
     QualitySettings,
 )
@@ -13,6 +14,7 @@ from recognition.application.settings.clustering import (
 __all__ = [
     "ClusteringSettings",
     "AutoLabelSettings",
+    "HACSettings",
     "MaturitySettings",
     "QualitySettings",
     "AdaptiveThresholdResult",

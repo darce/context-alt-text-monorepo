@@ -11,6 +11,7 @@ from recognition.application.assignment.checks import (
 )
 from recognition.application.orchestration import ClusterService
 from recognition.application.persistence.assignment_writer import AssignmentWriter
+from recognition.application.settings import HACSettings
 from recognition.infrastructure.repositories import SqlAlchemyClusterRepository, SqlAlchemyMemberRepository
 from recognition.interface_adapters.http import dependencies
 from recognition.observability import ClusteringLogger
@@ -32,6 +33,8 @@ async def test_build_cluster_service_wires_sqlalchemy_repositories(db_session, t
         ConfidenceCheck,
         ConstraintCheck,
     }
+    assert service.constrained_hac is not None
+    assert isinstance(service.hac_settings, HACSettings)
 
 
 @pytest.mark.asyncio

@@ -7,6 +7,7 @@ This is scaffolding only; methods are implemented in Phase 5.
 from __future__ import annotations
 
 import contextlib
+import logging
 import uuid
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
@@ -30,6 +31,7 @@ from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 _DB_SETTINGS = get_database_settings()
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
@@ -65,7 +67,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
             .where(ClusterModel.tenant_id == _coerce_uuid(tenant_id))
-            .options(selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity))
+            .options(
+                selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
+                selectinload(ClusterModel.centroid_data),
+            )
             .order_by(ClusterModel.created_at.desc())
             .limit(limit)
             .offset(offset)
@@ -82,10 +87,11 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         return [self._to_domain(row) for row in result.scalars().all()]
 
     async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
-        """Fetch top unlabeled clusters by member count.
+        """Fetch top unlabeled clusters by member count, with representatives for thumbnails.
 
         Used for bootstrapping suggestions (users must label clusters before identity-based
-        similarity suggestions can be generated).
+        similarity suggestions can be generated). Representatives are eagerly loaded so the
+        frontend can display face thumbnails in the suggestion panel.
         """
         tenant_uuid = _coerce_uuid(tenant_id)
         stmt: Select[tuple[ClusterModel]] = (
@@ -94,6 +100,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(ClusterModel.user_confirmed.is_(False))
             .where(ClusterModel.label.isnot(None))
             .where(ClusterModel.label.startswith("cluster-"))
+            .options(
+                selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
+            )
             .order_by(ClusterModel.identity_count.desc())
             .limit(limit)
         )
@@ -336,7 +345,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         return get_rowcount(result)
 
     async def get_maturity_info(self, cluster_id: str, *, settings: MaturitySettings) -> ClusterMaturityInfo | None:
-        """Fetch maturity information for a cluster."""
+        """Fetch maturity information for a cluster including pose coverage."""
+        cluster_uuid = _coerce_uuid(cluster_id)
+        if cluster_uuid is None:
+            return None
+
+        # Query cluster info + representative count
         stmt = (
             select(
                 ClusterModel.identity_count,
@@ -344,7 +358,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 func.count(IdentityClusterRepresentative.id).label("representative_count"),
             )
             .outerjoin(IdentityClusterRepresentative, ClusterModel.id == IdentityClusterRepresentative.cluster_id)
-            .where(ClusterModel.id == _coerce_uuid(cluster_id))
+            .where(ClusterModel.id == cluster_uuid)
             .group_by(ClusterModel.id)
         )
         result = await self._session.execute(stmt)
@@ -358,12 +372,16 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         user_confirmed = bool(row.user_confirmed)
         representative_count = int(row.representative_count)
 
+        # Compute pose bucket coverage from representatives
+        pose_bucket_coverage = await self._compute_pose_bucket_coverage(cluster_uuid, settings)
+
         # Compute domain logic
         level = compute_maturity_level(
             identity_count=identity_count,
             representative_count=representative_count,
             user_confirmed=user_confirmed,
             settings=settings,
+            pose_bucket_coverage=pose_bucket_coverage,
         )
         adjustment = compute_maturity_adjustment(level, settings=settings)
 
@@ -373,7 +391,43 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             representative_count=representative_count,
             user_confirmed=user_confirmed,
             threshold_adjustment=adjustment,
+            pose_bucket_coverage=pose_bucket_coverage,
         )
+
+    async def _compute_pose_bucket_coverage(self, cluster_id: uuid.UUID, settings: MaturitySettings) -> float:
+        """Compute the fraction of pose buckets filled by cluster representatives.
+
+        Args:
+            cluster_id: Cluster UUID.
+            settings: Maturity settings with bucket size and total buckets.
+
+        Returns:
+            Fraction of pose buckets covered (0.0 to 1.0).
+        """
+        # Get representative identities with pose data
+        stmt = (
+            select(MediaIdentity.pose_pitch, MediaIdentity.pose_yaw)
+            .join(IdentityClusterRepresentative, MediaIdentity.id == IdentityClusterRepresentative.identity_id)
+            .where(IdentityClusterRepresentative.cluster_id == cluster_id)
+            .where(MediaIdentity.pose_pitch.isnot(None))
+            .where(MediaIdentity.pose_yaw.isnot(None))
+        )
+        result = await self._session.execute(stmt)
+        rows = result.all()
+
+        if not rows:
+            return 0.0
+
+        # Count unique pose buckets
+        bucket_size = settings.pose_bucket_size
+        filled_buckets: set[tuple[int, int]] = set()
+        for pose_pitch, pose_yaw in rows:
+            bucket = (int(pose_pitch // bucket_size), int(pose_yaw // bucket_size))
+            filled_buckets.add(bucket)
+
+        # Return coverage fraction
+        total_buckets = settings.total_pose_buckets
+        return len(filled_buckets) / total_buckets if total_buckets > 0 else 0.0
 
     async def get_curriculum_t(self, cluster_id: str) -> float | None:
         """Fetch the curriculum bias parameter for a cluster."""
@@ -412,6 +466,20 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain_identity(model) for model in result.scalars().all()]
 
+    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
+        """Return identity ORM records with their membership similarity for a cluster.
+
+        Unlike get_member_identities, this returns the raw ORM model with thumbnail_url
+        and the similarity score from the member record, for API responses.
+        """
+        stmt = (
+            select(MediaIdentity, IdentityMemberModel.similarity)
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+        )
+        result = await self._session.execute(stmt)
+        return [(row[0], float(row[1])) for row in result.all()]
+
     async def get_members(self, cluster_id: str) -> list[DomainMember]:
         """Return member records for a cluster."""
         stmt: Select[tuple[IdentityMemberModel]] = select(IdentityMemberModel).where(
@@ -429,6 +497,33 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             )
             for member in result.scalars().all()
         ]
+
+    async def get_singleton_identities(
+        self,
+        tenant_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[DomainIdentity]:
+        """Fetch identities that belong to singleton clusters for a tenant."""
+        stmt: Select[tuple[MediaIdentity, uuid.UUID]] = (
+            select(MediaIdentity, IdentityMemberModel.cluster_id)
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .join(ClusterModel, ClusterModel.id == IdentityMemberModel.cluster_id)
+            .where(ClusterModel.tenant_id == _coerce_uuid(tenant_id))
+            .where(ClusterModel.identity_count == 1)
+            .where(ClusterModel.user_confirmed.is_(False))
+            .where(MediaIdentity.embedding.isnot(None))
+            .order_by(ClusterModel.created_at.desc())
+        )
+        if limit:
+            stmt = stmt.limit(limit)
+        result = await self._session.execute(stmt)
+        identities: list[DomainIdentity] = []
+        for model, cluster_id in result.all():
+            domain_identity = self._to_domain_identity(model)
+            domain_identity.cluster_id = str(cluster_id) if cluster_id else None
+            identities.append(domain_identity)
+        return identities
 
     async def assign_identity_to_cluster(self, identity: DomainIdentity, cluster_id: str) -> None:
         """Persist a membership between an identity and cluster."""
@@ -514,9 +609,17 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 rep_state = instance_state(rep)
                 debug_metrics = None
                 media_id = None
-                if "identity" in rep_state.dict and rep.identity:
+                identity_loaded = "identity" in rep_state.dict and rep.identity is not None
+                if identity_loaded:
                     identity = rep.identity
                     media_id = identity.media_id
+                    logger.debug(
+                        "Loaded representative identity pose rep_id=%s identity_id=%s pose_pitch=%s pose_yaw=%s",
+                        rep.id,
+                        identity.id,
+                        identity.pose_pitch,
+                        identity.pose_yaw,
+                    )
                     debug_metrics = {
                         "pose": {
                             "pitch": float(identity.pose_pitch or 0),
@@ -544,6 +647,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                             else None,
                         },
                     }
+                else:
+                    logger.debug(
+                        "Representative identity not loaded rep_id=%s identity_loaded=%s",
+                        rep.id,
+                        identity_loaded,
+                    )
                 domain_reps.append(
                     ClusterRepresentative(
                         id=str(rep.id),

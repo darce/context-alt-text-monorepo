@@ -14,11 +14,17 @@ from sqlalchemy import Select, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from db.models import IdentityCluster, MediaIdentity
+from db.models import IdentityCluster, IdentityMember, MediaIdentity
 from db.models import IdentitySuggestion as SuggestionModel
 from db.settings import get_database_settings
+from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.domain.repositories import SuggestionCreateData, SuggestionRepository
-from recognition.domain.suggestion import AssignmentSuggestion, FaceBox, SuggestionDetails, SuggestionStatus
+from recognition.domain.suggestion import (
+    AssignmentSuggestion,
+    FaceBox,
+    SuggestionDetails,
+    SuggestionStatus,
+)
 
 _DB_SETTINGS = get_database_settings()
 
@@ -132,11 +138,16 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         return self._to_domain(model)
 
     async def get_by_identity(self, tenant_id: str, identity_id: str) -> list[AssignmentSuggestion]:
-        """Fetch suggestions for an identity, scoped to tenant."""
+        """Fetch pending suggestions for an identity, scoped to tenant.
+
+        Only returns suggestions with status 'pending' - rejected/accepted suggestions
+        should not be shown to users.
+        """
         stmt: Select[tuple[SuggestionModel]] = (
             select(SuggestionModel)
             .where(SuggestionModel.tenant_id == _coerce_uuid(tenant_id))
             .where(SuggestionModel.identity_id == _coerce_uuid(identity_id))
+            .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
             .order_by(SuggestionModel.created_at.desc())
         )
         result = await self._session.execute(stmt)
@@ -183,11 +194,16 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         )
 
     async def get_by_cluster(self, tenant_id: str, cluster_id: str) -> list[AssignmentSuggestion]:
-        """Fetch suggestions for a cluster, scoped to tenant."""
+        """Fetch pending suggestions for a cluster, scoped to tenant.
+
+        Only returns suggestions with status 'pending' - rejected/accepted suggestions
+        should not be shown to users.
+        """
         stmt: Select[tuple[SuggestionModel]] = (
             select(SuggestionModel)
             .where(SuggestionModel.tenant_id == _coerce_uuid(tenant_id))
             .where(SuggestionModel.suggested_cluster_id == _coerce_uuid(cluster_id))
+            .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
             .order_by(SuggestionModel.created_at.desc())
         )
         result = await self._session.execute(stmt)
@@ -225,9 +241,15 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         return [self._to_domain(row) for row in result.scalars().all()]
 
     async def list_pending_with_details(self, tenant_id: str, limit: int, offset: int) -> list[SuggestionDetails]:
-        """Return pending suggestions with identity + cluster details."""
+        """Return pending suggestions with identity + cluster details.
+
+        Returns suggestions for both labeled and unlabeled clusters. Unlabeled clusters
+        remain actionable because callers can compute a best-effort suggested label
+        (with provenance) at read time for UI copy.
+        """
         stmt: Select[tuple[SuggestionModel]] = (
             select(SuggestionModel)
+            .join(SuggestionModel.suggested_cluster)
             .where(SuggestionModel.tenant_id == _coerce_uuid(tenant_id))
             .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
             .order_by(SuggestionModel.created_at.desc())
@@ -239,7 +261,87 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             )
         )
         result = await self._session.execute(stmt)
-        return [self._to_details(model) for model in result.scalars().all()]
+        rows = result.scalars().unique().all()
+
+        # Collect cluster IDs to fetch thumbnails
+        cluster_ids = [row.suggested_cluster_id for row in rows]
+        thumbnails_map: dict[uuid.UUID, list[str]] = {}
+
+        if cluster_ids:
+            # Fetch up to 4 thumbnails per cluster
+            # Using rank/partition is expensive/complex in ORM, so we fetch a few more and filter in Python
+            # or simplify: just fetch random 4 per cluster?
+            # Better: fetch last 4 added members with thumbnails
+            # Since we iterate clusters, let's do a loop if it's small (50), or a window query.
+            # Window query example:
+            from sqlalchemy import func
+
+            # Simple approach: Fetch all members for these clusters with limit? complex.
+            # Let's execute one query per cluster? 50 queries is bad.
+            # Let's try to fetch recent members for these clusters.
+            # Optimization: User requested "Face Grid".
+            # We can use a window function request or just fetch ALL members for these 50 clusters if they are small.
+            # Clusters can be large.
+            # Let's use a LATERAL JOIN equivalent or a simple IN query limited by total count?
+            # Or just fetch representative + 3 random members?
+            # Let's assume fetching `limit=4` members per cluster is desired.
+            pass
+
+            # Efficient approach: Use SQL partition/row_number
+            # But for MVP speed, and since limit is 50, let's just fetch IDs and thumbnails in one IN query
+            # and limit 9 per cluster?
+            # We can define a helper or just query:
+            # SELECT cluster_id, thumbnail_url FROM ... WHERE cluster_id IN (...) AND thumbnail_url IS NOT NULL
+            # Then group in python. If a cluster has 1000 members, querying all is bad.
+            # So we SHOULD use partitioning.
+
+            # SQLite (test env) supports window functions. Postgres does too.
+            subq = (
+                select(
+                    IdentityMember.cluster_id,
+                    MediaIdentity.thumbnail_url,
+                    func.row_number()
+                    .over(partition_by=IdentityMember.cluster_id, order_by=MediaIdentity.created_at.desc())
+                    .label("rn"),
+                )
+                .join(MediaIdentity, IdentityMember.identity_id == MediaIdentity.id)
+                .where(IdentityMember.cluster_id.in_(cluster_ids))
+                .where(MediaIdentity.thumbnail_url.isnot(None))
+            ).subquery()
+
+            thumb_stmt = (
+                select(subq.c.cluster_id, subq.c.thumbnail_url).where(
+                    subq.c.rn <= 9
+                )  # Fetch 9 for 3x3 grid or just 4 for 2x2. let's get 9.
+            )
+            thumb_res = await self._session.execute(thumb_stmt)
+            for cid, url in thumb_res.all():
+                if cid not in thumbnails_map:
+                    thumbnails_map[cid] = []
+                thumbnails_map[cid].append(url)
+
+        details_list = []
+        for model in rows:
+            details = self._to_details(model)
+            if details.cluster_id:
+                # Add thumbnails (filter out representative if desired, or keep all)
+                # Ensure UUID string key matching
+                cid_uuid = uuid.UUID(details.cluster_id)
+                details.cluster_thumbnails = thumbnails_map.get(cid_uuid, [])
+
+            # If cluster is unlabeled, try to infer a label
+            if not details.cluster_label:
+                inferred = await infer_suggested_label(
+                    tenant_id=tenant_id, cluster_id=details.cluster_id, session=self._session
+                )
+                if inferred:
+                    details.suggested_label = inferred.label
+                    details.suggested_label_source = inferred.source
+                    details.suggested_label_confidence = inferred.confidence
+
+            details_list.append(details)
+
+        return details_list
 
     async def bulk_update_status(
         self,

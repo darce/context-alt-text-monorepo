@@ -408,9 +408,11 @@ class SuggestionRefreshService:
 
         cluster = await self._cluster_repository.get_by_id(cluster_id)
         if not cluster or not cluster.user_confirmed or not cluster.label:
-            logger.debug(
-                "[suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=%s",
+            logger.info(
+                "[suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=%s user_confirmed=%s label=%s",
                 cluster_id,
+                getattr(cluster, 'user_confirmed', None),
+                getattr(cluster, 'label', None),
             )
             return 0
 
@@ -433,7 +435,7 @@ class SuggestionRefreshService:
         ]
 
         if not unlabeled_clusters:
-            logger.debug("[suggestions] surface_for_newly_labeled_cluster: no unlabeled clusters to scan")
+            logger.info("[suggestions] surface_for_newly_labeled_cluster: no unlabeled clusters to scan cluster_id=%s", cluster_id)
             return 0
 
         created = 0

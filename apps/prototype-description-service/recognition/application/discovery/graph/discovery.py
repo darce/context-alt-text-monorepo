@@ -19,6 +19,7 @@ from recognition.application.discovery.graph.helpers import (
     group_by_label,
     match_to_anchor,
     resolve_anchor_conflict,
+    validate_pairwise_similarities,
 )
 from recognition.application.discovery.graph.selection import describe_algorithm, hdbscan_available, select_algorithm
 from recognition.application.discovery.graph.verification import verify_complete_link
@@ -201,8 +202,25 @@ class GraphDiscovery(DiscoveryAlgorithm):
                     )
                     candidates.append(self._apply_complete_link(candidate, anchor_embeddings))
             else:
-                member_sims = compute_member_similarities(member_vectors_group)
-                new_clusters.append((new_members, member_sims))
+                # Validate pairwise similarities before creating a new cluster
+                # This prevents HDBSCAN from grouping dissimilar faces together
+                is_valid, min_pairwise_sim = validate_pairwise_similarities(
+                    member_vectors_group, self.settings.complete_link_threshold
+                )
+                if is_valid:
+                    member_sims = compute_member_similarities(member_vectors_group)
+                    new_clusters.append((new_members, member_sims))
+                else:
+                    # Split invalid group into singleton clusters
+                    media_ids = [m.media_id for m in new_members]
+                    logger.info(
+                        "[GraphDiscovery] Pairwise validation REJECTED group: media_ids=%s min_sim=%.3f threshold=%.2f",
+                        media_ids,
+                        min_pairwise_sim,
+                        self.settings.complete_link_threshold,
+                    )
+                    for member in new_members:
+                        new_clusters.append(([member], [1.0]))
 
         noise_identities = [
             (identity, face_vec)

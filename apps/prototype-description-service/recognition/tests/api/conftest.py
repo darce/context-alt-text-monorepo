@@ -35,6 +35,9 @@ class FakeSession:
             def scalar(self):  # noqa: ANN001
                 return 0
 
+            def all(self):  # noqa: ANN001
+                return []
+
         return _Result()
 
     def add(self, obj) -> None:  # noqa: ANN001
@@ -147,6 +150,10 @@ class FakeSuggestion:
         representative_media_url: str | None = None,
         representative_thumbnail_url: str | None = None,
         representative_bbox: FakeFaceBox | None = None,
+        suggested_label: str | None = None,
+        suggested_label_source: str | None = None,
+        suggested_label_confidence: float | None = None,
+        cluster_thumbnails: list[str] | None = None,
     ) -> None:
         self.id = str(uuid.uuid4())
         self.identity_id = identity_id
@@ -164,6 +171,10 @@ class FakeSuggestion:
         self.representative_media_url = representative_media_url
         self.representative_thumbnail_url = representative_thumbnail_url
         self.representative_bbox = representative_bbox
+        self.suggested_label = suggested_label
+        self.suggested_label_source = suggested_label_source
+        self.suggested_label_confidence = suggested_label_confidence
+        self.cluster_thumbnails = cluster_thumbnails
 
     def as_details(self) -> SimpleNamespace:
         """Return a detail-shaped suggestion with string status."""
@@ -184,6 +195,10 @@ class FakeSuggestion:
             representative_media_url=self.representative_media_url,
             representative_thumbnail_url=self.representative_thumbnail_url,
             representative_bbox=self.representative_bbox,
+            suggested_label=self.suggested_label,
+            suggested_label_source=self.suggested_label_source,
+            suggested_label_confidence=self.suggested_label_confidence,
+            cluster_thumbnails=self.cluster_thumbnails,
         )
 
 
@@ -358,6 +373,7 @@ class FakeClusterForRepo:
         self.is_labeled = bool(label)
         self.created_at = datetime.now(tz=UTC)
         self.is_auto_label = False
+        self.representatives: list = []  # Empty list for API response mapping
 
 
 class FakeClusterRepository:
@@ -373,6 +389,9 @@ class FakeClusterRepository:
         return self.clusters.get(cluster_id)
 
     async def get_members(self, cluster_id: str):
+        return []
+
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
         return []
 
     async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[FakeClusterForRepo]:
@@ -489,6 +508,7 @@ def api_client(
 
     monkeypatch.setattr(dependencies, "build_cluster_service", _fake_build_cluster_service)
     monkeypatch.setattr(clusters_router, "build_cluster_service", _fake_build_cluster_service)
+    monkeypatch.setattr(suggestions_router, "build_cluster_service", _fake_build_cluster_service)
 
     async def _fake_get_job_service(**_kwargs):
         return fake_job_service

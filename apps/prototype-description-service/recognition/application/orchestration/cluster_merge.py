@@ -21,7 +21,7 @@ from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
 from recognition.application.events.broadcaster import get_event_broadcaster
 from recognition.application.orchestration.curation import update_cluster
-from recognition.application.orchestration.protocols import SuggestionServiceProtocol
+from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -228,6 +228,7 @@ async def merge_cluster(
     assignment_writer: AssignmentWriter,
     suggestion_service: SuggestionServiceProtocol,
     gate: AssignmentGate,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
     clustering_logger: ClusteringLogger | None = None,
     session: AsyncSession | None = None,
     defer_recompute: bool = False,
@@ -299,6 +300,11 @@ async def merge_cluster(
     if not defer_recompute:
         # Delete source cluster LAST, after all recomputations and logging are complete.
         # This avoids "Cluster not found" 404s during session flush if other operations reference it.
+        delete_by_cluster = getattr(merge_suggestion_service, "delete_by_cluster", None)
+        if callable(delete_by_cluster):
+            with contextlib.suppress(Exception):
+                await delete_by_cluster(tenant_id, source_cluster_id)
+                await delete_by_cluster(tenant_id, target_cluster_id)
         await cluster_repo.delete(source_cluster_id)
 
         # Ensure identity_count reflects reassignment via full count if checked immediately

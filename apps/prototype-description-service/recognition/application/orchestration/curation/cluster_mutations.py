@@ -27,6 +27,34 @@ from recognition.shared.tenant import coerce_tenant_uuid
 
 logger = logging.getLogger(__name__)
 
+_CURRICULUM_FALSE_NEGATIVE_DELTA = 0.01
+_CURRICULUM_FALSE_POSITIVE_DELTA = -0.05
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+async def _adjust_curriculum_t(
+    *,
+    cluster_repo: ClusterRepository,
+    cluster_id: str,
+    delta: float,
+    reason: str,
+) -> None:
+    """Apply a bounded curriculum adjustment for a cluster."""
+    current = await cluster_repo.get_curriculum_t(cluster_id) or 0.0
+    updated = _clamp01(current + delta)
+    await cluster_repo.set_curriculum_t(cluster_id, updated)
+    logger.info(
+        "[curriculum] cluster_id=%s reason=%s prev=%.4f delta=%.4f next=%.4f",
+        cluster_id,
+        reason,
+        current,
+        delta,
+        updated,
+    )
+
 
 async def update_cluster(
     *,
@@ -109,6 +137,14 @@ async def remove_identity_from_cluster(
         if cluster and cluster.identity_count > 0:
             cluster.identity_count -= 1
             await cluster_repo.update(cluster)
+
+        with contextlib.suppress(Exception):
+            await _adjust_curriculum_t(
+                cluster_repo=cluster_repo,
+                cluster_id=cluster_id,
+                delta=_CURRICULUM_FALSE_POSITIVE_DELTA,
+                reason="manual_remove",
+            )
 
         refreshed = False
         if session and assignment_writer:
@@ -320,6 +356,14 @@ async def assign_outlier_to_cluster(
 
     await assignment_writer.recompute_representatives(target_cluster_id)
     await assignment_writer.recompute_centroid(target_cluster_id)
+
+    with contextlib.suppress(Exception):
+        await _adjust_curriculum_t(
+            cluster_repo=cluster_repo,
+            cluster_id=target_cluster_id,
+            delta=_CURRICULUM_FALSE_NEGATIVE_DELTA,
+            reason="manual_assign",
+        )
 
     if similarity == 0.0:
         try:

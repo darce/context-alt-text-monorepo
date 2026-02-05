@@ -216,7 +216,7 @@ async def test_reassign_removal_rejects_pending_suggestion(db_session, tenant: T
     )
     assert resp.status_code == 200
 
+    # get_by_identity only returns pending suggestions, so rejected ones should NOT appear
     suggestions = await suggestion_repo.get_by_identity(str(tenant.id), str(identity.id))
     matching = [s for s in suggestions if s.cluster_id == str(cluster.id)]
-    assert matching
-    assert matching[0].status is SuggestionStatus.REJECTED
+    assert not matching, "Rejected suggestion should not appear in pending suggestions"

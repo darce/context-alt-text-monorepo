@@ -45,6 +45,9 @@ class AssignmentGate:
         """
         self.settings = settings
         self.cluster_repository = cluster_repository
+        self.block_repository = block_repository
+        self.constraint_repository = constraint_repository
+        self.member_repository = member_repository
         if checks is None:
             gate_checks: list[AssignmentCheck] = [
                 ConfidenceCheck(settings, cluster_repository),

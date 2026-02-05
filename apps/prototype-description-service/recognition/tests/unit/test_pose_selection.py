@@ -1,3 +1,4 @@
+import logging
 from datetime import datetime
 from unittest.mock import MagicMock
 
@@ -54,6 +55,14 @@ def test_get_pose_bucket():
     ident_neg = create_identity("2", -45.0, -10.0)  # Bucket (-2, -1)
     bucket_neg = _get_pose_bucket(ident_neg, 30.0)
     assert bucket_neg == (-2, -1)
+
+
+def test_get_pose_bucket_logs(caplog):
+    caplog.set_level(logging.DEBUG)
+    ident = create_identity("log-1", 45.0, 45.0)
+    bucket = _get_pose_bucket(ident, 30.0)
+    assert bucket == (1, 1)
+    assert "[pose_bucket]" in caplog.text
 
 
 def test_is_novel_pose():

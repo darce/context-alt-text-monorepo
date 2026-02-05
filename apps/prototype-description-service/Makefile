@@ -96,6 +96,8 @@ logs-tail:
 	@tail -f logs/recognition.log
 
 # Rotate logs (shift current to .1, .1 to .2, etc., keep 10 rotations)
+# NOTE: WatchedFileHandler in api/logging_config.py auto-detects rotation,
+# so no server restart is needed after running this target.
 logs-rotate:
 	@echo "Rotating logs..."
 	@for log in logs/recognition.log logs/scan_worker.log; do \

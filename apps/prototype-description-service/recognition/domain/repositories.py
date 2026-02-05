@@ -4,10 +4,13 @@ Repository protocol definitions for cluster persistence (Phase 5).
 
 from __future__ import annotations
 
+import uuid
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
+
+import numpy as np
 
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.constraints import IdentityConstraint
@@ -15,7 +18,16 @@ from recognition.domain.identity import MediaIdentity
 from recognition.domain.job import Job
 from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.representative import ClusterRepresentative
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion import (
+    AssignmentSuggestion,
+    MergeSuggestion,
+    MergeSuggestionDetails,
+    SuggestionDetails,
+    SuggestionStatus,
+)
+
+if TYPE_CHECKING:
+    from recognition.application.settings.clustering import MaturitySettings
 
 
 @dataclass(frozen=True)
@@ -79,14 +91,35 @@ class ClusterRepository(Protocol):
 
     async def get_all_representatives(self, cluster_id: str) -> Sequence[ClusterRepresentative]: ...
 
-    async def get_maturity_info(self, cluster_id: str) -> ClusterMaturityInfo | None:
+    async def get_maturity_info(self, cluster_id: str, *, settings: MaturitySettings) -> ClusterMaturityInfo | None:
         """Fetch maturity information for a cluster.
+
+        Args:
+            cluster_id: Cluster to query.
+            settings: Maturity settings to apply.
+
+        Returns:
+            ClusterMaturityInfo or None if cluster not found.
+        """
+        ...
+
+    async def get_curriculum_t(self, cluster_id: str) -> float | None:
+        """Fetch the curriculum bias parameter for a cluster.
 
         Args:
             cluster_id: Cluster to query.
 
         Returns:
-            ClusterMaturityInfo or None if cluster not found.
+            Curriculum bias value or None if cluster not found.
+        """
+        ...
+
+    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
+        """Persist the curriculum bias parameter for a cluster.
+
+        Args:
+            cluster_id: Cluster to update.
+            value: Curriculum bias value to store.
         """
         ...
 
@@ -98,6 +131,15 @@ class ClusterRepository(Protocol):
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         """Fetch member records for a cluster."""
+        ...
+
+    async def get_singleton_identities(
+        self,
+        tenant_id: str,
+        *,
+        limit: int | None = None,
+    ) -> list[MediaIdentity]:
+        """Fetch identities that belong to singleton clusters for a tenant."""
         ...
 
     async def assign_identity_to_cluster(self, identity: MediaIdentity, cluster_id: str) -> None: ...
@@ -372,6 +414,10 @@ class SuggestionRepository(Protocol):
         """List pending suggestions for a tenant."""
         ...
 
+    async def list_pending_with_details(self, tenant_id: str, limit: int, offset: int) -> list[SuggestionDetails]:
+        """List pending suggestions with identity and cluster details."""
+        ...
+
     async def bulk_update_status(
         self,
         tenant_id: str,
@@ -403,6 +449,59 @@ class SuggestionRepository(Protocol):
 
         Returns:
             The created or updated suggestion.
+        """
+        ...
+
+
+@dataclass(frozen=True)
+class MergeSuggestionCreateData:
+    """Input data for creating a cluster merge suggestion."""
+
+    cluster_a_id: str
+    cluster_b_id: str
+    similarity: float
+    source: str | None = None
+    refreshed_at: datetime | None = None
+
+
+class MergeSuggestionRepository(Protocol):
+    """Abstract interface for cluster merge suggestion persistence."""
+
+    async def upsert_pending(self, tenant_id: str, payload: MergeSuggestionCreateData) -> MergeSuggestion:
+        """Create or update a pending merge suggestion for a cluster pair."""
+        ...
+
+    async def list_pending_with_details(
+        self,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+    ) -> list[MergeSuggestionDetails]:
+        """Return pending merge suggestions with cluster details."""
+        ...
+
+    async def update_status(
+        self,
+        tenant_id: str,
+        suggestion_id: str,
+        status: SuggestionStatus,
+    ) -> MergeSuggestion:
+        """Update the resolution of a merge suggestion."""
+        ...
+
+    async def get_by_id(self, tenant_id: str, suggestion_id: str) -> MergeSuggestion | None:
+        """Fetch a merge suggestion by id."""
+        ...
+
+    async def delete_by_cluster(self, tenant_id: str, cluster_id: str) -> int:
+        """Delete pending merge suggestions involving the provided cluster.
+
+        Args:
+            tenant_id: Tenant UUID string.
+            cluster_id: Cluster UUID string to match.
+
+        Returns:
+            Number of pending suggestions deleted.
         """
         ...
 
@@ -517,5 +616,34 @@ class IdentityConstraintRepository(Protocol):
 
         Returns:
             True if any cannot-link constraint exists.
+        """
+        ...
+
+
+class ConstrainedHACProtocol(Protocol):
+    """Protocol for constrained hierarchical agglomerative clustering.
+
+    This follows Apple's two-pass strategy: after conservative first-pass
+    clustering (HDBSCAN), HAC merges remaining singletons using cannot-link
+    constraints from user feedback.
+    """
+
+    async def refine_clusters(
+        self,
+        *,
+        tenant_id: uuid.UUID,
+        embeddings: dict[uuid.UUID, np.ndarray],
+        distance_threshold_override: float | None = None,
+    ) -> dict[uuid.UUID, uuid.UUID]:
+        """Cluster embeddings using constrained HAC.
+
+        Args:
+            tenant_id: Tenant scope for constraint lookup.
+            embeddings: Map of identity_id -> face embedding vector.
+            distance_threshold_override: If provided, use this instead of default threshold.
+
+        Returns:
+            Map of identity_id -> cluster_id for merged identities.
+            Identities not assigned to a cluster are omitted.
         """
         ...

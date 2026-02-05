@@ -47,6 +47,9 @@ class DummyClusterRepository(ClusterRepository):
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
+        raise NotImplementedError
+
     async def get_curriculum_t(self, cluster_id: str) -> float | None:
         raise NotImplementedError
 
@@ -69,6 +72,7 @@ def test_cluster_repository_methods_are_async() -> None:
         "delete",
         "get_curriculum_t",
         "set_curriculum_t",
+        "get_singleton_identities",
     ):
         method = getattr(DummyClusterRepository, method_name)
         assert inspect.iscoroutinefunction(method)

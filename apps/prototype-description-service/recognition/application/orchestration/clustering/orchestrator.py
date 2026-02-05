@@ -6,7 +6,7 @@ import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from datetime import UTC, datetime
-from typing import Any
+from typing import TYPE_CHECKING
 
 import numpy as np
 from sqlalchemy import Select, exists, select
@@ -23,9 +23,10 @@ from recognition.application.orchestration.clustering.discovery_pipeline import 
     prepare_cluster_caches,
     run_discovery_pipeline,
     run_hac_refinement,
+    run_singleton_hac_refinement,
 )
 from recognition.application.orchestration.clustering.job_result import ClusterJobResult
-from recognition.application.orchestration.protocols import SuggestionServiceProtocol
+from recognition.application.orchestration.protocols import MergeSuggestionServiceProtocol, SuggestionServiceProtocol
 from recognition.application.persistence.assignment_writer import AssignmentWriter
 from recognition.domain.identity import MediaIdentity
 from recognition.observability import ClusteringLogger
@@ -33,6 +34,10 @@ from recognition.observability.recognition_runs import complete_recognition_run,
 from recognition.observability.reports import BatchJobReport
 from recognition.shared.ids import generate_id
 from recognition.shared.tenant import coerce_tenant_uuid
+
+if TYPE_CHECKING:
+    from recognition.application.settings import HACSettings
+    from recognition.domain.repositories import ConstrainedHACProtocol
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +53,10 @@ async def cluster_unclustered_identities(
     graph_discovery: GraphDiscovery,
     assignment_writer: AssignmentWriter,
     suggestion_service: SuggestionServiceProtocol,
+    merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
     clustering_logger: ClusteringLogger | None = None,
-    constrained_hac: Any | None = None,
-    hac_settings: Any | None = None,
+    constrained_hac: ConstrainedHACProtocol | None = None,
+    hac_settings: HACSettings | None = None,
     progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
     commit: bool = True,
 ) -> ClusterJobResult:
@@ -63,6 +69,7 @@ async def cluster_unclustered_identities(
         graph_discovery=graph_discovery,
         assignment_writer=assignment_writer,
         suggestion_service=suggestion_service,
+        merge_suggestion_service=merge_suggestion_service,
         clustering_logger=clustering_logger,
         constrained_hac=constrained_hac,
         hac_settings=hac_settings,
@@ -85,9 +92,10 @@ class IncrementalClusteringRunner:
         graph_discovery: GraphDiscovery,
         assignment_writer: AssignmentWriter,
         suggestion_service: SuggestionServiceProtocol,
+        merge_suggestion_service: MergeSuggestionServiceProtocol | None = None,
         clustering_logger: ClusteringLogger | None = None,
-        constrained_hac: Any | None = None,
-        hac_settings: Any | None = None,
+        constrained_hac: ConstrainedHACProtocol | None = None,
+        hac_settings: HACSettings | None = None,
         progress_callback: Callable[[int, int], Awaitable[None]] | None = None,
         commit: bool = True,
     ) -> None:
@@ -98,6 +106,7 @@ class IncrementalClusteringRunner:
         self._graph_discovery = graph_discovery
         self._assignment_writer = assignment_writer
         self._suggestion_service = suggestion_service
+        self._merge_suggestion_service = merge_suggestion_service
         self._clustering_logger = clustering_logger
         self._constrained_hac = constrained_hac
         self._hac_settings = hac_settings
@@ -323,6 +332,9 @@ class IncrementalClusteringRunner:
                 bbox_height=row.bbox_height,
                 bbox_x=row.bbox_x,
                 bbox_y=row.bbox_y,
+                pose_pitch=row.pose_pitch,
+                pose_yaw=row.pose_yaw,
+                pose_roll=row.pose_roll,
                 image_phash=row.image_phash,
             )
             for row in rows
@@ -403,13 +415,17 @@ class IncrementalClusteringRunner:
             all_processed_ids = accepted_ids | suggested_ids | rejected_ids | already_in_new_clusters
             no_candidates = [i for i in chunk if i.id not in all_processed_ids]
             rejected_identities = [i for i in chunk if i.id in rejected_ids]
-            still_unclustered = no_candidates + rejected_identities
+            # Suggested identities need singleton clusters as fallback - they have a suggestion
+            # linking them to an existing cluster, but they must still belong to SOME cluster
+            suggested_identities = [i for i in chunk if i.id in suggested_ids]
+            still_unclustered = no_candidates + rejected_identities + suggested_identities
 
             logger.info(
-                "[clustering] Identities needing new clusters: %d (no candidates: %d, rejected: %d)",
+                "[clustering] Identities needing new clusters: %d (no candidates: %d, rejected: %d, suggested: %d)",
                 len(still_unclustered),
                 len(no_candidates),
                 len(rejected_identities),
+                len(suggested_identities),
             )
 
             if still_unclustered:
@@ -477,10 +493,29 @@ class IncrementalClusteringRunner:
             processed = processor.processed_count
             clustering_job.processed_identities = processed
             clustering_job.progress = (processed / total_identities) if total_identities else 1.0
+            clustering_job.payload = {
+                **(clustering_job.payload or {}),
+                "clusters_created": clusters_created,
+            }
             await self._session.flush()
 
             if self._progress_callback:
                 await self._progress_callback(processed, total_identities)
+
+        singleton_merges = await run_singleton_hac_refinement(
+            tenant_id=str(tenant_id),
+            constrained_hac=self._constrained_hac,
+            hac_settings=self._hac_settings,
+            assignment_writer=self._assignment_writer,
+            merge_suggestion_service=self._merge_suggestion_service,
+            clustering_logger=self._clustering_logger,
+        )
+        if singleton_merges > 0:
+            logger.info(
+                "[clustering] singleton_hac_complete job_id=%s merged_clusters=%d",
+                job_id,
+                singleton_merges,
+            )
 
         return accept_count, suggest_count, reject_count, clusters_created
 
@@ -522,6 +557,10 @@ class IncrementalClusteringRunner:
         clustering_job.progress = 1.0
         clustering_job.status = "completed"
         clustering_job.completed_at = datetime.now(tz=UTC)
+        clustering_job.payload = {
+            **(clustering_job.payload or {}),
+            "clusters_created": clusters_created,
+        }
         await self._session.flush()
 
         await complete_recognition_run(

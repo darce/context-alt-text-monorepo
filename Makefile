@@ -24,7 +24,7 @@ help:
 	@echo "  make mcp-stop     - Stop MCP server"
 	@echo "  make mcp-restart  - Restart MCP server"
 	@echo "  make mcp-status   - Check if MCP server is running"
-	@echo "  make mcp-run      - Run MCP server in foreground
+	@echo "  make mcp-run      - Run MCP server in foreground"
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all    - Run all checks (lint + types + tests)"

@@ -85,10 +85,12 @@ class Api {
 
 	/**
 	 * Handle GET /workbench/media requests.
+	 *
+	 * Note: per_page limits are enforced via REST API schema validation (see get_workbench_media_args).
 	 */
 	public function get_workbench_media( WP_REST_Request $request ): WP_REST_Response {
-		$page     = max( 1, (int) $request->get_param( 'page' ) );
-		$per_page = min( 50, max( 1, (int) $request->get_param( 'per_page' ) ) );
+		$page     = (int) $request->get_param( 'page' );
+		$per_page = (int) $request->get_param( 'per_page' );
 		$search   = (string) $request->get_param( 'search' );
 		$status   = (string) $request->get_param( 'status' );
 
@@ -128,7 +130,7 @@ class Api {
 		$items = array_map(
 			function ( int $attachment_id ): array {
 				$alt_text = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
-				$thumb    = wp_get_attachment_image_url( $attachment_id, 'medium_large' );
+				$thumb    = wp_get_attachment_image_url( $attachment_id, 'full' );
 				$meta     = wp_get_attachment_metadata( $attachment_id );
 				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
 
@@ -180,7 +182,7 @@ class Api {
 				'default'           => 20,
 				'sanitize_callback' => 'absint',
 				'minimum'           => 1,
-				'maximum'           => 50,
+				'maximum'           => 100,
 			),
 			'search'   => array(
 				'description'       => 'Optional search term applied to attachment title and meta.',

@@ -12,7 +12,7 @@ import { WorkbenchPage } from '../../WorkbenchPage';
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
-  sprintf: (template: string, ...args: Array<string | number>) => {
+  sprintf: (template: string, ...args: (string | number)[]) => {
     let idx = 0;
     return template.replace(/%[sd]/g, () => String(args[idx++] ?? ''));
   },
@@ -108,10 +108,10 @@ describe('WorkbenchPage (integration-lite)', () => {
     resetConfigCache();
   });
 
-  afterEach(() => {
+  afterEach(async () => {
     // Cancel all pending queries and unmount
     if (queryClient) {
-      queryClient.cancelQueries();
+      await queryClient.cancelQueries();
       queryClient.clear();
       queryClient = null;
     }
@@ -147,7 +147,7 @@ describe('WorkbenchPage (integration-lite)', () => {
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: async () => mediaResponse,
+      json: () => Promise.resolve(mediaResponse),
     }) as typeof fetch;
 
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
@@ -223,10 +223,7 @@ describe('WorkbenchPage (integration-lite)', () => {
       },
     });
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
-    client.setQueryData(
-      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '' }),
-      mediaResponse,
-    );
+    client.setQueryData(queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '' }), mediaResponse);
     client.setQueryData(queryKeys.media.identitiesByIds([11]), {
       identities_by_media: { '11': [] },
     });

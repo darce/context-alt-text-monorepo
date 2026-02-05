@@ -19,6 +19,7 @@ import type {
   AsyncSplitClusterResponse,
   CreateClusterForIdentityRequest,
   CreateClusterForIdentityResponse,
+  ClusterIdentity,
 } from './types';
 
 export const updateClusterLabel = async (clusterId: string, label: string, signal?: AbortSignal): Promise<void> => {
@@ -192,4 +193,24 @@ export const pinRepresentative = async (
     body: { is_pinned: isPinned },
     restNonce: getConfig().nonce,
   });
+};
+
+export const fetchClusterMembers = async (clusterId: string): Promise<ClusterIdentity[]> => {
+  const base = getEndpoint('recognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${clusterId}/members`;
+  return fetchApi<ClusterIdentity[]>(url, {
+    method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const removeClusterMember = async (identityId: string, block = true, signal?: AbortSignal): Promise<void> => {
+  return reassignClusterIdentity(
+    {
+      identityId,
+      targetClusterId: null,
+      blockFromCluster: block,
+    },
+    signal,
+  );
 };

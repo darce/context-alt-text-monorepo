@@ -49,9 +49,14 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
 
   // For singletons without a cluster, we still allow naming/merging via identity ID
   const isSingleton = !editableClusterId && cluster.members.length === 1;
-  const canEdit = Boolean(editableClusterId);
-  const canSearchForMatch = isSingleton;
-  const labelText = derivedLabel ?? __('Unlabeled identity', 'alt-context');
+  const canEdit = Boolean(editableClusterId) && !cluster.clusteringPending;
+  const canSearchForMatch = isSingleton && !cluster.clusteringPending;
+
+  // Show "Processing..." when clustering hasn't run yet, otherwise "Unlabeled identity"
+  const labelText = cluster.clusteringPending
+    ? __('Processing...', 'alt-context')
+    : (derivedLabel ?? __('Unlabeled identity', 'alt-context'));
+
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
@@ -248,7 +253,9 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
       <div className="acx-identity-cluster__info">
         {!editState.isEditing ? (
           <>
-            {canEdit || canSearchForMatch ? (
+            {cluster.clusteringPending ? (
+              <span className="acx-identity-cluster__label acx-identity-cluster__label--processing">{labelText}</span>
+            ) : canEdit || canSearchForMatch ? (
               <button
                 type="button"
                 className="acx-identity-cluster__label acx-identity-cluster__label--action"
@@ -259,18 +266,20 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
             ) : (
               <span className="acx-identity-cluster__label">{labelText}</span>
             )}
-            <ClusterActions
-              canEdit={canEdit}
-              canSearchForMatch={canSearchForMatch}
-              hasLabel={Boolean(cluster.label)}
-              isAutoLabel={cluster.isAutoLabel}
-              canSplit={Boolean(cluster.clusterId)}
-              canReject={isSingleton || cluster.members.length === 1}
-              isPending={mutations.isPending}
-              onEdit={startEditing}
-              onWrongPerson={handleWrongPerson}
-              onSplit={handleSplit}
-            />
+            {!cluster.clusteringPending && (
+              <ClusterActions
+                canEdit={canEdit}
+                canSearchForMatch={canSearchForMatch}
+                hasLabel={Boolean(cluster.label)}
+                isAutoLabel={cluster.isAutoLabel}
+                canSplit={Boolean(cluster.clusterId)}
+                canReject={isSingleton || cluster.members.length === 1}
+                isPending={mutations.isPending}
+                onEdit={startEditing}
+                onWrongPerson={handleWrongPerson}
+                onSplit={handleSplit}
+              />
+            )}
             {/* Show inline "Is this X?" prompt for unlabeled items */}
             {!cluster.label && anchorIdentityId && (
               <InlineSuggestionPrompt

@@ -4,6 +4,7 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use AltContext\Support\BatchLimits;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -32,14 +33,10 @@ use function wp_remote_retrieve_response_code;
 use function rest_sanitize_boolean;
 
 class RecognitionController {
+	use BatchLimits;
+
 	private string $recognition_base_url;
 	private string $api_key;
-	private const DEFAULT_TIER_BATCH_LIMITS = array(
-		'free'       => 50,
-		'pro'        => 500,
-		'business'   => 2000,
-		'enterprise' => 10000,
-	);
 
 	public function __construct() {
 		$this->recognition_base_url = (string) get_option( 'alt_context_recognition_url', 'http://localhost:8000' );
@@ -183,6 +180,16 @@ class RecognitionController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/members',
+			[
+				'methods'             => 'GET',
+				'callback'            => [ $this, 'get_cluster_members' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/clusters/(?P<source_id>[a-f0-9-]+)/merge',
 			[
 				'methods'             => 'POST',
@@ -207,6 +214,16 @@ class RecognitionController {
 			[
 				'methods'             => 'POST',
 				'callback'            => [ $this, 'create_cluster_for_identity' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/clusters/recover-orphans',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'recover_orphan_identities' ],
 				'permission_callback' => [ $this, 'can_manage_recognition' ],
 			]
 		);
@@ -278,6 +295,28 @@ class RecognitionController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/suggestions/merge',
+			[
+				'methods'             => 'GET',
+				'callback'            => [ $this, 'get_pending_merge_suggestions' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+				'args'                => [
+					'limit'  => [
+						'type'        => 'integer',
+						'default'     => 10,
+						'description' => 'Maximum number of merge suggestions to return.',
+					],
+					'offset' => [
+						'type'        => 'integer',
+						'default'     => 0,
+						'description' => 'Number of merge suggestions to skip.',
+					],
+				],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/suggestions/(?P<suggestion_id>[a-f0-9-]+)/accept',
 			[
 				'methods'             => 'POST',
@@ -288,10 +327,30 @@ class RecognitionController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/suggestions/merge/(?P<suggestion_id>[a-f0-9-]+)/accept',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'accept_merge_suggestion' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/suggestions/(?P<suggestion_id>[a-f0-9-]+)/reject',
 			[
 				'methods'             => 'POST',
 				'callback'            => [ $this, 'reject_suggestion' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/suggestions/merge/(?P<suggestion_id>[a-f0-9-]+)/reject',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'reject_merge_suggestion' ],
 				'permission_callback' => [ $this, 'can_manage_recognition' ],
 			]
 		);
@@ -316,7 +375,7 @@ class RecognitionController {
 				)
 			);
 
-			$max = $this->get_tier_batch_limit();
+			$max = $this->get_current_tier_batch_limit();
 			if ( count( $media_items ) > $max ) {
 				return new WP_Error(
 					'too_many_media_items',
@@ -389,6 +448,7 @@ class RecognitionController {
 		$last_completed = -1;
 		$last_emit      = 0.0;
 		$last_heartbeat = microtime( true );
+		$last_phase     = null;
 
 		while ( ! connection_aborted() ) {
 			$response = $this->proxy_request(
@@ -438,33 +498,73 @@ class RecognitionController {
 			$completed = absint( $progress['completed'] ?? 0 );
 			$total     = absint( $progress['total'] ?? 0 );
 			$status    = isset( $data['status'] ) ? sanitize_text_field( (string) $data['status'] ) : 'pending';
+			$phase     = isset( $progress['phase'] ) ? sanitize_text_field( (string) $progress['phase'] ) : null;
+			$job_type  = isset( $data['type'] ) ? sanitize_text_field( (string) $data['type'] ) : 'analyze';
+			$event_type = 'scan_progress';
+			if ( 'clustering' === $job_type ) {
+				$event_type = 'clustering_progress';
+			}
 
 			$now         = microtime( true );
 			$should_emit = (
 				$completed !== $last_completed
+				|| $phase !== $last_phase
 				|| ( $now - $last_emit > 0.5 && $completed > 0 )
 				|| ( $now - $last_heartbeat > 15 )
 			);
 
 			if ( $should_emit ) {
+				$payload = [
+					'type'      => $event_type,
+					'job_id'    => $job_id,
+					'status'    => $status,
+					'completed' => $completed,
+					'total'     => $total,
+				];
+				if ( null !== $phase && '' !== $phase ) {
+					$payload['phase'] = $phase;
+				}
+				if ( isset( $progress['images_processed'] ) ) {
+					$payload['images_processed'] = absint( $progress['images_processed'] );
+				}
+				if ( isset( $progress['faces_found'] ) ) {
+					$payload['faces_found'] = absint( $progress['faces_found'] );
+				}
+				if ( isset( $progress['clusters_created'] ) ) {
+					$payload['clusters_created'] = absint( $progress['clusters_created'] );
+				}
 				echo "event: progress\n";
-				echo 'data: ' . wp_json_encode(
-					[
-						'completed' => $completed,
-						'total'     => $total,
-						'status'    => $status,
-					]
-				) . "\n\n";
+				echo 'data: ' . wp_json_encode( $payload ) . "\n\n";
 				$last_completed = $completed;
 				$last_emit      = $now;
 				$last_heartbeat = $now;
+				$last_phase     = $phase;
 				@ob_flush();
 				@flush();
 			}
 
 			if ( in_array( $status, [ 'completed', 'failed' ], true ) ) {
+				$done_payload = [
+					'type'      => $event_type,
+					'job_id'    => $job_id,
+					'status'    => $status,
+					'completed' => $completed,
+					'total'     => $total,
+				];
+				if ( null !== $phase && '' !== $phase ) {
+					$done_payload['phase'] = $phase;
+				}
+				if ( isset( $progress['images_processed'] ) ) {
+					$done_payload['images_processed'] = absint( $progress['images_processed'] );
+				}
+				if ( isset( $progress['faces_found'] ) ) {
+					$done_payload['faces_found'] = absint( $progress['faces_found'] );
+				}
+				if ( isset( $progress['clusters_created'] ) ) {
+					$done_payload['clusters_created'] = absint( $progress['clusters_created'] );
+				}
 				echo "event: done\n";
-				echo 'data: ' . wp_json_encode( [ 'status' => $status ] ) . "\n\n";
+				echo 'data: ' . wp_json_encode( $done_payload ) . "\n\n";
 				@ob_flush();
 				@flush();
 				break;
@@ -506,6 +606,14 @@ class RecognitionController {
 
 		// Use the hybrid clustering endpoint which runs Chinese Whispers for unmatched identities
 		return $this->proxy_request( 'POST', '/recognition/clustering/jobs', $body );
+	}
+
+	public function recover_orphan_identities( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$payload = [
+			'tenant_id' => $this->get_tenant_id(),
+		];
+
+		return $this->proxy_request( 'POST', '/recognition/clusters/recover-orphans', $payload );
 	}
 
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -585,6 +693,20 @@ class RecognitionController {
 		return $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/clusters/%s', $cluster_id ),
+			[],
+			[ 'tenant_id' => $this->get_tenant_id() ]
+		);
+	}
+
+	public function get_cluster_members( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', [ 'status' => 400 ] );
+		}
+
+		return $this->proxy_request(
+			'GET',
+			sprintf( '/recognition/clusters/%s/members', $cluster_id ),
 			[],
 			[ 'tenant_id' => $this->get_tenant_id() ]
 		);
@@ -801,6 +923,21 @@ class RecognitionController {
 		);
 	}
 
+	public function get_pending_merge_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$query = [
+			'tenant_id' => $this->get_tenant_id(),
+			'limit'     => absint( $request->get_param( 'limit' ) ?? 10 ),
+			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
+		];
+
+		return $this->proxy_request(
+			'GET',
+			'/recognition/suggestions/merge',
+			[],
+			$query
+		);
+	}
+
 	public function accept_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
 
@@ -815,7 +952,27 @@ class RecognitionController {
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/suggestions/%s/accept', $suggestion_id ),
-			$payload
+			$payload,
+			[ 'tenant_id' => $this->get_tenant_id() ]
+		);
+	}
+
+	public function accept_merge_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
+
+		if ( '' === $suggestion_id ) {
+			return new WP_Error( 'missing_suggestion_id', 'Suggestion ID is required.', [ 'status' => 400 ] );
+		}
+
+		$payload = [
+			'tenant_id' => $this->get_tenant_id(),
+		];
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/suggestions/merge/%s/accept', $suggestion_id ),
+			$payload,
+			[ 'tenant_id' => $this->get_tenant_id() ]
 		);
 	}
 
@@ -833,7 +990,27 @@ class RecognitionController {
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/suggestions/%s/reject', $suggestion_id ),
-			$payload
+			$payload,
+			[ 'tenant_id' => $this->get_tenant_id() ]
+		);
+	}
+
+	public function reject_merge_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$suggestion_id = sanitize_text_field( (string) $request->get_param( 'suggestion_id' ) );
+
+		if ( '' === $suggestion_id ) {
+			return new WP_Error( 'missing_suggestion_id', 'Suggestion ID is required.', [ 'status' => 400 ] );
+		}
+
+		$payload = [
+			'tenant_id' => $this->get_tenant_id(),
+		];
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/suggestions/merge/%s/reject', $suggestion_id ),
+			$payload,
+			[ 'tenant_id' => $this->get_tenant_id() ]
 		);
 	}
 
@@ -847,7 +1024,7 @@ class RecognitionController {
 			return new WP_Error( 'missing_media_ids', 'Please provide one or more media IDs to analyze.', [ 'status' => 400 ] );
 		}
 
-		$max = $this->get_tier_batch_limit();
+		$max = $this->get_current_tier_batch_limit();
 		if ( $count > $max ) {
 			return new WP_Error(
 				'too_many_media_ids',
@@ -885,16 +1062,40 @@ class RecognitionController {
 			'body'    => ! empty( $body ) && 'GET' !== $method ? wp_json_encode( $body ) : null,
 		];
 
-		$response = wp_remote_request( $url, array_merge( $options, [ 'method' => $method ] ) );
+		// Retry with exponential backoff for transient failures
+		$max_retries    = 3;
+		$base_delay_ms  = 500;
+		$last_error     = null;
 
-		if ( is_wp_error( $response ) ) {
-			return $response;
+		for ( $attempt = 0; $attempt < $max_retries; $attempt++ ) {
+			$response = wp_remote_request( $url, array_merge( $options, [ 'method' => $method ] ) );
+
+			if ( is_wp_error( $response ) ) {
+				$last_error = $response;
+				// Retry on connection errors
+				if ( $attempt < $max_retries - 1 ) {
+					$delay_ms = $base_delay_ms * ( 2 ** $attempt ); // 500ms, 1000ms, 2000ms
+					usleep( $delay_ms * 1000 );
+					continue;
+				}
+				return $response;
+			}
+
+			$status = wp_remote_retrieve_response_code( $response );
+
+			// Retry on 5xx server errors (not 4xx client errors)
+			if ( $status >= 500 && $attempt < $max_retries - 1 ) {
+				$delay_ms = $base_delay_ms * ( 2 ** $attempt );
+				usleep( $delay_ms * 1000 );
+				continue;
+			}
+
+			$response_body = wp_remote_retrieve_body( $response );
+			return new WP_REST_Response( json_decode( $response_body, true ), $status );
 		}
 
-		$status = wp_remote_retrieve_response_code( $response );
-		$body   = wp_remote_retrieve_body( $response );
-
-		return new WP_REST_Response( json_decode( $body, true ), $status );
+		// Should not reach here, but return last error if we do
+		return $last_error ?? new WP_Error( 'proxy_failed', 'Request failed after retries.', [ 'status' => 502 ] );
 	}
 
 	private function build_media_items( array $media_ids ): array {
@@ -929,58 +1130,5 @@ class RecognitionController {
 
 	private function get_tenant_id(): string {
 		return md5( (string) get_site_url() );
-	}
-
-	private function get_tier_batch_limit(): int {
-		$tier   = sanitize_key( (string) get_option( 'alt_context_tier', 'free' ) );
-		$limits = $this->get_batch_limits();
-		return $limits[ $tier ] ?? $limits['free'];
-	}
-
-	/**
-	 * Resolve tier batch limits from options (and allow overrides via a WP filter).
-	 *
-	 * Option: alt_context_batch_limits
-	 * - Array or JSON object: { free: 50, pro: 500, business: 2000, enterprise: 10000 }
-	 *
-	 * Filter: alt_context_recognition_batch_limits
-	 * - Receives array<string,int> limits, returns same shape.
-	 *
-	 * @return array<string,int>
-	 */
-	private function get_batch_limits(): array {
-		$defaults = self::DEFAULT_TIER_BATCH_LIMITS;
-		$raw      = get_option( 'alt_context_batch_limits', array() );
-
-		$provided = array();
-		if ( is_array( $raw ) ) {
-			$provided = $raw;
-		} elseif ( is_string( $raw ) && '' !== $raw ) {
-			$decoded = json_decode( $raw, true );
-			if ( is_array( $decoded ) ) {
-				$provided = $decoded;
-			}
-		}
-
-		$limits = array();
-		foreach ( $defaults as $tier => $default_limit ) {
-			$value = $provided[ $tier ] ?? null;
-			$limit = absint( $value );
-			$limits[ $tier ] = $limit > 0 ? $limit : (int) $default_limit;
-		}
-
-		$filtered = apply_filters( 'alt_context_recognition_batch_limits', $limits );
-		if ( ! is_array( $filtered ) ) {
-			return $limits;
-		}
-
-		$normalized = array();
-		foreach ( $limits as $tier => $default_limit ) {
-			$value = $filtered[ $tier ] ?? $default_limit;
-			$limit = absint( $value );
-			$normalized[ $tier ] = $limit > 0 ? $limit : (int) $default_limit;
-		}
-
-		return $normalized;
 	}
 }

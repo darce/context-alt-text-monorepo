@@ -1,0 +1,203 @@
+2026-02-04 19:30:14,178 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2026-02-04 19:30:32,996 INFO db.startup - === Application Startup ===
+2026-02-04 19:30:32,996 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 19:30:32,996 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 19:30:42,266 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 19:30:42,348 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 19:30:42,485 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 19:30:42,540 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 19:30:42,625 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 19:30:42,651 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 19:31:36,630 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 19:31:36,748 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 19:32:08,806 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=55180aac-7ebc-4569-b272-f50e620fc382 old_label='None' new_label='Tory Guzman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:32:48,609 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=e4f934b4-132f-4434-9ede-11ad921b4b39 old_label='None' new_label='Maria Correonero' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:33:27,182 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=69ac8d7b-e1ee-4198-b119-933979e201f8 old_label='None' new_label='Maddie Pesavento' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:33:34,121 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=1b02b190-9080-4b8f-83b3-5a35c6e48d2a old_label='None' new_label='Lindsay Blair' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:33:37,187 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=13d21c77-6861-4bcc-b8a7-b84210c64753 old_label='None' new_label='Self' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:34:00,451 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=de18de11-d546-4216-bd48-b46d8316ae1b old_label='None' new_label='Hillary Sampliner' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:34:09,299 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=61a65722-991e-4e57-8eef-4a94cd71991e old_label='None' new_label='Amanda Row' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:34:34,205 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=238c14b9-1067-4506-acc1-584e94169056 old_label='None' new_label='Laura Sampliner' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:34:55,430 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=0d4bab82-ff99-4c8c-b8c6-5ebe29ce0c36 old_label='None' new_label='Allyee Whaley' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:35:04,015 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=79111b5f-7f7f-442d-bee9-103b1d1e41e0 old_label='None' new_label='Emilie Chartrand' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:41:52,894 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=b2d6d58a-1513-4686-8fbe-60429a970c05 old_label='None' new_label='Jen Greenwald' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:42:13,023 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=2a7cba29-86cd-438a-b808-fd149ff1dbec old_label='None' new_label='Rosalie Fransen' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:42:21,918 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=fb6f3cd3-f0ab-4b76-b286-89f025dad1e1 old_label='None' new_label='Coral Osborne' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:42:28,948 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=f7924008-4cd5-423b-bb9b-c5f0c86b4337 old_label='None' new_label='Faith Coggin' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:42:43,991 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=788937a2-703e-4275-a10b-4472900359f1 old_label='None' new_label='Kendall Osborne' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:42:58,141 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=1c711818-27ce-47c5-b718-2394cf8a0188 old_label='None' new_label='Talvi Faustmann' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:43:25,518 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=5daf71c6-1fb1-4623-8926-64afd3e0d314 old_label='None' new_label='Zoe Elefterin' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:43:35,155 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=a02bcdc3-a332-4586-892f-cdb2f80288ca old_label='None' new_label='Barbara Fransen' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:43:44,108 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=3cf28292-f9ae-4ca4-bca0-a59cfbe52c43 old_label='None' new_label='Michelle Cortese' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:43:51,374 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=b707403d-1255-4f9b-94fa-35bec204611d old_label='None' new_label='Kat Duma' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:44:00,170 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=efb0676e-2fa8-4a33-bd3f-2df0be74c9e5 old_label='None' new_label='Kirstie McCarrel' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:44:36,128 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=ff0bea10-1ea3-468f-ab9c-14c999e827f2 old_label='None' new_label='Sara Olas' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:45:13,439 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=706c7bd8-e07c-445f-be0b-1c840c2b8a64 old_label='None' new_label='Irene Droney' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:45:23,015 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=8a56f951-84bc-4fe1-a047-bb056cda20e8 old_label='None' new_label='Erin McLeod' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:47:15,102 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 19:47:15,329 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 19:47:59,525 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=2826a011-ef63-4e1e-a5ed-85691620987f old_label='None' new_label='Kelly Woltman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:48:09,448 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=93f95dfb-7954-4839-8abc-bf8d887fdf23 old_label='None' new_label='Kristin Trethewey' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:48:26,132 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=02b11d5a-6bc1-4016-a559-fb5560a2796d old_label='None' new_label='Scarlett Rose' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:48:50,305 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=d544dd42-4b55-4ff7-a6e1-573d763ba157 old_label='None' new_label='Laura Dresser' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:48:58,956 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=b526b20c-684b-4dd2-96c4-3992e335731d old_label='None' new_label='Lauren Treihaft' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:49:05,373 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=415b2909-69d6-4b51-a7f1-f7a4acd7c60e old_label='None' new_label='Liz Alves' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:49:38,944 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=49f8c4d6-b121-4994-8aa8-e87da75d711b old_label='None' new_label='Rachel Treihaft' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:50:34,567 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=f0f9078a-d574-4ffd-a555-e09ae3e85908 old_label='None' new_label='Lo' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:51:32,624 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=675ae983-b82d-47d7-9b70-079a7bc6b39b old_label='None' new_label='Erika Hansen-Miller' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:53:06,894 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=7b274035-ee6e-407c-8f03-c5fbeaee286b old_label='None' new_label='Jenny Farman' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:54:43,127 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=4cfea681-3d95-4679-976d-c4c8d873d0de old_label='None' new_label='Olive Glass' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:55:03,346 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=39056f9e-9ccc-4e6f-9c11-27420d33ebc0 old_label='None' new_label='Georgia Kauten' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 19:57:42,758 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 19:58:59,593 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 19:58:59,814 INFO recognition.interface_adapters.http.routers.clusters - Clustering request: tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8, mode=async
+2026-02-04 20:00:56,127 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=e2ed6746-620a-4ff2-ab16-77157855ca36 old_label='None' new_label='Micaela Carolan' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:01:50,916 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=e67fb02f-a98d-4115-bc83-c5b214b8d7c4 old_label='None' new_label='Kaitlin Till-Landry' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:04:05,053 INFO db.startup - === Application Startup ===
+2026-02-04 20:04:05,053 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:04:05,053 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:04:54,349 INFO db.startup - === Application Startup ===
+2026-02-04 20:04:54,349 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:04:54,349 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:05:05,023 INFO db.startup - === Application Startup ===
+2026-02-04 20:05:05,023 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:05:05,023 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:05:43,144 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=11bd0d11-f825-425f-a412-af67bf1603d1 old_label='None' new_label='Ashley Ruetenik' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:08:23,537 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=3d1a6eef-dbd2-421c-a11e-dee9589a94dd old_label='None' new_label='Stephanie Browne' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:08:59,084 INFO db.startup - === Application Startup ===
+2026-02-04 20:08:59,084 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:08:59,084 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:46:44,749 INFO db.startup - === Application Startup ===
+2026-02-04 20:46:44,750 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:46:44,750 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:46:53,503 INFO db.startup - === Application Startup ===
+2026-02-04 20:46:53,503 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:46:53,503 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:47:37,152 INFO db.startup - === Application Startup ===
+2026-02-04 20:47:37,152 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:47:37,152 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:49:21,069 INFO db.startup - === Application Startup ===
+2026-02-04 20:49:21,069 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:49:21,069 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:53:36,741 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Person For Surfacing' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:53:36,742 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 20:53:36,752 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef user_confirmed=False label=None
+2026-02-04 20:53:36,752 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 20:54:31,370 INFO db.startup - === Application Startup ===
+2026-02-04 20:54:31,371 INFO db.startup - Git: edc2a2f (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:54:31,371 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:55:12,766 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 2' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:55:13,268 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 20:55:13,275 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef user_confirmed=False label=None
+2026-02-04 20:55:13,275 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 20:56:32,200 INFO db.startup - === Application Startup ===
+2026-02-04 20:56:32,201 INFO db.startup - Git: 804db65 (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:56:32,201 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:56:46,615 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 3' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:56:47,117 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 20:56:47,126 INFO recognition.application.suggestions.refresh_service - [suggestions] RAW SQL: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef raw_row=(UUID('6c3c56be-8da0-4b46-972f-0c3e197e29ef'), None, False)
+2026-02-04 20:56:47,131 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef user_confirmed=False label=None
+2026-02-04 20:56:47,131 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 20:57:09,389 INFO db.startup - === Application Startup ===
+2026-02-04 20:57:09,389 INFO db.startup - Git: 8051abb (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:57:09,389 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:57:36,917 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 4' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:57:37,919 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 20:57:37,925 INFO recognition.application.suggestions.refresh_service - [suggestions] RAW SQL: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef raw_row=(UUID('6c3c56be-8da0-4b46-972f-0c3e197e29ef'), None, False)
+2026-02-04 20:57:37,930 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef user_confirmed=False label=None
+2026-02-04 20:57:37,930 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 20:59:26,314 INFO db.startup - === Application Startup ===
+2026-02-04 20:59:26,314 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 20:59:26,314 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 20:59:34,410 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 5' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 20:59:35,412 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 20:59:35,428 INFO recognition.application.suggestions.refresh_service - [suggestions] TENANT CONTEXT: app.current_tenant=cc42f496-c7e1-5631-b3b5-cfa270c763f8 _tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 20:59:35,433 INFO recognition.application.suggestions.refresh_service - [suggestions] RAW SQL: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef raw_row=(UUID('6c3c56be-8da0-4b46-972f-0c3e197e29ef'), None, False)
+2026-02-04 20:59:35,748 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef user_confirmed=False label=None
+2026-02-04 20:59:35,748 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 21:02:29,763 INFO db.startup - === Application Startup ===
+2026-02-04 21:02:29,763 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:02:29,763 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:02:36,827 INFO db.startup - === Application Startup ===
+2026-02-04 21:02:36,828 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:02:36,828 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:03:47,099 INFO db.startup - === Application Startup ===
+2026-02-04 21:03:47,100 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:03:47,100 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:04:02,819 INFO db.startup - === Application Startup ===
+2026-02-04 21:04:02,820 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:04:02,820 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:04:20,878 INFO db.startup - === Application Startup ===
+2026-02-04 21:04:20,879 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:04:20,879 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:04:53,709 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 7' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 21:04:53,710 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef label=Test Surfacing 7 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 21:04:53,716 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: using passed label=Test Surfacing 7 cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef (optimistic)
+2026-02-04 21:04:54,687 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 21:05:55,859 INFO db.startup - === Application Startup ===
+2026-02-04 21:05:55,859 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:05:55,859 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:06:04,401 INFO db.startup - === Application Startup ===
+2026-02-04 21:06:04,401 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:06:04,401 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:06:13,107 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 8' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 21:06:13,108 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef label=Test Surfacing 8 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 21:06:13,116 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: using passed label=Test Surfacing 8 cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef (optimistic)
+2026-02-04 21:06:13,134 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: found 3 representatives for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef
+2026-02-04 21:06:13,288 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: found 196 unlabeled clusters to scan
+2026-02-04 21:06:13,965 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: no matches found cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef
+2026-02-04 21:06:13,965 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 21:06:53,598 INFO db.startup - === Application Startup ===
+2026-02-04 21:06:53,598 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:06:53,598 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:06:58,926 INFO db.startup - === Application Startup ===
+2026-02-04 21:06:58,927 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:06:58,927 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:07:12,359 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 9' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 21:07:12,360 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef label=Test Surfacing 9 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 21:07:12,368 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: using passed label=Test Surfacing 9 cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef (optimistic)
+2026-02-04 21:07:12,392 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: found 3 representatives for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef
+2026-02-04 21:07:12,530 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: found 196 unlabeled clusters to scan
+2026-02-04 21:07:13,089 INFO recognition.application.suggestions.refresh_service - [suggestions] gate rejected: identity_id=50bdcb68-2985-4bc3-ba6c-163eb993897b similarity=0.715 outcome=reject
+2026-02-04 21:07:13,110 INFO recognition.application.suggestions.refresh_service - [suggestions] gate rejected: identity_id=e29f5be6-e1c5-4dde-8e96-2e98c7ac95ae similarity=0.420 outcome=reject
+2026-02-04 21:07:13,113 INFO recognition.application.suggestions.refresh_service - [suggestions] gate rejected: identity_id=4d4d4d54-16de-4115-81f1-6dd9ebcfd9d7 similarity=0.386 outcome=reject
+2026-02-04 21:07:13,270 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: no matches found cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef
+2026-02-04 21:07:13,270 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 21:07:59,594 INFO db.startup - === Application Startup ===
+2026-02-04 21:07:59,595 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:07:59,595 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:09:46,221 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Test Surfacing 10' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 21:09:46,224 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef label=Test Surfacing 10 tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 21:09:46,233 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: using passed label=Test Surfacing 10 cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef (optimistic)
+2026-02-04 21:09:46,258 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: found 3 representatives for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef
+2026-02-04 21:09:46,463 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: found 196 unlabeled clusters to scan
+2026-02-04 21:09:47,318 INFO recognition.application.suggestions.refresh_service - [suggestions] gate rejected: identity_id=50bdcb68-2985-4bc3-ba6c-163eb993897b similarity=0.715 outcome=reject metadata={'block_active': False, 'discovery_similarity': 0.7148765325546265, 'base_threshold': 0.55, 'final_threshold': 0.5487, 'maturity_adj': 0.0, 'quality_adj': 0.025, 'curriculum_t': 0.5254, 'curriculum_adj': -0.0263, 'suggestion_floor': 0.3487, 'suggestion_ceiling': 0.5487, 'maturity_level': 'NASCENT', 'quality_score': 0.192, 'fatal_quality_failure': True}
+2026-02-04 21:09:47,336 INFO recognition.application.suggestions.refresh_service - [suggestions] gate rejected: identity_id=e29f5be6-e1c5-4dde-8e96-2e98c7ac95ae similarity=0.420 outcome=reject metadata={'block_active': False, 'discovery_similarity': 0.42008429765701294, 'base_threshold': 0.55, 'final_threshold': 0.5487, 'maturity_adj': 0.0, 'quality_adj': 0.025, 'curriculum_t': 0.5254, 'curriculum_adj': -0.0263, 'suggestion_floor': 0.3487, 'suggestion_ceiling': 0.5487, 'maturity_level': 'NASCENT', 'quality_score': 0.0, 'fatal_quality_failure': True}
+2026-02-04 21:09:47,339 INFO recognition.application.suggestions.refresh_service - [suggestions] gate rejected: identity_id=4d4d4d54-16de-4115-81f1-6dd9ebcfd9d7 similarity=0.386 outcome=reject metadata={'block_active': False, 'discovery_similarity': 0.38593751192092896, 'base_threshold': 0.55, 'final_threshold': 0.5487, 'maturity_adj': 0.0, 'quality_adj': 0.025, 'curriculum_t': 0.5254, 'curriculum_adj': -0.0263, 'suggestion_floor': 0.3487, 'suggestion_ceiling': 0.5487, 'maturity_level': 'NASCENT', 'quality_score': 0.0, 'fatal_quality_failure': True}
+2026-02-04 21:09:47,507 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: no matches found cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef
+2026-02-04 21:09:47,508 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 21:10:15,042 INFO db.startup - === Application Startup ===
+2026-02-04 21:10:15,043 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:10:15,043 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:10:24,213 INFO db.startup - === Application Startup ===
+2026-02-04 21:10:24,214 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:10:24,214 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:10:28,407 INFO db.startup - === Application Startup ===
+2026-02-04 21:10:28,408 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:10:28,408 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:10:42,222 INFO recognition.application.orchestration.curation.cluster_mutations - [curation] RENAMED cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef old_label='None' new_label='Final Test' tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8 user_action=manual_rename metadata_only=true
+2026-02-04 21:10:42,223 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing starting for cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef label=Final Test tenant_id=cc42f496-c7e1-5631-b3b5-cfa270c763f8
+2026-02-04 21:10:42,233 INFO recognition.application.suggestions.refresh_service - [suggestions] surface_for_newly_labeled_cluster: using passed label=Final Test cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef (optimistic)
+2026-02-04 21:10:43,127 INFO recognition.application.tasks.clustering - [suggestions] Background surfacing completed: cluster_id=6c3c56be-8da0-4b46-972f-0c3e197e29ef surfaced=0
+2026-02-04 21:13:10,018 INFO db.reset - === Database reset via reset_dev_db.sh ===
+2026-02-04 21:13:21,000 INFO db.startup - === Application Startup ===
+2026-02-04 21:13:21,000 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:13:21,000 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:15:34,533 INFO db.startup - === Application Startup ===
+2026-02-04 21:15:34,534 INFO db.startup - Git: 8a0106c (refactor/4.11.1-clustering-persitence-and-false-positives)
+2026-02-04 21:15:34,534 INFO db.startup - Listening on http://127.0.0.1:8000
+2026-02-04 21:15:36,213 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 21:15:36,277 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 21:15:36,322 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 21:15:36,338 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found
+2026-02-04 21:15:36,382 ERROR recognition.interface_adapters.http.deps.session - get_optional_session: exception during yield/commit: 404: Job not found

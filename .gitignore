@@ -53,8 +53,8 @@ apps/archived-wp-context-alt-text/**
 
 #docs/literature
 .DS_Store
-.vscode/settings.json
-.vscode/
+# .vscode/settings.json
+# .vscode/
 .env
 .env.*
 node_modules/

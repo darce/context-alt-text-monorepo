@@ -10,7 +10,7 @@ description: Start/stop the MCP server for AI agent tooling
 - Enabling `search_code`, `trace_api_endpoint`, `find_react_component` tools
 - Debugging MCP server issues
 
-**Prerequisites**: Python 3.11+ with fastmcp installed (`pip install fastmcp`)
+**Prerequisites**: Python 3.11+ with fastmcp installed (`pip install fastmcp`). If you use pyenv, ensure `pyenv` is on your PATH so the script can run `pyenv exec python`.
 
 **Tools provided by MCP server**:
 
@@ -54,4 +54,16 @@ make mcp-restart
 
 # Run in foreground (for debugging)
 make mcp-run
+```
+
+---
+
+**VS Code integration**
+
+VS Code uses the same entry point as the CLI: `scripts/mcp/mcp-server.sh run`.  
+The `.vscode/mcp.json` file is configured to call that script and to inherit your
+pyenv environment (via `PYENV_ROOT`/`PYENV_VERSION` if set).
+
+If VS Code can’t find `pyenv`, ensure your system PATH includes it (or set
+`PYENV_ROOT` in your shell environment so VS Code inherits it).
 ```

@@ -26,14 +26,45 @@ LOG_FILE="$MONOREPO_ROOT/logs/mcp-server.log"
 # Ensure common tools (ripgrep, etc.) are in PATH for VS Code spawned processes
 export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
 
-# Python interpreter - prefer pyenv description-service, fallback to system
-if [ -f "$HOME/.pyenv/versions/description-service/bin/python" ]; then
-    PYTHON="$HOME/.pyenv/versions/description-service/bin/python"
-elif command -v python3 &> /dev/null; then
-    PYTHON="python3"
-else
-    echo "❌ Python not found. Install Python 3.11+ or pyenv."
-    exit 1
+# Prefer the backend's pyenv version when available (no hardcoded paths).
+# Note: backend tools like mypy should run from apps/prototype-description-service
+# (or use --config-file from repo root) to pick up the correct config.
+if [ -z "${PYENV_VERSION:-}" ]; then
+    PYENV_VERSION_FILE="$MONOREPO_ROOT/apps/prototype-description-service/.python-version"
+    if [ -f "$PYENV_VERSION_FILE" ]; then
+        PYENV_VERSION="$(head -n 1 "$PYENV_VERSION_FILE" | tr -d '[:space:]')"
+        if [ -n "$PYENV_VERSION" ]; then
+            export PYENV_VERSION
+        fi
+    fi
+fi
+
+# Python interpreter - prefer pyenv exec, fallback to system python3
+PYENV_CMD=""
+if command -v pyenv >/dev/null 2>&1; then
+    PYENV_CMD="$(command -v pyenv)"
+elif [ -n "${PYENV_ROOT:-}" ] && [ -x "${PYENV_ROOT}/bin/pyenv" ]; then
+    PYENV_CMD="${PYENV_ROOT}/bin/pyenv"
+fi
+
+PYTHON_CMD=()
+if [ -n "$PYENV_CMD" ]; then
+    if "$PYENV_CMD" exec python3 -c "import sys" >/dev/null 2>&1; then
+        PYTHON_CMD=("$PYENV_CMD" exec python3)
+    elif "$PYENV_CMD" exec python -c "import sys" >/dev/null 2>&1; then
+        PYTHON_CMD=("$PYENV_CMD" exec python)
+    fi
+fi
+
+if [ ${#PYTHON_CMD[@]} -eq 0 ]; then
+    if command -v python3 >/dev/null 2>&1; then
+        PYTHON_CMD=(python3)
+    elif command -v python >/dev/null 2>&1; then
+        PYTHON_CMD=(python)
+    else
+        echo "❌ Python not found. Install Python 3.11+ or configure pyenv."
+        exit 1
+    fi
 fi
 
 # Ensure logs directory exists
@@ -51,12 +82,12 @@ start_server() {
     fi
 
     echo "🚀 Starting MCP server..."
-    echo "   Python: $PYTHON"
+    echo "   Python: ${PYTHON_CMD[*]}"
     echo "   Server: $SERVER_SCRIPT"
     echo "   Log: $LOG_FILE"
     
     cd "$MONOREPO_ROOT"
-    nohup "$PYTHON" "$SERVER_SCRIPT" > "$LOG_FILE" 2>&1 &
+    nohup "${PYTHON_CMD[@]}" "$SERVER_SCRIPT" > "$LOG_FILE" 2>&1 &
     PID=$!
     echo $PID > "$PID_FILE"
     
@@ -68,7 +99,7 @@ start_server() {
         echo "To connect from VS Code, add to settings.json:"
         echo '  "mcp.servers": {'
         echo '    "context-alt-text": {'
-        echo '      "command": "'"$PYTHON"'",'
+        echo '      "command": "'"${PYTHON_CMD[*]}"'",'
         echo '      "args": ["'"$SERVER_SCRIPT"'"]'
         echo '    }'
         echo '  }'
@@ -116,11 +147,11 @@ status_server() {
 
 run_foreground() {
     echo "🚀 Starting MCP server in foreground (Ctrl+C to stop)..."
-    echo "   Python: $PYTHON"
+    echo "   Python: ${PYTHON_CMD[*]}"
     echo "   Server: $SERVER_SCRIPT"
     echo ""
     cd "$MONOREPO_ROOT"
-    exec "$PYTHON" "$SERVER_SCRIPT"
+    exec "${PYTHON_CMD[@]}" "$SERVER_SCRIPT"
 }
 
 case "${1:-help}" in

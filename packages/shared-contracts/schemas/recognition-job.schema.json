@@ -34,6 +34,26 @@
           "type": "integer",
           "minimum": 0,
           "description": "Total item count."
+        },
+        "phase": {
+          "type": "string",
+          "enum": ["queued", "detecting", "clustering", "complete"],
+          "description": "Current pipeline phase when available."
+        },
+        "images_processed": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of images processed for detection."
+        },
+        "faces_found": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Running count of detected faces/identities."
+        },
+        "clusters_created": {
+          "type": "integer",
+          "minimum": 0,
+          "description": "Number of clusters created during clustering jobs."
         }
       }
     },

@@ -4,6 +4,7 @@ Shared protocols for the orchestration layer to avoid circular dependencies and 
 
 from __future__ import annotations
 
+from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol
 
 from recognition.application.assignment import AssignmentCandidate
@@ -73,12 +74,16 @@ class SuggestionRefreshServiceProtocol(Protocol):
         cluster_id: str,
         *,
         cluster_label: str | None = None,
+        candidate_cluster_ids: Sequence[str] | None = None,
+        representatives_by_cluster: Mapping[str, Sequence[object] | object] | None = None,
     ) -> int:
         """Surface suggestions after a cluster is user-labeled.
 
         Args:
             cluster_id: The ID of the newly-labeled cluster.
             cluster_label: The label being applied (optimistic update pattern).
+            candidate_cluster_ids: Optional list of cluster IDs to scan (skips full tenant lookup).
+            representatives_by_cluster: Precomputed representatives to avoid recomputing cache.
         """
         ...
 

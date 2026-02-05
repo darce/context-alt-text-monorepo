@@ -5,7 +5,7 @@ Repository protocol definitions for cluster persistence (Phase 5).
 from __future__ import annotations
 
 import uuid
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Protocol
@@ -127,6 +127,16 @@ class ClusterRepository(Protocol):
 
     async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:
         """Fetch identities that are members of a cluster."""
+        ...
+
+    async def get_member_identities_for_clusters(
+        self, cluster_ids: Sequence[str]
+    ) -> Mapping[str, Sequence[MediaIdentity]]:
+        """Fetch identities that are members of any of the provided clusters.
+
+        Returns:
+            Mapping from cluster_id to member identities.
+        """
         ...
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:

@@ -3,9 +3,11 @@
 from __future__ import annotations
 
 import logging
+import time as _time
 import uuid
 from collections.abc import Mapping, Sequence
 from datetime import UTC, datetime
+from typing import TypeGuard
 
 import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -28,6 +30,14 @@ from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefres
 from recognition.observability.recognition_runs import RecognitionRunContext
 
 logger = logging.getLogger(__name__)
+
+
+def _has_reps(reps: Sequence[np.ndarray] | np.ndarray | None) -> TypeGuard[Sequence[np.ndarray] | np.ndarray]:
+    if reps is None:
+        return False
+    if isinstance(reps, np.ndarray):
+        return reps.size > 0
+    return len(reps) > 0
 
 
 class SuggestionRefreshService:
@@ -406,6 +416,8 @@ class SuggestionRefreshService:
         cluster_id: str,
         *,
         cluster_label: str | None = None,
+        candidate_cluster_ids: Sequence[str] | None = None,
+        representatives_by_cluster: Mapping[str, Sequence[np.ndarray] | np.ndarray] | None = None,
     ) -> int:
         """Create suggestions for identities in unlabeled clusters that match a newly-labeled cluster.
 
@@ -414,6 +426,8 @@ class SuggestionRefreshService:
             cluster_label: The label being applied (optimistic update pattern).
                           If provided, skips the cluster state query to avoid
                           MVCC snapshot isolation issues in background tasks.
+            candidate_cluster_ids: Optional list of cluster IDs to scan (skips full tenant lookup).
+            representatives_by_cluster: Precomputed representatives to avoid recomputing cache.
         """
         if self._session is None or self._cluster_repository is None:
             return 0
@@ -440,25 +454,60 @@ class SuggestionRefreshService:
                 return 0
             cluster_label = cluster.label
 
-        rep_cache = await RepresentativeCache.load([cluster_id], self._cluster_repository)
-        rep_embeddings = rep_cache.get_representatives(cluster_id)
-        if rep_embeddings is None:
+        rep_embeddings: Sequence[np.ndarray] | np.ndarray | None = None
+
+        if representatives_by_cluster is None:
+            logger.debug("[suggestions] surface: loading representative cache for cluster_id=%s", cluster_id)
+            rep_cache = await RepresentativeCache.load([cluster_id], self._cluster_repository)
+            rep_embeddings = rep_cache.get_representatives(cluster_id)
+            if not _has_reps(rep_embeddings):
+                logger.info(
+                    "[suggestions] surface_for_newly_labeled_cluster: no representatives cluster_id=%s",
+                    cluster_id,
+                )
+                return 0
+            representatives_by_cluster = {cluster_id: rep_embeddings}
+        else:
+            rep_embeddings = representatives_by_cluster.get(cluster_id)
+            if not _has_reps(rep_embeddings):
+                logger.info(
+                    "[suggestions] surface_for_newly_labeled_cluster: no representatives cluster_id=%s (precomputed)",
+                    cluster_id,
+                )
+                return 0
+
+        _t_start = _time.perf_counter()
+
+        if candidate_cluster_ids is None:
+            all_clusters = await self._cluster_repository.get_by_tenant(self._tenant_id, limit=1000)
+            _t_get_clusters = _time.perf_counter()
             logger.info(
-                "[suggestions] surface_for_newly_labeled_cluster: no representatives cluster_id=%s",
-                cluster_id,
+                "[suggestions] surface: loaded %d total clusters in %.3fs",
+                len(all_clusters),
+                _t_get_clusters - _t_start,
             )
-            return 0
 
-        representatives_by_cluster = {cluster_id: rep_embeddings}
+            unlabeled_clusters = [
+                c
+                for c in all_clusters
+                if c.id != cluster_id and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
+            ]
+            unlabeled_cluster_ids = [c.id for c in unlabeled_clusters if c.id]
+            logger.info(
+                "[suggestions] surface: found %d unlabeled clusters to scan (out of %d total)",
+                len(unlabeled_clusters),
+                len(all_clusters),
+            )
+            unlabeled_count = len(unlabeled_clusters)
+        else:
+            unlabeled_cluster_ids = [cid for cid in candidate_cluster_ids if cid and cid != cluster_id]
+            unlabeled_count = len(unlabeled_cluster_ids)
+            logger.info(
+                "[suggestions] surface: using %d provided unlabeled clusters to scan",
+                unlabeled_count,
+            )
 
-        all_clusters = await self._cluster_repository.get_by_tenant(self._tenant_id, limit=1000)
-        unlabeled_clusters = [
-            c
-            for c in all_clusters
-            if c.id != cluster_id and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
-        ]
-
-        if not unlabeled_clusters:
+        if not unlabeled_cluster_ids:
             logger.info(
                 "[suggestions] surface_for_newly_labeled_cluster: no unlabeled clusters to scan cluster_id=%s",
                 cluster_id,
@@ -467,25 +516,36 @@ class SuggestionRefreshService:
 
         created = 0
         now = datetime.now(tz=UTC)
+        _total_db_queries = 0
+        _t_loop_start = _time.perf_counter()
 
-        for unlabeled_cluster in unlabeled_clusters:
-            if not unlabeled_cluster.id:
-                continue
+        identities_by_cluster = await self._cluster_repository.get_member_identities_for_clusters(unlabeled_cluster_ids)
+        _total_db_queries += 1
+        _total_members = sum(len(identities) for identities in identities_by_cluster.values())
+        logger.info(
+            "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
+            _total_members,
+            len(unlabeled_cluster_ids),
+            _time.perf_counter() - _t_loop_start,
+        )
 
-            members = await self._cluster_repository.get_members(unlabeled_cluster.id)
-            for member in members:
-                identity_id = member.identity_id
+        processed_identities = 0
+        for _cluster_idx, member_cluster_id in enumerate(unlabeled_cluster_ids):
+            identities = identities_by_cluster.get(member_cluster_id, [])
 
-                try:
-                    identity_uuid = uuid.UUID(identity_id)
-                except ValueError:
-                    continue
+            if (_cluster_idx + 1) % 50 == 0:
+                _elapsed = _time.perf_counter() - _t_loop_start
+                logger.info(
+                    "[suggestions] surface: progress %d/%d clusters, %d identities, %.2fs elapsed",
+                    _cluster_idx + 1,
+                    len(unlabeled_cluster_ids),
+                    processed_identities,
+                    _elapsed,
+                )
 
-                model = await self._session.get(MediaIdentityModel, identity_uuid)
-                if model is None or model.embedding is None:
-                    continue
-
-                identity = self._build_identity(model)
+            for identity in identities:
+                processed_identities += 1
+                identity_id = identity.id
                 match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
                 if match is None:
                     continue
@@ -529,6 +589,15 @@ class SuggestionRefreshService:
                 await self._repository.upsert_by_identity_cluster(self._tenant_id, payload)
                 created += 1
 
+                if processed_identities % 1000 == 0:
+                    _elapsed = _time.perf_counter() - _t_loop_start
+                    logger.info(
+                        "[suggestions] surface: progress %d/%d identities scanned, %.2fs elapsed",
+                        processed_identities,
+                        _total_members,
+                        _elapsed,
+                    )
+
                 logger.info(
                     "[suggestions] SURFACED identity_id=%s cluster_id=%s cluster_label='%s' similarity=%.3f source=cluster_labeled",
                     identity_id,
@@ -537,17 +606,22 @@ class SuggestionRefreshService:
                     best_similarity,
                 )
 
-        if created > 0:
-            logger.info(
-                "[suggestions] surface_for_newly_labeled_cluster completed: cluster_id=%s cluster_label='%s' suggestions_created=%d",
-                cluster_id,
-                cluster_label,
-                created,
-            )
-        else:
-            logger.debug(
-                "[suggestions] surface_for_newly_labeled_cluster: no matches found cluster_id=%s",
-                cluster_id,
-            )
+        _t_end = _time.perf_counter()
+        _total_elapsed = _t_end - _t_start
+
+        # Summary log with N+1 query statistics
+        logger.info(
+            "[suggestions] surface_for_newly_labeled_cluster SUMMARY: "
+            "cluster_id=%s label='%s' "
+            "unlabeled_clusters=%d total_members=%d db_queries=%d "
+            "suggestions_created=%d total_time=%.2fs",
+            cluster_id,
+            cluster_label,
+            unlabeled_count,
+            _total_members,
+            _total_db_queries,
+            created,
+            _total_elapsed,
+        )
 
         return created

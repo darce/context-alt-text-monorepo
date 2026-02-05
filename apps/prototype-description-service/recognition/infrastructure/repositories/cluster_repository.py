@@ -9,6 +9,8 @@ from __future__ import annotations
 import contextlib
 import logging
 import uuid
+from collections import defaultdict
+from collections.abc import Sequence
 from datetime import UTC, datetime
 from typing import TYPE_CHECKING, Any
 
@@ -464,7 +466,29 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
         )
         result = await self._session.execute(stmt)
-        return [self._to_domain_identity(model) for model in result.scalars().all()]
+        return [self._to_domain_identity(model, cluster_id=cluster_id) for model in result.scalars().all()]
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[DomainIdentity]]:
+        """Return identity records for members across multiple clusters, grouped by cluster."""
+        cluster_uuids = [_coerce_uuid(cluster_id) for cluster_id in cluster_ids]
+        cluster_uuids = [cluster_id for cluster_id in cluster_uuids if cluster_id is not None]
+        if not cluster_uuids:
+            return {}
+
+        stmt: Select[tuple[MediaIdentity, uuid.UUID]] = (
+            select(MediaIdentity, IdentityMemberModel.cluster_id)
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .where(IdentityMemberModel.cluster_id.in_(cluster_uuids))
+            .where(MediaIdentity.embedding.isnot(None))
+        )
+        result = await self._session.execute(stmt)
+        grouped: dict[str, list[DomainIdentity]] = defaultdict(list)
+        for model, cluster_id in result.all():
+            if not cluster_id:
+                continue
+            cluster_key = str(cluster_id)
+            grouped[cluster_key].append(self._to_domain_identity(model, cluster_id=cluster_key))
+        return dict(grouped)
 
     async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
         """Return identity ORM records with their membership similarity for a cluster.
@@ -520,9 +544,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         identities: list[DomainIdentity] = []
         for model, cluster_id in result.all():
-            domain_identity = self._to_domain_identity(model)
-            domain_identity.cluster_id = str(cluster_id) if cluster_id else None
-            identities.append(domain_identity)
+            identities.append(
+                self._to_domain_identity(
+                    model,
+                    cluster_id=str(cluster_id) if cluster_id else None,
+                )
+            )
         return identities
 
     async def assign_identity_to_cluster(self, identity: DomainIdentity, cluster_id: str) -> None:
@@ -691,7 +718,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             centroid=centroid,
         )
 
-    def _to_domain_identity(self, model: MediaIdentity) -> DomainIdentity:
+    def _to_domain_identity(self, model: MediaIdentity, *, cluster_id: str | None = None) -> DomainIdentity:
         """Convert MediaIdentity ORM model to domain representation."""
         return DomainIdentity(
             id=str(model.id),
@@ -704,7 +731,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             bbox_x=int(model.bbox_x),
             bbox_y=int(model.bbox_y),
             image_phash=model.image_phash,
-            cluster_id=None,
+            cluster_id=cluster_id,
         )
 
     def _to_model(self, cluster: IdentityCluster) -> ClusterModel:

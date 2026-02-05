@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import os
 import uuid
-from collections.abc import AsyncGenerator, Iterable
+from collections.abc import AsyncGenerator, Iterable, Sequence
 from datetime import UTC, datetime
 
 import numpy as np
@@ -162,6 +162,12 @@ class FakeClusterRepository:
 
     async def get_member_embeddings(self, cluster_id: str):
         return []
+
+    async def get_member_identities(self, cluster_id: str):
+        return []
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]):
+        return {}
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         return []

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import uuid
+from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
 
@@ -12,6 +13,7 @@ import pytest
 
 from db.models import Tenant
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, IdentityMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories import (
@@ -45,6 +47,9 @@ class DummyClusterRepository(ClusterRepository):
         raise NotImplementedError
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
+        raise NotImplementedError
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
         raise NotImplementedError
 
     async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
@@ -157,6 +162,49 @@ async def test_update_cluster_label(db_session, tenant) -> None:
     assert fetched is not None
     assert fetched.label == "Updated"
     assert fetched.is_labeled is True
+
+
+@pytest.mark.asyncio
+async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, tenant) -> None:
+    repo = SqlAlchemyClusterRepository(db_session)
+    member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
+
+    cluster_a = await repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Cluster A",
+            is_labeled=False,
+            identity_count=2,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+    cluster_b = await repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Cluster B",
+            is_labeled=False,
+            identity_count=1,
+            created_at=datetime.now(tz=UTC),
+        )
+    )
+
+    identity_a1 = str(uuid.uuid4())
+    identity_a2 = str(uuid.uuid4())
+    identity_b1 = str(uuid.uuid4())
+
+    await member_repo.add_member(cluster_a.id, identity_id=identity_a1, similarity=0.91)
+    await member_repo.add_member(cluster_a.id, identity_id=identity_a2, similarity=0.92)
+    await member_repo.add_member(cluster_b.id, identity_id=identity_b1, similarity=0.93)
+
+    grouped = await repo.get_member_identities_for_clusters([cluster_a.id, cluster_b.id])
+
+    assert set(grouped.keys()) == {cluster_a.id, cluster_b.id}
+    assert {identity.id for identity in grouped[cluster_a.id]} == {identity_a1, identity_a2}
+    assert {identity.id for identity in grouped[cluster_b.id]} == {identity_b1}
+    assert all(identity.cluster_id == cluster_a.id for identity in grouped[cluster_a.id])
+    assert all(identity.cluster_id == cluster_b.id for identity in grouped[cluster_b.id])
 
 
 @pytest.mark.asyncio

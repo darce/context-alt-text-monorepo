@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from collections.abc import Sequence
+
 import numpy as np
 import pytest
 
@@ -60,6 +62,9 @@ class NullClusterRepo(ClusterRepository):
 
     async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
         return []
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
+        return {}
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         return []

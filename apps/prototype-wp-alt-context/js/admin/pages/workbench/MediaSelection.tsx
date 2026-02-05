@@ -1,4 +1,6 @@
 import { ChangeEvent } from 'react';
+import * as Select from '@radix-ui/react-select';
+import { Check, ChevronDown } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
 import type { UseQueryResult } from '@tanstack/react-query';
 
@@ -161,8 +163,8 @@ const MediaSelectionPagination = ({
   onPerPageChange,
   onPageChange,
 }: MediaSelectionPaginationProps) => {
-  const handlePerPageChange = (event: ChangeEvent<HTMLSelectElement>) => {
-    const selected = Number(event.target.value);
+  const handlePerPageChange = (value: string) => {
+    const selected = Number(value);
     if (!Number.isFinite(selected)) {
       return;
     }
@@ -170,7 +172,11 @@ const MediaSelectionPagination = ({
   };
 
   return (
-    <div className="acx-media-selection__pagination" role="navigation" aria-label={__('Media pagination', 'alt-context')}>
+    <div
+      className="acx-media-selection__pagination"
+      role="navigation"
+      aria-label={__('Media pagination', 'alt-context')}
+    >
       <button type="button" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>
         {__('Previous', 'alt-context')}
       </button>
@@ -184,16 +190,35 @@ const MediaSelectionPagination = ({
       >
         {__('Next', 'alt-context')}
       </button>
-      <label className="acx-media-selection__page-size">
-        <span>{__('Images per page', 'alt-context')}</span>
-        <select value={perPage} onChange={handlePerPageChange} aria-label={__('Images per page', 'alt-context')}>
-          {MEDIA_PAGE_SIZES.map((size) => (
-            <option key={size} value={size}>
-              {size}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className="acx-media-selection__page-size">
+        <span id="acx-media-page-size-label">{__('Images per page', 'alt-context')}</span>
+        <Select.Root value={String(perPage)} onValueChange={handlePerPageChange}>
+          <Select.Trigger
+            className="acx-media-selection__page-size-trigger"
+            aria-label={__('Images per page', 'alt-context')}
+            aria-labelledby="acx-media-page-size-label"
+          >
+            <Select.Value />
+            <Select.Icon className="acx-media-selection__page-size-icon">
+              <ChevronDown aria-hidden="true" size={16} />
+            </Select.Icon>
+          </Select.Trigger>
+          <Select.Portal>
+            <Select.Content className="acx-media-selection__page-size-content" position="popper" sideOffset={6}>
+              <Select.Viewport className="acx-media-selection__page-size-viewport">
+                {MEDIA_PAGE_SIZES.map((size) => (
+                  <Select.Item key={size} value={String(size)} className="acx-media-selection__page-size-item">
+                    <Select.ItemText>{size}</Select.ItemText>
+                    <Select.ItemIndicator className="acx-media-selection__page-size-indicator">
+                      <Check aria-hidden="true" size={14} />
+                    </Select.ItemIndicator>
+                  </Select.Item>
+                ))}
+              </Select.Viewport>
+            </Select.Content>
+          </Select.Portal>
+        </Select.Root>
+      </div>
     </div>
   );
 };

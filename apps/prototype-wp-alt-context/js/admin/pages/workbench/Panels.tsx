@@ -1,5 +1,7 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
+import type { JobProgress } from '../../api/recognition/types/scan';
+
 interface ScanActionPanelProps {
   selectedCount: number;
   onScanFaces: () => void;
@@ -9,7 +11,7 @@ interface ScanActionPanelProps {
   statusText?: string;
   jobId?: string | null;
   errorMessage?: string | null;
-  progress?: { completed: number; total: number } | null;
+  progress?: JobProgress | null;
   etaSeconds?: number | null;
   isSynced?: boolean;
 }
@@ -61,8 +63,20 @@ export const ScanActionPanel = ({
     )}
     {progress && progress.total > 0 && (
       <>
+        {progress.phase && (
+          <p className="acx-apply-panel__status">
+            {sprintf(__('Phase: %s', 'alt-context'), formatJobPhase(progress.phase))}
+          </p>
+        )}
         <p className="acx-apply-panel__status">
-          {sprintf(__('Progress: %d/%d', 'alt-context'), progress.completed, progress.total)}
+          {sprintf(
+            __('Processed %d/%d images', 'alt-context'),
+            progress.images_processed ?? progress.completed,
+            progress.total,
+          )}
+          {typeof progress.faces_found === 'number'
+            ? sprintf(__(' · %d faces found', 'alt-context'), progress.faces_found)
+            : ''}
         </p>
         <progress
           className="acx-apply-panel__progress"
@@ -112,7 +126,7 @@ interface ConfirmPanelProps {
   isClustering: boolean;
   clusterMessage?: string | null;
   onViewClusters: () => void;
-  progress?: { completed: number; total: number } | null;
+  progress?: JobProgress | null;
   etaSeconds?: number | null;
   isSynced?: boolean;
 }
@@ -146,9 +160,19 @@ export const ConfirmPanel = ({
     </button>
     {progress && progress.total > 0 && (
       <>
+        {progress.phase && (
+          <p className="acx-apply-panel__status">
+            {sprintf(__('Phase: %s', 'alt-context'), formatJobPhase(progress.phase))}
+          </p>
+        )}
         <p className="acx-apply-panel__status">
-          {sprintf(__('Progress: %d/%d', 'alt-context'), progress.completed, progress.total)}
+          {sprintf(__('Processed %d/%d identities', 'alt-context'), progress.completed, progress.total)}
         </p>
+        {typeof progress.clusters_created === 'number' && (
+          <p className="acx-apply-panel__status">
+            {sprintf(__('Clusters created: %d', 'alt-context'), progress.clusters_created)}
+          </p>
+        )}
         <progress
           className="acx-apply-panel__progress"
           value={Math.min(progress.completed, progress.total)}
@@ -222,4 +246,19 @@ const formatDuration = (seconds: number): string => {
     return sprintf(_n('%d minute', '%d minutes', minutes, 'alt-context'), minutes);
   }
   return sprintf(__('%d min %d sec', 'alt-context'), minutes, remainingSeconds);
+};
+
+const formatJobPhase = (phase: NonNullable<JobProgress['phase']>): string => {
+  switch (phase) {
+    case 'queued':
+      return __('Queued', 'alt-context');
+    case 'detecting':
+      return __('Detecting', 'alt-context');
+    case 'clustering':
+      return __('Clustering', 'alt-context');
+    case 'complete':
+      return __('Complete', 'alt-context');
+    default:
+      return phase;
+  }
 };

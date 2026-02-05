@@ -21,8 +21,11 @@ export { ClusterActions } from './ClusterActions';
 export { ClusterEditForm } from './ClusterEditForm';
 export { MergeUndoBanner } from './MergeUndoBanner';
 export { SuggestionReviewPanel } from './SuggestionReviewPanel';
+export { ClusterLabelingPanel } from './ClusterLabelingPanel';
+export { ClusterReviewPanel } from './ClusterReviewPanel';
 export { InlineSuggestionPrompt } from './InlineSuggestionPrompt';
 export { AnchorSelectionModal } from './AnchorSelectionModal';
+export { TopClustersSection } from './TopClustersSection';
 
 // Hooks
 export { useClusterEditState } from './useClusterEditState';

@@ -47,6 +47,9 @@ export const useClusterMutations = ({
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.labels() });
     void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    // Refresh suggestions after curation actions (labels may enable/disable suggestions)
+    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.mergePending() });
   }, [queryClient]);
 
   const cancelIdentityQueries = useCallback(

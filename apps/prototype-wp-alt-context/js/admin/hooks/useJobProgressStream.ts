@@ -103,11 +103,31 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         return;
       }
       try {
-        const data = JSON.parse(e.data as string) as { completed: number; total: number; status: JobStatus };
+        const data = JSON.parse(e.data as string) as {
+          completed: number;
+          total: number;
+          status: JobStatus;
+          phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
+          images_processed?: number;
+          faces_found?: number;
+          clusters_created?: number;
+        };
 
         // Calculate new state
         const now = Date.now();
         const newProgress: JobProgress = { completed: data.completed, total: data.total };
+        if (data.phase) {
+          newProgress.phase = data.phase;
+        }
+        if (typeof data.images_processed === 'number') {
+          newProgress.images_processed = data.images_processed;
+        }
+        if (typeof data.faces_found === 'number') {
+          newProgress.faces_found = data.faces_found;
+        }
+        if (typeof data.clusters_created === 'number') {
+          newProgress.clusters_created = data.clusters_created;
+        }
         let newEta: number | null = null;
 
         // Initialize start time on first progress
@@ -150,12 +170,29 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
         return;
       }
       try {
-        const data = JSON.parse(e.data as string) as { status: JobStatus };
+        const data = JSON.parse(e.data as string) as {
+          status: JobStatus;
+          completed?: number;
+          total?: number;
+          phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
+          images_processed?: number;
+          faces_found?: number;
+          clusters_created?: number;
+        };
         const latestProgress = progressRef.current;
         const finalProgress =
-          latestProgress && data.status === 'completed'
-            ? { completed: latestProgress.total, total: latestProgress.total }
-            : latestProgress;
+          typeof data.completed === 'number' && typeof data.total === 'number'
+            ? {
+                completed: data.completed,
+                total: data.total,
+                ...(data.phase ? { phase: data.phase } : {}),
+                ...(typeof data.images_processed === 'number' ? { images_processed: data.images_processed } : {}),
+                ...(typeof data.faces_found === 'number' ? { faces_found: data.faces_found } : {}),
+                ...(typeof data.clusters_created === 'number' ? { clusters_created: data.clusters_created } : {}),
+              }
+            : latestProgress && data.status === 'completed'
+              ? { completed: latestProgress.total, total: latestProgress.total }
+              : latestProgress;
         setStatus(data.status);
         setProgress(finalProgress ?? null);
         setEtaSeconds(null);

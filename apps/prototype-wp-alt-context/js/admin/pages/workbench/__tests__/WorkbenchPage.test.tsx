@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import type { Dispatch, ReactNode, SetStateAction } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -28,6 +28,23 @@ import {
   useMultiScanStatus,
   useCombinedScanStatus,
 } from '../../../hooks/useRecognitionHooks';
+
+// Mock ResizeObserver and PointerCapture for Radix UI
+window.ResizeObserver = class ResizeObserver {
+  observe(): void {
+    return undefined;
+  }
+  unobserve(): void {
+    return undefined;
+  }
+  disconnect(): void {
+    return undefined;
+  }
+};
+window.HTMLElement.prototype.hasPointerCapture = vi.fn();
+window.HTMLElement.prototype.setPointerCapture = vi.fn();
+window.HTMLElement.prototype.releasePointerCapture = vi.fn();
+window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
 // Mock AltContextAdmin config
 (window as unknown as { AltContextAdmin: object }).AltContextAdmin = {
@@ -121,7 +138,7 @@ describe('WorkbenchPage', () => {
   const mockUseCombinedScanStatus = vi.mocked(useCombinedScanStatus);
   const mockUseJobPersistence = vi.mocked(useJobPersistence);
   const mockUseJobProgressStream = vi.mocked(useJobProgressStream);
-  let setCurrentPage: ReturnType<typeof vi.fn>;
+  let setCurrentPage: Dispatch<SetStateAction<number>>;
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
@@ -171,7 +188,7 @@ describe('WorkbenchPage', () => {
     rememberJob.mockClear();
     selectJob.mockClear();
     clearHistory.mockClear();
-    setCurrentPage = vi.fn();
+    setCurrentPage = vi.fn() as Dispatch<SetStateAction<number>>;
 
     const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
       data: { items: [baseMediaItem], total: 1, totalPages: 1 },
@@ -348,7 +365,7 @@ describe('WorkbenchPage', () => {
     renderWorkbench();
 
     const select = screen.getByLabelText('Images per page');
-    expect(select).toHaveValue('50');
+    expect(select).toHaveTextContent('50');
 
     expect(mockUseWorkbenchMedia).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -358,6 +375,7 @@ describe('WorkbenchPage', () => {
   });
 
   it('persists media page size selection and resets to page 1', async () => {
+    setupScanMutation('success');
     mockUseWorkbenchFilters.mockReturnValue({
       searchQuery: '',
       normalizedSearch: '',
@@ -370,9 +388,17 @@ describe('WorkbenchPage', () => {
 
     const select = screen.getByLabelText('Images per page');
     const user = userEvent.setup();
-    await user.selectOptions(select, '100');
 
-    expect(window.localStorage.getItem('acx-media-page-size')).toBe('100');
+    // Open the select dropdown and use keyboard to navigate
+    await user.click(select);
+
+    // Use keyboard to select "100" (arrow down twice from "10" -> "50" -> "100", then Enter)
+    await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
+
+    // The useEffect that persists to localStorage runs after re-render
+    await waitFor(() => {
+      expect(window.localStorage.getItem('acx-media-page-size')).toBe('100');
+    });
     expect(setCurrentPage).toHaveBeenCalledWith(1);
     expect(mockUseWorkbenchMedia).toHaveBeenCalledWith(
       expect.objectContaining({

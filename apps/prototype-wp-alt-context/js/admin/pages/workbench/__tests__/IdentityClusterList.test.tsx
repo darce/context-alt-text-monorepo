@@ -211,7 +211,7 @@ describe('IdentityClusterList', () => {
   afterEach(async () => {
     // Cancel in-flight queries to prevent async leaks between tests
     if (activeQueryClient) {
-      activeQueryClient.cancelQueries();
+      await activeQueryClient.cancelQueries();
       activeQueryClient.clear();
       activeQueryClient = null;
     }
@@ -424,7 +424,10 @@ describe('IdentityClusterList', () => {
     const matchDeferred = matchDeferreds[0];
     expect(matchDeferred).toBeDefined();
     await actFlow(async () => {
-      await resolveDeferred(matchDeferred!, { id: existingCluster.id, label: existingCluster.label });
+      if (!matchDeferred) {
+        throw new Error('Expected match deferred to be defined.');
+      }
+      await resolveDeferred(matchDeferred, { id: existingCluster.id, label: existingCluster.label });
     });
 
     await actFlow(async () => {

@@ -55,6 +55,7 @@ export const useClusterActionMutations = ({
         await reassignClusterIdentity({ identityId: id, targetClusterId: null, blockFromCluster: true });
       }
     },
+    retry: false,
     onSuccess: () => {
       invalidateQueries();
     },
@@ -80,6 +81,7 @@ export const useClusterActionMutations = ({
     }) => {
       await reassignClusterIdentity({ identityId, targetClusterId }, signal);
     },
+    retry: false,
     onSuccess: () => {
       invalidateQueries();
       onRenameSuccess?.('');
@@ -98,6 +100,7 @@ export const useClusterActionMutations = ({
     mutationFn: async ({ identityId, label, signal }: { identityId: string; label: string; signal?: AbortSignal }) => {
       return createClusterForIdentity({ identityId, label }, signal);
     },
+    retry: false,
     onSuccess: (result) => {
       invalidateQueries();
       onRenameSuccess?.(result.label);
@@ -133,6 +136,7 @@ export const useClusterActionMutations = ({
       }
       return result;
     },
+    retry: false,
     onSuccess: () => {
       invalidateQueries();
     },
@@ -148,6 +152,7 @@ export const useClusterActionMutations = ({
   const rejectSuggestionMutation = useMutation({
     mutationKey: ['reject-suggestion'],
     mutationFn: (suggestionId: string) => rejectSuggestion(suggestionId),
+    retry: false,
     onSuccess: () => {
       invalidateQueries();
     },

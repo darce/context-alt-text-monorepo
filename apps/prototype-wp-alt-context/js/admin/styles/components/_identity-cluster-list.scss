@@ -66,6 +66,22 @@
         color: #2563eb; // blue-600
       }
     }
+
+    &--processing {
+      color: #64748b; // slate-500
+      font-style: italic;
+      animation: acx-pulse 1.5s ease-in-out infinite;
+    }
+  }
+
+  @keyframes acx-pulse {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
   }
 
   &__action {

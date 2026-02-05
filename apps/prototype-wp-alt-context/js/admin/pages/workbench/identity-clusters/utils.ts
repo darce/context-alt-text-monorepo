@@ -54,11 +54,18 @@ export const groupIdentitiesByClusters = (identities: DetectedIdentity[]): Clust
         clusterId: identity.cluster_id ?? null,
         label: identity.cluster_label ?? null,
         isAutoLabel: Boolean(identity.is_auto_label),
+        clusteringPending: Boolean(identity.clustering_pending),
         members: [],
       });
     }
 
-    groups.get(clusterKey)!.members.push(identity);
+    // If any member is pending, mark the whole group as pending
+    const group = groups.get(clusterKey)!;
+    if (identity.clustering_pending) {
+      group.clusteringPending = true;
+    }
+
+    group.members.push(identity);
   });
 
   return Array.from(groups.values());

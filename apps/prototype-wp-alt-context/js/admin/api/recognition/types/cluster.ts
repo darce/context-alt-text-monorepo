@@ -14,6 +14,26 @@ export interface ClusterSummary {
   sample_identities: ClusterIdentity[];
 }
 
+/**
+ * Top unlabeled cluster response from /clusters/top-unlabeled endpoint.
+ * Includes representatives with media IDs for thumbnail display.
+ */
+export interface TopUnlabeledCluster {
+  id: string;
+  tenant_id: string;
+  label: string | null;
+  is_labeled: boolean;
+  is_auto_label: boolean;
+  identity_count: number;
+  user_confirmed: boolean;
+  representatives: Array<{
+    id: string;
+    media_id: number;
+    thumb_url?: string;
+    is_pinned: boolean;
+  }>;
+}
+
 export interface ClusterListParams {
   limit?: number;
   offset?: number;

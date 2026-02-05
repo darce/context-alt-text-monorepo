@@ -37,6 +37,8 @@ export type {
   // Suggestion types
   PendingSuggestion,
   PendingSuggestionsResponse,
+  PendingMergeSuggestion,
+  PendingMergeSuggestionsResponse,
   SuggestionActionResponse,
 } from './types';
 
@@ -56,6 +58,8 @@ export {
   splitCluster,
   createClusterForIdentity,
   pinRepresentative,
+  fetchClusterMembers,
+  removeClusterMember,
 } from './clusterApi';
 
 // Identity operations
@@ -63,6 +67,9 @@ export {
   fetchMediaIdentities,
   fetchIdentitySuggestions,
   fetchPendingSuggestions,
+  fetchPendingMergeSuggestions,
   acceptSuggestion,
+  acceptMergeSuggestion,
   rejectSuggestion,
+  rejectMergeSuggestion,
 } from './identityApi';

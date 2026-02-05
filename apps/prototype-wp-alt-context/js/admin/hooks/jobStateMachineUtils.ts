@@ -54,14 +54,30 @@ export const buildStatusText = ({
   latestJobId,
   scanPending,
 }: StatusTextParams): string | undefined => {
-  if (clusterPending || sseStatus === 'clustering') {
-    if (sseProgress && sseStatus === 'clustering') {
+  if (clusterPending || sseProgress?.phase === 'clustering') {
+    if (sseProgress) {
       return sprintf(__('Clustering %d/%d identities…', 'alt-context'), sseProgress.completed, sseProgress.total);
     }
     return __('Clustering faces…', 'alt-context');
   }
 
   if (activeJobIds.length > 0) {
+    if (sseProgress?.phase === 'queued') {
+      return sprintf(__('Queued %d items…', 'alt-context'), sseProgress.total);
+    }
+    if (sseProgress?.phase === 'detecting') {
+      const processed = sseProgress.images_processed ?? sseProgress.completed;
+      const faces = sseProgress.faces_found;
+      if (typeof faces === 'number') {
+        return sprintf(
+          __('Detecting faces… %d/%d processed · %d faces found', 'alt-context'),
+          processed,
+          sseProgress.total,
+          faces,
+        );
+      }
+      return sprintf(__('Detecting faces… %d/%d processed', 'alt-context'), processed, sseProgress.total);
+    }
     if (sseStatus === 'completed') {
       return 'completed';
     }
@@ -109,9 +125,15 @@ export const buildScanProgress = ({
     const currentJobIndex = scanJobs.findIndex((job) => job.id === latestScanJob?.id);
     const completedJobs = currentJobIndex >= 0 ? currentJobIndex : 0;
     const completedFromPriorJobs = scanJobs.slice(0, completedJobs).reduce((sum, job) => sum + job.totalItems, 0);
+    const currentProcessed = sseProgress.images_processed ?? sseProgress.completed;
+    const aggregatedCompleted = completedFromPriorJobs + sseProgress.completed;
+    const aggregatedProcessed = completedFromPriorJobs + currentProcessed;
     return {
-      completed: completedFromPriorJobs + sseProgress.completed,
+      completed: aggregatedCompleted,
       total: totalItems,
+      ...(sseProgress.phase ? { phase: sseProgress.phase } : {}),
+      ...(typeof currentProcessed === 'number' ? { images_processed: aggregatedProcessed } : {}),
+      ...(typeof sseProgress.faces_found === 'number' ? { faces_found: sseProgress.faces_found } : {}),
     };
   }
 

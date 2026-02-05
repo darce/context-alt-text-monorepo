@@ -60,6 +60,8 @@ export interface DetectedIdentity {
   cluster_label: string | null;
   is_auto_label: boolean;
   is_pinned?: boolean;
+  /** True if clustering job hasn't processed this identity yet */
+  clustering_pending?: boolean;
   bbox: BoundingBox;
   confidence: number;
   similarity: number | null;

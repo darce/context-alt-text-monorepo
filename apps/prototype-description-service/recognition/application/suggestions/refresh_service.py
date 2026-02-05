@@ -401,33 +401,44 @@ class SuggestionRefreshService:
         )
         return refreshed
 
-    async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
-        """Create suggestions for identities in unlabeled clusters that match a newly-labeled cluster."""
+    async def surface_for_newly_labeled_cluster(
+        self,
+        cluster_id: str,
+        *,
+        cluster_label: str | None = None,
+    ) -> int:
+        """Create suggestions for identities in unlabeled clusters that match a newly-labeled cluster.
+
+        Args:
+            cluster_id: The ID of the newly-labeled cluster.
+            cluster_label: The label being applied (optimistic update pattern).
+                          If provided, skips the cluster state query to avoid
+                          MVCC snapshot isolation issues in background tasks.
+        """
         if self._session is None or self._cluster_repository is None:
             return 0
 
-        # Debug: try raw query
-        from sqlalchemy import text
-
-        raw_result = await self._session.execute(
-            text(f"SELECT id, label, user_confirmed FROM identity_clusters WHERE id = '{cluster_id}'")
-        )
-        raw_row = raw_result.fetchone()
-        logger.info(
-            "[suggestions] RAW SQL: cluster_id=%s raw_row=%s",
-            cluster_id,
-            raw_row,
-        )
-
-        cluster = await self._cluster_repository.get_by_id(cluster_id)
-        if not cluster or not cluster.user_confirmed or not cluster.label:
+        # When cluster_label is provided, we trust the caller (optimistic update pattern).
+        # This avoids MVCC snapshot isolation issues where a background task might
+        # see pre-commit data. See Kleppmann Ch 7, Pekka Enberg Ch 11.3.
+        if cluster_label is not None:
             logger.info(
-                "[suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=%s user_confirmed=%s label=%s",
+                "[suggestions] surface_for_newly_labeled_cluster: using passed label=%s cluster_id=%s (optimistic)",
+                cluster_label,
                 cluster_id,
-                getattr(cluster, 'user_confirmed', None),
-                getattr(cluster, 'label', None),
             )
-            return 0
+        else:
+            # Fallback: query the cluster state (used when called synchronously)
+            cluster = await self._cluster_repository.get_by_id(cluster_id)
+            if not cluster or not cluster.user_confirmed or not cluster.label:
+                logger.info(
+                    "[suggestions] surface_for_newly_labeled_cluster: cluster not user-labeled cluster_id=%s user_confirmed=%s label=%s",
+                    cluster_id,
+                    getattr(cluster, "user_confirmed", None),
+                    getattr(cluster, "label", None),
+                )
+                return 0
+            cluster_label = cluster.label
 
         rep_cache = await RepresentativeCache.load([cluster_id], self._cluster_repository)
         rep_embeddings = rep_cache.get_representatives(cluster_id)
@@ -448,7 +459,10 @@ class SuggestionRefreshService:
         ]
 
         if not unlabeled_clusters:
-            logger.info("[suggestions] surface_for_newly_labeled_cluster: no unlabeled clusters to scan cluster_id=%s", cluster_id)
+            logger.info(
+                "[suggestions] surface_for_newly_labeled_cluster: no unlabeled clusters to scan cluster_id=%s",
+                cluster_id,
+            )
             return 0
 
         created = 0
@@ -519,7 +533,7 @@ class SuggestionRefreshService:
                     "[suggestions] SURFACED identity_id=%s cluster_id=%s cluster_label='%s' similarity=%.3f source=cluster_labeled",
                     identity_id,
                     cluster_id,
-                    cluster.label,
+                    cluster_label,
                     best_similarity,
                 )
 
@@ -527,7 +541,7 @@ class SuggestionRefreshService:
             logger.info(
                 "[suggestions] surface_for_newly_labeled_cluster completed: cluster_id=%s cluster_label='%s' suggestions_created=%d",
                 cluster_id,
-                cluster.label,
+                cluster_label,
                 created,
             )
         else:

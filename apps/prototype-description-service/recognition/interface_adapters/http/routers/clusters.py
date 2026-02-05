@@ -262,6 +262,7 @@ async def update_cluster(
             run_background_surface_suggestions,
             request.tenant_id,
             cluster_id,
+            label,  # Pass label directly (optimistic update pattern)
             session_factory=async_session_factory,
             cluster_service_builder=build_cluster_service,
         )

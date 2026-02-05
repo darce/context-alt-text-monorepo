@@ -68,8 +68,18 @@ class SuggestionRefreshServiceProtocol(Protocol):
         """Refresh suggestions for a whole cluster."""
         ...
 
-    async def surface_for_newly_labeled_cluster(self, cluster_id: str) -> int:
-        """Surface suggestions after a cluster is user-labeled."""
+    async def surface_for_newly_labeled_cluster(
+        self,
+        cluster_id: str,
+        *,
+        cluster_label: str | None = None,
+    ) -> int:
+        """Surface suggestions after a cluster is user-labeled.
+
+        Args:
+            cluster_id: The ID of the newly-labeled cluster.
+            cluster_label: The label being applied (optimistic update pattern).
+        """
         ...
 
 

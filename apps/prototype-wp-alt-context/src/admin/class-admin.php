@@ -104,10 +104,11 @@ class Admin {
 		wp_enqueue_script( $devHandle, esc_url_raw( $base . '@vite/client' ), array(), null, true );
 		wp_script_add_data( $devHandle, 'type', 'module' );
 
+		$deps = array( 'wp-element', 'wp-i18n', 'wp-hooks', $devHandle );
 		wp_enqueue_script(
 			$entryHandle,
 			esc_url_raw( $base . self::ENTRY_POINT ),
-			array( $devHandle ),
+			$deps,
 			null,
 			true
 		);
@@ -126,7 +127,7 @@ class Admin {
 		wp_enqueue_script(
 			self::SCRIPT_HANDLE,
 			$this->build_asset_url( (string) $entry['file'] ),
-			array(),
+			array( 'wp-element', 'wp-i18n', 'wp-hooks' ),
 			ALT_CONTEXT_VERSION,
 			true
 		);

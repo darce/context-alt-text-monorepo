@@ -145,6 +145,10 @@ async def accept_suggestion(
     suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
     await suggestion_refresh_service.refresh_for_cluster(suggestion.cluster_id)
 
+    # Commit before response so client refetches see committed state
+    # (see clusters.py PATCH handler comment for full race condition explanation).
+    await session.commit()
+
     return _to_response(suggestion)
 
 
@@ -163,6 +167,11 @@ async def reject_suggestion(
     suggestion = await suggestion_service.reject(suggestion_id)
     if not suggestion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found")
+
+    # Commit before response so client refetches see committed state
+    # (see clusters.py PATCH handler comment for full race condition explanation).
+    await session.commit()
+
     return _to_response(suggestion)
 
 
@@ -205,6 +214,11 @@ async def accept_merge_suggestion(
     await repo.delete_by_cluster(request.tenant_id, source_cluster_id)
     await repo.delete_by_cluster(request.tenant_id, target_cluster_id)
     suggestion.status = SuggestionStatus.ACCEPTED
+
+    # Commit before response so client refetches see committed state
+    # (see clusters.py PATCH handler comment for full race condition explanation).
+    await session.commit()
+
     return _to_merge_response(suggestion)
 
 
@@ -225,6 +239,11 @@ async def reject_merge_suggestion(
         suggestion = await repo.update_status(request.tenant_id, suggestion_id, SuggestionStatus.REJECTED)
     except ValueError:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Merge suggestion not found") from None
+
+    # Commit before response so client refetches see committed state
+    # (see clusters.py PATCH handler comment for full race condition explanation).
+    await session.commit()
+
     return _to_merge_response(suggestion)
 
 

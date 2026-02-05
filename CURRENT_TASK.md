@@ -27,6 +27,7 @@ Issues began after commit `61a7d85` (pass label to background surfacing). Backen
 - [x] Backend tests green (`pytest` all: 434 passed, 4 skipped).
 - [x] Address dev-slice review quick fixes (items #1-#3, #6-#8).
 - [x] **Fix missing session commit** — `get_session()` now auto-commits on success, rolls back on exception. Root cause of cluster labels not persisting.
+- [x] **Fix intermittent label revert race condition** — Explicit `await session.commit()` before return on all write endpoints. FastAPI dependency teardown runs after response is sent; without pre-response commit, client refetches can read stale state.
 
 ### In Progress
 
@@ -114,3 +115,14 @@ pytest recognition/tests/integration/test_proactive_suggestions.py -k background
 - Added explicit `await session.commit()` in PATCH `/clusters/{id}` handler — **this was the line that actually fixed the problem** at runtime, since Session 4's `get_session()` change required a backend restart to take effect.
 - Both commits are now in place (explicit inline + `get_session()` teardown). The double-commit is harmless (second commit is a no-op on an already-committed transaction) and the explicit one serves as a defense-in-depth safety net.
 - Result: with both layers, all write endpoints are covered systemically via `get_session()`, and the PATCH handler has belt-and-suspenders protection.
+
+### 2026-02-05 - Session 6
+
+**Issue resolved: cluster labels persist after refresh**
+
+- Verified labeling now persists after refresh for media_id=6730 once the backend was restarted.
+- Actual fixes in place:
+  - `db/session.py` auto-commit in `get_session()` (systemic fix).
+  - Explicit `await session.commit()` in PATCH `/clusters/{id}` (defense-in-depth for the labeling path).
+- Removed the earlier (incorrect) hypothesis about a FastAPI dependency teardown race; no additional endpoint commits were made beyond the PATCH handler.
+- Issue closed. No additional domain-layer changes needed at this time.

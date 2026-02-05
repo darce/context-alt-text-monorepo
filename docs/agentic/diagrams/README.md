@@ -8,7 +8,7 @@ Mermaid diagrams documenting the Context Alt Text system architecture.
 | ---------------------------------------------------------------------- | -------------------------- | ---------------------------------- |
 | [system-overview.mmd](system-overview.mmd)                             | High-level system map      | Understanding overall architecture |
 | [backend-uml/agent-quick-start.mmd](backend-uml/agent-quick-start.mmd) | API routing                | Finding code for endpoints         |
-| [backend-uml/job-progress-flow.mmd](backend-uml/job-progress-flow.mmd) | SSE + multi-tab sync       | Job progress streaming (v4.10.3+)  |
+| [backend-uml/job-progress-flow.mmd](backend-uml/job-progress-flow.mmd) | SSE job progress flow      | Debugging backend progress streams |
 
 ## Directory Structure
 
@@ -17,9 +17,11 @@ diagrams/
 ├── system-overview.mmd          # Top-level architecture
 ├── backend-uml/                 # Recognition Service (Python/FastAPI)
 │   ├── agent-quick-start.mmd   # Endpoint → Service → Repo mapping
-│   ├── master.mmd              # System overview (clients, API, worker)
+│   ├── master.mmd              # Backend signal flow
 │   ├── class-diagram.mmd       # Key service + pipeline classes
 │   ├── container.mmd           # Runtime components
+│   ├── job-progress-flow.mmd   # Backend SSE job progress stream
+│   ├── hexagonal-map.mmd       # Hexagonal directory map
 │   ├── persistence.mmd         # Database schema
 │   ├── domain/                 # Core domain models
 │   ├── components/             # Component details
@@ -39,11 +41,12 @@ diagrams/
 
 | File                    | Description                                        |
 | ----------------------- | -------------------------------------------------- |
-| `master.mmd`            | System overview (clients, API, worker, data plane) |
+| `master.mmd`            | Backend signal flow (HTTP boundary, services, worker, data) |
 | `agent-quick-start.mmd` | Endpoints → services → repositories quick map      |
 | `container.mmd`         | Runtime components and dependencies                |
-| `context.mmd`           | External systems integration                       |
+| `context.mmd`           | Backend context (clients + data plane)             |
 | `class-diagram.mmd`     | Key service + pipeline class overview              |
+| `hexagonal-map.mmd`     | Hexagonal directory map (bounded contexts + layers) |
 
 ### Domain
 
@@ -59,7 +62,10 @@ diagrams/
 | File                                  | Description                     |
 | ------------------------------------- | ------------------------------- |
 | `components/assignment-gate.mmd`      | Assignment gate validation flow |
+| `components/http-boundary.mmd`        | HTTP boundary (routers, auth, SSE) |
 | `components/observability_module.mmd` | Observability classes           |
+| `components/realtime-events.mmd`      | Event broadcaster + SSE cluster events |
+| `components/worker-pipeline.mmd`      | Worker handlers + scan pipeline |
 
 ### Persistence & Observability
 
@@ -72,13 +78,13 @@ diagrams/
 
 | File                                    | Description                         |
 | --------------------------------------- | ----------------------------------- |
-| `workflows/complete-workflow.mmd`       | End-to-end workflow (high level)    |
 | `workflows/recognize_faces.mmd`         | Analyze + scan queue processing     |
+| `workflows/image-to-cluster-happy-path.mmd` | Happy path (image → cluster)     |
 | `workflows/unified-assignment.mmd`      | Discovery + assignment gate flow    |
 | `workflows/batch_job_observability.mmd` | Observability logging               |
 | `workflows/error_retry.mmd`             | Scan queue error handling           |
 | `workflows/startup_sequence.mmd`        | Application startup                 |
-| `job-progress-flow.mmd`                 | SSE progress + multi-tab (v4.10.3+) |
+| `job-progress-flow.mmd`                 | SSE job progress stream (backend)   |
 
 ## Frontend Diagrams Index
 

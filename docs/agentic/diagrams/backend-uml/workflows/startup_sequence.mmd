@@ -19,7 +19,7 @@ sequenceDiagram
     App->>Settings: load settings (env + yaml)
     App->>Static: mount thumbnails_dir (base_url from settings)
     App->>Routers: include /recognition routers (legacy + api)
-    App->>Routers: include /roster + /scene health routers
     App->>Handlers: register exception handlers
     App-->>CLI: FastAPI app ready
+    Note over Routers: Non-recognition routers (roster/scene health) omitted for backend UML scope
     Note over Routers: Per-request dependencies set app.current_tenant for RLS

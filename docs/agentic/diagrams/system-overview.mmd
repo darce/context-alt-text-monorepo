@@ -5,7 +5,7 @@ flowchart TB
     %% =======================================================================
     %% HIGH-LEVEL SYSTEM ARCHITECTURE
     %% Shows interaction between WordPress Plugin and Recognition Service
-    %% Updated: December 2025 (v4.2.4)
+    %% Updated: 2026-02-03
     %% =======================================================================
 
     subgraph WordPress["WordPress Plugin (prototype-wp-alt-context)"]
@@ -29,17 +29,16 @@ flowchart TB
         end
         
         subgraph PHPLayer["PHP REST Layer"]
-            RecognitionController["RecognitionController<br/>Route Registration"]
-            ProxyController["RecognitionProxyController<br/>Backend Forwarding"]
-            AuthHandler["Api Class<br/>Nonce + Headers"]
+            ApiClass["Api (class-api.php)<br/>Route Registration"]
+            RecognitionController["RecognitionController<br/>Recognition proxy + headers"]
         end
     end
 
     subgraph Backend["Recognition Service (prototype-description-service)"]
         subgraph API["FastAPI Routers"]
             AnalyzeRouter["POST /analyze<br/>GET /jobs/{id}"]
-            ClusterRouter["POST /clustering/jobs<br/>GET /clusters<br/>POST /merge"]
-            SuggestionRouter["GET /suggestions<br/>POST accept/reject"]
+            ClusterRouter["POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}<br/>POST /clusters/{id}/merge<br/>POST /clusters/{id}/split"]
+            SuggestionRouter["GET /suggestions, /suggestions/merge<br/>POST accept/reject"]
         end
         
         subgraph Orchestration["Orchestration"]
@@ -61,7 +60,7 @@ flowchart TB
         end
         
         subgraph Infra["Infrastructure"]
-            EmbeddingService["EmbeddingService<br/>InsightFace Wrapper"]
+            EmbeddingService["InsightFaceAdapter<br/>Detector + Generator"]
             ClusterRepo["ClusterRepository"]
             MemberRepo["MemberRepository"]
         end
@@ -78,12 +77,11 @@ flowchart TB
     %% WordPress internal flow
     ReactUI --> Hooks
     Hooks --> ApiClient
-    ApiClient --> RecognitionController
-    RecognitionController --> ProxyController
-    ProxyController --> AuthHandler
+    ApiClient --> ApiClass
+    ApiClass --> RecognitionController
 
     %% Cross-boundary call
-    AuthHandler -->|"HTTP + API Key<br/>X-Tenant-ID"| API
+    RecognitionController -->|"HTTP + X-API-Key<br/>tenant_id (query/body)"| API
 
     %% Backend flow
     API --> Orchestration

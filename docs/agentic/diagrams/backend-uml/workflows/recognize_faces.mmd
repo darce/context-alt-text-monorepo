@@ -2,11 +2,11 @@
 title: Analyze Media & Extract Identities
 ---
 sequenceDiagram
-    participant Client as WordPress Plugin
+    participant Client as HTTP Client
     participant API as /recognition/analyze
     participant Session as AsyncSession + tenant context
     participant Queue as ScanQueueService
-    participant BG as BackgroundTasks (populate queue)
+    participant BG as BackgroundTasks (chain_populate_and_process)
     participant Worker as scan_worker.py
     participant ScanSvc as ScanService
     participant Detector as FaceDetectorProtocol
@@ -20,11 +20,11 @@ sequenceDiagram
     Client->>API: ENTRY: POST /recognition/analyze {tenant_id, media_items[], user_id?}
     API->>Session: set_tenant_context and ensure tenant exists
     API->>Queue: create_scan_job_record(total, user_id)
-    API->>BG: add_task(populate_scan_job_items, job_id, media_items)
+    API->>BG: add_task(chain_populate_and_process, job_id, media_items, inline_processing?)
     API-->>Client: 202 accepted {job_id, status=pending}
 
     BG->>Session: async_session_factory()
-    BG->>Queue: populate_scan_job_items(job_id, media_items)
+    BG->>Queue: populate_scan_job_items_async(job_id, media_items)
     Queue->>DB: INSERT identity_scan_job_items
 
     alt async worker processing
@@ -38,7 +38,7 @@ sequenceDiagram
         Queue->>DB: update IdentityScanJob status/progress
         Worker->>Thumbs: write thumbnails (optional)
     else inline processing (RECOGNITION_ASYNC_ANALYZE_INLINE=1)
-        API->>ScanSvc: process_scan_job(job_id, media_items)
+        BG->>ScanSvc: process_scan_job_inline(job_id, media_items)
         ScanSvc->>Detector: detect(media_url)
         ScanSvc->>Generator: generate(face_bytes)
         ScanSvc->>DB: insert MediaIdentity rows

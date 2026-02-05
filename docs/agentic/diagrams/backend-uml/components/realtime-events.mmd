@@ -1,0 +1,35 @@
+flowchart LR
+    %% Realtime cluster/suggestion events
+    subgraph Legend["Legend + Conventions"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendOptional["Dashed arrow = optional wiring"]
+    end
+
+    subgraph Producers["Event Producers"]
+        direction TB
+        Curation["cluster_mutations.py\n(assign/rename/remove)"]
+        Merge["cluster_merge.py"]
+        Split["split/executor.py"]
+    end
+
+    subgraph Realtime["Realtime Core"]
+        direction TB
+        Broadcaster["EventBroadcaster\n(recognition/application/events)"]
+    end
+
+    subgraph HTTP["HTTP Boundary"]
+        direction TB
+        SSE["ENTRY: /recognition/clusters/events"]
+    end
+
+    Curation --> Broadcaster
+    Merge --> Broadcaster
+    Split --> Broadcaster
+    SSE --> Broadcaster
+
+    RealtimeCode["Code anchors:\nrecognition/application/events/broadcaster.py\nrecognition/application/orchestration/curation/cluster_mutations.py\nrecognition/application/orchestration/cluster_merge.py\nrecognition/application/orchestration/split/executor.py\nrecognition/interface_adapters/http/routers/events.py"]
+    Broadcaster -.-> RealtimeCode
+
+    LayerNote["Layer: application/events + orchestration\nDirectory: recognition/application/*"]
+    Broadcaster -.-> LayerNote

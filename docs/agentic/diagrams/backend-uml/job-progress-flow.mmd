@@ -1,43 +1,28 @@
 ---
-title: Job Progress Streaming (v4.10.3)
+title: Job Progress Streaming (Backend)
 ---
 sequenceDiagram
-    participant Tab1 as Browser Tab (Primary)
-    participant Tab2 as Browser Tab (Observer)
-    participant BC as BroadcastChannel
-    participant WP as WordPress REST
-    participant API as FastAPI
-    participant Worker as ScanWorker
+    participant Client as SSE Client
+    participant API as /recognition/jobs/{id}/stream
+    participant JobRepo as JobRepository
+    participant ScanRepo as ScanQueueRepository
     participant DB as PostgreSQL
+    participant Worker as ScanWorker / Job Handlers
 
-    Note over Tab1,Tab2: Multi-Tab Coordination
-    Tab1->>BC: PING_PRIMARY
-    Tab1->>Tab1: Assume primary (no PONG)
-    Tab2->>BC: PING_PRIMARY
-    Tab1->>BC: PONG_PRIMARY
-    Tab2->>Tab2: Become observer
+    Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,DB: Mini-map: ENTRY: GET /recognition/jobs/{id}/stream -> JobRepository + ScanQueueRepository, Code: recognition/interface_adapters/http/routers/analyze.py
 
-    Note over Tab1,API: SSE Connection (Primary Only)
-    Tab1->>WP: GET /recognition/jobs/{id}/stream
-    WP->>API: Forward with X-Tenant-ID
-    
-    loop Every 100ms
-        Worker->>DB: Update job progress
-        API->>DB: Poll job status
-        alt Progress changed
-            API-->>Tab1: SSE: progress event
-            Tab1->>BC: JOB_PROGRESS broadcast
-            BC-->>Tab2: Receive progress
+    Client->>API: ENTRY: GET /recognition/jobs/{id}/stream
+
+    loop Poll (100ms)
+        API->>JobRepo: get(job_id)
+        JobRepo->>DB: SELECT identity_scan_jobs / identity_clustering_jobs
+        API->>ScanRepo: get_job_item_status_counts(job_id)
+        ScanRepo->>DB: SELECT identity_scan_job_items (counts)
+        alt Progress changed or heartbeat
+            API-->>Client: SSE "progress" {status, completed, total, phase, images_processed, faces_found}
         end
     end
 
-    Note over Worker,DB: Job Completion
-    Worker->>DB: Set status=completed
-    API-->>Tab1: SSE: done event
-    Tab1->>BC: JOB_PROGRESS (final)
-    BC-->>Tab2: Receive completion
-
-    Note over Tab1,Tab2: Primary Closes
-    Tab1->>BC: PRIMARY_CLOSING
-    Tab2->>Tab2: Become primary
-    Tab2->>WP: New SSE connection
+    Worker->>DB: Update job progress (scan items / clustering jobs)
+    API-->>Client: SSE "done" when status completed/failed

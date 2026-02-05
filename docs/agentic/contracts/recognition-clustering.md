@@ -106,6 +106,12 @@ Query params:
 
 Response: `ClusterResponse[]`.
 
+ClusterResponse fields (abridged):
+- `id`, `tenant_id`, `label`, `is_labeled`, `is_auto_label`, `identity_count`, `representatives`
+- `suggested_label` (nullable; best-effort label inference for unlabeled clusters)
+- `suggested_label_source` (`identity` | `roster` | `similar_cluster` | `none` | null)
+- `suggested_label_confidence` (nullable float)
+
 ### GET /recognition/clusters/top-unlabeled
 
 Query params:
@@ -223,19 +229,29 @@ Response example:
     "rep_similarity": 0.92,
     "member_similarity": 0.92,
     "status": "pending",
-    "cluster_label": "Alice",
+    "cluster_label": null,
     "cluster_identity_count": 5,
+    "suggested_label": "Alice",
+    "suggested_label_source": "identity",
+    "suggested_label_confidence": 0.91,
     "identity_media_id": 123,
     "identity_media_url": "https://...",
     "identity_thumbnail_url": "https://...",
     "identity_bbox": { "x": 10, "y": 20, "width": 120, "height": 120 },
-    "representative_media_id": 456,
     "representative_media_url": "https://...",
     "representative_thumbnail_url": "https://...",
-    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 }
+    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 },
+    "cluster_thumbnails": [
+      "https://example.test/uploads/102-thumb.jpg",
+      "https://example.test/uploads/103-thumb.jpg"
+    ]
   }
 ]
 ```
+
+Notes:
+- `cluster_label` is null when the cluster is unlabeled.
+- `suggested_label*` fields are best-effort and may be null when no reliable source exists.
 
 ### GET /recognition/identities/{identity_id}/suggestions
 

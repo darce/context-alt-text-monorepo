@@ -8,15 +8,16 @@ flowchart LR
         LegendOptional["Dashed arrow = optional wiring"]
     end
 
-    subgraph client["WordPress Workbench"]
-        wp_spa["ENTRY: Admin SPA"]
-        wp_proxy["ENTRY: WP REST proxy\n/wp-json/acx/v1/recognition/*"]
+    subgraph client["HTTP Clients"]
+        http_client["ENTRY: HTTP client(s)"]
+        sse_client["ENTRY: SSE subscribers"]
     end
 
-    subgraph service["Prototype Description Service"]
+    subgraph service["Recognition Service"]
         recognition_api["ENTRY: FastAPI /recognition/*\nAnalyze, clusters, suggestions,\nmedia, diagnostics, events, health"]
-        sse["ENTRY: SSE /recognition/clusters/events"]
-        scan_worker["Scan worker process\nclaims queue items + curation jobs"]
+        sse_clusters["ENTRY: SSE /recognition/clusters/events"]
+        sse_jobs["ENTRY: SSE /recognition/jobs/{id}/stream"]
+        scan_worker["Scan worker process\nclaims scan + clustering/curation/split jobs"]
     end
 
     subgraph data_plane["Data & Models"]
@@ -25,14 +26,15 @@ flowchart LR
         thumbnails["Thumbnail storage\nmounted static path"]
     end
 
-    wp_spa --> wp_proxy --> recognition_api
-    recognition_api --> sse --> wp_spa
+    http_client --> recognition_api
+    sse_client --> sse_clusters
+    sse_client --> sse_jobs
 
     recognition_api -->|enqueue scan jobs + query data| postgres
     scan_worker -->|claim items + persist identities| postgres
     scan_worker --> model_weights
     scan_worker --> thumbnails
-    thumbnails --> wp_spa
+    thumbnails --> http_client
 
     ApiCode["Code anchors:\nrecognition/interface_adapters/http/routers/*\nrecognition/worker/scan_worker.py"]
     recognition_api -.-> ApiCode

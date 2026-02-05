@@ -6,7 +6,7 @@ sequenceDiagram
     %% Shows how all discovery methods route through AssignmentGate
     %% =======================================================================
     
-    participant UI as Workbench UI
+    participant Client as HTTP Client
     participant API as FastAPI Router
     participant CS as ClusterService
     participant RD as RepresentativeDiscovery
@@ -20,18 +20,19 @@ sequenceDiagram
     participant Sugg as SuggestionService
     participant DB as Database
 
-    Note over UI,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
-    Note over UI,DB: Mini-map: ENTRY: POST /recognition/clustering/jobs -> ClusterService.cluster_unclustered_identities, Code: recognition/interface_adapters/http/routers/clusters.py | recognition/application/orchestration/cluster_service.py | recognition/infrastructure/repositories/cluster_repository.py
+    Note over Client,DB: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,DB: Mini-map: ENTRY: POST /recognition/clustering/jobs -> ClusterService.cluster_unclustered_identities, Code: recognition/interface_adapters/http/routers/clusters.py | recognition/application/orchestration/cluster_service.py | recognition/infrastructure/repositories/cluster_repository.py
     
     %% Phase 1: Initiate Clustering
-    UI->>API: ENTRY: POST /recognition/clustering/jobs
+    Client->>API: ENTRY: POST /recognition/clustering/jobs
 
     API->>CS: cluster_unclustered_identities(tenant_id)
     
     CS->>DB: get_unclustered(tenant_id)
     DB-->>CS: identities[]
-    CS->>DB: get_cluster_data(tenant_id)
-    DB-->>CS: {representatives, centroids}
+    CS->>DB: get_by_tenant(tenant_id)
+    DB-->>CS: clusters (reps + centroids)
+    CS->>CS: prepare_cluster_caches()
     
     Note over CS: Phase 2: Discovery (find candidates, NO assignments)
     
@@ -67,7 +68,7 @@ sequenceDiagram
     
     CS->>CS: remaining = remaining - matched
     
-    %% Graph Discovery (HDBSCAN/CW)
+    %% Graph Discovery (HDBSCAN)
     rect rgb(220, 180, 180)
         Note over GD: Path 3: Graph Clustering
         CS->>GD: discover(remaining, anchors)
@@ -96,22 +97,27 @@ sequenceDiagram
                 Gate-->>CS: AssignmentDecision(REJECT)
             else not blocked
                 BC-->>Gate: CheckResult(passed)
-                %% Constraint check (non-fatal; records failure)
+                %% Constraint check (fatal reject on CANNOT_LINK)
                 Gate->>CON: evaluate(candidate)
-                CON-->>Gate: CheckResult(passed or failed)
-
-                %% Confidence check (adaptive thresholds + quality)
-                Note over CC: settings: ClusteringSettings.similarity_threshold, suggestion_floor, suggestion_ceiling, fatal_confidence_floor, fatal_quality_floor, early_stage_suggestion_enabled, anchor_linked candidates bypass thresholds
-                Gate->>CC: evaluate(candidate)
-                alt similarity >= threshold
-                    CC-->>Gate: CheckResult(passed)
-                    Gate-->>CS: AssignmentDecision(ACCEPT)
-                else within suggestion band
-                    CC-->>Gate: CheckResult(failed, suggest)
-                    Gate-->>CS: AssignmentDecision(SUGGEST)
-                else below floor / fatal quality
-                    CC-->>Gate: CheckResult(failed, reject)
+                alt cannot link
+                    CON-->>Gate: CheckResult(failed, fatal reject)
                     Gate-->>CS: AssignmentDecision(REJECT)
+                else ok
+                    CON-->>Gate: CheckResult(passed)
+
+                    %% Confidence check (adaptive thresholds + quality)
+                    Note over CC: settings: ClusteringSettings.similarity_threshold, suggestion_floor, suggestion_ceiling, fatal_confidence_floor, fatal_quality_floor, early_stage_suggestion_enabled, anchor_linked candidates bypass thresholds
+                    Gate->>CC: evaluate(candidate)
+                    alt similarity >= threshold
+                        CC-->>Gate: CheckResult(passed)
+                        Gate-->>CS: AssignmentDecision(ACCEPT)
+                    else within suggestion band
+                        CC-->>Gate: CheckResult(failed, suggest)
+                        Gate-->>CS: AssignmentDecision(SUGGEST)
+                    else below floor / fatal quality
+                        CC-->>Gate: CheckResult(failed, reject)
+                        Gate-->>CS: AssignmentDecision(REJECT)
+                    end
                 end
             end
         end
@@ -146,4 +152,4 @@ sequenceDiagram
     end
     
     CS-->>API: ClusteringResult
-    API-->>UI: {status: "complete", stats: {...}}
+    API-->>Client: {status: "complete", stats: {...}}

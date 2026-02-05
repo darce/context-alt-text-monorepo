@@ -1,7 +1,7 @@
 flowchart LR
     %% ======================================================================
-    %% RECOGNITION SERVICE - SYSTEM OVERVIEW
-    %% Focus: Runtime components and their primary data flows
+    %% PROTOTYPE DESCRIPTION SERVICE - BACKEND SIGNAL FLOW (HIGH LEVEL)
+    %% Focus: Backend components and primary data flows
     %% ======================================================================
 
     subgraph Legend["Legend + Conventions"]
@@ -10,45 +10,91 @@ flowchart LR
         LegendOptional["Dashed arrow = optional wiring"]
     end
 
-    subgraph Client["WordPress Workbench"]
+    subgraph App["Prototype Description Service (FastAPI app)"]
         direction TB
-        AdminUI["ENTRY: Admin SPA"]
-        WPProxy["ENTRY: WP REST proxy<br/>/wp-json/acx/v1/recognition/*"]
-    end
 
-    subgraph API["Recognition API (FastAPI)"]
-        direction TB
-        Routers["ENTRY: /recognition/* routers<br/>analyze, clusters, suggestions,<br/>media, diagnostics, events, health"]
-        Auth["Auth + tenant guards<br/>Authorization Bearer + X-Tenant-ID"]
-        Services["Application services<br/>ScanQueueService, ClusterService,<br/>SuggestionService, JobService"]
-        SSE["ENTRY: SSE stream<br/>/recognition/clusters/events"]
-    end
+        subgraph Recognition["Recognition Context"]
+            direction TB
 
-    subgraph Worker["Async Scan Worker"]
-        direction TB
-        ScanWorker["scan_worker.py<br/>claims scan items + curation jobs"]
-        ScanService["ScanService<br/>FaceDetector + EmbeddingGenerator"]
+            subgraph HTTP["FastAPI HTTP Boundary (recognition)"]
+                direction TB
+                Routers["ENTRY: /recognition/* routers\nanalyze, clusters, suggestions,\nmedia, diagnostics, events, health"]
+                Auth["Auth + tenant guards\nAuthorization Bearer or X-API-Key\nX-Tenant-ID / tenant_id"]
+                SSEClusters["ENTRY: SSE /recognition/clusters/events"]
+                SSEJobs["ENTRY: SSE /recognition/jobs/{id}/stream"]
+            end
+
+            subgraph Services["Application Services"]
+                direction TB
+                ScanQueue["ScanQueueService"]
+                ClusterService["ClusterService"]
+                SuggestionService["SuggestionService"]
+                JobService["JobService"]
+                MediaService["MediaIdentityService"]
+            end
+
+            subgraph Realtime["Realtime + Observability"]
+                direction TB
+                Broadcaster["EventBroadcaster (in-memory)"]
+                ClusteringLogger["ClusteringLogger"]
+                ObsRepo["ObservabilityRepository"]
+            end
+
+            subgraph Worker["Async Scan Worker"]
+                direction TB
+                ScanWorker["scan_worker.py\nscan + clustering/curation/split jobs"]
+                ScanService["ScanService\nFaceDetector + EmbeddingGenerator"]
+            end
+
+            subgraph Infra["Infrastructure"]
+                direction TB
+                Repos["SqlAlchemy* repositories"]
+                Embeddings["InsightFaceAdapter"]
+            end
+        end
+
+        subgraph Roster["Roster Context"]
+            direction TB
+            RosterRouter["ENTRY: /roster/health"]
+            RosterHealth["roster.application.health.check_health()"]
+        end
+
+        subgraph Scene["Scene Context"]
+            direction TB
+            SceneRouter["ENTRY: /scene/health"]
+            SceneHealth["scene.application.health.check_health()"]
+        end
+
+        Shared["shared/\nhealth + utilities"]
     end
 
     subgraph Data["Data Plane"]
         direction TB
-        DB["Postgres + pgvector<br/>RLS tenant isolation"]
+        DB["Postgres + pgvector\nRLS tenant isolation"]
         Thumbs["Thumbnail storage"]
         Models["InsightFace model cache"]
     end
 
-    AdminUI --> WPProxy --> Routers
     Routers --> Auth --> Services
-    Services --> DB
-    Routers --> SSE --> AdminUI
+    Routers --> SSEClusters
+    Routers --> SSEJobs
 
-    Services -->|"enqueue scan jobs"| DB
-    DB -->|"scan queue items"| ScanWorker
-    ScanWorker --> ScanService --> Models
+    Services --> Repos --> DB
+    Services --> ClusteringLogger --> ObsRepo --> DB
+    Services -.-> Broadcaster
+
+    SSEClusters --> Broadcaster
+    SSEJobs -.-> Repos
+
+    ScanWorker --> ScanService
+    ScanWorker -.-> ClusterService
+    ScanWorker --> Repos
     ScanService --> DB
     ScanService --> Thumbs
+    ScanService --> Embeddings --> Models
 
-    Services -.->|"observability logs<br/>assignment_decisions + recognition_events"| DB
+    RosterRouter --> RosterHealth --> Shared
+    SceneRouter --> SceneHealth --> Shared
 
-    RouterCode["Code anchors:\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/services.py\nrecognition/infrastructure/repositories/*"]
+    RouterCode["Code anchors:\napps/prototype-description-service/api/main.py\nrecognition/interface_adapters/http/routers/*\nrecognition/interface_adapters/http/deps/services.py\nrecognition/worker/scan_worker.py\nrecognition/application/events/broadcaster.py\nrecognition/infrastructure/repositories/*\nroster/interface_adapters/http/health_router.py\nscene/interface_adapters/http/health_router.py"]
     Routers -.-> RouterCode

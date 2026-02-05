@@ -122,6 +122,9 @@ Response (array of clusters):
     "is_labeled": true,
     "is_auto_label": false,
     "identity_count": 5,
+    "suggested_label": null,
+    "suggested_label_source": null,
+    "suggested_label_confidence": null,
     "representatives": [
       {
         "id": "8f91f4e7-3ad9-4c31-9a12-9c86e8790e6a",
@@ -133,6 +136,9 @@ Response (array of clusters):
   }
 ]
 ```
+
+Notes:
+- For unlabeled clusters, `label` is null and `suggested_label*` may be populated.
 
 ## GET /recognition/media-identities
 
@@ -322,8 +328,11 @@ Response:
     "rep_similarity": 0.92,
     "member_similarity": 0.92,
     "status": "pending",
-    "cluster_label": "Alice",
+    "cluster_label": null,
     "cluster_identity_count": 5,
+    "suggested_label": "Alice",
+    "suggested_label_source": "identity",
+    "suggested_label_confidence": 0.91,
     "identity_media_id": 123,
     "identity_media_url": "https://...",
     "identity_thumbnail_url": "https://...",
@@ -331,10 +340,17 @@ Response:
     "representative_media_id": 456,
     "representative_media_url": "https://...",
     "representative_thumbnail_url": "https://...",
-    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 }
+    "representative_bbox": { "x": 14, "y": 18, "width": 118, "height": 118 },
+    "cluster_thumbnails": [
+      "https://example.test/uploads/102-thumb.jpg",
+      "https://example.test/uploads/103-thumb.jpg"
+    ]
   }
 ]
 ```
+
+Notes:
+- `cluster_label` is null for unlabeled clusters; use `suggested_label*` for copy if present.
 
 ## POST /recognition/suggestions/{suggestion_id}/accept
 ## POST /recognition/suggestions/{suggestion_id}/reject

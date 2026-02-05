@@ -48,8 +48,8 @@ async def run_background_surface_suggestions(
     """Surface suggestions for newly labeled clusters with a fresh session."""
     import asyncio
 
-    # Small delay to ensure the main request's transaction has committed
-    await asyncio.sleep(0.5)
+    # Delay to ensure the main request's transaction has committed
+    await asyncio.sleep(1.0)
     logger.info(
         "[suggestions] Background surfacing starting for cluster_id=%s tenant_id=%s",
         cluster_id,
@@ -57,6 +57,10 @@ async def run_background_surface_suggestions(
     )
     try:
         async with session_factory() as session:
+            # Force a fresh snapshot by beginning a new transaction explicitly
+            from sqlalchemy import text
+
+            await session.execute(text("SELECT 1"))  # Start transaction
             cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
             refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
             surface_fn = getattr(refresh_service, "surface_for_newly_labeled_cluster", None)

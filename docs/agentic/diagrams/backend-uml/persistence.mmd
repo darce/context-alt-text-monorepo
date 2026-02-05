@@ -57,6 +57,8 @@ erDiagram
         int identity_count
         uuid roster_id
         float similarity_threshold
+        float curriculum_t
+        timestamptz curriculum_t_updated_at
         varchar clustering_algorithm
         bool user_confirmed
         int confirmation_count
@@ -83,6 +85,9 @@ erDiagram
         uuid cluster_id FK
         uuid identity_id FK
         vector embedding
+        float pose_pitch
+        float pose_yaw
+        float pose_roll
         float quality_score
         float diversity_score
         bool is_user_selected
@@ -161,6 +166,19 @@ erDiagram
         varchar source
     }
 
+    CLUSTER_MERGE_SUGGESTIONS {
+        uuid id PK
+        uuid tenant_id FK
+        uuid cluster_a_id FK
+        uuid cluster_b_id FK
+        float similarity
+        timestamptz created_at
+        timestamptz resolved_at
+        timestamptz refreshed_at
+        varchar source
+        varchar resolution
+    }
+
     IDENTITY_CLUSTER_BLOCKS {
         uuid id PK
         uuid tenant_id FK
@@ -187,6 +205,7 @@ erDiagram
     TENANTS ||--o{ MEDIA_IDENTITIES : "owns"
     TENANTS ||--o{ IDENTITY_CLUSTERS : "owns"
     TENANTS ||--o{ IDENTITY_SUGGESTIONS : "owns"
+    TENANTS ||--o{ CLUSTER_MERGE_SUGGESTIONS : "owns"
     TENANTS ||--o{ IDENTITY_SCAN_JOBS : "owns"
     TENANTS ||--o{ IDENTITY_CLUSTERING_JOBS : "owns"
     TENANTS ||--o{ IDENTITY_CLUSTER_BLOCKS : "owns"
@@ -198,6 +217,8 @@ erDiagram
     IDENTITY_CLUSTERS ||--o{ IDENTITY_CLUSTER_REPRESENTATIVES : "has reps"
     IDENTITY_CLUSTERS ||--|| MV_IDENTITY_CLUSTER_CENTROIDS : "summarized_by"
     IDENTITY_CLUSTERS ||--o{ IDENTITY_SUGGESTIONS : "suggested_target"
+    IDENTITY_CLUSTERS ||--o{ CLUSTER_MERGE_SUGGESTIONS : "cluster_a"
+    IDENTITY_CLUSTERS ||--o{ CLUSTER_MERGE_SUGGESTIONS : "cluster_b"
     IDENTITY_CLUSTERS ||--o{ IDENTITY_CLUSTER_BLOCKS : "blocked_by"
     IDENTITY_CLUSTERS ||--o| MEDIA_IDENTITIES : "representative_identity"
 

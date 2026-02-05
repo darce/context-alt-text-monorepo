@@ -1,0 +1,80 @@
+flowchart TB
+    %% =======================================================================
+    %% SCAN PIPELINE: ScanQueueService + ScanService
+    %% Layer: application (recognition/application/scan/*)
+    %% =======================================================================
+
+    subgraph Legend["Legend"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendDashed["Dashed arrow = async/optional"]
+    end
+
+    subgraph HTTP["HTTP Boundary"]
+        AnalyzeEndpoint["ENTRY: POST /recognition/analyze\n{media_items: [{id, url}]}"]
+    end
+
+    subgraph ScanQueue["ScanQueueService"]
+        direction TB
+        CreateJob["create_scan_job_record()\nCreate job + set total"]
+        PopulateItems["populate_scan_job_items()\nBatch insert scan_job_items"]
+        ClaimItems["claim_pending_items()\nAtomically claim N items"]
+        RefreshProgress["refresh_job_progress()\nUpdate completed count"]
+    end
+
+    subgraph Worker["scan_worker.py"]
+        direction TB
+        WorkerLoop["poll_and_process()\nClaim items in loop"]
+        ProcessItem["process_item()\nCall ScanService"]
+    end
+
+    subgraph ScanSvc["ScanService"]
+        direction TB
+        ProcessMedia["process_media_item()\nOrchestrate detection + embedding"]
+        Detector["FaceDetectorProtocol\n(InsightFaceAdapter)"]
+        Generator["EmbeddingGeneratorProtocol\n(InsightFaceAdapter)"]
+        SaveResults["save_job_results()\nPersist MediaIdentity rows"]
+    end
+
+    subgraph Infra["Infrastructure"]
+        direction TB
+        ScanRepo["ScanQueueRepository\n(SqlAlchemy)"]
+        IdentityRepo["IdentityRepository\n(SqlAlchemy)"]
+        Models["InsightFace Models\n(buffalo_l)"]
+    end
+
+    subgraph DB["PostgreSQL + pgvector"]
+        ScanJobsTable["identity_scan_jobs"]
+        ScanItemsTable["scan_job_items"]
+        IdentitiesTable["media_identities"]
+    end
+
+    %% HTTP -> ScanQueueService
+    AnalyzeEndpoint --> CreateJob
+    AnalyzeEndpoint --> PopulateItems
+    CreateJob --> ScanRepo --> ScanJobsTable
+    PopulateItems --> ScanRepo --> ScanItemsTable
+
+    %% Worker -> ScanQueueService
+    WorkerLoop --> ClaimItems
+    ClaimItems --> ScanRepo --> ScanItemsTable
+    WorkerLoop --> ProcessItem
+
+    %% Worker -> ScanService
+    ProcessItem --> ProcessMedia
+    ProcessMedia --> Detector --> Models
+    ProcessMedia --> Generator --> Models
+    ProcessMedia --> SaveResults
+    SaveResults --> IdentityRepo --> IdentitiesTable
+
+    %% Progress update
+    ProcessItem -.-> RefreshProgress
+    RefreshProgress --> ScanRepo --> ScanJobsTable
+
+    CodeAnchors["Code anchors:\nrecognition/application/scan/scan_queue_service.py\nrecognition/application/scan/service.py\nrecognition/application/scan/queue_repository.py\nrecognition/worker/scan_worker.py\nrecognition/application/embedding/detector.py\nrecognition/application/embedding/generator.py"]
+    ScanQueue -.-> CodeAnchors
+
+    %% Styling
+    style ScanQueue fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style ScanSvc fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style Worker fill:#fff3e0,stroke:#ef6c00,color:#e65100

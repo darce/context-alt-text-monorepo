@@ -1,0 +1,93 @@
+flowchart TB
+    %% =======================================================================
+    %% JOB SERVICE: Background job lifecycle management
+    %% Layer: application (recognition/application/orchestration/job_service.py)
+    %% =======================================================================
+
+    subgraph Legend["Legend"]
+        direction TB
+        LegendEntry["ENTRY: external entrypoint"]
+        LegendDashed["Dashed arrow = async delegation"]
+    end
+
+    subgraph HTTP["HTTP Boundary"]
+        GetJob["ENTRY: GET /recognition/jobs/{id}\nGet job status"]
+        StreamJob["ENTRY: SSE /recognition/jobs/{id}/stream\nReal-time progress"]
+        PostAnalyze["ENTRY: POST /recognition/analyze\nQueue analyze job"]
+        PostCluster["ENTRY: POST /recognition/clustering/jobs\nQueue clustering job"]
+    end
+
+    subgraph JobSvc["JobService"]
+        direction TB
+        CreateJob["create_job(type, tenant_id, total)\nCreate pending job"]
+        StartJob["start_job(job_id)\nTransition to RUNNING"]
+        UpdateProgress["update_progress(job_id, completed, total)\nUpdate counters"]
+        UpdateMessage["update_job_message(job_id, message)\nSet status text"]
+        CompleteJob["complete_job(job_id)\nMark COMPLETED"]
+        FailJob["fail_job(job_id, error)\nMark FAILED"]
+    end
+
+    subgraph Orchestrators["Job Orchestrators"]
+        direction TB
+        QueueAnalyze["queue_analyze(tenant_id, media_ids)\nEnqueue + run scan pipeline"]
+        QueueClustering["queue_clustering(tenant_id)\nEnqueue + run clustering"]
+        QueueCuration["queue_curation_followup()\nPost-split/merge cleanup"]
+        QueueSplit["queue_split(cluster_id, identity_ids)\nSplit cluster into new clusters"]
+    end
+
+    subgraph Domain["Job Domain"]
+        direction TB
+        JobEntity["Job\n- id, type, tenant_id\n- status: PENDING|RUNNING|COMPLETED|FAILED\n- progress_completed, progress_total\n- message, payload"]
+        JobType["JobType\nANALYZE | CLUSTERING | CURATION | SPLIT"]
+        JobStatus["JobStatus\nPENDING | RUNNING | COMPLETED | FAILED"]
+    end
+
+    subgraph Delegates["Delegated Services"]
+        direction TB
+        ScanService["ScanService\n(analyze_media)"]
+        ClusterService["ClusterService\n(cluster_unclustered_identities)"]
+    end
+
+    subgraph Repo["JobRepository"]
+        direction TB
+        Save["save(job)"]
+        Update["update(job)"]
+        GetById["get_by_id(job_id)"]
+    end
+
+    subgraph DB["PostgreSQL"]
+        JobsTable["recognition_jobs"]
+    end
+
+    %% HTTP -> JobService
+    GetJob --> GetById --> JobsTable
+    StreamJob --> GetById
+    PostAnalyze --> QueueAnalyze
+    PostCluster --> QueueClustering
+
+    %% Orchestrators -> JobService lifecycle
+    QueueAnalyze --> CreateJob --> Save --> JobsTable
+    QueueAnalyze --> StartJob --> Update
+    QueueAnalyze -.-> ScanService
+    QueueAnalyze --> UpdateProgress --> Update
+    QueueAnalyze --> CompleteJob --> Update
+
+    QueueClustering --> CreateJob
+    QueueClustering --> StartJob
+    QueueClustering -.-> ClusterService
+    QueueClustering --> CompleteJob
+
+    QueueCuration --> CreateJob
+    QueueSplit --> CreateJob
+
+    %% Domain relationships
+    JobEntity --> JobType
+    JobEntity --> JobStatus
+
+    CodeAnchors["Code anchors:\nrecognition/application/orchestration/job_service.py\nrecognition/domain/job.py\nrecognition/infrastructure/repositories/job_repository.py\nrecognition/interface_adapters/http/routers/jobs.py"]
+    JobSvc -.-> CodeAnchors
+
+    %% Styling
+    style JobSvc fill:#e8f5e9,stroke:#2e7d32,color:#1b5e20
+    style Orchestrators fill:#e3f2fd,stroke:#1565c0,color:#0d47a1
+    style Domain fill:#fff3e0,stroke:#ef6c00,color:#e65100

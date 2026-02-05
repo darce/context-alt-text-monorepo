@@ -10,22 +10,29 @@ flowchart LR
     subgraph Endpoints["API Endpoints"]
         Analyze["ENTRY: POST /recognition/analyze"]
         Jobs["ENTRY: GET /recognition/jobs/{id}"]
+        JobStream["ENTRY: GET /recognition/jobs/{id}/stream"]
         ClusterJob["ENTRY: POST /recognition/clustering/jobs"]
         Clusters["ENTRY: GET /recognition/clusters"]
         ClusterPatch["ENTRY: PATCH /recognition/clusters/{id}"]
         Suggestions["ENTRY: GET /recognition/suggestions"]
+        MergeSuggestions["ENTRY: GET /recognition/suggestions/merge"]
         SuggestAccept["ENTRY: POST /recognition/suggestions/{id}/accept"]
+        SuggestReject["ENTRY: POST /recognition/suggestions/{id}/reject"]
+        MergeAccept["ENTRY: POST /recognition/suggestions/merge/{id}/accept"]
+        MergeReject["ENTRY: POST /recognition/suggestions/merge/{id}/reject"]
         Media["ENTRY: GET /recognition/media/identities"]
+        Events["ENTRY: GET /recognition/clusters/events"]
         Diagnostics["ENTRY: GET /recognition/diagnostics/decisions"]
     end
 
-    subgraph Services["Services"]
+    subgraph Services["Services + Realtime"]
         ScanQueue["ScanQueueService"]
         JobService["JobService"]
         ClusterService["ClusterService"]
         SuggestionService["SuggestionService"]
         MediaService["MediaIdentityService"]
         ObsRepo["ObservabilityRepository"]
+        Broadcaster["EventBroadcaster"]
     end
 
     subgraph Repos["Repositories / Persistence"]
@@ -34,23 +41,34 @@ flowchart LR
         ClusterRepo["SqlAlchemyClusterRepository"]
         MemberRepo["SqlAlchemyMemberRepository"]
         SuggestionRepo["SqlAlchemySuggestionRepository"]
+        MergeSuggestionRepo["SqlAlchemyMergeSuggestionRepository"]
         DecisionsTable["assignment_decisions"]
+        DecisionStore["DecisionStore (fallback)"]
     end
 
     Analyze --> ScanQueue --> ScanQueueRepo
-    Jobs --> JobService --> JobRepo
+    Jobs --> JobRepo
+    JobStream --> JobRepo
+    JobStream --> ScanQueueRepo
     ClusterJob --> ClusterService --> ClusterRepo
     ClusterJob --> ClusterService --> MemberRepo
     ClusterJob --> ClusterService --> SuggestionRepo
+    ClusterJob -.-> JobService --> JobRepo
     Clusters --> ClusterService --> ClusterRepo
     ClusterPatch --> ClusterService --> ClusterRepo
     Suggestions --> SuggestionService --> SuggestionRepo
     SuggestAccept --> SuggestionService --> SuggestionRepo
+    SuggestReject --> SuggestionService --> SuggestionRepo
+    MergeSuggestions --> MergeSuggestionRepo
+    MergeAccept --> MergeSuggestionRepo
+    MergeReject --> MergeSuggestionRepo
     Media --> MediaService --> ClusterRepo
     Diagnostics --> ObsRepo --> DecisionsTable
+    Diagnostics -.-> DecisionStore
+    Events --> Broadcaster
 
-    EndpointCode["Code anchors:\nrecognition/interface_adapters/http/routers/analyze.py\nrecognition/interface_adapters/http/routers/clusters.py\nrecognition/interface_adapters/http/routers/suggestions.py\nrecognition/interface_adapters/http/routers/media.py\nrecognition/interface_adapters/http/routers/diagnostics.py"]
-    ServiceCode["Code anchors:\nrecognition/application/scan/scan_queue_service.py\nrecognition/application/orchestration/cluster_service.py\nrecognition/application/suggestions/service.py\nrecognition/interface_adapters/http/deps/stores.py\nrecognition/observability/persistence.py"]
+    EndpointCode["Code anchors:\nrecognition/interface_adapters/http/routers/analyze.py\nrecognition/interface_adapters/http/routers/clusters.py\nrecognition/interface_adapters/http/routers/suggestions.py\nrecognition/interface_adapters/http/routers/media.py\nrecognition/interface_adapters/http/routers/diagnostics.py\nrecognition/interface_adapters/http/routers/events.py"]
+    ServiceCode["Code anchors:\nrecognition/application/scan/scan_queue_service.py\nrecognition/application/orchestration/cluster_service.py\nrecognition/application/suggestions/service.py\nrecognition/application/events/broadcaster.py\nrecognition/interface_adapters/http/deps/stores.py\nrecognition/observability/persistence.py"]
     RepoCode["Code anchors:\nrecognition/infrastructure/repositories/*\napps/prototype-description-service/db/models.py"]
     Endpoints -.-> EndpointCode
     Services -.-> ServiceCode

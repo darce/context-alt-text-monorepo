@@ -5,24 +5,58 @@ classDiagram
     %% ======================================================================
 
     %% Domain (core types)
-    class MediaIdentity
-    class IdentityCluster
+    class MediaIdentity {
+        id: str
+        media_id: str
+        embedding: ndarray
+        confidence: float
+        cluster_id: str?
+    }
+    class IdentityCluster {
+        id: str
+        label: str?
+        is_labeled: bool
+        user_confirmed: bool
+        identity_count: int
+    }
     class ClusterRepresentative
     class AssignmentSuggestion
-    class Job
+    class Job {
+        id: str
+        type: JobType
+        status: JobStatus
+        progress_completed: int
+        progress_total: int
+    }
 
     MediaIdentity --> IdentityCluster : member_of
     IdentityCluster --> ClusterRepresentative : has
     MediaIdentity --> AssignmentSuggestion : suggested
 
     %% Assignment pipeline
-    class AssignmentCandidate
-    class AssignmentDecision
+    class AssignmentCandidate {
+        identity: MediaIdentity
+        cluster_id: str
+        discovery_method: DiscoveryMethod
+        discovery_similarity: float
+    }
+    class AssignmentDecision {
+        outcome: AssignmentOutcome
+        candidate: AssignmentCandidate
+        rejection_reason: str?
+        suggestion_confidence: float?
+    }
     class AssignmentOutcome {
         <<enumeration>>
         ACCEPT
         SUGGEST
         REJECT
+    }
+    class DiscoveryMethod {
+        <<enumeration>>
+        REPRESENTATIVE
+        CENTROID
+        GRAPH
     }
     class AssignmentGate
     class AssignmentWriter
@@ -75,6 +109,23 @@ classDiagram
     ScanService --> MediaIdentity
     SuggestionService --> AssignmentSuggestion
     JobService --> Job
+
+    class JobStatus {
+        <<enumeration>>
+        PENDING
+        RUNNING
+        COMPLETED
+        FAILED
+    }
+    class JobType {
+        <<enumeration>>
+        ANALYZE
+        CLUSTERING
+        CURATION
+        SPLIT
+    }
+    Job --> JobStatus
+    Job --> JobType
 
     %% Observability
     class ClusteringLogger

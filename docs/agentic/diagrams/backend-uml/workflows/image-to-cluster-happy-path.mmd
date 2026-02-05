@@ -1,0 +1,52 @@
+---
+title: Happy Path - Image to Cluster
+---
+sequenceDiagram
+    autonumber
+
+    %% =======================================================================
+    %% HAPPY PATH: IMAGE INPUT -> CLUSTERED GROUP
+    %% Summary diagram to avoid duplication.
+    %% See recognize_faces.mmd + unified-assignment.mmd for detailed steps.
+    %% =======================================================================
+
+    participant Client as HTTP Client
+    participant API as /recognition/analyze
+    participant Queue as ScanQueueService
+    participant Worker as scan_worker.py
+    participant ScanSvc as ScanService
+    participant DB as PostgreSQL + pgvector
+    participant ClusterAPI as /recognition/clustering/jobs
+    participant ClusterSvc as ClusterService
+    participant Discovery as Discovery Pipeline
+    participant Gate as AssignmentGate
+    participant Writer as AssignmentWriter
+
+    Note over Client,Writer: Legend: ENTRY = external entrypoint, Dashed arrow = optional wiring
+    Note over Client,Writer: Summary only. Details: workflows/recognize_faces.mmd + workflows/unified-assignment.mmd
+
+    %% Phase 1: Analyze images
+    Client->>API: ENTRY: POST /recognition/analyze {media_items}
+    API->>Queue: create_scan_job_record()
+    Queue->>DB: INSERT identity_scan_jobs + scan_job_items
+    API-->>Client: 202 {job_id}
+
+    Worker->>DB: claim scan_job_items
+    Worker->>ScanSvc: process_media_item()
+    ScanSvc->>DB: INSERT media_identities
+    Worker->>Queue: refresh_job_progress(job_id)
+
+    %% Phase 2: Cluster identities
+    Client->>ClusterAPI: ENTRY: POST /recognition/clustering/jobs
+    ClusterAPI->>ClusterSvc: cluster_unclustered_identities(tenant_id)
+    ClusterSvc->>DB: SELECT unclustered identities
+    ClusterSvc->>Discovery: rep/centroid/graph discovery
+    Discovery-->>ClusterSvc: assignment candidates + new cluster proposals
+    ClusterSvc->>Gate: evaluate(candidate)
+    Gate-->>ClusterSvc: ACCEPT (happy path)
+    ClusterSvc->>Writer: persist assignment / create cluster
+    Writer->>DB: INSERT clusters + members + representatives
+    ClusterSvc-->>ClusterAPI: {status: complete}
+    ClusterAPI-->>Client: {status: complete}
+
+    Note over API,Writer: Code anchors: routers/analyze.py, tasks/scan.py, scan_worker.py, cluster_service.py, orchestrator.py

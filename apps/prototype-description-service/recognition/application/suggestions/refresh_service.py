@@ -14,6 +14,12 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
+from recognition.application.assignment.checks import (
+    BlockCheck,
+    CheckFailureKind,
+    ConfidenceCheck,
+    ConstraintCheck,
+)
 from recognition.application.settings import ClusteringSettings
 from recognition.application.similarity import RepresentativeCache, SimilaritySearch
 from recognition.application.suggestions.eligibility import is_eligible_cluster
@@ -133,6 +139,83 @@ class SuggestionRefreshService:
 
         return match.cluster_id, match.similarity
 
+    def _meets_low_confidence_floor(self, similarity: float) -> bool:
+        """Return whether similarity is high enough to show as low-confidence suggestion."""
+        return similarity >= self._settings.effective_low_confidence_suggestion_floor
+
+    def _should_surface_gate_reject(self, decision, *, similarity: float) -> bool:
+        """Allow selected gate rejections to remain user-reviewable suggestions.
+
+        We only surface gate rejections produced by the confidence check and only
+        when they clear the low-confidence floor. Explicit user blocks and
+        constraint violations remain hard rejects.
+        """
+        if not self._meets_low_confidence_floor(similarity):
+            return False
+
+        failure_kinds = set(getattr(decision, "failure_kinds", []) or [])
+        if not failure_kinds:
+            failed_checks = set(getattr(decision, "checks_failed", []) or [])
+            if BlockCheck.name in failed_checks:
+                failure_kinds.add(CheckFailureKind.BLOCK)
+            if ConstraintCheck.name in failed_checks:
+                failure_kinds.add(CheckFailureKind.CONSTRAINT)
+            if ConfidenceCheck.name in failed_checks:
+                failure_kinds.add(CheckFailureKind.CONFIDENCE)
+        if CheckFailureKind.BLOCK in failure_kinds or CheckFailureKind.CONSTRAINT in failure_kinds:
+            return False
+
+        return CheckFailureKind.CONFIDENCE in failure_kinds
+
+    async def _get_cluster_member_ids(self, cluster_id: str) -> list[str]:
+        """Fetch member identity IDs for a cluster for constraint checks."""
+        if self._cluster_repository is None:
+            return []
+        members = await self._cluster_repository.get_members(cluster_id)
+        return [member.identity_id for member in members]
+
+    async def _passes_fallback_guards(
+        self,
+        *,
+        tenant_uuid: uuid.UUID,
+        identity_id: str,
+        cluster_id: str,
+        similarity: float,
+        cluster_member_ids: Sequence[str] | None = None,
+    ) -> bool:
+        """Evaluate fallback block/constraint/floor checks when gate is unavailable."""
+        if self._block_repository is not None and await self._block_repository.is_blocked(
+            tenant_id=self._tenant_id,
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+        ):
+            return False
+
+        if self._constraint_repository is not None:
+            member_ids = (
+                list(cluster_member_ids)
+                if cluster_member_ids is not None
+                else await self._get_cluster_member_ids(cluster_id)
+            )
+            if member_ids:
+                try:
+                    violates = await self._constraint_repository.has_cannot_link(
+                        tenant_id=str(tenant_uuid),
+                        identity_id=identity_id,
+                        cluster_member_ids=member_ids,
+                    )
+                    if violates:
+                        logger.debug(
+                            "[suggestions] Skipping cluster due to cannot-link constraint: cluster_id=%s identity_id=%s",
+                            cluster_id,
+                            identity_id,
+                        )
+                        return False
+                except Exception as exc:
+                    logger.warning("[suggestions] Error checking constraints: %s", exc)
+
+        return self._meets_low_confidence_floor(similarity)
+
     async def _create_or_update_suggestion(
         self,
         identity_id: str,
@@ -197,6 +280,7 @@ class SuggestionRefreshService:
             return []
 
         representatives_by_cluster: dict[str, list[np.ndarray]] = {}
+        member_ids_by_cluster: dict[str, list[str]] = {}
         for cluster, reps in clusters_with_reps:
             if not is_eligible_cluster(cluster, self._tenant_id):
                 continue
@@ -228,40 +312,29 @@ class SuggestionRefreshService:
                     discovery_similarity=match.similarity,
                 )
                 decision = await self._gate.evaluate(candidate)
-                if decision.outcome is not AssignmentOutcome.SUGGEST:
+                # Surfacing mode always creates a reviewable suggestion unless the gate
+                # explicitly rejects the match.
+                if decision.outcome is AssignmentOutcome.REJECT and not self._should_surface_gate_reject(
+                    decision,
+                    similarity=match.similarity,
+                ):
                     continue
                 confidence_score = decision.suggestion_confidence or match.similarity
             else:
-                if self._block_repository is not None and await self._block_repository.is_blocked(
-                    tenant_id=self._tenant_id,
-                    identity_id=identity_id,
+                member_ids = member_ids_by_cluster.get(cluster_id)
+                if member_ids is None and self._constraint_repository is not None:
+                    member_ids = await self._get_cluster_member_ids(cluster_id)
+                    member_ids_by_cluster[cluster_id] = member_ids
+
+                if not await self._passes_fallback_guards(
+                    tenant_uuid=tenant_uuid,
+                    identity_id=str(identity_uuid),
                     cluster_id=cluster_id,
+                    similarity=match.similarity,
+                    cluster_member_ids=member_ids,
                 ):
                     continue
-
-                if self._constraint_repository is not None:
-                    try:
-                        members = await self._cluster_repository.get_members(cluster_id)
-                        member_ids = [member.identity_id for member in members]
-                        violates = await self._constraint_repository.has_cannot_link(
-                            tenant_id=str(tenant_uuid),
-                            identity_id=str(identity_uuid),
-                            cluster_member_ids=member_ids,
-                        )
-                        if violates:
-                            logger.debug(
-                                "[suggestions] Skipping cluster due to cannot-link constraint: cluster_id=%s identity_id=%s",
-                                cluster_id,
-                                identity_id,
-                            )
-                            continue
-                    except Exception as exc:
-                        logger.warning("[suggestions] Error checking constraints: %s", exc)
-
-                if match.similarity < self._settings.suggestion_floor:
-                    continue
-                if match.similarity >= self._settings.suggestion_ceiling:
-                    continue
+                confidence_score = match.similarity
 
             suggestion = await self._create_or_update_suggestion(
                 identity_id=identity_id,
@@ -332,7 +405,6 @@ class SuggestionRefreshService:
 
             old_similarity = suggestion.representative_similarity
             delta = best_similarity - old_similarity
-            new_status = suggestion.status
 
             if abs(delta) > 0.01:
                 await self._repository.update_scores(
@@ -343,48 +415,6 @@ class SuggestionRefreshService:
                     confidence_score=best_similarity,
                 )
 
-                if self._gate is not None:
-                    candidate = AssignmentCandidate(
-                        identity=identity,
-                        identity_vector=identity.face_vector,
-                        cluster_id=cluster_id,
-                        discovery_method=DiscoveryMethod.SUGGESTION_REFRESH,
-                        discovery_similarity=best_similarity,
-                    )
-                    decision = await self._gate.evaluate(candidate)
-                    if decision.outcome == AssignmentOutcome.ACCEPT:
-                        new_status = SuggestionStatus.ACCEPTED
-                    elif decision.outcome == AssignmentOutcome.REJECT:
-                        new_status = SuggestionStatus.REJECTED
-                    else:
-                        new_status = SuggestionStatus.PENDING
-                else:
-                    if best_similarity >= self._settings.suggestion_ceiling:
-                        new_status = SuggestionStatus.ACCEPTED
-                    elif best_similarity < self._settings.suggestion_floor:
-                        new_status = SuggestionStatus.REJECTED
-
-                if new_status != suggestion.status:
-                    await self._repository.update_status(self._tenant_id, suggestion.id, status=new_status)
-
-                    if self._run_context:
-                        event_type = (
-                            "suggestion_auto_accepted"
-                            if new_status == SuggestionStatus.ACCEPTED
-                            else "suggestion_auto_rejected"
-                        )
-                        self._run_context.add_event(
-                            event_type=event_type,
-                            identity_id=suggestion.identity_id,
-                            cluster_id=cluster_id,
-                            payload={
-                                "suggestion_id": suggestion.id,
-                                "similarity": float(best_similarity),
-                                "old_similarity": float(old_similarity),
-                                "delta": float(delta),
-                            },
-                        )
-
                 logger.info(
                     "[suggestions] refresh_result cluster_id=%s identity_id=%s "
                     "old_sim=%.4f new_sim=%.4f delta=%+.4f status=%s updated=true",
@@ -393,7 +423,7 @@ class SuggestionRefreshService:
                     old_similarity,
                     best_similarity,
                     delta,
-                    new_status.value,
+                    SuggestionStatus.PENDING.value,
                 )
                 refreshed += 1
             else:
@@ -430,6 +460,10 @@ class SuggestionRefreshService:
             representatives_by_cluster: Precomputed representatives to avoid recomputing cache.
         """
         if self._session is None or self._cluster_repository is None:
+            return 0
+        try:
+            tenant_uuid = uuid.UUID(str(self._tenant_id))
+        except ValueError:
             return 0
 
         # When cluster_label is provided, we trust the caller (optimistic update pattern).
@@ -492,7 +526,7 @@ class SuggestionRefreshService:
                 for c in all_clusters
                 if c.id != cluster_id and (not c.user_confirmed or not c.label or c.label.startswith("cluster-"))
             ]
-            unlabeled_cluster_ids = [c.id for c in unlabeled_clusters if c.id]
+            unlabeled_cluster_ids = list(dict.fromkeys(c.id for c in unlabeled_clusters if c.id))
             logger.info(
                 "[suggestions] surface: found %d unlabeled clusters to scan (out of %d total)",
                 len(unlabeled_clusters),
@@ -500,7 +534,9 @@ class SuggestionRefreshService:
             )
             unlabeled_count = len(unlabeled_clusters)
         else:
-            unlabeled_cluster_ids = [cid for cid in candidate_cluster_ids if cid and cid != cluster_id]
+            unlabeled_cluster_ids = list(
+                dict.fromkeys(cid for cid in candidate_cluster_ids if cid and cid != cluster_id)
+            )
             unlabeled_count = len(unlabeled_cluster_ids)
             logger.info(
                 "[suggestions] surface: using %d provided unlabeled clusters to scan",
@@ -514,6 +550,10 @@ class SuggestionRefreshService:
             )
             return 0
 
+        target_cluster_member_ids: list[str] | None = None
+        if self._constraint_repository is not None:
+            target_cluster_member_ids = await self._get_cluster_member_ids(cluster_id)
+
         created = 0
         now = datetime.now(tz=UTC)
         _total_db_queries = 0
@@ -522,6 +562,8 @@ class SuggestionRefreshService:
         identities_by_cluster = await self._cluster_repository.get_member_identities_for_clusters(unlabeled_cluster_ids)
         _total_db_queries += 1
         _total_members = sum(len(identities) for identities in identities_by_cluster.values())
+        seen_identity_ids: set[str] = set()
+        duplicate_identity_skips = 0
         logger.info(
             "[suggestions] surface: loaded %d member identities from %d clusters in %.3fs",
             _total_members,
@@ -546,6 +588,10 @@ class SuggestionRefreshService:
             for identity in identities:
                 processed_identities += 1
                 identity_id = identity.id
+                if identity_id in seen_identity_ids:
+                    duplicate_identity_skips += 1
+                    continue
+                seen_identity_ids.add(identity_id)
                 match = self._search.find_best_match(identity.face_vector, representatives_by_cluster)
                 if match is None:
                     continue
@@ -560,20 +606,22 @@ class SuggestionRefreshService:
                         discovery_similarity=best_similarity,
                     )
                     decision = await self._gate.evaluate(candidate)
-                    if decision.outcome is not AssignmentOutcome.SUGGEST:
+                    # Surfacing mode always creates a reviewable suggestion unless the
+                    # gate explicitly rejects the match.
+                    if decision.outcome is AssignmentOutcome.REJECT and not self._should_surface_gate_reject(
+                        decision,
+                        similarity=best_similarity,
+                    ):
                         continue
                     confidence_score = decision.suggestion_confidence or best_similarity
                 else:
-                    if self._block_repository is not None and await self._block_repository.is_blocked(
-                        tenant_id=self._tenant_id,
+                    if not await self._passes_fallback_guards(
+                        tenant_uuid=tenant_uuid,
                         identity_id=identity_id,
                         cluster_id=cluster_id,
+                        similarity=best_similarity,
+                        cluster_member_ids=target_cluster_member_ids,
                     ):
-                        continue
-
-                    if best_similarity < self._settings.suggestion_floor:
-                        continue
-                    if best_similarity >= self._settings.suggestion_ceiling:
                         continue
                     confidence_score = best_similarity
 
@@ -613,12 +661,14 @@ class SuggestionRefreshService:
         logger.info(
             "[suggestions] surface_for_newly_labeled_cluster SUMMARY: "
             "cluster_id=%s label='%s' "
-            "unlabeled_clusters=%d total_members=%d db_queries=%d "
+            "unlabeled_clusters=%d total_members=%d unique_members=%d duplicate_skipped=%d db_queries=%d "
             "suggestions_created=%d total_time=%.2fs",
             cluster_id,
             cluster_label,
             unlabeled_count,
             _total_members,
+            len(seen_identity_ids),
+            duplicate_identity_skips,
             _total_db_queries,
             created,
             _total_elapsed,

@@ -4,7 +4,7 @@ Clustering and assignment thresholds for the recognition service.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 class QualitySettings(BaseModel):
@@ -238,6 +238,14 @@ class ClusteringSettings(BaseModel):
         default=0.35,
         description="Lower bound for suggestion band (below this -> reject). Lowered from 0.45 based on observed valid matches at 0.42+.",
     )
+    low_confidence_band_width: float = Field(
+        default=0.05,
+        description="Derived low-confidence band width below suggestion_floor (effective floor = suggestion_floor - width).",
+    )
+    low_confidence_suggestion_floor: float | None = Field(
+        default=None,
+        description="Optional explicit override for low-confidence floor. When unset, derived from suggestion_floor - low_confidence_band_width.",
+    )
     suggestion_ceiling: float = Field(
         default=0.55,
         description="Upper bound for suggestion band (at/above -> accept). Aligned with similarity_threshold.",
@@ -298,6 +306,25 @@ class ClusteringSettings(BaseModel):
         default=0.20,
         description="Minimum quality score below which suggestions are suppressed.",
     )
+
+    @model_validator(mode="after")
+    def _validate_low_confidence_thresholds(self) -> ClusteringSettings:
+        """Ensure low-confidence thresholds cannot exceed the primary suggestion floor."""
+        if self.low_confidence_band_width < 0:
+            raise ValueError("low_confidence_band_width must be >= 0")
+        if (
+            self.low_confidence_suggestion_floor is not None
+            and self.low_confidence_suggestion_floor > self.suggestion_floor
+        ):
+            raise ValueError("low_confidence_suggestion_floor must be <= suggestion_floor")
+        return self
+
+    @property
+    def effective_low_confidence_suggestion_floor(self) -> float:
+        """Return the effective low-confidence floor used for suggestion surfacing."""
+        if self.low_confidence_suggestion_floor is not None:
+            return self.low_confidence_suggestion_floor
+        return max(0.0, self.suggestion_floor - self.low_confidence_band_width)
 
 
 class HACSettings(BaseModel):

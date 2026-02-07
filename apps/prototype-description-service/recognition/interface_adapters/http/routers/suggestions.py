@@ -11,16 +11,13 @@ from recognition.domain.cluster import IdentityCluster
 from recognition.domain.suggestion import (
     AssignmentSuggestion,
     MergeSuggestion,
-    MergeSuggestionDetails,
-    SuggestionDetails,
     SuggestionStatus,
 )
 from recognition.infrastructure.repositories import SqlAlchemyMergeSuggestionRepository
 from recognition.interface_adapters.http.dependencies import (
-    build_cluster_service,
     get_cluster_repository,
+    get_cluster_service_builder,
     get_session,
-    get_suggestion_refresh_service,
     get_suggestion_service,
     require_auth,
     require_write_access,
@@ -35,6 +32,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     SuggestionResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_paging
+from recognition.interface_adapters.schemas.suggestion_details import MergeSuggestionDetails, SuggestionDetails
 
 router = APIRouter(tags=["suggestions"], dependencies=[Depends(require_auth)])
 
@@ -55,7 +53,7 @@ async def list_pending_suggestions(
 
 @router.get("/suggestions/merge", response_model=list[MergeSuggestionResponse])
 async def list_pending_merge_suggestions(
-    tenant_id: str = Depends(get_tenant_id),
+    _tenant_id: str = Depends(get_tenant_id),
     limit: int = Query(default=50),
     offset: int = Query(default=0),
     session=Depends(get_session),
@@ -64,14 +62,14 @@ async def list_pending_merge_suggestions(
     settings = get_security_settings()
     validate_paging(limit, offset, settings.max_page_size)
     repo = SqlAlchemyMergeSuggestionRepository(session)
-    suggestions = await repo.list_pending_with_details(tenant_id, limit=limit, offset=offset)
+    suggestions = await repo.list_pending_with_details(_tenant_id, limit=limit, offset=offset)
     return [_to_merge_response(s) for s in suggestions]
 
 
 @router.get("/identities/{identity_id}/suggestions", response_model=IdentitySuggestionsResponse)
 async def list_suggestions(
     identity_id: str,
-    tenant_id: str = Depends(get_tenant_id),
+    _tenant_id: str = Depends(get_tenant_id),
     suggestion_service=Depends(get_suggestion_service),
     cluster_repo=Depends(get_cluster_repository),
 ) -> IdentitySuggestionsResponse:
@@ -114,16 +112,17 @@ async def accept_suggestion(
     auth=Depends(require_write_access),
     tenant_id: str = Depends(get_tenant_id),
     session=Depends(get_session),
+    suggestion_service=Depends(get_suggestion_service),
+    cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> SuggestionResponse:
     """Accept a suggestion, persisting the assignment."""
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
-    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
     suggestion = await suggestion_service.accept(suggestion_id)
     if not suggestion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    cluster_service = await cluster_service_builder(request.tenant_id)
     assigned = await cluster_service.assign_outlier_to_cluster(
         identity_id=suggestion.identity_id,
         target_cluster_id=suggestion.cluster_id,
@@ -133,17 +132,14 @@ async def accept_suggestion(
     if assigned is None:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="Suggestion assignment failed")
 
-    resolve_exclusive = getattr(suggestion_service, "resolve_for_identity_exclusive", None)
-    if callable(resolve_exclusive):
-        await resolve_exclusive(
-            identity_id=suggestion.identity_id,
-            accepted_cluster_id=suggestion.cluster_id,
-            reason="manual_accept",
-        )
+    await suggestion_service.resolve_for_identity_exclusive(
+        identity_id=suggestion.identity_id,
+        accepted_cluster_id=suggestion.cluster_id,
+        reason="manual_accept",
+    )
 
-    # Refresh suggestions for the target cluster (centroid changed)
-    suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
-    await suggestion_refresh_service.refresh_for_cluster(suggestion.cluster_id)
+    # Do not trigger cluster-wide refresh on a single manual accept.
+    # Requirement: one click should resolve only the selected card.
 
     # Commit before response so client refetches see committed state
     # (see clusters.py PATCH handler comment for full race condition explanation).
@@ -159,11 +155,11 @@ async def reject_suggestion(
     auth=Depends(require_write_access),
     tenant_id: str = Depends(get_tenant_id),
     session=Depends(get_session),
+    suggestion_service=Depends(get_suggestion_service),
 ) -> SuggestionResponse:
     """Reject a suggestion."""
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
-    suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
     suggestion = await suggestion_service.reject(suggestion_id)
     if not suggestion:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Suggestion not found")
@@ -181,6 +177,7 @@ async def accept_merge_suggestion(
     request: SuggestionActionRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> MergeSuggestionResponse:
     """Accept a merge suggestion, merging the cluster pair."""
     validate_entity_id(suggestion_id, field_name="suggestion_id")
@@ -194,7 +191,7 @@ async def accept_merge_suggestion(
     if suggestion.status != SuggestionStatus.PENDING:
         return _to_merge_response(suggestion)
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
     cluster_a = await cluster_repo.get_by_id(suggestion.cluster_a_id)
     cluster_b = await cluster_repo.get_by_id(suggestion.cluster_b_id)

@@ -26,6 +26,7 @@ class IdentityCluster:
     created_at: datetime | None = None
     clustering_algorithm: str = "graph"
     user_confirmed: bool = False
+    dismissed_at: datetime | None = None
     representatives: Sequence[ClusterRepresentative] | None = None
     centroid: Any | None = None
 

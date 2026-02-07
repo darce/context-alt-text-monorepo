@@ -10,6 +10,7 @@ from typing import Any
 from recognition.application.assignment.candidate import AssignmentCandidate
 from recognition.application.assignment.checks import (
     BlockCheck,
+    CheckFailureKind,
     ConfidenceCheck,
     ConstraintCheck,
 )
@@ -70,11 +71,10 @@ class AssignmentGate:
 
         Returns:
             AssignmentDecision: Outcome including passed and failed checks.
-
-        Raises:
         """
         checks_passed: list[str] = []
         checks_failed: list[str] = []
+        failure_kinds: list[CheckFailureKind] = []
         all_metadata: dict[str, Any] = {}
 
         for check in self.checks:
@@ -90,6 +90,8 @@ class AssignmentGate:
                 continue
 
             checks_failed.append(check.name)
+            if result.failure_kind is not None:
+                failure_kinds.append(result.failure_kind)
             if result.is_fatal:
                 outcome = AssignmentOutcome.REJECT if result.should_reject else AssignmentOutcome.SUGGEST
                 return AssignmentDecision(
@@ -99,6 +101,7 @@ class AssignmentGate:
                     checks_failed=checks_failed,
                     rejection_reason=result.reason,
                     metadata=all_metadata,
+                    failure_kinds=failure_kinds,
                 )
 
         return AssignmentDecision(
@@ -107,6 +110,7 @@ class AssignmentGate:
             checks_passed=checks_passed,
             checks_failed=checks_failed,
             metadata=all_metadata,
+            failure_kinds=failure_kinds,
         )
 
     def add_check(self, check: AssignmentCheck) -> None:

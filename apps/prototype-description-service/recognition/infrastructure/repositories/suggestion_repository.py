@@ -10,23 +10,17 @@ import uuid
 from collections.abc import Sequence
 from datetime import UTC, datetime
 
-from sqlalchemy import Select, select, update
+from sqlalchemy import Select, and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from db.models import IdentityCluster, IdentityMember, MediaIdentity
 from db.models import IdentitySuggestion as SuggestionModel
-from db.settings import get_database_settings
-from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.domain.repositories import SuggestionCreateData, SuggestionRepository
-from recognition.domain.suggestion import (
-    AssignmentSuggestion,
-    FaceBox,
-    SuggestionDetails,
-    SuggestionStatus,
-)
-
-_DB_SETTINGS = get_database_settings()
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
+from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
+from recognition.interface_adapters.schemas.suggestion_details import FaceBox, SuggestionDetails
 
 
 def _clamp_similarity(value: float) -> float:
@@ -41,62 +35,16 @@ def _clamp_similarity(value: float) -> float:
 class SqlAlchemySuggestionRepository(SuggestionRepository):
     """Persist assignment suggestions using an async SQLAlchemy session."""
 
-    def __init__(self, session: AsyncSession, tenant_id: str) -> None:
+    def __init__(self, session: AsyncSession) -> None:
         self._session = session
-        self._tenant_id = tenant_id
 
     async def create(self, tenant_id: str, payload: SuggestionCreateData) -> AssignmentSuggestion:
         """Persist a new suggestion row."""
-        tenant_uuid = _coerce_uuid(tenant_id)
-        identity_uuid = _coerce_uuid(payload.identity_id)
-        cluster_uuid = _coerce_uuid(payload.cluster_id)
-        if not all([tenant_uuid, identity_uuid, cluster_uuid]):
-            raise ValueError("tenant_id, identity_id, and cluster_id must be valid UUID-compatible strings")
-
-        # Type narrowing for mypy
-        assert tenant_uuid is not None and identity_uuid is not None and cluster_uuid is not None
-
-        await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
-
-        # Check for existing pending suggestion to avoid unique constraint violations
-        existing_stmt = (
-            select(SuggestionModel)
-            .where(SuggestionModel.tenant_id == tenant_uuid)
-            .where(SuggestionModel.identity_id == identity_uuid)
-            .where(SuggestionModel.suggested_cluster_id == cluster_uuid)
+        return await self._upsert_suggestion(
+            tenant_id=tenant_id,
+            payload=payload,
+            touch_refreshed_at_on_update=False,
         )
-        existing_result = await self._session.execute(existing_stmt)
-        existing_suggestion = existing_result.scalar_one_or_none()
-
-        if existing_suggestion:
-            # Upsert scoring fields for pending suggestions to keep UI similarity fresh.
-            if existing_suggestion.resolution == SuggestionStatus.PENDING.value:
-                existing_suggestion.representative_similarity = _clamp_similarity(payload.representative_similarity)
-                existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
-                existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
-                if payload.refreshed_at:
-                    existing_suggestion.refreshed_at = payload.refreshed_at
-                if payload.source:
-                    existing_suggestion.source = payload.source
-                await self._session.flush()
-                await self._session.refresh(existing_suggestion)
-            return self._to_domain(existing_suggestion)
-
-        model = SuggestionModel(
-            tenant_id=tenant_uuid,
-            identity_id=identity_uuid,
-            suggested_cluster_id=cluster_uuid,
-            representative_similarity=_clamp_similarity(payload.representative_similarity),
-            avg_member_similarity=_clamp_similarity(payload.member_similarity),
-            confidence_score=_clamp_similarity(payload.confidence_score),
-            resolution=SuggestionStatus.PENDING.value,
-            refreshed_at=payload.refreshed_at,
-            source=payload.source,
-        )
-        self._session.add(model)
-        await self._session.flush()
-        await self._session.refresh(model)
-        return self._to_domain(model)
 
     async def update_scores(
         self,
@@ -240,19 +188,74 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
+    async def _fetch_cluster_thumbnails(
+        self,
+        cluster_ids: Sequence[uuid.UUID],
+        *,
+        per_cluster_limit: int = 9,
+    ) -> dict[uuid.UUID, list[str]]:
+        """Fetch recent member thumbnails per cluster using a window function."""
+        if not cluster_ids:
+            return {}
+
+        subq = (
+            select(
+                IdentityMember.cluster_id,
+                MediaIdentity.thumbnail_url,
+                func.row_number()
+                .over(partition_by=IdentityMember.cluster_id, order_by=MediaIdentity.created_at.desc())
+                .label("rn"),
+            )
+            .join(MediaIdentity, IdentityMember.identity_id == MediaIdentity.id)
+            .where(IdentityMember.cluster_id.in_(cluster_ids))
+            .where(MediaIdentity.thumbnail_url.isnot(None))
+        ).subquery()
+
+        thumb_stmt = select(subq.c.cluster_id, subq.c.thumbnail_url).where(subq.c.rn <= per_cluster_limit)
+        thumb_res = await self._session.execute(thumb_stmt)
+
+        thumbnails: dict[uuid.UUID, list[str]] = {}
+        for cid, url in thumb_res.all():
+            thumbnails.setdefault(cid, []).append(url)
+        return thumbnails
+
     async def list_pending_with_details(self, tenant_id: str, limit: int, offset: int) -> list[SuggestionDetails]:
         """Return pending suggestions with identity + cluster details.
 
-        Returns suggestions for both labeled and unlabeled clusters. Unlabeled clusters
-        remain actionable because callers can compute a best-effort suggested label
-        (with provenance) at read time for UI copy.
+        Only returns suggestions targeting user-confirmed clusters with human labels.
+        Legacy suggestions targeting unconfirmed clusters remain in DB but are filtered
+        out at query time. When a cluster becomes confirmed, its suggestions become
+        eligible again.
+
+        Also includes stale auto-accepted rows where the identity was never moved into
+        the suggested cluster. These rows are normalized back to `pending` in response
+        details so users can explicitly confirm or reject them.
         """
+        stale_accepted_without_membership = and_(
+            SuggestionModel.resolution == SuggestionStatus.ACCEPTED.value,
+            ~exists(
+                select(1)
+                .select_from(IdentityMember)
+                .where(IdentityMember.identity_id == SuggestionModel.identity_id)
+                .where(IdentityMember.cluster_id == SuggestionModel.suggested_cluster_id)
+            ),
+        )
+
         stmt: Select[tuple[SuggestionModel]] = (
             select(SuggestionModel)
             .join(SuggestionModel.suggested_cluster)
             .where(SuggestionModel.tenant_id == _coerce_uuid(tenant_id))
-            .where(SuggestionModel.resolution == SuggestionStatus.PENDING.value)
-            .order_by(SuggestionModel.created_at.desc())
+            .where(
+                or_(
+                    SuggestionModel.resolution == SuggestionStatus.PENDING.value,
+                    stale_accepted_without_membership,
+                )
+            )
+            # v4.12.0: Filter to confirmed clusters only
+            .where(IdentityCluster.user_confirmed.is_(True))
+            .where(IdentityCluster.label.is_not(None))
+            .where(~IdentityCluster.label.startswith("cluster-"))
+            .order_by(SuggestionModel.confidence_score.desc(), SuggestionModel.created_at.desc())
             .offset(offset)
             .limit(limit)
             .options(
@@ -263,81 +266,18 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         result = await self._session.execute(stmt)
         rows = result.scalars().unique().all()
 
-        # Collect cluster IDs to fetch thumbnails
+        # Attach recent member thumbnails for each target cluster.
         cluster_ids = [row.suggested_cluster_id for row in rows]
-        thumbnails_map: dict[uuid.UUID, list[str]] = {}
-
-        if cluster_ids:
-            # Fetch up to 4 thumbnails per cluster
-            # Using rank/partition is expensive/complex in ORM, so we fetch a few more and filter in Python
-            # or simplify: just fetch random 4 per cluster?
-            # Better: fetch last 4 added members with thumbnails
-            # Since we iterate clusters, let's do a loop if it's small (50), or a window query.
-            # Window query example:
-            from sqlalchemy import func
-
-            # Simple approach: Fetch all members for these clusters with limit? complex.
-            # Let's execute one query per cluster? 50 queries is bad.
-            # Let's try to fetch recent members for these clusters.
-            # Optimization: User requested "Face Grid".
-            # We can use a window function request or just fetch ALL members for these 50 clusters if they are small.
-            # Clusters can be large.
-            # Let's use a LATERAL JOIN equivalent or a simple IN query limited by total count?
-            # Or just fetch representative + 3 random members?
-            # Let's assume fetching `limit=4` members per cluster is desired.
-            pass
-
-            # Efficient approach: Use SQL partition/row_number
-            # But for MVP speed, and since limit is 50, let's just fetch IDs and thumbnails in one IN query
-            # and limit 9 per cluster?
-            # We can define a helper or just query:
-            # SELECT cluster_id, thumbnail_url FROM ... WHERE cluster_id IN (...) AND thumbnail_url IS NOT NULL
-            # Then group in python. If a cluster has 1000 members, querying all is bad.
-            # So we SHOULD use partitioning.
-
-            # SQLite (test env) supports window functions. Postgres does too.
-            subq = (
-                select(
-                    IdentityMember.cluster_id,
-                    MediaIdentity.thumbnail_url,
-                    func.row_number()
-                    .over(partition_by=IdentityMember.cluster_id, order_by=MediaIdentity.created_at.desc())
-                    .label("rn"),
-                )
-                .join(MediaIdentity, IdentityMember.identity_id == MediaIdentity.id)
-                .where(IdentityMember.cluster_id.in_(cluster_ids))
-                .where(MediaIdentity.thumbnail_url.isnot(None))
-            ).subquery()
-
-            thumb_stmt = (
-                select(subq.c.cluster_id, subq.c.thumbnail_url).where(
-                    subq.c.rn <= 9
-                )  # Fetch 9 for 3x3 grid or just 4 for 2x2. let's get 9.
-            )
-            thumb_res = await self._session.execute(thumb_stmt)
-            for cid, url in thumb_res.all():
-                if cid not in thumbnails_map:
-                    thumbnails_map[cid] = []
-                thumbnails_map[cid].append(url)
+        thumbnails_map = await self._fetch_cluster_thumbnails(cluster_ids, per_cluster_limit=9)
 
         details_list = []
         for model in rows:
             details = self._to_details(model)
+            if model.resolution == SuggestionStatus.ACCEPTED.value:
+                details.status = SuggestionStatus.PENDING.value
             if details.cluster_id:
-                # Add thumbnails (filter out representative if desired, or keep all)
-                # Ensure UUID string key matching
                 cid_uuid = uuid.UUID(details.cluster_id)
                 details.cluster_thumbnails = thumbnails_map.get(cid_uuid, [])
-
-            # If cluster is unlabeled, try to infer a label
-            if not details.cluster_label:
-                inferred = await infer_suggested_label(
-                    tenant_id=tenant_id, cluster_id=details.cluster_id, session=self._session
-                )
-                if inferred:
-                    details.suggested_label = inferred.label
-                    details.suggested_label_source = inferred.source
-                    details.suggested_label_confidence = inferred.confidence
 
             details_list.append(details)
 
@@ -396,6 +336,20 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         Returns:
             The created or updated suggestion.
         """
+        return await self._upsert_suggestion(
+            tenant_id=tenant_id,
+            payload=payload,
+            touch_refreshed_at_on_update=True,
+        )
+
+    async def _upsert_suggestion(
+        self,
+        *,
+        tenant_id: str,
+        payload: SuggestionCreateData,
+        touch_refreshed_at_on_update: bool,
+    ) -> AssignmentSuggestion:
+        """Create-or-update path shared by `create` and `upsert_by_identity_cluster`."""
         tenant_uuid = _coerce_uuid(tenant_id)
         identity_uuid = _coerce_uuid(payload.identity_id)
         cluster_uuid = _coerce_uuid(payload.cluster_id)
@@ -403,28 +357,31 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             raise ValueError("tenant_id, identity_id, and cluster_id must be valid UUID-compatible strings")
 
         assert tenant_uuid is not None and identity_uuid is not None and cluster_uuid is not None
-
         await _ensure_media_identity(self._session, tenant_uuid, identity_uuid)
 
-        stmt = (
+        existing_stmt = (
             select(SuggestionModel)
             .where(SuggestionModel.tenant_id == tenant_uuid)
             .where(SuggestionModel.identity_id == identity_uuid)
             .where(SuggestionModel.suggested_cluster_id == cluster_uuid)
         )
-        result = await self._session.execute(stmt)
-        existing = result.scalar_one_or_none()
-        if existing:
-            if existing.resolution == SuggestionStatus.PENDING.value:
-                existing.representative_similarity = _clamp_similarity(payload.representative_similarity)
-                existing.avg_member_similarity = _clamp_similarity(payload.member_similarity)
-                existing.confidence_score = _clamp_similarity(payload.confidence_score)
-                existing.refreshed_at = payload.refreshed_at or datetime.now(tz=UTC)
+        existing_result = await self._session.execute(existing_stmt)
+        existing_suggestion = existing_result.scalar_one_or_none()
+
+        if existing_suggestion:
+            if existing_suggestion.resolution == SuggestionStatus.PENDING.value:
+                existing_suggestion.representative_similarity = _clamp_similarity(payload.representative_similarity)
+                existing_suggestion.avg_member_similarity = _clamp_similarity(payload.member_similarity)
+                existing_suggestion.confidence_score = _clamp_similarity(payload.confidence_score)
+                if touch_refreshed_at_on_update:
+                    existing_suggestion.refreshed_at = payload.refreshed_at or datetime.now(tz=UTC)
+                elif payload.refreshed_at is not None:
+                    existing_suggestion.refreshed_at = payload.refreshed_at
                 if payload.source:
-                    existing.source = payload.source
+                    existing_suggestion.source = payload.source
                 await self._session.flush()
-                await self._session.refresh(existing)
-            return self._to_domain(existing)
+                await self._session.refresh(existing_suggestion)
+            return self._to_domain(existing_suggestion)
 
         model = SuggestionModel(
             tenant_id=tenant_uuid,
@@ -456,38 +413,3 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
 
 
 __all__ = ["SqlAlchemySuggestionRepository"]
-
-
-def _coerce_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
-    """Convert string identifiers to UUID objects, tolerating short IDs."""
-    if value is None:
-        return None
-    if isinstance(value, uuid.UUID):
-        return value
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, AttributeError):
-        return uuid.uuid5(uuid.NAMESPACE_URL, str(value))
-
-
-async def _ensure_media_identity(session: AsyncSession, tenant_id: uuid.UUID, identity_id: uuid.UUID) -> None:
-    """Create placeholder media identity if it does not exist."""
-    existing = await session.get(MediaIdentity, identity_id)
-    if existing:
-        return
-
-    media = MediaIdentity(
-        id=identity_id,
-        tenant_id=tenant_id,
-        media_id=abs(identity_id.int) % 1_000_000,
-        media_url="http://example.test/media.jpg",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=1.0,
-        embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
-    )
-    session.add(media)
-    await session.flush()
-    await session.refresh(media)

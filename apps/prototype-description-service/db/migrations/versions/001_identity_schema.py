@@ -150,6 +150,7 @@ def upgrade() -> None:
             onupdate=sa.func.now(),
         ),
         sa.Column("created_by_user_id", sa.Integer()),
+        sa.Column("dismissed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.CheckConstraint(
             "identity_type IN ('face', 'brand', 'pose', 'gait')",
             name="cluster_valid_identity_type",

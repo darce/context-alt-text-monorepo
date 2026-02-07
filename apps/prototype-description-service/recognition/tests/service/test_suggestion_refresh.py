@@ -14,10 +14,10 @@ from recognition.domain.identity import MediaIdentity
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason, SuggestionStatus
 
 
-def _make_identity_model(identity_id: str, embedding: np.ndarray) -> MagicMock:
+def _make_identity_model(identity_id: str, embedding: np.ndarray, *, tenant_id: str | None = None) -> MagicMock:
     model = MagicMock()
     model.id = uuid.UUID(identity_id)
-    model.tenant_id = uuid.uuid4()
+    model.tenant_id = uuid.UUID(tenant_id) if tenant_id else uuid.uuid4()
     model.media_id = "media-1"
     model.embedding = embedding.tolist()
     model.confidence = 0.9
@@ -49,6 +49,41 @@ def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:
         discovery_method=DiscoveryMethod.REPRESENTATIVE,
         discovery_similarity=0.88,
     )
+
+
+def _make_labeled_cluster_repo(tenant_id: str, cluster_id: str, representative_similarity: float):
+    """Return a repo stub with one labeled cluster and one representative vector."""
+    rep_vec = np.array(
+        [representative_similarity, np.sqrt(1 - representative_similarity**2)],
+        dtype=np.float32,
+    )
+    cluster = MagicMock()
+    cluster.id = cluster_id
+    cluster.tenant_id = tenant_id
+    cluster.label = "Avery Rhodes"
+    cluster.user_confirmed = True
+
+    class _ClusterRepoStub:
+        async def get_labeled_with_representatives(self, *_args, **_kwargs):
+            return [(cluster, [type("Rep", (), {"embedding": rep_vec})()])]
+
+    return _ClusterRepoStub()
+
+
+def _make_identity_session_stub(
+    *,
+    tenant_id: str,
+    identity_id: str,
+    embedding: np.ndarray | None = None,
+):
+    """Return a session stub that resolves one identity model."""
+    identity_embedding = embedding if embedding is not None else np.array([1.0, 0.0], dtype=np.float32)
+
+    class _SessionStub:
+        async def get(self, _model, _identity_id):
+            return _make_identity_model(identity_id, identity_embedding, tenant_id=tenant_id)
+
+    return _SessionStub()
 
 
 class TestRefreshForCluster:
@@ -204,7 +239,7 @@ class TestRefreshForCluster:
         mock_repository.update_scores.assert_not_called()
 
     @pytest.mark.asyncio
-    async def test_refresh_triggers_automatic_transitions(
+    async def test_refresh_updates_scores_without_automatic_transitions(
         self,
         mock_repository: AsyncMock,
         mock_cluster_repo: AsyncMock,
@@ -212,7 +247,7 @@ class TestRefreshForCluster:
         caplog: pytest.LogCaptureFixture,
         settings: ClusteringSettings,
     ) -> None:
-        """Automatic ACCEPTED/REJECTED transitions occur if thresholds are met."""
+        """Score refresh should not auto-resolve user-review suggestions."""
         # Arrange
         identity_id_match = str(uuid.uuid4())
         identity_id_reject = str(uuid.uuid4())
@@ -276,14 +311,12 @@ class TestRefreshForCluster:
         # Assert
         assert count == 2
 
-        # Verify status updates
-        mock_repository.update_status.assert_any_call("tenant-1", "sug-match", status=SuggestionStatus.ACCEPTED)
-        mock_repository.update_status.assert_any_call("tenant-1", "sug-reject", status=SuggestionStatus.REJECTED)
+        # Suggestions remain pending; refresh updates scores only.
+        mock_repository.update_status.assert_not_called()
 
         # Verify logging
         assert "[suggestions] refresh_result" in caplog.text
-        assert "status=accepted" in caplog.text
-        assert "status=rejected" in caplog.text
+        assert "status=pending" in caplog.text
         assert "updated=true" in caplog.text
 
 
@@ -307,38 +340,6 @@ class TestRefreshForIdentity:
             created_at=None,
         )
 
-        class ClusterRepoStub:
-            async def get_labeled_with_representatives(self, *_args, **_kwargs):
-                rep_vec = np.array([0.75, np.sqrt(1 - 0.75**2)], dtype=np.float32)
-                cluster = MagicMock()
-                cluster.id = cluster_id
-                cluster.tenant_id = tenant_id
-                cluster.label = "Avery Rhodes"
-                cluster.user_confirmed = True
-                return [(cluster, [type("Rep", (), {"embedding": rep_vec})()])]
-
-        class SessionStub:
-            async def get(self, _model, _identity_id):
-                return type(
-                    "IdentityModel",
-                    (),
-                    {
-                        "id": uuid.UUID(identity_id),
-                        "tenant_id": uuid.UUID(tenant_id),
-                        "media_id": "media-1",
-                        "embedding": np.array([1.0, 0.0], dtype=np.float32),
-                        "confidence": 0.9,
-                        "bbox_width": 1,
-                        "bbox_height": 1,
-                        "bbox_x": 0,
-                        "bbox_y": 0,
-                        "pose_pitch": None,
-                        "pose_yaw": None,
-                        "pose_roll": None,
-                        "image_phash": None,
-                    },
-                )()
-
         settings = ClusteringSettings(
             similarity_threshold=0.8,
             suggestion_floor=0.7,
@@ -347,8 +348,8 @@ class TestRefreshForIdentity:
         service = SuggestionRefreshService(
             suggestion_repo,
             tenant_id=tenant_id,
-            cluster_repository=ClusterRepoStub(),
-            session=SessionStub(),
+            cluster_repository=_make_labeled_cluster_repo(tenant_id, cluster_id, representative_similarity=0.75),
+            session=_make_identity_session_stub(tenant_id=tenant_id, identity_id=identity_id),
             settings=settings,
         )
 
@@ -368,51 +369,19 @@ class TestRefreshForIdentity:
 
         suggestion_repo = AsyncMock()
 
-        class ClusterRepoStub:
-            async def get_labeled_with_representatives(self, *_args, **_kwargs):
-                rep_vec = np.array([0.75, np.sqrt(1 - 0.75**2)], dtype=np.float32)
-                cluster = MagicMock()
-                cluster.id = cluster_id
-                cluster.tenant_id = tenant_id
-                cluster.label = "Avery Rhodes"
-                cluster.user_confirmed = True
-                return [(cluster, [type("Rep", (), {"embedding": rep_vec})()])]
-
-        class SessionStub:
-            async def get(self, _model, _identity_id):
-                return type(
-                    "IdentityModel",
-                    (),
-                    {
-                        "id": uuid.UUID(identity_id),
-                        "tenant_id": uuid.UUID(tenant_id),
-                        "media_id": "media-1",
-                        "embedding": np.array([1.0, 0.0], dtype=np.float32),
-                        "confidence": 0.9,
-                        "bbox_width": 1,
-                        "bbox_height": 1,
-                        "bbox_x": 0,
-                        "bbox_y": 0,
-                        "pose_pitch": None,
-                        "pose_yaw": None,
-                        "pose_roll": None,
-                        "image_phash": None,
-                    },
-                )()
-
         gate = AsyncMock()
         gate.evaluate.return_value = AssignmentDecision(
             outcome=AssignmentOutcome.REJECT,
             candidate=_make_candidate(tenant_id, cluster_id),
-            checks_passed=[],
-            checks_failed=["confidence"],
+            checks_passed=["confidence_check"],
+            checks_failed=["block_check"],
         )
 
         service = SuggestionRefreshService(
             suggestion_repo,
             tenant_id=tenant_id,
-            cluster_repository=ClusterRepoStub(),
-            session=SessionStub(),
+            cluster_repository=_make_labeled_cluster_repo(tenant_id, cluster_id, representative_similarity=0.75),
+            session=_make_identity_session_stub(tenant_id=tenant_id, identity_id=identity_id),
             settings=ClusteringSettings(similarity_threshold=0.8, suggestion_floor=0.7, suggestion_ceiling=0.8),
             gate=gate,
         )
@@ -424,4 +393,94 @@ class TestRefreshForIdentity:
 
         assert suggestions == []
         suggestion_repo.upsert_by_identity_cluster.assert_not_awaited()
+        gate.evaluate.assert_awaited()
+
+    @pytest.mark.asyncio
+    async def test_refresh_surfaces_low_confidence_when_confidence_check_rejects(self) -> None:
+        tenant_id = str(uuid.uuid4())
+        cluster_id = str(uuid.uuid4())
+        identity_id = str(uuid.uuid4())
+
+        suggestion_repo = AsyncMock()
+        suggestion_repo.upsert_by_identity_cluster.return_value = AssignmentSuggestion(
+            id="s-low-confidence",
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            representative_similarity=0.65,
+            member_similarity=0.65,
+            status=SuggestionStatus.PENDING,
+            created_at=None,
+        )
+
+        gate = AsyncMock()
+        gate.evaluate.return_value = AssignmentDecision(
+            outcome=AssignmentOutcome.REJECT,
+            candidate=_make_candidate(tenant_id, cluster_id),
+            checks_passed=[],
+            checks_failed=["confidence_check"],
+        )
+
+        service = SuggestionRefreshService(
+            suggestion_repo,
+            tenant_id=tenant_id,
+            cluster_repository=_make_labeled_cluster_repo(tenant_id, cluster_id, representative_similarity=0.65),
+            session=_make_identity_session_stub(tenant_id=tenant_id, identity_id=identity_id),
+            settings=ClusteringSettings(
+                similarity_threshold=0.8,
+                suggestion_floor=0.7,
+                suggestion_ceiling=0.8,
+                low_confidence_suggestion_floor=0.6,
+            ),
+            gate=gate,
+        )
+
+        suggestions = await service.refresh_for_identity(
+            identity_id=identity_id,
+            reason=SuggestionRefreshReason.MANUAL_SPLIT,
+        )
+
+        assert len(suggestions) == 1
+        suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
+
+    @pytest.mark.asyncio
+    async def test_refresh_creates_suggestion_when_gate_accepts(self) -> None:
+        tenant_id = str(uuid.uuid4())
+        cluster_id = str(uuid.uuid4())
+        identity_id = str(uuid.uuid4())
+
+        suggestion_repo = AsyncMock()
+        suggestion_repo.upsert_by_identity_cluster.return_value = AssignmentSuggestion(
+            id="s-accept",
+            identity_id=identity_id,
+            cluster_id=cluster_id,
+            representative_similarity=0.85,
+            member_similarity=0.85,
+            status=SuggestionStatus.PENDING,
+            created_at=None,
+        )
+
+        gate = AsyncMock()
+        gate.evaluate.return_value = AssignmentDecision(
+            outcome=AssignmentOutcome.ACCEPT,
+            candidate=_make_candidate(tenant_id, cluster_id),
+            checks_passed=["confidence_check"],
+            checks_failed=[],
+        )
+
+        service = SuggestionRefreshService(
+            suggestion_repo,
+            tenant_id=tenant_id,
+            cluster_repository=_make_labeled_cluster_repo(tenant_id, cluster_id, representative_similarity=0.85),
+            session=_make_identity_session_stub(tenant_id=tenant_id, identity_id=identity_id),
+            settings=ClusteringSettings(similarity_threshold=0.8, suggestion_floor=0.7, suggestion_ceiling=0.8),
+            gate=gate,
+        )
+
+        suggestions = await service.refresh_for_identity(
+            identity_id=identity_id,
+            reason=SuggestionRefreshReason.MANUAL_SPLIT,
+        )
+
+        assert len(suggestions) == 1
+        suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
         gate.evaluate.assert_awaited()

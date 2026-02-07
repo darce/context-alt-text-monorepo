@@ -104,6 +104,8 @@ class RepresentativeResponse(BaseModel):
     id: str
     media_id: str | int
     thumb_url: str | None = None
+    media_url: str | None = None
+    bbox: FaceBoxResponse | None = None
     is_pinned: bool = Field(False, alias="is_user_selected")
     debug_metrics: dict[str, Any] | None = None
 
@@ -134,6 +136,7 @@ class ClusterResponse(BaseModel):
     suggested_label: str | None = None
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
     suggested_label_confidence: float | None = None
+    suggested_target_cluster_id: str | None = None
 
     @field_validator("id", "tenant_id")
     @classmethod
@@ -168,7 +171,6 @@ class SuggestionResponse(BaseModel):
     identity_bbox: FaceBoxResponse | None = None
     representative_media_id: int | None = None
     representative_media_url: str | None = None
-    representative_thumbnail_url: str | None = None
     representative_thumbnail_url: str | None = None
     representative_bbox: FaceBoxResponse | None = None
     suggested_label: str | None = None

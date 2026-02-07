@@ -18,19 +18,24 @@ from db.models import MediaIdentity as MediaIdentityModel
 from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.representative import ClusterRepresentative
+from recognition.domain.suggestion import SuggestionStatus
 from recognition.infrastructure.repositories import SqlAlchemySuggestionRepository
 from recognition.interface_adapters.http import dependencies
 
 
 @pytest.mark.asyncio
-async def test_unlabeled_clusters_are_surfaced_as_suggestions(db_session, tenant) -> None:
-    """Unlabeled clusters should appear in suggestion list pending response."""
+async def test_unlabeled_clusters_are_filtered_from_suggestions(db_session, tenant) -> None:
+    """v4.12.0: Unlabeled clusters should NOT appear in pending suggestions.
+
+    Suggestions targeting unconfirmed clusters remain in DB but are filtered
+    at query time. When the cluster becomes confirmed, the suggestion resurfaces.
+    """
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
-    suggestion_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
     member_repo = cluster_service.assignment_writer.member_repository
 
-    # 1. Create a cluster (unlabeled)
+    # 1. Create a cluster (unlabeled, unconfirmed)
     cluster = await cluster_repo.save(
         IdentityCluster(
             id=None,
@@ -94,15 +99,85 @@ async def test_unlabeled_clusters_are_surfaced_as_suggestions(db_session, tenant
 
     await db_session.commit()
 
-    # 4. List pending suggestions
+    # 4. List pending suggestions - should be empty because cluster is unconfirmed
     suggestions = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
 
-    # 5. Verify unlabeled cluster is returned
-    assert len(suggestions) == 1
-    item = suggestions[0]
-    assert item.cluster_id == cluster.id
-    assert item.cluster_label is None
-    assert item.identity_id == str(suggestion_identity.id)
+    # 5. v4.12.0: Unlabeled cluster suggestions are filtered out
+    assert len(suggestions) == 0
+
+
+@pytest.mark.asyncio
+async def test_stale_accepted_suggestion_is_relisted_for_review(db_session, tenant) -> None:
+    """Accepted suggestions with no membership move should resurface for manual review."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+
+    target_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Maria Correonero",
+            is_labeled=True,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=True,
+        )
+    )
+
+    source_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=False,
+        )
+    )
+
+    embedding = [0.0] * 512
+    embedding[0] = 1.0
+    identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=1003,
+        media_url="http://example.test/1003.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=0.99,
+        embedding=embedding,
+    )
+    db_session.add(identity)
+    await db_session.flush()
+
+    await member_repo.add_member(source_cluster.id, identity_id=str(identity.id), similarity=0.92)
+
+    from recognition.domain.repositories import SuggestionCreateData
+
+    suggestion = await suggestion_repo.create(
+        tenant_id=str(tenant.id),
+        payload=SuggestionCreateData(
+            identity_id=str(identity.id),
+            cluster_id=target_cluster.id,
+            representative_similarity=0.62,
+            member_similarity=0.62,
+            confidence_score=0.62,
+            refreshed_at=None,
+            source="test",
+        ),
+    )
+    await suggestion_repo.update_status(str(tenant.id), suggestion.id, SuggestionStatus.ACCEPTED)
+    await db_session.commit()
+
+    pending = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
+    matches = [item for item in pending if item.id == suggestion.id]
+
+    assert len(matches) == 1
+    assert matches[0].status == SuggestionStatus.PENDING.value
 
 
 @pytest.mark.asyncio
@@ -173,7 +248,7 @@ async def test_background_surfacing_after_label_creates_suggestions(db_session, 
     cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
     cluster_repo = cluster_service.assignment_writer.cluster_repository
     member_repo = cluster_service.assignment_writer.member_repository
-    suggestion_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
 
     labeled_cluster = await cluster_repo.save(
         IdentityCluster(

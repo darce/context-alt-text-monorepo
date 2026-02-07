@@ -13,7 +13,9 @@ from sqlalchemy.orm import joinedload
 from db.models import ClusterMergeSuggestion as MergeSuggestionModel
 from db.models import IdentityCluster, MediaIdentity
 from recognition.domain.repositories import MergeSuggestionCreateData, MergeSuggestionRepository
-from recognition.domain.suggestion import FaceBox, MergeSuggestion, MergeSuggestionDetails, SuggestionStatus
+from recognition.domain.suggestion import MergeSuggestion, SuggestionStatus
+from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
+from recognition.interface_adapters.schemas.suggestion_details import FaceBox, MergeSuggestionDetails
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 
@@ -241,18 +243,6 @@ def _canonical_pair(a: uuid.UUID, b: uuid.UUID) -> tuple[uuid.UUID, uuid.UUID]:
     if a.int <= b.int:
         return a, b
     return b, a
-
-
-def _coerce_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
-    """Convert string identifiers to UUID objects, tolerating short IDs."""
-    if value is None:
-        return None
-    if isinstance(value, uuid.UUID):
-        return value
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, AttributeError):
-        return uuid.uuid5(uuid.NAMESPACE_URL, str(value))
 
 
 __all__ = ["SqlAlchemyMergeSuggestionRepository"]

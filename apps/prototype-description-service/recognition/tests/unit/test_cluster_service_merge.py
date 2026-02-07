@@ -149,6 +149,8 @@ async def test_merge_cluster_defers_recompute_and_deletion(
     assert merged is target_cluster
     mock_member_repo.move_members.assert_awaited_once_with(source_id, target_id)
     mock_cluster_repo.delete.assert_not_called()
+    assert source_cluster.identity_count == 0
+    assert mock_cluster_repo.update.await_count == 2
     mock_member_repo.get_by_cluster.assert_not_awaited()
     mock_writer.recompute_centroid.assert_not_awaited()
     mock_writer.recompute_representatives.assert_not_awaited()

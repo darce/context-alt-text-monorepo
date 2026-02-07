@@ -18,12 +18,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.sql.dml import Insert
 
 from db.models import IdentityMember as MemberModel
-from db.models import MediaIdentity
-from db.settings import get_database_settings
 from recognition.domain.repositories import IdentityMember, MemberRepository
+from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
+from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
 from recognition.shared.db.helpers import execute_dml, get_rowcount
-
-_DB_SETTINGS = get_database_settings()
 
 
 def _clamp_similarity(value: float) -> float:
@@ -250,38 +248,3 @@ class SqlAlchemyMemberRepository(MemberRepository):
             tenant_id=str(model.tenant_id) if model.tenant_id else None,
             assigned_at=model.assigned_at if isinstance(model.assigned_at, datetime) else None,
         )
-
-
-def _coerce_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
-    """Convert string identifiers to UUID objects."""
-    if value is None:
-        return None
-    if isinstance(value, uuid.UUID):
-        return value
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, AttributeError):
-        return uuid.uuid5(uuid.NAMESPACE_URL, str(value))
-
-
-async def _ensure_media_identity(session: AsyncSession, tenant_id: uuid.UUID, identity_id: uuid.UUID) -> None:
-    """Create a placeholder media identity if one doesn't exist."""
-    existing = await session.get(MediaIdentity, identity_id)
-    if existing:
-        return
-
-    media = MediaIdentity(
-        id=identity_id,
-        tenant_id=tenant_id,
-        media_id=abs(identity_id.int) % 1_000_000,
-        media_url="http://example.test/media.jpg",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=1.0,
-        embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
-    )
-    session.add(media)
-    await session.flush()
-    await session.refresh(media)

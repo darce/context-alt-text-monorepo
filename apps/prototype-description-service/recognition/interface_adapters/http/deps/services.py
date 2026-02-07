@@ -93,7 +93,7 @@ async def get_suggestion_service(
 ) -> SuggestionService:
     """Repository-backed suggestion service scoped to the tenant."""
     tenant = tenant_id or ""
-    repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
+    repo = SqlAlchemySuggestionRepository(session)
     cluster_repo = SqlAlchemyClusterRepository(session)
     SqlAlchemyMemberRepository(session, tenant_id=tenant)
     block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant)
@@ -113,7 +113,7 @@ async def get_suggestion_refresh_service(
 ) -> SuggestionRefreshService:
     """Suggestion refresh service scoped to the tenant."""
     tenant = tenant_id or ""
-    repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant)
+    repo = SqlAlchemySuggestionRepository(session)
     cluster_repo = SqlAlchemyClusterRepository(session)
     member_repo = SqlAlchemyMemberRepository(session, tenant_id=tenant)
     block_repo = SqlAlchemyIdentityClusterBlockRepository(session, tenant_id=tenant)
@@ -193,7 +193,7 @@ async def build_cluster_service(
         member_repository=member_repo,
     )
 
-    suggestion_repo = SqlAlchemySuggestionRepository(session, tenant_id=tenant_id)
+    suggestion_repo = SqlAlchemySuggestionRepository(session)
     suggestion_service = SuggestionService(
         suggestion_repo,
         tenant_id=tenant_id,

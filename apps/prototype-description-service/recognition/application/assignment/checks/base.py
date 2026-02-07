@@ -6,9 +6,19 @@ from __future__ import annotations
 
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from enum import Enum
 from typing import Any
 
 from recognition.application.assignment.candidate import AssignmentCandidate
+
+
+class CheckFailureKind(str, Enum):
+    """Typed reason categories for failed assignment checks."""
+
+    BLOCK = "block"
+    CONSTRAINT = "constraint"
+    CONFIDENCE = "confidence"
+    OTHER = "other"
 
 
 @dataclass
@@ -20,6 +30,7 @@ class CheckResult:
     should_reject: bool = False
     reason: str | None = None
     metadata: dict[str, Any] | None = None
+    failure_kind: CheckFailureKind | None = None
 
 
 class AssignmentCheck(ABC):

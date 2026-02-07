@@ -13,7 +13,7 @@ similarities and provides continuous leniency via: curriculum_adj = -0.05 * t
 from __future__ import annotations
 
 from recognition.application.assignment.candidate import AssignmentCandidate
-from recognition.application.assignment.checks.base import AssignmentCheck, CheckResult
+from recognition.application.assignment.checks.base import AssignmentCheck, CheckFailureKind, CheckResult
 from recognition.application.assignment.quality import IdentityQualityInfo, compute_identity_quality
 from recognition.application.settings import ClusteringSettings
 from recognition.domain.identity import MediaIdentity
@@ -24,7 +24,7 @@ from recognition.domain.repositories import ClusterRepository
 class ConfidenceCheck(AssignmentCheck):
     """Handles confidence gating with adaptive thresholds based on cluster maturity and identity quality."""
 
-    name = "confidence"
+    name = "confidence_check"
 
     def __init__(
         self,
@@ -143,12 +143,27 @@ class ConfidenceCheck(AssignmentCheck):
 
         if self._is_fatal_failure(identity=identity, quality_info=quality_info):
             metadata["fatal_quality_failure"] = True
+            metadata["quality_review_required"] = True
+
+            # Low-quality detections with meaningful similarity should still surface as
+            # user-reviewable suggestions instead of being silently dropped.
+            if similarity >= adjusted_floor:
+                return CheckResult(
+                    passed=False,
+                    is_fatal=True,
+                    should_reject=False,
+                    reason="fatal_quality_failure_suggest",
+                    metadata=metadata,
+                    failure_kind=CheckFailureKind.CONFIDENCE,
+                )
+
             return CheckResult(
                 passed=False,
                 is_fatal=True,
                 should_reject=True,
-                reason="fatal_quality_failure",
+                reason="fatal_quality_failure_below_suggestion_floor",
                 metadata=metadata,
+                failure_kind=CheckFailureKind.CONFIDENCE,
             )
 
         if similarity >= final_threshold:
@@ -161,6 +176,7 @@ class ConfidenceCheck(AssignmentCheck):
                 should_reject=False,
                 reason=f"similarity {similarity:.2%} within suggestion band",
                 metadata=metadata,
+                failure_kind=CheckFailureKind.CONFIDENCE,
             )
 
         return CheckResult(
@@ -169,6 +185,7 @@ class ConfidenceCheck(AssignmentCheck):
             should_reject=True,
             reason=f"similarity {similarity:.2%} below suggestion floor {adjusted_floor:.2%}",
             metadata=metadata,
+            failure_kind=CheckFailureKind.CONFIDENCE,
         )
 
     def _is_fatal_failure(self, *, identity: MediaIdentity, quality_info: IdentityQualityInfo) -> bool:

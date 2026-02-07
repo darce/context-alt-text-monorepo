@@ -22,7 +22,7 @@ from recognition.application.settings.clustering import ClusteringSettings
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.locator import IdentityLocator
-from recognition.domain.repositories import ClusterRepository, MemberData, MemberRepository
+from recognition.domain.repositories import ClusterNotFoundError, ClusterRepository, MemberData, MemberRepository
 from recognition.domain.representative import ClusterRepresentative
 from recognition.observability import ClusteringLogger
 from recognition.observability.recognition_runs import RecognitionRunContext
@@ -933,14 +933,6 @@ class AssignmentWriter:
         # Update member count
         cluster.identity_count += 1
         await self._clusters.update(cluster)
-
-
-class ClusterNotFoundError(Exception):
-    """Raised when a cluster lookup fails."""
-
-    def __init__(self, cluster_id: str) -> None:
-        super().__init__(f"Cluster not found: {cluster_id}")
-        self.cluster_id = cluster_id
 
 
 def _locator_payload(identity: MediaIdentity) -> dict[str, object] | None:

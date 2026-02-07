@@ -39,6 +39,7 @@ class MediaIdentity(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
+    identity_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'face'"))
     media_id: Mapped[int] = mapped_column(Integer, nullable=False)
     media_url: Mapped[str] = mapped_column(Text, nullable=False)
 
@@ -72,8 +73,12 @@ class MediaIdentity(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "media_id", "bbox_x", "bbox_y", name="unique_media_identity"),
+        UniqueConstraint("tenant_id", "media_id", "identity_type", "bbox_x", "bbox_y", name="unique_media_identity"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        CheckConstraint(
+            "identity_type IN ('face', 'brand', 'pose', 'gait')",
+            name="valid_identity_type",
+        ),
         Index("idx_media_identities_tenant", "tenant_id"),
         Index(
             "idx_media_identities_embedding",
@@ -92,6 +97,7 @@ class IdentityCluster(Base):
     tenant_id: Mapped[uuid.UUID] = mapped_column(
         UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
     )
+    identity_type: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'face'"))
     label: Mapped[str | None] = mapped_column(String(255))
     representative_identity_id: Mapped[uuid.UUID | None] = mapped_column(
         UUID(as_uuid=True), ForeignKey("media_identities.id", ondelete="SET NULL")
@@ -117,6 +123,7 @@ class IdentityCluster(Base):
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
     )
     created_by_user_id: Mapped[int | None] = mapped_column(Integer)
+    dismissed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     tenant: Mapped[Tenant] = relationship(back_populates="identity_clusters")
     representative_identity: Mapped[MediaIdentity | None] = relationship(
@@ -137,7 +144,11 @@ class IdentityCluster(Base):
     )
 
     __table_args__ = (
-        UniqueConstraint("tenant_id", "label", name="unique_tenant_identity_label"),
+        UniqueConstraint("tenant_id", "identity_type", "label", name="unique_tenant_identity_label"),
+        CheckConstraint(
+            "identity_type IN ('face', 'brand', 'pose', 'gait')",
+            name="cluster_valid_identity_type",
+        ),
         Index("idx_identity_clusters_tenant", "tenant_id"),
         Index(
             "idx_identity_clusters_roster",

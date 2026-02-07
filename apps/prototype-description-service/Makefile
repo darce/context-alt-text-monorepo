@@ -1,11 +1,13 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp logs-tail logs-rotate logs-clean logs-archive
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive
 
 # Default target
 help:
 	@echo "Available commands:"
 	@echo "  make setup      - Full setup (deps + face detection, platform-aware)"
 	@echo "  make install    - Install core dependencies only"
-	@echo "  make serve      - Start the development server + scan worker"
+	@echo "  make postgres-start - Start local PostgreSQL via Homebrew (if needed)"
+	@echo "  make dev-ready  - Prepare local env for development/testing (no dependency install)"
+	@echo "  make serve      - Start PostgreSQL + development server + scan worker"
 	@echo "  make stop       - Stop the development server"
 	@echo "  make check      - Run linting, type checking, and tests"
 	@echo "  make lint       - Run code linting checks"
@@ -27,11 +29,44 @@ help:
 mcp:
 	@cd ../.. && make mcp-start
 
+# Start local PostgreSQL service (native Homebrew install)
+postgres-start:
+	@if ! command -v pg_isready >/dev/null 2>&1; then \
+		echo "pg_isready not found. Install PostgreSQL tools first." >&2; \
+		exit 1; \
+	fi
+	@DB_HOST="$${PGHOST:-localhost}"; \
+	DB_PORT="$${PGPORT:-5432}"; \
+	if pg_isready -h "$$DB_HOST" -p "$$DB_PORT" >/dev/null 2>&1; then \
+		echo "✓ PostgreSQL already running at $$DB_HOST:$$DB_PORT"; \
+	elif command -v brew >/dev/null 2>&1; then \
+		echo "Starting PostgreSQL (postgresql@17) via Homebrew..."; \
+		brew services start postgresql@17 >/dev/null; \
+		for i in 1 2 3 4 5 6 7 8 9 10; do \
+			if pg_isready -h "$$DB_HOST" -p "$$DB_PORT" >/dev/null 2>&1; then \
+				echo "✓ PostgreSQL is ready at $$DB_HOST:$$DB_PORT"; \
+				exit 0; \
+			fi; \
+			sleep 1; \
+		done; \
+		echo "PostgreSQL did not become ready at $$DB_HOST:$$DB_PORT." >&2; \
+		exit 1; \
+	else \
+		echo "PostgreSQL is not running and Homebrew is unavailable." >&2; \
+		echo "Start PostgreSQL manually, then rerun this command." >&2; \
+		exit 1; \
+	fi
+
+# Prepare local environment for development/testing (dependencies assumed installed)
+dev-ready: postgres-start
+	@echo "✓ Local environment ready for development and testing"
+
 # Start development server
-serve:
+serve: dev-ready
 	@RECOGNITION_ASYNC_ANALYZE_INLINE=0 \
 	START_SCAN_WORKER=1 \
 	UVICORN_EXTRA_ARGS="--timeout-graceful-shutdown 1" \
+	SKIP_INSTALL=1 \
 	./scripts/start_prototype_local.sh start &
 
 # Stop development server

@@ -17,7 +17,8 @@ from recognition.application.suggestions.merge_suggestions import (
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.repositories import MergeSuggestionCreateData, MergeSuggestionRepository
 from recognition.domain.representative import ClusterRepresentative
-from recognition.domain.suggestion import MergeSuggestion, MergeSuggestionDetails, SuggestionStatus
+from recognition.domain.suggestion import MergeSuggestion, SuggestionStatus
+from recognition.interface_adapters.schemas.suggestion_details import MergeSuggestionDetails
 from recognition.shared.ids import generate_id
 from recognition.shared.similarity import normalize_face_embedding
 

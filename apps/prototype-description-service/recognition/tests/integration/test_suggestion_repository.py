@@ -28,7 +28,7 @@ async def test_create_persists_suggestion(db_session, tenant) -> None:
         )
     )
 
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=cluster.id,
@@ -59,7 +59,7 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=cluster.id,
@@ -73,7 +73,7 @@ async def test_get_by_identity_returns_only_tenant_rows(db_session, tenant) -> N
     other_tenant = Tenant(id=uuid.UUID(other_tenant_id), site_url="http://other.example.test")
     db_session.add(other_tenant)
     await db_session.commit()
-    other_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=other_tenant_id)
+    other_repo = SqlAlchemySuggestionRepository(db_session)
     other_cluster = await cluster_repo.save(
         IdentityCluster(
             id=None,
@@ -113,7 +113,7 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
         )
     )
 
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=cluster.id,
@@ -139,7 +139,7 @@ async def test_get_by_cluster_filters_tenant(db_session, tenant) -> None:
         )
     )
 
-    other_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=other_tenant_id)
+    other_repo = SqlAlchemySuggestionRepository(db_session)
     other_payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=other_cluster.id,
@@ -168,7 +168,7 @@ async def test_update_status_transitions(db_session, tenant) -> None:
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=cluster.id,
@@ -199,7 +199,7 @@ async def test_create_upserts_pending_suggestion_scores(db_session, tenant) -> N
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     identity_id = str(uuid.uuid4())
 
     original = await repo.create(
@@ -243,7 +243,7 @@ async def test_update_scores_updates_pending_suggestions(db_session, tenant) -> 
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=cluster.id,
@@ -280,7 +280,7 @@ async def test_update_scores_does_not_modify_resolved_suggestions(db_session, te
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     payload = SuggestionCreateData(
         identity_id=str(uuid.uuid4()),
         cluster_id=cluster.id,
@@ -318,7 +318,7 @@ async def test_bulk_update_status_updates_multiple_rows(db_session, tenant) -> N
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
 
     suggestion_a = await repo.create(
         str(tenant.id),
@@ -368,7 +368,7 @@ async def test_upsert_updates_pending_and_skips_resolved(db_session, tenant) -> 
             created_at=None,
         )
     )
-    repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    repo = SqlAlchemySuggestionRepository(db_session)
     identity_id = str(uuid.uuid4())
 
     pending = await repo.create(

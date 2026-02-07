@@ -80,7 +80,7 @@ async def test_suggestions_are_tenant_scoped(db_session, tenant) -> None:
         )
     )
 
-    sugg_repo_a = SqlAlchemySuggestionRepository(db_session, tenant_id=tenant_a)
+    sugg_repo_a = SqlAlchemySuggestionRepository(db_session)
     suggestion = await sugg_repo_a.create(
         tenant_a,
         SuggestionCreateData(

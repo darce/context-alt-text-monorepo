@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Sequence
+from typing import cast
 
 import numpy as np
 import pytest
@@ -87,7 +88,7 @@ async def test_analyze_persists_media_identities(db_session, tenant) -> None:
 
 
 @pytest.mark.asyncio
-async def test_clustering_job_creates_clusters_from_unclustered_identities(db_session, tenant, monkeypatch) -> None:
+async def test_clustering_job_creates_clusters_from_unclustered_identities(db_session, tenant) -> None:
     """Clustering job should create clusters and members for unclustered identities."""
     # Seed unclustered identities
     embedding = [0.0] * 512
@@ -119,16 +120,17 @@ async def test_clustering_job_creates_clusters_from_unclustered_identities(db_se
     db_session.add_all(identities)
     await db_session.commit()
 
-    async def _build_cluster_service(session, tenant_id: str):
-        cluster_service = await dependencies.build_cluster_service(session=session, tenant_id=tenant_id)
-        cluster_service.graph_discovery.set_algorithm(DeterministicGraphAlgorithm())
-        return cluster_service
+    def _cluster_service_builder_override():
+        async def _builder(tenant_id: str):
+            cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=tenant_id)
+            cluster_service.graph_discovery.set_algorithm(DeterministicGraphAlgorithm())
+            return cluster_service
 
-    import recognition.interface_adapters.http.routers.clusters as clusters_router
-
-    monkeypatch.setattr(clusters_router, "build_cluster_service", _build_cluster_service)
+        return _builder
 
     client = _make_client(db_session, tenant)
+    app = cast(FastAPI, client.app)
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = _cluster_service_builder_override
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": str(tenant.id), "mode": "sync"})
 
     assert resp.status_code == 202

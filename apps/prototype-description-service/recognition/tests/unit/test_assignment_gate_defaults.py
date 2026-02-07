@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from datetime import UTC, datetime
 
 import numpy as np
@@ -12,11 +11,8 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.assignment.decision import AssignmentOutcome
 from recognition.application.assignment.gate import AssignmentGate
 from recognition.application.settings import ClusteringSettings
-from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
-from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.repositories import (
-    ClusterRepository,
     IdentityClusterBlockRepository,
     IdentityConstraintRepository,
     IdentityMember,
@@ -24,46 +20,16 @@ from recognition.domain.repositories import (
 )
 from recognition.domain.representative import ClusterRepresentative
 from recognition.shared.ids import generate_id
+from recognition.tests.stubs import NullClusterRepository
 
 
-class GateRepoStub(ClusterRepository):
+class GateRepoStub(NullClusterRepository):
     """Repository stub providing data for all default checks."""
 
     def __init__(self, reps: dict[str, list[np.ndarray]], members: dict[str, list[np.ndarray]]) -> None:
+        super().__init__(labeled_count=10)
         self._reps = reps
         self._members = members
-
-    async def get_by_id(self, cluster_id: str):
-        return None
-
-    async def get_by_tenant(
-        self,
-        tenant_id: str,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-        labeled_only: bool = False,
-        search: str | None = None,
-    ):
-        return []
-
-    async def save(self, cluster):
-        return cluster
-
-    async def update(self, cluster):
-        return cluster
-
-    async def delete(self, cluster_id: str) -> None:
-        return None
-
-    async def refresh_centroids_view(self) -> None:
-        pass
-
-    async def refresh_centroids_view_concurrent(self) -> None:
-        pass
-
-    async def get_unclustered(self, tenant_id: str):
-        return []
 
     async def get_representative_count(self, cluster_id: str) -> int:
         return len(self._reps.get(cluster_id, []))
@@ -85,69 +51,6 @@ class GateRepoStub(ClusterRepository):
     async def get_member_embeddings(self, cluster_id: str) -> list[np.ndarray]:
         return self._members.get(cluster_id, [])
 
-    async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
-        raise NotImplementedError
-
-    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
-        raise NotImplementedError
-
-    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
-        return []
-
-    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
-        return []
-
-    async def save_cluster(self, cluster):
-        raise NotImplementedError
-
-    async def assign_identity_to_cluster(self, identity, cluster_id: str):
-        raise NotImplementedError
-
-    async def add_representative(self, representative):
-        raise NotImplementedError
-
-    async def clear_representatives(self, cluster_id: str) -> None:
-        raise NotImplementedError
-
-    async def remove_representative(self, representative_id: str) -> None:
-        pass
-
-    async def count_labeled(self) -> int:
-        return 10  # Return a mature count so adaptive threshold is relaxed
-
-    async def get_labeled_with_representatives(
-        self,
-        tenant_id: str,
-    ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
-        return []
-
-    async def get_maturity_info(self, cluster_id: str, *, settings=None) -> ClusterMaturityInfo | None:  # noqa: ANN001
-        return None
-
-    async def get_curriculum_t(self, cluster_id: str) -> float | None:
-        return None
-
-    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
-        return None
-
-    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
-        return []
-
-    async def mark_representative_user_selected(self, representative_id: str, is_selected: bool = True) -> None:
-        pass
-
-    async def get_user_selected_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
-        return []
-
-    async def confirm_provisional_representatives(self, cluster_id: str) -> int:
-        return 0
-
-    async def confirm_all_provisional_reps(self, tenant_id: str) -> int:
-        return 0
-
-    async def cleanup_orphaned_provisional_reps(self, tenant_id: str) -> int:
-        return 0
-
 
 class BlockRepoStub(IdentityClusterBlockRepository):
     """Block repository stub controlling a single blocked state."""
@@ -155,18 +58,6 @@ class BlockRepoStub(IdentityClusterBlockRepository):
     def __init__(self, blocked: bool) -> None:
         self._blocked = blocked
         self.called = False
-
-    async def block(
-        self,
-        *,
-        tenant_id: str,
-        identity_id: str,
-        cluster_id: str,
-        reason: str | None = None,
-        created_by_user_id: int | None = None,
-        expires_at: datetime | None = None,
-    ):
-        raise NotImplementedError
 
     async def add_block(
         self,
@@ -343,7 +234,7 @@ async def test_default_checks_accept_when_all_pass() -> None:
     assert decision.outcome is AssignmentOutcome.ACCEPT
     assert decision.checks_failed == []
     # Gate now uses only confidence check (maturity, complete_link, member_distribution removed)
-    assert set(decision.checks_passed) == {"confidence"}
+    assert set(decision.checks_passed) == {"confidence_check"}
 
 
 @pytest.mark.asyncio
@@ -358,7 +249,7 @@ async def test_default_checks_suggest_on_low_confidence() -> None:
     decision = await gate.evaluate(make_candidate(normalize(base + np.array([0.05, 0.02, 0.0])), cluster_id, 0.5))
 
     assert decision.outcome is AssignmentOutcome.SUGGEST
-    assert "confidence" in decision.checks_failed
+    assert "confidence_check" in decision.checks_failed
     # Gate now uses only confidence check (maturity, complete_link, member_distribution removed)
     assert decision.checks_passed == []
 
@@ -383,7 +274,7 @@ async def test_default_checks_include_block_and_constraint_when_configured() -> 
 
     assert decision.outcome is AssignmentOutcome.ACCEPT
     assert decision.checks_failed == []
-    assert decision.checks_passed == ["block_check", "ConstraintCheck", "confidence"]
+    assert decision.checks_passed == ["block_check", "constraint_check", "confidence_check"]
 
 
 @pytest.mark.asyncio

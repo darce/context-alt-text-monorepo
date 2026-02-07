@@ -6,12 +6,14 @@ from __future__ import annotations
 
 import uuid
 
-from sqlalchemy import select
+from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
 from db.models import IdentityCluster, MediaIdentity
-from recognition.config.settings import ClusteringSettings  # Assuming this location or will verify
+from recognition.application.settings import ClusteringSettings
+from recognition.config import get_settings as get_recognition_settings
+from recognition.domain.repositories import ClusterRepository
 from recognition.domain.suggestion import SuggestedLabel, SuggestedLabelSource
 
 
@@ -20,6 +22,8 @@ async def infer_suggested_label(
     cluster_id: str,
     *,
     session: AsyncSession,
+    cluster_repository: ClusterRepository | None = None,
+    settings: ClusteringSettings | None = None,
 ) -> SuggestedLabel | None:
     """Infer a label for a cluster based on available signals.
 
@@ -36,9 +40,8 @@ async def infer_suggested_label(
     Returns:
         SuggestedLabel or None if no reliable inference found.
     """
-    settings = ClusteringSettings()
-
-    threshold = settings.suggestion_floor  # Dynamic threshold
+    inference_settings = settings or get_recognition_settings().clustering
+    threshold = inference_settings.suggestion_floor
 
     try:
         tenant_uuid = uuid.UUID(tenant_id)
@@ -46,8 +49,8 @@ async def infer_suggested_label(
     except ValueError:
         return None
 
-    # Fetch the target cluster's representative embedding
-    # Correct model attribute: 'representative_identity' which has 'embedding'
+    # Fetch target cluster state first. We can infer from member suggestion signals
+    # even when representative linkage is missing.
     stmt_target = (
         select(IdentityCluster)
         .options(joinedload(IdentityCluster.representative_identity))
@@ -57,25 +60,28 @@ async def infer_suggested_label(
     result_target = await session.execute(stmt_target)
     target_cluster = result_target.scalar_one_or_none()
 
-    if not target_cluster or not target_cluster.representative_identity:
+    if not target_cluster:
         return None
 
-    # 1. Identity Match (via IdentitySuggestion)
-    # Check if any member of this cluster has a pending suggestion to link to a LABELED cluster
-    # This implies the member is likely that person, so the whole cluster (assignment target) might be that person.
+    # 1. Identity Match (via IdentitySuggestion), including accepted suggestions.
+    # If a member already has an accepted suggestion to a labeled cluster, surface it
+    # immediately as the strongest signal for top-unlabeled CTA enrichment.
     from db.models.constraints import IdentitySuggestion
     from db.models.identity import IdentityMember
 
+    accepted_first = case((IdentitySuggestion.resolution == "accepted", 0), else_=1)
     stmt_identity = (
         select(IdentitySuggestion, IdentityCluster)
         .join(IdentityCluster, IdentitySuggestion.suggested_cluster_id == IdentityCluster.id)
         .join(IdentityMember, IdentitySuggestion.identity_id == IdentityMember.identity_id)
         .where(IdentitySuggestion.tenant_id == tenant_uuid)
-        .where(IdentitySuggestion.resolution == "pending")
+        .where(IdentitySuggestion.resolution.in_(("accepted", "pending")))
         .where(IdentityMember.cluster_id == cluster_uuid)
         .where(IdentityCluster.label.isnot(None))
         .where(IdentityCluster.label != "")
-        .order_by(IdentitySuggestion.confidence_score.desc())
+        .where(~IdentityCluster.label.startswith("cluster-"))
+        .where(IdentityCluster.id != cluster_uuid)
+        .order_by(accepted_first, IdentitySuggestion.confidence_score.desc())
         .limit(1)
     )
 
@@ -84,32 +90,24 @@ async def infer_suggested_label(
 
     if identity_match:
         suggestion, other_cluster = identity_match
-        # If we have a strong suggestion linking a member to a labeled cluster, use it.
-        # Threshold: use suggestion confidence.
-        if suggestion.confidence_score >= threshold:
+        # Accepted suggestions are explicit outcomes, so we honor them regardless of
+        # confidence threshold. Pending suggestions still require threshold gating.
+        if suggestion.resolution == "accepted" or suggestion.confidence_score >= threshold:
             return SuggestedLabel(
-                label=other_cluster.label, source=SuggestedLabelSource.IDENTITY, confidence=suggestion.confidence_score
+                label=other_cluster.label,
+                source=SuggestedLabelSource.IDENTITY,
+                confidence=suggestion.confidence_score,
+                target_cluster_id=str(other_cluster.id),
             )
 
     # 1b. Roster Entry Match
     if target_cluster.roster_id:
-        # Check if we can resolve the name from a legacy table (best effort)
-        # Even if table is missing, the presence of roster_id is a strong signal.
-        try:
-            from sqlalchemy import text
+        if cluster_repository is None:
+            return None
 
-            # Use text() to avoid dependency on missing model
-            roster_stmt = text("SELECT name FROM roster_entries WHERE id = :rid")
-            roster_res = await session.execute(roster_stmt, {"rid": str(target_cluster.roster_id)})
-            roster_name = roster_res.scalar()
-            if roster_name:
-                return SuggestedLabel(label=roster_name, source=SuggestedLabelSource.ROSTER, confidence=1.0)
-        except Exception:
-            # Table missing or query failure - cannot verify label
-            pass
-
-        # If we couldn't resolve the name (missing table or ID), return None.
-        # Requirements imply we need the specific name, not a generic signal.
+        roster_name = await cluster_repository.get_roster_entry_name(str(target_cluster.roster_id))
+        if roster_name:
+            return SuggestedLabel(label=roster_name, source=SuggestedLabelSource.ROSTER, confidence=1.0)
         return None
 
     # 2. Merge Suggestions (Preferred Provenance for Similar Cluster)
@@ -144,15 +142,16 @@ async def infer_suggested_label(
         suggestion, other_cluster = merge_match
         if suggestion.similarity >= threshold:
             return SuggestedLabel(
-                label=other_cluster.label, source=SuggestedLabelSource.SIMILAR_CLUSTER, confidence=suggestion.similarity
+                label=other_cluster.label,
+                source=SuggestedLabelSource.SIMILAR_CLUSTER,
+                confidence=suggestion.similarity,
+                target_cluster_id=str(other_cluster.id),
             )
 
     # 3. Nearest Neighbor Search (Fallback)
     if not target_cluster.representative_identity:
         return None
 
-    # Check if representative_identity is loaded; if not, might need to fetch it?
-    # joinedload was used above, so it should be there.
     target_embedding = target_cluster.representative_identity.embedding
     if not target_embedding:
         return None
@@ -191,7 +190,10 @@ async def infer_suggested_label(
 
             if similarity >= threshold and nearest_cluster.label:
                 return SuggestedLabel(
-                    label=nearest_cluster.label, source=SuggestedLabelSource.SIMILAR_CLUSTER, confidence=similarity
+                    label=nearest_cluster.label,
+                    source=SuggestedLabelSource.SIMILAR_CLUSTER,
+                    confidence=similarity,
+                    target_cluster_id=str(nearest_cluster.id),
                 )
 
     return None

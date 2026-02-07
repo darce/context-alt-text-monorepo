@@ -161,7 +161,7 @@ async def test_reassign_removal_creates_block_and_job(db_session, tenant: Tenant
 async def test_reassign_removal_rejects_pending_suggestion(db_session, tenant: Tenant) -> None:
     cluster_repo = SqlAlchemyClusterRepository(db_session)
     member_repo = SqlAlchemyMemberRepository(db_session, tenant_id=str(tenant.id))
-    suggestion_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
 
     embedding = [0.0] * 512
     embedding[0] = 1.0

@@ -230,7 +230,11 @@ class ClusterService:
                 if not cluster.label and self._session:
                     try:
                         suggestion = await infer_suggested_label(
-                            tenant_id=tenant_id, cluster_id=str(cluster.id), session=self._session
+                            tenant_id=tenant_id,
+                            cluster_id=str(cluster.id),
+                            session=self._session,
+                            cluster_repository=self.cluster_repository,
+                            settings=self.gate.settings,
                         )
                         if suggestion:
                             cluster.suggested_label = suggestion.label  # type: ignore[attr-defined]
@@ -279,20 +283,24 @@ class ClusterService:
         )
 
         # If cluster just became user-labeled, surface suggestions
-        if surface_suggestions and result and label and not was_user_confirmed:
-            surface_fn = getattr(self.suggestion_refresh_service, "surface_for_newly_labeled_cluster", None)
-            if callable(surface_fn):
-                try:
-                    surfaced = await surface_fn(cluster_id)
-                    if surfaced > 0:
-                        logger.info(
-                            "[curation] Surfaced %d suggestions after labeling cluster_id=%s label='%s'",
-                            surfaced,
-                            cluster_id,
-                            label,
-                        )
-                except Exception as e:
-                    logger.warning("[curation] Failed to surface suggestions: %s", e)
+        if (
+            surface_suggestions
+            and result
+            and label
+            and not was_user_confirmed
+            and self.suggestion_refresh_service is not None
+        ):
+            try:
+                surfaced = await self.suggestion_refresh_service.surface_for_newly_labeled_cluster(cluster_id)
+                if surfaced > 0:
+                    logger.info(
+                        "[curation] Surfaced %d suggestions after labeling cluster_id=%s label='%s'",
+                        surfaced,
+                        cluster_id,
+                        label,
+                    )
+            except Exception as e:
+                logger.warning("[curation] Failed to surface suggestions: %s", e)
 
         return result
 

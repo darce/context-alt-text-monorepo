@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import select
@@ -11,6 +10,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityClusteringJob, IdentityScanJob
 from recognition.domain.job import Job, JobStatus, JobType
 from recognition.domain.repositories import JobRepository
+from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 
 
 class SqlAlchemyJobRepository(JobRepository):
@@ -23,7 +23,7 @@ class SqlAlchemyJobRepository(JobRepository):
         """Create a new job record."""
         if job.type is JobType.ANALYZE:
             scan_model = IdentityScanJob(
-                tenant_id=_coerce_uuid(job.tenant_id),
+                tenant_id=_coerce_uuid(job.tenant_id, on_failure="none"),
                 status=job.status.value,
                 media_ids=[],
                 total_media=job.progress_total,
@@ -41,7 +41,7 @@ class SqlAlchemyJobRepository(JobRepository):
         if job.type in (JobType.CLUSTERING, JobType.CURATION, JobType.SPLIT):
             progress = _compute_progress(job.progress_completed, job.progress_total)
             cluster_model = IdentityClusteringJob(
-                tenant_id=_coerce_uuid(job.tenant_id),
+                tenant_id=_coerce_uuid(job.tenant_id, on_failure="none"),
                 job_type=job.type.value,
                 status=job.status.value,
                 progress=progress,
@@ -61,7 +61,7 @@ class SqlAlchemyJobRepository(JobRepository):
 
     async def get(self, job_id: str) -> Job | None:
         """Fetch a job by ID."""
-        job_uuid = _coerce_uuid(job_id)
+        job_uuid = _coerce_uuid(job_id, on_failure="none")
         if job_uuid is None:
             return None
 
@@ -101,7 +101,7 @@ class SqlAlchemyJobRepository(JobRepository):
 
     async def update(self, job: Job) -> Job:
         """Update an existing job."""
-        job_uuid = _coerce_uuid(job.id)
+        job_uuid = _coerce_uuid(job.id, on_failure="none")
         if job.type is JobType.ANALYZE:
             scan_stmt = select(IdentityScanJob).where(IdentityScanJob.id == job_uuid)
             scan_result = await self._session.execute(scan_stmt)
@@ -134,13 +134,6 @@ class SqlAlchemyJobRepository(JobRepository):
 
         await self._session.flush()
         return job
-
-
-def _coerce_uuid(value: str) -> uuid.UUID | None:
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, TypeError, AttributeError):
-        return None
 
 
 def _compute_progress(completed: int, total: int) -> float:

@@ -11,6 +11,7 @@ from typing import Protocol
 import numpy as np
 import pytest
 
+from db.models import MediaIdentity as MediaIdentityModel
 from db.models import Tenant
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
@@ -49,7 +50,13 @@ class DummyClusterRepository(ClusterRepository):
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         raise NotImplementedError
 
+    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
+        raise NotImplementedError
+
     async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
+        raise NotImplementedError
+
+    async def get_roster_entry_name(self, roster_id: str) -> str | None:
         raise NotImplementedError
 
     async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
@@ -194,6 +201,25 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
     identity_a2 = str(uuid.uuid4())
     identity_b1 = str(uuid.uuid4())
 
+    db_session.add(
+        MediaIdentityModel(
+            id=uuid.UUID(identity_a1),
+            tenant_id=tenant.id,
+            media_id=9001,
+            media_url="http://example.test/a1.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=100,
+            bbox_height=120,
+            confidence=0.9,
+            embedding=[0.1] * 512,
+            pose_pitch=25.0,
+            pose_yaw=-30.0,
+            pose_roll=-20.0,
+        )
+    )
+    await db_session.flush()
+
     await member_repo.add_member(cluster_a.id, identity_id=identity_a1, similarity=0.91)
     await member_repo.add_member(cluster_a.id, identity_id=identity_a2, similarity=0.92)
     await member_repo.add_member(cluster_b.id, identity_id=identity_b1, similarity=0.93)
@@ -205,6 +231,11 @@ async def test_get_member_identities_for_clusters_groups_by_cluster(db_session, 
     assert {identity.id for identity in grouped[cluster_b.id]} == {identity_b1}
     assert all(identity.cluster_id == cluster_a.id for identity in grouped[cluster_a.id])
     assert all(identity.cluster_id == cluster_b.id for identity in grouped[cluster_b.id])
+
+    identity_a1_domain = next(identity for identity in grouped[cluster_a.id] if identity.id == identity_a1)
+    assert identity_a1_domain.pose_pitch == pytest.approx(25.0)
+    assert identity_a1_domain.pose_yaw == pytest.approx(-30.0)
+    assert identity_a1_domain.pose_roll == pytest.approx(-20.0)
 
 
 @pytest.mark.asyncio

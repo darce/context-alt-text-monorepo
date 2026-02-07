@@ -14,9 +14,7 @@ from fastapi.testclient import TestClient
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
-from recognition.interface_adapters.http.routers import clusters as clusters_router
 from recognition.interface_adapters.http.routers import media as media_router
-from recognition.interface_adapters.http.routers import suggestions as suggestions_router
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.shared.ids import generate_id
 from recognition.tests.fakes import FakeClusterService, FakeJobService
@@ -27,19 +25,33 @@ class FakeSession:
 
     def __init__(self) -> None:
         self.added: list[object] = []
+        self._get_results: dict[tuple[object, object], object | None] = {}
+        self._execute_results: list[FakeSessionResult] = []
+
+    def set_get_result(self, *, model_class: object, pk: object, value: object | None) -> None:
+        """Register a deterministic return value for `get(model_class, pk)`."""
+        self._get_results[(model_class, pk)] = value
+
+    def queue_execute_result(
+        self,
+        *,
+        scalar_one_or_none: object | None = None,
+        scalar: object = 0,
+        all_rows: list[object] | None = None,
+    ) -> None:
+        """Queue a deterministic execute result for the next `execute()` call."""
+        self._execute_results.append(
+            FakeSessionResult(
+                scalar_one_or_none_value=scalar_one_or_none,
+                scalar_value=scalar,
+                all_rows=all_rows or [],
+            )
+        )
 
     async def execute(self, _statement, _params=None):  # noqa: ANN001
-        class _Result:
-            def scalar_one_or_none(self):  # noqa: ANN001
-                return None
-
-            def scalar(self):  # noqa: ANN001
-                return 0
-
-            def all(self):  # noqa: ANN001
-                return []
-
-        return _Result()
+        if self._execute_results:
+            return self._execute_results.pop(0)
+        return FakeSessionResult()
 
     def add(self, obj) -> None:  # noqa: ANN001
         if getattr(obj, "id", None) is None:
@@ -64,7 +76,31 @@ class FakeSession:
 
     async def get(self, model_class, pk):  # noqa: ANN001
         """Stub get method for repository compatibility."""
-        return None
+        return self._get_results.get((model_class, pk))
+
+
+class FakeSessionResult:
+    """Minimal SQLAlchemy result stub with configurable scalar/all payloads."""
+
+    def __init__(
+        self,
+        *,
+        scalar_one_or_none_value: object | None = None,
+        scalar_value: object = 0,
+        all_rows: list[object] | None = None,
+    ) -> None:
+        self._scalar_one_or_none_value = scalar_one_or_none_value
+        self._scalar_value = scalar_value
+        self._all_rows = all_rows or []
+
+    def scalar_one_or_none(self):  # noqa: ANN001
+        return self._scalar_one_or_none_value
+
+    def scalar(self):  # noqa: ANN001
+        return self._scalar_value
+
+    def all(self):  # noqa: ANN001
+        return self._all_rows
 
 
 class FakeScanService:
@@ -383,6 +419,7 @@ class FakeClusterForRepo:
         self.is_labeled = bool(label)
         self.created_at = datetime.now(tz=UTC)
         self.is_auto_label = False
+        self.dismissed_at: datetime | None = None
         self.representatives: list = []  # Empty list for API response mapping
 
 
@@ -407,10 +444,33 @@ class FakeClusterRepository:
     async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
         return []
 
-    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[FakeClusterForRepo]:
-        unlabeled = [c for c in self.clusters.values() if not c.label]
+    async def get_top_unlabeled(
+        self,
+        tenant_id: str,
+        limit: int = 10,
+        min_identity_count: int = 2,
+    ) -> list[FakeClusterForRepo]:
+        unlabeled = [
+            c
+            for c in self.clusters.values()
+            if not c.label and c.identity_count >= min_identity_count and c.dismissed_at is None
+        ]
         sorted_clusters = sorted(unlabeled, key=lambda c: c.identity_count, reverse=True)
         return sorted_clusters[:limit]
+
+    async def dismiss_cluster(self, cluster_id: str) -> bool:
+        cluster = self.clusters.get(cluster_id)
+        if not cluster or cluster.dismissed_at is not None:
+            return False
+        cluster.dismissed_at = datetime.now(tz=UTC)
+        return True
+
+    async def undismiss_cluster(self, cluster_id: str) -> bool:
+        cluster = self.clusters.get(cluster_id)
+        if not cluster or cluster.dismissed_at is None:
+            return False
+        cluster.dismissed_at = None
+        return True
 
 
 @pytest.fixture
@@ -494,40 +554,8 @@ def api_client(
     async def cluster_repo_dep(session=None):  # noqa: ANN001
         return fake_cluster_repository
 
-    async def suggestion_service_dep(session=None, tenant_id=None):  # noqa: ANN001
-        return fake_suggestion_service
-
-    async def suggestion_refresh_service_dep(session=None, tenant_id=None):  # noqa: ANN001
-        return fake_suggestion_refresh_service
-
     async def _no_observability_repo():
         return None
-
-    app.dependency_overrides[dependencies.get_session] = _no_session
-    app.dependency_overrides[dependencies.get_optional_session] = _no_session
-    app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
-    app.dependency_overrides[dependencies.get_cluster_repository] = cluster_repo_dep
-    app.dependency_overrides[dependencies.get_job_service_dependency] = job_service_dep
-    app.dependency_overrides[dependencies.get_suggestion_service] = suggestion_service_dep
-    app.dependency_overrides[dependencies.get_suggestion_refresh_service] = suggestion_refresh_service_dep
-    app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
-    app.dependency_overrides[get_tenant_id] = lambda: tenant_id
-    app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: fake_scan_queue_service
-    app.dependency_overrides[dependencies.get_scan_queue_service_optional] = lambda: fake_scan_queue_service
-
-    # Monkeypatch router helpers to point at fakes
-    async def _fake_build_cluster_service(session, tenant_id, settings=None):  # noqa: ANN001
-        return fake_cluster_service
-
-    monkeypatch.setattr(dependencies, "build_cluster_service", _fake_build_cluster_service)
-    monkeypatch.setattr(clusters_router, "build_cluster_service", _fake_build_cluster_service)
-    monkeypatch.setattr(suggestions_router, "build_cluster_service", _fake_build_cluster_service)
-
-    async def _fake_get_job_service(**_kwargs):
-        return fake_job_service
-
-    monkeypatch.setattr(dependencies, "get_job_service", _fake_get_job_service)
-    monkeypatch.setattr(clusters_router, "get_job_service", _fake_get_job_service)
 
     async def _fake_suggestion_service(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_service
@@ -535,16 +563,22 @@ def api_client(
     async def _fake_suggestion_refresh_service(session=None, tenant_id=None):  # noqa: ANN001
         return fake_suggestion_refresh_service
 
-    monkeypatch.setattr(dependencies, "get_suggestion_service", _fake_suggestion_service)
-    monkeypatch.setattr(suggestions_router, "get_suggestion_service", _fake_suggestion_service)
-    monkeypatch.setattr(clusters_router, "get_suggestion_service", _fake_suggestion_service)
-    monkeypatch.setattr(dependencies, "get_suggestion_refresh_service", _fake_suggestion_refresh_service)
-    monkeypatch.setattr(clusters_router, "get_suggestion_refresh_service", _fake_suggestion_refresh_service)
+    app.dependency_overrides[dependencies.get_session] = _no_session
+    app.dependency_overrides[dependencies.get_optional_session] = _no_session
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
+    app.dependency_overrides[dependencies.get_cluster_repository] = cluster_repo_dep
+    app.dependency_overrides[dependencies.get_job_service_dependency] = job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_job_service] = job_service_dep
+    app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
+    app.dependency_overrides[dependencies.get_suggestion_service] = _fake_suggestion_service
+    app.dependency_overrides[dependencies.get_suggestion_refresh_service] = _fake_suggestion_refresh_service
+    app.dependency_overrides[get_tenant_id] = lambda: tenant_id
+    app.dependency_overrides[dependencies.get_scan_queue_service] = lambda: fake_scan_queue_service
+    app.dependency_overrides[dependencies.get_scan_queue_service_optional] = lambda: fake_scan_queue_service
 
     async def _fake_media_identity_service():
         return fake_media_identity_service
 
-    monkeypatch.setattr(dependencies, "get_media_identity_service", _fake_media_identity_service)
     app.dependency_overrides[media_router.get_media_identity_service] = _fake_media_identity_service
 
     return TestClient(app)

@@ -6,7 +6,6 @@ This is scaffolding only; methods are implemented in Phase 5.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import uuid
 from collections import defaultdict
@@ -21,7 +20,7 @@ from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
 
 from db.models import IdentityCluster as ClusterModel
-from db.models import IdentityClusterRepresentative, MediaIdentity
+from db.models import IdentityClusterRepresentative, IdentitySuggestion, MediaIdentity
 from db.models import IdentityMember as IdentityMemberModel
 from db.settings import get_database_settings
 from recognition.domain.cluster import IdentityCluster
@@ -30,10 +29,13 @@ from recognition.domain.maturity import ClusterMaturityInfo, compute_maturity_ad
 from recognition.domain.repositories import ClusterRepository
 from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
+from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
+from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 _DB_SETTINGS = get_database_settings()
 logger = logging.getLogger(__name__)
+_TOP_UNLABELED_FALLBACK_REP_LIMIT = 4
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
@@ -83,33 +85,215 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             stmt = stmt.where(ClusterModel.user_confirmed.is_(True))
 
         if search:
-            stmt = stmt.where(ClusterModel.label.ilike(f"%{search}%"))
+            escaped_search = search.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+            stmt = stmt.where(ClusterModel.label.ilike(f"%{escaped_search}%", escape="\\"))
 
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
-    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
-        """Fetch top unlabeled clusters by member count, with representatives for thumbnails.
+    async def get_top_unlabeled(
+        self,
+        tenant_id: str,
+        limit: int = 10,
+        min_identity_count: int = 2,
+    ) -> list[IdentityCluster]:
+        """Fetch top unlabeled clusters globally by size, with representatives for thumbnails.
 
-        Used for bootstrapping suggestions (users must label clusters before identity-based
-        similarity suggestions can be generated). Representatives are eagerly loaded so the
-        frontend can display face thumbnails in the suggestion panel.
+        This endpoint is productivity-first: prioritize the largest unlabeled clusters
+        across the tenant (not latest-run scoped), so users label the most observations first.
+        Dismissed clusters and singletons are excluded.
         """
+        from sqlalchemy import or_
+
         tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None:
+            return []
+
+        accepted_member_suggestion_exists = (
+            select(1)
+            .select_from(IdentityMemberModel)
+            .join(
+                IdentitySuggestion,
+                IdentitySuggestion.identity_id == IdentityMemberModel.identity_id,
+            )
+            .where(IdentityMemberModel.cluster_id == ClusterModel.id)
+            .where(IdentitySuggestion.tenant_id == tenant_uuid)
+            .where(IdentitySuggestion.resolution == "accepted")
+            .where(IdentitySuggestion.suggested_cluster_id != ClusterModel.id)
+        )
+
         stmt: Select[tuple[ClusterModel]] = (
             select(ClusterModel)
             .where(ClusterModel.tenant_id == tenant_uuid)
             .where(ClusterModel.user_confirmed.is_(False))
-            .where(ClusterModel.label.isnot(None))
-            .where(ClusterModel.label.startswith("cluster-"))
+            .where(or_(ClusterModel.label.is_(None), ClusterModel.label.startswith("cluster-")))
+            .where(ClusterModel.identity_count >= min_identity_count)
+            .where(ClusterModel.dismissed_at.is_(None))
+            .where(~exists(accepted_member_suggestion_exists))
             .options(
                 selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity),
             )
-            .order_by(ClusterModel.identity_count.desc())
+            .order_by(ClusterModel.identity_count.desc(), ClusterModel.created_at.desc())
             .limit(limit)
         )
         result = await self._session.execute(stmt)
-        return [self._to_domain(row) for row in result.scalars().all()]
+        results = [self._to_domain(row) for row in result.scalars().all()]
+        clusters_requiring_top_up = [
+            cluster.id
+            for cluster in results
+            if cluster.id and len(cluster.representatives or []) < _TOP_UNLABELED_FALLBACK_REP_LIMIT
+        ]
+        topped_up_clusters = 0
+        if clusters_requiring_top_up:
+            fallback_representatives = await self._get_member_fallback_representatives(
+                clusters_requiring_top_up,
+                max_per_cluster=_TOP_UNLABELED_FALLBACK_REP_LIMIT,
+            )
+            for cluster in results:
+                if not cluster.id:
+                    continue
+                existing_representatives = list(cluster.representatives or [])
+                if len(existing_representatives) >= _TOP_UNLABELED_FALLBACK_REP_LIMIT:
+                    continue
+
+                member_reps = fallback_representatives.get(cluster.id, [])
+                if not member_reps:
+                    continue
+
+                merged_representatives: list[ClusterRepresentative] = []
+                seen_identity_ids: set[str] = set()
+                for representative in [*existing_representatives, *member_reps]:
+                    identity_id = str(representative.identity_id)
+                    if identity_id in seen_identity_ids:
+                        continue
+                    seen_identity_ids.add(identity_id)
+                    merged_representatives.append(representative)
+                    if len(merged_representatives) >= _TOP_UNLABELED_FALLBACK_REP_LIMIT:
+                        break
+
+                if len(merged_representatives) > len(existing_representatives):
+                    cluster.representatives = merged_representatives
+                    topped_up_clusters += 1
+
+        logger.info(
+            "Top clusters (size-priority): tenant_id=%s returned=%d limit=%d min_identity_count=%d rep_topup_candidates=%d rep_topup_applied=%d",
+            tenant_id,
+            len(results),
+            limit,
+            min_identity_count,
+            len(clusters_requiring_top_up),
+            topped_up_clusters,
+        )
+        return results
+
+    async def _get_member_fallback_representatives(
+        self,
+        cluster_ids: Sequence[str],
+        *,
+        max_per_cluster: int,
+    ) -> dict[str, list[ClusterRepresentative]]:
+        """Build thumbnail-capable fallback representatives from top-scoring cluster members."""
+        cluster_uuids = [_coerce_uuid(cluster_id) for cluster_id in cluster_ids]
+        cluster_uuids = [cluster_id for cluster_id in cluster_uuids if cluster_id is not None]
+        if not cluster_uuids:
+            return {}
+
+        stmt = (
+            select(
+                IdentityMemberModel.cluster_id,
+                IdentityMemberModel.id,
+                IdentityMemberModel.identity_id,
+                IdentityMemberModel.similarity,
+                IdentityMemberModel.assigned_at,
+                MediaIdentity.media_id,
+                MediaIdentity.media_url,
+                MediaIdentity.bbox_x,
+                MediaIdentity.bbox_y,
+                MediaIdentity.bbox_width,
+                MediaIdentity.bbox_height,
+                MediaIdentity.thumbnail_url,
+            )
+            .join(MediaIdentity, MediaIdentity.id == IdentityMemberModel.identity_id)
+            .where(IdentityMemberModel.cluster_id.in_(cluster_uuids))
+            .order_by(
+                IdentityMemberModel.cluster_id,
+                IdentityMemberModel.similarity.desc(),
+                IdentityMemberModel.assigned_at.asc(),
+            )
+        )
+        result = await self._session.execute(stmt)
+        fallback_by_cluster: dict[str, list[ClusterRepresentative]] = defaultdict(list)
+        now = datetime.now(tz=UTC)
+        for row in result:
+            cluster_key = str(row.cluster_id)
+            existing = fallback_by_cluster[cluster_key]
+            if len(existing) >= max_per_cluster:
+                continue
+
+            assigned_at = row.assigned_at if isinstance(row.assigned_at, datetime) else now
+            existing.append(
+                ClusterRepresentative(
+                    id=str(row.id),
+                    cluster_id=cluster_key,
+                    identity_id=str(row.identity_id),
+                    embedding=np.zeros(_DB_SETTINGS.pgvector_dimension, dtype=np.float32),
+                    created_at=assigned_at,
+                    quality_score=float(row.similarity),
+                    media_id=int(row.media_id) if row.media_id is not None else None,
+                    media_url=row.media_url,
+                    bbox_x=int(row.bbox_x) if row.bbox_x is not None else None,
+                    bbox_y=int(row.bbox_y) if row.bbox_y is not None else None,
+                    bbox_width=int(row.bbox_width) if row.bbox_width is not None else None,
+                    bbox_height=int(row.bbox_height) if row.bbox_height is not None else None,
+                    thumbnail_url=row.thumbnail_url,
+                )
+            )
+
+        return dict(fallback_by_cluster)
+
+    async def dismiss_cluster(self, cluster_id: str) -> bool:
+        """Mark a cluster as dismissed so it no longer appears in the naming queue.
+
+        Args:
+            cluster_id: UUID of the cluster to dismiss.
+
+        Returns:
+            True if a cluster was found and dismissed, False otherwise.
+        """
+        cluster_uuid = _coerce_uuid(cluster_id)
+        if cluster_uuid is None:
+            return False
+        stmt = (
+            update(ClusterModel)
+            .where(ClusterModel.id == cluster_uuid)
+            .where(ClusterModel.dismissed_at.is_(None))
+            .values(dismissed_at=datetime.now(tz=UTC))
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0) > 0
+
+    async def undismiss_cluster(self, cluster_id: str) -> bool:
+        """Clear the dismissed flag on a cluster to resurface it in the naming queue.
+
+        Args:
+            cluster_id: UUID of the cluster to undismiss.
+
+        Returns:
+            True if a cluster was found and undismissed, False otherwise.
+        """
+        cluster_uuid = _coerce_uuid(cluster_id)
+        if cluster_uuid is None:
+            return False
+        stmt = (
+            update(ClusterModel)
+            .where(ClusterModel.id == cluster_uuid)
+            .where(ClusterModel.dismissed_at.is_not(None))
+            .values(dismissed_at=None)
+        )
+        result = await self._session.execute(stmt)
+        await self._session.flush()
+        return int(getattr(result, "rowcount", 0) or 0) > 0
 
     async def get_labeled_with_representatives(
         self,
@@ -191,11 +375,13 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         This is a PostgreSQL-specific operation. SQLite and other databases
         will silently skip this operation.
         """
-        with contextlib.suppress(Exception):
+        try:
             # Use CONCURRENTLY if possible, but it requires a unique index on the MV
             # For now, standard refresh.
             # SQLite and other databases don't support REFRESH MATERIALIZED VIEW
             await self._session.execute(text("REFRESH MATERIALIZED VIEW mv_identity_cluster_centroids"))
+        except Exception:
+            logger.warning("Failed to refresh centroid materialized view", exc_info=True)
 
     async def refresh_centroids_view_concurrent(self) -> None:
         """Refresh the materialized view concurrently.
@@ -203,10 +389,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         This allows reads to continue during the refresh and avoids locking the table.
         It requires a unique index on the MV, which is created in the migration.
         """
-        with contextlib.suppress(Exception):
+        try:
             # Use CONCURRENTLY for background scheduled refreshes
             # This is critical to avoid locking the MV during updates
             await self._session.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
+        except Exception:
+            logger.warning("Failed to refresh centroid materialized view concurrently", exc_info=True)
 
     async def get_unclustered(self, tenant_id: str):
         """Return media identities not yet assigned to any cluster."""
@@ -504,6 +692,27 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         result = await self._session.execute(stmt)
         return [(row[0], float(row[1])) for row in result.all()]
 
+    async def get_roster_entry_name(self, roster_id: str) -> str | None:
+        """Resolve a roster entry UUID to display name."""
+        roster_uuid = _coerce_uuid(roster_id)
+        if roster_uuid is None:
+            return None
+
+        try:
+            result = await self._session.execute(
+                text("SELECT name FROM roster_entries WHERE id = :rid LIMIT 1"),
+                {"rid": str(roster_uuid)},
+            )
+        except Exception as exc:
+            logger.debug("Roster lookup failed for roster_id=%s err=%s", roster_id, exc)
+            return None
+
+        roster_name = result.scalar_one_or_none()
+        if roster_name is None:
+            return None
+        normalized = str(roster_name).strip()
+        return normalized or None
+
     async def get_members(self, cluster_id: str) -> list[DomainMember]:
         """Return member records for a cluster."""
         stmt: Select[tuple[IdentityMemberModel]] = select(IdentityMemberModel).where(
@@ -636,10 +845,20 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 rep_state = instance_state(rep)
                 debug_metrics = None
                 media_id = None
+                media_url = None
+                bbox_x = None
+                bbox_y = None
+                bbox_width = None
+                bbox_height = None
                 identity_loaded = "identity" in rep_state.dict and rep.identity is not None
                 if identity_loaded:
                     identity = rep.identity
                     media_id = identity.media_id
+                    media_url = identity.media_url
+                    bbox_x = int(identity.bbox_x) if identity.bbox_x is not None else None
+                    bbox_y = int(identity.bbox_y) if identity.bbox_y is not None else None
+                    bbox_width = int(identity.bbox_width) if identity.bbox_width is not None else None
+                    bbox_height = int(identity.bbox_height) if identity.bbox_height is not None else None
                     logger.debug(
                         "Loaded representative identity pose rep_id=%s identity_id=%s pose_pitch=%s pose_yaw=%s",
                         rep.id,
@@ -691,6 +910,12 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         quality_score=float(rep.quality_score),
                         diversity_score=float(rep.diversity_score) if rep.diversity_score else None,
                         media_id=media_id,
+                        media_url=media_url,
+                        bbox_x=bbox_x,
+                        bbox_y=bbox_y,
+                        bbox_width=bbox_width,
+                        bbox_height=bbox_height,
+                        thumbnail_url=identity.thumbnail_url if identity_loaded else None,
                         is_user_selected=bool(rep.is_user_selected),
                         is_provisional=bool(rep.is_provisional),
                         debug_metrics=debug_metrics,
@@ -714,6 +939,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             else None,
             clustering_algorithm=model.clustering_algorithm,
             user_confirmed=model.user_confirmed,
+            dismissed_at=model.dismissed_at if isinstance(model.dismissed_at, datetime) else None,
             representatives=domain_reps,
             centroid=centroid,
         )
@@ -730,6 +956,9 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             bbox_height=int(model.bbox_height),
             bbox_x=int(model.bbox_x),
             bbox_y=int(model.bbox_y),
+            pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
+            pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
+            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
             image_phash=model.image_phash,
             cluster_id=cluster_id,
         )
@@ -750,44 +979,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             model_kwargs["representative_identity_id"] = _coerce_uuid(cluster.representative_identity_id)
         if cluster.created_at:
             model_kwargs["created_at"] = cluster.created_at
+        if cluster.dismissed_at:
+            model_kwargs["dismissed_at"] = cluster.dismissed_at
 
         return ClusterModel(**model_kwargs)
-
-
-def _coerce_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
-    """Convert str/UUID to uuid.UUID, generating a stable UUID for short IDs."""
-    if value is None:
-        return None
-    if isinstance(value, uuid.UUID):
-        return value
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, AttributeError):
-        # Fall back to a deterministic UUID so short IDs remain storable.
-        return uuid.uuid5(uuid.NAMESPACE_URL, str(value))
-
-
-async def _ensure_media_identity(session: AsyncSession, tenant_id: uuid.UUID, identity_id: uuid.UUID | None) -> None:
-    """Create a placeholder media identity when assigning representatives."""
-    if identity_id is None:
-        return
-
-    existing = await session.get(MediaIdentity, identity_id)
-    if existing:
-        return
-
-    media = MediaIdentity(
-        id=identity_id,
-        tenant_id=tenant_id,
-        media_id=abs(identity_id.int) % 1_000_000,
-        media_url="http://example.test/media.jpg",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=1.0,
-        embedding=[0.0] * _DB_SETTINGS.pgvector_dimension,
-    )
-    session.add(media)
-    await session.flush()
-    await session.refresh(media)

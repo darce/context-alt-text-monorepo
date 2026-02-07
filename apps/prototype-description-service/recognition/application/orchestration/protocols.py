@@ -33,21 +33,25 @@ class SuggestionServiceProtocol(Protocol):
         """Update similarity/confidence metrics for an existing suggestion."""
         ...
 
+    async def get_by_cluster(self, cluster_id: str) -> list[AssignmentSuggestion]:
+        """List suggestions for a cluster scoped to the current tenant."""
+        ...
+
     async def resolve_for_identity(
         self,
         identity_id: str,
         cluster_id: str,
         resolution: str,
-        source: str = "manual_curation",
-    ) -> bool:
+    ) -> int:
         """Accept or reject a single suggestion for an identity."""
         ...
 
     async def resolve_for_identity_exclusive(
         self,
+        *,
         identity_id: str,
         accepted_cluster_id: str,
-        reason: str = "manual_assign",
+        reason: str | None = None,
     ) -> int:
         """Accept one assignment and reject all other suggestions for an identity."""
         ...

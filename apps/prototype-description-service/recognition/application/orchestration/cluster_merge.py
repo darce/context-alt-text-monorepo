@@ -7,7 +7,6 @@ out of the main ClusterService façade.
 
 from __future__ import annotations
 
-import contextlib
 import logging
 import uuid
 from typing import cast
@@ -26,6 +25,7 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, MemberRepository
+from recognition.domain.suggestion import SuggestionStatus
 from recognition.observability import ClusteringLogger
 from recognition.shared.similarity import normalize_face_embedding
 from recognition.shared.tenant import coerce_tenant_uuid
@@ -66,17 +66,12 @@ async def post_merge_retry_matching(
     processed_identity_ids: set[str] = set()
 
     # 1) Re-evaluate pending suggestions for the target cluster.
-    get_by_cluster = getattr(suggestion_service, "get_by_cluster", None)
-    suggestions_for_cluster = []
-    if callable(get_by_cluster):
-        suggestions_for_cluster = await get_by_cluster(target_cluster_id)
+    suggestions_for_cluster = await suggestion_service.get_by_cluster(target_cluster_id)
 
-    pending_suggestions = [
-        s for s in suggestions_for_cluster if getattr(getattr(s, "status", None), "value", None) == "pending"
-    ]
+    pending_suggestions = [s for s in suggestions_for_cluster if s.status == SuggestionStatus.PENDING]
 
     for suggestion in pending_suggestions:
-        identity_id = getattr(suggestion, "identity_id", None)
+        identity_id = suggestion.identity_id
         if not identity_id or identity_id in processed_identity_ids:
             continue
         processed_identity_ids.add(identity_id)
@@ -85,9 +80,7 @@ async def post_merge_retry_matching(
         existing_members = await member_repo.get_by_identity_id(identity_id)
         if existing_members:
             resolution = "accepted" if any(m.cluster_id == target_cluster_id for m in existing_members) else "rejected"
-            resolve_for_identity = getattr(suggestion_service, "resolve_for_identity", None)
-            if callable(resolve_for_identity):
-                await resolve_for_identity(identity_id, target_cluster_id, resolution=resolution)
+            await suggestion_service.resolve_for_identity(identity_id, target_cluster_id, resolution=resolution)
             continue
 
         try:
@@ -109,6 +102,10 @@ async def post_merge_retry_matching(
             bbox_height=int(model.bbox_height),
             bbox_x=int(model.bbox_x),
             bbox_y=int(model.bbox_y),
+            pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
+            pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
+            pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
+            image_phash=model.image_phash,
         )
         face_vec = normalize_face_embedding(identity.embedding)
         best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
@@ -125,19 +122,17 @@ async def post_merge_retry_matching(
         if best_sim >= gate.settings.similarity_threshold:
             evaluated += 1
             decision = await gate.evaluate(candidate)
-            suggestion_confidence = getattr(decision, "suggestion_confidence", None)
+            suggestion_confidence = decision.suggestion_confidence
             if suggestion_confidence is not None:
                 confidence_score = float(suggestion_confidence)
 
         # Always rescore the existing pending suggestion so the UI % stays current.
-        update_scores = getattr(suggestion_service, "update_scores", None)
-        if callable(update_scores):
-            await update_scores(
-                suggestion.id,
-                representative_similarity=best_sim,
-                member_similarity=best_sim,
-                confidence_score=confidence_score,
-            )
+        await suggestion_service.update_scores(
+            suggestion.id,
+            representative_similarity=best_sim,
+            member_similarity=best_sim,
+            confidence_score=confidence_score,
+        )
 
         if decision is None:
             continue
@@ -145,9 +140,7 @@ async def post_merge_retry_matching(
         if decision.outcome == AssignmentOutcome.ACCEPT:
             await assignment_writer.persist_assignment(decision)
             accepted += 1
-            resolve_for_identity = getattr(suggestion_service, "resolve_for_identity", None)
-            if callable(resolve_for_identity):
-                await resolve_for_identity(identity.id, target_cluster_id, resolution="accepted")
+            await suggestion_service.resolve_for_identity(identity.id, target_cluster_id, resolution="accepted")
         elif decision.outcome == AssignmentOutcome.SUGGEST:
             suggested += 1
 
@@ -184,6 +177,10 @@ async def post_merge_retry_matching(
                 bbox_height=int(model.bbox_height),
                 bbox_x=int(model.bbox_x),
                 bbox_y=int(model.bbox_y),
+                pose_pitch=float(model.pose_pitch) if model.pose_pitch is not None else None,
+                pose_yaw=float(model.pose_yaw) if model.pose_yaw is not None else None,
+                pose_roll=float(model.pose_roll) if model.pose_roll is not None else None,
+                image_phash=model.image_phash,
             )
             face_vec = normalize_face_embedding(identity.embedding)
             best_sim = max(float(np.dot(face_vec, rep_vec)) for rep_vec in rep_face_vecs)
@@ -263,6 +260,13 @@ async def merge_cluster(
     updated: IdentityCluster = await cluster_repo.update(target)
 
     # Source cluster deletion moved to end of function to prevent early commit failures
+    #
+    # In deferred mode, source deletion happens in a queued curation job. Until that
+    # job runs, keep source hidden from top-unlabeled queues by zeroing its count now.
+    # Otherwise stale identity_count can surface an empty cluster card in the UI.
+    if defer_recompute:
+        source.identity_count = 0
+        await cluster_repo.update(source)
 
     # [Optimized] Constraint creation deferred/removed from sync path.
     # Logic for MUST_LINK creation should be moved to curation_job if needed.
@@ -273,17 +277,22 @@ async def merge_cluster(
         await assignment_writer.refresh_centroids_view()
 
         # Resolve any pending suggestions for identities moved into the target cluster
-        if suggestion_service:
-            with contextlib.suppress(Exception):
-                members = await member_repo.get_by_cluster(target_cluster_id)
-                for member in members:
-                    # We only need to check identities that were recently moved,
-                    # but resolve_for_identity_exclusive already checks for pending status.
-                    await suggestion_service.resolve_for_identity_exclusive(
-                        identity_id=str(member.identity_id),
-                        accepted_cluster_id=target_cluster_id,
-                        reason="manual_merge",
-                    )
+        try:
+            members = await member_repo.get_by_cluster(target_cluster_id)
+            for member in members:
+                # We only need to check identities that were recently moved,
+                # but resolve_for_identity_exclusive already checks for pending status.
+                await suggestion_service.resolve_for_identity_exclusive(
+                    identity_id=str(member.identity_id),
+                    accepted_cluster_id=target_cluster_id,
+                    reason="manual_merge",
+                )
+        except Exception:
+            logger.warning(
+                "Failed to resolve pending suggestions after merge for target_cluster_id=%s",
+                target_cluster_id,
+                exc_info=True,
+            )
 
     # Broadcast merge event
     broadcaster = get_event_broadcaster()
@@ -300,11 +309,17 @@ async def merge_cluster(
     if not defer_recompute:
         # Delete source cluster LAST, after all recomputations and logging are complete.
         # This avoids "Cluster not found" 404s during session flush if other operations reference it.
-        delete_by_cluster = getattr(merge_suggestion_service, "delete_by_cluster", None)
-        if callable(delete_by_cluster):
-            with contextlib.suppress(Exception):
-                await delete_by_cluster(tenant_id, source_cluster_id)
-                await delete_by_cluster(tenant_id, target_cluster_id)
+        if merge_suggestion_service is not None:
+            try:
+                await merge_suggestion_service.delete_by_cluster(tenant_id, source_cluster_id)
+                await merge_suggestion_service.delete_by_cluster(tenant_id, target_cluster_id)
+            except Exception:
+                logger.warning(
+                    "Failed to delete merge suggestions for source_cluster_id=%s target_cluster_id=%s",
+                    source_cluster_id,
+                    target_cluster_id,
+                    exc_info=True,
+                )
         await cluster_repo.delete(source_cluster_id)
 
         # Ensure identity_count reflects reassignment via full count if checked immediately

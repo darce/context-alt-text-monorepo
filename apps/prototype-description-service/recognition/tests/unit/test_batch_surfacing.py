@@ -9,11 +9,14 @@ from typing import Any
 import numpy as np
 import pytest
 
+from recognition.application.assignment import AssignmentDecision, AssignmentOutcome
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import SuggestionCreateData
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+
+TENANT_ID = "00000000-0000-0000-0000-000000000001"
 
 
 class StubSuggestionRepository:
@@ -47,7 +50,7 @@ def _make_identity(identity_id: str) -> MediaIdentity:
     embedding = np.array([1.0, 0.0, 0.0], dtype=np.float32)
     return MediaIdentity(
         id=identity_id,
-        tenant_id="tenant-1",
+        tenant_id=TENANT_ID,
         media_id="media-1",
         embedding=embedding,
         confidence=0.99,
@@ -69,7 +72,7 @@ async def test_batch_surfacing_groups_by_cluster() -> None:
 
     service = SuggestionRefreshService(
         repository=suggestion_repo,
-        tenant_id="tenant-1",
+        tenant_id=TENANT_ID,
         cluster_repository=cluster_repo,
         session=object(),
         settings=settings,
@@ -100,7 +103,7 @@ async def test_batch_surfacing_handles_empty_clusters() -> None:
 
     service = SuggestionRefreshService(
         repository=suggestion_repo,
-        tenant_id="tenant-1",
+        tenant_id=TENANT_ID,
         cluster_repository=cluster_repo,
         session=object(),
         settings=settings,
@@ -138,7 +141,7 @@ async def test_batch_surfacing_handles_large_cluster_sets() -> None:
 
     service = SuggestionRefreshService(
         repository=suggestion_repo,
-        tenant_id="tenant-1",
+        tenant_id=TENANT_ID,
         cluster_repository=cluster_repo,
         session=object(),
         settings=settings,
@@ -155,3 +158,81 @@ async def test_batch_surfacing_handles_large_cluster_sets() -> None:
     assert created == 100
     assert len(suggestion_repo.payloads) == 100
     assert cluster_repo.calls == [cluster_ids]
+
+
+@pytest.mark.asyncio
+async def test_batch_surfacing_creates_suggestions_when_gate_accepts() -> None:
+    identity = _make_identity("identity-accept")
+    cluster_repo = StubClusterRepository({"cluster-2": [identity]})
+    suggestion_repo = StubSuggestionRepository()
+    settings = ClusteringSettings(
+        similarity_threshold=0.0,
+        suggestion_floor=0.0,
+        suggestion_ceiling=1.1,
+    )
+
+    class AcceptGate:
+        async def evaluate(self, candidate):  # noqa: ANN001
+            return AssignmentDecision(
+                outcome=AssignmentOutcome.ACCEPT,
+                candidate=candidate,
+                checks_passed=["confidence_check"],
+                checks_failed=[],
+            )
+
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=TENANT_ID,
+        cluster_repository=cluster_repo,
+        session=object(),
+        settings=settings,
+        gate=AcceptGate(),
+    )
+
+    representatives_by_cluster: dict[str, Any] = {"cluster-1": [identity.embedding]}
+    created = await service.surface_for_newly_labeled_cluster(
+        "cluster-1",
+        cluster_label="Test Label",
+        candidate_cluster_ids=["cluster-2"],
+        representatives_by_cluster=representatives_by_cluster,
+    )
+
+    assert created == 1
+    assert len(suggestion_repo.payloads) == 1
+
+
+@pytest.mark.asyncio
+async def test_batch_surfacing_dedupes_same_identity_across_clusters() -> None:
+    repeated_identity = _make_identity("identity-repeat")
+    cluster_repo = StubClusterRepository(
+        {
+            "cluster-2": [repeated_identity],
+            "cluster-3": [repeated_identity],
+        }
+    )
+    suggestion_repo = StubSuggestionRepository()
+    settings = ClusteringSettings(
+        similarity_threshold=0.0,
+        suggestion_floor=0.0,
+        suggestion_ceiling=1.1,
+    )
+
+    service = SuggestionRefreshService(
+        repository=suggestion_repo,
+        tenant_id=TENANT_ID,
+        cluster_repository=cluster_repo,
+        session=object(),
+        settings=settings,
+    )
+
+    representatives_by_cluster: dict[str, Any] = {"cluster-1": [repeated_identity.embedding]}
+    created = await service.surface_for_newly_labeled_cluster(
+        "cluster-1",
+        cluster_label="Test Label",
+        candidate_cluster_ids=["cluster-2", "cluster-3", "cluster-2"],
+        representatives_by_cluster=representatives_by_cluster,
+    )
+
+    assert created == 1
+    assert len(suggestion_repo.payloads) == 1
+    assert cluster_repo.calls == [["cluster-2", "cluster-3"]]

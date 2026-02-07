@@ -9,6 +9,8 @@ from fastapi import FastAPI, Request, status
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import IntegrityError
 
+from recognition.domain.repositories import ClusterNotFoundError
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,11 +21,6 @@ class RecognitionError(Exception):
         super().__init__(message)
         self.message = message
         self.status_code = status_code
-
-
-class ClusterNotFoundError(RecognitionError):
-    def __init__(self, message: str = "Cluster not found") -> None:
-        super().__init__(message, status_code=404)
 
 
 class TenantIsolationError(RecognitionError):
@@ -58,6 +55,20 @@ async def generic_exception_handler(request: Request, exc: Exception) -> JSONRes
         status_code=500,
         content={
             "error": exc.__class__.__name__,
+            "message": str(exc),
+            "path": str(request.url),
+            "trace_id": trace_id,
+        },
+    )
+
+
+async def cluster_not_found_exception_handler(request: Request, exc: ClusterNotFoundError) -> JSONResponse:
+    """Translate domain cluster-not-found errors to HTTP 404."""
+    trace_id = request.headers.get("X-Request-ID") or f"req-{uuid.uuid4()}"
+    return JSONResponse(
+        status_code=status.HTTP_404_NOT_FOUND,
+        content={
+            "error": "ClusterNotFoundError",
             "message": str(exc),
             "path": str(request.url),
             "trace_id": trace_id,
@@ -103,6 +114,7 @@ async def integrity_exception_handler(request: Request, exc: IntegrityError) -> 
 
 def register_exception_handlers(app: FastAPI) -> None:
     """Attach exception handlers to the FastAPI app."""
+    app.add_exception_handler(ClusterNotFoundError, cluster_not_found_exception_handler)
     app.add_exception_handler(RecognitionError, recognition_exception_handler)
     app.add_exception_handler(IntegrityError, integrity_exception_handler)
     app.add_exception_handler(Exception, generic_exception_handler)
@@ -110,10 +122,10 @@ def register_exception_handlers(app: FastAPI) -> None:
 
 __all__ = [
     "RecognitionError",
-    "ClusterNotFoundError",
     "TenantIsolationError",
     "ValidationError",
     "recognition_exception_handler",
     "generic_exception_handler",
+    "cluster_not_found_exception_handler",
     "register_exception_handlers",
 ]

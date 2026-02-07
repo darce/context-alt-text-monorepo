@@ -5,14 +5,14 @@ Check that rejects candidates violating user constraints.
 from __future__ import annotations
 
 from recognition.application.assignment.candidate import AssignmentCandidate
-from recognition.application.assignment.checks.base import AssignmentCheck, CheckResult
+from recognition.application.assignment.checks.base import AssignmentCheck, CheckFailureKind, CheckResult
 from recognition.domain.repositories import IdentityConstraintRepository, MemberRepository
 
 
 class ConstraintCheck(AssignmentCheck):
     """Reject candidates that violate pairwise constraints."""
 
-    name = "ConstraintCheck"
+    name = "constraint_check"
 
     def __init__(
         self,
@@ -47,6 +47,7 @@ class ConstraintCheck(AssignmentCheck):
                 is_fatal=True,
                 should_reject=True,
                 reason="Constraint violation: CANNOT_LINK",
+                failure_kind=CheckFailureKind.CONSTRAINT,
             )
 
         return CheckResult(passed=True)

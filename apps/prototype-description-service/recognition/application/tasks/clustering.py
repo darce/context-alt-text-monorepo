@@ -74,9 +74,8 @@ async def run_background_surface_suggestions(
             chunk_target = 1000
             async with session_factory() as session:
                 cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
-                refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
-                surface_fn = getattr(refresh_service, "surface_for_newly_labeled_cluster", None)
-                if not callable(surface_fn):
+                refresh_service = cluster_service.suggestion_refresh_service
+                if refresh_service is None:
                     logger.warning(
                         "[suggestions] Background surfacing: surface_fn not available for cluster_id=%s",
                         cluster_id,
@@ -144,20 +143,22 @@ async def run_background_surface_suggestions(
                 _t_chunk_start = _time.perf_counter()
                 async with session_factory() as session:
                     cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
-                    refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
-                    surface_fn = getattr(refresh_service, "surface_for_newly_labeled_cluster", None)
-                    if not callable(surface_fn):
+                    refresh_service = cluster_service.suggestion_refresh_service
+                    if refresh_service is None:
                         logger.warning(
                             "[suggestions] Background surfacing: surface_fn not available for cluster_id=%s",
                             cluster_id,
                         )
                         break
-                    chunk_surfaced = await surface_fn(
+                    chunk_surfaced = await refresh_service.surface_for_newly_labeled_cluster(
                         cluster_id,
                         cluster_label=cluster_label,
                         candidate_cluster_ids=chunk_ids,
                         representatives_by_cluster=labeled_reps,
                     )
+                    # Background sessions are not wrapped by request-scoped commit middleware.
+                    # Explicit commit ensures surfaced suggestions are persisted.
+                    await session.commit()
                     total_surfaced += chunk_surfaced
                 chunk_elapsed = _time.perf_counter() - _t_chunk_start
                 logger.info(
@@ -202,9 +203,10 @@ async def run_background_refresh_suggestions(
     try:
         async with session_factory() as session:
             cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
-            refresh_service = getattr(cluster_service, "suggestion_refresh_service", None)
+            refresh_service = cluster_service.suggestion_refresh_service
             if refresh_service is not None:
                 await refresh_service.refresh_for_cluster(cluster_id)
+                await session.commit()
     except Exception as exc:
         logger.exception(
             "Background suggestion refresh failed for cluster %s: %s",

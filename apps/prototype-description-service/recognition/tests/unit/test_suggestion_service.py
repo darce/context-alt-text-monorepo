@@ -13,7 +13,13 @@ from recognition.application.suggestions.service import SuggestionService
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
 from recognition.domain.repositories import ClusterRepository, SuggestionRepository
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion import (
+    AssignmentSuggestion,
+    SuggestedLabel,
+    SuggestedLabelSource,
+    SuggestionStatus,
+)
+from recognition.interface_adapters.schemas.suggestion_details import SuggestionDetails
 
 
 def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:
@@ -36,7 +42,8 @@ def _make_candidate(tenant_id: str, cluster_id: str) -> AssignmentCandidate:
 
 
 @pytest.mark.asyncio
-async def test_create_persists_for_unlabeled_clusters() -> None:
+async def test_create_returns_none_for_unlabeled_clusters() -> None:
+    """v4.12.0: Unlabeled clusters are not eligible for suggestions."""
     tenant_id = "tenant-1"
     cluster_id = "cluster-1"
 
@@ -55,18 +62,19 @@ async def test_create_persists_for_unlabeled_clusters() -> None:
     cluster_repo.get_by_id.return_value = IdentityCluster(
         id=cluster_id,
         tenant_id=tenant_id,
-        label=None,
+        label=None,  # Unlabeled
         is_labeled=False,
         identity_count=1,
-        user_confirmed=False,
+        user_confirmed=False,  # Not confirmed
         created_at=None,
     )
 
     service = SuggestionService(suggestion_repo, tenant_id=tenant_id, cluster_repository=cluster_repo)
     result = await service.create(_make_candidate(tenant_id, cluster_id))
 
-    assert result is suggestion_repo.create.return_value
-    suggestion_repo.create.assert_awaited_once()
+    # v4.12.0: confirmed-only eligibility rejects unlabeled/unconfirmed clusters
+    assert result is None
+    suggestion_repo.create.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -185,10 +193,10 @@ async def test_reject_creates_blocks_and_constraints() -> None:
 
     assert result == suggestion
     suggestion_repo.update_status.assert_awaited_once_with(tenant_id, suggestion_id, SuggestionStatus.REJECTED)
-    block_repo.block.assert_awaited_once_with(
+    block_repo.add_block.assert_awaited_once_with(
         tenant_id=tenant_id,
         identity_id=identity_id,
-        cluster_id=cluster_id,
+        blocked_cluster_id=cluster_id,
         reason="manual_reject",
     )
     constraint_repo.create_cannot_link.assert_awaited_once_with(
@@ -197,3 +205,65 @@ async def test_reject_creates_blocks_and_constraints() -> None:
         identity_b=rep_identity_id,
         source="manual_reject",
     )
+
+
+@pytest.mark.asyncio
+async def test_list_pending_enriches_suggested_label_from_inference(monkeypatch: pytest.MonkeyPatch) -> None:
+    tenant_id = "tenant-1"
+    suggestion_repo = AsyncMock(spec=SuggestionRepository)
+    suggestion_repo.list_pending_with_details.return_value = [
+        SuggestionDetails(
+            id="s-1",
+            identity_id="identity-1",
+            cluster_id="cluster-1",
+            representative_similarity=0.61,
+            member_similarity=0.61,
+            status="pending",
+            cluster_label=None,
+        )
+    ]
+
+    infer_mock = AsyncMock(
+        return_value=SuggestedLabel(
+            label="Maria Correonero",
+            source=SuggestedLabelSource.SIMILAR_CLUSTER,
+            confidence=0.68,
+        )
+    )
+    monkeypatch.setattr("recognition.application.suggestions.service.infer_suggested_label", infer_mock)
+
+    service = SuggestionService(suggestion_repo, tenant_id=tenant_id, session=AsyncMock())
+    pending = await service.list_pending(limit=25, offset=0)
+
+    assert len(pending) == 1
+    assert pending[0].suggested_label == "Maria Correonero"
+    assert pending[0].suggested_label_source == SuggestedLabelSource.SIMILAR_CLUSTER
+    assert pending[0].suggested_label_confidence == 0.68
+    infer_mock.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_list_pending_skips_inference_for_labeled_clusters(monkeypatch: pytest.MonkeyPatch) -> None:
+    tenant_id = "tenant-1"
+    suggestion_repo = AsyncMock(spec=SuggestionRepository)
+    suggestion_repo.list_pending_with_details.return_value = [
+        SuggestionDetails(
+            id="s-1",
+            identity_id="identity-1",
+            cluster_id="cluster-1",
+            representative_similarity=0.78,
+            member_similarity=0.78,
+            status="pending",
+            cluster_label="Known Person",
+        )
+    ]
+
+    infer_mock = AsyncMock()
+    monkeypatch.setattr("recognition.application.suggestions.service.infer_suggested_label", infer_mock)
+
+    service = SuggestionService(suggestion_repo, tenant_id=tenant_id, session=AsyncMock())
+    pending = await service.list_pending(limit=10, offset=0)
+
+    assert len(pending) == 1
+    assert pending[0].cluster_label == "Known Person"
+    infer_mock.assert_not_awaited()

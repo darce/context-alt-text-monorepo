@@ -17,12 +17,10 @@ def test_list_suggestions_empty_by_default(api_client, tenant_id) -> None:
     )
 
     assert resp.status_code == 200
-    assert resp.status_code == 200
     assert resp.json() == {"matches": []}
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip("scaffold")
 async def test_suggestion_response_has_suggested_label_fields(
     api_client, tenant_id, fake_suggestion_service, fake_cluster_service
 ) -> None:
@@ -76,7 +74,7 @@ async def test_suggestion_response_has_suggested_label_fields(
 
 @pytest.mark.asyncio
 async def test_accept_and_reject_suggestion(
-    api_client, tenant_id, fake_suggestion_service, fake_cluster_service
+    api_client, tenant_id, fake_suggestion_service, fake_cluster_service, fake_suggestion_refresh_service
 ) -> None:
     identity_id = str(uuid.uuid4())
     cluster_id = str(uuid.uuid4())
@@ -100,6 +98,7 @@ async def test_accept_and_reject_suggestion(
     )
     assert accept_resp.status_code == 200
     assert accept_resp.json()["status"] == "accepted"
+    assert fake_suggestion_refresh_service.refresh_calls == []
 
     second_cluster_id = str(uuid.uuid4())
     fake_cluster_service.clusters.append(

@@ -18,12 +18,10 @@ from recognition.domain.identity import MediaIdentity
 from recognition.domain.job import Job
 from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.representative import ClusterRepresentative
-from recognition.domain.suggestion import (
-    AssignmentSuggestion,
-    MergeSuggestion,
+from recognition.domain.suggestion import AssignmentSuggestion, MergeSuggestion, SuggestionStatus
+from recognition.interface_adapters.schemas.suggestion_details import (
     MergeSuggestionDetails,
     SuggestionDetails,
-    SuggestionStatus,
 )
 
 if TYPE_CHECKING:
@@ -52,6 +50,10 @@ class MemberData:
 
 class ClusterNotFoundError(Exception):
     """Raised when a requested cluster is not found."""
+
+    def __init__(self, cluster_id: str) -> None:
+        super().__init__(f"Cluster not found: {cluster_id}")
+        self.cluster_id = cluster_id
 
 
 class ClusterRepository(Protocol):
@@ -129,6 +131,10 @@ class ClusterRepository(Protocol):
         """Fetch identities that are members of a cluster."""
         ...
 
+    async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[Any, float]]:
+        """Fetch cluster members and similarity scores for review UIs."""
+        ...
+
     async def get_member_identities_for_clusters(
         self, cluster_ids: Sequence[str]
     ) -> Mapping[str, Sequence[MediaIdentity]]:
@@ -141,6 +147,10 @@ class ClusterRepository(Protocol):
 
     async def get_members(self, cluster_id: str) -> list[IdentityMember]:
         """Fetch member records for a cluster."""
+        ...
+
+    async def get_roster_entry_name(self, roster_id: str) -> str | None:
+        """Resolve a roster entry ID to its display name."""
         ...
 
     async def get_singleton_identities(
@@ -186,15 +196,39 @@ class ClusterRepository(Protocol):
         self,
         tenant_id: str,
         limit: int = 10,
+        min_identity_count: int = 2,
     ) -> list[IdentityCluster]:
         """Get unlabeled clusters sorted by identity_count descending.
 
         Args:
             tenant_id: Tenant scope.
             limit: Maximum clusters to return.
+            min_identity_count: Minimum identity count (default 2 to skip singletons).
 
         Returns:
             Unlabeled clusters with highest member counts.
+        """
+        ...
+
+    async def dismiss_cluster(self, cluster_id: str) -> bool:
+        """Mark a cluster as dismissed from the naming queue.
+
+        Args:
+            cluster_id: UUID of the cluster to dismiss.
+
+        Returns:
+            True if a cluster was found and dismissed, False otherwise.
+        """
+        ...
+
+    async def undismiss_cluster(self, cluster_id: str) -> bool:
+        """Clear the dismissed flag on a cluster.
+
+        Args:
+            cluster_id: UUID of the cluster to undismiss.
+
+        Returns:
+            True if a cluster was found and undismissed, False otherwise.
         """
         ...
 
@@ -319,19 +353,6 @@ class IdentityClusterBlock:
 
 class IdentityClusterBlockRepository(Protocol):
     """Abstract interface for identity-cluster block persistence."""
-
-    async def block(
-        self,
-        *,
-        tenant_id: str,
-        identity_id: str,
-        cluster_id: str,
-        reason: str | None = None,
-        created_by_user_id: int | None = None,
-        expires_at: datetime | None = None,
-    ) -> IdentityClusterBlock:
-        """Persist a new block preventing auto-assignment."""
-        ...
 
     async def add_block(
         self,

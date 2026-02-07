@@ -12,6 +12,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, R
 
 from db.session import async_session_factory
 from recognition.application.tasks.clustering import run_background_surface_suggestions
+from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
 from recognition.domain.job import JobType, SplitJobPayload
 from recognition.domain.suggestion import SuggestionRefreshReason
@@ -20,7 +21,7 @@ from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
     get_cluster_repository,
     get_cluster_service_builder,
-    get_job_service,
+    get_persisted_job_service,
     get_session,
     get_suggestion_refresh_service,
     get_suggestion_service,
@@ -68,20 +69,15 @@ async def create_clustering_job(
     request: ClusteringJobRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    job_service=Depends(get_persisted_job_service),
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
-    job_service = await get_job_service(
-        session=session,
-        tenant_id=request.tenant_id,
-        cluster_service_builder=lambda tid: cluster_service,
-        scan_service_builder=None,
-    )
-
+    cluster_service = await cluster_service_builder(request.tenant_id)
     if request.mode == "sync":
         try:
             result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
@@ -115,12 +111,13 @@ async def recover_orphan_identities(
     request: RecoverOrphansRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> OrphanRecoveryResponse:
     """Re-cluster any orphaned identities for a tenant."""
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    cluster_service = await cluster_service_builder(request.tenant_id)
     try:
         result = await cluster_service.cluster_unclustered_identities(request.tenant_id)
     except Exception as exc:
@@ -163,34 +160,128 @@ async def list_clusters(
 async def get_top_unlabeled_clusters(
     tenant_id: str = Depends(get_tenant_id),
     limit: int = Query(10),
+    min_identity_count: int = Query(2, ge=1, description="Minimum identity count (default 2 to skip singletons)"),
     repo=Depends(get_cluster_repository),
+    session=Depends(get_session),
 ) -> list[ClusterResponse]:
     """Fetch top unlabeled clusters by member count for bootstrapping suggestions.
 
     Includes cluster representatives with face thumbnails for display in the
     suggestion panel.
     """
-    clusters = await repo.get_top_unlabeled(tenant_id, limit=limit)
-    return [
-        ClusterResponse(
-            id=str(c.id),
-            tenant_id=tenant_id,
-            label=c.label,
-            is_labeled=c.is_labeled,
-            is_auto_label=c.is_auto_label,
-            identity_count=c.identity_count,
-            user_confirmed=c.user_confirmed,
-            representatives=[
-                RepresentativeResponse(
-                    id=str(rep.id),
-                    media_id=rep.media_id or 0,
-                    is_pinned=rep.is_user_selected,
+    clusters = await repo.get_top_unlabeled(
+        tenant_id,
+        limit=limit,
+        min_identity_count=min_identity_count,
+    )
+    allowed_sources = {"identity", "roster", "similar_cluster", "none"}
+    from recognition.application.suggestions.label_inference import infer_suggested_label
+
+    responses: list[ClusterResponse] = []
+    clustering_settings = get_recognition_settings().clustering
+    for c in clusters:
+        suggested_label = getattr(c, "suggested_label", None)
+
+        raw_source = getattr(c, "suggested_label_source", None)
+        if hasattr(raw_source, "value"):
+            raw_source = raw_source.value
+        suggested_label_source = raw_source if isinstance(raw_source, str) and raw_source in allowed_sources else None
+
+        raw_confidence = getattr(c, "suggested_label_confidence", None)
+        try:
+            suggested_label_confidence = float(raw_confidence) if raw_confidence is not None else None
+        except (TypeError, ValueError):
+            suggested_label_confidence = None
+        raw_target_cluster_id = getattr(c, "suggested_target_cluster_id", None)
+        suggested_target_cluster_id = str(raw_target_cluster_id) if raw_target_cluster_id else None
+
+        if not suggested_label and not c.user_confirmed:
+            try:
+                inferred = await infer_suggested_label(
+                    tenant_id=tenant_id,
+                    cluster_id=str(c.id),
+                    session=session,
+                    cluster_repository=repo,
+                    settings=clustering_settings,
                 )
-                for rep in (c.representatives or [])
-            ],
+                if inferred:
+                    suggested_label = inferred.label
+                    suggested_label_source = inferred.source.value if inferred.source else None
+                    suggested_label_confidence = inferred.confidence
+                    suggested_target_cluster_id = inferred.target_cluster_id
+            except Exception as exc:  # pragma: no cover - best-effort enrichment
+                _logger.debug("top-unlabeled label inference failed cluster_id=%s err=%s", c.id, exc)
+
+        responses.append(
+            ClusterResponse(
+                id=str(c.id),
+                tenant_id=tenant_id,
+                label=c.label,
+                is_labeled=c.is_labeled,
+                is_auto_label=c.is_auto_label,
+                identity_count=c.identity_count,
+                user_confirmed=c.user_confirmed,
+                representatives=[
+                    RepresentativeResponse(
+                        id=str(rep.id),
+                        media_id=rep.media_id or 0,
+                        thumb_url=rep.thumbnail_url,
+                        media_url=rep.media_url,
+                        bbox=(
+                            FaceBoxResponse(
+                                x=int(rep.bbox_x),
+                                y=int(rep.bbox_y),
+                                width=int(rep.bbox_width),
+                                height=int(rep.bbox_height),
+                            )
+                            if (
+                                rep.bbox_x is not None
+                                and rep.bbox_y is not None
+                                and rep.bbox_width is not None
+                                and rep.bbox_height is not None
+                            )
+                            else None
+                        ),
+                        is_pinned=rep.is_user_selected,
+                    )
+                    for rep in (c.representatives or [])
+                ],
+                suggested_label=suggested_label,
+                suggested_label_source=suggested_label_source,
+                suggested_label_confidence=suggested_label_confidence,
+                suggested_target_cluster_id=suggested_target_cluster_id,
+            )
         )
-        for c in clusters
-    ]
+
+    return responses
+
+
+@router.post("/clusters/{cluster_id}/dismiss", status_code=204)
+async def dismiss_cluster(
+    cluster_id: str,
+    repo=Depends(get_cluster_repository),
+    auth=Depends(require_write_access),
+) -> Response:
+    """Dismiss a cluster from the naming queue so the next cluster surfaces."""
+    validate_entity_id(cluster_id, field_name="cluster_id")
+    dismissed = await repo.dismiss_cluster(cluster_id)
+    if not dismissed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found or already dismissed")
+    return Response(status_code=204)
+
+
+@router.delete("/clusters/{cluster_id}/dismiss", status_code=204)
+async def undismiss_cluster(
+    cluster_id: str,
+    repo=Depends(get_cluster_repository),
+    auth=Depends(require_write_access),
+) -> Response:
+    """Undo dismissal so the cluster reappears in the naming queue."""
+    validate_entity_id(cluster_id, field_name="cluster_id")
+    undismissed = await repo.undismiss_cluster(cluster_id)
+    if not undismissed:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found or not dismissed")
+    return Response(status_code=204)
 
 
 @router.get("/clusters/{cluster_id}/members", response_model=list[ClusterMemberResponse])
@@ -237,6 +328,7 @@ async def update_cluster(
     background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> ClusterResponse:
     """Update cluster label."""
     import time as _time
@@ -248,7 +340,7 @@ async def update_cluster(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    cluster_service = await cluster_service_builder(request.tenant_id)
     cluster_repo = cluster_service.assignment_writer.cluster_repository
     old_cluster = await cluster_repo.get_by_id(cluster_id)
     was_user_confirmed = old_cluster.user_confirmed if old_cluster else False
@@ -307,6 +399,7 @@ async def create_cluster_for_identity(
     request: CreateClusterForIdentityRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
 ) -> CreateClusterForIdentityResponse:
     """Create a new labeled cluster for a single identity."""
     validate_entity_id(request.identity_id, field_name="identity_id")
@@ -314,7 +407,7 @@ async def create_cluster_for_identity(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    cluster_service = await cluster_service_builder(request.tenant_id)
     try:
         cluster = await cluster_service.create_cluster_for_identity(
             identity_id=request.identity_id,
@@ -345,6 +438,8 @@ async def merge_cluster(
     background_tasks: BackgroundTasks,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    job_service=Depends(get_persisted_job_service),
 ) -> ClusterResponse:
     """Merge cluster into target (by label)."""
     validate_entity_id(cluster_id, field_name="cluster_id")
@@ -352,7 +447,7 @@ async def merge_cluster(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    cluster_service = await cluster_service_builder(request.tenant_id)
     cluster = await cluster_service.merge_cluster(
         source_cluster_id=cluster_id,
         tenant_id=request.tenant_id,
@@ -366,12 +461,6 @@ async def merge_cluster(
     # Queue curation job for deferred work (replaces background tasks).
     # Skip if source == target (merge becomes a metadata update and should not trigger delete).
     if cluster_id.lower() != request.target_cluster_id.lower():
-        job_service = await get_job_service(
-            session=session,
-            tenant_id=request.tenant_id,
-            cluster_service_builder=lambda _tid: cluster_service,
-            scan_service_builder=None,
-        )
         await job_service.queue_curation_followup(
             tenant_id=request.tenant_id,
             cluster_ids=[request.target_cluster_id],
@@ -391,6 +480,9 @@ async def split_cluster(
     response: Response,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    suggestion_refresh_service=Depends(get_suggestion_refresh_service),
+    job_service=Depends(get_persisted_job_service),
 ) -> SplitClusterResponse | AsyncSplitClusterResponse:
     """
     Split a cluster using hierarchical clustering.
@@ -406,7 +498,6 @@ async def split_cluster(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     if request.mode == "async":
-        job_service = await get_job_service(session=session, tenant_id=request.tenant_id)
         payload = SplitJobPayload(
             cluster_id=cluster_id,
             n_clusters=request.n_clusters,
@@ -421,7 +512,17 @@ async def split_cluster(
             message=f"Split operation queued for cluster {cluster_id[:8]}",
         )
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    try:
+        needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
+    except AttributeError:
+        needs_tenant_scoped_refresh = False
+    if needs_tenant_scoped_refresh:
+        suggestion_refresh_service = await get_suggestion_refresh_service(
+            session=session,
+            tenant_id=request.tenant_id,
+        )
+
+    cluster_service = await cluster_service_builder(request.tenant_id)
     new_ids, counts = await cluster_service.split_cluster(
         cluster_id,
         n_clusters=request.n_clusters,
@@ -430,12 +531,6 @@ async def split_cluster(
         recompute=False,
     )
     if new_ids:
-        job_service = await get_job_service(
-            session=session,
-            tenant_id=request.tenant_id,
-            cluster_service_builder=lambda _tid: cluster_service,
-            scan_service_builder=None,
-        )
         await job_service.queue_curation_followup(
             tenant_id=request.tenant_id,
             cluster_ids=[cluster_id, *new_ids],
@@ -451,7 +546,6 @@ async def split_cluster(
     )
 
     # Refresh suggestions for affected clusters
-    suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
     for cid in [cluster_id, *new_ids]:
         await suggestion_refresh_service.refresh_for_cluster(cid)
 
@@ -466,6 +560,10 @@ async def reassign_identity(
     request: ReassignIdentityRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    suggestion_service=Depends(get_suggestion_service),
+    suggestion_refresh_service=Depends(get_suggestion_refresh_service),
+    job_service=Depends(get_persisted_job_service),
 ) -> ReassignIdentityResponse:
     """Reassign an identity to a different cluster.
 
@@ -483,7 +581,26 @@ async def reassign_identity(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    try:
+        needs_tenant_scoped_suggestion_service = not suggestion_service._tenant_id
+    except AttributeError:
+        needs_tenant_scoped_suggestion_service = False
+    if needs_tenant_scoped_suggestion_service:
+        suggestion_service = await get_suggestion_service(
+            session=session,
+            tenant_id=request.tenant_id,
+        )
+    try:
+        needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
+    except AttributeError:
+        needs_tenant_scoped_refresh = False
+    if needs_tenant_scoped_refresh:
+        suggestion_refresh_service = await get_suggestion_refresh_service(
+            session=session,
+            tenant_id=request.tenant_id,
+        )
+
+    cluster_service = await cluster_service_builder(request.tenant_id)
 
     # Get identity's current cluster (if any)
     source_cluster_id = await cluster_service.get_identity_cluster_id(request.identity_id)
@@ -509,21 +626,11 @@ async def reassign_identity(
             )
 
         # Resolve any pending suggestion for this identity+cluster as accepted
-        suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
-        resolve_exclusive = getattr(suggestion_service, "resolve_for_identity_exclusive", None)
-        if callable(resolve_exclusive):
-            await resolve_exclusive(
-                identity_id=request.identity_id,
-                accepted_cluster_id=request.target_cluster_id,
-                reason="manual_assign",
-            )
-        else:
-            await suggestion_service.resolve_for_identity(
-                identity_id=request.identity_id,
-                cluster_id=request.target_cluster_id,
-                resolution="accepted",
-            )
-        suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
+        await suggestion_service.resolve_for_identity_exclusive(
+            identity_id=request.identity_id,
+            accepted_cluster_id=request.target_cluster_id,
+            reason="manual_assign",
+        )
         await suggestion_refresh_service.refresh_for_identity(
             identity_id=request.identity_id,
             reason=SuggestionRefreshReason.MANUAL_ASSIGN,
@@ -567,25 +674,17 @@ async def reassign_identity(
                         "Failed to create CANNOT_LINK constraint for identity %s: %s", request.identity_id, exc
                     )
 
-            job_service = await get_job_service(
-                session=session,
-                tenant_id=request.tenant_id,
-                cluster_service_builder=lambda _tid: cluster_service,
-                scan_service_builder=None,
-            )
             await job_service.queue_curation_followup(
                 tenant_id=request.tenant_id,
                 cluster_ids=[source_cluster_id],
                 identity_ids=[request.identity_id],
             )
-        suggestion_service = await get_suggestion_service(session=session, tenant_id=request.tenant_id)
         if source_cluster_id:
             await suggestion_service.resolve_for_identity(
                 identity_id=request.identity_id,
                 cluster_id=source_cluster_id,
                 resolution="rejected",
             )
-        suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
         await suggestion_refresh_service.refresh_for_identity(
             identity_id=request.identity_id,
             reason=SuggestionRefreshReason.WRONG_PERSON,
@@ -594,8 +693,6 @@ async def reassign_identity(
         # Refresh suggestions for the affected clusters
         if source_cluster_id:
             await suggestion_refresh_service.refresh_for_cluster(source_cluster_id)
-        if request.target_cluster_id:
-            await suggestion_refresh_service.refresh_for_cluster(request.target_cluster_id)
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
     await session.commit()
@@ -614,6 +711,8 @@ async def assign_outlier(
     request: AssignOutlierRequest,
     auth=Depends(require_write_access),
     session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    suggestion_refresh_service=Depends(get_suggestion_refresh_service),
 ) -> ClusterResponse:
     """Assign an unclustered identity (outlier) to an existing cluster."""
     validate_entity_id(cluster_id, field_name="cluster_id")
@@ -621,7 +720,17 @@ async def assign_outlier(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    cluster_service = await build_cluster_service(session=session, tenant_id=request.tenant_id)
+    try:
+        needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
+    except AttributeError:
+        needs_tenant_scoped_refresh = False
+    if needs_tenant_scoped_refresh:
+        suggestion_refresh_service = await get_suggestion_refresh_service(
+            session=session,
+            tenant_id=request.tenant_id,
+        )
+
+    cluster_service = await cluster_service_builder(request.tenant_id)
     cluster = await cluster_service.assign_outlier_to_cluster(
         identity_id=request.identity_id,
         target_cluster_id=cluster_id,
@@ -632,7 +741,6 @@ async def assign_outlier(
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster or identity not found")
 
     # Refresh suggestions for the target cluster
-    suggestion_refresh_service = await get_suggestion_refresh_service(session=session, tenant_id=request.tenant_id)
     await suggestion_refresh_service.refresh_for_cluster(cluster_id)
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).

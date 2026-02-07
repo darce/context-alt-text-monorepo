@@ -46,7 +46,7 @@ async def test_accept_emits_suggestion_resolved_event(db_session, tenant) -> Non
     )
     await db_session.commit()
 
-    suggestion_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
     suggestion = await suggestion_repo.create(
         str(tenant.id),
         SuggestionCreateData(
@@ -114,7 +114,7 @@ async def test_resolve_for_identity_emits_suggestion_resolved_event(db_session, 
     )
     await db_session.commit()
 
-    suggestion_repo = SqlAlchemySuggestionRepository(db_session, tenant_id=str(tenant.id))
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
     suggestion = await suggestion_repo.create(
         str(tenant.id),
         SuggestionCreateData(

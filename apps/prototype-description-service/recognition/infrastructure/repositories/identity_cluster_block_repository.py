@@ -6,7 +6,6 @@ Scaffolded for curation block persistence.
 
 from __future__ import annotations
 
-import uuid
 from datetime import UTC, datetime
 
 from sqlalchemy import Select, select
@@ -14,6 +13,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityClusterBlock as IdentityClusterBlockModel
 from recognition.domain.repositories import IdentityClusterBlock, IdentityClusterBlockRepository
+from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 
 
 class SqlAlchemyIdentityClusterBlockRepository(IdentityClusterBlockRepository):
@@ -22,26 +22,6 @@ class SqlAlchemyIdentityClusterBlockRepository(IdentityClusterBlockRepository):
     def __init__(self, session: AsyncSession, tenant_id: str) -> None:
         self._session = session
         self._tenant_id = tenant_id
-
-    async def block(
-        self,
-        *,
-        tenant_id: str,
-        identity_id: str,
-        cluster_id: str,
-        reason: str | None = None,
-        created_by_user_id: int | None = None,
-        expires_at: datetime | None = None,
-    ) -> IdentityClusterBlock:
-        """Persist a new block preventing auto-assignment."""
-        return await self.add_block(
-            tenant_id=tenant_id,
-            identity_id=identity_id,
-            blocked_cluster_id=cluster_id,
-            reason=reason,
-            created_by_user_id=created_by_user_id,
-            expires_at=expires_at,
-        )
 
     async def add_block(
         self,
@@ -183,15 +163,3 @@ class SqlAlchemyIdentityClusterBlockRepository(IdentityClusterBlockRepository):
 
 
 __all__ = ["SqlAlchemyIdentityClusterBlockRepository"]
-
-
-def _coerce_uuid(value: str | uuid.UUID | None) -> uuid.UUID | None:
-    """Convert string identifiers to UUID objects, tolerating short IDs."""
-    if value is None:
-        return None
-    if isinstance(value, uuid.UUID):
-        return value
-    try:
-        return uuid.UUID(str(value))
-    except (ValueError, AttributeError):
-        return uuid.uuid5(uuid.NAMESPACE_URL, str(value))

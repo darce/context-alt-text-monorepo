@@ -10,181 +10,127 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from db.models import IdentityCluster, IdentityMember, MediaIdentity, Tenant
 from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.domain.suggestion import SuggestedLabelSource
+from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Vector search not supported in SQLite")
-async def test_infer_suggested_label_from_similar_cluster(
+async def test_infer_suggested_label_from_merge_suggestion_above_threshold(
     db_session: AsyncSession,
     tenant: Tenant,
 ) -> None:
-    # 1. Setup Data
+    """Pending merge suggestions above threshold should infer a label."""
     tenant_id = tenant.id
 
-    # Create target cluster (unlabeled)
-    target_cluster_id = uuid.uuid4()
-    target_rep_id = uuid.uuid4()
-
-    target_rep = MediaIdentity(
-        id=target_rep_id,
-        tenant_id=tenant_id,
-        media_id=1,
-        media_url="http://example.test/1.jpg",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=0.99,
-        embedding=[0.1] * 512,  # Unit vector approx
-    )
-    db_session.add(target_rep)
-
     target_cluster = IdentityCluster(
-        id=target_cluster_id,
+        id=uuid.uuid4(),
         tenant_id=tenant_id,
         label=None,
-        representative_identity_id=target_rep_id,
-        identity_count=1,
+        identity_count=4,
         user_confirmed=False,
     )
-    db_session.add(target_cluster)
-
-    # Create neighbor cluster (labeled "Alice")
-    # High similarity: same embedding direction
-    neighbor_cluster_id = uuid.uuid4()
-    neighbor_rep_id = uuid.uuid4()
-
-    neighbor_rep = MediaIdentity(
-        id=neighbor_rep_id,
+    labeled_cluster = IdentityCluster(
+        id=uuid.uuid4(),
         tenant_id=tenant_id,
-        media_id=2,
-        media_url="http://example.test/2.jpg",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=0.99,
-        # Same direction, slightly different magnitude usually normalized but pgvector handles it
-        embedding=[0.1] * 512,
-    )
-    db_session.add(neighbor_rep)
-
-    neighbor_cluster = IdentityCluster(
-        id=neighbor_cluster_id,
-        tenant_id=tenant_id,
-        label="Alice",  # Labeled
-        representative_identity_id=neighbor_rep_id,
-        identity_count=5,
+        label="Alice",
+        identity_count=10,
         user_confirmed=True,
     )
-    db_session.add(neighbor_cluster)
+    db_session.add_all([target_cluster, labeled_cluster])
 
+    id_a, id_b = target_cluster.id, labeled_cluster.id
+    if id_a > id_b:
+        id_a, id_b = id_b, id_a
+
+    from db.models.constraints import ClusterMergeSuggestion
+
+    db_session.add(
+        ClusterMergeSuggestion(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            cluster_a_id=id_a,
+            cluster_b_id=id_b,
+            similarity=0.92,
+            resolution="pending",
+        )
+    )
     await db_session.commit()
 
-    # 2. Execute Inference
     result = await infer_suggested_label(
-        tenant_id=str(tenant_id), cluster_id=str(target_cluster_id), session=db_session
+        tenant_id=str(tenant_id),
+        cluster_id=str(target_cluster.id),
+        session=db_session,
     )
 
-    # 3. Verify
     assert result is not None
     assert result.label == "Alice"
     assert result.source == SuggestedLabelSource.SIMILAR_CLUSTER
-    assert result.confidence >= 0.99  # Identical embeddings -> high similarity
+    assert result.confidence == 0.92
+    assert result.target_cluster_id == str(labeled_cluster.id)
 
 
 @pytest.mark.asyncio
-@pytest.mark.skip(reason="Vector search not supported in SQLite")
-async def test_infer_suggested_label_no_match_low_similarity(
+async def test_infer_suggested_label_merge_suggestion_below_threshold_returns_none(
     db_session: AsyncSession,
     tenant: Tenant,
 ) -> None:
-    # 1. Setup Data - Orthogonal embeddings
+    """Merge suggestions below threshold should not infer a label."""
     tenant_id = tenant.id
-    target_cluster_id = uuid.uuid4()
-    target_rep_id = uuid.uuid4()
-
-    target_rep = MediaIdentity(
-        id=target_rep_id,
-        tenant_id=tenant_id,
-        media_id=3,
-        media_url="url",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=0.9,
-        embedding=[1.0] + [0.0] * 511,  # X-axis
-    )
-    db_session.add(target_rep)
 
     target_cluster = IdentityCluster(
-        id=target_cluster_id,
+        id=uuid.uuid4(),
         tenant_id=tenant_id,
         label=None,
-        representative_identity_id=target_rep_id,
+        identity_count=2,
+        representative_identity_id=None,
+        user_confirmed=False,
     )
-    db_session.add(target_cluster)
-
-    neighbor_cluster_id = uuid.uuid4()
-    neighbor_rep_id = uuid.uuid4()
-
-    neighbor_rep = MediaIdentity(
-        id=neighbor_rep_id,
-        tenant_id=tenant_id,
-        media_id=4,
-        media_url="url",
-        bbox_x=0,
-        bbox_y=0,
-        bbox_width=1,
-        bbox_height=1,
-        confidence=0.9,
-        embedding=[0.0, 1.0] + [0.0] * 510,  # Y-axis: Orthogonal, similarity = 0
-    )
-    db_session.add(neighbor_rep)
-
-    neighbor_cluster = IdentityCluster(
-        id=neighbor_cluster_id,
+    labeled_cluster = IdentityCluster(
+        id=uuid.uuid4(),
         tenant_id=tenant_id,
         label="Bob",
-        representative_identity_id=neighbor_rep_id,
+        identity_count=8,
+        user_confirmed=True,
     )
-    db_session.add(neighbor_cluster)
+    db_session.add_all([target_cluster, labeled_cluster])
 
+    id_a, id_b = target_cluster.id, labeled_cluster.id
+    if id_a > id_b:
+        id_a, id_b = id_b, id_a
+
+    from db.models.constraints import ClusterMergeSuggestion
+
+    db_session.add(
+        ClusterMergeSuggestion(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            cluster_a_id=id_a,
+            cluster_b_id=id_b,
+            similarity=0.2,
+            resolution="pending",
+        )
+    )
     await db_session.commit()
 
-    # 2. Execute
     result = await infer_suggested_label(
-        tenant_id=str(tenant_id), cluster_id=str(target_cluster_id), session=db_session
+        tenant_id=str(tenant_id),
+        cluster_id=str(target_cluster.id),
+        session=db_session,
     )
 
-    # 3. Verify
     assert result is None
 
 
 @pytest.mark.asyncio
-async def test_infer_suggested_label_from_identity_match_deprecated(
+async def test_infer_suggested_label_returns_none_for_invalid_identifiers(
     db_session: AsyncSession,
-    tenant: Tenant,
 ) -> None:
-    # 1. Setup Data - Cluster linked to Identity that has a name (Legacy Match)
-    uuid.uuid4()
-
-    # In legacy/mixed state, a cluster might be created for an Identity that already exists
-    # but the cluster itself is unlabeled. If the Identity has a name, we suggest it.
-
-    # Create Identity (Legacy concept, but table likely exists or we simulate match)
-    # Actually, the spec says: "Matched identity name (if suggestion links to a known identity)"
-    # This implies we look at Merge Suggestions or Identity-Cluster links?
-    # For MVP, let's assume if cluster.identity_id is set (if that field exists) or if
-    # we have a way to link them.
-    # Checking `IdentityCluster` model in `db/models.py` would be good.
-    # Assuming `identity_id` exists on Cluster based on context, or we use `IdentitySuggestion`.
-
-    # IF `IdentityCluster` has no `identity_id` column, maybe we use `IdentitySuggestion` table?
-    # "if suggestion links to a known identity" -> Suggestion table.
-
-    pass  # TODO: Implement after confirming model
+    """Invalid UUIDs should short-circuit inference and return None."""
+    result = await infer_suggested_label(
+        tenant_id="not-a-uuid",
+        cluster_id="also-not-a-uuid",
+        session=db_session,
+    )
+    assert result is None
 
 
 @pytest.mark.asyncio
@@ -234,14 +180,6 @@ async def test_infer_suggested_label_from_merge_suggestion(
     id_b = cluster_b.id
     if id_a > id_b:
         id_a, id_b = id_b, id_a
-        # Note: If we swap IDs, the suggestion is still valid but A/B mapping changes.
-        # However, merge suggestion just says "these two should merge".
-        # If we infer label for 'cluster_a', we check if it is part of the pair.
-        # But wait, my test logic expects 'cluster_a' to be the one we are inferring FOR.
-        # If I swap them in the suggestion record, I must ensure 'suggestion.cluster_a_id' matches 'cluster_a.id' OR 'cluster_b.id'.
-        # Actually, the logic looks for BOTH directions: (A==ID and B==Target) OR (B==ID and A==Target).
-        # So swapping is fine for the query logic I implemented!
-        pass
 
     from db.models.constraints import ClusterMergeSuggestion
 
@@ -346,6 +284,86 @@ async def test_infer_suggested_label_from_identity_match(
 
 
 @pytest.mark.asyncio
+async def test_infer_suggested_label_from_accepted_member_suggestion_without_representative(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    """Accepted member suggestions should infer label even when representative linkage is missing."""
+    tenant_id = tenant.id
+
+    # Unlabeled source cluster intentionally has no representative_identity_id.
+    source_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label=None,
+        identity_count=1,
+        representative_identity_id=None,
+    )
+    db_session.add(source_cluster)
+
+    member_identity = MediaIdentity(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        media_id=11,
+        media_url="url",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=1.0,
+        embedding=[0.0] * 512,
+    )
+    db_session.add(member_identity)
+    db_session.add(
+        IdentityMember(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            cluster_id=source_cluster.id,
+            identity_id=member_identity.id,
+            similarity=0.75,
+        )
+    )
+
+    # Confirmed labeled target cluster.
+    labeled_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label="Maria Correonero",
+        identity_count=10,
+        user_confirmed=True,
+    )
+    db_session.add(labeled_cluster)
+
+    from db.models.constraints import IdentitySuggestion
+
+    # Low confidence is intentional: accepted suggestions should still be surfaced.
+    db_session.add(
+        IdentitySuggestion(
+            id=uuid.uuid4(),
+            tenant_id=tenant_id,
+            identity_id=member_identity.id,
+            suggested_cluster_id=labeled_cluster.id,
+            representative_similarity=0.41,
+            avg_member_similarity=0.41,
+            confidence_score=0.41,
+            resolution="accepted",
+        )
+    )
+    await db_session.commit()
+
+    result = await infer_suggested_label(
+        tenant_id=str(tenant_id),
+        cluster_id=str(source_cluster.id),
+        session=db_session,
+    )
+
+    assert result is not None
+    assert result.label == "Maria Correonero"
+    assert result.source == SuggestedLabelSource.IDENTITY
+    assert result.target_cluster_id == str(labeled_cluster.id)
+
+
+@pytest.mark.asyncio
 async def test_infer_suggested_label_from_roster_match(
     db_session: AsyncSession,
     tenant: Tenant,
@@ -393,8 +411,12 @@ async def test_infer_suggested_label_from_roster_match(
     await db_session.commit()
 
     # Execute
+    cluster_repo = SqlAlchemyClusterRepository(db_session)
     result = await infer_suggested_label(
-        tenant_id=str(tenant_id), cluster_id=str(target_cluster_id), session=db_session
+        tenant_id=str(tenant_id),
+        cluster_id=str(target_cluster_id),
+        session=db_session,
+        cluster_repository=cluster_repo,
     )
 
     # Verify

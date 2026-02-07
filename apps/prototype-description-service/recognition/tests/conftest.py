@@ -270,7 +270,7 @@ def member_repository(db_session: AsyncSession, tenant: Tenant) -> SqlAlchemyMem
 
 @pytest.fixture
 def suggestion_repository(db_session: AsyncSession, tenant: Tenant) -> SqlAlchemySuggestionRepository:
-    return SqlAlchemySuggestionRepository(db_session, tenant_id=tenant.id)
+    return SqlAlchemySuggestionRepository(db_session)
 
 
 @pytest.fixture

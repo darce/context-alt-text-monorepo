@@ -5,7 +5,7 @@ Block check to prevent assignment to user-blocked clusters.
 from __future__ import annotations
 
 from recognition.application.assignment.candidate import AssignmentCandidate
-from recognition.application.assignment.checks.base import AssignmentCheck, CheckResult
+from recognition.application.assignment.checks.base import AssignmentCheck, CheckFailureKind, CheckResult
 from recognition.domain.repositories import IdentityClusterBlockRepository
 
 
@@ -47,5 +47,6 @@ class BlockCheck(AssignmentCheck):
                 should_reject=True,
                 reason="identity blocked from cluster by user",
                 metadata={"block_active": True},
+                failure_kind=CheckFailureKind.BLOCK,
             )
         return CheckResult(passed=True, metadata={"block_active": False})

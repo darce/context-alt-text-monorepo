@@ -170,8 +170,8 @@ async def test_confidence_suggestion_band_returns_suggest() -> None:
 
 
 @pytest.mark.asyncio
-async def test_confidence_fatal_quality_failure_rejects() -> None:
-    """Extremely low quality should reject before suggestions."""
+async def test_confidence_fatal_quality_failure_suggests_when_similarity_in_band() -> None:
+    """Low-quality detections should still be surfaced as suggestions when similarity is viable."""
     settings = ClusteringSettings(
         similarity_threshold=0.8,
         suggestion_floor=0.7,
@@ -184,6 +184,28 @@ async def test_confidence_fatal_quality_failure_rejects() -> None:
     result = await check.evaluate(candidate)
 
     assert result.passed is False
-    assert result.should_reject is True
-    assert result.reason == "fatal_quality_failure"
+    assert result.should_reject is False
+    assert result.reason == "fatal_quality_failure_suggest"
     assert result.metadata["fatal_quality_failure"] is True
+    assert result.metadata["quality_review_required"] is True
+
+
+@pytest.mark.asyncio
+async def test_confidence_fatal_quality_failure_rejects_below_suggestion_floor() -> None:
+    """Low-quality detections below the suggestion floor should remain rejected."""
+    settings = ClusteringSettings(
+        similarity_threshold=0.8,
+        suggestion_floor=0.7,
+        suggestion_ceiling=0.8,
+        early_stage_suggestion_enabled=True,
+    )
+    check = ConfidenceCheck(settings, None)
+    candidate = make_candidate(similarity=0.6, confidence=0.2, bbox_size=20, pose_angle=0.0)
+
+    result = await check.evaluate(candidate)
+
+    assert result.passed is False
+    assert result.should_reject is True
+    assert result.reason == "fatal_quality_failure_below_suggestion_floor"
+    assert result.metadata["fatal_quality_failure"] is True
+    assert result.metadata["quality_review_required"] is True

@@ -4,11 +4,12 @@ Assignment decision model produced by the AssignmentGate.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
 from recognition.application.assignment.candidate import AssignmentCandidate
+from recognition.application.assignment.checks.base import CheckFailureKind
 
 
 class AssignmentOutcome(Enum):
@@ -30,3 +31,4 @@ class AssignmentDecision:
     rejection_reason: str | None = None
     suggestion_confidence: float | None = None
     metadata: dict[str, Any] | None = None
+    failure_kinds: list[CheckFailureKind] = field(default_factory=list)

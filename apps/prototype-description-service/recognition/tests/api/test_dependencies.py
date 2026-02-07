@@ -9,7 +9,6 @@ from fastapi.testclient import TestClient
 
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
-from recognition.interface_adapters.http.routers import clusters as clusters_router
 from recognition.tests.api.conftest import FakeSession
 
 
@@ -20,37 +19,39 @@ def test_clusters_router_respects_dependency_override(api_client, tenant_id, fak
     assert any(call["method"] == "cluster_unclustered_identities" for call in fake_cluster_service.calls)
 
 
-def test_clusters_router_invokes_cluster_service_dependency(monkeypatch, tenant_id) -> None:
+def test_clusters_router_invokes_cluster_service_dependency(tenant_id) -> None:
     """Default dependency should call build_cluster_service with request tenant and session."""
     called: dict[str, object] = {}
 
-    async def fake_build(session, tenant_id: str, settings=None):
-        called["session"] = session
-        called["tenant_id"] = tenant_id
+    def fake_cluster_service_builder():
+        async def _builder(dep_tenant_id: str):
+            called["tenant_id"] = dep_tenant_id
 
-        class StubService:
-            async def cluster_unclustered_identities(self, tenant_id: str):
-                called["invoke_tenant"] = tenant_id
-                dt = __import__("datetime")
-                now = dt.datetime.now(tz=dt.UTC)
-                return type(
-                    "Result",
-                    (),
-                    {
-                        "job_id": str(uuid.uuid4()),
-                        "started_at": now,
-                        "finished_at": now,
-                        "completed": 0,
-                        "total": 0,
-                    },
-                )()
+            class StubService:
+                async def cluster_unclustered_identities(self, invoked_tenant_id: str):
+                    called["invoke_tenant"] = invoked_tenant_id
+                    dt = __import__("datetime")
+                    now = dt.datetime.now(tz=dt.UTC)
+                    return type(
+                        "Result",
+                        (),
+                        {
+                            "job_id": str(uuid.uuid4()),
+                            "started_at": now,
+                            "finished_at": now,
+                            "completed": 0,
+                            "total": 0,
+                        },
+                    )()
 
-        return StubService()
+            return StubService()
+
+        return _builder
 
     async def _session_override():
         yield FakeSession()
 
-    async def fake_get_job_service(session, tenant_id, cluster_service_builder=None, scan_service_builder=None):
+    async def fake_job_service_dep():
         from recognition.tests.fakes import FakeJobService
 
         return FakeJobService()
@@ -59,9 +60,8 @@ def test_clusters_router_invokes_cluster_service_dependency(monkeypatch, tenant_
     app.include_router(recognition_router, prefix="/recognition")
     app.dependency_overrides[dependencies.get_session] = _session_override
     app.dependency_overrides[dependencies.get_optional_session] = _session_override
-    monkeypatch.setattr(dependencies, "build_cluster_service", fake_build)
-    monkeypatch.setattr(clusters_router, "build_cluster_service", fake_build)
-    monkeypatch.setattr(clusters_router, "get_job_service", fake_get_job_service)
+    app.dependency_overrides[dependencies.get_cluster_service_builder] = fake_cluster_service_builder
+    app.dependency_overrides[dependencies.get_persisted_job_service] = fake_job_service_dep
 
     client = TestClient(app)
     resp = client.post("/recognition/clustering/jobs", json={"tenant_id": tenant_id, "mode": "sync"})

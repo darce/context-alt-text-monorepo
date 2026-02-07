@@ -12,7 +12,10 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import RecognitionRun
 from recognition.application.assignment import AssignmentCandidate
+from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.eligibility import is_eligible_cluster
+from recognition.application.suggestions.label_inference import infer_suggested_label
+from recognition.config import get_settings as get_recognition_settings
 from recognition.domain.repositories import (
     ClusterRepository,
     IdentityClusterBlockRepository,
@@ -20,7 +23,8 @@ from recognition.domain.repositories import (
     SuggestionCreateData,
     SuggestionRepository,
 )
-from recognition.domain.suggestion import AssignmentSuggestion, SuggestionDetails, SuggestionStatus
+from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.interface_adapters.schemas.suggestion_details import SuggestionDetails
 from recognition.observability.recognition_runs import RecognitionRunContext
 
 logger = logging.getLogger(__name__)
@@ -39,6 +43,7 @@ class SuggestionService:
         run_context: RecognitionRunContext | None = None,
         block_repository: IdentityClusterBlockRepository | None = None,
         constraint_repository: IdentityConstraintRepository | None = None,
+        settings: ClusteringSettings | None = None,
     ) -> None:
         self._repository = repository
         self._tenant_id = tenant_id
@@ -47,6 +52,7 @@ class SuggestionService:
         self._run_context = run_context
         self._block_repository = block_repository
         self._constraint_repository = constraint_repository
+        self._settings = settings or get_recognition_settings().clustering
 
     def bind_run_context(self, context: RecognitionRunContext | None) -> None:
         """Attach or clear the active recognition run context.
@@ -292,10 +298,10 @@ class SuggestionService:
                         )
 
                 if self._block_repository:
-                    await self._block_repository.block(
+                    await self._block_repository.add_block(
                         tenant_id=self._tenant_id,
                         identity_id=suggestion.identity_id,
-                        cluster_id=suggestion.cluster_id,
+                        blocked_cluster_id=suggestion.cluster_id,
                         reason="manual_reject",
                     )
 
@@ -306,7 +312,26 @@ class SuggestionService:
 
     async def list_pending(self, limit: int = 50, offset: int = 0) -> list[SuggestionDetails]:
         """List pending suggestions with identity + cluster details for the service tenant."""
-        return await self._repository.list_pending_with_details(self._tenant_id, limit, offset)
+        suggestions = await self._repository.list_pending_with_details(self._tenant_id, limit, offset)
+        if self._session is None:
+            return suggestions
+
+        for suggestion in suggestions:
+            if suggestion.cluster_label:
+                continue
+            inferred = await infer_suggested_label(
+                tenant_id=self._tenant_id,
+                cluster_id=suggestion.cluster_id,
+                session=self._session,
+                cluster_repository=self._cluster_repository,
+                settings=self._settings,
+            )
+            if inferred:
+                suggestion.suggested_label = inferred.label
+                suggestion.suggested_label_source = inferred.source
+                suggestion.suggested_label_confidence = inferred.confidence
+
+        return suggestions
 
     async def resolve_for_identity(self, identity_id: str, cluster_id: str, resolution: str = "accepted") -> int:
         """Resolve pending suggestions for an identity+cluster combination.

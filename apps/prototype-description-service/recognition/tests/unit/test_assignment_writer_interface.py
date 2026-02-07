@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
-
 import numpy as np
 import pytest
 
@@ -11,114 +9,9 @@ from recognition.application.assignment.candidate import AssignmentCandidate, Di
 from recognition.application.assignment.decision import AssignmentDecision, AssignmentOutcome
 from recognition.application.persistence.assignment_writer import AssignmentWriter, ClusterNotFoundError
 from recognition.application.settings.clustering import ClusteringSettings
-from recognition.domain.cluster import IdentityCluster
 from recognition.domain.identity import MediaIdentity
-from recognition.domain.maturity import ClusterMaturityInfo
-from recognition.domain.repositories import ClusterRepository, IdentityMember, MemberRepository
-from recognition.domain.representative import ClusterRepresentative
-
-
-class NullClusterRepo(ClusterRepository):
-    async def get_by_id(self, cluster_id: str) -> IdentityCluster | None:
-        return None
-
-    async def get_by_tenant(
-        self,
-        tenant_id: str,
-        *,
-        limit: int = 100,
-        offset: int = 0,
-        labeled_only: bool = False,
-        search: str | None = None,
-    ) -> list[IdentityCluster]:
-        return []
-
-    async def save(self, cluster: IdentityCluster) -> IdentityCluster:
-        return cluster
-
-    async def update(self, cluster: IdentityCluster) -> IdentityCluster:
-        return cluster
-
-    async def delete(self, cluster_id: str) -> None:
-        return None
-
-    async def refresh_centroids_view(self) -> None:
-        return None
-
-    async def refresh_centroids_view_concurrent(self) -> None:
-        return None
-
-    async def get_unclustered(self, tenant_id: str):
-        return []
-
-    async def get_representative_count(self, cluster_id: str) -> int:
-        return 0
-
-    async def get_all_representatives(self, cluster_id: str):
-        return []
-
-    async def get_member_embeddings(self, cluster_id: str):
-        return []
-
-    async def get_member_identities(self, cluster_id: str) -> list[MediaIdentity]:
-        return []
-
-    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]) -> dict[str, list[MediaIdentity]]:
-        return {}
-
-    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
-        return []
-
-    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None) -> list[MediaIdentity]:
-        return []
-
-    async def assign_identity_to_cluster(self, identity: MediaIdentity, cluster_id: str) -> None:
-        return None
-
-    async def add_representative(self, representative) -> None:
-        return None
-
-    async def clear_representatives(self, cluster_id: str) -> None:
-        return None
-
-    async def remove_representative(self, representative_id: str) -> None:
-        return None
-
-    async def count_labeled(self) -> int:
-        return 0
-
-    async def get_labeled_with_representatives(
-        self,
-        tenant_id: str,
-    ) -> list[tuple[IdentityCluster, list[ClusterRepresentative]]]:
-        return []
-
-    async def get_maturity_info(self, cluster_id: str, *, settings=None) -> ClusterMaturityInfo | None:  # noqa: ANN001
-        return None
-
-    async def get_curriculum_t(self, cluster_id: str) -> float | None:
-        return None
-
-    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
-        return None
-
-    async def get_top_unlabeled(self, tenant_id: str, limit: int = 10) -> list[IdentityCluster]:
-        return []
-
-    async def mark_representative_user_selected(self, representative_id: str, is_selected: bool = True) -> None:
-        return None
-
-    async def get_user_selected_representatives(self, cluster_id: str) -> list[ClusterRepresentative]:
-        return []
-
-    async def confirm_provisional_representatives(self, cluster_id: str) -> int:
-        return 0
-
-    async def confirm_all_provisional_reps(self, tenant_id: str) -> int:
-        return 0
-
-    async def cleanup_orphaned_provisional_reps(self, tenant_id: str) -> int:
-        return 0
+from recognition.domain.repositories import IdentityMember, MemberRepository
+from recognition.tests.stubs import NullClusterRepository
 
 
 class NullMemberRepo(MemberRepository):
@@ -193,7 +86,7 @@ def _make_decision(outcome: AssignmentOutcome = AssignmentOutcome.ACCEPT) -> Ass
 @pytest.mark.asyncio
 async def test_assignment_writer_methods_raise_not_implemented() -> None:
     """AssignmentWriter should validate inputs before delegating to repositories."""
-    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepo(), NullMemberRepo())
+    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepository(), NullMemberRepo())
 
     decision = _make_decision(outcome=AssignmentOutcome.SUGGEST)
     with pytest.raises(ValueError):
@@ -206,7 +99,7 @@ async def test_assignment_writer_methods_raise_not_implemented() -> None:
 
 @pytest.mark.asyncio
 async def test_persist_new_cluster_requires_matching_lengths() -> None:
-    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepo(), NullMemberRepo())
+    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepository(), NullMemberRepo())
 
     with pytest.raises(ValueError):
         await writer.persist_new_cluster(
@@ -219,7 +112,7 @@ async def test_persist_new_cluster_requires_matching_lengths() -> None:
 
 @pytest.mark.asyncio
 async def test_persist_new_cluster_raises_when_cluster_id_missing() -> None:
-    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepo(), NullMemberRepo())
+    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepository(), NullMemberRepo())
 
     with pytest.raises(ClusterNotFoundError):
         await writer.persist_new_cluster(
@@ -232,7 +125,7 @@ async def test_persist_new_cluster_raises_when_cluster_id_missing() -> None:
 
 @pytest.mark.asyncio
 async def test_update_cluster_metadata_requires_existing_cluster() -> None:
-    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepo(), NullMemberRepo())
+    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepository(), NullMemberRepo())
 
     with pytest.raises(ClusterNotFoundError):
         await writer.update_cluster_metadata(cluster_id="cluster-1", label="Confirmed")
@@ -240,7 +133,7 @@ async def test_update_cluster_metadata_requires_existing_cluster() -> None:
 
 @pytest.mark.asyncio
 async def test_assign_to_existing_cluster_requires_cluster() -> None:
-    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepo(), NullMemberRepo())
+    writer = AssignmentWriter(ClusteringSettings(), NullClusterRepository(), NullMemberRepo())
 
     with pytest.raises(ClusterNotFoundError):
         await writer.assign_to_existing_cluster(identity=_make_identity(), cluster_id="cluster-1", similarity=0.9)

@@ -16,13 +16,17 @@ vi.mock('../config', () => ({
   isDevMode: vi.fn(() => false),
 }));
 
-vi.mock('../../utils/http', () => ({
-  fetchApi: vi.fn(),
-  stripTrailingSlash: (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value),
-}));
+vi.mock('../../utils/http', () => {
+  const requestMock = vi.fn();
+  return {
+    fetchApi: requestMock,
+    fetchRequiredApi: requestMock,
+    stripTrailingSlash: (value: string) => (value.endsWith('/') ? value.slice(0, -1) : value),
+  };
+});
 
 describe('recognitionApi', () => {
-  const fetchApiMock = vi.mocked(httpModule.fetchApi);
+  const fetchApiMock = vi.mocked(httpModule.fetchRequiredApi);
 
   beforeEach(() => {
     vi.clearAllMocks();

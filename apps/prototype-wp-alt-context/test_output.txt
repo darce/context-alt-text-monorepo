@@ -1,0 +1,313 @@
+
+> prototype-wp-alt-context@0.0.1 test
+> vitest run SuggestionReviewPanel
+
+
+[1m[46m RUN [49m[22m [36mv4.0.8 [39m[90m/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context[39m
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mhides panel on initial load failure (cold start friendly)
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mhides panel on initial load failure (cold start friendly)
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mtrue[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mfalse[39m,
+  failureCount: [33m2[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders suggestions and accepts a suggestion
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders suggestions and accepts a suggestion
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders suggestions and accepts a suggestion
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders suggestions and accepts a suggestion
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders suggestions and accepts a suggestion
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrejects a suggestion and invalidates pending suggestions
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrejects a suggestion and invalidates pending suggestions
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrejects a suggestion and invalidates pending suggestions
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrejects a suggestion and invalidates pending suggestions
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders face grid when cluster thumbnails are present
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders face grid when cluster thumbnails are present
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders face grid when cluster thumbnails are present
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Is this {label}?" when a suggested label is present
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Is this {label}?" when a suggested label is present
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Is this {label}?" when a suggested label is present
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Name this person" for unlabeled clusters without inference
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Name this person" for unlabeled clusters without inference
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Name this person" for unlabeled clusters without inference
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Review cluster" button
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Review cluster" button
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders "Review cluster" button
+[22m[39mQuery data cannot be undefined. Please make sure to return a value other than undefined from your query function. Affected query key: ["clusters","top-unlabeled","test-tenant-id"]
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders naming queue alongside suggestions (Unified View)
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: [90mundefined[39m,
+  mergeData: [90mundefined[39m,
+  isLoading: [33mtrue[39m,
+  failureCount: [33m0[39m
+}
+
+[90mstdout[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders naming queue alongside suggestions (Unified View)
+[22m[39mSuggestionReviewPanel render {
+  isError: [33mfalse[39m,
+  assignmentData: { suggestions: [ [36m[Object][39m ], total: [33m1[39m, limit: [33m10[39m, offset: [33m0[39m },
+  mergeData: { suggestions: [], total: [33m0[39m, limit: [33m10[39m, offset: [33m0[39m },
+  isLoading: [33mfalse[39m,
+  failureCount: [33m0[39m
+}
+
+Error: Uncaught [Error: [vitest] No "sprintf" export is defined on the "@wordpress/i18n" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+]
+    at reportException (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/helpers/runtime-script-errors.js:66:24)
+    at innerInvokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:353:9)
+    at invokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:286:3)
+    at HTMLUnknownElementImpl._dispatch (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:233:9)
+    at HTMLUnknownElementImpl.dispatchEvent (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:104:17)
+    at HTMLUnknownElement.dispatchEvent (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/generated/EventTarget.js:241:34)
+    at Object.invokeGuardedCallbackDev (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:4213:16)
+    at invokeGuardedCallback (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:4277:31)
+    at beginWork$1 (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:27490:7)
+    at performUnitOfWork (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:26599:12) Error: [vitest] No "sprintf" export is defined on the "@wordpress/i18n" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+    at VitestMocker.createError (file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/vitest/dist/chunks/startModuleRunner.BOmUtLIO.js:307:17)
+    at Object.get (file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/vitest/dist/chunks/startModuleRunner.BOmUtLIO.js:362:16)
+    at TopClusterCard (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClustersSection.tsx:83:12)
+    at renderWithHooks (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:15486:18)
+    at mountIndeterminateComponent (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:20103:13)
+    at beginWork (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:21626:16)
+    at HTMLUnknownElement.callCallback (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:4164:14)
+    at HTMLUnknownElement.callTheUserObjectsOperation (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/generated/EventListener.js:26:30)
+    at innerInvokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:350:25)
+    at invokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:286:3) {
+  codeFrame: 'vi.mock(import("@wordpress/i18n"), async (importOriginal) => {\n' +
+    '  const actual = await importOriginal()\n' +
+    '  return {\n' +
+    '    ...actual,\n' +
+    '    // your mocked methods\n' +
+    '  }\n' +
+    '})'
+}
+Error: Uncaught [Error: [vitest] No "sprintf" export is defined on the "@wordpress/i18n" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+]
+    at reportException (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/helpers/runtime-script-errors.js:66:24)
+    at innerInvokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:353:9)
+    at invokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:286:3)
+    at HTMLUnknownElementImpl._dispatch (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:233:9)
+    at HTMLUnknownElementImpl.dispatchEvent (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:104:17)
+    at HTMLUnknownElement.dispatchEvent (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/generated/EventTarget.js:241:34)
+    at Object.invokeGuardedCallbackDev (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:4213:16)
+    at invokeGuardedCallback (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:4277:31)
+    at beginWork$1 (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:27490:7)
+    at performUnitOfWork (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:26599:12) Error: [vitest] No "sprintf" export is defined on the "@wordpress/i18n" mock. Did you forget to return it from "vi.mock"?
+If you need to partially mock a module, you can use "importOriginal" helper inside:
+
+    at VitestMocker.createError (file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/vitest/dist/chunks/startModuleRunner.BOmUtLIO.js:307:17)
+    at Object.get (file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/vitest/dist/chunks/startModuleRunner.BOmUtLIO.js:362:16)
+    at TopClusterCard (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClustersSection.tsx:83:12)
+    at renderWithHooks (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:15486:18)
+    at mountIndeterminateComponent (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:20103:13)
+    at beginWork (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:21626:16)
+    at HTMLUnknownElement.callCallback (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/react-dom/cjs/react-dom.development.js:4164:14)
+    at HTMLUnknownElement.callTheUserObjectsOperation (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/generated/EventListener.js:26:30)
+    at innerInvokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:350:25)
+    at invokeEventListeners (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/jsdom/lib/jsdom/living/events/EventTarget-impl.js:286:3) {
+  codeFrame: 'vi.mock(import("@wordpress/i18n"), async (importOriginal) => {\n' +
+    '  const actual = await importOriginal()\n' +
+    '  return {\n' +
+    '    ...actual,\n' +
+    '    // your mocked methods\n' +
+    '  }\n' +
+    '})'
+}
+[90mstderr[2m | js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22m[2mSuggestionReviewPanel[2m > [22m[2mrenders naming queue alongside suggestions (Unified View)
+[22m[39mThe above error occurred in the <TopClusterCard> component:
+
+    at TopClusterCard (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClustersSection.tsx:15:3)
+    at div
+    at div
+    at TopClustersSection (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/TopClustersSection.tsx:142:3)
+    at div
+    at div
+    at SuggestionReviewPanel (/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx:428:3)
+    at QueryClientProvider (file:///Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/node_modules/@tanstack/react-query/build/modern/QueryClientProvider.js:20:3)
+
+Consider adding an error boundary to your tree to customize error handling behavior.
+Visit https://reactjs.org/link/error-boundaries to learn more about error boundaries.
+
+ [31m❯[39m js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx [2m([22m[2m8 tests[22m[2m | [22m[31m1 failed[39m[2m)[22m[33m 1172[2mms[22m[39m
+     [32m✓[39m hides panel on initial load failure (cold start friendly)[32m 72[2mms[22m[39m
+     [32m✓[39m renders suggestions and accepts a suggestion[32m 46[2mms[22m[39m
+     [32m✓[39m rejects a suggestion and invalidates pending suggestions[32m 17[2mms[22m[39m
+     [32m✓[39m renders face grid when cluster thumbnails are present[32m 5[2mms[22m[39m
+     [32m✓[39m renders "Is this {label}?" when a suggested label is present[32m 4[2mms[22m[39m
+     [32m✓[39m renders "Name this person" for unlabeled clusters without inference[32m 6[2mms[22m[39m
+     [32m✓[39m renders "Review cluster" button[32m 5[2mms[22m[39m
+[31m     [31m×[31m renders naming queue alongside suggestions (Unified View)[39m[33m 1014[2mms[22m[39m
+
+[31m⎯⎯⎯⎯⎯⎯⎯[39m[1m[41m Failed Tests 1 [49m[22m[31m⎯⎯⎯⎯⎯⎯⎯[39m
+
+[41m[1m FAIL [22m[49m js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx[2m > [22mSuggestionReviewPanel[2m > [22mrenders naming queue alongside suggestions (Unified View)
+[31m[1mTestingLibraryElementError[22m: Unable to find an element with the text: /Is this/. This could be because the text is broken up by multiple elements. In this case, you can provide a function for your text matcher to make your matcher more flexible.
+
+Ignored nodes: comments, script, style
+[36m<body>[31m
+  [36m<div />[31m
+[36m</body>[31m
+
+Ignored nodes: comments, script, style
+[36m<body>[31m
+  [36m<div />[31m
+[36m</body>[31m[39m
+[90m [2m❯[22m waitForWrapper node_modules/@testing-library/dom/dist/wait-for.js:[2m163:27[22m[39m
+[90m [2m❯[22m node_modules/@testing-library/dom/dist/query-helpers.js:[2m86:33[22m[39m
+[36m [2m❯[22m js/admin/pages/workbench/identity-clusters/__tests__/SuggestionReviewPanel.test.tsx:[2m406:25[22m[39m
+    [90m404| [39m    })[33m;[39m
+    [90m405| [39m    
+    [90m406| [39m    [34mexpect[39m([35mawait[39m screen[33m.[39m[34mfindByText[39m([36m/Is this/[39m))[33m.[39m[34mtoBeInTheDocument[39m()[33m;[39m
+    [90m   | [39m                        [31m^[39m
+    [90m407| [39m
+    [90m408| [39m    [90m// 4. Verify Naming Queue is ALSO present[39m
+
+[31m[2m⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯⎯[1/1]⎯[22m[39m
+
+
+[2m Test Files [22m [1m[31m1 failed[39m[22m[90m (1)[39m
+[2m      Tests [22m [1m[31m1 failed[39m[22m[2m | [22m[1m[32m7 passed[39m[22m[90m (8)[39m
+[2m   Start at [22m 21:43:52
+[2m   Duration [22m 2.01s[2m (transform 107ms, setup 163ms, collect 136ms, tests 1.17s, environment 389ms, prepare 5ms)[22m
+

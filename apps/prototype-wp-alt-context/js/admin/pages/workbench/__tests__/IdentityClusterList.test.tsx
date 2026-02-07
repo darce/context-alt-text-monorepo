@@ -45,12 +45,13 @@ class MockEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;
   close = vi.fn();
+  static instances = 0;
   static CONNECTING = 0;
   static OPEN = 1;
   static CLOSED = 2;
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
   constructor(_url: string) {
-    // Empty constructor
+    MockEventSource.instances += 1;
   }
 }
 
@@ -69,6 +70,7 @@ const setupMocks = () => {
   };
 
   resetConfigCache();
+  MockEventSource.instances = 0;
   window.EventSource = MockEventSource as unknown as typeof EventSource;
 };
 
@@ -230,6 +232,7 @@ describe('IdentityClusterList', () => {
   it('renders placeholder when no identities exist', async () => {
     await renderWithClient(<IdentityClusterList identities={[]} />);
     expect(screen.getByText(/No identities detected yet/i)).toBeInTheDocument();
+    expect(MockEventSource.instances).toBe(0);
   });
 
   it('allows renaming a manually labeled cluster', async () => {

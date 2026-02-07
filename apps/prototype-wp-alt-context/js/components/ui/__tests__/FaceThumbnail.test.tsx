@@ -142,6 +142,23 @@ describe('FaceThumbnail', () => {
         expect(img).toHaveStyle({ opacity: '1' });
       });
     });
+
+    it('shows image when browser cache marks image complete before load event fires', async () => {
+      const completeSpy = vi.spyOn(HTMLImageElement.prototype, 'complete', 'get').mockReturnValue(true);
+      const naturalWidthSpy = vi.spyOn(HTMLImageElement.prototype, 'naturalWidth', 'get').mockReturnValue(640);
+
+      const { container } = render(<FaceThumbnail mediaUrl={mockMediaUrl} bbox={mockBbox} />);
+      const img = screen.getByRole('img');
+
+      await waitFor(() => {
+        const wrapper = container.firstChild as HTMLElement;
+        expect(wrapper).not.toHaveClass('acx-face-thumbnail--loading');
+        expect(img).toHaveStyle({ opacity: '1' });
+      });
+
+      completeSpy.mockRestore();
+      naturalWidthSpy.mockRestore();
+    });
   });
 
   describe('error states', () => {

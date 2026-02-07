@@ -4,7 +4,7 @@
  * API functions for face scanning and job status.
  */
 
-import { fetchApi } from '../../utils/http';
+import { fetchRequiredApi } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import type { AnalyzeRequest, AnalyzeResponse, JobStatusResponse, ClusterResponse } from './types';
 
@@ -50,7 +50,7 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
     body.cluster_id = request.clusterId;
   }
 
-  return fetchApi<AnalyzeResponse>(getEndpoint('recognitionAnalyze'), {
+  return fetchRequiredApi<AnalyzeResponse>(getEndpoint('recognitionAnalyze'), {
     method: 'POST',
     body,
     restNonce: getConfig().nonce,
@@ -76,7 +76,7 @@ export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse>
   const base = getEndpoint('recognitionJobs');
   const separator = base.endsWith('/') ? '' : '/';
 
-  return fetchApi<JobStatusResponse>(`${base}${separator}${jobId}`, {
+  return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}`, {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -86,7 +86,7 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
   const base = getEndpoint('recognitionJobs');
   const separator = base.endsWith('/') ? '' : '/';
 
-  return fetchApi<JobStatusResponse>(`${base}${separator}${jobId}${separator}cancel`, {
+  return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}${separator}cancel`, {
     method: 'POST',
     restNonce: getConfig().nonce,
   });
@@ -94,7 +94,7 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
 
 export const clusterFaces = async (mode: 'sync' | 'async' = 'async'): Promise<ClusterResponse> => {
   const tenantId = getConfig().tenant_id;
-  return fetchApi<ClusterResponse>(getEndpoint('recognitionCluster'), {
+  return fetchRequiredApi<ClusterResponse>(getEndpoint('recognitionCluster'), {
     method: 'POST',
     body: {
       tenant_id: tenantId,

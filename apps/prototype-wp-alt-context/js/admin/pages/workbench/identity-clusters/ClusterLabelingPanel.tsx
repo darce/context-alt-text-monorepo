@@ -8,7 +8,7 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { fetchClusterMembers, updateClusterLabel } from '../../../api/recognition';
+import { fetchClusterMembers, listRecognitionClusters, mergeCluster, updateClusterLabel } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 
@@ -45,10 +45,11 @@ const getErrorMessage = (error: unknown, label: string): string => {
 export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState('');
   const [error, setError] = useState<string | null>(null);
+  const [duplicateMatch, setDuplicateMatch] = useState<{ id: string; label: string } | null>(null);
   const queryClient = useQueryClient();
 
   const { data: members, isLoading } = useQuery({
-    queryKey: ['cluster-members', clusterId], // TODO: Add to queryKeys logic if reused
+    queryKey: queryKeys.clusters.memberList(clusterId),
     queryFn: () => fetchClusterMembers(clusterId),
     enabled: Boolean(clusterId),
   });
@@ -59,7 +60,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     retry: false,
     onSuccess: () => {
       setError(null);
+      setDuplicateMatch(null);
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
       void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
       onLabel(labelInput);
     },
@@ -68,14 +71,57 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     },
   });
 
-  const handleSubmit = (e: React.FormEvent) => {
+  const mergeMutation = useMutation({
+    mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel: string }) =>
+      mergeCluster(clusterId, targetClusterId, targetLabel),
+    retry: false,
+    onSuccess: (_result, vars) => {
+      setError(null);
+      setDuplicateMatch(null);
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+      onLabel(vars.targetLabel);
+    },
+    onError: (err: Error) => {
+      setError(getErrorMessage(err, labelInput));
+    },
+  });
+
+  const findClusterByLabel = async (label: string): Promise<{ id: string; label: string } | null> => {
+    const normalizedLabel = label.toLowerCase().trim();
+    if (!normalizedLabel) {
+      return null;
+    }
+    try {
+      const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true });
+      const match = results.find((cluster) => cluster.id !== clusterId && cluster.label.toLowerCase() === normalizedLabel);
+      if (match?.id && match.label) {
+        return { id: match.id, label: match.label };
+      }
+    } catch {
+      // Fall back to regular save path on lookup failures.
+    }
+    return null;
+  };
+
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     const trimmed = labelInput.trim();
     if (!trimmed) {
       return;
     }
-    // Clear any previous error when attempting a new save
+    // Clear any previous error when attempting a new save.
     setError(null);
+    setDuplicateMatch(null);
+
+    // Avoid duplicate-label dead end by surfacing a merge suggestion first.
+    const match = await findClusterByLabel(trimmed);
+    if (match) {
+      setDuplicateMatch(match);
+      return;
+    }
+
     labelMutation.mutate(trimmed);
   };
 
@@ -84,6 +130,9 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     // Clear error when user starts typing again
     if (error) {
       setError(null);
+    }
+    if (duplicateMatch) {
+      setDuplicateMatch(null);
     }
   };
 
@@ -117,7 +166,12 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           )}
         </div>
 
-        <form onSubmit={handleSubmit} className="acx-cluster-labeling-panel__form">
+        <form
+          onSubmit={(event) => {
+            void handleSubmit(event);
+          }}
+          className="acx-cluster-labeling-panel__form"
+        >
           <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
           <div className="acx-cluster-labeling-panel__input-group">
             <input
@@ -127,17 +181,47 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
               onChange={handleInputChange}
               placeholder={__('Enter name...', 'alt-context')}
               className="regular-text"
-              disabled={labelMutation.isPending}
+              disabled={labelMutation.isPending || mergeMutation.isPending}
               autoFocus
             />
             <button
               type="submit"
               className="button button-primary"
-              disabled={!labelInput.trim() || labelMutation.isPending}
+              disabled={!labelInput.trim() || labelMutation.isPending || mergeMutation.isPending}
             >
-              {labelMutation.isPending ? __('Saving...', 'alt-context') : __('Save', 'alt-context')}
+              {labelMutation.isPending ? __('Saving...', 'alt-context') : mergeMutation.isPending ? __('Merging...', 'alt-context') : __('Save', 'alt-context')}
             </button>
           </div>
+          {duplicateMatch && (
+            <div className="acx-cluster-labeling-panel__suggestion" role="status" aria-live="polite">
+              <p className="acx-cluster-labeling-panel__suggestion-text">
+                {sprintf(__('Is this %s?', 'alt-context'), duplicateMatch.label)}
+              </p>
+              <div className="acx-cluster-labeling-panel__suggestion-actions">
+                <button
+                  type="button"
+                  className="button button-primary"
+                  disabled={mergeMutation.isPending || labelMutation.isPending}
+                  onClick={() =>
+                    mergeMutation.mutate({
+                      targetClusterId: duplicateMatch.id,
+                      targetLabel: duplicateMatch.label,
+                    })
+                  }
+                >
+                  {__('Yes', 'alt-context')}
+                </button>
+                <button
+                  type="button"
+                  className="button"
+                  disabled={mergeMutation.isPending || labelMutation.isPending}
+                  onClick={() => setDuplicateMatch(null)}
+                >
+                  {__('No', 'alt-context')}
+                </button>
+              </div>
+            </div>
+          )}
           {error && (
             <p className="acx-cluster-labeling-panel__error" role="alert">
               {error}

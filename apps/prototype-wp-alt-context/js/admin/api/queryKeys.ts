@@ -20,6 +20,8 @@ export const queryKeys = {
     list: (params: ClusterListParams = {}) => [...queryKeys.clusters.lists(), params] as const,
     details: () => [...queryKeys.clusters.all, 'detail'] as const,
     detail: (clusterId: string | null) => [...queryKeys.clusters.details(), clusterId] as const,
+    members: () => [...queryKeys.clusters.all, 'members'] as const,
+    memberList: (clusterId: string) => [...queryKeys.clusters.members(), clusterId] as const,
     labels: () => [...queryKeys.clusters.all, 'labels'] as const,
     topUnlabeled: (tenantId: string) => [...queryKeys.clusters.all, 'top-unlabeled', tenantId] as const,
     labelSearch: (term: string) => [...queryKeys.clusters.all, 'label-search', term] as const,

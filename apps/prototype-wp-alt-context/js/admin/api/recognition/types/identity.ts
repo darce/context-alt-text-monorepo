@@ -19,6 +19,7 @@ export interface ClusterIdentity {
   media_id: number;
   similarity: number;
   confidence: number;
+  clustering_pending?: boolean;
   bbox: BoundingBox;
   thumbnail_url?: string | null;
   media_url?: string | null;

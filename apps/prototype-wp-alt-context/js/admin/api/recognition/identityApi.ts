@@ -4,7 +4,7 @@
  * API functions for identity queries and suggestions.
  */
 
-import { fetchApi, stripTrailingSlash } from '../../utils/http';
+import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig, isDevMode } from '../config';
 import type {
   MediaIdentitiesResponse,
@@ -75,7 +75,7 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
     url.searchParams.set('include_debug', 'true');
   }
 
-  return fetchApi(url.toString(), {
+  return fetchRequiredApi<MediaIdentitiesResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -93,7 +93,7 @@ export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Pr
   const url = new URL(`${normalized}/${identityId}/suggestions`, window.location.origin);
   url.searchParams.set('top_k', String(topK));
 
-  return fetchApi<IdentitySuggestionsResponse>(url.toString(), {
+  return fetchRequiredApi<IdentitySuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -109,7 +109,7 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const response = await fetchApi<PendingSuggestionsResponse | PendingSuggestionApiResponse[]>(url.toString(), {
+  const response = await fetchRequiredApi<PendingSuggestionsResponse | PendingSuggestionApiResponse[]>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -159,7 +159,7 @@ export const fetchPendingMergeSuggestions = async (
   url.searchParams.set('limit', String(limit));
   url.searchParams.set('offset', String(offset));
 
-  const response = await fetchApi<PendingMergeSuggestionsResponse | PendingMergeSuggestionApiResponse[]>(
+  const response = await fetchRequiredApi<PendingMergeSuggestionsResponse | PendingMergeSuggestionApiResponse[]>(
     url.toString(),
     {
       method: 'GET',
@@ -206,7 +206,7 @@ export const acceptSuggestion = async (suggestionId: string): Promise<Suggestion
   const base = getEndpoint('recognitionSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
 
-  return fetchApi<SuggestionActionResponse>(url.toString(), {
+  return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
     restNonce: getConfig().nonce,
   });
@@ -216,7 +216,7 @@ export const acceptMergeSuggestion = async (suggestionId: string): Promise<Pendi
   const base = getEndpoint('recognitionMergeSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/accept`, window.location.origin);
 
-  return fetchApi<PendingMergeSuggestion>(url.toString(), {
+  return fetchRequiredApi<PendingMergeSuggestion>(url.toString(), {
     method: 'POST',
     restNonce: getConfig().nonce,
   });
@@ -229,7 +229,7 @@ export const rejectSuggestion = async (suggestionId: string): Promise<Suggestion
   const base = getEndpoint('recognitionSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/reject`, window.location.origin);
 
-  return fetchApi<SuggestionActionResponse>(url.toString(), {
+  return fetchRequiredApi<SuggestionActionResponse>(url.toString(), {
     method: 'POST',
     restNonce: getConfig().nonce,
   });
@@ -239,7 +239,7 @@ export const rejectMergeSuggestion = async (suggestionId: string): Promise<Pendi
   const base = getEndpoint('recognitionMergeSuggestions');
   const url = new URL(`${stripTrailingSlash(base)}/${suggestionId}/reject`, window.location.origin);
 
-  return fetchApi<PendingMergeSuggestion>(url.toString(), {
+  return fetchRequiredApi<PendingMergeSuggestion>(url.toString(), {
     method: 'POST',
     restNonce: getConfig().nonce,
   });

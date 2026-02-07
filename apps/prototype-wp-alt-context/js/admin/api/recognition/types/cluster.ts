@@ -2,7 +2,7 @@
  * Cluster Types and Operations
  */
 
-import type { ClusterIdentity, RepresentativeBounds } from './identity';
+import type { BoundingBox, ClusterIdentity, DebugMetrics, RepresentativeBounds } from './identity';
 
 export interface ClusterSummary {
   id: string;
@@ -26,12 +26,18 @@ export interface TopUnlabeledCluster {
   is_auto_label: boolean;
   identity_count: number;
   user_confirmed: boolean;
-  representatives: Array<{
+  suggested_label?: string | null;
+  suggested_label_source?: 'identity' | 'roster' | 'similar_cluster' | 'none' | null;
+  suggested_label_confidence?: number | null;
+  suggested_target_cluster_id?: string | null;
+  representatives: {
     id: string;
     media_id: number;
     thumb_url?: string;
+    media_url?: string | null;
+    bbox?: BoundingBox | null;
     is_pinned: boolean;
-  }>;
+  }[];
 }
 
 export interface ClusterListParams {
@@ -135,8 +141,6 @@ export interface CreateClusterForIdentityResponse {
   identity_id: string;
   message: string;
 }
-
-import type { DebugMetrics } from './identity';
 
 export interface ClusterRepresentative {
   id: string;

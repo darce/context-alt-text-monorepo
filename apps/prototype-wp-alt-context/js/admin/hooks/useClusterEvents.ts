@@ -24,13 +24,15 @@ export const useClusterEvents = (tenantId: string, enabled = true): void => {
 
     let base: string;
     try {
-      base = getEndpoint('recognitionClusters');
+      base = getEndpoint('recognitionClustersEvents', 'recognitionClusters');
     } catch {
       return;
     }
 
     const config = getConfig();
-    const url = new URL(`${stripTrailingSlash(base)}/events`, window.location.origin);
+    const normalizedBase = stripTrailingSlash(base);
+    const streamUrl = normalizedBase.endsWith('/events') ? normalizedBase : `${normalizedBase}/events`;
+    const url = new URL(streamUrl, window.location.origin);
     url.searchParams.set('tenant_id', tenantId);
 
     // Add nonce for authentication since EventSource doesn't support headers
@@ -39,6 +41,7 @@ export const useClusterEvents = (tenantId: string, enabled = true): void => {
     }
 
     const eventSource = new EventSource(url.toString());
+    let closedLogged = false;
 
     const handleEvent = (event: MessageEvent) => {
       try {
@@ -70,6 +73,14 @@ export const useClusterEvents = (tenantId: string, enabled = true): void => {
 
     eventSource.onmessage = handleEvent;
     eventSource.onerror = (err) => {
+      if (eventSource.readyState === EventSource.CLOSED) {
+        eventSource.close();
+        if (!closedLogged) {
+          closedLogged = true;
+          console.warn('Cluster EventSource closed; live updates disabled until next refresh.');
+        }
+        return;
+      }
       console.error('Cluster EventSource error:', err);
     };
 

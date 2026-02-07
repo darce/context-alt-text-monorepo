@@ -1,4 +1,4 @@
-import { fetchApi, stripTrailingSlash } from '../utils/http';
+import { fetchApi, fetchRequiredApi, stripTrailingSlash } from '../utils/http';
 import { getEndpoint, getConfig } from './config';
 import type { RosterEntry } from './generated';
 
@@ -6,7 +6,7 @@ export type { RosterEntry } from './generated';
 
 export const listRosterEntries = async (): Promise<RosterEntry[]> => {
   const endpoint = getEndpoint('rosterEntries');
-  return fetchApi(endpoint, { method: 'GET', restNonce: getConfig().nonce });
+  return fetchRequiredApi<RosterEntry[]>(endpoint, { method: 'GET', restNonce: getConfig().nonce });
 };
 
 export interface CommitClusterRequest {

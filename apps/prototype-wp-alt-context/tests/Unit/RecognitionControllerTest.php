@@ -148,4 +148,90 @@ class RecognitionControllerTest extends TestCase
         $this->assertTrue(is_wp_error($result), 'Exceeding 10000 items should be rejected');
         $this->assertSame('too_many_media_ids', $result->get_error_code());
     }
+
+    public function testTopUnlabeledClustersHydrateThumbnailFallbacks(): void
+    {
+        $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                [
+                    'id' => 'cluster-1',
+                    'representatives' => [
+                        [
+                            'id' => 'rep-1',
+                            'media_id' => 101,
+                            'thumb_url' => null,
+                        ],
+                        [
+                            'id' => 'rep-2',
+                            'media_id' => 202,
+                            'thumbnail_url' => 'http://example.test/media/legacy-202.jpg',
+                        ],
+                    ],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $this->controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+
+        $data = $response->get_data();
+        $this->assertSame('http://example.test/media/101.jpg', $data[0]['representatives'][0]['thumb_url']);
+        $this->assertSame('http://example.test/media/legacy-202.jpg', $data[0]['representatives'][1]['thumb_url']);
+    }
+
+    public function testDismissClusterProxiesToBackend(): void
+    {
+        $clusterId = 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae';
+        $this->queueHttpResponse([
+            'response' => ['code' => 204, 'message' => 'No Content'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $clusterId . '/dismiss');
+        $request->set_param('cluster_id', $clusterId);
+
+        $response = $this->controller->dismiss_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(204, $response->get_status());
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('POST', $calls[0]['method']);
+        $this->assertStringContainsString('/recognition/clusters/' . $clusterId . '/dismiss', $calls[0]['url']);
+        $this->assertStringContainsString('tenant_id=', $calls[0]['url']);
+
+        $this->assertTrue($calls[0]['body'] === null || $calls[0]['body'] === '');
+    }
+
+    public function testUndismissClusterProxiesToBackend(): void
+    {
+        $clusterId = 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae';
+        $this->queueHttpResponse([
+            'response' => ['code' => 204, 'message' => 'No Content'],
+            'body' => '',
+        ]);
+
+        $request = new WP_REST_Request('DELETE', '/acx/v1/recognition/clusters/' . $clusterId . '/dismiss');
+        $request->set_param('cluster_id', $clusterId);
+
+        $response = $this->controller->undismiss_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(204, $response->get_status());
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('DELETE', $calls[0]['method']);
+        $this->assertStringContainsString('/recognition/clusters/' . $clusterId . '/dismiss', $calls[0]['url']);
+        $this->assertStringContainsString('tenant_id=', $calls[0]['url']);
+
+        $this->assertTrue($calls[0]['body'] === null || $calls[0]['body'] === '');
+    }
 }

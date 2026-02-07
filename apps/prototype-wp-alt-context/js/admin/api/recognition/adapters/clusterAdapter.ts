@@ -27,6 +27,7 @@ export const toClusterGroup = (summary: ClusterSummary): ClusterGroup => {
     clusterId: summary.id,
     label: summary.label,
     isAutoLabel: summary.is_auto_label ?? false,
+    clusteringPending: summary.sample_identities.some((identity) => Boolean(identity.clustering_pending)),
     members: summary.sample_identities.map((identity) => toDetectedIdentity(identity, summary)),
   };
 };
@@ -42,6 +43,7 @@ export const toDetectedIdentity = (identity: ClusterIdentity, summary: ClusterSu
     cluster_id: summary.id,
     cluster_label: summary.label,
     is_auto_label: summary.is_auto_label ?? false,
+    clustering_pending: identity.clustering_pending ?? false,
     // Fields from ClusterIdentity
     bbox: identity.bbox,
     confidence: identity.confidence,

@@ -26,7 +26,7 @@ const buildHeaders = (options: HTTPOptions): Record<string, string> => {
   return headers;
 };
 
-export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T> => {
+export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T | undefined> => {
   const response = await fetch(endpoint, {
     method: options.method ?? 'GET',
     headers: buildHeaders(options),
@@ -39,6 +39,27 @@ export const fetchApi = async <T>(endpoint: string, options: HTTPOptions = {}): 
     throw new Error(`Request to ${endpoint} failed (${response.status}): ${errorText}`);
   }
 
-  const payload: unknown = await response.json();
+  // 204/205 intentionally return no body.
+  if (response.status === 204 || response.status === 205) {
+    return undefined;
+  }
+
+  const rawBody = await response.text();
+  if (rawBody.trim() === '') {
+    return undefined;
+  }
+
+  const payload: unknown = JSON.parse(rawBody);
   return payload as T;
+};
+
+/**
+ * Fetch API payload and fail loudly when a body was expected but missing.
+ */
+export const fetchRequiredApi = async <T>(endpoint: string, options: HTTPOptions = {}): Promise<T> => {
+  const payload = await fetchApi<T>(endpoint, options);
+  if (payload === undefined) {
+    throw new Error(`Request to ${endpoint} succeeded but returned an empty response body.`);
+  }
+  return payload;
 };

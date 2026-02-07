@@ -130,6 +130,16 @@ class RecognitionController {
 
 		register_rest_route(
 			'acx/v1',
+			'/recognition/clusters/events',
+			[
+				'methods'             => 'GET',
+				'callback'            => [ $this, 'stream_cluster_events' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
 			'/recognition/clusters/labels',
 			[
 				'methods'             => 'GET',
@@ -184,6 +194,26 @@ class RecognitionController {
 			[
 				'methods'             => 'GET',
 				'callback'            => [ $this, 'get_cluster_members' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/dismiss',
+			[
+				'methods'             => 'POST',
+				'callback'            => [ $this, 'dismiss_cluster' ],
+				'permission_callback' => [ $this, 'can_manage_recognition' ],
+			]
+		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/dismiss',
+			[
+				'methods'             => 'DELETE',
+				'callback'            => [ $this, 'undismiss_cluster' ],
 				'permission_callback' => [ $this, 'can_manage_recognition' ],
 			]
 		);
@@ -644,7 +674,106 @@ class RecognitionController {
 			'limit'     => absint( $request->get_param( 'limit' ) ?? 10 ),
 		];
 
-		return $this->proxy_request( 'GET', '/recognition/clusters/top-unlabeled', [], $query );
+		$response = $this->proxy_request( 'GET', '/recognition/clusters/top-unlabeled', [], $query );
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		if ( 200 !== $response->get_status() ) {
+			return $response;
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return $response;
+		}
+
+		foreach ( $data as $cluster_index => $cluster ) {
+			if ( ! is_array( $cluster ) ) {
+				continue;
+			}
+			if ( ! isset( $cluster['representatives'] ) || ! is_array( $cluster['representatives'] ) ) {
+				continue;
+			}
+
+			foreach ( $cluster['representatives'] as $rep_index => $rep ) {
+				if ( ! is_array( $rep ) ) {
+					continue;
+				}
+
+				$thumb_url = $rep['thumb_url'] ?? null;
+				if ( ( ! is_string( $thumb_url ) || '' === $thumb_url ) && isset( $rep['thumbnail_url'] ) ) {
+					$legacy_thumb = $rep['thumbnail_url'];
+					if ( is_string( $legacy_thumb ) && '' !== $legacy_thumb ) {
+						$thumb_url = $legacy_thumb;
+					}
+				}
+
+				if ( ( ! is_string( $thumb_url ) || '' === $thumb_url ) && isset( $rep['media_id'] ) ) {
+					$media_id = absint( $rep['media_id'] );
+					if ( $media_id > 0 ) {
+						$fallback_url = wp_get_attachment_url( $media_id );
+						if ( is_string( $fallback_url ) && '' !== $fallback_url ) {
+							$thumb_url = $fallback_url;
+						}
+					}
+				}
+
+				$cluster['representatives'][ $rep_index ]['thumb_url'] = is_string( $thumb_url ) && '' !== $thumb_url ? $thumb_url : null;
+			}
+
+			$data[ $cluster_index ] = $cluster;
+		}
+
+		$response->set_data( $data );
+		return $response;
+	}
+
+	public function stream_cluster_events( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		if ( function_exists( 'set_time_limit' ) ) {
+			@set_time_limit( 0 );
+		}
+		if ( function_exists( 'ignore_user_abort' ) ) {
+			@ignore_user_abort( true );
+		}
+
+		nocache_headers();
+		header( 'Content-Type: text/event-stream' );
+		header( 'Cache-Control: no-cache' );
+		header( 'X-Accel-Buffering: no' );
+
+		while ( ob_get_level() > 0 ) {
+			ob_end_flush();
+		}
+		@ini_set( 'output_buffering', 'off' );
+		@ini_set( 'zlib.output_compression', '0' );
+
+		$last_ping = microtime( true );
+		$tenant_id = $this->get_tenant_id();
+
+		echo ": connected\n\n";
+		@ob_flush();
+		@flush();
+
+		while ( ! connection_aborted() ) {
+			$now = microtime( true );
+			if ( $now - $last_ping >= 15 ) {
+				echo "event: ping\n";
+				echo 'data: ' . wp_json_encode(
+					[
+						'event_type' => 'heartbeat',
+						'timestamp'  => gmdate( 'c' ),
+						'tenant_id'  => $tenant_id,
+					]
+				) . "\n\n";
+				@ob_flush();
+				@flush();
+				$last_ping = $now;
+			}
+			usleep( 250000 );
+		}
+
+		exit;
 	}
 
 	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -730,6 +859,34 @@ class RecognitionController {
 		];
 
 		return $this->proxy_request( 'PATCH', sprintf( '/recognition/clusters/%s', $cluster_id ), $payload );
+	}
+
+	public function dismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', [ 'status' => 400 ] );
+		}
+
+		return $this->proxy_request(
+			'POST',
+			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
+			[],
+			[ 'tenant_id' => $this->get_tenant_id() ]
+		);
+	}
+
+	public function undismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', [ 'status' => 400 ] );
+		}
+
+		return $this->proxy_request(
+			'DELETE',
+			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
+			[],
+			[ 'tenant_id' => $this->get_tenant_id() ]
+		);
 	}
 
 	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {

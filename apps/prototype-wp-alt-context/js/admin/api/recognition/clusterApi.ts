@@ -4,7 +4,7 @@
  * API functions for cluster management: update, merge, split, revert.
  */
 
-import { fetchApi, stripTrailingSlash } from '../../utils/http';
+import { fetchApi, fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import type {
   ClusterSummary,
@@ -39,7 +39,7 @@ export const mergeCluster = async (
   signal?: AbortSignal,
 ): Promise<MergeClusterResponse> => {
   const url = `${stripTrailingSlash(getEndpoint('recognitionClusters'))}/${sourceId}/merge`;
-  return fetchApi<MergeClusterResponse>(url, {
+  return fetchRequiredApi<MergeClusterResponse>(url, {
     method: 'POST',
     body: { target_cluster_id: targetClusterId, target_label: targetLabel },
     restNonce: getConfig().nonce,
@@ -66,7 +66,7 @@ export const listRecognitionClusters = async (
     url.searchParams.set('search', params.search);
   }
 
-  return fetchApi<ClusterSummary[]>(url.toString(), {
+  return fetchRequiredApi<ClusterSummary[]>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
     signal,
@@ -77,7 +77,7 @@ export const getRecognitionCluster = async (clusterId: string): Promise<ClusterS
   const base = getEndpoint('recognitionClusters');
   const url = `${stripTrailingSlash(base)}/${clusterId}`;
 
-  return fetchApi<ClusterSummary>(url, {
+  return fetchRequiredApi<ClusterSummary>(url, {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -85,7 +85,7 @@ export const getRecognitionCluster = async (clusterId: string): Promise<ClusterS
 
 export const fetchClusterLabels = async (): Promise<string[]> => {
   const base = getEndpoint('recognitionClusterLabels');
-  return fetchApi<string[]>(stripTrailingSlash(base), {
+  return fetchRequiredApi<string[]>(stripTrailingSlash(base), {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -121,7 +121,7 @@ export const reassignClusterFace = (request: ReassignClusterFaceRequest): Promis
 
 export const revertMergeCluster = async (request: RevertMergeRequest): Promise<RevertMergeResponse> => {
   const base = getEndpoint('recognitionRevertMerge');
-  return fetchApi<RevertMergeResponse>(base, {
+  return fetchRequiredApi<RevertMergeResponse>(base, {
     method: 'POST',
     body: {
       target_cluster_id: request.targetClusterId,
@@ -156,11 +156,14 @@ export const splitCluster = async (
   if (mode) {
     body.mode = mode;
   }
-  return fetchApi<SplitClusterResponse | AsyncSplitClusterResponse>(`${stripTrailingSlash(base)}/${clusterId}/split`, {
-    method: 'POST',
-    body,
-    restNonce: getConfig().nonce,
-  });
+  return fetchRequiredApi<SplitClusterResponse | AsyncSplitClusterResponse>(
+    `${stripTrailingSlash(base)}/${clusterId}/split`,
+    {
+      method: 'POST',
+      body,
+      restNonce: getConfig().nonce,
+    },
+  );
 };
 
 export const createClusterForIdentity = async (
@@ -170,7 +173,7 @@ export const createClusterForIdentity = async (
   const base = getEndpoint('recognitionCreateClusterForIdentity');
   const url = stripTrailingSlash(base);
 
-  return fetchApi<CreateClusterForIdentityResponse>(url, {
+  return fetchRequiredApi<CreateClusterForIdentityResponse>(url, {
     method: 'POST',
     body: {
       identity_id: request.identityId,
@@ -198,7 +201,7 @@ export const pinRepresentative = async (
 export const fetchClusterMembers = async (clusterId: string): Promise<ClusterIdentity[]> => {
   const base = getEndpoint('recognitionClusters');
   const url = `${stripTrailingSlash(base)}/${clusterId}/members`;
-  return fetchApi<ClusterIdentity[]>(url, {
+  return fetchRequiredApi<ClusterIdentity[]>(url, {
     method: 'GET',
     restNonce: getConfig().nonce,
   });
@@ -213,4 +216,31 @@ export const removeClusterMember = async (identityId: string, block = true, sign
     },
     signal,
   );
+};
+
+/**
+ * Dismiss a cluster from the naming queue.
+ * The cluster will no longer appear in top-unlabeled results until undismissed.
+ */
+export const dismissCluster = async (clusterId: string, signal?: AbortSignal): Promise<void> => {
+  const base = getEndpoint('recognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${clusterId}/dismiss`;
+  await fetchApi(url, {
+    method: 'POST',
+    restNonce: getConfig().nonce,
+    signal,
+  });
+};
+
+/**
+ * Undo cluster dismissal so it reappears in the naming queue.
+ */
+export const undismissCluster = async (clusterId: string, signal?: AbortSignal): Promise<void> => {
+  const base = getEndpoint('recognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${clusterId}/dismiss`;
+  await fetchApi(url, {
+    method: 'DELETE',
+    restNonce: getConfig().nonce,
+    signal,
+  });
 };

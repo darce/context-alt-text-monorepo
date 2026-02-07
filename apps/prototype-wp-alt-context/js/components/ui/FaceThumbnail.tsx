@@ -27,6 +27,10 @@ export interface FaceThumbnailProps {
   bbox: BoundingBox;
   /** Display size variant */
   size?: FaceThumbnailSize;
+  /** Optional explicit pixel size override */
+  sizePx?: number;
+  /** Thumbnail shape. */
+  shape?: 'circle' | 'square';
   /** Accessible alt text */
   alt?: string;
   /** Additional CSS class */
@@ -42,9 +46,22 @@ type LoadingState = 'loading' | 'loaded' | 'error';
  * Works offline with browser-cached images.
  */
 export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps>(
-  ({ mediaUrl, bbox, size = 'md', alt = __('Detected face', 'alt-context'), className = '' }, ref) => {
+  (
+    {
+      mediaUrl,
+      bbox,
+      size = 'md',
+      sizePx,
+      shape = 'circle',
+      alt = __('Detected face', 'alt-context'),
+      className = '',
+    },
+    ref,
+  ) => {
     const [loadState, setLoadState] = React.useState<LoadingState>('loading');
-    const displaySize = sizeMap[size];
+    const imgRef = React.useRef<HTMLImageElement | null>(null);
+    const displaySize = sizePx ?? sizeMap[size];
+    const borderRadius = shape === 'square' ? '0' : '50%';
 
     // Calculate scale to fit bbox into display size
     // Use the larger dimension to ensure the face fills the container
@@ -64,6 +81,23 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
       setLoadState('error');
     }, []);
 
+    React.useEffect(() => {
+      setLoadState('loading');
+    }, [mediaUrl]);
+
+    React.useEffect(() => {
+      const img = imgRef.current;
+      if (!img || loadState !== 'loading') {
+        return;
+      }
+
+      if (!img.complete) {
+        return;
+      }
+
+      setLoadState(img.naturalWidth > 0 ? 'loaded' : 'error');
+    }, [loadState, mediaUrl]);
+
     const baseClass = 'acx-face-thumbnail';
     const sizeClass = `${baseClass}--${size}`;
     const stateClass = loadState !== 'loaded' ? `${baseClass}--${loadState}` : '';
@@ -74,11 +108,11 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
       return (
         <div
           ref={ref}
-          className={classes}
-          role="img"
-          aria-label={__('Face image unavailable', 'alt-context')}
-          style={{ width: displaySize, height: displaySize }}
-        />
+        className={classes}
+        role="img"
+        aria-label={__('Face image unavailable', 'alt-context')}
+        style={{ width: displaySize, height: displaySize }}
+      />
       );
     }
 
@@ -90,7 +124,7 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
           width: displaySize,
           height: displaySize,
           overflow: 'hidden',
-          borderRadius: '50%',
+          borderRadius,
           position: 'relative',
         }}
       >
@@ -102,11 +136,12 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
               position: 'absolute',
               inset: 0,
               backgroundColor: 'var(--acx-color-gray-200, #e5e7eb)',
-              borderRadius: '50%',
+              borderRadius,
             }}
           />
         )}
         <img
+          ref={imgRef}
           src={mediaUrl}
           alt={alt}
           onLoad={handleLoad}

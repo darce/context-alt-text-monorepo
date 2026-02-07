@@ -11,6 +11,7 @@ use function add_action;
 use function apply_filters;
 use function esc_url_raw;
 use function file_get_contents;
+use function get_site_url;
 use function in_array;
 use function is_array;
 use function is_readable;
@@ -25,6 +26,7 @@ use function wp_create_nonce;
 use function wp_get_environment_type;
 use function wp_localize_script;
 use function wp_script_add_data;
+use function wp_unslash;
 
 /**
  * Coordinates admin-only concerns such as enqueueing the SPA bundle.
@@ -83,7 +85,7 @@ class Admin {
 	}
 
 	private function is_supported_page_request(): bool {
-		$page = $_GET['page'] ?? null;
+		$page = isset( $_GET['page'] ) ? sanitize_key( wp_unslash( (string) $_GET['page'] ) ) : null;
 
 		if ( ! is_string( $page ) ) {
 			return false;
@@ -188,6 +190,7 @@ class Admin {
 				'nonce'     => wp_create_nonce( 'wp_rest' ),
 				'devMode'   => $is_dev_mode,
 				'tier'      => $tier,
+				'tenant_id' => md5( (string) get_site_url() ), // v4.12.0: Keep query keys tenant-scoped
 				'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
@@ -195,6 +198,7 @@ class Admin {
 					'recognitionJobs'     => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'  => rest_url( 'acx/v1/recognition/cluster' ),
 					'recognitionClusters' => rest_url( 'acx/v1/recognition/clusters' ),
+					'recognitionClustersEvents' => rest_url( 'acx/v1/recognition/clusters/events' ),
 					'recognitionClusterLabels' => rest_url( 'acx/v1/recognition/clusters/labels' ),
 					'recognitionTrainingStage' => rest_url( 'acx/v1/recognition/training-stage' ),
 					'recognitionMediaIdentities' => rest_url( 'acx/v1/recognition/media-identities' ),

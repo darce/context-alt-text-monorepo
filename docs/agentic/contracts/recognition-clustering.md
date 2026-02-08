@@ -120,6 +120,11 @@ Query params:
 
 Response: `ClusterResponse[]`.
 
+Notes:
+- Returns clusters from the **latest clustering run** (current batch).
+- Falls back to tenant-wide unlabeled clusters if no run data exists.
+- `representatives` objects include `thumb_url` for UI display.
+
 ### PATCH /recognition/clusters/{cluster_id}
 
 Request body:

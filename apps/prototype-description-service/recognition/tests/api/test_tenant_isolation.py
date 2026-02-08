@@ -13,6 +13,33 @@ from recognition.shared.ids import generate_id
 from recognition.tests.api.conftest import FakeSession
 
 
+class StubClusterService:
+    """Shared minimal cluster service stub for tenant-isolation tests."""
+
+    def __init__(self, on_list=None):  # noqa: ANN001
+        self._on_list = on_list
+
+    async def list_clusters(
+        self,
+        tenant_id: str,
+        limit: int,
+        offset: int,
+        include_outliers: bool = False,
+        labeled_only: bool = False,
+        search: str | None = None,
+    ):
+        if self._on_list is not None:
+            self._on_list(
+                tenant_id=tenant_id,
+                limit=limit,
+                offset=offset,
+                include_outliers=include_outliers,
+                labeled_only=labeled_only,
+                search=search,
+            )
+        return []
+
+
 def _tenant_validation_client() -> TestClient:
     """Build a TestClient that preserves real tenant validation."""
     app = FastAPI()
@@ -23,18 +50,6 @@ def _tenant_validation_client() -> TestClient:
 
     def cluster_builder():
         async def _build(_tenant_id: str):
-            class StubClusterService:
-                async def list_clusters(
-                    self,
-                    tenant_id: str,
-                    limit: int,
-                    offset: int,
-                    include_outliers: bool = False,
-                    labeled_only: bool = False,
-                    search: str | None = None,
-                ):
-                    return []
-
             return StubClusterService()
 
         return _build
@@ -96,20 +111,7 @@ def test_query_param_tenant_fallback(monkeypatch) -> None:
         async def _build(tenant_id: str):
             collected["tenant_id"] = tenant_id
 
-            class StubClusterService:
-                async def list_clusters(
-                    self,
-                    tenant_id: str,
-                    limit: int,
-                    offset: int,
-                    include_outliers: bool = False,
-                    labeled_only: bool = False,
-                    search: str | None = None,
-                ):
-                    collected["service_tenant"] = tenant_id
-                    return []
-
-            return StubClusterService()
+            return StubClusterService(on_list=lambda **_: collected.__setitem__("service_tenant", tenant_id))
 
         return _build
 
@@ -173,20 +175,9 @@ def test_session_context_cleared_after_request(monkeypatch) -> None:
 
     def builder(session_dep=Depends(dependencies.get_session)):
         async def _build(_: str):
-            class StubClusterService:
-                async def list_clusters(
-                    self,
-                    tenant_id: str,
-                    limit: int,
-                    offset: int,
-                    include_outliers: bool = False,
-                    labeled_only: bool = False,
-                    search: str | None = None,
-                ):
-                    events.append(("list", tenant_id, session_dep.current_tenant))
-                    return []
-
-            return StubClusterService()
+            return StubClusterService(
+                on_list=lambda **kwargs: events.append(("list", kwargs["tenant_id"], session_dep.current_tenant))
+            )
 
         return _build
 

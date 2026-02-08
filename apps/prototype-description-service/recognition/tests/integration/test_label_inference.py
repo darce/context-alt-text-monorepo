@@ -5,9 +5,11 @@ from __future__ import annotations
 import uuid
 
 import pytest
+from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from db.models import IdentityCluster, IdentityMember, MediaIdentity, Tenant
+from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity, Tenant
+from db.models.constraints import ClusterMergeSuggestion, IdentitySuggestion
 from recognition.application.suggestions.label_inference import infer_suggested_label
 from recognition.domain.suggestion import SuggestedLabelSource
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
@@ -40,8 +42,6 @@ async def test_infer_suggested_label_from_merge_suggestion_above_threshold(
     id_a, id_b = target_cluster.id, labeled_cluster.id
     if id_a > id_b:
         id_a, id_b = id_b, id_a
-
-    from db.models.constraints import ClusterMergeSuggestion
 
     db_session.add(
         ClusterMergeSuggestion(
@@ -96,8 +96,6 @@ async def test_infer_suggested_label_merge_suggestion_below_threshold_returns_no
     id_a, id_b = target_cluster.id, labeled_cluster.id
     if id_a > id_b:
         id_a, id_b = id_b, id_a
-
-    from db.models.constraints import ClusterMergeSuggestion
 
     db_session.add(
         ClusterMergeSuggestion(
@@ -181,8 +179,6 @@ async def test_infer_suggested_label_from_merge_suggestion(
     if id_a > id_b:
         id_a, id_b = id_b, id_a
 
-    from db.models.constraints import ClusterMergeSuggestion
-
     suggestion = ClusterMergeSuggestion(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
@@ -255,8 +251,6 @@ async def test_infer_suggested_label_from_identity_match(
 
     # 3. Create Suggestion: Member -> Labeled Cluster
     # This implies "MemberIdentity" might be "Dave"
-    from db.models.constraints import IdentitySuggestion
-
     suggestion = IdentitySuggestion(
         id=uuid.uuid4(),
         tenant_id=tenant_id,
@@ -334,8 +328,6 @@ async def test_infer_suggested_label_from_accepted_member_suggestion_without_rep
     )
     db_session.add(labeled_cluster)
 
-    from db.models.constraints import IdentitySuggestion
-
     # Low confidence is intentional: accepted suggestions should still be surfaced.
     db_session.add(
         IdentitySuggestion(
@@ -370,8 +362,6 @@ async def test_infer_suggested_label_from_roster_match(
 ) -> None:
     # Create temporary roster_entries table for test context
     # SQLite syntax is compatible with raw text execution in SQLAlchemy
-    from sqlalchemy import text
-
     await db_session.execute(text("CREATE TABLE IF NOT EXISTS roster_entries (id UUID PRIMARY KEY, name TEXT)"))
 
     roster_id = uuid.uuid4()
@@ -424,3 +414,76 @@ async def test_infer_suggested_label_from_roster_match(
     assert result.label == "Roster Dave"
     assert result.source == SuggestedLabelSource.ROSTER
     assert result.confidence == 1.0
+
+
+@pytest.mark.asyncio
+async def test_infer_suggested_label_uses_representative_table_when_missing_rep_identity(
+    db_session: AsyncSession,
+    tenant: Tenant,
+) -> None:
+    """Inference should use representative table embeddings when representative_identity_id is null."""
+    tenant_id = tenant.id
+
+    labeled_rep = MediaIdentity(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        media_id=301,
+        media_url="http://example.test/301.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=1,
+        bbox_height=1,
+        confidence=1.0,
+        embedding=[1.0] + [0.0] * 511,
+    )
+    labeled_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label="Casey",
+        representative_identity_id=labeled_rep.id,
+        identity_count=2,
+        user_confirmed=True,
+    )
+
+    unlabeled_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label=None,
+        representative_identity_id=None,
+        identity_count=1,
+        user_confirmed=False,
+    )
+    db_session.add_all([labeled_rep, labeled_cluster, unlabeled_cluster])
+    await db_session.flush()
+
+    db_session.add(
+        IdentityClusterRepresentative(
+            tenant_id=tenant_id,
+            cluster_id=labeled_cluster.id,
+            identity_id=labeled_rep.id,
+            embedding=[1.0] + [0.0] * 511,
+            quality_score=1.0,
+        )
+    )
+    db_session.add(
+        IdentityClusterRepresentative(
+            tenant_id=tenant_id,
+            cluster_id=unlabeled_cluster.id,
+            identity_id=labeled_rep.id,
+            embedding=[1.0] + [0.0] * 511,
+            quality_score=1.0,
+        )
+    )
+    await db_session.commit()
+
+    repo = SqlAlchemyClusterRepository(db_session)
+    result = await infer_suggested_label(
+        tenant_id=str(tenant_id),
+        cluster_id=str(unlabeled_cluster.id),
+        session=db_session,
+        cluster_repository=repo,
+    )
+
+    assert result is not None
+    assert result.label == "Casey"
+    assert result.source == SuggestedLabelSource.SIMILAR_CLUSTER

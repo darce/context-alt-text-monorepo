@@ -1,7 +1,9 @@
-import { useState, useEffect, useRef } from 'react';
-import { useJobCoordination } from './useJobCoordination';
-import { getConfig, getEndpoint } from '../api/config';
+import { useEffect, useRef, useState } from 'react';
+
 import type { JobProgress } from '../api/recognition/types/scan';
+import { getConfig, getEndpoint } from '../api/config';
+import { useJobCoordination } from './useJobCoordination';
+import { broadcastJobProgress, parseDoneEvent, parseProgressEvent } from './useJobProgressStreamHelpers';
 
 export type JobStatus = 'pending' | 'running' | 'completed' | 'failed' | 'clustering';
 
@@ -15,9 +17,6 @@ export interface JobProgressStream {
 
 /**
  * Hook to connect to the backend SSE endpoint for real-time job progress updates.
- *
- * @param jobId - The UUID of the job to track.
- * @returns {JobProgressStream} Real-time progress and status.
  */
 export const useJobProgressStream = (jobId: string | null): JobProgressStream => {
   const [progress, setProgress] = useState<JobProgress | null>(null);
@@ -30,19 +29,17 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
   const { isPrimary, channel } = useJobCoordination(jobId);
 
   useEffect(() => {
-    const handleOnline = () => setIsOnline(true);
-    const handleOffline = () => setIsOnline(false);
+    const goOnline = () => setIsOnline(true);
+    const goOffline = () => setIsOnline(false);
 
-    window.addEventListener('online', handleOnline);
-    window.addEventListener('offline', handleOffline);
-
+    window.addEventListener('online', goOnline);
+    window.addEventListener('offline', goOffline);
     return () => {
-      window.removeEventListener('online', handleOnline);
-      window.removeEventListener('offline', handleOffline);
+      window.removeEventListener('online', goOnline);
+      window.removeEventListener('offline', goOffline);
     };
   }, []);
 
-  // Reset state when jobId changes
   useEffect(() => {
     setProgress(null);
     setStatus('pending');
@@ -51,22 +48,22 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
     progressRef.current = null;
   }, [jobId]);
 
-  // Handle incoming broadcasted events for non-primary tabs
   useEffect(() => {
     if (!channel || isPrimary) {
       return;
     }
 
     const handleMessage = (event: MessageEvent) => {
-      const { type, payload } = event.data as {
+      const payload = event.data as {
         type: string;
         payload: { progress: JobProgress | null; status: JobStatus; etaSeconds: number | null };
       };
-      if (type === 'JOB_PROGRESS') {
-        setProgress(payload.progress);
-        setStatus(payload.status);
-        setEtaSeconds(payload.etaSeconds);
+      if (payload.type !== 'JOB_PROGRESS') {
+        return;
       }
+      setProgress(payload.payload.progress);
+      setStatus(payload.payload.status);
+      setEtaSeconds(payload.payload.etaSeconds);
     };
 
     channel.addEventListener('message', handleMessage);
@@ -82,177 +79,90 @@ export const useJobProgressStream = (jobId: string | null): JobProgressStream =>
       return;
     }
 
-    const apiBase = getEndpoint('recognitionJobs');
-    const url = new URL(`${apiBase}/${jobId}/stream`, window.location.origin);
+    const streamUrl = new URL(`${getEndpoint('recognitionJobs')}/${jobId}/stream`, window.location.origin);
     const nonce = getConfig().nonce;
     if (nonce) {
-      url.searchParams.set('_wpnonce', nonce);
+      streamUrl.searchParams.set('_wpnonce', nonce);
     }
 
-    let eventSource: EventSource | null = new EventSource(url.toString());
-    let isClosed = false;
+    let closed = false;
+    let eventSource: EventSource | null = new EventSource(streamUrl.toString());
 
-    const closeAndCleanup = () => {
-      isClosed = true;
+    const close = () => {
+      closed = true;
       eventSource?.close();
       eventSource = null;
     };
 
-    eventSource.addEventListener('progress', (e) => {
-      if (isClosed) {
+    eventSource.addEventListener('progress', (event) => {
+      if (closed) {
         return;
       }
-      try {
-        const data = JSON.parse(e.data as string) as {
-          completed: number;
-          total: number;
-          status: JobStatus;
-          phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
-          images_processed?: number;
-          faces_found?: number;
-          clusters_created?: number;
-        };
 
-        // Calculate new state
-        const now = Date.now();
-        const newProgress: JobProgress = { completed: data.completed, total: data.total };
-        if (data.phase) {
-          newProgress.phase = data.phase;
-        }
-        if (typeof data.images_processed === 'number') {
-          newProgress.images_processed = data.images_processed;
-        }
-        if (typeof data.faces_found === 'number') {
-          newProgress.faces_found = data.faces_found;
-        }
-        if (typeof data.clusters_created === 'number') {
-          newProgress.clusters_created = data.clusters_created;
-        }
-        let newEta: number | null = null;
-
-        // Initialize start time on first progress
-        if (!startTimeRef.current && data.completed > 0) {
-          startTimeRef.current = now;
-        }
-
-        // Calculate ETA
-        if (startTimeRef.current && data.completed > 0 && data.completed < data.total) {
-          const elapsedMs = now - startTimeRef.current;
-          const itemsProcessed = data.completed;
-          const rate = itemsProcessed / elapsedMs;
-          const remainingItems = data.total - data.completed;
-          const remainingMs = remainingItems / rate;
-          newEta = Math.round(remainingMs / 1000);
-        }
-
-        // Update local state
-        progressRef.current = newProgress;
-        setProgress(newProgress);
-        setStatus(data.status);
-        setEtaSeconds(newEta);
-
-        // Broadcast to other tabs
-        channel?.postMessage({
-          type: 'JOB_PROGRESS',
-          payload: {
-            progress: newProgress,
-            status: data.status,
-            etaSeconds: newEta,
-          },
-        });
-      } catch (err) {
-        console.error('Failed to parse SSE progress data', err);
+      const parsed = parseProgressEvent<JobStatus>(event.data as string, startTimeRef);
+      if (!parsed) {
+        console.error('Failed to parse SSE progress data');
+        return;
       }
+
+      progressRef.current = parsed.progress;
+      setProgress(parsed.progress);
+      setStatus(parsed.status);
+      setEtaSeconds(parsed.etaSeconds);
+      broadcastJobProgress(channel, parsed);
     });
 
-    eventSource.addEventListener('done', (e) => {
-      if (isClosed) {
+    eventSource.addEventListener('done', (event) => {
+      if (closed) {
         return;
       }
-      try {
-        const data = JSON.parse(e.data as string) as {
-          status: JobStatus;
-          completed?: number;
-          total?: number;
-          phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
-          images_processed?: number;
-          faces_found?: number;
-          clusters_created?: number;
-        };
-        const latestProgress = progressRef.current;
-        const finalProgress =
-          typeof data.completed === 'number' && typeof data.total === 'number'
-            ? {
-                completed: data.completed,
-                total: data.total,
-                ...(data.phase ? { phase: data.phase } : {}),
-                ...(typeof data.images_processed === 'number' ? { images_processed: data.images_processed } : {}),
-                ...(typeof data.faces_found === 'number' ? { faces_found: data.faces_found } : {}),
-                ...(typeof data.clusters_created === 'number' ? { clusters_created: data.clusters_created } : {}),
-              }
-            : latestProgress && data.status === 'completed'
-              ? { completed: latestProgress.total, total: latestProgress.total }
-              : latestProgress;
-        setStatus(data.status);
-        setProgress(finalProgress ?? null);
-        setEtaSeconds(null);
 
-        // Broadcast completion
-        channel?.postMessage({
-          type: 'JOB_PROGRESS',
-          payload: {
-            progress: finalProgress ?? null,
-            status: data.status,
-            etaSeconds: null,
-          },
-        });
-
-        closeAndCleanup();
-      } catch (err) {
-        console.error('Failed to parse SSE done data', err);
+      const parsed = parseDoneEvent<JobStatus>(event.data as string, progressRef.current);
+      if (!parsed) {
+        console.error('Failed to parse SSE done data');
+        return;
       }
+
+      setStatus(parsed.status);
+      setProgress(parsed.progress);
+      setEtaSeconds(null);
+      broadcastJobProgress(channel, {
+        progress: parsed.progress,
+        status: parsed.status,
+        etaSeconds: null,
+      });
+      close();
     });
 
-    // Handle server-sent error events (e.g., 404 Job not found)
-    eventSource.addEventListener('error', (e: Event) => {
-      if (isClosed) {
+    eventSource.addEventListener('error', (event: Event) => {
+      if (closed) {
         return;
       }
 
-      // Check if this is a MessageEvent with error data from the server
-      if (e instanceof MessageEvent && e.data) {
+      if (event instanceof MessageEvent && event.data) {
         try {
-          const errorData = JSON.parse(e.data as string) as { message?: string };
-          console.error('SSE server error:', errorData.message);
-
-          // Job not found - mark as failed and stop reconnecting
+          const errorData = JSON.parse(event.data as string) as { message?: string };
           if (errorData.message?.includes('not found')) {
             setStatus('failed');
-            closeAndCleanup();
+            close();
             return;
           }
+          console.error('SSE server error:', errorData.message);
         } catch {
-          // Not JSON, fall through to connection error handling
+          // Non-JSON payload; handled below.
         }
       }
 
-      // Connection error - EventSource will auto-reconnect
-      console.warn('SSE connection error, will auto-reconnect...', e);
+      console.warn('SSE connection error, will auto-reconnect...', event);
     });
 
-    // Handle EventSource connection failures
     eventSource.onerror = () => {
-      if (isClosed) {
-        return;
-      }
-      // EventSource auto-reconnects on connection errors
-      // Only log if we haven't explicitly closed
-      if (eventSource?.readyState === EventSource.CLOSED) {
+      if (!closed && eventSource?.readyState === EventSource.CLOSED) {
         console.warn('SSE connection closed unexpectedly');
       }
     };
 
-    return () => closeAndCleanup();
+    return () => close();
   }, [jobId, isOnline, isPrimary, channel]);
 
   return { progress, status, isOnline, etaSeconds, isPrimary };

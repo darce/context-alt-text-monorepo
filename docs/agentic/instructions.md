@@ -253,6 +253,16 @@ Never fabricate benchmark numbers, latency claims, or metrics. If data is unavai
 
 **The "Cam Grant domination" bug (December 2025) was falsely claimed as fixed when 21+ false positives were still appearing in production logs. This is unacceptable.**
 
+### Curation-First Precedence
+
+**User curation decisions are ground truth. Never use time-based heuristics to override them.**
+
+- A user's rejection, acceptance, or label is curated ground truth — the backend must not autonomously reverse it.
+- Do not use time-based cooldowns, expiry windows, or TTLs to gate re-evaluation of curated state. Time assumes constant usage cadence, which cannot be guaranteed — users engage in bursts separated by weeks or months.
+- The correct gate is always a **data delta**: did the underlying evidence (representative set, embeddings, cluster composition) change since the user's decision? If yes → surface as a new proposal. If no → respect the decision indefinitely.
+- When re-surfacing after changed evidence, create a **new record** (not mutate the original). The user's prior decision must remain visible in the audit trail.
+- Avoid adding settings fields for time-based gates. They consume cognitive space for a trivial decision with no correct universal default.
+
 ---
 
 ## Development Workflow
@@ -423,6 +433,35 @@ const { data, isLoading, error, refetch } = useQuery({
 });
 ```
 
+### TypeScript Safety Rules (Lessons Learned)
+
+> These rules were distilled from the 4.12.0 branch audit.
+
+1. **No non-null assertions (`!`) on API data.** Fields typed `T | null | undefined` from an API response must be narrowed with a guard, not suppressed with `!`. Use a local const and an `if` check.
+
+   ```tsx
+   // BAD
+   <Img src={item.url!} />
+
+   // GOOD
+   const url = item.url;
+   if (url) { <Img src={url} /> }
+   ```
+
+2. **No `undefined as T` or `x as T` for API return types.** If `fetchApi` can return `undefined` (204, empty body), the return type must be `Promise<T | undefined>`. Casting `undefined as T` gives callers a lie.
+
+3. **Centralize query keys.** All React Query keys must go through a `queryKeys` factory. Ad-hoc `['resource', id]` arrays create stale-data risk when other components invalidate via the factory but miss the ad-hoc key.
+
+4. **No inline styles for layout.** If a grid/flex pattern is used more than once, it belongs in a SCSS class. Inline `style={{ display: 'grid', ... }}` objects are not reusable, not inspectable in DevTools by class name, and duplicate easily.
+
+5. **No `!important` in SCSS.** Increase selector specificity instead (nest under a root `.acx-` container). WordPress admin styles have high specificity, but `!important` creates an arms race.
+
+6. **Use design tokens for colors.** Hex literals (`#fef2f2`) must be CSS custom properties (`var(--acx-color-error-bg)`). Magic colors diverge silently across components.
+
+7. **API calls go through the API module.** Components must not import `fetchApi` directly and build URLs with string interpolation. All API calls should go through a dedicated function in the relevant API module (e.g., `clusterApi.ts`) for mockability and consistency.
+
+8. **Use `URLSearchParams` for query strings.** String interpolation (`` `?limit=${n}&tenant_id=${id}` ``) fails on special characters. Use `new URLSearchParams({ limit: String(n), tenant_id: id })` instead.
+
 ### Accessibility Requirements
 
 - Query elements by accessible roles: `getByRole('button')`, not `getByTestId()`
@@ -450,6 +489,8 @@ const { data, isLoading, error, refetch } = useQuery({
 - Centralize capability checks in a Security class
 - Escape all output, sanitize all input
 - Rate limiting via keyed transients
+- **Always sanitize superglobal access** — use `sanitize_key()`, `sanitize_text_field()`, or `absint()` on `$_GET`/`$_POST`/`$_REQUEST` even when comparing against allowlists
+- **One transport per parameter** — do not send the same value (e.g., `tenant_id`) in both the POST body and query params; pick one per your API contract
 
 **REST API:**
 
@@ -496,6 +537,23 @@ make install  # Faster, skips insightface
 - Infrastructure adapters in `recognition/infrastructure/`
 - Interface adapters (HTTP) in `recognition/interface_adapters/`
 - Services orchestrate domain operations
+
+**Hexagonal Layer Rules (Lessons Learned):**
+
+> These rules were distilled from the 4.12.0 branch audit. Violating them creates coupling, suppresses errors, and defeats type safety.
+
+1. **No raw SQL in the application layer.** Use `text()` / raw queries only in `infrastructure/repositories/`. The application layer must call repository methods.
+2. **No `contextlib.suppress(Exception)`.** Bare suppression hides real bugs. Catch specific exceptions and log at `WARNING` level at minimum.
+3. **No `getattr()` duck-typing on service protocols.** If a method is used at a call site, declare it on the Protocol interface. Never use `getattr(service, "method_name", None)` + `callable()` guards — this defeats mypy entirely.
+4. **No presentation DTOs in the domain or application layer.** Types shaped for API responses (`FaceBox`, `SuggestionDetails`) belong in `interface_adapters/http/schemas/`. Neither `domain/` nor `application/` should import or return them. Application services must return domain types; the interface adapter maps to DTOs at the HTTP boundary.
+5. **No `object` parameters.** Use the domain type or a Protocol. `getattr(cluster, "label", None)` silently returns `None` on typos.
+6. **No default-instantiating settings.** `ClusteringSettings()` inside a function bypasses DI. Always inject settings as a parameter.
+7. **Escape LIKE wildcards.** Any user-supplied string used in `ilike()` must escape `%` and `_` before interpolation.
+8. **Migration ↔ model parity.** After any schema change, verify the migration and ORM model define identical constraints. Run `alembic check` to detect drift.
+9. **No duplicate definitions.** Exceptions, constants, and helpers must have exactly one canonical location. Cross-layer duplication (e.g., `ClusterNotFoundError` in both domain and application) causes import confusion.
+10. **Extract shared repository utilities.** UUID coercion, media-identity bootstrap, and similar boilerplate must live in a shared module (e.g., `infrastructure/repositories/_helpers.py`), not be copy-pasted across repository files.
+11. **Scope `except` clauses to the exact operation they guard.** A broad `except ValueError` (or any typed catch) that wraps an entire method body will catch unrelated errors from downstream calls — turning real bugs into silent "not found" responses. Wrap only the single call you intend to guard and let other exceptions propagate. *Discovered when `reject()` caught a `ValueError` from an incomplete enum in `_to_domain()` because the `except` wrapped `update_status()`, `create_cannot_link()`, and `add_block()` together.*
+12. **No redundant router/dependency wiring.** When a parent router already `include_router`s its sub-routers, do not also register those sub-routers individually on the app. Duplicate registration multiplies endpoint handlers (3× in the suggestion case), wastes memory, and produces confusing `/docs` output. Audit `include_router` calls to ensure every router is registered exactly once.
 
 **Standards:**
 
@@ -930,6 +988,92 @@ repo.get_curriculum_t = AsyncMock(return_value=0.0)  # Production default is 0.5
 # GOOD: Match production defaults explicitly
 repo.get_curriculum_t = AsyncMock(return_value=0.5)  # Matches schema default
 ```
+
+#### 9. No Permanently Skipped Tests
+
+Tests marked `@pytest.mark.skip` or `it.skip()` without a linked issue or TODO date are dead code that creates false coverage confidence. Either:
+- Remove the test (if the feature is abandoned)
+- Complete the test (if the feature shipped)
+- Add a comment with an issue reference and expected resolution (if blocked)
+
+Empty test bodies (`pass`, `...`) that run green are worse — they inflate pass counts.
+
+#### 10. Extract Shared Test Stubs
+
+If a Protocol stub (e.g., `NullClusterRepository`) is copy-pasted across 3+ test files, extract it to a shared test utility module (`tests/fakes.py` or `tests/stubs.py`). Copy-pasted stubs drift when the Protocol changes, causing some tests to miss new required methods.
+
+```python
+# BAD: 100-line ClusterRepoStub defined independently in 4 test files
+class ClusterRepoStub:
+    async def get(self, id): return None
+    async def save(self, c): pass
+    # ... 20 more methods, copy-pasted
+
+# GOOD: Shared null implementation
+# tests/stubs.py
+class NullClusterRepository:
+    """No-op implementation of ClusterRepository for unit tests."""
+    async def get(self, cluster_id): return None
+    async def save(self, cluster): pass
+    # full Protocol surface in one place
+```
+
+#### 11. One Canonical Fake Per Protocol
+
+Do not maintain multiple divergent fake implementations of the same Protocol across test files. When three files each define their own `FakeClusterRepository` with different stored types and method sets, a Protocol change requires updates in all three places — and the divergence means they test subtly different contracts.
+
+```python
+# BAD: FakeClusterRepository defined in conftest.py, api/conftest.py, and fakes.py
+# with different stored types (FakeClusterForRepo vs ClusterResponse vs _FakeClusterRecord)
+
+# GOOD: One configurable fake in tests/fakes.py
+class FakeClusterRepository:
+    """Configurable fake for ClusterRepository protocol."""
+    def __init__(self, clusters: list[IdentityCluster] | None = None):
+        self._clusters = {c.id: c for c in (clusters or [])}
+    async def get(self, cluster_id: str) -> IdentityCluster | None:
+        return self._clusters.get(cluster_id)
+```
+
+The same applies to inline stubs repeated within a single test file — extract to a file-local fixture or `conftest.py` instead of redefining the class multiple times.
+
+#### 12. No False-Positive Fakes
+
+Test fakes that always return `None`/`0`/empty can make tests pass for the wrong reason. If a route checks `if cluster is None: return 404`, a fake that always returns `None` will always take the 404 path — the happy path is never tested.
+
+Design fakes to be configurable:
+
+```python
+# BAD: Always returns None
+class FakeSession:
+    async def get(self, *a, **kw): return None
+
+# GOOD: Configurable
+class FakeSession:
+    def __init__(self, data=None):
+        self._data = data
+    async def get(self, *a, **kw): return self._data
+```
+
+#### 13. `QueryClient` Must Use `retry: false` in Tests
+
+```tsx
+// BAD: retry: 1 adds non-deterministic timing
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: 1, retryDelay: 1 } },
+});
+
+// GOOD: Disable retries entirely
+const queryClient = new QueryClient({
+  defaultOptions: { queries: { retry: false } },
+});
+```
+
+Retries in tests cause flaky timing, extra network calls, and `act()` warnings from async updates after test teardown.
+
+#### 14. Use One Injection Strategy Per Dependency
+
+Do not use both `app.dependency_overrides[dep]` and `monkeypatch.setattr(module, "dep", ...)` for the same dependency. If the resolution path changes, one strategy silently becomes dead code. Pick one — prefer FastAPI's `dependency_overrides` for endpoint-injected deps.
 
 ### Test Pyramid
 

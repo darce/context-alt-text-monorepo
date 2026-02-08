@@ -55,6 +55,7 @@ class AssignmentSuggestion:
     representative_similarity: float
     member_similarity: float
     status: SuggestionStatus
+    evidence_generation: int = 0
     created_at: datetime | None = None
 
 

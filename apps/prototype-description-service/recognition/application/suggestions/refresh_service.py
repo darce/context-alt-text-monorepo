@@ -13,7 +13,13 @@ import numpy as np
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import MediaIdentity as MediaIdentityModel
-from recognition.application.assignment import AssignmentCandidate, AssignmentGate, AssignmentOutcome, DiscoveryMethod
+from recognition.application.assignment import (
+    AssignmentCandidate,
+    AssignmentDecision,
+    AssignmentGate,
+    AssignmentOutcome,
+    DiscoveryMethod,
+)
 from recognition.application.assignment.checks import (
     BlockCheck,
     CheckFailureKind,
@@ -143,7 +149,7 @@ class SuggestionRefreshService:
         """Return whether similarity is high enough to show as low-confidence suggestion."""
         return similarity >= self._settings.effective_low_confidence_suggestion_floor
 
-    def _should_surface_gate_reject(self, decision, *, similarity: float) -> bool:
+    def _should_surface_gate_reject(self, decision: AssignmentDecision, *, similarity: float) -> bool:
         """Allow selected gate rejections to remain user-reviewable suggestions.
 
         We only surface gate rejections produced by the confidence check and only
@@ -675,3 +681,78 @@ class SuggestionRefreshService:
         )
 
         return created
+
+    async def backfill_for_new_unlabeled_clusters(
+        self,
+        *,
+        tenant_id: str,
+        created_cluster_ids: Sequence[str],
+        fallback_window_minutes: int = 30,
+    ) -> int:
+        """Surface suggestions for clusters created in the latest clustering batch."""
+        if self._session is None or self._cluster_repository is None:
+            return 0
+
+        primary_candidate_ids = {cid for cid in created_cluster_ids if cid}
+        candidate_ids = set(primary_candidate_ids)
+        fallback_recovered = 0
+        if fallback_window_minutes > 0:
+            recent = await self._cluster_repository.get_unlabeled_created_after(
+                tenant_id, minutes_ago=fallback_window_minutes
+            )
+            fallback_candidate_ids = {str(cluster.id) for cluster in recent if cluster.id}
+            fallback_recovered = len(fallback_candidate_ids - primary_candidate_ids)
+            candidate_ids.update(fallback_candidate_ids)
+
+        if not candidate_ids:
+            logger.info(
+                "[suggestions] backfill skipped tenant_id=%s reason=no_candidates primary=%d fallback_recovered=%d",
+                tenant_id,
+                len(primary_candidate_ids),
+                fallback_recovered,
+            )
+            return 0
+
+        confirmed_clusters = await self._cluster_repository.get_confirmed_labeled(tenant_id)
+        if not confirmed_clusters:
+            logger.info(
+                "[suggestions] backfill skipped tenant_id=%s reason=no_confirmed candidates=%d fallback_recovered=%d",
+                tenant_id,
+                len(candidate_ids),
+                fallback_recovered,
+            )
+            return 0
+
+        total_created = 0
+        confirmed_skipped = 0
+        confirmed_without_surface = 0
+        confirmed_scanned = 0
+        for cluster in confirmed_clusters:
+            if not cluster.id or not cluster.label:
+                confirmed_skipped += 1
+                continue
+            confirmed_scanned += 1
+            surfaced = await self.surface_for_newly_labeled_cluster(
+                str(cluster.id),
+                cluster_label=cluster.label,
+                candidate_cluster_ids=list(candidate_ids),
+            )
+            total_created += surfaced
+            if surfaced == 0:
+                confirmed_without_surface += 1
+
+        logger.info(
+            "[suggestions] backfill complete tenant_id=%s primary_candidates=%d "
+            "fallback_recovered=%d candidates_total=%d confirmed_total=%d confirmed_scanned=%d "
+            "confirmed_skipped=%d confirmed_without_surface=%d surfaced_total=%d",
+            tenant_id,
+            len(primary_candidate_ids),
+            fallback_recovered,
+            len(candidate_ids),
+            len(confirmed_clusters),
+            confirmed_scanned,
+            confirmed_skipped,
+            confirmed_without_surface,
+            total_created,
+        )
+        return total_created

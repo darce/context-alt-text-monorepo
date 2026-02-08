@@ -24,6 +24,7 @@ class ConstraintSource(StrEnum):
     MERGE = "merge"
     SPLIT = "split"
     WRONG_PERSON = "wrong_person"
+    MANUAL_REJECT = "manual_reject"
 
 
 @dataclass(frozen=True)

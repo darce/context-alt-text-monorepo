@@ -40,6 +40,31 @@ const TAB_IDS = {
 } as const;
 type WorkbenchTab = (typeof TAB_IDS)[keyof typeof TAB_IDS];
 
+type ClusterPanelMode = 'none' | 'label' | 'review';
+
+interface ClusterPanelState {
+  mode: ClusterPanelMode;
+  clusterId: string | null;
+}
+
+type ClusterPanelAction =
+  | { type: 'open_label'; clusterId: string }
+  | { type: 'open_review'; clusterId: string }
+  | { type: 'close' };
+
+const clusterPanelReducer = (state: ClusterPanelState, action: ClusterPanelAction): ClusterPanelState => {
+  switch (action.type) {
+    case 'open_label':
+      return { mode: 'label', clusterId: action.clusterId };
+    case 'open_review':
+      return { mode: 'review', clusterId: action.clusterId };
+    case 'close':
+      return { mode: 'none', clusterId: null };
+    default:
+      return state;
+  }
+};
+
 interface WorkbenchSection {
   id: WorkbenchTab;
   label: string;
@@ -76,8 +101,10 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [perPage, setPerPage] = useState<number>(() => getStoredMediaPageSize());
-  const [activeLabelingClusterId, setActiveLabelingClusterId] = useState<string | null>(null);
-  const [activeReviewClusterId, setActiveReviewClusterId] = useState<string | null>(null);
+  const [clusterPanel, dispatchClusterPanel] = React.useReducer(clusterPanelReducer, {
+    mode: 'none',
+    clusterId: null,
+  });
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
@@ -261,20 +288,23 @@ export const WorkbenchPage = (): React.JSX.Element => {
               isSynced={!isPrimary && !!latestJobId}
             />
             {!isScanRunning && !hasIdentities && !isScanRunning && <NoMediaPanel />}
-            {activeReviewClusterId ? (
-              <ClusterReviewPanel clusterId={activeReviewClusterId} onClose={() => setActiveReviewClusterId(null)} />
-            ) : activeLabelingClusterId ? (
+            {clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
+              <ClusterReviewPanel
+                clusterId={clusterPanel.clusterId}
+                onClose={() => dispatchClusterPanel({ type: 'close' })}
+              />
+            ) : clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
               <ClusterLabelingPanel
-                clusterId={activeLabelingClusterId}
-                onClose={() => setActiveLabelingClusterId(null)}
+                clusterId={clusterPanel.clusterId}
+                onClose={() => dispatchClusterPanel({ type: 'close' })}
                 onLabel={() => {
-                  setActiveLabelingClusterId(null);
+                  dispatchClusterPanel({ type: 'close' });
                 }}
               />
             ) : (
               <SuggestionReviewPanel
-                onLabel={(clusterId) => setActiveLabelingClusterId(clusterId)}
-                onReview={(clusterId) => setActiveReviewClusterId(clusterId)}
+                onLabel={(clusterId) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+                onReview={(clusterId) => dispatchClusterPanel({ type: 'open_review', clusterId })}
               />
             )}
             <MediaSelection

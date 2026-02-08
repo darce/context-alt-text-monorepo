@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime
 
 
@@ -16,6 +16,7 @@ class ClusterJobResult:
     completed: int
     total: int
     clusters_created: int
+    created_cluster_ids: list[str] = field(default_factory=list)
     accepted: int = 0
     suggested: int = 0
     rejected: int = 0

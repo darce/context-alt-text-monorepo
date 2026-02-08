@@ -170,6 +170,23 @@ class ClusterService:
             commit=commit,
         )
 
+        if self.suggestion_refresh_service and result.created_cluster_ids:
+            try:
+                surfaced = await self.suggestion_refresh_service.backfill_for_new_unlabeled_clusters(
+                    tenant_id=tenant_id, created_cluster_ids=result.created_cluster_ids
+                )
+                if surfaced > 0:
+                    logger.info(
+                        "[suggestions] backfill surfaced=%d tenant_id=%s clusters=%d",
+                        surfaced,
+                        tenant_id,
+                        len(result.created_cluster_ids),
+                    )
+                if commit:
+                    await self.session.commit()
+            except Exception as exc:
+                logger.warning("[suggestions] backfill failed tenant_id=%s err=%s", tenant_id, exc)
+
         if commit and self.merge_suggestion_service is not None:
             try:
                 await self.assignment_writer.refresh_centroids_view()

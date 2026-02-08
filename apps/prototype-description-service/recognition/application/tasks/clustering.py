@@ -213,3 +213,46 @@ async def run_background_refresh_suggestions(
             cluster_id,
             exc,
         )
+
+
+async def run_background_backfill_suggestions(
+    tenant_id: str,
+    created_cluster_ids: list[str],
+    *,
+    fallback_window_minutes: int = 30,
+    session_factory: async_sessionmaker[AsyncSession],
+    cluster_service_builder: Callable[..., Awaitable[ClusterServiceProtocol]],
+) -> None:
+    """Backfill suggestions for newly created clusters with a fresh session."""
+    if not created_cluster_ids:
+        logger.info("[suggestions] Background backfill skipped: no created cluster ids tenant_id=%s", tenant_id)
+        return
+
+    try:
+        async with asyncio.timeout(30):
+            async with session_factory() as session:
+                cluster_service = await cluster_service_builder(session=session, tenant_id=tenant_id)
+                refresh_service = cluster_service.suggestion_refresh_service
+                if refresh_service is None:
+                    logger.warning(
+                        "[suggestions] Background backfill: refresh service unavailable tenant_id=%s",
+                        tenant_id,
+                    )
+                    return
+
+                surfaced = await refresh_service.backfill_for_new_unlabeled_clusters(
+                    tenant_id=tenant_id,
+                    created_cluster_ids=created_cluster_ids,
+                    fallback_window_minutes=fallback_window_minutes,
+                )
+                await session.commit()
+                logger.info(
+                    "[suggestions] Background backfill complete tenant_id=%s created_clusters=%d surfaced=%d",
+                    tenant_id,
+                    len(created_cluster_ids),
+                    surfaced,
+                )
+    except TimeoutError:
+        logger.warning("[suggestions] Background backfill timed out after 30s tenant_id=%s", tenant_id)
+    except Exception as exc:
+        logger.exception("[suggestions] Background backfill failed tenant_id=%s err=%s", tenant_id, exc)

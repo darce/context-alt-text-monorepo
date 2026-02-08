@@ -171,7 +171,7 @@ class IncrementalClusteringRunner:
         clustering_job.progress = 0.0
         await self._session.flush()
 
-        accept_count, suggest_count, reject_count, clusters_created = await self._process_chunks(
+        accept_count, suggest_count, reject_count, clusters_created, created_cluster_ids = await self._process_chunks(
             tenant_id=tenant_id,
             job_id=job_id_str,
             job_label=job_label,
@@ -190,6 +190,7 @@ class IncrementalClusteringRunner:
             suggest_count=suggest_count,
             reject_count=reject_count,
             clusters_created=clusters_created,
+            created_cluster_ids=created_cluster_ids,
             algorithm=self._graph_discovery.algorithm_name,
         )
 
@@ -203,6 +204,7 @@ class IncrementalClusteringRunner:
             completed=total_identities,
             total=total_identities,
             clusters_created=clusters_created,
+            created_cluster_ids=created_cluster_ids,
             accepted=accept_count,
             suggested=suggest_count,
             rejected=reject_count,
@@ -358,11 +360,12 @@ class IncrementalClusteringRunner:
         job_label: str,
         clustering_job: IdentityClusteringJob,
         identities: list[MediaIdentity],
-    ) -> tuple[int, int, int, int]:
+    ) -> tuple[int, int, int, int, list[str]]:
         accept_count = 0
         suggest_count = 0
         reject_count = 0
         clusters_created = 0
+        created_cluster_ids: list[str] = []
 
         processor = ChunkedIdentityProcessor(identities)
         total_identities = processor.total_count
@@ -440,8 +443,23 @@ class IncrementalClusteringRunner:
                             clustering_logger=self._clustering_logger,
                         )
                         clusters_created += 1
+                        if cluster and cluster.id:
+                            created_cluster_ids.append(str(cluster.id))
 
                         for member in members:
+                            # Curation-first: identities the gate marked SUGGEST have
+                            # pending suggestions linking them to a labeled cluster.
+                            # Don't auto-reject those suggestions just because the
+                            # identity also needs a fallback cluster.  The user should
+                            # see the suggestion card and decide.
+                            if member.id in suggested_ids:
+                                logger.debug(
+                                    "[clustering] Preserving pending suggestions for suggested identity %s "
+                                    "(fallback cluster %s)",
+                                    member.id,
+                                    cluster.id,
+                                )
+                                continue
                             await self._suggestion_service.resolve_for_identity_exclusive(
                                 identity_id=member.id,
                                 accepted_cluster_id=str(cluster.id),
@@ -464,6 +482,8 @@ class IncrementalClusteringRunner:
                         clustering_logger=self._clustering_logger,
                     )
                     clusters_created += 1
+                    if cluster and cluster.id:
+                        created_cluster_ids.append(str(cluster.id))
 
                     for member in members:
                         await self._suggestion_service.resolve_for_identity_exclusive(
@@ -517,7 +537,7 @@ class IncrementalClusteringRunner:
                 singleton_merges,
             )
 
-        return accept_count, suggest_count, reject_count, clusters_created
+        return accept_count, suggest_count, reject_count, clusters_created, created_cluster_ids
 
     async def _finalize_job(
         self,
@@ -532,6 +552,7 @@ class IncrementalClusteringRunner:
         suggest_count: int,
         reject_count: int,
         clusters_created: int,
+        created_cluster_ids: list[str],
         algorithm: str,
     ) -> None:
         try:
@@ -560,6 +581,7 @@ class IncrementalClusteringRunner:
         clustering_job.payload = {
             **(clustering_job.payload or {}),
             "clusters_created": clusters_created,
+            "created_cluster_ids": created_cluster_ids,
         }
         await self._session.flush()
 

@@ -19,10 +19,7 @@ from recognition.domain.job import Job
 from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import AssignmentSuggestion, MergeSuggestion, SuggestionStatus
-from recognition.interface_adapters.schemas.suggestion_details import (
-    MergeSuggestionDetails,
-    SuggestionDetails,
-)
+from recognition.domain.suggestion_details import MergeSuggestionDetails, SuggestionDetails
 
 if TYPE_CHECKING:
     from recognition.application.settings.clustering import MaturitySettings
@@ -125,7 +122,15 @@ class ClusterRepository(Protocol):
         """
         ...
 
-    async def get_member_embeddings(self, cluster_id: str) -> Sequence[Any]: ...
+    async def get_member_embeddings(self, cluster_id: str) -> Sequence[np.ndarray]: ...
+
+    async def get_representative_embeddings(self, cluster_id: str) -> Sequence[np.ndarray]:
+        """Fetch representative embeddings for a cluster."""
+        ...
+
+    async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> Sequence[np.ndarray]:
+        """Fetch top member embeddings for fallback similarity checks."""
+        ...
 
     async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:
         """Fetch identities that are members of a cluster."""
@@ -190,6 +195,14 @@ class ClusterRepository(Protocol):
         Returns:
             List of (cluster, representatives) tuples.
         """
+        ...
+
+    async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
+        """Fetch confirmed, human-labeled clusters for tenant."""
+        ...
+
+    async def get_unlabeled_created_after(self, tenant_id: str, *, minutes_ago: int) -> list[IdentityCluster]:
+        """Fetch recently created unlabeled clusters for backfill fallback."""
         ...
 
     async def get_top_unlabeled(

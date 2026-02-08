@@ -23,4 +23,3 @@ describe('fetchApi', () => {
     expect(result).toBeUndefined();
   });
 });
-

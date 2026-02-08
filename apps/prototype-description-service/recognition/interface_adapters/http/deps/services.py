@@ -255,14 +255,19 @@ async def get_cluster_service(
 
 
 def get_cluster_service_builder(
-    session: AsyncSession | None = Depends(get_optional_session),
+    session: AsyncSession = Depends(get_session),
     settings: ClusteringSettings = Depends(get_settings),
 ) -> Callable[[str], Awaitable[ClusterService]]:
-    """Return a builder that can construct a ClusterService for a given tenant."""
+    """Return a builder that can construct a ClusterService for a given tenant.
+
+    Uses ``get_session`` (not ``get_optional_session``) so that FastAPI's DI
+    cache gives mutation endpoints the *same* session instance when they also
+    inject ``session=Depends(get_session)``.  Without this, explicit
+    ``await session.commit()`` in the router would commit the wrong session,
+    causing a client-visible race where refetches still see pre-commit data.
+    """
 
     async def _builder(tenant_id: str) -> ClusterService:
-        if session is None:
-            raise RuntimeError("Database session is required for ClusterService")
         return await build_cluster_service(session=session, tenant_id=tenant_id, settings=settings)
 
     return _builder

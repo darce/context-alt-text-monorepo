@@ -10,11 +10,11 @@ import logging
 import uuid
 from collections import defaultdict
 from collections.abc import Sequence
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
 
 import numpy as np
-from sqlalchemy import Select, delete, exists, func, select, text, update
+from sqlalchemy import Select, delete, exists, func, or_, select, text, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
@@ -636,12 +636,32 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         await self._session.execute(stmt)
         await self._session.flush()
 
-    async def get_member_embeddings(self, cluster_id: str):
+    async def get_member_embeddings(self, cluster_id: str) -> list[np.ndarray]:
         """Return embeddings for members of the cluster."""
         stmt = (
             select(MediaIdentity.embedding)
             .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
             .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+        )
+        result = await self._session.execute(stmt)
+        return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
+
+    async def get_representative_embeddings(self, cluster_id: str) -> list[np.ndarray]:
+        """Return embeddings for stored representatives of a cluster."""
+        stmt = select(IdentityClusterRepresentative.embedding).where(
+            IdentityClusterRepresentative.cluster_id == _coerce_uuid(cluster_id)
+        )
+        result = await self._session.execute(stmt)
+        return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
+
+    async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
+        """Return top member embeddings as fallback representatives ordered by similarity then recency."""
+        stmt = (
+            select(MediaIdentity.embedding)
+            .join(IdentityMemberModel, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .where(IdentityMemberModel.cluster_id == _coerce_uuid(cluster_id))
+            .order_by(IdentityMemberModel.similarity.desc(), IdentityMemberModel.assigned_at.asc())
+            .limit(max(limit, 0))
         )
         result = await self._session.execute(stmt)
         return [np.asarray(row[0], dtype=np.float32) for row in result.all()]
@@ -677,6 +697,38 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             cluster_key = str(cluster_id)
             grouped[cluster_key].append(self._to_domain_identity(model, cluster_id=cluster_key))
         return dict(grouped)
+
+    async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
+        """Return confirmed clusters with human labels."""
+        stmt: Select[tuple[ClusterModel]] = (
+            select(ClusterModel)
+            .where(ClusterModel.tenant_id == _coerce_uuid(tenant_id))
+            .where(ClusterModel.user_confirmed.is_(True))
+            .where(ClusterModel.label.is_not(None))
+            .where(~ClusterModel.label.startswith("cluster-"))
+            .order_by(ClusterModel.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain(model) for model in result.scalars().all()]
+
+    async def get_unlabeled_created_after(self, tenant_id: str, *, minutes_ago: int) -> list[IdentityCluster]:
+        """Return unlabeled clusters created within the provided time window."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None or minutes_ago <= 0:
+            return []
+
+        window_start = datetime.now(tz=UTC) - timedelta(minutes=minutes_ago)
+        stmt: Select[tuple[ClusterModel]] = select(ClusterModel).where(
+            ClusterModel.tenant_id == tenant_uuid,
+            or_(
+                ClusterModel.user_confirmed.is_(False),
+                ClusterModel.label.is_(None),
+                ClusterModel.label.startswith("cluster-"),
+            ),
+            ClusterModel.created_at >= window_start,
+        )
+        result = await self._session.execute(stmt)
+        return [self._to_domain(model) for model in result.scalars().all()]
 
     async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
         """Return identity ORM records with their membership similarity for a cluster.

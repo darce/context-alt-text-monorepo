@@ -14,8 +14,8 @@ from db.models import ClusterMergeSuggestion as MergeSuggestionModel
 from db.models import IdentityCluster, MediaIdentity
 from recognition.domain.repositories import MergeSuggestionCreateData, MergeSuggestionRepository
 from recognition.domain.suggestion import MergeSuggestion, SuggestionStatus
+from recognition.domain.suggestion_details import FaceBox, MergeSuggestionDetails
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
-from recognition.interface_adapters.schemas.suggestion_details import FaceBox, MergeSuggestionDetails
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 

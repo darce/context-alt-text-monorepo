@@ -22,6 +22,7 @@ from recognition.interface_adapters.http.dependencies import (
     get_cluster_repository,
     get_cluster_service_builder,
     get_persisted_job_service,
+    get_scan_service_builder,
     get_session,
     get_suggestion_refresh_service,
     get_suggestion_service,
@@ -481,6 +482,7 @@ async def split_cluster(
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
+    scan_service_builder=Depends(get_scan_service_builder),
     suggestion_refresh_service=Depends(get_suggestion_refresh_service),
     job_service=Depends(get_persisted_job_service),
 ) -> SplitClusterResponse | AsyncSplitClusterResponse:
@@ -498,6 +500,13 @@ async def split_cluster(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     if request.mode == "async":
+        if not hasattr(job_service, "queue_split"):
+            job_service = await get_persisted_job_service(
+                session=session,
+                tenant_id=request.tenant_id,
+                cluster_service_builder=cluster_service_builder,
+                scan_service_builder=scan_service_builder,
+            )
         payload = SplitJobPayload(
             cluster_id=cluster_id,
             n_clusters=request.n_clusters,

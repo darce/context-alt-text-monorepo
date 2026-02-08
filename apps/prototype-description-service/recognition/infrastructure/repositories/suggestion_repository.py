@@ -14,13 +14,13 @@ from sqlalchemy import Select, and_, exists, func, or_, select, update
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
 
-from db.models import IdentityCluster, IdentityMember, MediaIdentity
+from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity
 from db.models import IdentitySuggestion as SuggestionModel
 from recognition.domain.repositories import SuggestionCreateData, SuggestionRepository
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
+from recognition.domain.suggestion_details import FaceBox, SuggestionDetails
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
-from recognition.interface_adapters.schemas.suggestion_details import FaceBox, SuggestionDetails
 
 
 def _clamp_similarity(value: float) -> float:
@@ -364,6 +364,8 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             .where(SuggestionModel.tenant_id == tenant_uuid)
             .where(SuggestionModel.identity_id == identity_uuid)
             .where(SuggestionModel.suggested_cluster_id == cluster_uuid)
+            .order_by(SuggestionModel.evidence_generation.desc(), SuggestionModel.created_at.desc())
+            .limit(1)
         )
         existing_result = await self._session.execute(existing_stmt)
         existing_suggestion = existing_result.scalar_one_or_none()
@@ -381,6 +383,36 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
                     existing_suggestion.source = payload.source
                 await self._session.flush()
                 await self._session.refresh(existing_suggestion)
+                return self._to_domain(existing_suggestion)
+
+            if existing_suggestion.resolution == SuggestionStatus.REJECTED.value:
+                resolved_at = existing_suggestion.resolved_at
+                if resolved_at is None:
+                    return self._to_domain(existing_suggestion)
+
+                if not await self._cluster_context_changed(cluster_uuid, resolved_at):
+                    return self._to_domain(existing_suggestion)
+
+                next_generation = await self._next_evidence_generation(
+                    tenant_uuid, identity_uuid, cluster_uuid, existing_suggestion.evidence_generation
+                )
+                model = SuggestionModel(
+                    tenant_id=tenant_uuid,
+                    identity_id=identity_uuid,
+                    suggested_cluster_id=cluster_uuid,
+                    representative_similarity=_clamp_similarity(payload.representative_similarity),
+                    avg_member_similarity=_clamp_similarity(payload.member_similarity),
+                    confidence_score=_clamp_similarity(payload.confidence_score),
+                    resolution=SuggestionStatus.PENDING.value,
+                    refreshed_at=payload.refreshed_at,
+                    source=payload.source or "backfill_new_evidence",
+                    evidence_generation=next_generation,
+                )
+                self._session.add(model)
+                await self._session.flush()
+                await self._session.refresh(model)
+                return self._to_domain(model)
+
             return self._to_domain(existing_suggestion)
 
         model = SuggestionModel(
@@ -393,6 +425,7 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             resolution=SuggestionStatus.PENDING.value,
             refreshed_at=payload.refreshed_at,
             source=payload.source,
+            evidence_generation=0,
         )
         self._session.add(model)
         await self._session.flush()
@@ -408,8 +441,58 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             representative_similarity=model.representative_similarity,
             member_similarity=model.avg_member_similarity,
             status=SuggestionStatus(model.resolution),
+            evidence_generation=int(getattr(model, "evidence_generation", 0) or 0),
             created_at=model.created_at,
         )
+
+    async def _next_evidence_generation(
+        self,
+        tenant_uuid: uuid.UUID,
+        identity_uuid: uuid.UUID,
+        cluster_uuid: uuid.UUID,
+        current_generation: int,
+    ) -> int:
+        stmt = (
+            select(func.max(SuggestionModel.evidence_generation))
+            .where(SuggestionModel.tenant_id == tenant_uuid)
+            .where(SuggestionModel.identity_id == identity_uuid)
+            .where(SuggestionModel.suggested_cluster_id == cluster_uuid)
+        )
+        result = await self._session.execute(stmt)
+        max_generation = result.scalar_one_or_none()
+        if max_generation is None:
+            return current_generation + 1
+        return int(max_generation) + 1
+
+    async def _cluster_context_changed(self, cluster_uuid: uuid.UUID, since: datetime) -> bool:
+        """Return True if cluster evidence changed after the provided timestamp."""
+        cluster_ts = await self._session.execute(
+            select(IdentityCluster.updated_at).where(IdentityCluster.id == cluster_uuid)
+        )
+        rep_ts = await self._session.execute(
+            select(func.max(IdentityClusterRepresentative.created_at)).where(
+                IdentityClusterRepresentative.cluster_id == cluster_uuid
+            )
+        )
+        member_ts = await self._session.execute(
+            select(func.max(IdentityMember.assigned_at)).where(IdentityMember.cluster_id == cluster_uuid)
+        )
+
+        timestamps = [
+            cluster_ts.scalar_one_or_none(),
+            rep_ts.scalar_one_or_none(),
+            member_ts.scalar_one_or_none(),
+        ]
+        latest = max([ts for ts in timestamps if ts is not None], default=None)
+        if latest is None:
+            return False
+
+        def _to_utc_naive(value: datetime) -> datetime:
+            if value.tzinfo is None:
+                return value
+            return value.astimezone(UTC).replace(tzinfo=None)
+
+        return _to_utc_naive(latest) > _to_utc_naive(since)
 
 
 __all__ = ["SqlAlchemySuggestionRepository"]

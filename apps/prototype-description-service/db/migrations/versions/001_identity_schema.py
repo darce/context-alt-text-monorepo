@@ -387,6 +387,7 @@ def upgrade() -> None:
         sa.Column("confidence_score", sa.Float(), nullable=False),
         # Priority level: 1=CRITICAL (cold start), 2=HIGH, 3=NORMAL, 4=LOW
         sa.Column("priority", sa.Integer(), nullable=False, server_default=sa.text("3")),
+        sa.Column("evidence_generation", sa.Integer(), nullable=False, server_default=sa.text("0")),
         # Timestamps
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column("resolved_at", sa.TIMESTAMP(timezone=True), nullable=True),
@@ -420,10 +421,10 @@ def upgrade() -> None:
             "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
             name="valid_resolution",
         ),
-        # Prevent duplicate pending suggestions for same identity/cluster pair
         sa.UniqueConstraint(
             "identity_id",
             "suggested_cluster_id",
+            "evidence_generation",
             name="unique_identity_suggestion",
         ),
     )

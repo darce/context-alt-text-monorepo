@@ -141,7 +141,7 @@ describe('ClusterReviewPanel', () => {
     expect(screen.getByText('Loading members...')).toBeInTheDocument();
   });
 
-  it('shows error message when members cannot be loaded', async () => {
+  it('shows error message when members cannot be loaded', () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     fetchClusterMembersMock.mockResolvedValue([]);
     reactQueryState.useQueryOverride = {

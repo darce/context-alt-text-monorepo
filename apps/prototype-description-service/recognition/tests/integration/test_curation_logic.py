@@ -1,3 +1,4 @@
+import logging
 import uuid
 from datetime import UTC, datetime
 
@@ -5,6 +6,7 @@ import numpy as np
 import pytest
 from sqlalchemy import select
 
+from db.models import IdentityClusterRepresentative as RepModel
 from db.models import IdentityMember as MemberModel
 from db.models import MediaIdentity as MediaIdentityModel
 from recognition.observability import CurationEventType
@@ -231,10 +233,7 @@ async def test_remove_representative_triggers_refresh(
     caplog,
 ):
     """Verify that removing a representative triggers recomputation."""
-    import logging
-
     caplog.set_level(logging.INFO)
-    from db.models import IdentityClusterRepresentative as RepModel
 
     # 1. Setup Cluster with 2 members, one is representative
     id1 = str(uuid.uuid4())
@@ -325,10 +324,7 @@ async def test_remove_representative_deferred_recompute(
     caplog,
 ):
     """Verify that removing a representative logs event even if recompute is deferred."""
-    import logging
-
     caplog.set_level(logging.INFO)
-    from db.models import IdentityClusterRepresentative as RepModel
 
     # 1. Setup Cluster with representative
     id1 = str(uuid.uuid4())

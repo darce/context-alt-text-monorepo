@@ -484,3 +484,37 @@ class TestRefreshForIdentity:
         assert len(suggestions) == 1
         suggestion_repo.upsert_by_identity_cluster.assert_awaited_once()
         gate.evaluate.assert_awaited()
+
+
+@pytest.mark.asyncio
+async def test_backfill_surfaces_for_confirmed_clusters(monkeypatch) -> None:
+    tenant_id = "tenant-1"
+    repo = AsyncMock()
+    cluster_repo = AsyncMock()
+    cluster_repo.get_unlabeled_created_after = AsyncMock(return_value=[MagicMock(id="c-fallback")])
+    cluster_repo.get_confirmed_labeled = AsyncMock(return_value=[MagicMock(id="confirmed-1", label="Label A")])
+    session = AsyncMock()
+
+    service = SuggestionRefreshService(
+        repository=repo,
+        tenant_id=tenant_id,
+        cluster_repository=cluster_repo,
+        session=session,
+    )
+
+    surface_mock = AsyncMock(return_value=2)
+    monkeypatch.setattr(service, "surface_for_newly_labeled_cluster", surface_mock)
+
+    created = await service.backfill_for_new_unlabeled_clusters(
+        tenant_id=tenant_id,
+        created_cluster_ids=["c-created"],
+        fallback_window_minutes=30,
+    )
+
+    assert created == 2
+    surface_mock.assert_awaited_once()
+    call_args = surface_mock.await_args
+    assert call_args is not None
+    call_kwargs = call_args.kwargs
+    assert call_kwargs["cluster_label"] == "Label A"
+    assert set(call_kwargs["candidate_cluster_ids"]) == {"c-created", "c-fallback"}

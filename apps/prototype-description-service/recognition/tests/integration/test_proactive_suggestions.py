@@ -10,17 +10,23 @@ import math
 import uuid
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
+from unittest.mock import AsyncMock
 
 import numpy as np
 import pytest
 
 from db.models import MediaIdentity as MediaIdentityModel
-from recognition.application.tasks.clustering import run_background_surface_suggestions
+from recognition.application.tasks.clustering import (
+    run_background_backfill_suggestions,
+    run_background_surface_suggestions,
+)
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.repositories import SuggestionCreateData
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import SuggestionStatus
 from recognition.infrastructure.repositories import SqlAlchemySuggestionRepository
 from recognition.interface_adapters.http import dependencies
+from recognition.interface_adapters.http.routers.clusters import get_top_unlabeled_clusters
 
 
 @pytest.mark.asyncio
@@ -81,8 +87,6 @@ async def test_unlabeled_clusters_are_filtered_from_suggestions(db_session, tena
     )
     db_session.add(suggestion_identity)
     await db_session.flush()
-
-    from recognition.domain.repositories import SuggestionCreateData
 
     await suggestion_repo.create(
         tenant_id=str(tenant.id),
@@ -156,8 +160,6 @@ async def test_stale_accepted_suggestion_is_relisted_for_review(db_session, tena
 
     await member_repo.add_member(source_cluster.id, identity_id=str(identity.id), similarity=0.92)
 
-    from recognition.domain.repositories import SuggestionCreateData
-
     suggestion = await suggestion_repo.create(
         tenant_id=str(tenant.id),
         payload=SuggestionCreateData(
@@ -196,8 +198,6 @@ async def test_identity_removal_triggers_suggestion_refresh(db_session, tenant) 
     # Given this is integration, let's just ensure the operation succeeds and suggestions remain consistent.
 
     # Mocking refresh service call is safer to confirm the wiring logic added in Phase 3.
-    from unittest.mock import AsyncMock
-
     mock_refresh = AsyncMock()
     cluster_service.suggestion_refresh_service = mock_refresh
 
@@ -349,3 +349,218 @@ async def test_background_surfacing_after_label_creates_suggestions(db_session, 
         suggestion.identity_id == str(candidate_identity.id) and suggestion.cluster_id == labeled_cluster.id
         for suggestion in suggestions
     )
+
+
+@pytest.mark.asyncio
+async def test_background_backfill_surfaces_suggestions_for_later_batch_cluster(db_session, tenant) -> None:
+    """Later-batch unlabeled clusters should receive suggestions against existing confirmed labels."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+    suggestion_repo = SqlAlchemySuggestionRepository(db_session)
+
+    # Batch 1: confirmed labeled cluster exists.
+    labeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label="Maria Correonero",
+            is_labeled=True,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=True,
+        )
+    )
+    rep_embedding = [0.0] * 512
+    rep_embedding[0] = 1.0
+    rep_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3101,
+        media_url="http://example.test/3101.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=96,
+        bbox_height=96,
+        confidence=0.99,
+        embedding=rep_embedding,
+    )
+    db_session.add(rep_identity)
+    await db_session.flush()
+    await member_repo.add_member(labeled_cluster.id, identity_id=str(rep_identity.id), similarity=0.95)
+    await cluster_repo.add_representative(
+        ClusterRepresentative(
+            id=str(uuid.uuid4()),
+            cluster_id=labeled_cluster.id,
+            identity_id=str(rep_identity.id),
+            embedding=np.asarray(rep_identity.embedding, dtype=np.float32),
+            created_at=datetime.now(tz=UTC),
+            tenant_id=str(tenant.id),
+        )
+    )
+    await db_session.commit()
+
+    # Batch 2: new unlabeled cluster appears later.
+    unlabeled_cluster = await cluster_repo.save(
+        IdentityCluster(
+            id=None,
+            tenant_id=str(tenant.id),
+            label=None,
+            is_labeled=False,
+            identity_count=1,
+            created_at=None,
+            user_confirmed=False,
+        )
+    )
+    candidate_embedding = [0.0] * 512
+    candidate_embedding[0] = 0.52
+    candidate_embedding[1] = math.sqrt(1.0 - 0.52**2)
+    candidate_identity = MediaIdentityModel(
+        tenant_id=tenant.id,
+        media_id=3102,
+        media_url="http://example.test/3102.jpg",
+        bbox_x=0,
+        bbox_y=0,
+        bbox_width=64,
+        bbox_height=64,
+        confidence=0.93,
+        embedding=candidate_embedding,
+    )
+    db_session.add(candidate_identity)
+    await db_session.flush()
+    await member_repo.add_member(unlabeled_cluster.id, identity_id=str(candidate_identity.id), similarity=0.52)
+    await db_session.commit()
+
+    @asynccontextmanager
+    async def _session_factory():
+        yield db_session
+
+    async def _builder(*, session, tenant_id):  # noqa: ANN001
+        return await dependencies.build_cluster_service(session=session, tenant_id=tenant_id)
+
+    assert unlabeled_cluster.id is not None
+    await run_background_backfill_suggestions(
+        str(tenant.id),
+        [unlabeled_cluster.id],
+        fallback_window_minutes=0,
+        session_factory=_session_factory,
+        cluster_service_builder=_builder,
+    )
+    await db_session.commit()
+
+    suggestions = await suggestion_repo.list_pending_with_details(tenant_id=str(tenant.id), limit=10, offset=0)
+    assert any(
+        suggestion.identity_id == str(candidate_identity.id) and suggestion.cluster_id == labeled_cluster.id
+        for suggestion in suggestions
+    )
+
+
+@pytest.mark.asyncio
+async def test_top_unlabeled_cards_show_known_label_ctas_for_later_batch_clusters(db_session, tenant) -> None:
+    """Later-batch unlabeled cards should infer known labels (Laura/Talvi/Jen-style), including low confidence."""
+    cluster_service = await dependencies.build_cluster_service(session=db_session, tenant_id=str(tenant.id))
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    member_repo = cluster_service.assignment_writer.member_repository
+
+    confirmed_specs = [
+        ("Laura", 4001, [1.0] + [0.0] * 511),
+        ("Talvi", 4002, [0.0, 1.0] + [0.0] * 510),
+        ("Jen", 4003, [0.0, 0.0, 1.0] + [0.0] * 509),
+    ]
+    expected_labels_by_unlabeled_id: dict[str, str] = {}
+
+    for label, media_id, rep_embedding in confirmed_specs:
+        labeled_cluster = await cluster_repo.save(
+            IdentityCluster(
+                id=None,
+                tenant_id=str(tenant.id),
+                label=label,
+                is_labeled=True,
+                identity_count=1,
+                created_at=None,
+                user_confirmed=True,
+            )
+        )
+        rep_identity = MediaIdentityModel(
+            tenant_id=tenant.id,
+            media_id=media_id,
+            media_url=f"http://example.test/{media_id}.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=96,
+            bbox_height=96,
+            confidence=0.99,
+            embedding=rep_embedding,
+        )
+        db_session.add(rep_identity)
+        await db_session.flush()
+        await member_repo.add_member(labeled_cluster.id, identity_id=str(rep_identity.id), similarity=0.95)
+        await cluster_repo.add_representative(
+            ClusterRepresentative(
+                id=str(uuid.uuid4()),
+                cluster_id=labeled_cluster.id,
+                identity_id=str(rep_identity.id),
+                embedding=np.asarray(rep_identity.embedding, dtype=np.float32),
+                created_at=datetime.now(tz=UTC),
+                tenant_id=str(tenant.id),
+            )
+        )
+
+    # Later-batch unlabeled clusters. Jen stays in the low-confidence UI band (<0.6) but above inference floor.
+    unlabeled_specs = [
+        ("Laura", 4101, [0.95, math.sqrt(1.0 - 0.95**2)] + [0.0] * 510),
+        ("Talvi", 4102, [0.0, 0.9, math.sqrt(1.0 - 0.9**2)] + [0.0] * 509),
+        ("Jen", 4103, [0.0, 0.0, 0.55, math.sqrt(1.0 - 0.55**2)] + [0.0] * 508),
+    ]
+
+    for expected_label, media_id, embedding in unlabeled_specs:
+        unlabeled_cluster = await cluster_repo.save(
+            IdentityCluster(
+                id=None,
+                tenant_id=str(tenant.id),
+                label=None,
+                is_labeled=False,
+                identity_count=1,
+                created_at=None,
+                user_confirmed=False,
+            )
+        )
+        assert unlabeled_cluster.id is not None
+        candidate_identity = MediaIdentityModel(
+            tenant_id=tenant.id,
+            media_id=media_id,
+            media_url=f"http://example.test/{media_id}.jpg",
+            bbox_x=0,
+            bbox_y=0,
+            bbox_width=64,
+            bbox_height=64,
+            confidence=0.93,
+            embedding=embedding,
+        )
+        db_session.add(candidate_identity)
+        await db_session.flush()
+        await member_repo.add_member(unlabeled_cluster.id, identity_id=str(candidate_identity.id), similarity=0.6)
+        expected_labels_by_unlabeled_id[unlabeled_cluster.id] = expected_label
+
+    await db_session.commit()
+
+    top_unlabeled = await get_top_unlabeled_clusters(
+        tenant_id=str(tenant.id),
+        limit=10,
+        min_identity_count=1,
+        repo=cluster_repo,
+        session=db_session,
+    )
+
+    by_id = {cluster.id: cluster for cluster in top_unlabeled}
+    assert set(expected_labels_by_unlabeled_id).issubset(set(by_id))
+
+    for cluster_id, expected_label in expected_labels_by_unlabeled_id.items():
+        card = by_id[cluster_id]
+        assert card.suggested_label == expected_label
+        assert card.suggested_label_source == "similar_cluster"
+        assert card.suggested_label_confidence is not None
+
+    jen_cluster_id = next(cid for cid, label in expected_labels_by_unlabeled_id.items() if label == "Jen")
+    jen_confidence = by_id[jen_cluster_id].suggested_label_confidence
+    assert jen_confidence is not None
+    assert jen_confidence < 0.6

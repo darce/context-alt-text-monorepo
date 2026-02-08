@@ -1109,8 +1109,7 @@ class RecognitionController {
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/suggestions/%s/accept', $suggestion_id ),
-			$payload,
-			[ 'tenant_id' => $this->get_tenant_id() ]
+			$payload
 		);
 	}
 
@@ -1128,8 +1127,7 @@ class RecognitionController {
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/suggestions/merge/%s/accept', $suggestion_id ),
-			$payload,
-			[ 'tenant_id' => $this->get_tenant_id() ]
+			$payload
 		);
 	}
 
@@ -1147,8 +1145,7 @@ class RecognitionController {
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/suggestions/%s/reject', $suggestion_id ),
-			$payload,
-			[ 'tenant_id' => $this->get_tenant_id() ]
+			$payload
 		);
 	}
 
@@ -1166,8 +1163,7 @@ class RecognitionController {
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/suggestions/merge/%s/reject', $suggestion_id ),
-			$payload,
-			[ 'tenant_id' => $this->get_tenant_id() ]
+			$payload
 		);
 	}
 
@@ -1207,6 +1203,7 @@ class RecognitionController {
 
 		$headers = [
 			'Content-Type' => 'application/json',
+			'X-Tenant-ID'  => $this->get_tenant_id(),
 		];
 
 		if ( '' !== $this->api_key ) {

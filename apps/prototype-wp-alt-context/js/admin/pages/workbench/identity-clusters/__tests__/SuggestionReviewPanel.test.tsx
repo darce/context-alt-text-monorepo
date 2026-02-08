@@ -1,5 +1,5 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
-import { act, render, screen, waitFor } from '@testing-library/react';
+import { act, render, screen, waitFor, within } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
@@ -11,12 +11,12 @@ import {
   rejectSuggestion,
   updateClusterLabel,
 } from '../../../../api/recognition';
-import { dismissCluster } from '../../../../api/recognition/clusterApi';
-import { fetchApi } from '../../../../utils/http';
+import { dismissCluster, fetchTopUnlabeledClusters } from '../../../../api/recognition/clusterApi';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import { SuggestionReviewPanel } from '../SuggestionReviewPanel';
 import type { PendingSuggestionsResponse } from '../../../../api/recognition/types';
+import type { TopUnlabeledCluster } from '../../../../api/recognition/types';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -39,14 +39,11 @@ vi.mock('../../../../api/recognition', async () => {
   };
 });
 
-vi.mock('../../../../utils/http', () => ({
-  fetchApi: vi.fn(),
-}));
-
 vi.mock('../../../../api/recognition/clusterApi', async (importOriginal) => {
   const actual = await importOriginal<typeof import('../../../../api/recognition/clusterApi')>();
   return {
     ...actual,
+    fetchTopUnlabeledClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
   };
 });
@@ -76,7 +73,7 @@ describe('SuggestionReviewPanel', () => {
   });
 
   beforeEach(() => {
-    const fetchApiMock = vi.mocked(fetchApi);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
     window.AltContextAdmin = {
       nonce: 'test-nonce',
@@ -88,7 +85,7 @@ describe('SuggestionReviewPanel', () => {
       tenant_id: 'test-tenant-id',
     } as unknown as NonNullable<Window['AltContextAdmin']>;
 
-    fetchApiMock.mockResolvedValue([]);
+    fetchTopUnlabeledClustersMock.mockResolvedValue([]);
     resetConfigCache();
   });
 
@@ -100,10 +97,13 @@ describe('SuggestionReviewPanel', () => {
 
     renderPanel();
 
-    await waitFor(() => {
-      expect(fetchPendingSuggestionsMock).toHaveBeenCalledTimes(2);
-      expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalledTimes(2);
-    }, { timeout: 3000 });
+    await waitFor(
+      () => {
+        expect(fetchPendingSuggestionsMock).toHaveBeenCalledTimes(2);
+        expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalledTimes(2);
+      },
+      { timeout: 3000 },
+    );
 
     expect(screen.queryByText('Failed to load suggestions.')).not.toBeInTheDocument();
   });
@@ -211,13 +211,15 @@ describe('SuggestionReviewPanel', () => {
       limit: 10,
       offset: 0,
     });
-    acceptSuggestionMock.mockImplementation((suggestionId: string) => Promise.resolve({
-      suggestion_id: suggestionId,
-      resolution: 'accepted',
-      identity_id: `identity-for-${suggestionId}`,
-      cluster_id: 'cluster-any',
-      message: 'ok',
-    }));
+    acceptSuggestionMock.mockImplementation((suggestionId: string) =>
+      Promise.resolve({
+        suggestion_id: suggestionId,
+        resolution: 'accepted',
+        identity_id: `identity-for-${suggestionId}`,
+        cluster_id: 'cluster-any',
+        message: 'ok',
+      }),
+    );
 
     const { container } = renderPanel();
 
@@ -238,6 +240,101 @@ describe('SuggestionReviewPanel', () => {
     });
 
     expect(acceptSuggestionMock).not.toHaveBeenCalledWith('sugg-other-1', expect.anything());
+  });
+
+  it('groups suggestions by target cluster and rejects only that group with "No all"', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const rejectSuggestionMock = vi.mocked(rejectSuggestion);
+
+    fetchPendingSuggestionsMock
+      .mockResolvedValueOnce({
+        suggestions: [
+          {
+            id: 'sugg-group-reject-1',
+            identity_id: 'identity-group-reject-1',
+            suggested_cluster_id: 'cluster-maria',
+            representative_similarity: 0.58,
+            avg_member_similarity: 0.56,
+            cluster_label: 'Maria Correonero',
+            cluster_identity_count: 13,
+          },
+          {
+            id: 'sugg-group-reject-2',
+            identity_id: 'identity-group-reject-2',
+            suggested_cluster_id: 'cluster-maria',
+            representative_similarity: 0.53,
+            avg_member_similarity: 0.5,
+            cluster_label: 'Maria Correonero',
+            cluster_identity_count: 13,
+          },
+          {
+            id: 'sugg-group-reject-other',
+            identity_id: 'identity-group-reject-other',
+            suggested_cluster_id: 'cluster-other',
+            representative_similarity: 0.87,
+            avg_member_similarity: 0.84,
+            cluster_label: 'Alex',
+            cluster_identity_count: 7,
+          },
+        ],
+        total: 3,
+        limit: 10,
+        offset: 0,
+      })
+      .mockResolvedValue({
+        suggestions: [
+          {
+            id: 'sugg-group-reject-other',
+            identity_id: 'identity-group-reject-other',
+            suggested_cluster_id: 'cluster-other',
+            representative_similarity: 0.87,
+            avg_member_similarity: 0.84,
+            cluster_label: 'Alex',
+            cluster_identity_count: 7,
+          },
+        ],
+        total: 1,
+        limit: 10,
+        offset: 0,
+      });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+    rejectSuggestionMock.mockImplementation((suggestionId: string) =>
+      Promise.resolve({
+        suggestion_id: suggestionId,
+        resolution: 'rejected',
+        identity_id: `identity-for-${suggestionId}`,
+        cluster_id: null,
+        message: 'ok',
+      }),
+    );
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+
+    const groupedCard = container.querySelector('[data-cluster-id="cluster-maria"]');
+    if (!(groupedCard instanceof HTMLElement)) {
+      throw new Error('Expected grouped card for cluster-maria');
+    }
+    expect(within(groupedCard).getByRole('button', { name: 'No all' })).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(within(groupedCard).getByRole('button', { name: 'No all' }));
+
+    await waitFor(() => {
+      expect(rejectSuggestionMock).toHaveBeenCalledWith('sugg-group-reject-1', expect.anything());
+      expect(rejectSuggestionMock).toHaveBeenCalledWith('sugg-group-reject-2', expect.anything());
+    });
+
+    expect(rejectSuggestionMock).not.toHaveBeenCalledWith('sugg-group-reject-other', expect.anything());
   });
 
   it('rejects a suggestion and invalidates pending suggestions', async () => {
@@ -293,6 +390,143 @@ describe('SuggestionReviewPanel', () => {
 
     await waitFor(() => {
       expect(invalidateSpy).toHaveBeenCalledWith({ queryKey: queryKeys.suggestions.pending() });
+    });
+  });
+
+  it('accepting one suggestion card does not trigger batch-wide accepts', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const acceptSuggestionMock = vi.mocked(acceptSuggestion);
+    fetchPendingSuggestionsMock.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-accept-1',
+          identity_id: 'identity-accept-1',
+          suggested_cluster_id: 'cluster-accept-1',
+          representative_similarity: 0.82,
+          avg_member_similarity: 0.8,
+          cluster_label: 'Alex One',
+          cluster_identity_count: 4,
+        },
+        {
+          id: 'sugg-accept-2',
+          identity_id: 'identity-accept-2',
+          suggested_cluster_id: 'cluster-accept-2',
+          representative_similarity: 0.79,
+          avg_member_similarity: 0.75,
+          cluster_label: 'Jordan Two',
+          cluster_identity_count: 5,
+        },
+      ],
+      total: 2,
+      limit: 10,
+      offset: 0,
+    });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+    acceptSuggestionMock.mockResolvedValue({
+      suggestion_id: 'sugg-accept-1',
+      resolution: 'accepted',
+      identity_id: 'identity-accept-1',
+      cluster_id: 'cluster-accept-1',
+      message: 'ok',
+    });
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+
+    const cards = container.querySelectorAll('.acx-suggestion-card');
+    expect(cards.length).toBe(2);
+    const alexCard = cards[0] as HTMLElement;
+
+    const user = userEvent.setup();
+    await user.click(within(alexCard).getByRole('button', { name: 'Yes' }));
+
+    await waitFor(() => {
+      expect(acceptSuggestionMock).toHaveBeenCalledTimes(1);
+      expect(acceptSuggestionMock).toHaveBeenCalledWith('sugg-accept-1', expect.anything());
+    });
+    expect(acceptSuggestionMock).not.toHaveBeenCalledWith('sugg-accept-2', expect.anything());
+    expect(container.querySelectorAll('.acx-suggestion-card').length).toBeGreaterThan(0);
+  });
+
+  it('rejecting one suggestion card does not trigger batch-wide rejects', async () => {
+    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
+    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
+    const rejectSuggestionMock = vi.mocked(rejectSuggestion);
+    fetchPendingSuggestionsMock.mockResolvedValue({
+      suggestions: [
+        {
+          id: 'sugg-reject-1',
+          identity_id: 'identity-reject-1',
+          suggested_cluster_id: 'cluster-reject-1',
+          representative_similarity: 0.67,
+          avg_member_similarity: 0.64,
+          cluster_label: 'Taylor One',
+          cluster_identity_count: 3,
+        },
+        {
+          id: 'sugg-reject-2',
+          identity_id: 'identity-reject-2',
+          suggested_cluster_id: 'cluster-reject-2',
+          representative_similarity: 0.65,
+          avg_member_similarity: 0.6,
+          cluster_label: 'Casey Two',
+          cluster_identity_count: 3,
+        },
+      ],
+      total: 2,
+      limit: 10,
+      offset: 0,
+    });
+    fetchPendingMergeSuggestionsMock.mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+    let resolveReject: ((value: Awaited<ReturnType<typeof rejectSuggestion>>) => void) | null = null;
+    const pendingReject = new Promise<Awaited<ReturnType<typeof rejectSuggestion>>>((resolve) => {
+      resolveReject = resolve;
+    });
+    rejectSuggestionMock.mockReturnValue(pendingReject);
+
+    const { container } = renderPanel();
+
+    await waitFor(() => {
+      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
+    });
+
+    const cards = container.querySelectorAll('.acx-suggestion-card');
+    expect(cards.length).toBe(2);
+    const taylorCard = cards[0] as HTMLElement;
+
+    const user = userEvent.setup();
+    await user.click(within(taylorCard).getByRole('button', { name: 'No' }));
+
+    await waitFor(() => {
+      expect(rejectSuggestionMock).toHaveBeenCalledTimes(1);
+      expect(rejectSuggestionMock).toHaveBeenCalledWith('sugg-reject-1', expect.anything());
+      expect(screen.getAllByRole('button', { name: 'No' })).toHaveLength(1);
+    });
+    expect(rejectSuggestionMock).not.toHaveBeenCalledWith('sugg-reject-2', expect.anything());
+
+    await act(async () => {
+      resolveReject?.({
+        suggestion_id: 'sugg-reject-1',
+        resolution: 'rejected',
+        identity_id: 'identity-reject-1',
+        cluster_id: null,
+        message: 'ok',
+      });
+      await pendingReject;
     });
   });
 
@@ -532,7 +766,7 @@ describe('SuggestionReviewPanel', () => {
   it('renders naming queue alongside suggestions (Unified View)', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
-    const fetchApiMock = vi.mocked(fetchApi);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
     // 1. Setup pending suggestions (Assignment)
     fetchPendingSuggestionsMock.mockResolvedValue({
@@ -565,7 +799,7 @@ describe('SuggestionReviewPanel', () => {
           cluster_a_identity_count: 5,
           cluster_b_identity_count: 3,
           status: 'pending',
-        }
+        },
       ],
       total: 1,
       limit: 10,
@@ -573,7 +807,7 @@ describe('SuggestionReviewPanel', () => {
     });
 
     // 3. Setup top unlabeled clusters (Naming Queue)
-    fetchApiMock.mockResolvedValue([
+    fetchTopUnlabeledClustersMock.mockResolvedValue([
       {
         id: 'c-unlabeled',
         label: 'cluster-123',
@@ -592,7 +826,7 @@ describe('SuggestionReviewPanel', () => {
     await waitFor(() => {
       expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
     });
-    
+
     expect(await screen.findByText(/Is this/)).toBeInTheDocument();
 
     // 5. Verify Naming Queue is ALSO present
@@ -603,7 +837,7 @@ describe('SuggestionReviewPanel', () => {
     expect(screen.getByText('1', { selector: '.acx-badge--count' })).toBeInTheDocument(); // Badge count
     // Content should NOT be visible yet
     expect(screen.queryByText(/Are these the same person/)).not.toBeInTheDocument();
-    
+
     // 7. Click to Expand Merge Queue
     await userEvent.click(screen.getByText('Merge Candidates'));
     expect(await screen.findByText(/Are these the same person/)).toBeInTheDocument();
@@ -612,23 +846,22 @@ describe('SuggestionReviewPanel', () => {
   it('renders top cluster thumbnails from legacy thumbnail_url field', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
-    const fetchApiMock = vi.mocked(fetchApi);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
+    const legacyRepresentative = {
+      id: 'rep-1',
+      media_id: 101,
+      thumbnail_url: 'http://example.test/media/face-101.jpg',
+      is_pinned: false,
+    } as unknown as TopUnlabeledCluster['representatives'][number];
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchApiMock.mockResolvedValue([
+    fetchTopUnlabeledClustersMock.mockResolvedValue([
       {
         id: 'cluster-top-1',
         label: null,
         identity_count: 3,
-        representatives: [
-          {
-            id: 'rep-1',
-            media_id: 101,
-            thumbnail_url: 'http://example.test/media/face-101.jpg',
-            is_pinned: false,
-          },
-        ],
+        representatives: [legacyRepresentative],
         tenant_id: 'test-tenant-id',
         user_confirmed: false,
         is_labeled: false,
@@ -649,10 +882,7 @@ describe('SuggestionReviewPanel', () => {
     expect(await screen.findByText('Name These People')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Name this person' })).toBeInTheDocument();
     expect(screen.queryByRole('button', { name: 'Label' })).not.toBeInTheDocument();
-    expect(fetchApiMock).toHaveBeenCalledWith(
-      expect.stringContaining('top-unlabeled?limit=20&tenant_id=test-tenant-id'),
-      expect.objectContaining({ restNonce: 'test-nonce' }),
-    );
+    expect(fetchTopUnlabeledClustersMock).toHaveBeenCalledWith('test-tenant-id', 20);
 
     const thumbImage = container.querySelector<HTMLImageElement>('.acx-top-cluster-card__thumb img');
     if (!thumbImage) {
@@ -665,11 +895,11 @@ describe('SuggestionReviewPanel', () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
     const mergeClusterMock = vi.mocked(mergeCluster);
-    const fetchApiMock = vi.mocked(fetchApi);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchApiMock.mockResolvedValue([
+    fetchTopUnlabeledClustersMock.mockResolvedValue([
       {
         id: 'cluster-top-suggested',
         label: null,
@@ -726,11 +956,11 @@ describe('SuggestionReviewPanel', () => {
   it('renders top cluster representative crop from media_url and bbox', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
-    const fetchApiMock = vi.mocked(fetchApi);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-    fetchApiMock.mockResolvedValue([
+    fetchTopUnlabeledClustersMock.mockResolvedValue([
       {
         id: 'cluster-top-2',
         label: null,
@@ -772,7 +1002,7 @@ describe('SuggestionReviewPanel', () => {
   it('dismisses only the selected top cluster card and keeps other Skip buttons interactive', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
-    const fetchApiMock = vi.mocked(fetchApi);
+    const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
     const dismissClusterMock = vi.mocked(dismissCluster);
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
@@ -787,7 +1017,7 @@ describe('SuggestionReviewPanel', () => {
     );
 
     // Top-unlabeled fetch returns multiple clusters.
-    fetchApiMock.mockResolvedValue([
+    fetchTopUnlabeledClustersMock.mockResolvedValue([
       {
         id: 'cluster-skip-1',
         label: null,
@@ -836,8 +1066,9 @@ describe('SuggestionReviewPanel', () => {
       expect(remainingSkipButtons[0]).not.toBeDisabled();
     });
 
-    act(() => {
+    await act(async () => {
       resolveDismiss?.();
+      await Promise.resolve();
     });
   });
 });

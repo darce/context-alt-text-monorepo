@@ -47,15 +47,7 @@ type LoadingState = 'loading' | 'loaded' | 'error';
  */
 export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps>(
   (
-    {
-      mediaUrl,
-      bbox,
-      size = 'md',
-      sizePx,
-      shape = 'circle',
-      alt = __('Detected face', 'alt-context'),
-      className = '',
-    },
+    { mediaUrl, bbox, size = 'md', sizePx, shape = 'circle', alt = __('Detected face', 'alt-context'), className = '' },
     ref,
   ) => {
     const [loadState, setLoadState] = React.useState<LoadingState>('loading');
@@ -108,11 +100,11 @@ export const FaceThumbnail = React.forwardRef<HTMLDivElement, FaceThumbnailProps
       return (
         <div
           ref={ref}
-        className={classes}
-        role="img"
-        aria-label={__('Face image unavailable', 'alt-context')}
-        style={{ width: displaySize, height: displaySize }}
-      />
+          className={classes}
+          role="img"
+          aria-label={__('Face image unavailable', 'alt-context')}
+          style={{ width: displaySize, height: displaySize }}
+        />
       );
     }
 

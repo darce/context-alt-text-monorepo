@@ -1,4 +1,3 @@
-
 import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';

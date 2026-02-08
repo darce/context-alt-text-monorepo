@@ -10,11 +10,9 @@ import React from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
-import { fetchApi } from '../../../utils/http';
-import { getEndpoint, getConfig } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import { mergeCluster, updateClusterLabel } from '../../../api/recognition';
-import { dismissCluster } from '../../../api/recognition/clusterApi';
+import { dismissCluster, fetchTopUnlabeledClusters } from '../../../api/recognition/clusterApi';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
@@ -30,7 +28,9 @@ interface TopClustersSectionProps {
 
 const TOP_UNLABELED_LIMIT = 20;
 
-const resolveRepresentativeThumbUrl = (representative: TopUnlabeledCluster['representatives'][number]): string | null => {
+const resolveRepresentativeThumbUrl = (
+  representative: TopUnlabeledCluster['representatives'][number],
+): string | null => {
   const legacyThumbnail = (representative as { thumbnail_url?: string | null }).thumbnail_url;
   const rawUrl = representative.thumb_url ?? legacyThumbnail ?? null;
   if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
@@ -120,14 +120,29 @@ const TopClusterCard = ({
     ? `${__('Is this', 'alt-context')} ${suggestedLabel}?`
     : __('Name this person', 'alt-context');
   const representative = getMostRepresentative(cluster.representatives ?? []);
-  const reps = suggestedLabel ? (representative ? [representative] : []) : (cluster.representatives ?? []).slice(0, maxThumbs);
+  const reps = suggestedLabel
+    ? representative
+      ? [representative]
+      : []
+    : (cluster.representatives ?? []).slice(0, maxThumbs);
   const columnCount = reps.length <= 1 ? 1 : 2;
   const cellSize = (gridSizePx - gapPx * (columnCount - 1)) / columnCount;
   const gridClassName =
-    columnCount === 1
-      ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single'
-      : 'acx-top-cluster-card__grid';
+    columnCount === 1 ? 'acx-top-cluster-card__grid acx-top-cluster-card__grid--single' : 'acx-top-cluster-card__grid';
   const isBusy = (isDismissing ?? false) || (isConfirming ?? false);
+  const handleConfirmSuggestedLabelClick = () => {
+    if (!suggestedLabel || !onConfirmSuggestedLabel) {
+      return;
+    }
+    onConfirmSuggestedLabel(cluster.id, suggestedLabel, cluster.suggested_target_cluster_id);
+  };
+  const handleRejectSuggestedLabelClick = () => {
+    if (onDismiss) {
+      onDismiss(cluster.id);
+      return;
+    }
+    onLabel(cluster.id);
+  };
 
   return (
     <div className="acx-top-cluster-card">
@@ -187,7 +202,7 @@ const TopClusterCard = ({
             <button
               type="button"
               className="button button-primary acx-top-cluster-card__confirm-btn"
-              onClick={() => onConfirmSuggestedLabel(cluster.id, suggestedLabel, cluster.suggested_target_cluster_id)}
+              onClick={handleConfirmSuggestedLabelClick}
               disabled={isBusy}
               title={__('Confirm suggested name', 'alt-context')}
             >
@@ -196,13 +211,7 @@ const TopClusterCard = ({
             <button
               type="button"
               className="button acx-top-cluster-card__reject-btn"
-              onClick={() => {
-                if (onDismiss) {
-                  onDismiss(cluster.id);
-                  return;
-                }
-                onLabel(cluster.id);
-              }}
+              onClick={handleRejectSuggestedLabelClick}
               disabled={isBusy}
               title={__('Reject suggestion for now', 'alt-context')}
             >
@@ -251,15 +260,12 @@ export const TopClustersSection = ({
 
   const { data: topClusters, isLoading } = useQuery<TopUnlabeledCluster[]>({
     queryKey: queryKeys.clusters.topUnlabeled(tenantId),
-    queryFn: async () => {
-      const base = getEndpoint('recognitionClusters');
-      const url = `${base}/top-unlabeled?limit=${TOP_UNLABELED_LIMIT}&tenant_id=${tenantId}`;
-      const response = await fetchApi<TopUnlabeledCluster[]>(url, {
-        restNonce: getConfig().nonce,
-      });
-      return response ?? [];
-    },
+    queryFn: () => fetchTopUnlabeledClusters(tenantId, TOP_UNLABELED_LIMIT),
     staleTime: 60000, // 1 minute
+    // This component unmounts when ClusterLabelingPanel opens (conditional render in
+    // WorkbenchPage).  Data may change while unmounted, so always refetch on remount
+    // to avoid showing a just-labeled cluster as still unlabeled.
+    refetchOnMount: 'always',
   });
 
   const dismissMutation = useMutation({

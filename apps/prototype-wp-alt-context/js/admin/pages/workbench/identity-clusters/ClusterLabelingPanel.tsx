@@ -8,7 +8,12 @@ import React, { useState } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, sprintf } from '@wordpress/i18n';
 
-import { fetchClusterMembers, listRecognitionClusters, mergeCluster, updateClusterLabel } from '../../../api/recognition';
+import {
+  fetchClusterMembers,
+  listRecognitionClusters,
+  mergeCluster,
+  updateClusterLabel,
+} from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
 
@@ -23,6 +28,13 @@ interface ClusterLabelingPanelProps {
  */
 const getErrorMessage = (error: unknown, label: string): string => {
   if (error instanceof Error) {
+    if (
+      error.name === 'AbortError' ||
+      error.message.toLowerCase().includes('timed out') ||
+      error.message.toLowerCase().includes('timeout')
+    ) {
+      return __('Save is taking too long. Please try again.', 'alt-context');
+    }
     // Check for 409 Conflict (duplicate label)
     if (error.message.includes('409') || error.message.toLowerCase().includes('conflict')) {
       return sprintf(
@@ -42,11 +54,41 @@ const getErrorMessage = (error: unknown, label: string): string => {
   return __('An unexpected error occurred. Please try again.', 'alt-context');
 };
 
+const SAVE_TIMEOUT_MS = 3000;
+const DUPLICATE_LOOKUP_TIMEOUT_MS = 2000;
+
+const withTimeout = async <T,>(
+  request: (signal: AbortSignal) => Promise<T>,
+  timeoutMs: number,
+  timeoutMessage: string,
+): Promise<T> => {
+  const controller = new AbortController();
+  const timeoutId = window.setTimeout(() => controller.abort(timeoutMessage), timeoutMs);
+  try {
+    return await request(controller.signal);
+  } catch (error) {
+    if (error instanceof DOMException && error.name === 'AbortError') {
+      throw new Error(timeoutMessage);
+    }
+    throw error;
+  } finally {
+    window.clearTimeout(timeoutId);
+  }
+};
+
 export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLabelingPanelProps): React.JSX.Element => {
   const [labelInput, setLabelInput] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [duplicateMatch, setDuplicateMatch] = useState<{ id: string; label: string } | null>(null);
   const queryClient = useQueryClient();
+  const handleSaveSuccess = (label: string) => {
+    setError(null);
+    setDuplicateMatch(null);
+    void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+    void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
+    onLabel(label);
+  };
 
   const { data: members, isLoading } = useQuery({
     queryKey: queryKeys.clusters.memberList(clusterId),
@@ -55,34 +97,22 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
   });
 
   const labelMutation = useMutation({
-    mutationFn: (newLabel: string) => updateClusterLabel(clusterId, newLabel),
+    mutationFn: (newLabel: string) =>
+      withTimeout(
+        (signal) => updateClusterLabel(clusterId, newLabel, signal),
+        SAVE_TIMEOUT_MS,
+        'save request timed out',
+      ),
     // Don't retry on client errors like 409 Conflict
     retry: false,
-    onSuccess: () => {
-      setError(null);
-      setDuplicateMatch(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
-      onLabel(labelInput);
-    },
-    onError: (err: Error) => {
-      setError(getErrorMessage(err, labelInput));
-    },
+    onSuccess: (_result, newLabel) => handleSaveSuccess(newLabel),
   });
 
   const mergeMutation = useMutation({
     mutationFn: ({ targetClusterId, targetLabel }: { targetClusterId: string; targetLabel: string }) =>
       mergeCluster(clusterId, targetClusterId, targetLabel),
     retry: false,
-    onSuccess: (_result, vars) => {
-      setError(null);
-      setDuplicateMatch(null);
-      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
-      void queryClient.invalidateQueries({ queryKey: queryKeys.suggestions.pending() });
-      onLabel(vars.targetLabel);
-    },
+    onSuccess: (_result, vars) => handleSaveSuccess(vars.targetLabel),
     onError: (err: Error) => {
       setError(getErrorMessage(err, labelInput));
     },
@@ -94,13 +124,23 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
       return null;
     }
     try {
-      const results = await listRecognitionClusters({ search: label, limit: 10, labeled_only: true });
-      const match = results.find((cluster) => cluster.id !== clusterId && cluster.label.toLowerCase() === normalizedLabel);
+      const results = await withTimeout(
+        (signal) => listRecognitionClusters({ search: label, limit: 10, labeled_only: true }, signal),
+        DUPLICATE_LOOKUP_TIMEOUT_MS,
+        'duplicate lookup timed out',
+      );
+      const match = results.find(
+        (cluster) =>
+          cluster.id !== clusterId &&
+          typeof cluster.label === 'string' &&
+          cluster.label.toLowerCase() === normalizedLabel,
+      );
       if (match?.id && match.label) {
         return { id: match.id, label: match.label };
       }
-    } catch {
+    } catch (err) {
       // Fall back to regular save path on lookup failures.
+      console.warn('[ClusterLabelingPanel] duplicate lookup failed, falling back to save path', err);
     }
     return null;
   };
@@ -115,14 +155,18 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     setError(null);
     setDuplicateMatch(null);
 
-    // Avoid duplicate-label dead end by surfacing a merge suggestion first.
-    const match = await findClusterByLabel(trimmed);
-    if (match) {
-      setDuplicateMatch(match);
-      return;
+    try {
+      await labelMutation.mutateAsync(trimmed);
+    } catch (err) {
+      if (err instanceof Error && (err.message.includes('409') || err.message.toLowerCase().includes('conflict'))) {
+        const match = await findClusterByLabel(trimmed);
+        if (match) {
+          setDuplicateMatch(match);
+          return;
+        }
+      }
+      setError(getErrorMessage(err, trimmed));
     }
-
-    labelMutation.mutate(trimmed);
   };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -181,7 +225,7 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
               onChange={handleInputChange}
               placeholder={__('Enter name...', 'alt-context')}
               className="regular-text"
-              disabled={labelMutation.isPending || mergeMutation.isPending}
+              disabled={mergeMutation.isPending}
               autoFocus
             />
             <button
@@ -189,7 +233,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
               className="button button-primary"
               disabled={!labelInput.trim() || labelMutation.isPending || mergeMutation.isPending}
             >
-              {labelMutation.isPending ? __('Saving...', 'alt-context') : mergeMutation.isPending ? __('Merging...', 'alt-context') : __('Save', 'alt-context')}
+              {labelMutation.isPending
+                ? __('Saving...', 'alt-context')
+                : mergeMutation.isPending
+                  ? __('Merging...', 'alt-context')
+                  : __('Save', 'alt-context')}
             </button>
           </div>
           {duplicateMatch && (

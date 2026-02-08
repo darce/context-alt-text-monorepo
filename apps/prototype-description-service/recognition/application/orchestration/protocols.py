@@ -7,6 +7,8 @@ from __future__ import annotations
 from collections.abc import Mapping, Sequence
 from typing import TYPE_CHECKING, Protocol
 
+import numpy as np
+
 from recognition.application.assignment import AssignmentCandidate
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionRefreshReason
 
@@ -79,7 +81,7 @@ class SuggestionRefreshServiceProtocol(Protocol):
         *,
         cluster_label: str | None = None,
         candidate_cluster_ids: Sequence[str] | None = None,
-        representatives_by_cluster: Mapping[str, Sequence[object] | object] | None = None,
+        representatives_by_cluster: Mapping[str, Sequence[np.ndarray] | np.ndarray] | None = None,
     ) -> int:
         """Surface suggestions after a cluster is user-labeled.
 
@@ -89,6 +91,16 @@ class SuggestionRefreshServiceProtocol(Protocol):
             candidate_cluster_ids: Optional list of cluster IDs to scan (skips full tenant lookup).
             representatives_by_cluster: Precomputed representatives to avoid recomputing cache.
         """
+        ...
+
+    async def backfill_for_new_unlabeled_clusters(
+        self,
+        *,
+        tenant_id: str,
+        created_cluster_ids: Sequence[str],
+        fallback_window_minutes: int = 30,
+    ) -> int:
+        """Backfill suggestions for newly created unlabeled clusters."""
         ...
 
 

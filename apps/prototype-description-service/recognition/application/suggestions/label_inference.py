@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import uuid
 
+import numpy as np
 from sqlalchemy import case, select
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import joinedload
@@ -149,14 +150,59 @@ async def infer_suggested_label(
             )
 
     # 3. Nearest Neighbor Search (Fallback)
-    if not target_cluster.representative_identity:
-        return None
+    target_embedding: np.ndarray | None = None
+    if target_cluster.representative_identity and target_cluster.representative_identity.embedding:
+        target_embedding = np.asarray(target_cluster.representative_identity.embedding, dtype=np.float32)
+    else:
+        if cluster_repository is None:
+            return None
+        reps = await cluster_repository.get_representative_embeddings(cluster_id)
+        if not reps:
+            reps = await cluster_repository.get_member_fallback_embeddings(cluster_id, limit=4)
+        if reps:
+            rep_stack = np.asarray(reps, dtype=np.float32)
+            target_embedding = rep_stack.mean(axis=0)
+        else:
+            return None
 
-    target_embedding = target_cluster.representative_identity.embedding
-    if not target_embedding:
-        return None
+    # Prefer in-process similarity search using representative sets when available to avoid
+    # vector index constraints and to honor representative table embeddings.
+    if cluster_repository is not None:
+        labeled_clusters = await cluster_repository.get_labeled_with_representatives(str(tenant_uuid))
+        best_similarity = -1.0
+        best_cluster_id: str | None = None
+        for labeled_cluster, cluster_reps in labeled_clusters:
+            if not labeled_cluster.id or labeled_cluster.id == str(cluster_uuid):
+                continue
+            label_value = labeled_cluster.label
+            if not label_value or label_value.startswith("cluster-"):
+                continue
+            for rep in cluster_reps:
+                rep_vec = np.asarray(getattr(rep, "embedding", rep), dtype=np.float32)
+                norm_a = np.linalg.norm(target_embedding)
+                norm_b = np.linalg.norm(rep_vec)
+                if norm_a == 0 or norm_b == 0:
+                    continue
+                similarity = float(np.dot(target_embedding, rep_vec) / (norm_a * norm_b))
+                if similarity > best_similarity:
+                    best_similarity = similarity
+                    best_cluster_id = labeled_cluster.id
 
-    # Find nearest labeled cluster using embedding distance
+        if best_cluster_id is not None and best_similarity >= threshold:
+            label_value = next(
+                (c.label for c, _ in labeled_clusters if c.id == best_cluster_id and c.label),
+                None,
+            )
+            if not label_value:
+                return None
+            return SuggestedLabel(
+                label=label_value,
+                source=SuggestedLabelSource.SIMILAR_CLUSTER,
+                confidence=best_similarity,
+                target_cluster_id=best_cluster_id,
+            )
+
+    # Find nearest labeled cluster using embedding distance (DB fallback)
     stmt = (
         select(IdentityCluster)
         .join(MediaIdentity, IdentityCluster.representative_identity_id == MediaIdentity.id)
@@ -177,8 +223,6 @@ async def infer_suggested_label(
         and nearest_cluster.representative_identity
         and nearest_cluster.representative_identity.embedding
     ):
-        import numpy as np
-
         vec_a = np.array(target_embedding)
         vec_b = np.array(nearest_cluster.representative_identity.embedding)
 

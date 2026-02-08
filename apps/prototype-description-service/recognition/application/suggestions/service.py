@@ -24,7 +24,7 @@ from recognition.domain.repositories import (
     SuggestionRepository,
 )
 from recognition.domain.suggestion import AssignmentSuggestion, SuggestionStatus
-from recognition.interface_adapters.schemas.suggestion_details import SuggestionDetails
+from recognition.domain.suggestion_details import SuggestionDetails
 from recognition.observability.recognition_runs import RecognitionRunContext
 
 logger = logging.getLogger(__name__)
@@ -244,71 +244,73 @@ class SuggestionService:
         """Mark a suggestion as accepted."""
         try:
             suggestion = await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.ACCEPTED)
-            if suggestion:
-                logger.info(
-                    "[curation] ACCEPTED suggestion_id=%s identity=%s cluster=%s similarity=%.4f user_action=manual_accept",
-                    suggestion.id,
-                    suggestion.identity_id,
-                    suggestion.cluster_id,
-                    suggestion.representative_similarity,
-                )
-                await self._ensure_run_context()
-                self._emit_suggestion_resolved_event(
-                    identity_id=suggestion.identity_id,
-                    cluster_id=suggestion.cluster_id,
-                    resolution="accepted",
-                    suggestion_id=suggestion.id,
-                    source="manual_accept",
-                )
-            return suggestion
         except ValueError:
             logger.warning("[curation] Failed to accept suggestion_id=%s: Not found", suggestion_id)
             return None  # Not found
+
+        if suggestion:
+            logger.info(
+                "[curation] ACCEPTED suggestion_id=%s identity=%s cluster=%s similarity=%.4f user_action=manual_accept",
+                suggestion.id,
+                suggestion.identity_id,
+                suggestion.cluster_id,
+                suggestion.representative_similarity,
+            )
+            await self._ensure_run_context()
+            self._emit_suggestion_resolved_event(
+                identity_id=suggestion.identity_id,
+                cluster_id=suggestion.cluster_id,
+                resolution="accepted",
+                suggestion_id=suggestion.id,
+                source="manual_accept",
+            )
+        return suggestion
 
     async def reject(self, suggestion_id: str) -> AssignmentSuggestion | None:
         """Mark a suggestion as rejected and create negative constraints."""
         try:
             suggestion = await self._repository.update_status(self._tenant_id, suggestion_id, SuggestionStatus.REJECTED)
-            if suggestion:
-                logger.info(
-                    "[curation] REJECTED suggestion_id=%s identity=%s cluster=%s similarity=%.4f user_action=manual_reject",
-                    suggestion.id,
-                    suggestion.identity_id,
-                    suggestion.cluster_id,
-                    suggestion.representative_similarity,
-                )
-                await self._ensure_run_context()
-                self._emit_suggestion_resolved_event(
-                    identity_id=suggestion.identity_id,
-                    cluster_id=suggestion.cluster_id,
-                    resolution="rejected",
-                    suggestion_id=suggestion.id,
-                    source="manual_reject",
-                )
-
-                # Create negative constraints to prevent future auto-assignment
-                if self._cluster_repository and self._constraint_repository:
-                    cluster = await self._cluster_repository.get_by_id(suggestion.cluster_id)
-                    if cluster and cluster.representative_identity_id:
-                        await self._constraint_repository.create_cannot_link(
-                            tenant_id=self._tenant_id,
-                            identity_a=suggestion.identity_id,
-                            identity_b=cluster.representative_identity_id,
-                            source="manual_reject",
-                        )
-
-                if self._block_repository:
-                    await self._block_repository.add_block(
-                        tenant_id=self._tenant_id,
-                        identity_id=suggestion.identity_id,
-                        blocked_cluster_id=suggestion.cluster_id,
-                        reason="manual_reject",
-                    )
-
-            return suggestion
         except ValueError:
             logger.warning("[curation] Failed to reject suggestion_id=%s: Not found", suggestion_id)
             return None  # Not found
+
+        if suggestion:
+            logger.info(
+                "[curation] REJECTED suggestion_id=%s identity=%s cluster=%s similarity=%.4f user_action=manual_reject",
+                suggestion.id,
+                suggestion.identity_id,
+                suggestion.cluster_id,
+                suggestion.representative_similarity,
+            )
+            await self._ensure_run_context()
+            self._emit_suggestion_resolved_event(
+                identity_id=suggestion.identity_id,
+                cluster_id=suggestion.cluster_id,
+                resolution="rejected",
+                suggestion_id=suggestion.id,
+                source="manual_reject",
+            )
+
+            # Create negative constraints to prevent future auto-assignment
+            if self._cluster_repository and self._constraint_repository:
+                cluster = await self._cluster_repository.get_by_id(suggestion.cluster_id)
+                if cluster and cluster.representative_identity_id:
+                    await self._constraint_repository.create_cannot_link(
+                        tenant_id=self._tenant_id,
+                        identity_a=suggestion.identity_id,
+                        identity_b=cluster.representative_identity_id,
+                        source="manual_reject",
+                    )
+
+            if self._block_repository:
+                await self._block_repository.add_block(
+                    tenant_id=self._tenant_id,
+                    identity_id=suggestion.identity_id,
+                    blocked_cluster_id=suggestion.cluster_id,
+                    reason="manual_reject",
+                )
+
+        return suggestion
 
     async def list_pending(self, limit: int = 50, offset: int = 0) -> list[SuggestionDetails]:
         """List pending suggestions with identity + cluster details for the service tenant."""

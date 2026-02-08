@@ -608,8 +608,8 @@
   min-width: 280px;
 
   &--low-confidence {
-    background-color: #fff7ed;
-    border-color: #f59e0b;
+    background-color: var(--acx-color-warning-bg);
+    border-color: var(--acx-color-warning-border);
   }
 
   &__faces {
@@ -690,8 +690,8 @@
     margin-left: var(--acx-space-8);
     padding: 1px 6px;
     border-radius: 10px;
-    background-color: #fef3c7;
-    color: #92400e;
+    background-color: var(--acx-color-warning-pill-bg);
+    color: var(--acx-color-warning-pill-text);
     font-size: 0.68rem;
     font-weight: 600;
     letter-spacing: 0.01em;
@@ -809,7 +809,7 @@
     }
 
     &--frame {
-      background-color: #e0e0e0;
+      background-color: var(--acx-color-frame-muted);
       aspect-ratio: 1;
       overflow: hidden;
       position: relative;

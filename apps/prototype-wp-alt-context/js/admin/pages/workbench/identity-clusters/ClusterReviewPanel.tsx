@@ -20,7 +20,11 @@ interface ClusterReviewPanelProps {
 export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelProps): React.JSX.Element => {
   const queryClient = useQueryClient();
 
-  const { data: members, isLoading, isError } = useQuery({
+  const {
+    data: members,
+    isLoading,
+    isError,
+  } = useQuery({
     queryKey: queryKeys.clusters.memberList(clusterId),
     queryFn: () => fetchClusterMembers(clusterId),
     enabled: Boolean(clusterId),
@@ -68,7 +72,12 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
                       className="acx-cluster-member-card__image"
                     />
                   ) : member.media_url && member.bbox ? (
-                    <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg" alt={__('Cluster member', 'alt-context')} />
+                    <FaceThumbnail
+                      mediaUrl={member.media_url}
+                      bbox={member.bbox}
+                      size="lg"
+                      alt={__('Cluster member', 'alt-context')}
+                    />
                   ) : (
                     <div className="acx-placeholder" />
                   )}

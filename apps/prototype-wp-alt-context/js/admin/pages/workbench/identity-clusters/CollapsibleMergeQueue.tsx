@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect } from 'react';
 import { __ } from '@wordpress/i18n';
 import { MergeSuggestionCard } from './MergeSuggestionCard';
@@ -38,15 +37,8 @@ export const CollapsibleMergeQueue = ({
 
   return (
     <div className="acx-merge-queue">
-      <button
-        type="button"
-        className="acx-merge-queue__header"
-        onClick={toggle}
-        aria-expanded={isOpen}
-      >
-        <span className={`acx-merge-queue__toggle-icon ${isOpen ? 'is-open' : ''}`}>
-          ▼
-        </span>
+      <button type="button" className="acx-merge-queue__header" onClick={toggle} aria-expanded={isOpen}>
+        <span className={`acx-merge-queue__toggle-icon ${isOpen ? 'is-open' : ''}`}>▼</span>
         <span className="acx-merge-queue__title">{__('Merge Candidates', 'alt-context')}</span>
         <span className="acx-badge acx-badge--count">{suggestions.length}</span>
       </button>

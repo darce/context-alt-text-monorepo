@@ -70,6 +70,7 @@ class IdentitySuggestion(Base):
 
     # Priority level (1=critical, 2=high, 3=normal, 4=low)
     priority: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("3"))
+    evidence_generation: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
 
     # Timestamps
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
@@ -102,7 +103,12 @@ class IdentitySuggestion(Base):
             "resolution IN ('pending', 'accepted', 'rejected', 'expired')",
             name="valid_resolution",
         ),
-        UniqueConstraint("identity_id", "suggested_cluster_id", name="unique_identity_suggestion"),
+        UniqueConstraint(
+            "identity_id",
+            "suggested_cluster_id",
+            "evidence_generation",
+            name="unique_identity_suggestion",
+        ),
         Index("idx_identity_suggestions_tenant", "tenant_id"),
         Index("idx_identity_suggestions_identity", "identity_id"),
         Index("idx_identity_suggestions_cluster", "suggested_cluster_id"),

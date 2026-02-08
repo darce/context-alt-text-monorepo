@@ -56,6 +56,71 @@ class _FakeClusterRepository:
         return []
 
 
+class FakeClusterForRepo:
+    """Minimal cluster object returned by FakeClusterRepository."""
+
+    def __init__(self, cluster_id: str, label: str | None = None, identity_count: int = 1) -> None:
+        self.id = cluster_id
+        self.label = label
+        self.identity_count = identity_count
+        self.user_confirmed = bool(label)
+        self.is_labeled = bool(label)
+        self.created_at = datetime.now(tz=UTC)
+        self.is_auto_label = False
+        self.dismissed_at: datetime | None = None
+        self.representatives: list = []
+
+
+class FakeClusterRepository:
+    """In-memory cluster repository for API tests."""
+
+    def __init__(self) -> None:
+        self.clusters: dict[str, FakeClusterForRepo] = {}
+
+    def seed(self, cluster_id: str, label: str | None = None, identity_count: int = 1) -> None:
+        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, label, identity_count)
+
+    async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
+        return self.clusters.get(cluster_id)
+
+    async def get_members(self, cluster_id: str):
+        return []
+
+    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]):
+        return {}
+
+    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
+        return []
+
+    async def get_top_unlabeled(
+        self,
+        tenant_id: str,
+        limit: int = 10,
+        min_identity_count: int = 2,
+    ) -> list[FakeClusterForRepo]:
+        unlabeled = [
+            cluster
+            for cluster in self.clusters.values()
+            if not cluster.label and cluster.identity_count >= min_identity_count and cluster.dismissed_at is None
+        ]
+        sorted_clusters = sorted(unlabeled, key=lambda cluster: cluster.identity_count, reverse=True)
+        return sorted_clusters[:limit]
+
+    async def dismiss_cluster(self, cluster_id: str) -> bool:
+        cluster = self.clusters.get(cluster_id)
+        if not cluster or cluster.dismissed_at is not None:
+            return False
+        cluster.dismissed_at = datetime.now(tz=UTC)
+        return True
+
+    async def undismiss_cluster(self, cluster_id: str) -> bool:
+        cluster = self.clusters.get(cluster_id)
+        if not cluster or cluster.dismissed_at is None:
+            return False
+        cluster.dismissed_at = None
+        return True
+
+
 class FakeJobRepository:
     """In-memory job repository for orchestration tests."""
 

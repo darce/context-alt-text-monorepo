@@ -27,16 +27,11 @@ from recognition.application.persistence.assignment_writer import AssignmentWrit
 from recognition.application.scan.service import ScanService
 from recognition.application.settings import ClusteringSettings
 from recognition.application.suggestions.service import SuggestionService
-from recognition.domain.maturity import ClusterMaturityInfo
-from recognition.domain.repositories import IdentityMember
 from recognition.infrastructure.clustering.hdbscan_adapter import HdbscanGraphAlgorithm
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
 from recognition.infrastructure.repositories.member_repository import SqlAlchemyMemberRepository
 from recognition.infrastructure.repositories.suggestion_repository import SqlAlchemySuggestionRepository
-from recognition.interface_adapters.http.schemas.responses import ClusterResponse
-from recognition.shared.ids import generate_id
-from recognition.tests.fakes import _clone_cluster
 
 os.environ["RECOGNITION_AUTH_ENABLED"] = "0"
 os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
@@ -122,81 +117,6 @@ async def tenant(db_session: AsyncSession) -> Tenant:
 def uuid_str() -> str:
     """Return a new UUID string."""
     return str(uuid.uuid4())
-
-
-class FakeClusterRepository:
-    """In-memory cluster repository stub."""
-
-    def __init__(self) -> None:
-        self.clusters: dict[str, ClusterResponse] = {}
-
-    async def get_by_id(self, cluster_id: str) -> ClusterResponse | None:
-        return self.clusters.get(cluster_id)
-
-    async def get_by_tenant(
-        self, tenant_id: str, *, limit: int = 100, offset: int = 0, labeled_only: bool = False
-    ) -> list[ClusterResponse]:
-        return [c for c in self.clusters.values() if c.tenant_id == tenant_id][offset : offset + limit]
-
-    async def save(self, cluster: ClusterResponse) -> ClusterResponse:
-        cluster_id = cluster.id or str(generate_id())
-        saved = _clone_cluster(cluster, id=cluster_id)
-        self.clusters[cluster_id] = saved
-        return saved
-
-    async def update(self, cluster: ClusterResponse) -> ClusterResponse:
-        self.clusters[cluster.id] = cluster
-        return cluster
-
-    async def delete(self, cluster_id: str) -> None:
-        self.clusters.pop(cluster_id, None)
-
-    async def get_unclustered(self, tenant_id: str):
-        return []
-
-    async def get_representative_count(self, cluster_id: str) -> int:
-        return 0
-
-    async def get_all_representatives(self, cluster_id: str):
-        return []
-
-    async def get_member_embeddings(self, cluster_id: str):
-        return []
-
-    async def get_member_identities(self, cluster_id: str):
-        return []
-
-    async def get_member_identities_for_clusters(self, cluster_ids: Sequence[str]):
-        return {}
-
-    async def get_members(self, cluster_id: str) -> list[IdentityMember]:
-        return []
-
-    async def get_singleton_identities(self, tenant_id: str, *, limit: int | None = None):
-        return []
-
-    async def assign_identity_to_cluster(self, identity, cluster_id: str) -> None:  # noqa: ANN001
-        return None
-
-    async def add_representative(self, representative) -> None:  # noqa: ANN001
-        return None
-
-    async def remove_representative(self, representative_id: str) -> None:
-        return None
-
-    async def get_maturity_info(
-        self,
-        cluster_id: str,
-        *,
-        settings=None,  # noqa: ANN001
-    ) -> ClusterMaturityInfo | None:
-        return None
-
-    async def get_curriculum_t(self, cluster_id: str) -> float | None:
-        return None
-
-    async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
-        return None
 
 
 # ----------------------------------------------------------------------

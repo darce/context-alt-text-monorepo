@@ -27,6 +27,7 @@ class NullClusterRepository(ClusterRepository):
         members_by_cluster: dict[str, list[IdentityMember]] | None = None,
         labeled_with_representatives: list[tuple[IdentityCluster, list[ClusterRepresentative]]] | None = None,
         labeled_count: int | None = None,
+        maturity_by_cluster: dict[str, ClusterMaturityInfo] | None = None,
     ) -> None:
         self._clusters_by_id = clusters_by_id or {}
         self._representatives_by_cluster = representatives_by_cluster or {}
@@ -35,6 +36,7 @@ class NullClusterRepository(ClusterRepository):
         self._members_by_cluster = members_by_cluster or {}
         self._labeled_with_representatives = labeled_with_representatives
         self._labeled_count = labeled_count
+        self._maturity_by_cluster = maturity_by_cluster or {}
         self._dismissed_cluster_ids: set[str] = set()
         self._curriculum_t: dict[str, float] = {}
 
@@ -97,7 +99,7 @@ class NullClusterRepository(ClusterRepository):
         *,
         settings: Any = None,
     ) -> ClusterMaturityInfo | None:
-        return None
+        return self._maturity_by_cluster.get(cluster_id)
 
     async def get_curriculum_t(self, cluster_id: str) -> float | None:
         return self._curriculum_t.get(cluster_id)
@@ -105,7 +107,7 @@ class NullClusterRepository(ClusterRepository):
     async def set_curriculum_t(self, cluster_id: str, value: float) -> None:
         self._curriculum_t[cluster_id] = value
 
-    async def get_member_embeddings(self, cluster_id: str) -> Sequence[Any]:
+    async def get_member_embeddings(self, cluster_id: str) -> Sequence[np.ndarray]:
         return list(self._member_embeddings_by_cluster.get(cluster_id, []))
 
     async def get_member_identities(self, cluster_id: str) -> Sequence[MediaIdentity]:
@@ -239,3 +241,28 @@ class NullClusterRepository(ClusterRepository):
                 keep.append(rep)
             self._representatives_by_cluster[cluster_id] = keep
         return removed
+
+    async def get_representative_embeddings(self, cluster_id: str) -> list[np.ndarray]:
+        reps = self._representatives_by_cluster.get(cluster_id, [])
+        return [np.asarray(getattr(rep, "embedding", rep), dtype=np.float32) for rep in reps]
+
+    async def get_member_fallback_embeddings(self, cluster_id: str, limit: int = 4) -> list[np.ndarray]:
+        embeddings = self._member_embeddings_by_cluster.get(cluster_id, [])
+        if limit is None or limit < 0:
+            return [np.asarray(e, dtype=np.float32) for e in embeddings]
+        return [np.asarray(e, dtype=np.float32) for e in embeddings[:limit]]
+
+    async def get_confirmed_labeled(self, tenant_id: str) -> list[IdentityCluster]:
+        return [
+            cluster
+            for cluster in self._clusters_by_id.values()
+            if cluster.tenant_id == tenant_id and cluster.label and not cluster.label.startswith("cluster-")
+        ]
+
+    async def get_unlabeled_created_after(self, tenant_id: str, *, minutes_ago: int) -> list[IdentityCluster]:
+        return [
+            cluster
+            for cluster in self._clusters_by_id.values()
+            if cluster.tenant_id == tenant_id
+            and (cluster.label is None or cluster.label.startswith("cluster-") or not cluster.user_confirmed)
+        ]

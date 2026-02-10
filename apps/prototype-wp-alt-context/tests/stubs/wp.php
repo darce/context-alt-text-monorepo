@@ -637,6 +637,22 @@ if (!function_exists('sanitize_key')) {
     }
 }
 
+if (!function_exists('rest_sanitize_boolean')) {
+    function rest_sanitize_boolean($value): bool
+    {
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_numeric($value)) {
+            return (int) $value === 1;
+        }
+
+        $normalized = strtolower(trim((string) $value));
+        return in_array($normalized, ['1', 'true', 'yes', 'on'], true);
+    }
+}
+
 if (!function_exists('term_exists')) {
     function term_exists($term, $taxonomy)
     {
@@ -1284,6 +1300,21 @@ if (!function_exists('wp_enqueue_script')) {
     function wp_enqueue_script($handle, $src = '', $deps = [], $ver = false, $in_footer = false): void
     {
         $GLOBALS['__ac_scripts'][$handle] = compact('src', 'deps', 'ver', 'in_footer');
+    }
+}
+
+if (!function_exists('wp_script_add_data')) {
+    function wp_script_add_data($handle, $key, $value): void
+    {
+        if (!isset($GLOBALS['__ac_scripts'][$handle])) {
+            $GLOBALS['__ac_scripts'][$handle] = [];
+        }
+
+        if (!isset($GLOBALS['__ac_scripts'][$handle]['data']) || !is_array($GLOBALS['__ac_scripts'][$handle]['data'])) {
+            $GLOBALS['__ac_scripts'][$handle]['data'] = [];
+        }
+
+        $GLOBALS['__ac_scripts'][$handle]['data'][$key] = $value;
     }
 }
 

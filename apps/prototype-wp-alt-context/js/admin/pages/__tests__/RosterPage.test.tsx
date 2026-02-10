@@ -13,6 +13,35 @@ vi.mock('@wordpress/i18n', () => ({
   },
 }));
 
+vi.mock('../../../components/ui/combobox', () => ({
+  Combobox: ({
+    options,
+    value,
+    onSelect,
+    ariaLabel,
+    id,
+  }: {
+    options: { value: string; label: string }[];
+    value?: string;
+    onSelect?: (nextValue: string) => void;
+    ariaLabel?: string;
+    id?: string;
+  }) => (
+    <select
+      id={id}
+      aria-label={ariaLabel}
+      value={value ?? ''}
+      onChange={(event) => onSelect?.(event.target.value)}
+    >
+      {options.map((option) => (
+        <option key={option.value} value={option.value}>
+          {option.label}
+        </option>
+      ))}
+    </select>
+  ),
+}));
+
 const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary => ({
   id: 'cluster-1',
   label: 'cluster-1',
@@ -145,8 +174,46 @@ describe('ClusterDrawerPanel', () => {
     expect(onClose).toHaveBeenCalled();
   });
 
-  // TODO: This test is skipped because cmdk/Radix popover behavior in JSDOM
-  // doesn't properly expose options after clicking the combobox trigger.
-  // Tracked in docs/tasks/4.0/4.13.0/review-69ab3b4-gaps.md#g-7.
-  it.todo('[ACX-4130-G7-ROSTER] commits to an existing roster entry');
+  it('[ACX-4130-G7-ROSTER] commits to an existing roster entry', async () => {
+    const onCommitCluster = vi.fn();
+    const cluster = makeCluster();
+
+    render(
+      <ClusterDrawerPanel
+        cluster={cluster}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={onCommitCluster}
+        isCommitting={false}
+        rosterEntries={[
+          {
+            id: 42,
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            updated_at: '2026-01-01T00:00:00Z',
+          },
+        ]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    const entrySelect = screen.getByRole('combobox', { name: /Commit to roster entry/i });
+    await userEvent.selectOptions(entrySelect, '42');
+
+    const commitButton = screen.getByRole('button', { name: /^Commit to roster entry$/i });
+    expect(commitButton).toBeEnabled();
+
+    await userEvent.click(commitButton);
+    expect(onCommitCluster).toHaveBeenCalledWith(cluster, { rosterEntryId: 42 });
+  });
 });

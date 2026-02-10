@@ -66,6 +66,17 @@ describe('useJobPersistence', () => {
     expect(result.current.activeJobs).toEqual(initialJobs);
   });
 
+  it('returns empty state when localStorage contains invalid JSON', () => {
+    const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    window.localStorage.setItem(STORAGE_KEY, '{not-json');
+
+    const { result } = renderHook(() => useJobPersistence());
+
+    expect(result.current.activeJobs).toEqual([]);
+    expect(consoleSpy).toHaveBeenCalled();
+    consoleSpy.mockRestore();
+  });
+
   it('retains non-terminal jobs past 1 hour to preserve recovery state', () => {
     const now = Date.now();
     const staleTime = now - (3600 * 1000 + 1); // 1 hour + 1ms ago

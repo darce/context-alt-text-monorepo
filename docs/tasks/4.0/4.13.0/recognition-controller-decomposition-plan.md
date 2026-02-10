@@ -32,30 +32,30 @@ Split route ownership by domain while preserving current REST contract behavior:
 
 ## Phase 0: Scaffolding
 
-- [ ] Add controller interfaces/base abstractions with method signatures only.
-- [ ] Add new controller class shells and route group boundaries.
-- [ ] Add/adjust test files with failing scaffolds for each route group.
+- [x] Add controller interfaces/base abstractions with method signatures only.
+- [x] Add new controller class shells and route group boundaries.
+- [x] Add/adjust test files with failing scaffolds for each route group.
 
 ## Phase 1: Extraction
 
-- [ ] Move analysis/job routes and callbacks to `AnalysisJobsController`.
-- [ ] Move cluster/media identity routes and callbacks to `ClustersController`.
-- [ ] Move suggestion routes and callbacks to `SuggestionsController`.
+- [x] Move analysis/job routes and callbacks to `AnalysisJobsController`.
+- [x] Move cluster/media identity routes and callbacks to `ClustersController`.
+- [x] Move suggestion routes and callbacks to `SuggestionsController`.
 
 ## Phase 2: Wiring and Compatibility
 
-- [ ] Update API bootstrap to initialize and register sub-controllers.
-- [ ] Keep route paths, request/response shapes, and permission callbacks unchanged.
-- [ ] Remove dead code from the legacy monolithic controller.
+- [x] Update API bootstrap to initialize and register sub-controllers.
+- [x] Keep route paths, request/response shapes, and permission callbacks unchanged.
+- [x] Remove dead code from the legacy monolithic controller.
 
 ## Phase 3: Verification
 
-- [ ] Ensure `composer test` passes for recognition controller coverage.
-- [ ] Ensure frontend contract tests that depend on recognition routes still pass.
+- [x] Ensure `composer test` passes for recognition controller coverage.
+- [x] Ensure frontend contract tests that depend on recognition routes still pass.
 - [ ] Confirm no REST endpoint regressions in manual smoke checks.
 
 ## Success Criteria
 
-- [ ] Recognition API responsibilities are split across domain controllers.
-- [ ] Legacy monolithic controller is either removed or reduced to thin composition.
-- [ ] Existing route contracts remain backward-compatible for the current branch.
+- [x] Recognition API responsibilities are split across domain controllers.
+- [x] Legacy monolithic controller is either removed or reduced to thin composition.
+- [x] Existing route contracts remain backward-compatible for the current branch.

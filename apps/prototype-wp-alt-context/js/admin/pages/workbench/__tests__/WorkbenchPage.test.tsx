@@ -226,7 +226,6 @@ describe('WorkbenchPage', () => {
       toggleRow: vi.fn(),
       toggleAll: vi.fn(),
       isPageFullySelected: () => true,
-      clearSelection: vi.fn(),
     });
 
     mockUseRecognitionJobHistory.mockReturnValue({

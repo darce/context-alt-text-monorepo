@@ -5,7 +5,6 @@ import type {
   CreateClusterForIdentityRequest,
   CreateClusterForIdentityResponse,
   MergeClusterResponse,
-  ReassignClusterFaceRequest,
   ReassignClusterIdentityRequest,
   RevertMergeRequest,
   RevertMergeResponse,
@@ -58,13 +57,6 @@ export const reassignClusterIdentity = async (
     signal,
   });
 };
-
-export const reassignClusterFace = (request: ReassignClusterFaceRequest): Promise<void> =>
-  reassignClusterIdentity({
-    identityId: request.faceId,
-    targetClusterId: request.targetClusterId,
-    blockFromCluster: request.blockFromCluster,
-  });
 
 export const revertMergeCluster = async (request: RevertMergeRequest): Promise<RevertMergeResponse> => {
   const base = getEndpoint('recognitionRevertMerge');
@@ -136,6 +128,8 @@ export const dismissCluster = async (clusterId: string, signal?: AbortSignal): P
   });
 };
 
+// TODO(sovereign-phase-3): retain undismiss until local-first curation reversal
+// is fully implemented in the sovereign roadmap.
 export const undismissCluster = async (clusterId: string, signal?: AbortSignal): Promise<void> => {
   const base = getEndpoint('recognitionClusters');
   const url = `${stripTrailingSlash(base)}/${clusterId}/dismiss`;

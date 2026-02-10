@@ -90,7 +90,7 @@ export const useJobStateMachine = ({
   } = useJobProgressStream(latestJobId);
 
   // Poll for history / external updates
-  const { scanStatusQuery } = useCombinedScanStatus(jobId ?? null, []);
+  const { scanStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds);
 
   useJobStateMachineEffects({
     scanStatus: scanStatusQuery.data,

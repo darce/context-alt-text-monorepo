@@ -38,14 +38,6 @@ export const getRecognitionCluster = async (clusterId: string): Promise<ClusterS
   });
 };
 
-export const fetchClusterLabels = async (): Promise<string[]> => {
-  const base = getEndpoint('recognitionClusterLabels');
-  return fetchRequiredApi<string[]>(stripTrailingSlash(base), {
-    method: 'GET',
-    restNonce: getConfig().nonce,
-  });
-};
-
 export const fetchTopUnlabeledClusters = async (
   tenantId: string,
   limit: number,

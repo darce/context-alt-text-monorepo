@@ -8,26 +8,7 @@ import { fetchRequiredApi } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import type { AnalyzeRequest, AnalyzeResponse, JobStatusResponse, ClusterResponse } from './types';
 
-type TenantTier = 'free' | 'pro' | 'business' | 'enterprise';
-
-interface TenantLimits {
-  maxMediaPerBatch: number;
-  tier: TenantTier;
-}
-
-const TIER_VALUES: TenantTier[] = ['free', 'pro', 'business', 'enterprise'];
-
-const isTenantTier = (value: unknown): value is TenantTier =>
-  typeof value === 'string' && TIER_VALUES.includes(value as TenantTier);
-
-const getTenantLimits = (): TenantLimits => {
-  const config = getConfig();
-  const tier: TenantTier = isTenantTier(config.tier) ? config.tier : 'free';
-
-  const maxMediaPerBatch = config.maxMediaPerBatch;
-
-  return { maxMediaPerBatch, tier };
-};
+const getMaxMediaPerBatch = (): number => getConfig().maxMediaPerBatch;
 
 const chunkMediaIds = (mediaIds: number[], size: number): number[][] => {
   if (size <= 0) {
@@ -58,7 +39,7 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
 };
 
 export const scanFacesBatched = async (request: AnalyzeRequest): Promise<AnalyzeResponse[]> => {
-  const { maxMediaPerBatch } = getTenantLimits();
+  const maxMediaPerBatch = getMaxMediaPerBatch();
   if (request.mediaIds.length <= maxMediaPerBatch) {
     const result = await scanFaces(request);
     return [result];

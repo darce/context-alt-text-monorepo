@@ -71,17 +71,11 @@ export const useMediaSelectionState = () => {
     [selection],
   );
 
-  const clearSelection = useCallback(() => {
-    setSelection({});
-    setSelectedDetails({});
-  }, []);
-
   return {
     selection,
     selectedMedia,
     toggleRow,
     toggleAll,
     isPageFullySelected,
-    clearSelection,
   } as const;
 };

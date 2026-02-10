@@ -8,7 +8,6 @@ export {
   updateClusterLabel,
   mergeCluster,
   reassignClusterIdentity,
-  reassignClusterFace,
   revertMergeCluster,
   splitCluster,
   createClusterForIdentity,
@@ -16,11 +15,10 @@ export {
   undismissCluster,
 } from './clusterApiMutations';
 
-export { pinRepresentative, fetchClusterMembers, removeClusterMember } from './clusterApiMembers';
+export { fetchClusterMembers, removeClusterMember } from './clusterApiMembers';
 
 export {
   listRecognitionClusters,
   getRecognitionCluster,
-  fetchClusterLabels,
   fetchTopUnlabeledClusters,
 } from './clusterApiQueries';

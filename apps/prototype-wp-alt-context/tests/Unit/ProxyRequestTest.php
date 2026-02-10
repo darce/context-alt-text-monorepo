@@ -63,7 +63,7 @@ class ProxyRequestTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
         $this->assertSame(200, $result->get_status());
-        
+
         $data = $result->get_data();
         $this->assertSame('completed', $data['status']);
         $this->assertSame('test-123', $data['job_id']);

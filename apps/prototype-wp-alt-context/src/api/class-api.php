@@ -134,16 +134,16 @@ class Api {
 				$meta     = wp_get_attachment_metadata( $attachment_id );
 				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
 
-				return array(
-					'id'           => $attachment_id,
-					'title'        => get_the_title( $attachment_id ),
-					'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
+					return array(
+						'id'           => $attachment_id,
+						'title'        => get_the_title( $attachment_id ),
+						'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
 						'thumbnailUrl' => false === $thumb ? null : $thumb,
-					'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
-					'mimeType'     => get_post_mime_type( $attachment_id ),
-					'editUrl'      => get_edit_post_link( $attachment_id, '' ),
-					'updatedAt'    => get_post_modified_time( 'c', true, $attachment_id ),
-					'dimensions'   => array(
+						'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
+						'mimeType'     => get_post_mime_type( $attachment_id ),
+						'editUrl'      => get_edit_post_link( $attachment_id, '' ),
+						'updatedAt'    => get_post_modified_time( 'c', true, $attachment_id ),
+						'dimensions'   => array(
 						'width'  => isset( $meta['width'] ) ? (int) $meta['width'] : null,
 						'height' => isset( $meta['height'] ) ? (int) $meta['height'] : null,
 					),

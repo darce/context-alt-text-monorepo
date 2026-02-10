@@ -11,6 +11,14 @@ import { __ } from '@wordpress/i18n';
 import { fetchClusterMembers, removeClusterMember } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import {
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from '../../../../components/ui/dialog';
 
 interface ClusterReviewPanelProps {
   clusterId: string;
@@ -19,6 +27,7 @@ interface ClusterReviewPanelProps {
 
 export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelProps): React.JSX.Element => {
   const queryClient = useQueryClient();
+  const [pendingRemovalIdentityId, setPendingRemovalIdentityId] = React.useState<string | null>(null);
 
   const {
     data: members,
@@ -41,9 +50,21 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
   });
 
   const handleRemove = (identityId: string) => {
-    if (window.confirm(__('Are you sure you want to remove this person from the cluster?', 'alt-context'))) {
-      removeMutation.mutate(identityId);
+    setPendingRemovalIdentityId(identityId);
+  };
+
+  const handleCancelRemoval = () => {
+    setPendingRemovalIdentityId(null);
+  };
+
+  const handleConfirmRemoval = () => {
+    if (!pendingRemovalIdentityId) {
+      return;
     }
+
+    const identityId = pendingRemovalIdentityId;
+    setPendingRemovalIdentityId(null);
+    removeMutation.mutate(identityId);
   };
 
   return (
@@ -98,6 +119,35 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
           <p>{__('No members found.', 'alt-context')}</p>
         )}
       </div>
+
+      <DialogRoot
+        open={pendingRemovalIdentityId !== null}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelRemoval();
+          }
+        }}
+      >
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="acx-queue-modal">
+              <DialogTitle>{__('Remove cluster member', 'alt-context')}</DialogTitle>
+              <DialogDescription>
+                {__('Are you sure you want to remove this person from the cluster?', 'alt-context')}
+              </DialogDescription>
+              <div className="acx-queue-modal__actions">
+                <button type="button" className="button" onClick={handleCancelRemoval}>
+                  {__('Cancel', 'alt-context')}
+                </button>
+                <button type="button" className="button button-primary" onClick={handleConfirmRemoval}>
+                  {__('Remove member', 'alt-context')}
+                </button>
+              </div>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
     </div>
   );
 };

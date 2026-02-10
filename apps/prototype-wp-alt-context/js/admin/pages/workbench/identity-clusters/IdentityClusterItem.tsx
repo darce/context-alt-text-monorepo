@@ -22,6 +22,14 @@ import { ClusterConfirmDialog } from './ClusterConfirmDialog';
 import { useClusterConfirmDialog } from './useClusterConfirmDialog';
 import { useClusterSaveHandlers } from './useClusterSaveHandlers';
 import { useClusterSaveStatus } from './useClusterSaveStatus';
+import {
+  DialogContent,
+  DialogDescription,
+  DialogOverlay,
+  DialogPortal,
+  DialogRoot,
+  DialogTitle,
+} from '../../../../components/ui/dialog';
 
 const MATCH_DEBOUNCE_MS = 300;
 
@@ -60,6 +68,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
   const representative = cluster.members[0];
   const anchorIdentityId = representative?.identity_id;
   const [isAnchorModalOpen, setIsAnchorModalOpen] = React.useState(false);
+  const [isWrongPersonDialogOpen, setIsWrongPersonDialogOpen] = React.useState(false);
   const [matchedCluster, setMatchedCluster] = React.useState<{ id: string; label: string } | null>(null);
   const saveAbortRef = React.useRef<AbortController | null>(null);
   const matchAbortRef = React.useRef<AbortController | null>(null);
@@ -200,12 +209,24 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
 
   // Handle "Wrong person" action
   const handleWrongPerson = () => {
-    if (window.confirm(__('Are you sure you want to remove this from the cluster?', 'alt-context'))) {
-      // Send only representative ID per requirements (backend will handle cluster implications)
-      if (representative?.identity_id) {
-        mutations.reassign([representative.identity_id]);
-      }
+    if (!representative?.identity_id) {
+      return;
     }
+
+    setIsWrongPersonDialogOpen(true);
+  };
+
+  const handleCancelWrongPerson = () => {
+    setIsWrongPersonDialogOpen(false);
+  };
+
+  const handleConfirmWrongPerson = () => {
+    if (representative?.identity_id) {
+      // Send only representative ID per requirements (backend will handle cluster implications).
+      mutations.reassign([representative.identity_id]);
+    }
+
+    setIsWrongPersonDialogOpen(false);
   };
 
   // Handle "Split cluster" action
@@ -325,6 +346,35 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
         onClose={() => setIsAnchorModalOpen(false)}
         onSelectAnchor={handleAnchorSelect}
       />
+
+      <DialogRoot
+        open={isWrongPersonDialogOpen}
+        onOpenChange={(open) => {
+          if (!open) {
+            handleCancelWrongPerson();
+          }
+        }}
+      >
+        <DialogPortal>
+          <DialogOverlay />
+          <DialogContent>
+            <div className="acx-queue-modal">
+              <DialogTitle>{__('Remove member from cluster', 'alt-context')}</DialogTitle>
+              <DialogDescription>
+                {__('Are you sure you want to remove this from the cluster?', 'alt-context')}
+              </DialogDescription>
+              <div className="acx-queue-modal__actions">
+                <button type="button" className="button" onClick={handleCancelWrongPerson}>
+                  {__('Cancel', 'alt-context')}
+                </button>
+                <button type="button" className="button button-primary" onClick={handleConfirmWrongPerson}>
+                  {__('Remove member', 'alt-context')}
+                </button>
+              </div>
+            </div>
+          </DialogContent>
+        </DialogPortal>
+      </DialogRoot>
 
       <ClusterConfirmDialog
         dialog={confirmDialog}

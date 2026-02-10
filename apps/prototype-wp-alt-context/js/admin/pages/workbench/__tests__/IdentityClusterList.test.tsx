@@ -668,7 +668,6 @@ describe('IdentityClusterList', () => {
   it('allows unlinking an identity (wrong person) only for singletons', async () => {
     const reassignDeferred = createDeferred<unknown>();
     (api.reassignClusterIdentity as Mock).mockReturnValue(reassignDeferred.promise);
-    vi.spyOn(window, 'confirm').mockImplementation(() => true);
 
     // 1. Singleton case - button should be visible
     const { client, user, unmount } = await renderWithClient(<IdentityClusterList identities={[baseIdentity]} />);
@@ -689,6 +688,15 @@ describe('IdentityClusterList', () => {
     const wrongPersonButton = screen.getByText('Remove from Cluster', { selector: 'button' });
     await actFlow(async () => {
       await user.click(wrongPersonButton);
+    });
+
+    await screen.findByRole('dialog');
+
+    await actFlow(async () => {
+      await user.click(screen.getByRole('button', { name: /remove member/i }));
+    });
+
+    await actFlow(async () => {
       await resolveDeferred(reassignDeferred, {});
     });
     await waitFor(() =>

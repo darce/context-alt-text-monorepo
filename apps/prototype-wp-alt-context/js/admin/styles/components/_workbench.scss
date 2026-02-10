@@ -283,7 +283,7 @@
   &__error {
     margin: 0;
     font-size: 0.8rem;
-    color: var(--acx-color-danger, #a00);
+    color: var(--acx-color-danger);
   }
 
   &__undo {
@@ -360,7 +360,7 @@
     color: var(--acx-color-text-secondary);
 
     &--error {
-      color: var(--acx-color-danger, #b42318);
+      color: var(--acx-color-danger);
     }
   }
 
@@ -398,7 +398,7 @@
 
   // Sticky positioning for visibility during curation
   position: sticky;
-  top: 46px; // Account for WP admin bar (32px) + some breathing room
+  top: var(--acx-workbench-sticky-top);
   z-index: 100; // Stay above other content
   box-shadow: 0 2px 8px rgb(0 0 0 / 10%);
   max-height: calc(100vh - 58px);

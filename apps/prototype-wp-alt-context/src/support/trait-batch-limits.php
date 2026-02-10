@@ -13,8 +13,8 @@ namespace AltContext\Support;
  * Provides shared batch limit constants and methods.
  *
  * NOTE: Batch limits disabled for MVP. All tiers use the same limit.
- * TODO: Restore tier-based limits post-MVP.
- * See docs/tasks/4.0/4.11.0/stability-audit-2026-01-20.md
+ * TODO(post-mvp-tiers): Restore tier-based limits post-MVP.
+ * Reference: docs/tasks/4.0/4.11.0/stability-audit-2026-01-20.md
  */
 trait BatchLimits {
 	/**

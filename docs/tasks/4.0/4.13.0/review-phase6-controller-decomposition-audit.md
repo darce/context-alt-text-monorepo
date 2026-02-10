@@ -103,13 +103,55 @@ Items from the carry-forward table in `web-deployment-cleanup-plan.md`, verified
 
 ---
 
+## Commit `5b92720` Verification
+
+> **Commit:** `5b92720058bd697c9f545a3128ce5aa58bdf30aa` ("Address carry-forward items")
+> **Files changed:** 11 files, +880 / −404
+
+### Gate Re-Run Results (Post `5b92720`)
+
+| Check | Result | Delta vs `cafa041` |
+| --- | --- | --- |
+| `composer test` | pass (55 tests, 161 assertions) | +7 tests, +32 assertions |
+| `composer cs-check` | pass (exit `0`) | — |
+| `npm run typecheck` | pass | — |
+| `npm run lint` | pass | — |
+| `npm run arch` | pass (98 files) | — |
+| `npm run test -- --run` | pass (30 files, 153 tests) | — |
+
+### Finding Resolution
+
+| ID | Severity | Status | Evidence |
+| --- | --- | --- | --- |
+| P6-M1 | MEDIUM | **Resolved** | `ClustersController` split into three focused files: `class-clusters-controller.php` (189 lines, read-only cluster queries + thumbnail hydration), `class-cluster-mutations-controller.php` (297 lines, cluster CRUD/merge/split/reassign/dismiss), `class-media-identities-controller.php` (90 lines, media identity lookup). Total: 576 lines across 3 files vs 541 in one. Each file has a single cohesive domain. |
+| P6-M2 | MEDIUM | **Resolved** | `__call()` magic removed from `RecognitionController`. Replaced with 27 typed public delegation methods (e.g., `dismiss_cluster()`, `merge_cluster()`, `get_media_identities()`). Composition root now instantiates 5 sub-controllers. File grew from 68 → 153 lines. PHPStan/IDE can now resolve all method calls statically. |
+| P6-L1 | LOW | **Resolved** | Three new per-controller test files: `AnalysisJobsControllerTest.php` (69 lines, 2 tests — route registration + validation error), `ClustersControllerTest.php` (79 lines, 2 tests — route surface boundary + thumbnail hydration), `SuggestionsControllerTest.php` (69 lines, 2 tests — route registration + query forwarding). Total: 217 lines, 6 new test cases (55 total PHP tests, up from 48). |
+| P6-L2 | LOW | **Not addressed** | Constructor-time option reads remain in `AbstractRecognitionProxyController`. Acceptable for MVP per original audit recommendation. |
+| P6-CF1 | LOW | **Resolved** | `#ef4444` at L212/L283 removed (was `border-left-color` and `background-color` for error states). `#fee2e2` at L213 removed. All `!important` declarations removed from `_identity-cluster-list.scss` (0 matches). Remaining hex colors in the file (e.g., `#fff`, `#e2e8f0`, `#f1f5f9`) are pre-existing and outside P6-CF1 scope. |
+
+### Size Breakdown (Post `5b92720`)
+
+| File | Lines | Change |
+| --- | --- | --- |
+| `class-recognition-controller.php` (composition root) | 153 | +85 (typed delegation) |
+| `class-analysis-jobs-controller.php` | 375 | — |
+| `class-clusters-controller.php` | 189 | −352 (split) |
+| `class-cluster-mutations-controller.php` | 297 | new |
+| `class-media-identities-controller.php` | 90 | new |
+| `class-suggestions-controller.php` | 234 | — |
+| `class-abstract-recognition-proxy-controller.php` | 97 | — |
+| `interface-recognition-route-controller.php` | 9 | — |
+| **Total** | **1,444** | +120 |
+
+---
+
 ## Summary
 
-| Severity | Phase 6 Findings | Carry-Forward Findings | Total New |
-| --- | --- | --- | --- |
-| HIGH | 0 | 0 | 0 |
-| MEDIUM | 2 | 0 | 2 |
-| LOW | 2 | 1 | 3 |
-| **Total** | **4** | **1** | **5** |
+| Severity | Phase 6 Findings | Carry-Forward Findings | Total | Resolved in `5b92720` | Remaining |
+| --- | --- | --- | --- | --- | --- |
+| HIGH | 0 | 0 | 0 | 0 | 0 |
+| MEDIUM | 2 | 0 | 2 | 2 | 0 |
+| LOW | 2 | 1 | 3 | 2 | 1 (P6-L2) |
+| **Total** | **4** | **1** | **5** | **4** | **1** |
 
-Phase 6 is **correctly completed** per the plan checklist. The monolithic controller (1,288 lines) has been decomposed into three focused domain controllers with a shared proxy base, preserving the REST contract. All automated gates pass. Two MEDIUM findings (further ClustersController split opportunity, `__call()` magic method) are tracked for sovereign roadmap Phase 2. All carry-forward items are confirmed resolved except a pre-existing hex-color anti-pattern in `_identity-cluster-list.scss` that was outside the original carry-forward scope.
+Phase 6 is **correctly completed** per the plan checklist. Commit `5b92720` resolves 4 of 5 audit findings: `ClustersController` is split into three cohesive files (P6-M1), `__call()` magic is replaced with typed delegation (P6-M2), per-controller tests are added (P6-L1), and carry-forward hex colors / `!important` are removed (P6-CF1). The sole remaining finding (P6-L2, constructor-time option reads) is deferred to the sovereign roadmap as originally recommended. All six automated gates pass with increased PHP test coverage (55 tests / 161 assertions, up from 48 / 129).

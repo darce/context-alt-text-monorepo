@@ -45,7 +45,6 @@ class Admin {
 		'alt-context-dashboard',
 		'alt-context-workbench',
 		'alt-context-roster',
-		'alt-context-settings',
 	);
 
 	private string $devServer;

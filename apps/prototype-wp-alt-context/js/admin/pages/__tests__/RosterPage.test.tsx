@@ -1,7 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ClusterDrawerPanel as ClusterDrawer } from '../roster/ClusterDrawerPanel';
-import { ClusterGrid as ClusterGallery } from '../roster/ClusterGrid';
+import { ClusterDrawerPanel } from '../roster/ClusterDrawerPanel';
+import { ClusterGrid } from '../roster/ClusterGrid';
 import type { ClusterSummary } from '../../api/recognition';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -26,10 +26,10 @@ const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary =>
   ...overrides,
 });
 
-describe('ClusterGallery', () => {
+describe('ClusterGrid', () => {
   it('describes empty states', () => {
     render(
-      <ClusterGallery
+      <ClusterGrid
         clusters={[]}
         isLoading={false}
         isError={false}
@@ -53,7 +53,7 @@ describe('ClusterGallery', () => {
     const cluster = makeCluster();
 
     render(
-      <ClusterGallery
+      <ClusterGrid
         clusters={[cluster]}
         isLoading={false}
         isError={false}
@@ -89,7 +89,7 @@ describe('ClusterGallery', () => {
     const clusterB = makeCluster({ id: 'cluster-2', label: 'cluster-2' });
 
     render(
-      <ClusterGallery
+      <ClusterGrid
         clusters={[clusterA, clusterB]}
         isLoading={false}
         isError={false}
@@ -115,11 +115,11 @@ describe('ClusterGallery', () => {
   });
 });
 
-describe('ClusterDrawer', () => {
+describe('ClusterDrawerPanel', () => {
   it('renders metadata and close handler', async () => {
     const onClose = vi.fn();
     render(
-      <ClusterDrawer
+      <ClusterDrawerPanel
         cluster={makeCluster()}
         identities={[]}
         mediaMap={{}}
@@ -147,6 +147,6 @@ describe('ClusterDrawer', () => {
 
   // TODO: This test is skipped because cmdk/Radix popover behavior in JSDOM
   // doesn't properly expose options after clicking the combobox trigger.
-  // The component works correctly in browser testing.
-  it.todo('commits to an existing roster entry');
+  // Tracked in docs/tasks/4.0/4.13.0/review-69ab3b4-gaps.md#g-7.
+  it.todo('[ACX-4130-G7-ROSTER] commits to an existing roster entry');
 });

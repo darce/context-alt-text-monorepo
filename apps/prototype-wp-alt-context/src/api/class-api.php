@@ -138,7 +138,7 @@ class Api {
 					'id'           => $attachment_id,
 					'title'        => get_the_title( $attachment_id ),
 					'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
-					'thumbnailUrl' => $thumb ?: null,
+						'thumbnailUrl' => false === $thumb ? null : $thumb,
 					'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
 					'mimeType'     => get_post_mime_type( $attachment_id ),
 					'editUrl'      => get_edit_post_link( $attachment_id, '' ),

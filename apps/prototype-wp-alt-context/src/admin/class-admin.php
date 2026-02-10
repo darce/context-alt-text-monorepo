@@ -6,9 +6,7 @@ namespace AltContext\Admin;
 
 use AltContext\Support\BatchLimits;
 
-use function absint;
 use function add_action;
-use function apply_filters;
 use function esc_url_raw;
 use function file_get_contents;
 use function get_site_url;
@@ -198,9 +196,7 @@ class Admin {
 					'recognitionJobs'     => rest_url( 'acx/v1/recognition/jobs' ),
 					'recognitionCluster'  => rest_url( 'acx/v1/recognition/cluster' ),
 					'recognitionClusters' => rest_url( 'acx/v1/recognition/clusters' ),
-					'recognitionClustersEvents' => rest_url( 'acx/v1/recognition/clusters/events' ),
 					'recognitionClusterLabels' => rest_url( 'acx/v1/recognition/clusters/labels' ),
-					'recognitionTrainingStage' => rest_url( 'acx/v1/recognition/training-stage' ),
 					'recognitionMediaIdentities' => rest_url( 'acx/v1/recognition/media-identities' ),
 					'recognitionReassignIdentity' => rest_url( 'acx/v1/recognition/clusters/reassign' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),

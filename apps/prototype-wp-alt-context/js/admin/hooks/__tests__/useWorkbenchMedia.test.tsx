@@ -45,7 +45,6 @@ describe('useWorkbenchMedia', () => {
         recognitionCluster: '/wp-json/acx/v1/recognition/cluster',
         recognitionClusters: '/wp-json/acx/v1/recognition/clusters',
         recognitionClusterLabels: '/wp-json/acx/v1/recognition/cluster-labels',
-        recognitionTrainingStage: '/wp-json/acx/v1/recognition/training-stage',
         recognitionMediaIdentities: '/wp-json/acx/v1/recognition/media-identities',
         recognitionReassignIdentity: '/wp-json/acx/v1/recognition/reassign-identity',
         recognitionIdentitySuggestions: '/wp-json/acx/v1/recognition/identity-suggestions',

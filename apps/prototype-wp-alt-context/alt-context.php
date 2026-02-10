@@ -24,7 +24,6 @@ use AltContext\Admin\Admin;
 use AltContext\Admin\Menu;
 use AltContext\Api\Api;
 use AltContext\AltContext;
-use AltContext\Frontend\Frontend;
 use AltContext\Support\LifecycleManager;
 use AltContext\Admin\DashboardPage;
 use AltContext\Admin\WorkbenchPage;
@@ -104,7 +103,6 @@ function alt_context(): AltContext
 
     $instance = new AltContext(
         new Admin(),
-        new Frontend(),
         new Api(),
         new Menu(
             new DashboardPage(),

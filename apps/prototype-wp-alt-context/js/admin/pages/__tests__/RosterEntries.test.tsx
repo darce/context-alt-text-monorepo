@@ -1,7 +1,8 @@
 import { render, screen } from '@testing-library/react';
 
-import { RosterEntriesTable, RosterEntriesSection } from '../RosterPage';
-import type { useRosterEntries } from '../../hooks/useRosterHooks';
+import { RosterEntriesSection } from '../roster/RosterEntriesSection';
+import type { RosterEntriesQuery } from '../roster/RosterEntriesSection';
+import { RosterEntriesTable } from '../roster/RosterEntriesTable';
 import { vi } from 'vitest';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -31,7 +32,6 @@ describe('RosterEntriesTable', () => {
 
 describe('RosterEntriesSection', () => {
   it('shows loading state', () => {
-    type RosterEntriesQuery = Pick<ReturnType<typeof useRosterEntries>, 'isLoading' | 'isError' | 'data' | 'refetch'>;
     const query: RosterEntriesQuery = { isLoading: true, isError: false, data: undefined, refetch: vi.fn() };
     render(<RosterEntriesSection query={query} />);
     expect(screen.getByText(/Loading roster entries/)).toBeInTheDocument();

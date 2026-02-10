@@ -64,6 +64,9 @@ Required branch-review gate commands:
 2. `composer test`
 3. `npm run typecheck`
 
+`composer cs-check` is implemented via `phpcs.xml.dist`; the `tests/stubs/wp.php`
+fixture shim is intentionally excluded from style gating.
+
 ## Seeded Findings (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP)
 
 | ID  | Severity | Category    | Finding                                                              | Evidence                                                                                                                                                                                                                                                                                                                                                                                |
@@ -345,12 +348,12 @@ Audit scope for this addendum:
 - [x] Resolve `M-4`: remove deprecated `workbench/IdentityClusterList` compatibility re-export after import audit.
 - [x] Resolve `AFS-M3`: either wire live cluster events in production runtime or remove/deprecate cluster-events surface.
 - [x] Resolve `HK-M1`: wire or remove `useClusterEvents` runtime surface.
-- [ ] Resolve `HK-M2`: remove inert multi-status path or connect it to real active job IDs.
-- [ ] Resolve `HK-L1`: remove unused `clearSelection` export or make it part of runtime selection-reset flow.
-- [ ] Resolve `RAP-M2`: remove `reassignClusterFace`, `pinRepresentative`, `fetchClusterLabels`; retain `undismissCluster` with TODO linked to sovereign roadmap Phase 3 (local-first curation reversal).
-- [ ] Resolve `RAP-M3`: remove or integrate the orphaned `clusterAdapter` mapping layer.
-- [ ] Resolve `RAP-L1`: prune unused recognition type exports in `types/constraint.ts` and `types/cluster.ts`.
-- [ ] Resolve `RAP-L2`: remove unused tier metadata in scan batching utility or wire it into real behavior.
+- [x] Resolve `HK-M2`: remove inert multi-status path or connect it to real active job IDs.
+- [x] Resolve `HK-L1`: remove unused `clearSelection` export or make it part of runtime selection-reset flow.
+- [x] Resolve `RAP-M2`: remove `reassignClusterFace`, `pinRepresentative`, `fetchClusterLabels`; retain `undismissCluster` with TODO linked to sovereign roadmap Phase 3 (local-first curation reversal).
+- [x] Resolve `RAP-M3`: remove or integrate the orphaned `clusterAdapter` mapping layer.
+- [x] Resolve `RAP-L1`: prune unused recognition type exports in `types/constraint.ts` and `types/cluster.ts`.
+- [x] Resolve `RAP-L2`: remove unused tier metadata in scan batching utility or wire it into real behavior.
 - [x] Resolve `PAG-L1`: remove `RosterPage` test-only compatibility re-exports or keep only with explicit deprecation intent.
 
 ## Phase 3: Remove Deployment-Noise Artifacts and Low-Risk Anti-Patterns

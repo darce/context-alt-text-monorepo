@@ -2,7 +2,7 @@
  * Cluster Types and Operations
  */
 
-import type { BoundingBox, ClusterIdentity, DebugMetrics, RepresentativeBounds } from './identity';
+import type { BoundingBox, ClusterIdentity, RepresentativeBounds } from './identity';
 
 export interface ClusterSummary {
   id: string;
@@ -86,12 +86,6 @@ export interface ReassignClusterIdentityRequest {
   blockFromCluster?: boolean;
 }
 
-export interface ReassignClusterFaceRequest {
-  faceId: string;
-  targetClusterId?: string | null;
-  blockFromCluster?: boolean;
-}
-
 export interface RevertMergeRequest {
   targetClusterId: string;
   movedIdentityIds: string[];
@@ -140,17 +134,4 @@ export interface CreateClusterForIdentityResponse {
   label: string;
   identity_id: string;
   message: string;
-}
-
-export interface ClusterRepresentative {
-  id: string;
-  media_id: number;
-  thumb_url?: string;
-  is_pinned?: boolean;
-  debug_metrics?: DebugMetrics | null;
-}
-
-export interface PinRepresentativeRequest {
-  tenant_id: string;
-  is_pinned: boolean;
 }

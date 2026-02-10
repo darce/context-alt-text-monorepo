@@ -132,4 +132,17 @@ describe('useJobCoordination', () => {
     expect(result.current.isPrimary).toBe(true);
     expect(result.current.channel).toBeNull();
   });
+
+  it('falls back to primary mode when BroadcastChannel construction throws', () => {
+    globalThis.BroadcastChannel = class {
+      constructor() {
+        throw new Error('BroadcastChannel blocked');
+      }
+    } as unknown as typeof BroadcastChannel;
+
+    const { result } = renderHook(() => useJobCoordination(jobId));
+
+    expect(result.current.isPrimary).toBe(true);
+    expect(result.current.channel).toBeNull();
+  });
 });

@@ -7,7 +7,7 @@ vi.mock('@wordpress/i18n', () => ({
   _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
-    return format.replace(/%s/g, () => String(args[index++]));
+    return format.replace(/%(s|d)/g, () => String(args[index++]));
   },
 }));
 
@@ -74,6 +74,64 @@ describe('RecentJobsPanel', () => {
   });
 });
 
-// Follow-up coverage tracked in docs/tasks/4.0/4.13.0/review-69ab3b4-gaps.md#g-7.
-test.todo('[ACX-4130-G7-WB-1] Workbench provides a Rescan with sensitivity option once a job is selected');
-test.todo('[ACX-4130-G7-WB-2] Workbench clusters panel shows summary cards after clustering runs');
+describe('Workbench follow-up coverage', () => {
+  it('[ACX-4130-G7-WB-1] surfaces clustering progress and sync state for selected jobs', async () => {
+    const onCluster = vi.fn();
+    const onViewClusters = vi.fn();
+
+    render(
+      <ConfirmPanel
+        jobId="job-42"
+        status="running"
+        onCluster={onCluster}
+        isClustering={false}
+        clusterMessage={null}
+        onViewClusters={onViewClusters}
+        progress={{
+          completed: 2,
+          total: 10,
+          phase: 'clustering',
+          clusters_created: 1,
+        }}
+        etaSeconds={45}
+        isSynced
+      />,
+    );
+
+    expect(screen.getByText('Phase: Clustering')).toBeInTheDocument();
+    expect(screen.getByText('Processed 2/10 identities')).toBeInTheDocument();
+    expect(screen.getByText('Clusters created: 1')).toBeInTheDocument();
+    expect(screen.getByText('Remaining: 45 seconds')).toBeInTheDocument();
+    expect(screen.getByText('Synced')).toBeInTheDocument();
+
+    await userEvent.click(screen.getByRole('button', { name: 'Cluster the latest job results' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Open clusters in roster' }));
+
+    expect(onCluster).toHaveBeenCalledTimes(1);
+    expect(onViewClusters).toHaveBeenCalledTimes(1);
+  });
+
+  it('[ACX-4130-G7-WB-2] shows clustering summary details after a clustering run', () => {
+    render(
+      <ConfirmPanel
+        jobId="job-99"
+        status="completed"
+        onCluster={vi.fn()}
+        isClustering={false}
+        clusterMessage="Created 3 clusters for 18 identities."
+        onViewClusters={vi.fn()}
+        progress={{
+          completed: 10,
+          total: 10,
+          phase: 'complete',
+          clusters_created: 3,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Phase: Complete')).toBeInTheDocument();
+    expect(screen.getByText('Processed 10/10 identities')).toBeInTheDocument();
+    expect(screen.getByText('Clusters created: 3')).toBeInTheDocument();
+    expect(screen.getByText('Created 3 clusters for 18 identities.')).toBeInTheDocument();
+  });
+});

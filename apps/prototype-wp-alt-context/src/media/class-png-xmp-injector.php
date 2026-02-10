@@ -38,6 +38,12 @@ class PngXmpInjector {
 			}
 
 			$chunk_data = substr( $png_binary, $data_offset, $chunk_length );
+			$chunk_crc = $this->read_chunk_crc( $png_binary, $offset, $chunk_length );
+			if ( null === $chunk_crc || ! $this->is_valid_chunk_crc( $chunk_type, $chunk_data, $chunk_crc ) ) {
+				$offset += $chunk_total_length;
+				continue;
+			}
+
 			if ( 'iTXt' === $chunk_type ) {
 				$xmp_text = $this->extract_xmp_itxt_text( $chunk_data );
 				if ( null !== $xmp_text ) {
@@ -80,6 +86,12 @@ class PngXmpInjector {
 			}
 
 			$chunk_data = substr( $png_binary, $data_offset, $chunk_length );
+			$chunk_crc = $this->read_chunk_crc( $png_binary, $offset, $chunk_length );
+			if ( null === $chunk_crc || ! $this->is_valid_chunk_crc( $chunk_type, $chunk_data, $chunk_crc ) ) {
+				$offset += $chunk_total_length;
+				continue;
+			}
+
 			if ( 'iTXt' === $chunk_type && null !== $this->extract_xmp_itxt_text( $chunk_data ) ) {
 				return substr( $png_binary, 0, $offset ) . $itxt_chunk . substr( $png_binary, $offset + $chunk_total_length );
 			}
@@ -107,6 +119,22 @@ class PngXmpInjector {
 
 		$unpacked = unpack( 'Nlength', $bytes );
 		return (int) ( $unpacked['length'] ?? 0 );
+	}
+
+	private function read_chunk_crc( string $png_binary, int $offset, int $chunk_length ): ?int {
+		$crc_offset = $offset + 8 + $chunk_length;
+		$crc_bytes = substr( $png_binary, $crc_offset, 4 );
+		if ( strlen( $crc_bytes ) < 4 ) {
+			return null;
+		}
+
+		$unpacked = unpack( 'Ncrc', $crc_bytes );
+		return (int) ( $unpacked['crc'] ?? 0 );
+	}
+
+	private function is_valid_chunk_crc( string $chunk_type, string $chunk_data, int $chunk_crc ): bool {
+		$computed_crc = (int) sprintf( '%u', crc32( $chunk_type . $chunk_data ) );
+		return $computed_crc === $chunk_crc;
 	}
 
 	private function build_xmp_itxt_chunk( string $xmp_packet ): string {

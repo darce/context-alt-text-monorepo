@@ -41,9 +41,24 @@ class XmpImageRegionPacketBuilderTest extends TestCase
         $dom = new DOMDocument();
         $this->assertTrue($dom->loadXML($packet));
 
+        $pitchElements = $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::ACX_NS, 'Pitch');
+        $yawElements = $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::ACX_NS, 'Yaw');
+        $rollElements = $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::ACX_NS, 'Roll');
+        $detScoreElements = $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::ACX_NS, 'DetScore');
+        $landmarkQualityElements = $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::ACX_NS, 'LandmarkQuality');
+
         $this->assertSame(1, $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::IPTC_NS, 'ImageRegion')->length);
         $this->assertSame(1, $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::IPTC_NS, 'Name')->length);
-        $this->assertSame(1, $dom->getElementsByTagNameNS(XmpImageRegionPacketBuilder::ACX_NS, 'Pitch')->length);
+        $this->assertSame(1, $pitchElements->length);
+        $this->assertSame(1, $yawElements->length);
+        $this->assertSame(1, $rollElements->length);
+        $this->assertSame(1, $detScoreElements->length);
+        $this->assertSame(1, $landmarkQualityElements->length);
+        $this->assertSame('-12.3', $pitchElements->item(0)?->textContent);
+        $this->assertSame('8.7', $yawElements->item(0)?->textContent);
+        $this->assertSame('-2.1', $rollElements->item(0)?->textContent);
+        $this->assertSame('0.94', $detScoreElements->item(0)?->textContent);
+        $this->assertSame('0.87', $landmarkQualityElements->item(0)?->textContent);
         $this->assertStringNotContainsString('Age', $packet);
         $this->assertStringNotContainsString('Gender', $packet);
     }

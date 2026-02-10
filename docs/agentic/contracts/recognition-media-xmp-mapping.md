@@ -1,6 +1,6 @@
 ---
 title: Recognition Media XMP Mapping
-status: draft
+status: active
 owners:
   - plugin-platform
   - recognition-service

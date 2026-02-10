@@ -1274,13 +1274,16 @@ if (!function_exists('current_time')) {
     function current_time($type, $gmt = 0)
     {
         $timestamp = time();
+        $gmtOffset = (float) get_option('gmt_offset', 0);
+        $offsetSeconds = (int) round($gmtOffset * 3600);
+        $localizedTimestamp = $timestamp + $offsetSeconds;
 
         if ($type === 'timestamp') {
-            return $gmt ? $timestamp : $timestamp;
+            return $gmt ? $timestamp : $localizedTimestamp;
         }
 
         if ($type === 'mysql') {
-            return gmdate('Y-m-d H:i:s', $timestamp);
+            return gmdate('Y-m-d H:i:s', $gmt ? $timestamp : $localizedTimestamp);
         }
 
         return $timestamp;

@@ -10,6 +10,8 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function do_action;
+use function get_transient;
 use function get_current_user_id;
 use function get_site_url;
 use function in_array;
@@ -17,12 +19,17 @@ use function is_array;
 use function is_wp_error;
 use function nocache_headers;
 use function sanitize_text_field;
+use function set_transient;
 use function sprintf;
 use function wp_get_attachment_url;
 use function wp_json_encode;
 
 class AnalysisJobsController extends AbstractRecognitionProxyController {
 	use BatchLimits;
+
+	private const JOB_MEDIA_IDS_TRANSIENT_PREFIX = 'acx_job_media_ids_';
+	private const JOB_COMPLETION_TRANSIENT_PREFIX = 'acx_job_completion_emitted_';
+	private const JOB_TRACKING_TTL_SECONDS = 86400;
 
 	public function register_routes(): void {
 		register_rest_route(
@@ -122,7 +129,15 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			'user_id'     => get_current_user_id(),
 		);
 
-		return $this->proxy_request( 'POST', '/recognition/analyze', $payload );
+		$response = $this->proxy_request( 'POST', '/recognition/analyze', $payload );
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$this->store_job_media_ids( (string) ( $data['id'] ?? '' ), $this->extract_media_ids_from_analyze_payload( $media_items ) );
+			}
+		}
+
+		return $response;
 	}
 
 	public function get_job_status( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -131,7 +146,7 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_job_id', 'Job ID is required.', array( 'status' => 400 ) );
 		}
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/jobs/%s', $job_id ),
 			array(),
@@ -139,6 +154,15 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 				'tenant_id' => $this->get_tenant_id(),
 			)
 		);
+
+		if ( $response instanceof WP_REST_Response ) {
+			$data = $response->get_data();
+			if ( is_array( $data ) ) {
+				$this->maybe_dispatch_recognition_complete( $job_id, $data );
+			}
+		}
+
+		return $response;
 	}
 
 	public function stream_job_progress( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -223,6 +247,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			$event_type = 'scan_progress';
 			if ( 'clustering' === $job_type ) {
 				$event_type = 'clustering_progress';
+			}
+			if ( 'completed' === $status ) {
+				$this->maybe_dispatch_recognition_complete( $job_id, $data );
 			}
 
 			$now         = microtime( true );
@@ -371,5 +398,134 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			'media_id'  => absint( $media_item['media_id'] ?? 0 ),
 			'media_url' => esc_url_raw( (string) ( $media_item['media_url'] ?? '' ) ),
 		);
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $media_items
+	 * @return int[]
+	 */
+	private function extract_media_ids_from_analyze_payload( array $media_items ): array {
+		$media_ids = array();
+
+		foreach ( $media_items as $media_item ) {
+			$media_id = absint( $media_item['media_id'] ?? 0 );
+			if ( $media_id > 0 ) {
+				$media_ids[] = $media_id;
+			}
+		}
+
+		return array_values( array_unique( $media_ids ) );
+	}
+
+	/**
+	 * @param array<string,mixed> $job_data
+	 */
+	private function maybe_dispatch_recognition_complete( string $job_id, array $job_data ): void {
+		$status = (string) ( $job_data['status'] ?? '' );
+		if ( 'completed' !== $status || '' === $job_id || $this->has_emitted_completion( $job_id ) ) {
+			return;
+		}
+
+		$media_ids = $this->extract_media_ids_from_job_data( $job_data );
+		if ( empty( $media_ids ) ) {
+			$media_ids = $this->load_stored_media_ids( $job_id );
+		}
+
+		if ( empty( $media_ids ) ) {
+			return;
+		}
+
+		foreach ( $media_ids as $attachment_id ) {
+			do_action( 'acx_recognition_complete', $attachment_id, $job_id );
+		}
+
+		$this->mark_completion_emitted( $job_id );
+	}
+
+	/**
+	 * @param array<string,mixed> $job_data
+	 * @return int[]
+	 */
+	private function extract_media_ids_from_job_data( array $job_data ): array {
+		$media_ids = array();
+
+		if ( isset( $job_data['media_ids'] ) && is_array( $job_data['media_ids'] ) ) {
+			foreach ( $job_data['media_ids'] as $candidate ) {
+				$media_id = absint( $candidate );
+				if ( $media_id > 0 ) {
+					$media_ids[] = $media_id;
+				}
+			}
+		}
+
+		if ( isset( $job_data['media_items'] ) && is_array( $job_data['media_items'] ) ) {
+			foreach ( $job_data['media_items'] as $media_item ) {
+				if ( ! is_array( $media_item ) ) {
+					continue;
+				}
+
+				$media_id = absint( $media_item['media_id'] ?? 0 );
+				if ( $media_id > 0 ) {
+					$media_ids[] = $media_id;
+				}
+			}
+		}
+
+		return array_values( array_unique( $media_ids ) );
+	}
+
+	/**
+	 * @param int[] $media_ids
+	 */
+	private function store_job_media_ids( string $job_id, array $media_ids ): void {
+		if ( '' === $job_id || empty( $media_ids ) ) {
+			return;
+		}
+
+		set_transient( $this->job_media_ids_transient_key( $job_id ), $media_ids, self::JOB_TRACKING_TTL_SECONDS );
+	}
+
+	/**
+	 * @return int[]
+	 */
+	private function load_stored_media_ids( string $job_id ): array {
+		if ( '' === $job_id ) {
+			return array();
+		}
+
+		$stored = get_transient( $this->job_media_ids_transient_key( $job_id ) );
+		if ( ! is_array( $stored ) ) {
+			return array();
+		}
+
+		$media_ids = array();
+		foreach ( $stored as $candidate ) {
+			$media_id = absint( $candidate );
+			if ( $media_id > 0 ) {
+				$media_ids[] = $media_id;
+			}
+		}
+
+		return array_values( array_unique( $media_ids ) );
+	}
+
+	private function has_emitted_completion( string $job_id ): bool {
+		return true === (bool) get_transient( $this->completion_emitted_transient_key( $job_id ) );
+	}
+
+	private function mark_completion_emitted( string $job_id ): void {
+		if ( '' === $job_id ) {
+			return;
+		}
+
+		set_transient( $this->completion_emitted_transient_key( $job_id ), true, self::JOB_TRACKING_TTL_SECONDS );
+	}
+
+	private function job_media_ids_transient_key( string $job_id ): string {
+		return self::JOB_MEDIA_IDS_TRANSIENT_PREFIX . $job_id;
+	}
+
+	private function completion_emitted_transient_key( string $job_id ): string {
+		return self::JOB_COMPLETION_TRANSIENT_PREFIX . $job_id;
 	}
 }

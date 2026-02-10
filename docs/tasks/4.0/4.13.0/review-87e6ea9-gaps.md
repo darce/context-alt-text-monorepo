@@ -187,7 +187,7 @@ The entire `return array(…)` should start at 4 tabs (matching sibling statemen
 				);
 ```
 
-**Continuity:** Supersedes G-8 from `review-69ab3b4-gaps.md` (which is now marked Open, pointing here).
+**Continuity:** Superseded G-8 from `review-69ab3b4-gaps.md`; both carry-over indentation issues are now resolved in this branch.
 
 ---
 
@@ -220,8 +220,8 @@ The anonymous class comment line has a leading tab mixed with spaces, and the cl
 
 | ID | Severity | Category | Status | Summary |
 |---|---|---|---|---|
-| G-11 | **MEDIUM** | ANTIPATTERN | **Open** | `class-api.php` `return array(…)` block over-indented by 1 tab, `tags` key under-indented relative to siblings |
-| G-12 | **LOW** | ANTIPATTERN | **Open** | `BatchLimitsTest.php` mixed tabs/spaces in anonymous class vs surrounding code |
+| G-11 | **MEDIUM** | ANTIPATTERN | **Resolved** | `class-api.php` `return array(…)` block re-indented to closure-level alignment with consistent key nesting. |
+| G-12 | **LOW** | ANTIPATTERN | **Resolved** | `BatchLimitsTest.php` anonymous class indentation normalized to the file's existing space-based style. |
 
 ---
 
@@ -229,7 +229,7 @@ The anonymous class comment line has a leading tab mixed with spaces, and the cl
 
 | Prior ID | Verdict | Evidence |
 |---|---|---|
-| G-8 | **Not resolved** | `thumbnailUrl` alignment fixed, but entire `return array(…)` block shifted right by 1 tab; `dimensions` children and `tags` key inconsistent. Carried forward as G-11. |
+| G-8 | **Resolved** | `return array(…)` block and nested keys were re-indented to consistent closure-level tab nesting. |
 | G-9 | **Confirmed closed** | `phpcs.xml.dist` `<file>tests</file>` restores test directory to CS scope. Only `tests/stubs/wp.php` excluded. |
 | G-10 | **Confirmed closed** | `composer.json` scripts reference `--standard=phpcs.xml.dist`. No inline `--exclude` duplication remains. |
 

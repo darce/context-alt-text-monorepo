@@ -390,6 +390,38 @@ Audit scope for this addendum:
 - [ ] Reclassify findings and capture post-cleanup severity/category counts.
 - [ ] Publish a post-cleanup findings delta note in `docs/tasks/4.0/4.13.0/`.
 
+## Phase 6: Recognition Controller Decomposition
+
+Tracked in [recognition-controller-decomposition-plan.md](recognition-controller-decomposition-plan.md).
+
+`class-recognition-controller.php` concentrates route registration and callback logic for analysis, clustering, suggestions, and job orchestration in a single class. Decomposition splits ownership by domain while preserving the current REST contract.
+
+### Phase 6.0: Scaffolding
+
+- [ ] Add controller interfaces / base abstractions with method signatures only.
+- [ ] Add new controller class shells and route group boundaries.
+- [ ] Add / adjust test files with failing scaffolds for each route group.
+
+### Phase 6.1: Extraction
+
+- [ ] Move analysis / job routes and callbacks to `AnalysisJobsController`.
+- [ ] Move cluster / media-identity routes and callbacks to `ClustersController`.
+- [ ] Move suggestion routes and callbacks to `SuggestionsController`.
+
+### Phase 6.2: Wiring and Compatibility
+
+- [ ] Update API bootstrap to initialize and register sub-controllers.
+- [ ] Keep route paths, request/response shapes, and permission callbacks unchanged.
+- [ ] Remove dead code from the legacy monolithic controller.
+
+### Phase 6.3: Verification
+
+- [ ] `composer test` passes for recognition controller coverage.
+- [ ] Frontend contract tests that depend on recognition routes still pass.
+- [ ] No REST endpoint regressions in manual smoke checks.
+
+---
+
 ## Carry-Forward Items (Pre-Existing / Cross-Audit)
 
 Items discovered during cleanup verification that were **not introduced** by cleanup commits (`f7ff6f8..HEAD`) but remain open in the codebase. Included here for tracking continuity.

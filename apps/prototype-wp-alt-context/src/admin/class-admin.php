@@ -7,7 +7,10 @@ namespace AltContext\Admin;
 use AltContext\Support\BatchLimits;
 
 use function add_action;
+use function do_action;
 use function admin_url;
+use function esc_html;
+use function esc_html__;
 use function esc_url_raw;
 use function file_get_contents;
 use function get_site_url;
@@ -49,9 +52,15 @@ class Admin {
 	);
 
 	private string $devServer;
+	private string $manifestPath;
+	private ?string $assetBootstrapFailureMessage = null;
+	private bool $assetBootstrapNoticeHooked = false;
 
-	public function __construct() {
+	public function __construct( ?string $manifestPath = null ) {
 		$this->devServer = defined('ALT_CONTEXT_VITE_DEV_SERVER') ? (string) ALT_CONTEXT_VITE_DEV_SERVER : '';
+		$this->manifestPath = null !== $manifestPath && '' !== $manifestPath
+			? $manifestPath
+			: ALT_CONTEXT_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
 	}
 
 	public function init(): void {
@@ -63,12 +72,16 @@ class Admin {
 			return;
 		}
 
-		$handle = self::SCRIPT_HANDLE;
+		$handle = null;
 
 		if ( $this->should_use_dev_server() ) {
 			$handle = $this->enqueue_dev_assets();
 		} else {
-			$this->enqueue_build_assets();
+			$handle = $this->enqueue_build_assets();
+		}
+
+		if ( ! is_string( $handle ) || '' === $handle ) {
+			return;
 		}
 
 		$this->localize_spa_config( $handle );
@@ -117,11 +130,12 @@ class Admin {
 		return $entryHandle;
 	}
 
-	private function enqueue_build_assets(): void {
+	private function enqueue_build_assets(): ?string {
 		$entry = $this->get_manifest_entry();
 
 		if ( ! $entry || empty( $entry['file'] ) ) {
-			return;
+			$this->report_asset_bootstrap_failure( 'Missing or invalid build manifest entry for admin SPA bundle.' );
+			return null;
 		}
 
 		wp_enqueue_script(
@@ -134,7 +148,7 @@ class Admin {
 		wp_script_add_data( self::SCRIPT_HANDLE, 'type', 'module' );
 
 		if ( empty( $entry['css'] ) || ! is_array( $entry['css'] ) ) {
-			return;
+			return self::SCRIPT_HANDLE;
 		}
 
 		foreach ( $entry['css'] as $index => $cssFile ) {
@@ -145,16 +159,16 @@ class Admin {
 				ALT_CONTEXT_VERSION
 			);
 		}
+
+		return self::SCRIPT_HANDLE;
 	}
 
 	private function get_manifest_entry(): ?array {
-		$manifestPath = ALT_CONTEXT_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
-
-		if ( ! is_readable( $manifestPath ) ) {
+		if ( ! is_readable( $this->manifestPath ) ) {
 			return null;
 		}
 
-		$contents = file_get_contents( $manifestPath );
+		$contents = file_get_contents( $this->manifestPath );
 
 		if ( false === $contents ) {
 			return null;
@@ -174,6 +188,42 @@ class Admin {
 		$base = trailingslashit( ALT_CONTEXT_PLUGIN_URL . 'public/assets/dist' );
 
 		return esc_url_raw( $base . ltrim( $relative, '/' ) );
+	}
+
+	private function report_asset_bootstrap_failure( string $reason ): void {
+		if ( null !== $this->assetBootstrapFailureMessage ) {
+			return;
+		}
+
+		$this->assetBootstrapFailureMessage = $reason . ' Manifest path: ' . $this->manifestPath;
+
+		if ( ! $this->assetBootstrapNoticeHooked ) {
+			add_action( 'admin_notices', array( $this, 'render_asset_bootstrap_notice' ) );
+			$this->assetBootstrapNoticeHooked = true;
+		}
+
+		if ( function_exists( '_doing_it_wrong' ) ) {
+			_doing_it_wrong( __METHOD__, esc_html( $this->assetBootstrapFailureMessage ), '4.13.0' );
+		}
+
+		do_action(
+			'alt_context_admin_asset_bootstrap_failure',
+			$this->assetBootstrapFailureMessage,
+			array(
+				'manifest_path' => $this->manifestPath,
+				'reason'        => $reason,
+			)
+		);
+	}
+
+	public function render_asset_bootstrap_notice(): void {
+		if ( null === $this->assetBootstrapFailureMessage ) {
+			return;
+		}
+
+		echo '<div class="notice notice-error"><p>';
+		echo esc_html__( 'Alt Context admin assets could not be loaded. Run npm run build in apps/prototype-wp-alt-context and reload this page.', 'alt-context' );
+		echo '</p></div>';
 	}
 
 	private function localize_spa_config( string $handle ): void {

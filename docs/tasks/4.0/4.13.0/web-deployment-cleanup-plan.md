@@ -335,6 +335,7 @@ Audit scope for this addendum:
 - [x] Update `composer cs-check` to include explicit target paths.
 - [x] Verify `composer cs-check` executes and returns a meaningful result.
 - [x] Document tool invocation contract for repeatable audits.
+- [x] Resolve `A-H1`: fail fast on missing admin build assets and avoid localizing SPA config when no script handle is enqueued.
 
 ## Phase 2: Remove or Justify Dead Runtime Surfaces
 
@@ -362,7 +363,7 @@ Audit scope for this addendum:
 - [x] Resolve redundant render condition in `WorkbenchPage.tsx`.
 - [x] Resolve unused-parameter dead code in `trait-batch-limits.php` without behavior regression.
 - [x] Resolve `A-L1`: remove unused imports in `src/admin/class-admin.php`.
-- [ ] Resolve `AFS-M4`: split `RecognitionController` into smaller focused units. **Sovereign roadmap dependency:** this decomposition is a prerequisite for roadmap Phase 2 (read-path flip) and Phase 4 (local service facade). Do not defer past sovereign cluster work start.
+- [x] Resolve `AFS-M4`: split `RecognitionController` into smaller focused units. **Sovereign roadmap dependency:** this decomposition is a prerequisite for roadmap Phase 2 (read-path flip) and Phase 4 (local service facade). Do not defer past sovereign cluster work start.
 - [x] Resolve `AFS-M5`: add `drop_tables()` to `LifecycleManager::uninstall()` — implemented with plugin-owned table suffix contract to keep create/destroy symmetric as sovereign tables land.
 - [x] Resolve `AFS-L1`: normalize `include_debug` parsing to strict boolean behavior.
 - [x] Resolve `HK-M3`: add browser-capability fallback in `useJobCoordination`.
@@ -387,8 +388,8 @@ Audit scope for this addendum:
 ## Phase 5: Re-Audit and Publish Delta
 
 - [x] Re-run all baseline checks from this document.
-- [ ] Reclassify findings and capture post-cleanup severity/category counts.
-- [ ] Publish a post-cleanup findings delta note in `docs/tasks/4.0/4.13.0/`.
+- [x] Reclassify findings and capture post-cleanup severity/category counts.
+- [x] Publish a post-cleanup findings delta note in `docs/tasks/4.0/4.13.0/` (`review-phase5-post-cleanup-delta.md`).
 
 ## Phase 6: Recognition Controller Decomposition
 
@@ -398,26 +399,26 @@ Tracked in [recognition-controller-decomposition-plan.md](recognition-controller
 
 ### Phase 6.0: Scaffolding
 
-- [ ] Add controller interfaces / base abstractions with method signatures only.
-- [ ] Add new controller class shells and route group boundaries.
-- [ ] Add / adjust test files with failing scaffolds for each route group.
+- [x] Add controller interfaces / base abstractions with method signatures only.
+- [x] Add new controller class shells and route group boundaries.
+- [x] Add / adjust test files with failing scaffolds for each route group.
 
 ### Phase 6.1: Extraction
 
-- [ ] Move analysis / job routes and callbacks to `AnalysisJobsController`.
-- [ ] Move cluster / media-identity routes and callbacks to `ClustersController`.
-- [ ] Move suggestion routes and callbacks to `SuggestionsController`.
+- [x] Move analysis / job routes and callbacks to `AnalysisJobsController`.
+- [x] Move cluster / media-identity routes and callbacks to `ClustersController`.
+- [x] Move suggestion routes and callbacks to `SuggestionsController`.
 
 ### Phase 6.2: Wiring and Compatibility
 
-- [ ] Update API bootstrap to initialize and register sub-controllers.
-- [ ] Keep route paths, request/response shapes, and permission callbacks unchanged.
-- [ ] Remove dead code from the legacy monolithic controller.
+- [x] Update API bootstrap to initialize and register sub-controllers.
+- [x] Keep route paths, request/response shapes, and permission callbacks unchanged.
+- [x] Remove dead code from the legacy monolithic controller.
 
 ### Phase 6.3: Verification
 
-- [ ] `composer test` passes for recognition controller coverage.
-- [ ] Frontend contract tests that depend on recognition routes still pass.
+- [x] `composer test` passes for recognition controller coverage.
+- [x] Frontend contract tests that depend on recognition routes still pass.
 - [ ] No REST endpoint regressions in manual smoke checks.
 
 ---
@@ -430,7 +431,7 @@ Items discovered during cleanup verification that were **not introduced** by cle
 
 | ID | Severity | Category | Finding | Evidence | Status |
 |---|---|---|---|---|---|
-| 4.12-M14 | MEDIUM | ANTIPATTERN | Non-null assertions (`!`) on nullable API data in `SuggestionReviewPanel.tsx`. Originally flagged as `suggestion.identity_media_url!` and `suggestion.representative_bbox!` suppressing nullable types without guards. | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` — current grep shows no remaining `!` postfix assertions on properties; the component was rewritten during the feature branch. | **Verify** — appears resolved by component rewrite but needs explicit confirmation. |
+| 4.12-M14 | MEDIUM | ANTIPATTERN | Non-null assertions (`!`) on nullable API data in `SuggestionReviewPanel.tsx`. Originally flagged as `suggestion.identity_media_url!` and `suggestion.representative_bbox!` suppressing nullable types without guards. | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` — targeted grep now shows no remaining postfix non-null assertions in the component. | **Resolved** — verification completed in Phase 5 delta (`review-phase5-post-cleanup-delta.md`). |
 | 4.12-M15 | MEDIUM | ANTIPATTERN | `fetchApi` returned `undefined as T` for empty/204 responses, typing `undefined` as the expected interface and causing runtime errors on property access. | `js/admin/utils/http.ts:29` — return type is now `Promise<T \| undefined>`, and `undefined` is returned directly (not cast). `return payload as T` on L53 casts parsed JSON from `unknown`, which is the standard pattern. | **Resolved** — `undefined as T` eliminated; return type correctly unions `T \| undefined`. |
 | 4.12-L13 | LOW | ANTIPATTERN | `window.confirm()` used for destructive member-removal action. Not styleable, not accessible — should use a dialog component. | `js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx:44` — `window.confirm(__(…))` | **Open** — add to Phase 3. |
 | 4.12-L15 | LOW | COMPLEXITY | Magic hex colors (`#fef2f2`, `#fecaca`, `#991b1b`) hardcoded in SCSS without CSS custom properties / design tokens. | `js/admin/styles/components/_cluster-panels.scss:50-53` | **Open** — add to Phase 3 (pairs with `CF-L1` token consistency work). |
@@ -447,8 +448,7 @@ Items discovered during cleanup verification that were **not introduced** by cle
 
 - **Phase 3** should include `CF-L1` (SCSS token fallback unification) and `CF-L2` (structured TODO format).
 - **Phase 3** should include `4.12-L13` (replace `window.confirm` with dialog component), `4.12-L15` (extract magic hex colors to design tokens), and `4.12-L16` (replace magic `top: 46px` with documented custom property).
-- **Phase 3** should verify `4.12-M14` (confirm no non-null assertions remain post-rewrite).
-- `4.12-M15` requires no further action (resolved).
+- `4.12-M14` and `4.12-M15` require no further action (resolved).
 
 ---
 

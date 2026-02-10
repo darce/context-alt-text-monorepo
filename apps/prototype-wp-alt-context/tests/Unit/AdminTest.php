@@ -116,6 +116,46 @@ class AdminTest extends TestCase
     }
 
     /**
+     * Test enqueue_scripts enqueues and localizes build assets in production.
+     */
+    public function testEnqueueScriptsBuildAssetsInProduction(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+
+        $this->admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
+        $this->assertArrayHasKey('alt-context-admin', $GLOBALS['__ac_localized_scripts']);
+        $this->assertArrayNotHasKey('admin_notices', $GLOBALS['__ac_actions']);
+    }
+
+    /**
+     * Test enqueue_scripts reports missing manifest and skips localization.
+     */
+    public function testEnqueueScriptsReportsMissingManifest(): void
+    {
+        unset($_ENV['WP_ENVIRONMENT_TYPE']);
+
+        $admin = new Admin('/tmp/acx-missing-manifest.json');
+        $admin->enqueue_scripts('toplevel_page_alt-context-dashboard');
+
+        $this->assertArrayNotHasKey('alt-context-admin', $GLOBALS['__ac_scripts']);
+        $this->assertArrayNotHasKey('alt-context-admin', $GLOBALS['__ac_localized_scripts']);
+        $this->assertArrayHasKey('admin_notices', $GLOBALS['__ac_actions']);
+
+        $noticeCallbacks = $GLOBALS['__ac_actions']['admin_notices'][10] ?? [];
+        $this->assertNotEmpty($noticeCallbacks);
+
+        ob_start();
+        foreach ($noticeCallbacks as $callback) {
+            ($callback['callback'])();
+        }
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Alt Context admin assets could not be loaded.', $output);
+    }
+
+    /**
      * Helper to invoke private/protected methods.
      */
     private function invokePrivateMethod(object $object, string $methodName, array $args = []): mixed

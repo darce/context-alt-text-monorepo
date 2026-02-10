@@ -7,6 +7,7 @@ namespace AltContext\Admin;
 use AltContext\Support\BatchLimits;
 
 use function add_action;
+use function apply_filters;
 use function do_action;
 use function admin_url;
 use function esc_html;
@@ -19,7 +20,9 @@ use function is_array;
 use function is_readable;
 use function json_decode;
 use function get_option;
+use function parse_url;
 use function sanitize_key;
+use function strtolower;
 use function trailingslashit;
 use function rest_url;
 use function wp_enqueue_script;
@@ -57,14 +60,15 @@ class Admin {
 	private bool $assetBootstrapNoticeHooked = false;
 
 	public function __construct( ?string $manifestPath = null ) {
-		$this->devServer = defined('ALT_CONTEXT_VITE_DEV_SERVER') ? (string) ALT_CONTEXT_VITE_DEV_SERVER : '';
+		$this->devServer = defined('ACX_VITE_DEV_SERVER') ? (string) ACX_VITE_DEV_SERVER : '';
 		$this->manifestPath = null !== $manifestPath && '' !== $manifestPath
 			? $manifestPath
-			: ALT_CONTEXT_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
+			: ACX_PLUGIN_DIR . 'public/assets/dist/.vite/manifest.json';
 	}
 
 	public function init(): void {
 		add_action( 'admin_enqueue_scripts', array( $this, 'enqueue_scripts' ) );
+		add_action( 'admin_notices', array( $this, 'render_recognition_config_notice' ) );
 	}
 
 	public function enqueue_scripts( string $hookSuffix ): void {
@@ -142,7 +146,7 @@ class Admin {
 			self::SCRIPT_HANDLE,
 			$this->build_asset_url( (string) $entry['file'] ),
 			array( 'wp-element', 'wp-i18n', 'wp-hooks' ),
-			ALT_CONTEXT_VERSION,
+			ACX_VERSION,
 			true
 		);
 		wp_script_add_data( self::SCRIPT_HANDLE, 'type', 'module' );
@@ -156,7 +160,7 @@ class Admin {
 				self::SCRIPT_HANDLE . '-' . $index,
 				$this->build_asset_url( (string) $cssFile ),
 				array(),
-				ALT_CONTEXT_VERSION
+				ACX_VERSION
 			);
 		}
 
@@ -185,7 +189,7 @@ class Admin {
 	}
 
 	private function build_asset_url( string $relative ): string {
-		$base = trailingslashit( ALT_CONTEXT_PLUGIN_URL . 'public/assets/dist' );
+		$base = trailingslashit( ACX_PLUGIN_URL . 'public/assets/dist' );
 
 		return esc_url_raw( $base . ltrim( $relative, '/' ) );
 	}
@@ -207,7 +211,7 @@ class Admin {
 		}
 
 		do_action(
-			'alt_context_admin_asset_bootstrap_failure',
+			'acx_admin_asset_bootstrap_failure',
 			$this->assetBootstrapFailureMessage,
 			array(
 				'manifest_path' => $this->manifestPath,
@@ -223,6 +227,23 @@ class Admin {
 
 		echo '<div class="notice notice-error"><p>';
 		echo esc_html__( 'Alt Context admin assets could not be loaded. Run npm run build in apps/prototype-wp-alt-context and reload this page.', 'alt-context' );
+		echo '</p></div>';
+	}
+
+	public function render_recognition_config_notice(): void {
+		if ( ! $this->is_supported_page_request() ) {
+			return;
+		}
+
+		if ( ! $this->should_render_recognition_fallback_notice() ) {
+			return;
+		}
+
+		echo '<div class="notice notice-warning"><p>';
+		echo esc_html__(
+			'Alt Context is using the local recognition URL fallback (http://localhost:8000). Configure acx_recognition_url or ACX_RECOGNITION_URL for this environment.',
+			'alt-context'
+		);
 		echo '</p></div>';
 	}
 
@@ -266,10 +287,58 @@ class Admin {
 	}
 
 	private function get_tier(): string {
-		$tier = sanitize_key( (string) get_option( 'alt_context_tier', 'free' ) );
+		$tier = sanitize_key( (string) get_option( 'acx_tier', 'free' ) );
 		if ( '' === $tier || ! $this->is_valid_tier( $tier ) ) {
 			return 'free';
 		}
 		return $tier;
+	}
+
+	private function should_render_recognition_fallback_notice(): bool {
+		return ! $this->has_valid_recognition_url_configuration();
+	}
+
+	private function has_valid_recognition_url_configuration(): bool {
+		$candidates = array(
+			$this->get_recognition_url_from_constant(),
+			trim( (string) get_option( 'acx_recognition_url', '' ) ),
+			trim( (string) apply_filters( 'acx_recognition_base_url', '' ) ),
+		);
+
+		foreach ( $candidates as $candidate ) {
+			if ( $this->is_valid_recognition_base_url( $candidate ) ) {
+				return true;
+			}
+		}
+
+		return false;
+	}
+
+	private function get_recognition_url_from_constant(): string {
+		if ( defined( 'ACX_RECOGNITION_URL' ) && is_string( ACX_RECOGNITION_URL ) ) {
+			return trim( ACX_RECOGNITION_URL );
+		}
+
+		return '';
+	}
+
+	private function is_valid_recognition_base_url( string $candidate ): bool {
+		if ( '' === $candidate ) {
+			return false;
+		}
+
+		$parts = parse_url( $candidate );
+		if ( false === $parts || ! is_array( $parts ) ) {
+			return false;
+		}
+
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		$host   = (string) ( $parts['host'] ?? '' );
+
+		if ( ! in_array( $scheme, array( 'http', 'https' ), true ) ) {
+			return false;
+		}
+
+		return '' !== $host;
 	}
 }

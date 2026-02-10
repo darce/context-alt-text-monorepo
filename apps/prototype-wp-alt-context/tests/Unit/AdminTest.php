@@ -20,6 +20,7 @@ class AdminTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
+        $_GET = [];
         $this->admin = new Admin();
     }
 
@@ -28,7 +29,7 @@ class AdminTest extends TestCase
      */
     public function testGetTierReturnsValidTierFromOption(): void
     {
-        $this->setOption('alt_context_tier', 'pro');
+        $this->setOption('acx_tier', 'pro');
 
         $tier = $this->invokePrivateMethod($this->admin, 'get_tier');
 
@@ -51,7 +52,7 @@ class AdminTest extends TestCase
      */
     public function testGetTierFallsBackToFreeForInvalidTier(): void
     {
-        $this->setOption('alt_context_tier', 'invalid_tier_name');
+        $this->setOption('acx_tier', 'invalid_tier_name');
 
         $tier = $this->invokePrivateMethod($this->admin, 'get_tier');
 
@@ -65,7 +66,7 @@ class AdminTest extends TestCase
      */
     public function testGetTierWithValidTiers(string $tierName): void
     {
-        $this->setOption('alt_context_tier', $tierName);
+        $this->setOption('acx_tier', $tierName);
 
         $tier = $this->invokePrivateMethod($this->admin, 'get_tier');
 
@@ -91,7 +92,7 @@ class AdminTest extends TestCase
     public function testGetTierSanitizesInput(): void
     {
         // sanitize_key lowercases and removes special chars
-        $this->setOption('alt_context_tier', 'PRO');
+        $this->setOption('acx_tier', 'PRO');
 
         $tier = $this->invokePrivateMethod($this->admin, 'get_tier');
 
@@ -153,6 +154,40 @@ class AdminTest extends TestCase
         $output = (string) ob_get_clean();
 
         $this->assertStringContainsString('Alt Context admin assets could not be loaded.', $output);
+    }
+
+    public function testRenderRecognitionConfigNoticeAppearsOnPluginScreensWithFallback(): void
+    {
+        $_GET['page'] = 'alt-context-dashboard';
+
+        ob_start();
+        $this->admin->render_recognition_config_notice();
+        $output = (string) ob_get_clean();
+
+        $this->assertStringContainsString('Alt Context is using the local recognition URL fallback', $output);
+    }
+
+    public function testRenderRecognitionConfigNoticeDoesNotAppearWhenUrlConfigured(): void
+    {
+        $_GET['page'] = 'alt-context-dashboard';
+        $this->setOption('acx_recognition_url', 'https://recognition.example');
+
+        ob_start();
+        $this->admin->render_recognition_config_notice();
+        $output = (string) ob_get_clean();
+
+        $this->assertSame('', $output);
+    }
+
+    public function testRenderRecognitionConfigNoticeIsScopedToPluginScreens(): void
+    {
+        $_GET['page'] = 'plugins';
+
+        ob_start();
+        $this->admin->render_recognition_config_notice();
+        $output = (string) ob_get_clean();
+
+        $this->assertSame('', $output);
     }
 
     /**

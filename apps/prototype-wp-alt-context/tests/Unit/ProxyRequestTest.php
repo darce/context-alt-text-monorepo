@@ -22,28 +22,31 @@ class ProxyRequestTest extends TestCase
     {
         parent::setUp();
 
-        $this->setOption('alt_context_recognition_url', 'http://localhost:8000');
-        $this->setOption('alt_context_tier', 'free');
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_tier', 'free');
 
         $this->controller = new RecognitionController();
     }
 
-    /**
-     * Test proxy request fails when recognition URL is not configured.
-     */
-    public function testProxyFailsWhenUrlNotConfigured(): void
+    public function testProxyFallsBackToLocalhostWhenUrlNotConfigured(): void
     {
-        // Create controller with empty URL
-        $this->setOption('alt_context_recognition_url', '');
-        $controller = new RecognitionController();
+        $this->setOption('acx_recognition_url', '');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
         $request->set_param('job_id', 'test-job-id');
 
-        $result = $controller->get_job_status($request);
+        $result = $this->controller->get_job_status($request);
 
-        $this->assertTrue(is_wp_error($result), 'Should return WP_Error when URL not configured');
-        $this->assertSame('recognition_not_configured', $result->get_error_code());
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-job-id', $calls[0]['url']);
     }
 
     /**
@@ -74,7 +77,7 @@ class ProxyRequestTest extends TestCase
      */
     public function testProxyRequestIncludesApiKeyHeader(): void
     {
-        $this->setOption('alt_context_recognition_api_key', 'secret-key-123');
+        $this->setOption('acx_recognition_api_key', 'secret-key-123');
         $controller = new RecognitionController();
 
         $this->queueHttpResponse([
@@ -92,9 +95,134 @@ class ProxyRequestTest extends TestCase
         $this->assertSame('secret-key-123', $calls[0]['args']['headers']['X-API-Key'] ?? null);
     }
 
+    public function testProxyRequestUsesFilteredBaseUrlWhenOptionMissing(): void
+    {
+        $this->setOption('acx_recognition_url', '');
+
+        add_filter('acx_recognition_base_url', static function (): string {
+            return 'https://filtered.example';
+        });
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('https://filtered.example/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
+    public function testProxyRequestIgnoresInvalidFilteredBaseUrl(): void
+    {
+        $this->setOption('acx_recognition_url', '');
+
+        add_filter('acx_recognition_base_url', static function (): string {
+            return 'ftp://invalid-filter.example';
+        });
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('http://localhost:8000/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
+    public function testProxyRequestUsesFilteredApiKeyWhenOptionMissing(): void
+    {
+        $this->setOption('acx_recognition_api_key', '');
+
+        add_filter('acx_recognition_api_key', static function (): string {
+            return 'filtered-api-key';
+        });
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $this->controller->get_job_status($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('filtered-api-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testProxyRequestUsesConstantBaseUrlOverOption(): void
+    {
+        define('ACX_RECOGNITION_URL', 'https://constant.example');
+
+        $this->setOption('acx_recognition_url', 'https://option.example');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status":"completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('https://constant.example/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
+    /**
+     * @runInSeparateProcess
+     * @preserveGlobalState disabled
+     */
+    public function testProxyRequestUsesConstantApiKeyOverOption(): void
+    {
+        define('ACX_RECOGNITION_API_KEY', 'constant-api-key');
+
+        $this->setOption('acx_recognition_api_key', 'option-api-key');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $this->controller->get_job_status($request);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame('constant-api-key', $calls[0]['args']['headers']['X-API-Key'] ?? null);
+    }
+
     public function testProxyRequestReadsLatestUrlWithoutControllerReconstruction(): void
     {
-        $this->setOption('alt_context_recognition_url', 'http://example.internal:9000');
+        $this->setOption('acx_recognition_url', 'http://example.internal:9000');
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],

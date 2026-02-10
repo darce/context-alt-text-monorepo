@@ -21,20 +21,20 @@ class BatchLimitsTest extends TestCase
         parent::setUp();
 
         // Create anonymous class that uses the trait
-	        $this->subject = new class() {
-				use BatchLimits;
+        $this->subject = new class() {
+            use BatchLimits;
 
-				// Expose protected methods for testing
-				public function getTierBatchLimitFor(string $tier): int
-				{
-					return $this->get_tier_batch_limit_for($tier);
-				}
+            // Expose protected methods for testing
+            public function getTierBatchLimitFor(string $tier): int
+            {
+                return $this->get_tier_batch_limit_for($tier);
+            }
 
-				public function getCurrentTierBatchLimit(): int
-				{
-					return $this->get_current_tier_batch_limit();
-				}
-			};
+            public function getCurrentTierBatchLimit(): int
+            {
+                return $this->get_current_tier_batch_limit();
+            }
+        };
     }
 
     /**

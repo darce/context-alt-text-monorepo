@@ -92,6 +92,27 @@ class ProxyRequestTest extends TestCase
         $this->assertSame('secret-key-123', $calls[0]['args']['headers']['X-API-Key'] ?? null);
     }
 
+    public function testProxyRequestReadsLatestUrlWithoutControllerReconstruction(): void
+    {
+        $this->setOption('alt_context_recognition_url', 'http://example.internal:9000');
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '{"status": "completed"}',
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $result = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $result);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('http://example.internal:9000/recognition/jobs/test-123', $calls[0]['url']);
+    }
+
     /**
      * Test proxy request retries on 500 error.
      */

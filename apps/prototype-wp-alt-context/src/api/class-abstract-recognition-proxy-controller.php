@@ -19,26 +19,20 @@ use function wp_json_encode;
 use function wp_remote_request;
 use function wp_remote_retrieve_body;
 use function wp_remote_retrieve_response_code;
+use function trim;
 
 abstract class AbstractRecognitionProxyController implements RecognitionRouteControllerInterface {
-	private string $recognitionBaseUrl;
-	private string $apiKey;
-
-	public function __construct() {
-		$this->recognitionBaseUrl = (string) get_option( 'alt_context_recognition_url', 'http://localhost:8000' );
-		$this->apiKey             = (string) get_option( 'alt_context_recognition_api_key', '' );
-	}
-
 	public function can_manage_recognition(): bool {
 		return current_user_can( 'manage_options' );
 	}
 
 	protected function proxy_request( string $method, string $path, array $body = array(), array $query = array() ): WP_REST_Response|WP_Error {
-		if ( '' === $this->recognitionBaseUrl ) {
+		$recognition_base_url = $this->get_recognition_base_url();
+		if ( '' === $recognition_base_url ) {
 			return new WP_Error( 'recognition_not_configured', 'Recognition service URL is missing.', array( 'status' => 500 ) );
 		}
 
-		$base_url = untrailingslashit( $this->recognitionBaseUrl );
+		$base_url = untrailingslashit( $recognition_base_url );
 		$url      = esc_url_raw( $base_url . $path );
 
 		if ( ! empty( $query ) ) {
@@ -50,8 +44,9 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 			'X-Tenant-ID'  => $this->get_tenant_id(),
 		);
 
-		if ( '' !== $this->apiKey ) {
-			$headers['X-API-Key'] = $this->apiKey;
+		$api_key = $this->get_recognition_api_key();
+		if ( '' !== $api_key ) {
+			$headers['X-API-Key'] = $api_key;
 		}
 
 		$options = array(
@@ -93,5 +88,13 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 
 	protected function get_tenant_id(): string {
 		return md5( (string) get_site_url() );
+	}
+
+	protected function get_recognition_base_url(): string {
+		return trim( (string) get_option( 'alt_context_recognition_url', 'http://localhost:8000' ) );
+	}
+
+	protected function get_recognition_api_key(): string {
+		return trim( (string) get_option( 'alt_context_recognition_api_key', '' ) );
 	}
 }

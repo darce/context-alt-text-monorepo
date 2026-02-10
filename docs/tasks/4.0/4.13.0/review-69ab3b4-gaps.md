@@ -232,6 +232,6 @@ All other keys in the array use 4 tabs of indentation; `thumbnailUrl` uses 5. Th
 | G-5 | **Resolved** | SCSS blank line removed |
 | G-6 | **Resolved** | MockEventSource comment clarified |
 | G-7 | **Resolved** | Todo items tagged with tracking IDs |
-| G-8 | **New** | `thumbnailUrl` indentation regression in `class-api.php` |
-| G-9 | **New** | `tests` dir excluded from `cs-check` scope |
-| G-10 | **New** | Fragile inline `--exclude` list; should use `phpcs.xml` |
+| G-8 | **Resolved** | Fixed array indentation for `thumbnailUrl` in `src/api/class-api.php`. |
+| G-9 | **Resolved** | Restored `tests` into `composer cs-check` scope via `phpcs.xml.dist` (excluding only `tests/stubs/wp.php` fixture shim). |
+| G-10 | **Resolved** | Replaced duplicated inline `--exclude` flags with a shared `phpcs.xml.dist` ruleset. |

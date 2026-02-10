@@ -5,13 +5,14 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   acceptSuggestion,
+  dismissCluster,
   fetchPendingMergeSuggestions,
   fetchPendingSuggestions,
+  fetchTopUnlabeledClusters,
   mergeCluster,
   rejectSuggestion,
   updateClusterLabel,
 } from '../../../../api/recognition';
-import { dismissCluster, fetchTopUnlabeledClusters } from '../../../../api/recognition/clusterApi';
 import { resetConfigCache } from '../../../../api/config';
 import { queryKeys } from '../../../../api/queryKeys';
 import { SuggestionReviewPanel } from '../SuggestionReviewPanel';
@@ -34,17 +35,10 @@ vi.mock('../../../../api/recognition', async () => {
     acceptMergeSuggestion: vi.fn(),
     rejectSuggestion: vi.fn(),
     rejectMergeSuggestion: vi.fn(),
-    mergeCluster: vi.fn().mockResolvedValue(undefined),
-    updateClusterLabel: vi.fn().mockResolvedValue(undefined),
-  };
-});
-
-vi.mock('../../../../api/recognition/clusterApi', async (importOriginal) => {
-  const actual = await importOriginal<typeof import('../../../../api/recognition/clusterApi')>();
-  return {
-    ...actual,
     fetchTopUnlabeledClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
+    mergeCluster: vi.fn().mockResolvedValue(undefined),
+    updateClusterLabel: vi.fn().mockResolvedValue(undefined),
   };
 });
 
@@ -852,7 +846,7 @@ describe('SuggestionReviewPanel', () => {
       media_id: 101,
       thumbnail_url: 'http://example.test/media/face-101.jpg',
       is_pinned: false,
-    } as unknown as TopUnlabeledCluster['representatives'][number];
+    } as TopUnlabeledCluster['representatives'][number];
 
     fetchPendingSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
     fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });

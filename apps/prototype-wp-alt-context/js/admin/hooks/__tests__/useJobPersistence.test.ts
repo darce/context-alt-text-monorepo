@@ -66,7 +66,7 @@ describe('useJobPersistence', () => {
     expect(result.current.activeJobs).toEqual(initialJobs);
   });
 
-  it('purges stale jobs (> 1 hour) on mount', () => {
+  it('retains non-terminal jobs past 1 hour to preserve recovery state', () => {
     const now = Date.now();
     const staleTime = now - (3600 * 1000 + 1); // 1 hour + 1ms ago
     const freshJob = { id: 'fresh', type: 'scan', startedAt: now, totalItems: 10 };
@@ -76,11 +76,36 @@ describe('useJobPersistence', () => {
 
     const { result } = renderHook(() => useJobPersistence());
 
-    expect(result.current.activeJobs).toHaveLength(1);
+    expect(result.current.activeJobs).toHaveLength(2);
     expect(result.current.activeJobs[0].id).toBe('fresh');
+    expect(result.current.activeJobs[1].id).toBe('stale');
+
+    const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]') as { id: string }[];
+    expect(stored).toHaveLength(2);
+    expect(stored[1]?.id).toBe('stale');
+  });
+
+  it('purges stale terminal jobs on mount', () => {
+    const now = Date.now();
+    const staleTime = now - (3600 * 1000 + 1); // 1 hour + 1ms ago
+    const activeJob = { id: 'active', type: 'scan', startedAt: staleTime, totalItems: 10 };
+    const staleTerminalJob = {
+      id: 'done',
+      type: 'clustering',
+      startedAt: staleTime,
+      totalItems: 20,
+      status: 'completed',
+    };
+
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify([activeJob, staleTerminalJob]));
+
+    const { result } = renderHook(() => useJobPersistence());
+
+    expect(result.current.activeJobs).toHaveLength(1);
+    expect(result.current.activeJobs[0].id).toBe('active');
 
     const stored = JSON.parse(window.localStorage.getItem(STORAGE_KEY) ?? '[]') as { id: string }[];
     expect(stored).toHaveLength(1);
-    expect(stored[0]?.id).toBe('fresh');
+    expect(stored[0]?.id).toBe('active');
   });
 });

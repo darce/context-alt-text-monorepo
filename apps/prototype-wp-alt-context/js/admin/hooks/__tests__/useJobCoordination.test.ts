@@ -16,7 +16,7 @@ class MockBroadcastChannel {
   }
 }
 
-global.BroadcastChannel = MockBroadcastChannel as unknown as typeof BroadcastChannel;
+const originalBroadcastChannel = globalThis.BroadcastChannel;
 
 describe('useJobCoordination', () => {
   const jobId = 'test-job-uuid';
@@ -25,11 +25,17 @@ describe('useJobCoordination', () => {
     vi.clearAllMocks();
     vi.useFakeTimers();
     vi.spyOn(Math, 'random').mockReturnValue(0);
+    globalThis.BroadcastChannel = MockBroadcastChannel as unknown as typeof BroadcastChannel;
   });
 
   afterEach(() => {
     vi.useRealTimers();
     vi.restoreAllMocks();
+    if (originalBroadcastChannel) {
+      globalThis.BroadcastChannel = originalBroadcastChannel;
+    } else {
+      Reflect.deleteProperty(globalThis, 'BroadcastChannel');
+    }
   });
 
   it('elects primary after randomized backoff when no primary responds', () => {
@@ -118,5 +124,12 @@ describe('useJobCoordination', () => {
         type: 'PONG_PRIMARY',
       }),
     );
+  });
+
+  it('falls back to primary mode when BroadcastChannel is unavailable', () => {
+    Reflect.deleteProperty(globalThis, 'BroadcastChannel');
+    const { result } = renderHook(() => useJobCoordination(jobId));
+    expect(result.current.isPrimary).toBe(true);
+    expect(result.current.channel).toBeNull();
   });
 });

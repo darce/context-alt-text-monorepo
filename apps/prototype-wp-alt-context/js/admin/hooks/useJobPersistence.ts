@@ -32,7 +32,27 @@ export interface JobPersistence {
 }
 
 const STORAGE_KEY = 'acx_active_jobs';
-const MAX_AGE_MS = 3600000; // 1 hour
+const ACTIVE_MAX_AGE_MS = 24 * 60 * 60 * 1000; // 24 hours
+const TERMINAL_MAX_AGE_MS = 60 * 60 * 1000; // 1 hour
+const TERMINAL_STATUSES = new Set(['complete', 'completed', 'failed', 'cancelled', 'canceled']);
+
+const isTerminalStatus = (status: unknown): boolean =>
+  typeof status === 'string' && TERMINAL_STATUSES.has(status.toLowerCase());
+
+const isFreshPersistedJob = (job: PersistedJob, now: number): boolean => {
+  if (typeof job.type !== 'string' || !Number.isFinite(job.startedAt)) {
+    return false;
+  }
+
+  const ageMs = now - job.startedAt;
+  if (!Number.isFinite(ageMs) || ageMs < 0) {
+    return false;
+  }
+
+  const legacyStatus = (job as PersistedJob & { status?: unknown }).status;
+  const maxAgeMs = isTerminalStatus(legacyStatus) ? TERMINAL_MAX_AGE_MS : ACTIVE_MAX_AGE_MS;
+  return ageMs < maxAgeMs;
+};
 
 /**
  * Hook to manage active job IDs in localStorage to survive page reloads.
@@ -50,8 +70,8 @@ export const useJobPersistence = (): JobPersistence => {
       const jobs = JSON.parse(stored) as PersistedJob[];
       const now = Date.now();
 
-      // Purge stale jobs (>1 hour old) AND jobs without type field (old schema)
-      const freshJobs = jobs.filter((job) => now - job.startedAt < MAX_AGE_MS && typeof job.type === 'string');
+      // Keep active jobs for a longer recovery window; purge terminal/invalid entries.
+      const freshJobs = jobs.filter((job) => isFreshPersistedJob(job, now));
 
       // If we purged some, update storage immediately
       if (freshJobs.length !== jobs.length) {

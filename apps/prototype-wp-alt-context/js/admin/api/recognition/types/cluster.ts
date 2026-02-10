@@ -14,6 +14,16 @@ export interface ClusterSummary {
   sample_identities: ClusterIdentity[];
 }
 
+export interface TopUnlabeledRepresentative {
+  id: string;
+  media_id: number;
+  thumb_url?: string | null;
+  thumbnail_url?: string | null;
+  media_url?: string | null;
+  bbox?: BoundingBox | null;
+  is_pinned: boolean;
+}
+
 /**
  * Top unlabeled cluster response from /clusters/top-unlabeled endpoint.
  * Includes representatives with media IDs for thumbnail display.
@@ -30,14 +40,7 @@ export interface TopUnlabeledCluster {
   suggested_label_source?: 'identity' | 'roster' | 'similar_cluster' | 'none' | null;
   suggested_label_confidence?: number | null;
   suggested_target_cluster_id?: string | null;
-  representatives: {
-    id: string;
-    media_id: number;
-    thumb_url?: string;
-    media_url?: string | null;
-    bbox?: BoundingBox | null;
-    is_pinned: boolean;
-  }[];
+  representatives: TopUnlabeledRepresentative[];
 }
 
 export interface ClusterListParams {

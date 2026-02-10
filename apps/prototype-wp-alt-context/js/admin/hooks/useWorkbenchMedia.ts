@@ -2,8 +2,11 @@ import { useEffect, useMemo } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 
 import { useMediaIdentities } from './useMediaIdentities';
-import { getConfig, getEndpoint } from '../api/config';
-import type { WorkbenchMediaItem as WorkbenchMediaItemSchema } from '../api/generated';
+import {
+  fetchWorkbenchMedia,
+  type WorkbenchMediaItem as WorkbenchMediaItemSchema,
+  type WorkbenchMediaResponse as WorkbenchMediaApiResponse,
+} from '../api/workbenchMediaApi';
 import { queryKeys } from '../api/queryKeys';
 import { fetchMediaIdentities, type MediaIdentitiesResponse, type DetectedIdentity } from '../api/recognition';
 
@@ -11,11 +14,7 @@ type WorkbenchMediaItem = WorkbenchMediaItemSchema & {
   identities?: DetectedIdentity[];
 };
 
-interface WorkbenchMediaResponse {
-  items: WorkbenchMediaItem[];
-  total: number;
-  totalPages: number;
-}
+type WorkbenchMediaResponse = WorkbenchMediaApiResponse;
 
 interface Params {
   page: number;
@@ -23,54 +22,6 @@ interface Params {
   search?: string;
   enabled: boolean;
 }
-
-interface FetchParams {
-  page: number;
-  perPage: number;
-  search?: string;
-}
-
-const isWorkbenchMediaResponse = (value: unknown): value is WorkbenchMediaResponse =>
-  Boolean(
-    value &&
-      typeof value === 'object' &&
-      Array.isArray((value as WorkbenchMediaResponse).items) &&
-      typeof (value as WorkbenchMediaResponse).total === 'number' &&
-      typeof (value as WorkbenchMediaResponse).totalPages === 'number',
-  );
-
-const fetchWorkbenchMedia = async ({ page, perPage, search }: FetchParams): Promise<WorkbenchMediaResponse> => {
-  const config = getConfig();
-  const endpoint = getEndpoint('workbenchMedia');
-
-  const requestUrl = new URL(endpoint, window.location.origin);
-  requestUrl.searchParams.set('page', String(page));
-  requestUrl.searchParams.set('per_page', String(perPage));
-  requestUrl.searchParams.set('status', 'missing');
-
-  if (search) {
-    requestUrl.searchParams.set('search', search);
-  }
-
-  const response = await fetch(requestUrl.toString(), {
-    headers: {
-      'X-WP-Nonce': config.nonce,
-      Accept: 'application/json',
-    },
-    credentials: 'same-origin',
-  });
-
-  if (!response.ok) {
-    throw new Error(`Request failed with status ${response.status}`);
-  }
-
-  const data: unknown = await response.json();
-  if (!isWorkbenchMediaResponse(data)) {
-    throw new Error('Workbench media response was malformed.');
-  }
-
-  return data;
-};
 
 export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) => {
   const queryClient = useQueryClient();

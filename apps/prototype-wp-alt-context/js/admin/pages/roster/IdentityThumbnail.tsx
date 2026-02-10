@@ -2,7 +2,7 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import type { ClusterIdentity } from '../../api/recognition';
-import type { MediaMeta } from './utils/mediaMeta';
+import type { MediaMeta } from '../../api/mediaApi';
 
 export interface IdentityThumbnailProps {
   identity: ClusterIdentity;

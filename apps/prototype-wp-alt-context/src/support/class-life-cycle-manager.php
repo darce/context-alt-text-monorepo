@@ -8,6 +8,16 @@ class LifecycleManager {
 
 	private const OPTION_VERSION      = 'alt_context_version';
 	private const OPTION_INSTALLED_AT = 'alt_context_installed';
+	/**
+	 * Plugin-owned custom table suffixes (without WordPress prefix).
+	 *
+	 * @var string[]
+	 */
+	private const OWNED_TABLE_SUFFIXES = array(
+		'acx_clusters',
+		'acx_identity_members',
+		'acx_sync_state',
+	);
 
 	/**
 	 * Run when the plugin is activated.
@@ -43,6 +53,26 @@ class LifecycleManager {
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
+		$this->drop_tables();
 		flush_rewrite_rules( false );
+	}
+
+	/**
+	 * Drop plugin-owned custom tables during uninstall.
+	 *
+	 * This keeps create/destroy behavior symmetric as sovereign tables are added.
+	 */
+	private function drop_tables(): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! isset( $wpdb->prefix ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		foreach ( self::OWNED_TABLE_SUFFIXES as $table_suffix ) {
+			$table_name = $wpdb->prefix . $table_suffix;
+			// phpcs:ignore WordPress.DB.PreparedSQL.InterpolatedNotPrepared,WordPress.DB.PreparedSQL.NotPrepared -- Table names are fixed plugin-owned suffixes with wpdb prefix.
+			$wpdb->query( "DROP TABLE IF EXISTS `{$table_name}`" );
+		}
 	}
 }

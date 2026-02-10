@@ -1,8 +1,14 @@
+export interface AdminUrlsConfig {
+  mediaEditBase?: string;
+  rosterClusters?: string;
+}
+
 export interface ApiConfig {
   nonce: string;
   endpoints: Record<string, string>;
   tenant_id?: string;
   tier?: string;
+  adminUrls?: AdminUrlsConfig;
   max_media_per_batch?: number | string; // wp_localize_script may coerce to string
   devMode?: boolean | string | number; // wp_localize_script may convert to "1" or ""
 }
@@ -12,6 +18,7 @@ export interface NormalizedConfig {
   endpoints: Record<string, string>;
   tenant_id?: string;
   tier?: string;
+  adminUrls: AdminUrlsConfig;
   maxMediaPerBatch: number;
   devMode: boolean;
 }
@@ -20,16 +27,24 @@ export interface NormalizedConfig {
 // See docs/tasks/4.0/4.11.0/progress-tracking-investigation-2026-01-20.md
 const DEFAULT_MAX_MEDIA_PER_BATCH = 10000;
 
+const normalizeOptionalString = (value: unknown): string | undefined =>
+  typeof value === 'string' && value.trim() !== '' ? value : undefined;
+
 export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
+  const adminUrls = {
+    mediaEditBase: normalizeOptionalString(raw.adminUrls?.mediaEditBase),
+    rosterClusters: normalizeOptionalString(raw.adminUrls?.rosterClusters),
+  };
 
   return {
     nonce: raw.nonce,
     endpoints: raw.endpoints,
     tenant_id: raw.tenant_id,
     tier: raw.tier,
+    adminUrls,
     maxMediaPerBatch,
     devMode,
   };

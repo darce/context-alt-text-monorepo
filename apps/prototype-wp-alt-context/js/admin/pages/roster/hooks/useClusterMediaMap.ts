@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 
 import type { ClusterSummary } from '../../../api/recognition';
-import { fetchMediaMeta, type MediaMeta } from '../utils/mediaMeta';
+import { fetchMediaMeta, type MediaMeta } from '../../../api/mediaApi';
 
 export type MediaMap = Record<number, MediaMeta>;
 

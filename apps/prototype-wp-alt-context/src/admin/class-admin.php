@@ -7,6 +7,7 @@ namespace AltContext\Admin;
 use AltContext\Support\BatchLimits;
 
 use function add_action;
+use function admin_url;
 use function esc_url_raw;
 use function file_get_contents;
 use function get_site_url;
@@ -189,22 +190,26 @@ class Admin {
 				'tier'      => $tier,
 				'tenant_id' => md5( (string) get_site_url() ), // v4.12.0: Keep query keys tenant-scoped
 				'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
+				'adminUrls' => array(
+					'mediaEditBase' => admin_url( 'post.php' ),
+					'rosterClusters' => admin_url( 'admin.php?page=alt-context-roster&tab=clusters' ),
+				),
 				'endpoints' => array(
 					'workbenchMedia'                 => rest_url( 'acx/v1/workbench/media' ),
-					'recognitionAnalyze'  => rest_url( 'acx/v1/recognition/analyze' ),
-					'recognitionJobs'     => rest_url( 'acx/v1/recognition/jobs' ),
-					'recognitionCluster'  => rest_url( 'acx/v1/recognition/cluster' ),
-					'recognitionClusters' => rest_url( 'acx/v1/recognition/clusters' ),
-					'recognitionClusterLabels' => rest_url( 'acx/v1/recognition/clusters/labels' ),
-					'recognitionMediaIdentities' => rest_url( 'acx/v1/recognition/media-identities' ),
-					'recognitionReassignIdentity' => rest_url( 'acx/v1/recognition/clusters/reassign' ),
+					'recognitionAnalyze'             => rest_url( 'acx/v1/recognition/analyze' ),
+					'recognitionJobs'                => rest_url( 'acx/v1/recognition/jobs' ),
+					'recognitionCluster'             => rest_url( 'acx/v1/recognition/cluster' ),
+					'recognitionClusters'            => rest_url( 'acx/v1/recognition/clusters' ),
+					'recognitionClusterLabels'       => rest_url( 'acx/v1/recognition/clusters/labels' ),
+					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
+					'recognitionReassignIdentity'    => rest_url( 'acx/v1/recognition/clusters/reassign' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),
-					'recognitionSuggestions' => rest_url( 'acx/v1/recognition/suggestions' ),
-					'recognitionMergeSuggestions' => rest_url( 'acx/v1/recognition/suggestions/merge' ),
-					'recognitionRevertMerge' => rest_url( 'acx/v1/recognition/clusters/revert-merge' ),
+					'recognitionSuggestions'         => rest_url( 'acx/v1/recognition/suggestions' ),
+					'recognitionMergeSuggestions'    => rest_url( 'acx/v1/recognition/suggestions/merge' ),
+					'recognitionRevertMerge'         => rest_url( 'acx/v1/recognition/clusters/revert-merge' ),
 					'recognitionCreateClusterForIdentity' => rest_url( 'acx/v1/recognition/clusters/create-for-identity' ),
-					'rosterEntries'       => rest_url( 'acx/v1/roster/entries' ),
-					'rosterClusters'      => rest_url( 'acx/v1/roster/clusters' ),
+					'rosterEntries'                  => rest_url( 'acx/v1/roster/entries' ),
+					'rosterClusters'                 => rest_url( 'acx/v1/roster/clusters' ),
 				),
 			)
 		);

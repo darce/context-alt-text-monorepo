@@ -4,6 +4,7 @@ import { __, _n, sprintf } from '@wordpress/i18n';
 import type { ClusterIdentity, ClusterSummary } from '../../api/recognition';
 import type { RosterEntry } from '../../api/rosterApi';
 import type { MediaMap } from './hooks/useClusterMediaMap';
+import { mediaEditUrl } from '../../utils/adminUrls';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
 
@@ -150,7 +151,7 @@ export const ClusterDrawerPanel = ({
                 onDragEnd={onFaceDragEnd}
               >
                 <a
-                  href={`${window.location.origin}/wp-admin/post.php?post=${identity.media_id}&action=edit`}
+                  href={mediaEditUrl(identity.media_id)}
                   target="_blank"
                   rel="noopener noreferrer"
                 >

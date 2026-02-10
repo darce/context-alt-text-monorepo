@@ -4,8 +4,12 @@ import userEvent from '@testing-library/user-event';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { resetConfigCache } from '../../../../api/config';
-import { mergeCluster, updateClusterLabel } from '../../../../api/recognition';
-import { dismissCluster, fetchTopUnlabeledClusters } from '../../../../api/recognition/clusterApi';
+import {
+  dismissCluster,
+  fetchTopUnlabeledClusters,
+  mergeCluster,
+  updateClusterLabel,
+} from '../../../../api/recognition';
 import { TopClustersSection } from '../TopClustersSection';
 import type { TopUnlabeledCluster } from '../../../../api/recognition/types';
 
@@ -24,15 +28,6 @@ vi.mock('../../../../api/recognition', async () => {
     ...actual,
     mergeCluster: vi.fn().mockResolvedValue(undefined),
     updateClusterLabel: vi.fn().mockResolvedValue(undefined),
-  };
-});
-
-vi.mock('../../../../api/recognition/clusterApi', async () => {
-  const actual = await vi.importActual<typeof import('../../../../api/recognition/clusterApi')>(
-    '../../../../api/recognition/clusterApi',
-  );
-  return {
-    ...actual,
     fetchTopUnlabeledClusters: vi.fn(),
     dismissCluster: vi.fn().mockResolvedValue(undefined),
   };

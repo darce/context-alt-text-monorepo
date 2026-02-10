@@ -3,8 +3,8 @@ import { afterEach, vi } from 'vitest';
 
 import { useClusterMediaMap } from '../useClusterMediaMap';
 import type { ClusterSummary } from '../../../../api/recognition';
-import { fetchMediaMeta } from '../../utils/mediaMeta';
-import * as mediaMeta from '../../utils/mediaMeta';
+import { fetchMediaMeta } from '../../../../api/mediaApi';
+import * as mediaMeta from '../../../../api/mediaApi';
 
 afterEach(() => {
   vi.restoreAllMocks();

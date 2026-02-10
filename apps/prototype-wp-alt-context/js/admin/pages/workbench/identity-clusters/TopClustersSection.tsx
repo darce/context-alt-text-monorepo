@@ -11,8 +11,7 @@ import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import { queryKeys } from '../../../api/queryKeys';
-import { mergeCluster, updateClusterLabel } from '../../../api/recognition';
-import { dismissCluster, fetchTopUnlabeledClusters } from '../../../api/recognition/clusterApi';
+import { dismissCluster, fetchTopUnlabeledClusters, mergeCluster, updateClusterLabel } from '../../../api/recognition';
 import type { TopUnlabeledCluster } from '../../../api/recognition/types/cluster';
 import type { BoundingBox } from '../../../api/recognition/types/identity';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
@@ -31,8 +30,7 @@ const TOP_UNLABELED_LIMIT = 20;
 const resolveRepresentativeThumbUrl = (
   representative: TopUnlabeledCluster['representatives'][number],
 ): string | null => {
-  const legacyThumbnail = (representative as { thumbnail_url?: string | null }).thumbnail_url;
-  const rawUrl = representative.thumb_url ?? legacyThumbnail ?? null;
+  const rawUrl = representative.thumb_url ?? representative.thumbnail_url ?? null;
   if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
     return null;
   }

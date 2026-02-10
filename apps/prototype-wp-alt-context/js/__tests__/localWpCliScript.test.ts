@@ -13,7 +13,7 @@ describe('local-wp-cli.sh', () => {
     const env: NodeJS.ProcessEnv = {
       ...process.env,
       LOCALWP_SITE_PATH: '/tmp/site',
-      ALT_CONTEXT_WP_CLI_DRY_RUN: '1',
+      ACX_WP_CLI_DRY_RUN: '1',
     };
     delete env.LOCALWP_MYSQL_SOCKET;
 
@@ -28,7 +28,7 @@ describe('local-wp-cli.sh', () => {
       LOCALWP_MYSQL_SOCKET: '/tmp/mysql.sock',
       LOCALWP_SITE_PATH: '/Users/example/Local Sites/alt-context/app/public',
       LOCALWP_SITE_URL: 'http://example.test',
-      ALT_CONTEXT_WP_CLI_DRY_RUN: '1',
+      ACX_WP_CLI_DRY_RUN: '1',
     };
 
     const result = spawnSync('bash', [scriptPath, 'core', 'version'], { env, encoding: 'utf8' });

@@ -19,22 +19,22 @@ spl_autoload_register(static function (string $class): void {
     }
 });
 
-if (!defined('ALT_CONTEXT_PLUGIN_DIR')) {
-    define('ALT_CONTEXT_PLUGIN_DIR', realpath(__DIR__ . '/..') . '/');
+if (!defined('ACX_PLUGIN_DIR')) {
+    define('ACX_PLUGIN_DIR', realpath(__DIR__ . '/..') . '/');
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_URL')) {
-    define('ALT_CONTEXT_PLUGIN_URL', 'http://example.test/wp-content/plugins/alt-context/');
+if (!defined('ACX_PLUGIN_URL')) {
+    define('ACX_PLUGIN_URL', 'http://example.test/wp-content/plugins/alt-context/');
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_BASENAME')) {
-    define('ALT_CONTEXT_PLUGIN_BASENAME', 'alt-context/alt-context.php');
+if (!defined('ACX_PLUGIN_BASENAME')) {
+    define('ACX_PLUGIN_BASENAME', 'alt-context/alt-context.php');
 }
 
-if (!defined('ALT_CONTEXT_VERSION')) {
-    define('ALT_CONTEXT_VERSION', 'test');
+if (!defined('ACX_VERSION')) {
+    define('ACX_VERSION', 'test');
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_FILE')) {
-    define('ALT_CONTEXT_PLUGIN_FILE', ALT_CONTEXT_PLUGIN_DIR . 'alt-context.php');
+if (!defined('ACX_PLUGIN_FILE')) {
+    define('ACX_PLUGIN_FILE', ACX_PLUGIN_DIR . 'alt-context.php');
 }

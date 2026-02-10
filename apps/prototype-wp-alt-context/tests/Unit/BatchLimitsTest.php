@@ -62,7 +62,7 @@ class BatchLimitsTest extends TestCase
     public function testGetCurrentTierBatchLimitReturnsMvpLimit(): void
     {
         // Regardless of tier option, MVP always returns same limit
-        $this->setOption('alt_context_tier', 'pro');
+        $this->setOption('acx_tier', 'pro');
         $this->assertSame(10000, $this->subject->getCurrentTierBatchLimit());
     }
 

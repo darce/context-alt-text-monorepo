@@ -2,7 +2,6 @@ import React from 'react';
 import { __ } from '@wordpress/i18n';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
-import type { RosterEntry } from '../api/rosterApi';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
 import { useClusterMediaMap } from './roster/hooks/useClusterMediaMap';
@@ -10,13 +9,13 @@ import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
 import { ClusterGrid } from './roster/ClusterGrid';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
+import { RosterEntriesSection } from './roster/RosterEntriesSection';
 const ROSTER_TABS = {
   entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
   clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
 } as const;
 
 type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];
-type RosterEntriesQuery = Pick<ReturnType<typeof useRosterEntries>, 'isLoading' | 'isError' | 'data' | 'refetch'>;
 
 export const RosterPage = (): React.JSX.Element => {
   const [activeTab, setActiveTab] = React.useState<RosterTab>(ROSTER_TABS.entries.id);
@@ -172,58 +171,3 @@ export const RosterPage = (): React.JSX.Element => {
     </section>
   );
 };
-
-const RosterEntriesSection = ({ query }: { query: RosterEntriesQuery }) => {
-  if (query.isLoading) {
-    return <p>{__('Loading roster entries…', 'alt-context')}</p>;
-  }
-
-  if (query.isError) {
-    return (
-      <div>
-        <p>{__('Unable to load roster entries.', 'alt-context')}</p>
-        <button type="button" onClick={() => void query.refetch()}>
-          {__('Retry', 'alt-context')}
-        </button>
-      </div>
-    );
-  }
-
-  return <RosterEntriesTable entries={query.data ?? []} />;
-};
-
-const RosterEntriesTable = ({ entries }: { entries: RosterEntry[] }) => {
-  if (entries.length === 0) {
-    return <p>{__('No roster entries found yet.', 'alt-context')}</p>;
-  }
-
-  return (
-    <div className="acx-roster-entries">
-      <table className="acx-roster-entries__table">
-        <thead>
-          <tr>
-            <th>{__('Identity', 'alt-context')}</th>
-            <th>{__('Tags', 'alt-context')}</th>
-            <th>{__('Clusters', 'alt-context')}</th>
-            <th>{__('Updated', 'alt-context')}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {entries.map((entry) => (
-            <tr key={entry.id}>
-              <td>
-                <strong>{entry.name}</strong>
-              </td>
-              <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
-              <td>{entry.cluster_count}</td>
-              <td>{new Date(entry.updated_at).toLocaleDateString()}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
-    </div>
-  );
-};
-
-export { ClusterGrid as ClusterGallery, ClusterDrawerPanel as ClusterDrawer };
-export { RosterEntriesSection, RosterEntriesTable };

@@ -74,5 +74,6 @@ describe('RecentJobsPanel', () => {
   });
 });
 
-test.todo('Workbench provides a Rescan with sensitivity option once a job is selected');
-test.todo('Workbench clusters panel shows summary cards after clustering runs');
+// Follow-up coverage tracked in docs/tasks/4.0/4.13.0/review-69ab3b4-gaps.md#g-7.
+test.todo('[ACX-4130-G7-WB-1] Workbench provides a Rescan with sensitivity option once a job is selected');
+test.todo('[ACX-4130-G7-WB-2] Workbench clusters panel shows summary cards after clustering runs');

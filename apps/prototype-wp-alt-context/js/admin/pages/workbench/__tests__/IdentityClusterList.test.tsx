@@ -40,7 +40,8 @@ window.HTMLElement.prototype.releasePointerCapture = vi.fn();
 // Mock scrollIntoView for cmdk
 window.HTMLElement.prototype.scrollIntoView = vi.fn();
 
-// Mock EventSource to guard against accidental per-row subscriptions.
+// Keep this guard even after deleting useClusterEvents: it catches accidental
+// EventSource reintroduction in the identity list render path.
 class MockEventSource {
   onmessage: ((event: MessageEvent) => void) | null = null;
   onerror: ((event: Event) => void) | null = null;

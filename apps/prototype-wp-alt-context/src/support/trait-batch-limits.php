@@ -34,7 +34,8 @@ trait BatchLimits {
 	 * @return int The batch limit.
 	 */
 	protected function get_tier_batch_limit_for( string $_tier ): int {
-		unset( $_tier ); // MVP: tiered limits are intentionally disabled.
+		// Decision: keep the tier parameter for API stability while MVP ignores it.
+		unset( $_tier );
 		// MVP: All tiers use the same limit.
 		return self::MVP_BATCH_LIMIT;
 	}

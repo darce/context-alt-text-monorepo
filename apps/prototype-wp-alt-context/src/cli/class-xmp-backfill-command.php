@@ -5,11 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Cli;
 
 use AltContext\Media\AttachmentXmpMetricsPersistor;
-use AltContext\Media\ImageXmpWriter;
-use AltContext\Media\JpegXmpInjector;
-use AltContext\Media\PngXmpInjector;
-use AltContext\Media\ProxyFaceMetricsSource;
-use AltContext\Media\XmpImageRegionPacketBuilder;
+use AltContext\Media\XmpPersistenceFactory;
 
 use function absint;
 use function array_unique;
@@ -27,14 +23,7 @@ class XmpBackfillCommand extends \WP_CLI_Command {
 	private AttachmentXmpMetricsPersistor $persistor;
 
 	public function __construct( ?AttachmentXmpMetricsPersistor $persistor = null ) {
-		$this->persistor = $persistor ?? new AttachmentXmpMetricsPersistor(
-			new ImageXmpWriter(
-				new ProxyFaceMetricsSource(),
-				new XmpImageRegionPacketBuilder(),
-				new JpegXmpInjector(),
-				new PngXmpInjector()
-			)
-		);
+		$this->persistor = $persistor ?? XmpPersistenceFactory::create_attachment_xmp_metrics_persistor();
 	}
 
 	/**

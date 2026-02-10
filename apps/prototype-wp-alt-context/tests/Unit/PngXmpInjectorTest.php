@@ -51,6 +51,22 @@ class PngXmpInjectorTest extends TestCase
         $this->assertSame($computedCrc, $itxtChunk['crc']);
     }
 
+    public function testExtractPacketReturnsNullWhenItxtChunkCrcIsInvalid(): void
+    {
+        $png = $this->buildMinimalPng();
+        $packet = '<x:xmpmeta xmlns:x="adobe:ns:meta/"><rdf:RDF/></x:xmpmeta>';
+        $pngWithXmp = $this->injector->inject_packet($png, $packet);
+
+        $itxtChunk = $this->findChunk($pngWithXmp, 'iTXt');
+        $this->assertNotNull($itxtChunk);
+        $this->assertIsArray($itxtChunk);
+
+        $corruptCrcByte = chr(ord($pngWithXmp[$itxtChunk['crc_offset']]) ^ 0xFF);
+        $corruptedPng = substr_replace($pngWithXmp, $corruptCrcByte, $itxtChunk['crc_offset'], 1);
+
+        $this->assertNull($this->injector->extract_packet($corruptedPng));
+    }
+
     private function buildMinimalPng(): string
     {
         $signature = "\x89PNG\r\n\x1A\n";
@@ -71,7 +87,7 @@ class PngXmpInjectorTest extends TestCase
     }
 
     /**
-     * @return array{data:string,crc:int}|null
+     * @return array{data:string,crc:int,offset:int,length:int,crc_offset:int}|null
      */
     private function findChunk(string $png, string $targetType): ?array
     {
@@ -95,6 +111,9 @@ class PngXmpInjectorTest extends TestCase
                 return [
                     'data' => $chunkData,
                     'crc' => $chunkCrc,
+                    'offset' => $offset,
+                    'length' => $chunkLength,
+                    'crc_offset' => $crcOffset,
                 ];
             }
 

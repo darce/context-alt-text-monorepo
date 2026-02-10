@@ -375,14 +375,14 @@ Audit scope for this addendum:
 
 ## Phase 4: Resolve Test Placeholder Debt
 
-- [ ] Implement `it.todo` coverage for roster commit flow.
-- [ ] Implement `test.todo` coverage for workbench follow-up flows.
-- [ ] If any TODO remains, replace with issue-linked tracked deferral.
-- [ ] Resolve `AFS-L2`: add route tests for cluster-events/include-debug and explicit coverage that removed route surfaces stay absent.
-- [ ] Resolve `HK-L2`: add hook failure-path tests for coordination/storage.
-- [ ] Resolve `RAP-L3`: expand direct recognition API tests for mappers and retained cluster operations.
-- [ ] Resolve `PAG-M3`: add direct `RosterPage` route-container tests (tab bootstrapping and drawer flows).
-- [ ] Resolve `PAG-L2`: close page-level TODO placeholders or convert each to issue-linked deferral.
+- [x] Implement `it.todo` coverage for roster commit flow.
+- [x] Implement `test.todo` coverage for workbench follow-up flows.
+- [x] If any TODO remains, replace with issue-linked tracked deferral.
+- [x] Resolve `AFS-L2`: add route tests for cluster-events/include-debug and explicit coverage that removed route surfaces stay absent.
+- [x] Resolve `HK-L2`: add hook failure-path tests for coordination/storage.
+- [x] Resolve `RAP-L3`: expand direct recognition API tests for mappers and retained cluster operations.
+- [x] Resolve `PAG-M3`: add direct `RosterPage` route-container tests (tab bootstrapping and drawer flows).
+- [x] Resolve `PAG-L2`: close page-level TODO placeholders or convert each to issue-linked deferral.
 
 ## Phase 5: Re-Audit and Publish Delta
 
@@ -432,6 +432,9 @@ Items discovered during cleanup verification that were **not introduced** by cle
 |---|---|---|---|---|---|
 | 4.12-M14 | MEDIUM | ANTIPATTERN | Non-null assertions (`!`) on nullable API data in `SuggestionReviewPanel.tsx`. Originally flagged as `suggestion.identity_media_url!` and `suggestion.representative_bbox!` suppressing nullable types without guards. | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` — current grep shows no remaining `!` postfix assertions on properties; the component was rewritten during the feature branch. | **Verify** — appears resolved by component rewrite but needs explicit confirmation. |
 | 4.12-M15 | MEDIUM | ANTIPATTERN | `fetchApi` returned `undefined as T` for empty/204 responses, typing `undefined` as the expected interface and causing runtime errors on property access. | `js/admin/utils/http.ts:29` — return type is now `Promise<T \| undefined>`, and `undefined` is returned directly (not cast). `return payload as T` on L53 casts parsed JSON from `unknown`, which is the standard pattern. | **Resolved** — `undefined as T` eliminated; return type correctly unions `T \| undefined`. |
+| 4.12-L13 | LOW | ANTIPATTERN | `window.confirm()` used for destructive member-removal action. Not styleable, not accessible — should use a dialog component. | `js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx:44` — `window.confirm(__(…))` | **Open** — add to Phase 3. |
+| 4.12-L15 | LOW | COMPLEXITY | Magic hex colors (`#fef2f2`, `#fecaca`, `#991b1b`) hardcoded in SCSS without CSS custom properties / design tokens. | `js/admin/styles/components/_cluster-panels.scss:50-53` | **Open** — add to Phase 3 (pairs with `CF-L1` token consistency work). |
+| 4.12-L16 | LOW | COMPLEXITY | Magic number `top: 46px` for sticky positioning without a documenting CSS custom property (32px admin-bar + 14px breathing room). | `js/admin/styles/components/_workbench.scss:401` | **Open** — add to Phase 3. |
 
 ### Pre-Existing Style / Documentation Items
 
@@ -443,6 +446,7 @@ Items discovered during cleanup verification that were **not introduced** by cle
 ### Phase Mapping
 
 - **Phase 3** should include `CF-L1` (SCSS token fallback unification) and `CF-L2` (structured TODO format).
+- **Phase 3** should include `4.12-L13` (replace `window.confirm` with dialog component), `4.12-L15` (extract magic hex colors to design tokens), and `4.12-L16` (replace magic `top: 46px` with documented custom property).
 - **Phase 3** should verify `4.12-M14` (confirm no non-null assertions remain post-rewrite).
 - `4.12-M15` requires no further action (resolved).
 

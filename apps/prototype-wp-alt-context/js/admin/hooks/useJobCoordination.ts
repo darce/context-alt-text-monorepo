@@ -12,6 +12,15 @@ const HEARTBEAT_INTERVAL_MS = 30_000;
 const HEARTBEAT_TIMEOUT_MS = HEARTBEAT_INTERVAL_MS * 2;
 const HEARTBEAT_CHECK_INTERVAL_MS = 5000;
 
+const supportsBroadcastChannel = (): boolean => typeof BroadcastChannel === 'function';
+
+const generateTabId = (): string => {
+  if (typeof globalThis.crypto?.randomUUID === 'function') {
+    return globalThis.crypto.randomUUID();
+  }
+  return `tab-${Date.now()}-${Math.random().toString(16).slice(2, 10)}`;
+};
+
 interface CoordinationMessage {
   type: 'PING_PRIMARY' | 'PONG_PRIMARY' | 'PRIMARY_CLAIM' | 'PRIMARY_HEARTBEAT' | 'PRIMARY_CLOSING';
   payload: { tabId: string; timestamp?: number };
@@ -31,7 +40,7 @@ export const useJobCoordination = (jobId: string | null): JobCoordination => {
   const [isPrimary, setIsPrimary] = useState(false);
   const [channel, setChannel] = useState<BroadcastChannel | null>(null);
   const channelRef = useRef<BroadcastChannel | null>(null);
-  const tabId = useRef(crypto.randomUUID());
+  const tabId = useRef(generateTabId());
 
   const isPrimaryRef = useRef(false);
   const lastHeartbeatRef = useRef<number | null>(null);
@@ -47,8 +56,23 @@ export const useJobCoordination = (jobId: string | null): JobCoordination => {
       return;
     }
 
+    if (!supportsBroadcastChannel()) {
+      setIsPrimary(true);
+      isPrimaryRef.current = true;
+      setChannel(null);
+      return;
+    }
+
     const channelName = `${COORDINATION_CHANNEL_PREFIX}${jobId}`;
-    const coordinationChannel = new BroadcastChannel(channelName);
+    let coordinationChannel: BroadcastChannel;
+    try {
+      coordinationChannel = new BroadcastChannel(channelName);
+    } catch {
+      setIsPrimary(true);
+      isPrimaryRef.current = true;
+      setChannel(null);
+      return;
+    }
     channelRef.current = coordinationChannel;
     lastHeartbeatRef.current = null;
     setIsPrimary(false);

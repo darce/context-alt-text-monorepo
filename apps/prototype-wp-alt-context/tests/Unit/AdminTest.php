@@ -99,6 +99,23 @@ class AdminTest extends TestCase
     }
 
     /**
+     * Test localized SPA config includes canonical admin URLs.
+     */
+    public function testLocalizeSpaConfigIncludesAdminUrls(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('/wp-admin/post.php', $localized['adminUrls']['mediaEditBase'] ?? null);
+        $this->assertSame(
+            '/wp-admin/admin.php?page=alt-context-roster&tab=clusters',
+            $localized['adminUrls']['rosterClusters'] ?? null
+        );
+    }
+
+    /**
      * Helper to invoke private/protected methods.
      */
     private function invokePrivateMethod(object $object, string $methodName, array $args = []): mixed

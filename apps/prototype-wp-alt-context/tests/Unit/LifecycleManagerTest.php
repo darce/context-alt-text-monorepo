@@ -99,6 +99,20 @@ class LifecycleManagerTest extends TestCase
     }
 
     /**
+     * Test uninstall drops plugin-owned custom tables.
+     */
+    public function testUninstallDropsPluginOwnedTables(): void
+    {
+        global $wpdb;
+
+        $this->manager->uninstall();
+
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_clusters`', $wpdb->queries);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_identity_members`', $wpdb->queries);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_state`', $wpdb->queries);
+    }
+
+    /**
      * Test full lifecycle: activate -> deactivate -> uninstall.
      */
     public function testFullLifecycle(): void

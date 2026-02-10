@@ -1,11 +1,15 @@
 import type { ReactNode } from 'react';
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { act, renderHook, waitFor } from '@testing-library/react';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
 
+import { fetchWorkbenchMedia, type WorkbenchMediaResponse } from '../../api/workbenchMediaApi';
 import { useWorkbenchMedia } from '../useWorkbenchMedia';
 import * as recognitionApi from '../../api/recognition';
-import { resetConfigCache } from '../../api/config';
+
+vi.mock('../../api/workbenchMediaApi', () => ({
+  fetchWorkbenchMedia: vi.fn(),
+}));
 
 vi.mock('../../api/recognition', () => ({
   fetchMediaIdentities: vi.fn(),
@@ -22,8 +26,6 @@ const createDeferred = <T,>() => {
 };
 
 describe('useWorkbenchMedia', () => {
-  const originalFetch = globalThis.fetch;
-
   const createWrapper = () => {
     const queryClient = new QueryClient({
       defaultOptions: { queries: { retry: false } },
@@ -36,38 +38,11 @@ describe('useWorkbenchMedia', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    window.AltContextAdmin = {
-      nonce: 'test-nonce',
-      endpoints: {
-        workbenchMedia: '/wp-json/acx/v1/media',
-        recognitionAnalyze: '/wp-json/acx/v1/recognition/analyze',
-        recognitionJobs: '/wp-json/acx/v1/recognition/jobs',
-        recognitionCluster: '/wp-json/acx/v1/recognition/cluster',
-        recognitionClusters: '/wp-json/acx/v1/recognition/clusters',
-        recognitionClusterLabels: '/wp-json/acx/v1/recognition/cluster-labels',
-        recognitionMediaIdentities: '/wp-json/acx/v1/recognition/media-identities',
-        recognitionReassignIdentity: '/wp-json/acx/v1/recognition/reassign-identity',
-        recognitionIdentitySuggestions: '/wp-json/acx/v1/recognition/identity-suggestions',
-        recognitionSuggestions: '/wp-json/acx/v1/recognition/suggestions',
-        recognitionRevertMerge: '/wp-json/acx/v1/recognition/revert-merge',
-        recognitionCreateClusterForIdentity: '/wp-json/acx/v1/recognition/create-cluster-for-identity',
-      },
-    };
-    resetConfigCache();
-  });
-
-  afterEach(() => {
-    if (originalFetch) {
-      globalThis.fetch = originalFetch;
-    } else {
-      // @ts-expect-error allow cleanup when fetch was undefined
-      delete globalThis.fetch;
-    }
   });
 
   it('merges fetched identities into each media item', async () => {
     const { wrapper, queryClient } = createWrapper();
-    const mediaResponse = {
+    const mediaResponse: WorkbenchMediaResponse = {
       items: [
         {
           id: 11,
@@ -98,14 +73,9 @@ describe('useWorkbenchMedia', () => {
       totalPages: 1,
     };
 
-    const fetchDeferred = createDeferred<{
-      ok: boolean;
-      status: number;
-      json: () => Promise<typeof mediaResponse>;
-    }>();
-    const jsonDeferred = createDeferred<typeof mediaResponse>();
-    const fetchMock = vi.fn().mockReturnValue(fetchDeferred.promise);
-    globalThis.fetch = fetchMock as typeof fetch;
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
+    const fetchMediaDeferred = createDeferred<WorkbenchMediaResponse>();
+    fetchWorkbenchMediaMock.mockReturnValue(fetchMediaDeferred.promise);
 
     const fetchMediaIdentitiesMock = vi.mocked(recognitionApi.fetchMediaIdentities);
     const identitiesDeferred = createDeferred<recognitionApi.MediaIdentitiesResponse>();
@@ -113,20 +83,13 @@ describe('useWorkbenchMedia', () => {
 
     const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), { wrapper });
 
-    await waitFor(() => expect(fetchMock).toHaveBeenCalled());
-
-    await act(async () => {
-      fetchDeferred.resolve({
-        ok: true,
-        status: 200,
-        json: () => jsonDeferred.promise,
-      });
-      await fetchDeferred.promise;
+    await waitFor(() => {
+      expect(fetchWorkbenchMediaMock).toHaveBeenCalledWith({ page: 1, perPage: 10, search: undefined });
     });
 
     await act(async () => {
-      jsonDeferred.resolve(mediaResponse);
-      await jsonDeferred.promise;
+      fetchMediaDeferred.resolve(mediaResponse);
+      await fetchMediaDeferred.promise;
     });
 
     await waitFor(() => expect(fetchMediaIdentitiesMock).toHaveBeenCalledWith([11, 12]));
@@ -164,13 +127,12 @@ describe('useWorkbenchMedia', () => {
 
   it('skips fetching when disabled', async () => {
     const { wrapper, queryClient } = createWrapper();
-    const fetchMock = vi.fn();
-    globalThis.fetch = fetchMock as typeof fetch;
+    const fetchWorkbenchMediaMock = vi.mocked(fetchWorkbenchMedia);
 
     renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: false }), { wrapper });
 
     await waitFor(() => {
-      expect(fetchMock).not.toHaveBeenCalled();
+      expect(fetchWorkbenchMediaMock).not.toHaveBeenCalled();
       expect(recognitionApi.fetchMediaIdentities).not.toHaveBeenCalled();
     });
 

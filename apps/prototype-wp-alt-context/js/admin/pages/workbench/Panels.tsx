@@ -1,6 +1,7 @@
 import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { JobProgress } from '../../api/recognition/types/scan';
+export { mediaEditUrl, rosterClustersUrl } from '../../utils/adminUrls';
 
 interface ScanActionPanelProps {
   selectedCount: number;
@@ -229,12 +230,6 @@ export const RecentJobsPanel = ({ jobs, statuses, activeJobId, onSelect, onClear
     )}
   </div>
 );
-
-export const mediaEditUrl = (mediaId: number): string =>
-  `${window.location.origin}/wp-admin/post.php?post=${mediaId}&action=edit`;
-
-export const rosterClustersUrl = (): string =>
-  `${window.location.origin}/wp-admin/admin.php?page=alt-context-roster&tab=clusters`;
 
 const formatDuration = (seconds: number): string => {
   if (seconds < 60) {

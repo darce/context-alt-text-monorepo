@@ -54,8 +54,11 @@ export {
   revertMergeCluster,
   splitCluster,
   createClusterForIdentity,
+  dismissCluster,
+  undismissCluster,
   fetchClusterMembers,
   removeClusterMember,
+  fetchTopUnlabeledClusters,
 } from './clusterApi';
 
 // Identity operations

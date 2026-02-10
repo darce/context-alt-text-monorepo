@@ -1,4 +1,5 @@
-import { getConfig } from '../../../api/config';
+import { getConfig } from './config';
+import { fetchRequiredApi } from '../utils/http';
 
 export interface MediaMeta {
   url: string | null;
@@ -49,20 +50,14 @@ const isWPMediaResponse = (payload: unknown): payload is WPMediaResponse =>
 export const fetchMediaMeta = async (mediaId: number): Promise<MediaMeta> => {
   const base = getWpRestBase();
   const nonce = getRestNonce();
+  const endpoint = `${base}/wp/v2/media/${mediaId}?context=edit`;
+
   try {
-    const response = await fetch(`${base}/wp/v2/media/${mediaId}?context=edit`, {
-      headers: {
-        Accept: 'application/json',
-        ...(nonce ? { 'X-WP-Nonce': nonce } : {}),
-      },
-      credentials: 'same-origin',
+    const payload = await fetchRequiredApi<unknown>(endpoint, {
+      method: 'GET',
+      restNonce: nonce,
     });
 
-    if (!response.ok) {
-      return { url: null };
-    }
-
-    const payload: unknown = await response.json();
     if (!isWPMediaResponse(payload)) {
       return { url: null };
     }

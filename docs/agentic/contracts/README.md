@@ -22,6 +22,7 @@ Human-readable documentation of the live integration between WordPress plugin an
 | -------------------------------------------------------------- | -------------------------------------------- |
 | [security.md](security.md)                                     | API key auth, tenant isolation, RLS policies |
 | [wordpress-backend-contract.md](wordpress-backend-contract.md) | Progressive learning workflow (reference)    |
+| [recognition-media-xmp-mapping.md](recognition-media-xmp-mapping.md) | Face payload to XMP persistence mapping      |
 
 ## Machine-Readable Schemas
 

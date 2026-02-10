@@ -9,14 +9,30 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function add_action;
+use function array_filter;
+use function array_map;
+use function array_unique;
+use function array_values;
+use function do_action;
 use function get_current_user_id;
 use function in_array;
 use function is_array;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
+use function time;
+use function wp_next_scheduled;
+use function wp_schedule_single_event;
 
 class ClusterMutationsController extends AbstractRecognitionProxyController {
+	private const XMP_REFRESH_CLUSTER_HOOK = 'acx_refresh_xmp_for_clusters';
+	private const XMP_REFRESH_DELAY_SECONDS = 1;
+
+	public function __construct() {
+		add_action( self::XMP_REFRESH_CLUSTER_HOOK, array( $this, 'refresh_xmp_for_cluster_ids_async' ), 10, 2 );
+	}
+
 	public function register_routes(): void {
 		register_rest_route(
 			'acx/v1',
@@ -141,7 +157,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			$payload['block_from_cluster'] = rest_sanitize_boolean( $block_from_cluster );
 		}
 
-		return $this->proxy_request( 'POST', '/recognition/clusters/reassign', $payload );
+		$response = $this->proxy_request( 'POST', '/recognition/clusters/reassign', $payload );
+		$this->maybe_trigger_xmp_refresh_for_response( $response, array(), 'cluster-reassign' );
+		return $response;
 	}
 
 	public function update_cluster_label( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -161,7 +179,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			'label'     => $label,
 		);
 
-		return $this->proxy_request( 'PATCH', sprintf( '/recognition/clusters/%s', $cluster_id ), $payload );
+		$response = $this->proxy_request( 'PATCH', sprintf( '/recognition/clusters/%s', $cluster_id ), $payload );
+		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $cluster_id ), 'cluster-label-update' );
+		return $response;
 	}
 
 	public function dismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -214,7 +234,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			$payload['target_label'] = $target_label;
 		}
 
-		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/merge', $source_id ), $payload );
+		$response = $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/merge', $source_id ), $payload );
+		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $source_id, $target_cluster_id ), 'cluster-merge' );
+		return $response;
 	}
 
 	public function split_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -239,7 +261,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			$payload['split_mode'] = $split_mode;
 		}
 
-		return $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/split', $cluster_id ), $payload );
+		$response = $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/split', $cluster_id ), $payload );
+		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $cluster_id ), 'cluster-split' );
+		return $response;
 	}
 
 	public function create_cluster_for_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -261,7 +285,9 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			'user_id'     => get_current_user_id(),
 		);
 
-		return $this->proxy_request( 'POST', '/recognition/clusters/create-for-identity', $payload );
+		$response = $this->proxy_request( 'POST', '/recognition/clusters/create-for-identity', $payload );
+		$this->maybe_trigger_xmp_refresh_for_response( $response, array(), 'cluster-create-for-identity' );
+		return $response;
 	}
 
 	public function revert_merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -292,6 +318,143 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			'user_id'            => get_current_user_id(),
 		);
 
-		return $this->proxy_request( 'POST', '/recognition/clusters/revert-merge', $payload );
+		$response = $this->proxy_request( 'POST', '/recognition/clusters/revert-merge', $payload );
+		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $target_cluster_id ), 'cluster-revert-merge' );
+		return $response;
+	}
+
+	/**
+	 * @param string[] $default_cluster_ids
+	 */
+	private function maybe_trigger_xmp_refresh_for_response( WP_REST_Response|WP_Error $response, array $default_cluster_ids, string $context ): void {
+		if ( ! ( $response instanceof WP_REST_Response ) || $response->get_status() >= 400 ) {
+			return;
+		}
+
+		$cluster_ids = $this->extract_cluster_ids_from_response_data( $response->get_data(), $default_cluster_ids );
+		$this->trigger_xmp_refresh_for_cluster_ids( $cluster_ids, $context );
+	}
+
+	/**
+	 * @param mixed $data
+	 * @param string[] $default_cluster_ids
+	 * @return string[]
+	 */
+	private function extract_cluster_ids_from_response_data( $data, array $default_cluster_ids = array() ): array {
+		$cluster_ids = $default_cluster_ids;
+
+		if ( ! is_array( $data ) ) {
+			return $this->sanitize_cluster_ids( $cluster_ids );
+		}
+
+		foreach ( array( 'cluster_id', 'source_cluster_id', 'target_cluster_id', 'new_cluster_id' ) as $key ) {
+			$value = sanitize_text_field( (string) ( $data[ $key ] ?? '' ) );
+			if ( '' !== $value ) {
+				$cluster_ids[] = $value;
+			}
+		}
+
+		if ( is_array( $data['new_cluster_ids'] ?? null ) ) {
+			foreach ( $data['new_cluster_ids'] as $new_cluster_id ) {
+				$value = sanitize_text_field( (string) $new_cluster_id );
+				if ( '' !== $value ) {
+					$cluster_ids[] = $value;
+				}
+			}
+		}
+
+		if ( is_array( $data['clusters'] ?? null ) ) {
+			foreach ( $data['clusters'] as $cluster ) {
+				if ( ! is_array( $cluster ) ) {
+					continue;
+				}
+
+				$value = sanitize_text_field( (string) ( $cluster['id'] ?? $cluster['cluster_id'] ?? '' ) );
+				if ( '' !== $value ) {
+					$cluster_ids[] = $value;
+				}
+			}
+		}
+
+		return $this->sanitize_cluster_ids( $cluster_ids );
+	}
+
+	/**
+	 * @param string[] $cluster_ids
+	 */
+	private function trigger_xmp_refresh_for_cluster_ids( array $cluster_ids, string $context ): void {
+		$normalized_cluster_ids = $this->sanitize_cluster_ids( $cluster_ids );
+		if ( empty( $normalized_cluster_ids ) ) {
+			return;
+		}
+
+		$args = array( $normalized_cluster_ids, $context );
+		if ( false === wp_next_scheduled( self::XMP_REFRESH_CLUSTER_HOOK, $args ) ) {
+			wp_schedule_single_event( time() + self::XMP_REFRESH_DELAY_SECONDS, self::XMP_REFRESH_CLUSTER_HOOK, $args );
+		}
+	}
+
+	/**
+	 * @param string[] $cluster_ids
+	 */
+	public function refresh_xmp_for_cluster_ids_async( array $cluster_ids, string $context ): void {
+		$normalized_cluster_ids = $this->sanitize_cluster_ids( $cluster_ids );
+		if ( empty( $normalized_cluster_ids ) ) {
+			return;
+		}
+
+		$media_ids = array();
+		foreach ( $normalized_cluster_ids as $cluster_id ) {
+			$members_response = $this->proxy_request(
+				'GET',
+				sprintf( '/recognition/clusters/%s/members', $cluster_id ),
+				array(),
+				array( 'tenant_id' => $this->get_tenant_id() )
+			);
+
+			if ( ! ( $members_response instanceof WP_REST_Response ) || 200 !== $members_response->get_status() ) {
+				continue;
+			}
+
+			$members_data = $members_response->get_data();
+			// Compatibility: legacy service returns a flat list, newer shape wraps members in {members:[...]}.
+			if ( is_array( $members_data ) && is_array( $members_data['members'] ?? null ) ) {
+				$members_data = $members_data['members'];
+			}
+
+			if ( ! is_array( $members_data ) ) {
+				continue;
+			}
+
+			foreach ( $members_data as $member ) {
+				if ( ! is_array( $member ) ) {
+					continue;
+				}
+
+				$media_id = absint( $member['media_id'] ?? 0 );
+				if ( $media_id > 0 ) {
+					$media_ids[] = $media_id;
+				}
+			}
+		}
+
+		foreach ( array_values( array_unique( $media_ids ) ) as $media_id ) {
+			do_action( 'acx_recognition_complete', $media_id, $context );
+		}
+	}
+
+	/**
+	 * @param string[] $cluster_ids
+	 * @return string[]
+	 */
+	private function sanitize_cluster_ids( array $cluster_ids ): array {
+		$normalized = array_map(
+			static function ( string $cluster_id ): string {
+				return sanitize_text_field( $cluster_id );
+			},
+			$cluster_ids
+		);
+
+		return array_values( array_unique( array_filter( $normalized ) ) );
 	}
 }

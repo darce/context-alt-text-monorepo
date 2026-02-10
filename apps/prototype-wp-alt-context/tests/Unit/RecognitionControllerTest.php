@@ -22,8 +22,8 @@ class RecognitionControllerTest extends TestCase
         parent::setUp();
 
         // Set up recognition URL so controller doesn't fail on missing config
-        $this->setOption('alt_context_recognition_url', 'http://localhost:8000');
-        $this->setOption('alt_context_tier', 'free');
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_tier', 'free');
 
         $this->controller = new RecognitionController();
     }
@@ -287,6 +287,222 @@ class RecognitionControllerTest extends TestCase
         parse_str(is_string($queryString) ? $queryString : '', $query);
 
         $this->assertSame('true', $query['include_debug'] ?? null);
+    }
+
+    public function testUpdateClusterLabelTriggersXmpRefreshForClusterMembers(): void
+    {
+        $clusterId = '5bc82b54-e3ca-41f9-a665-87f57ab2b3ce';
+        $captured = [];
+
+        add_action(
+            'acx_recognition_complete',
+            static function ($attachmentId, $context) use (&$captured): void {
+                $captured[] = [(int) $attachmentId, (string) $context];
+            },
+            10,
+            2
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'id' => $clusterId,
+                'label' => 'Daniel',
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['identity_id' => 'a', 'media_id' => 501],
+                ['identity_id' => 'b', 'media_id' => 502],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('PATCH', '/acx/v1/recognition/clusters/' . $clusterId);
+        $request->set_param('cluster_id', $clusterId);
+        $request->set_param('label', 'Daniel');
+
+        $response = $this->controller->update_cluster_label($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([], $captured);
+        $this->assertNotFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$clusterId], 'cluster-label-update'])
+        );
+
+        do_action('acx_refresh_xmp_for_clusters', [$clusterId], 'cluster-label-update');
+
+        $this->assertSame(
+            [
+                [501, 'cluster-label-update'],
+                [502, 'cluster-label-update'],
+            ],
+            $captured
+        );
+    }
+
+    public function testReassignClusterIdentityTriggersXmpRefreshForSourceAndTargetClusters(): void
+    {
+        $sourceClusterId = '92b407ec-2768-4ff3-90e4-e33afbf7c609';
+        $targetClusterId = '19734ad5-4d95-4077-a711-8e407a9dd9ff';
+        $captured = [];
+
+        add_action(
+            'acx_recognition_complete',
+            static function ($attachmentId, $context) use (&$captured): void {
+                $captured[] = [(int) $attachmentId, (string) $context];
+            },
+            10,
+            2
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'identity_id' => 'f30df8eb-4946-4a09-9df9-b5d74e8e0d1d',
+                'source_cluster_id' => $sourceClusterId,
+                'target_cluster_id' => $targetClusterId,
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['identity_id' => 'm1', 'media_id' => 601],
+                ['identity_id' => 'm2', 'media_id' => 602],
+            ]),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'members' => [
+                    ['identity_id' => 'm3', 'media_id' => 602],
+                    ['identity_id' => 'm4', 'media_id' => 603],
+                ],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/reassign');
+        $request->set_param('identity_id', 'f30df8eb-4946-4a09-9df9-b5d74e8e0d1d');
+        $request->set_param('target_cluster_id', $targetClusterId);
+
+        $response = $this->controller->reassign_cluster_identity($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([], $captured);
+        $this->assertNotFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$sourceClusterId, $targetClusterId], 'cluster-reassign'])
+        );
+
+        do_action('acx_refresh_xmp_for_clusters', [$sourceClusterId, $targetClusterId], 'cluster-reassign');
+
+        $this->assertSame(
+            [
+                [601, 'cluster-reassign'],
+                [602, 'cluster-reassign'],
+                [603, 'cluster-reassign'],
+            ],
+            $captured
+        );
+    }
+
+    public function testMergeClusterSchedulesAsyncXmpRefresh(): void
+    {
+        $sourceClusterId = '6f83f4e9-fe44-49d0-9ed9-62581f5a6ddf';
+        $targetClusterId = '2e489e1d-0f64-4694-9082-5779d6cc7e52';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['merged' => true]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $sourceClusterId . '/merge');
+        $request->set_param('source_id', $sourceClusterId);
+        $request->set_param('target_cluster_id', $targetClusterId);
+
+        $response = $this->controller->merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertNotFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$sourceClusterId, $targetClusterId], 'cluster-merge'])
+        );
+    }
+
+    public function testSplitClusterSchedulesAsyncXmpRefreshIncludingNewClusterIds(): void
+    {
+        $clusterId = '7e2e1003-0e24-4e8c-a4d8-97ec8d269ba8';
+        $newClusterA = '9b0a0e4d-2658-4eac-81f0-fba5f89e5b82';
+        $newClusterB = 'dd333f66-e5fd-4c26-84a0-5f3df64d7c66';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'new_cluster_ids' => [$newClusterA, $newClusterB],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $clusterId . '/split');
+        $request->set_param('cluster_id', $clusterId);
+        $request->set_param('n_clusters', 2);
+
+        $response = $this->controller->split_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertNotFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$clusterId, $newClusterA, $newClusterB], 'cluster-split'])
+        );
+    }
+
+    public function testCreateClusterForIdentitySchedulesAsyncXmpRefresh(): void
+    {
+        $newClusterId = 'a3e8ac0f-3f7e-494c-a814-265184ceb4c2';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'cluster_id' => $newClusterId,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
+        $request->set_param('identity_id', 'd07a0e5b-0607-49dc-8b7f-8f63f6f18d2a');
+        $request->set_param('label', 'Curated Name');
+
+        $response = $this->controller->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertNotFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$newClusterId], 'cluster-create-for-identity'])
+        );
+    }
+
+    public function testRevertMergeClusterSchedulesAsyncXmpRefresh(): void
+    {
+        $targetClusterId = 'de7e4cc7-bfe2-45f7-9c04-79f34dcd73f1';
+        $sourceClusterId = '62096ccf-1c96-4de8-bf1c-2ca71411c96a';
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'source_cluster_id' => $sourceClusterId,
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/revert-merge');
+        $request->set_param('target_cluster_id', $targetClusterId);
+        $request->set_param('moved_identity_ids', ['id-1', 'id-2']);
+
+        $response = $this->controller->revert_merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertNotFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$targetClusterId, $sourceClusterId], 'cluster-revert-merge'])
+        );
     }
 
     /**

@@ -150,3 +150,88 @@ The commit addresses findings M-1 through M-5 and L-1/L-2 from `web-deployment-c
 | — | **Resolved: G-5** | Double blank line removed from SCSS. |
 | — | **Resolved: G-6** | `MockEventSource` comment updated with explicit rationale. |
 | — | **Resolved: G-7** | `test.todo` entries now carry tracking IDs/references. |
+
+---
+
+## Review: Commit 2b690a2 — "Check $_tier implementation"
+
+> **Parent:** `69ab3b4`  
+> **Date:** 2026-02-09  
+> **Files changed:** 9 source files + 2 docs
+
+### Automated Gate Results (Post-2b690a2)
+
+| Check | Result |
+|---|---|
+| `npm run typecheck` | **pass** |
+| `npm run lint` | **pass** |
+| `npm run test -- --run` | **pass** (29 files, 138 passed, 3 todo) |
+| `composer test` | **pass** (41 tests, 102 assertions) |
+| `composer cs-check` | **pass** (exit 0) |
+
+### Changes Reviewed
+
+1. **`alt-context.php`** — Trailing space removed from `Requires PHP: 8.0 ` header. Cosmetic fix, correct.
+2. **`composer.json`** — `cs-check`/`cs-fix` scripts refactored: added `-n` (no warnings), added long `--exclude` list for incompatible WordPress sniffs, dropped `tests` directory from scan targets. Resolves G-1.
+3. **`RosterPage.test.tsx`** — Aliases `ClusterGallery`→`ClusterGrid` and `ClusterDrawer`→`ClusterDrawerPanel` replaced with canonical names in imports and describe blocks. Resolves G-3.
+4. **`WorkbenchPage.test.tsx`** — `test.todo` items tagged with `[ACX-4130-G7-WB-*]` tracking IDs and comment linking to review doc. Resolves G-7 (partial).
+5. **`IdentityClusterList.test.tsx`** — `MockEventSource` comment expanded with explicit rationale for retention. Resolves G-6.
+6. **`_workbench.scss`** — Double blank line removed. Resolves G-5.
+7. **`class-admin.php`** — `'alt-context-settings'` removed from `SUPPORTED_PAGE_SLUGS`. Resolves G-2.
+8. **`class-api.php`** — `$thumb ?: null` replaced with `false === $thumb ? null : $thumb`. Semantically more explicit.
+9. **`trait-batch-limits.php`** — Comment on `unset($_tier)` expanded with design rationale.
+
+### New Findings
+
+#### G-8 — MEDIUM — ANTIPATTERN: `class-api.php` indentation broken on `thumbnailUrl` line
+
+**Finding:** The replacement on [class-api.php](apps/prototype-wp-alt-context/src/api/class-api.php#L141) introduced a tab-alignment error. The `'thumbnailUrl'` key is indented with an extra tab compared to its siblings in the array:
+
+```php
+				'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
+					'thumbnailUrl' => false === $thumb ? null : $thumb,   // ← extra tab
+				'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
+```
+
+All other keys in the array use 4 tabs of indentation; `thumbnailUrl` uses 5. This is a formatting regression that breaks visual alignment.
+
+**Severity:** MEDIUM — Not a runtime defect, but will confuse reviewers and may cause PHPCS violations if the `tests` directory or this file is scanned with stricter rules.
+
+**Recommendation:** Align `'thumbnailUrl'` to 4 tabs, matching its siblings.
+
+---
+
+#### G-9 — MEDIUM — GAP: `tests` directory removed from `cs-check` scope
+
+**Finding:** The `cs-check` script in [composer.json](apps/prototype-wp-alt-context/composer.json#L32) now targets `src alt-context.php` only. The `tests` directory was dropped entirely. While test files have heavy formatting incompatibilities with WordPress coding standards, excluding them means no code-style enforcement on test code at all.
+
+**Severity:** MEDIUM — Test code may drift in style without any lint coverage. A narrower exclusion (e.g., keeping tests but adding test-specific exclusions) would be preferable.
+
+**Recommendation:** Either restore `tests` to the targets with an additional `--exclude` for test-only incompatible sniffs, or document the exclusion rationale in the composer.json or a project-level config note.
+
+---
+
+#### G-10 — LOW — GAP: Massive `--exclude` list in `composer.json` is fragile
+
+**Finding:** The `cs-check` and `cs-fix` scripts each contain a ~850-character `--exclude` flag with 28 individual sniff names. This is duplicated between both scripts and is difficult to maintain. Any change requires updating both lines in lockstep.
+
+**Severity:** LOW — Works correctly today, but maintenance burden is high.
+
+**Recommendation:** Extract the exclusion list to a `phpcs.xml` or `.phpcs.xml.dist` configuration file, which both scripts can reference via `--standard=./phpcs.xml`. This is the standard WordPress plugin approach and eliminates duplication.
+
+---
+
+### Updated Finding Status
+
+| ID | Status | Notes |
+|---|---|---|
+| G-1 | **Resolved** | PHPCS gate passes with scoped exclusions |
+| G-2 | **Resolved** | Phantom slug removed |
+| G-3 | **Resolved** | Canonical names in tests |
+| G-4 | **Tracked** | Decomposition plan in `recognition-controller-decomposition-plan.md` |
+| G-5 | **Resolved** | SCSS blank line removed |
+| G-6 | **Resolved** | MockEventSource comment clarified |
+| G-7 | **Resolved** | Todo items tagged with tracking IDs |
+| G-8 | **New** | `thumbnailUrl` indentation regression in `class-api.php` |
+| G-9 | **New** | `tests` dir excluded from `cs-check` scope |
+| G-10 | **New** | Fragile inline `--exclude` list; should use `phpcs.xml` |

@@ -208,15 +208,15 @@
     justify-content: center;
 
     &:hover {
-      opacity: 1 !important;
-      color: #ef4444 !important; // red-500
-      background-color: #fee2e2 !important; // red-100
+      opacity: 1;
+      color: var(--acx-color-danger);
+      background-color: var(--acx-color-danger-soft);
     }
   }
 
   &__suggestion-label {
     font-size: 13px;
-    color: #0f172a; // slate-950
+    color: var(--acx-color-text);
   }
 
   &__save {
@@ -280,7 +280,7 @@
     width: 100%;
     margin-top: 4px;
     font-size: 12px;
-    color: #ef4444; // red-500
+    color: var(--acx-color-danger);
   }
 
   &__suggestion-meta {
@@ -374,7 +374,7 @@
 
 // Ensure combobox content has background
 .acx-combobox__content {
-  background-color: #fff !important;
+  background-color: var(--acx-color-surface-alt);
   z-index: 9999; // Ensure it sits above other elements
 }
 

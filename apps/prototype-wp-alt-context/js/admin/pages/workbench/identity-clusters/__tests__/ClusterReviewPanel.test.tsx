@@ -1,7 +1,7 @@
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { fetchClusterMembers, removeClusterMember } from '../../../../api/recognition';
 import { queryKeys } from '../../../../api/queryKeys';
@@ -60,10 +60,6 @@ describe('ClusterReviewPanel', () => {
     vi.resetAllMocks();
   });
 
-  beforeEach(() => {
-    window.confirm = vi.fn().mockReturnValue(true);
-  });
-
   it('removes a cluster member and invalidates related queries', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const removeClusterMemberMock = vi.mocked(removeClusterMember);
@@ -92,6 +88,7 @@ describe('ClusterReviewPanel', () => {
 
     const user = userEvent.setup();
     await user.click(screen.getByLabelText('Remove from cluster'));
+    await user.click(screen.getByRole('button', { name: 'Remove member' }));
 
     await waitFor(() => {
       expect(removeClusterMemberMock).toHaveBeenCalledWith('identity-1', true);
@@ -158,7 +155,6 @@ describe('ClusterReviewPanel', () => {
   it('does not remove member when user cancels confirmation dialog', async () => {
     const fetchClusterMembersMock = vi.mocked(fetchClusterMembers);
     const removeClusterMemberMock = vi.mocked(removeClusterMember);
-    window.confirm = vi.fn().mockReturnValue(false);
     fetchClusterMembersMock.mockResolvedValue([
       {
         identity_id: 'identity-3',
@@ -178,6 +174,7 @@ describe('ClusterReviewPanel', () => {
     });
 
     await user.click(screen.getByLabelText('Remove from cluster'));
+    await user.click(screen.getByRole('button', { name: 'Cancel' }));
     expect(removeClusterMemberMock).not.toHaveBeenCalled();
   });
 

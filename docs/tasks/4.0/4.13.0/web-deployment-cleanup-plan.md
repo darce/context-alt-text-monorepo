@@ -425,7 +425,7 @@ Tracked in [recognition-controller-decomposition-plan.md](recognition-controller
 
 ## Carry-Forward Items (Pre-Existing / Cross-Audit)
 
-Items discovered during cleanup verification that were **not introduced** by cleanup commits (`f7ff6f8..HEAD`) but remain open in the codebase. Included here for tracking continuity.
+Items discovered during cleanup verification that were **not introduced** by cleanup commits (`f7ff6f8..HEAD`). Included here for tracking continuity with explicit current status.
 
 ### From 4.12.0 Branch Audit (Overlapping WP Plugin Files)
 
@@ -433,22 +433,21 @@ Items discovered during cleanup verification that were **not introduced** by cle
 |---|---|---|---|---|---|
 | 4.12-M14 | MEDIUM | ANTIPATTERN | Non-null assertions (`!`) on nullable API data in `SuggestionReviewPanel.tsx`. Originally flagged as `suggestion.identity_media_url!` and `suggestion.representative_bbox!` suppressing nullable types without guards. | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` — targeted grep now shows no remaining postfix non-null assertions in the component. | **Resolved** — verification completed in Phase 5 delta (`review-phase5-post-cleanup-delta.md`). |
 | 4.12-M15 | MEDIUM | ANTIPATTERN | `fetchApi` returned `undefined as T` for empty/204 responses, typing `undefined` as the expected interface and causing runtime errors on property access. | `js/admin/utils/http.ts:29` — return type is now `Promise<T \| undefined>`, and `undefined` is returned directly (not cast). `return payload as T` on L53 casts parsed JSON from `unknown`, which is the standard pattern. | **Resolved** — `undefined as T` eliminated; return type correctly unions `T \| undefined`. |
-| 4.12-L13 | LOW | ANTIPATTERN | `window.confirm()` used for destructive member-removal action. Not styleable, not accessible — should use a dialog component. | `js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx:44` — `window.confirm(__(…))` | **Open** — add to Phase 3. |
-| 4.12-L15 | LOW | COMPLEXITY | Magic hex colors (`#fef2f2`, `#fecaca`, `#991b1b`) hardcoded in SCSS without CSS custom properties / design tokens. | `js/admin/styles/components/_cluster-panels.scss:50-53` | **Open** — add to Phase 3 (pairs with `CF-L1` token consistency work). |
-| 4.12-L16 | LOW | COMPLEXITY | Magic number `top: 46px` for sticky positioning without a documenting CSS custom property (32px admin-bar + 14px breathing room). | `js/admin/styles/components/_workbench.scss:401` | **Open** — add to Phase 3. |
+| 4.12-L13 | LOW | ANTIPATTERN | `window.confirm()` used for destructive member-removal action. Not styleable, not accessible — should use a dialog component. | Removal confirmation now uses Radix dialogs in `js/admin/pages/workbench/identity-clusters/ClusterReviewPanel.tsx` and `js/admin/pages/workbench/identity-clusters/IdentityClusterItem.tsx` (`DialogRoot` + confirm/cancel controls). | **Resolved (2026-02-10)** — replaced `window.confirm` flows with accessible dialogs. |
+| 4.12-L15 | LOW | COMPLEXITY | Magic hex colors (`#fef2f2`, `#fecaca`, `#991b1b`) hardcoded in SCSS without CSS custom properties / design tokens. | `js/admin/styles/tokens/_colors.scss` now defines `--acx-color-danger-soft|border|strong`, and `js/admin/styles/components/_cluster-panels.scss` consumes those tokens without hex fallbacks. | **Resolved (2026-02-10)** — extracted hardcoded danger colors into shared design tokens. |
+| 4.12-L16 | LOW | COMPLEXITY | Magic number `top: 46px` for sticky positioning without a documenting CSS custom property (32px admin-bar + 14px breathing room). | `js/admin/styles/tokens/_spacing.scss` now defines `--acx-workbench-sticky-top`, consumed at `js/admin/styles/components/_workbench.scss` for sticky offset. | **Resolved (2026-02-10)** — replaced literal `46px` with a documented custom property. |
 
 ### Pre-Existing Style / Documentation Items
 
 | ID | Severity | Category | Finding | Evidence | Recommended Action |
 |---|---|---|---|---|---|
-| CF-L1 | LOW | ANTIPATTERN | `--acx-color-danger` CSS custom property has three divergent fallback hex values across SCSS files: `#a00` (workbench L286), `#b42318` (workbench L363), `#ef4444` (cluster-panels L105). | `js/admin/styles/components/_workbench.scss:286`, `_workbench.scss:363`, `_cluster-panels.scss:105` | Unify fallback values to a single canonical hex (e.g., the design-token source value) across all `var(--acx-color-danger, …)` usages. |
-| CF-L2 | LOW | GAP | Unstructured `TODO: Restore tier-based limits post-MVP` in `trait-batch-limits.php` class docblock. References `stability-audit-2026-01-20.md` on the next line but lacks a structured tracking ID like `TODO(…)`. | `src/support/trait-batch-limits.php:16` | Convert to structured format, e.g., `TODO(post-mvp-tiers):`, or add an issue reference. |
+| CF-L1 | LOW | ANTIPATTERN | `--acx-color-danger` CSS custom property had divergent fallback hex values across SCSS files (`#a00`, `#b42318`, `#ef4444`). | `js/admin/styles/tokens/_colors.scss` now defines canonical danger tokens; `js/admin/styles/components/_workbench.scss` and `js/admin/styles/components/_cluster-panels.scss` now consume `var(--acx-color-danger)` without divergent fallbacks. | **Resolved (2026-02-10)** — danger-token fallbacks unified via shared token declarations. |
+| CF-L2 | LOW | GAP | Unstructured `TODO: Restore tier-based limits post-MVP` in `trait-batch-limits.php` class docblock. References `stability-audit-2026-01-20.md` on the next line but lacks a structured tracking ID like `TODO(…)`. | `src/support/trait-batch-limits.php` now uses `TODO(post-mvp-tiers):` with an explicit reference line. | **Resolved (2026-02-10)** — converted to structured TODO format with tracking context. |
 
 ### Phase Mapping
 
-- **Phase 3** should include `CF-L1` (SCSS token fallback unification) and `CF-L2` (structured TODO format).
-- **Phase 3** should include `4.12-L13` (replace `window.confirm` with dialog component), `4.12-L15` (extract magic hex colors to design tokens), and `4.12-L16` (replace magic `top: 46px` with documented custom property).
-- `4.12-M14` and `4.12-M15` require no further action (resolved).
+- **Phase 3 carry-forward scope completed (2026-02-10)**: `CF-L1`, `CF-L2`, `4.12-L13`, `4.12-L15`, and `4.12-L16` are resolved.
+- `4.12-M14` and `4.12-M15` remain no-action resolved items from prior verification.
 
 ---
 

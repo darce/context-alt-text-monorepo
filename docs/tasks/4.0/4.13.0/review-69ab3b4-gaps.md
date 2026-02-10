@@ -232,6 +232,6 @@ All other keys in the array use 4 tabs of indentation; `thumbnailUrl` uses 5. Th
 | G-5 | **Resolved** | SCSS blank line removed |
 | G-6 | **Resolved** | MockEventSource comment clarified |
 | G-7 | **Resolved** | Todo items tagged with tracking IDs |
-| G-8 | **Open** | `thumbnailUrl` alignment fixed, but `return array(…)` block shifted to 5 tabs (should be 4); `dimensions` children at same level as parent key; closing elements each under-indented by one tab. Carried forward as G-11 in `review-87e6ea9-gaps.md`. |
+| G-8 | **Resolved** | Follow-up G-11 indentation issues were corrected in `src/api/class-api.php`; array block now matches expected tab nesting. |
 | G-9 | **Closed** | Confirmed: `phpcs.xml.dist` includes `tests` directory; only `tests/stubs/wp.php` excluded. |
 | G-10 | **Closed** | Confirmed: `composer.json` scripts reference `--standard=phpcs.xml.dist`; all exclusions in one file. |

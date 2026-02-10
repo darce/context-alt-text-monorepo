@@ -30,10 +30,11 @@ trait BatchLimits {
 	/**
 	 * Get the batch limit for a specific tier.
 	 *
-	 * @param string $tier The tier name (unused for MVP).
+	 * @param string $_tier The tier name (unused for MVP).
 	 * @return int The batch limit.
 	 */
-	protected function get_tier_batch_limit_for( string $tier ): int {
+	protected function get_tier_batch_limit_for( string $_tier ): int {
+		unset( $_tier ); // MVP: tiered limits are intentionally disabled.
 		// MVP: All tiers use the same limit.
 		return self::MVP_BATCH_LIMIT;
 	}

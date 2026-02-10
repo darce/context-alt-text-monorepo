@@ -29,8 +29,8 @@
   "scripts": {
     "test": "vendor/bin/phpunit",
     "test:unit": "vendor/bin/phpunit --testsuite Unit",
-    "cs-check": "vendor/bin/phpcs --standard=WordPress",
-    "cs-fix": "vendor/bin/phpcbf --standard=WordPress"
+    "cs-check": "vendor/bin/phpcs --standard=WordPress src tests alt-context.php",
+    "cs-fix": "vendor/bin/phpcbf --standard=WordPress src tests alt-context.php"
   },
   "config": {
     "allow-plugins": {

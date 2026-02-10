@@ -1,6 +1,7 @@
 import { fireEvent, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { ClusterDrawer, ClusterGallery } from '../RosterPage';
+import { ClusterDrawerPanel as ClusterDrawer } from '../roster/ClusterDrawerPanel';
+import { ClusterGrid as ClusterGallery } from '../roster/ClusterGrid';
 import type { ClusterSummary } from '../../api/recognition';
 
 vi.mock('@wordpress/i18n', () => ({

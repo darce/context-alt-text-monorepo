@@ -287,7 +287,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
               etaSeconds={etaSeconds}
               isSynced={!isPrimary && !!latestJobId}
             />
-            {!isScanRunning && !hasIdentities && !isScanRunning && <NoMediaPanel />}
+            {!isScanRunning && !hasIdentities && <NoMediaPanel />}
             {clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
               <ClusterReviewPanel
                 clusterId={clusterPanel.clusterId}

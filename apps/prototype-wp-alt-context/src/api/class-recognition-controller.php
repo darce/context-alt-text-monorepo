@@ -130,30 +130,10 @@ class RecognitionController {
 
 		register_rest_route(
 			'acx/v1',
-			'/recognition/clusters/events',
-			[
-				'methods'             => 'GET',
-				'callback'            => [ $this, 'stream_cluster_events' ],
-				'permission_callback' => [ $this, 'can_manage_recognition' ],
-			]
-		);
-
-		register_rest_route(
-			'acx/v1',
 			'/recognition/clusters/labels',
 			[
 				'methods'             => 'GET',
 				'callback'            => [ $this, 'list_cluster_labels' ],
-				'permission_callback' => [ $this, 'can_manage_recognition' ],
-			]
-		);
-
-		register_rest_route(
-			'acx/v1',
-			'/recognition/training-stage',
-			[
-				'methods'             => 'GET',
-				'callback'            => [ $this, 'get_training_stage' ],
 				'permission_callback' => [ $this, 'can_manage_recognition' ],
 			]
 		);
@@ -244,16 +224,6 @@ class RecognitionController {
 			[
 				'methods'             => 'POST',
 				'callback'            => [ $this, 'create_cluster_for_identity' ],
-				'permission_callback' => [ $this, 'can_manage_recognition' ],
-			]
-		);
-
-		register_rest_route(
-			'acx/v1',
-			'/recognition/clusters/recover-orphans',
-			[
-				'methods'             => 'POST',
-				'callback'            => [ $this, 'recover_orphan_identities' ],
 				'permission_callback' => [ $this, 'can_manage_recognition' ],
 			]
 		);
@@ -638,14 +608,6 @@ class RecognitionController {
 		return $this->proxy_request( 'POST', '/recognition/clustering/jobs', $body );
 	}
 
-	public function recover_orphan_identities( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$payload = [
-			'tenant_id' => $this->get_tenant_id(),
-		];
-
-		return $this->proxy_request( 'POST', '/recognition/clusters/recover-orphans', $payload );
-	}
-
 	public function list_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$limit  = absint( $request->get_param( 'limit' ) ?? 50 );
 		$limit  = min( $limit, 500 );
@@ -729,67 +691,12 @@ class RecognitionController {
 		return $response;
 	}
 
-	public function stream_cluster_events( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		if ( function_exists( 'set_time_limit' ) ) {
-			@set_time_limit( 0 );
-		}
-		if ( function_exists( 'ignore_user_abort' ) ) {
-			@ignore_user_abort( true );
-		}
-
-		nocache_headers();
-		header( 'Content-Type: text/event-stream' );
-		header( 'Cache-Control: no-cache' );
-		header( 'X-Accel-Buffering: no' );
-
-		while ( ob_get_level() > 0 ) {
-			ob_end_flush();
-		}
-		@ini_set( 'output_buffering', 'off' );
-		@ini_set( 'zlib.output_compression', '0' );
-
-		$last_ping = microtime( true );
-		$tenant_id = $this->get_tenant_id();
-
-		echo ": connected\n\n";
-		@ob_flush();
-		@flush();
-
-		while ( ! connection_aborted() ) {
-			$now = microtime( true );
-			if ( $now - $last_ping >= 15 ) {
-				echo "event: ping\n";
-				echo 'data: ' . wp_json_encode(
-					[
-						'event_type' => 'heartbeat',
-						'timestamp'  => gmdate( 'c' ),
-						'tenant_id'  => $tenant_id,
-					]
-				) . "\n\n";
-				@ob_flush();
-				@flush();
-				$last_ping = $now;
-			}
-			usleep( 250000 );
-		}
-
-		exit;
-	}
-
 	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		$query = [
 			'tenant_id' => $this->get_tenant_id(),
 		];
 
 		return $this->proxy_request( 'GET', '/recognition/clusters/labels', [], $query );
-	}
-
-	public function get_training_stage( WP_REST_Request $request ): WP_REST_Response|WP_Error {
-		$query = [
-			'tenant_id' => $this->get_tenant_id(),
-		];
-
-		return $this->proxy_request( 'GET', '/recognition/training-stage', [], $query );
 	}
 
 	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -984,9 +891,8 @@ class RecognitionController {
 			'media_ids' => $ids,
 		];
 
-		// Forward include_debug param for development environments
 		$include_debug = $request->get_param( 'include_debug' );
-		if ( $include_debug ) {
+		if ( null !== $include_debug && true === rest_sanitize_boolean( $include_debug ) ) {
 			$query['include_debug'] = 'true';
 		}
 

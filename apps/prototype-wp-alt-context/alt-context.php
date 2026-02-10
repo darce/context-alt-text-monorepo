@@ -4,14 +4,14 @@
  * Plugin Name: Alt Context
  * Plugin URI: https://github.com/darce/context-alt-text-monorepo
  * Description: Batch-generate contextually rich alt-text with facial recognition.
- * Version: 0.0.1
+ * Version: 0.0.2
  * Author: Daniel Arcé
  * License: GPL v2 or later
  * License URI: https://www.gnu.org/licenses/gpl-2.0.html
  * Text Domain: alt-context
  * Domain Path: /public/languages
  * Requires at least: 6.0
- * Tested up to: 6.3
+ * Tested up to: 6.8
  * Requires PHP: 8.0
  * Network: false
  *
@@ -23,7 +23,15 @@ declare(strict_types=1);
 use AltContext\Admin\Admin;
 use AltContext\Admin\Menu;
 use AltContext\Api\Api;
+use AltContext\Api\XmpEmbedController;
 use AltContext\AltContext;
+use AltContext\Cli\XmpBackfillCommand;
+use AltContext\Media\AttachmentXmpMetricsPersistor;
+use AltContext\Media\ImageXmpWriter;
+use AltContext\Media\JpegXmpInjector;
+use AltContext\Media\PngXmpInjector;
+use AltContext\Media\ProxyFaceMetricsSource;
+use AltContext\Media\XmpImageRegionPacketBuilder;
 use AltContext\Support\LifecycleManager;
 use AltContext\Admin\DashboardPage;
 use AltContext\Admin\WorkbenchPage;
@@ -42,24 +50,24 @@ if (!defined('ABSPATH')) {
 $pluginMeta = get_file_data(__FILE__, ['Version' => 'Version']);
 $pluginVersion = trim((string) ($pluginMeta['Version'] ?? ''));
 
-if (!defined('ALT_CONTEXT_PLUGIN_FILE')) {
-    define('ALT_CONTEXT_PLUGIN_FILE', __FILE__);
+if (!defined('ACX_PLUGIN_FILE')) {
+    define('ACX_PLUGIN_FILE', __FILE__);
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_DIR')) {
-    define('ALT_CONTEXT_PLUGIN_DIR', plugin_dir_path(__FILE__));
+if (!defined('ACX_PLUGIN_DIR')) {
+    define('ACX_PLUGIN_DIR', plugin_dir_path(__FILE__));
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_URL')) {
-    define('ALT_CONTEXT_PLUGIN_URL', plugin_dir_url(__FILE__));
+if (!defined('ACX_PLUGIN_URL')) {
+    define('ACX_PLUGIN_URL', plugin_dir_url(__FILE__));
 }
 
-if (!defined('ALT_CONTEXT_PLUGIN_BASENAME')) {
-    define('ALT_CONTEXT_PLUGIN_BASENAME', plugin_basename(__FILE__));
+if (!defined('ACX_PLUGIN_BASENAME')) {
+    define('ACX_PLUGIN_BASENAME', plugin_basename(__FILE__));
 }
 
-if (!defined('ALT_CONTEXT_VERSION')) {
-    define('ALT_CONTEXT_VERSION', $pluginVersion);
+if (!defined('ACX_VERSION')) {
+    define('ACX_VERSION', $pluginVersion);
 }
 
 /**
@@ -67,7 +75,7 @@ if (!defined('ALT_CONTEXT_VERSION')) {
  * Autoloader & environment bootstrap
  * ------------------------------------------------------------------------
  */
-$altContextAutoload = ALT_CONTEXT_PLUGIN_DIR . 'vendor/autoload.php';
+$altContextAutoload = ACX_PLUGIN_DIR . 'vendor/autoload.php';
 
 if (!is_readable($altContextAutoload)) {
     wp_die(
@@ -80,12 +88,12 @@ if (!is_readable($altContextAutoload)) {
 
 require_once $altContextAutoload;
 
-$dotenv = Dotenv::createImmutable(ALT_CONTEXT_PLUGIN_DIR);
+$dotenv = Dotenv::createImmutable(ACX_PLUGIN_DIR);
 $dotenv->safeLoad();
 
-$viteServer = getenv('ALT_CONTEXT_VITE_DEV_SERVER');
-if ($viteServer && !defined('ALT_CONTEXT_VITE_DEV_SERVER')) {
-    define('ALT_CONTEXT_VITE_DEV_SERVER', rtrim((string) $viteServer, '/'));
+$viteServer = getenv('ACX_VITE_DEV_SERVER');
+if ($viteServer && !defined('ACX_VITE_DEV_SERVER')) {
+    define('ACX_VITE_DEV_SERVER', rtrim((string) $viteServer, '/'));
 }
 
 /**
@@ -97,22 +105,34 @@ function alt_context(): AltContext
 {
     static $instance = null;
 
-    if ($instance instanceof AltContext) {
-        return $instance;
-    }
+	if ($instance instanceof AltContext) {
+		return $instance;
+	}
 
-    $instance = new AltContext(
-        new Admin(),
-        new Api(),
-        new Menu(
-            new DashboardPage(),
-            new WorkbenchPage(),
-            new RosterPage()
-        ),
-        new LifecycleManager()
-    );
+	$attachmentXmpMetricsPersistor = new AttachmentXmpMetricsPersistor(
+		new ImageXmpWriter(
+			new ProxyFaceMetricsSource(),
+			new XmpImageRegionPacketBuilder(),
+			new JpegXmpInjector(),
+			new PngXmpInjector()
+		)
+	);
 
-    return $instance;
+	$instance = new AltContext(
+		new Admin(),
+		new Api(
+			new XmpEmbedController( $attachmentXmpMetricsPersistor )
+		),
+		new Menu(
+			new DashboardPage(),
+			new WorkbenchPage(),
+			new RosterPage()
+		),
+		new LifecycleManager(),
+		$attachmentXmpMetricsPersistor
+	);
+
+	return $instance;
 }
 
 function alt_context_activate(): void
@@ -130,6 +150,24 @@ function alt_context_uninstall(): void
     alt_context()->lifecycle()->uninstall();
 }
 
+function acx_load_textdomain(): void
+{
+    load_plugin_textdomain(
+        'alt-context',
+        false,
+        dirname(plugin_basename(__FILE__)) . '/public/languages'
+    );
+}
+
+function acx_register_cli_commands(): void
+{
+    if (!class_exists('WP_CLI')) {
+        return;
+    }
+
+    WP_CLI::add_command('acx xmp-backfill', new XmpBackfillCommand());
+}
+
 /**
  * ------------------------------------------------------------------------
  * WordPress hooks
@@ -138,6 +176,11 @@ function alt_context_uninstall(): void
 add_action('plugins_loaded', static function (): void {
     alt_context()->init();
 });
+add_action('init', 'acx_load_textdomain');
+
+if (defined('WP_CLI') && WP_CLI) {
+    add_action('plugins_loaded', 'acx_register_cli_commands', 11);
+}
 
 register_activation_hook(__FILE__, 'alt_context_activate');
 register_deactivation_hook(__FILE__, 'alt_context_deactivate');

@@ -31,9 +31,11 @@ use function wp_get_object_terms;
 
 class Api {
 	private RecognitionController $recognitionController;
+	private ?XmpEmbedController $xmpEmbedController;
 
-	public function __construct() {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null ) {
 		$this->recognitionController = new RecognitionController();
+		$this->xmpEmbedController = $xmp_embed_controller;
 	}
 
 	public function init(): void {
@@ -73,6 +75,9 @@ class Api {
 		);
 
 		$this->recognitionController->register_routes();
+		if ( $this->xmpEmbedController instanceof XmpEmbedController ) {
+			$this->xmpEmbedController->register_routes();
+		}
 	}
 
 	public function can_view_media_queue(): bool {
@@ -133,6 +138,8 @@ class Api {
 				$thumb    = wp_get_attachment_image_url( $attachment_id, 'full' );
 				$meta     = wp_get_attachment_metadata( $attachment_id );
 				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
+				$xmp_persist = get_post_meta( $attachment_id, 'acx_xmp_persist_last_result', true );
+				$xmp_persist_payload = is_array( $xmp_persist ) ? $xmp_persist : null;
 
 				return array(
 					'id'           => $attachment_id,
@@ -147,6 +154,7 @@ class Api {
 						'width'  => isset( $meta['width'] ) ? (int) $meta['width'] : null,
 						'height' => isset( $meta['height'] ) ? (int) $meta['height'] : null,
 					),
+					'xmpPersistence' => $xmp_persist_payload,
 					'tags'         => is_wp_error( $terms ) || ! is_array( $terms ) ? array() : array_values( $terms ),
 				);
 			},

@@ -18,7 +18,7 @@ class SuggestionsControllerTest extends TestCase
     protected function setUp(): void
     {
         parent::setUp();
-        $this->setOption('alt_context_recognition_url', 'http://localhost:8000');
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
         $this->controller = new SuggestionsController();
     }
 

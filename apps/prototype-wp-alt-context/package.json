@@ -1,6 +1,6 @@
 {
   "name": "prototype-wp-alt-context",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "WordPress plugin configuration",
   "scripts": {
     "test": "vitest run",
@@ -10,6 +10,7 @@
     "dev": "vite",
     "build": "vite build --mode production",
     "build:dev": "vite build --mode development",
+    "release:package": "bash scripts/release/package-plugin.sh",
     "preview": "vite preview",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

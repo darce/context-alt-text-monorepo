@@ -24,9 +24,9 @@ class ExampleTest extends TestCase
 
     public function testPluginConstantsDefined(): void
     {
-        $this->assertTrue(defined('ALT_CONTEXT_PLUGIN_DIR'));
-        $this->assertTrue(defined('ALT_CONTEXT_PLUGIN_URL'));
-        $this->assertTrue(defined('ALT_CONTEXT_VERSION'));
+        $this->assertTrue(defined('ACX_PLUGIN_DIR'));
+        $this->assertTrue(defined('ACX_PLUGIN_URL'));
+        $this->assertTrue(defined('ACX_VERSION'));
     }
 
     public function testOptionHelpers(): void

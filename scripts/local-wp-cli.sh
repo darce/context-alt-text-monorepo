@@ -23,7 +23,7 @@ fi
 
 CMD+=("$@")
 
-if [[ -n "${ALT_CONTEXT_WP_CLI_DRY_RUN:-}" ]]; then
+if [[ -n "${ACX_WP_CLI_DRY_RUN:-}" ]]; then
   printf 'WP_CLI_PHP_ARGS=%s%s\n' "${WP_CLI_PHP_ARGS:-}" "${WP_CLI_PHP_ARGS:+ }${SOCKET_ARG}"
   printf 'CMD=%s\n' "${CMD[*]}"
   exit 0

@@ -30,8 +30,8 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $this->assertSame(
-            ALT_CONTEXT_VERSION,
-            get_option('alt_context_version'),
+            ACX_VERSION,
+            get_option('acx_version'),
             'Version should be stored on activation'
         );
     }
@@ -43,7 +43,7 @@ class LifecycleManagerTest extends TestCase
     {
         $this->manager->activate();
 
-        $installed = get_option('alt_context_installed');
+        $installed = get_option('acx_installed');
         $this->assertNotFalse($installed, 'Install timestamp should be set');
         $this->assertIsInt($installed, 'Install timestamp should be an integer');
         $this->assertGreaterThan(0, $installed, 'Install timestamp should be positive');
@@ -55,13 +55,13 @@ class LifecycleManagerTest extends TestCase
     public function testActivateDoesNotOverwriteExistingInstallTimestamp(): void
     {
         $originalTimestamp = 1234567890;
-        $this->setOption('alt_context_installed', $originalTimestamp);
+        $this->setOption('acx_installed', $originalTimestamp);
 
         $this->manager->activate();
 
         $this->assertSame(
             $originalTimestamp,
-            get_option('alt_context_installed'),
+            get_option('acx_installed'),
             'Existing install timestamp should not be overwritten'
         );
     }
@@ -71,13 +71,13 @@ class LifecycleManagerTest extends TestCase
      */
     public function testUninstallRemovesVersionOption(): void
     {
-        $this->setOption('alt_context_version', '1.0.0');
-        $this->setOption('alt_context_installed', time());
+        $this->setOption('acx_version', '1.0.0');
+        $this->setOption('acx_installed', time());
 
         $this->manager->uninstall();
 
         $this->assertFalse(
-            get_option('alt_context_version'),
+            get_option('acx_version'),
             'Version option should be removed on uninstall'
         );
     }
@@ -87,15 +87,35 @@ class LifecycleManagerTest extends TestCase
      */
     public function testUninstallRemovesInstallTimestamp(): void
     {
-        $this->setOption('alt_context_version', '1.0.0');
-        $this->setOption('alt_context_installed', time());
+        $this->setOption('acx_version', '1.0.0');
+        $this->setOption('acx_installed', time());
 
         $this->manager->uninstall();
 
         $this->assertFalse(
-            get_option('alt_context_installed'),
+            get_option('acx_installed'),
             'Install timestamp should be removed on uninstall'
         );
+    }
+
+    public function testDeactivateClearsSnapshotSyncSchedule(): void
+    {
+        wp_schedule_single_event(time() + 300, 'acx_sync_pull_snapshot');
+        $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+
+        $this->manager->deactivate();
+
+        $this->assertFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+    }
+
+    public function testUninstallClearsSnapshotSyncSchedule(): void
+    {
+        wp_schedule_single_event(time() + 300, 'acx_sync_pull_snapshot');
+        $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+
+        $this->manager->uninstall();
+
+        $this->assertFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
     }
 
     /**
@@ -119,17 +139,17 @@ class LifecycleManagerTest extends TestCase
     {
         // Activate
         $this->manager->activate();
-        $this->assertSame(ALT_CONTEXT_VERSION, get_option('alt_context_version'));
-        $this->assertNotFalse(get_option('alt_context_installed'));
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertNotFalse(get_option('acx_installed'));
 
         // Deactivate (should not remove options)
         $this->manager->deactivate();
-        $this->assertSame(ALT_CONTEXT_VERSION, get_option('alt_context_version'));
-        $this->assertNotFalse(get_option('alt_context_installed'));
+        $this->assertSame(ACX_VERSION, get_option('acx_version'));
+        $this->assertNotFalse(get_option('acx_installed'));
 
         // Uninstall (should remove options)
         $this->manager->uninstall();
-        $this->assertFalse(get_option('alt_context_version'));
-        $this->assertFalse(get_option('alt_context_installed'));
+        $this->assertFalse(get_option('acx_version'));
+        $this->assertFalse(get_option('acx_installed'));
     }
 }

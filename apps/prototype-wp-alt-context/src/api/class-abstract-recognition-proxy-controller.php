@@ -7,6 +7,7 @@ namespace AltContext\Api;
 use WP_Error;
 use WP_REST_Response;
 
+use function apply_filters;
 use function add_query_arg;
 use function current_user_can;
 use function esc_url_raw;
@@ -14,6 +15,8 @@ use function get_option;
 use function get_site_url;
 use function in_array;
 use function is_wp_error;
+use function parse_url;
+use function strtolower;
 use function untrailingslashit;
 use function wp_json_encode;
 use function wp_remote_request;
@@ -91,10 +94,64 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 	}
 
 	protected function get_recognition_base_url(): string {
-		return trim( (string) get_option( 'alt_context_recognition_url', 'http://localhost:8000' ) );
+		$candidates = array(
+			$this->get_recognition_base_url_from_constant(),
+			trim( (string) get_option( 'acx_recognition_url', '' ) ),
+			trim( (string) apply_filters( 'acx_recognition_base_url', '' ) ),
+		);
+
+		foreach ( $candidates as $candidate ) {
+			if ( $this->is_valid_recognition_base_url( $candidate ) ) {
+				return $candidate;
+			}
+		}
+
+		return 'http://localhost:8000';
 	}
 
 	protected function get_recognition_api_key(): string {
-		return trim( (string) get_option( 'alt_context_recognition_api_key', '' ) );
+		$constant_api_key = $this->get_recognition_api_key_from_constant();
+		if ( '' !== $constant_api_key ) {
+			return $constant_api_key;
+		}
+
+		$option_api_key = trim( (string) get_option( 'acx_recognition_api_key', '' ) );
+		if ( '' !== $option_api_key ) {
+			return $option_api_key;
+		}
+
+		return trim( (string) apply_filters( 'acx_recognition_api_key', '' ) );
+	}
+
+	private function get_recognition_base_url_from_constant(): string {
+		if ( defined( 'ACX_RECOGNITION_URL' ) && is_string( ACX_RECOGNITION_URL ) ) {
+			return trim( ACX_RECOGNITION_URL );
+		}
+
+		return '';
+	}
+
+	private function get_recognition_api_key_from_constant(): string {
+		if ( defined( 'ACX_RECOGNITION_API_KEY' ) && is_string( ACX_RECOGNITION_API_KEY ) ) {
+			return trim( ACX_RECOGNITION_API_KEY );
+		}
+
+		return '';
+	}
+
+	private function is_valid_recognition_base_url( string $candidate ): bool {
+		if ( '' === $candidate ) {
+			return false;
+		}
+
+		$parts = parse_url( $candidate );
+		if ( false === $parts || ! is_array( $parts ) ) {
+			return false;
+		}
+
+		$scheme = strtolower( (string) ( $parts['scheme'] ?? '' ) );
+		$host   = (string) ( $parts['host'] ?? '' );
+
+		return in_array( $scheme, array( 'http', 'https' ), true ) && '' !== $host;
 	}
 }

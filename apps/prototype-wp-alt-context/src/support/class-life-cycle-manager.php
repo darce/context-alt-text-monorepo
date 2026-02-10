@@ -6,8 +6,9 @@ namespace AltContext\Support;
 
 class LifecycleManager {
 
-	private const OPTION_VERSION      = 'alt_context_version';
-	private const OPTION_INSTALLED_AT = 'alt_context_installed';
+	private const OPTION_VERSION      = 'acx_version';
+	private const OPTION_INSTALLED_AT = 'acx_installed';
+	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
 	/**
 	 * Plugin-owned custom table suffixes (without WordPress prefix).
 	 *
@@ -25,8 +26,8 @@ class LifecycleManager {
 	 * Stores install metadata and ensures rewrite rules are refreshed.
 	 */
 	public function activate(): void {
-		if ( defined( 'ALT_CONTEXT_VERSION' ) ) {
-			update_option( self::OPTION_VERSION, ALT_CONTEXT_VERSION );
+		if ( defined( 'ACX_VERSION' ) ) {
+			update_option( self::OPTION_VERSION, ACX_VERSION );
 		}
 
 		if ( false === get_option( self::OPTION_INSTALLED_AT ) ) {
@@ -42,17 +43,22 @@ class LifecycleManager {
 	 * Currently we just flush rewrite rules to remove custom routes.
 	 */
 	public function deactivate(): void {
+		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		flush_rewrite_rules( false );
 	}
 
 	/**
 	 * Run when the plugin is uninstalled.
 	 *
-	 * Cleans up any options created during activation.
+	 * Cleans up plugin-owned persistence:
+	 * - options: acx_version, acx_installed
+	 * - scheduled hooks: acx_sync_pull_snapshot
+	 * - custom tables: wp_acx_clusters, wp_acx_identity_members, wp_acx_sync_state
 	 */
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
+		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->drop_tables();
 		flush_rewrite_rules( false );
 	}

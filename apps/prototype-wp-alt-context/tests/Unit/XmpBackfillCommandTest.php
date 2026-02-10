@@ -96,4 +96,32 @@ class XmpBackfillCommandTest extends TestCase
         $this->assertNotEmpty(\WP_CLI::$messages['success']);
         $this->assertStringContainsString('processed=2', \WP_CLI::$messages['success'][0]);
     }
+
+    public function testInvokeAllProcessesEveryCollectedAttachmentWhenLimitMissing(): void
+    {
+        $writer = new class() extends ImageXmpWriter {
+            public array $writtenIds = [];
+
+            public function __construct() {}
+
+            public function write_for_attachment(int $attachment_id, string $original_path): string
+            {
+                $this->writtenIds[] = $attachment_id;
+                return self::STATUS_WRITTEN;
+            }
+        };
+
+        $persistor = new AttachmentXmpMetricsPersistor($writer);
+        $command = new XmpBackfillCommand($persistor);
+
+        $GLOBALS['__ac_get_posts_results'] = [401, 402];
+        $GLOBALS['__ac_attached_file'][401] = '/tmp/image-401.jpg';
+        $GLOBALS['__ac_attached_file'][402] = '/tmp/image-402.jpg';
+
+        $command->__invoke([], ['all' => true]);
+
+        $this->assertSame([401, 402], $writer->writtenIds);
+        $this->assertNotEmpty(\WP_CLI::$messages['success']);
+        $this->assertStringContainsString('processed=2', \WP_CLI::$messages['success'][0]);
+    }
 }

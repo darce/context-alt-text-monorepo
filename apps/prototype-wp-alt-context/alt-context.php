@@ -26,12 +26,7 @@ use AltContext\Api\Api;
 use AltContext\Api\XmpEmbedController;
 use AltContext\AltContext;
 use AltContext\Cli\XmpBackfillCommand;
-use AltContext\Media\AttachmentXmpMetricsPersistor;
-use AltContext\Media\ImageXmpWriter;
-use AltContext\Media\JpegXmpInjector;
-use AltContext\Media\PngXmpInjector;
-use AltContext\Media\ProxyFaceMetricsSource;
-use AltContext\Media\XmpImageRegionPacketBuilder;
+use AltContext\Media\XmpPersistenceFactory;
 use AltContext\Support\LifecycleManager;
 use AltContext\Admin\DashboardPage;
 use AltContext\Admin\WorkbenchPage;
@@ -109,14 +104,7 @@ function alt_context(): AltContext
 		return $instance;
 	}
 
-	$attachmentXmpMetricsPersistor = new AttachmentXmpMetricsPersistor(
-		new ImageXmpWriter(
-			new ProxyFaceMetricsSource(),
-			new XmpImageRegionPacketBuilder(),
-			new JpegXmpInjector(),
-			new PngXmpInjector()
-		)
-	);
+	$attachmentXmpMetricsPersistor = XmpPersistenceFactory::create_attachment_xmp_metrics_persistor();
 
 	$instance = new AltContext(
 		new Admin(),

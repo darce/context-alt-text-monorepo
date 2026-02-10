@@ -243,10 +243,13 @@ private function maybe_dispatch_recognition_complete(string $job_id, array $job_
 | `apps/prototype-wp-alt-context/src/media/class-jpeg-xmp-injector.php` | new | Implement APP1 XMP detection and replace/insert logic for JPEG bytes. |
 | `apps/prototype-wp-alt-context/src/media/class-png-xmp-injector.php` | new | Implement iTXt XMP detection and replace/insert logic for PNG bytes. |
 | `apps/prototype-wp-alt-context/src/media/class-image-xmp-writer.php` | new | Orchestrate MIME detection, packet creation, binary rewrite, and file persistence safeguards. |
+| `apps/prototype-wp-alt-context/src/media/class-xmp-persistence-factory.php` | new | Centralize XMP persistence dependency graph construction for plugin runtime and CLI backfill paths. |
+| `apps/prototype-wp-alt-context/src/cli/class-xmp-backfill-command.php` | new | Add `wp acx xmp-backfill` command supporting explicit media IDs plus `--all` and `--limit` batch modes. |
 | `apps/prototype-wp-alt-context/tests/Unit/AttachmentXmpMetricsPersistorTest.php` | new | Verify original-only hook behavior, no thumbnail writes, and graceful no-op on missing data. |
 | `apps/prototype-wp-alt-context/tests/Unit/XmpImageRegionPacketBuilderTest.php` | new | Verify XML validity, namespace presence, one packet rule, and exclusion of age/gender fields. |
 | `apps/prototype-wp-alt-context/tests/Unit/JpegXmpInjectorTest.php` | new | Verify APP1 replacement/insertion and non-XMP APP segments remain intact. |
 | `apps/prototype-wp-alt-context/tests/Unit/PngXmpInjectorTest.php` | new | Verify iTXt replacement/insertion and CRC correctness. |
+| `apps/prototype-wp-alt-context/tests/Unit/XmpBackfillCommandTest.php` | new | Verify CLI explicit ID path, empty-input error, and `--all`/`--limit` batch behavior. |
 | `docs/agentic/contracts/recognition-media-xmp-mapping.md` | new | Document face payload to XMP field mapping and normalized bbox semantics. |
 
 ## Related Files

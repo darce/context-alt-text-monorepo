@@ -363,15 +363,15 @@ Audit scope for this addendum:
 - [x] Resolve unused-parameter dead code in `trait-batch-limits.php` without behavior regression.
 - [x] Resolve `A-L1`: remove unused imports in `src/admin/class-admin.php`.
 - [ ] Resolve `AFS-M4`: split `RecognitionController` into smaller focused units. **Sovereign roadmap dependency:** this decomposition is a prerequisite for roadmap Phase 2 (read-path flip) and Phase 4 (local service facade). Do not defer past sovereign cluster work start.
-- [ ] Resolve `AFS-M5`: add `drop_tables()` to `LifecycleManager::uninstall()` — implement alongside `dbDelta()` table creation in sovereign roadmap Phase 1 to keep create/destroy symmetric.
+- [x] Resolve `AFS-M5`: add `drop_tables()` to `LifecycleManager::uninstall()` — implemented with plugin-owned table suffix contract to keep create/destroy symmetric as sovereign tables land.
 - [x] Resolve `AFS-L1`: normalize `include_debug` parsing to strict boolean behavior.
-- [ ] Resolve `HK-M3`: add browser-capability fallback in `useJobCoordination`.
-- [ ] Resolve `HK-M4`: move workbench media transport into a dedicated API module with shared request semantics.
-- [ ] Resolve `HK-M5`: avoid age-only purge for persisted active jobs.
-- [ ] Resolve `RAP-M1`: align `api/recognition/index.ts` exports and remove deep `clusterApi` imports from runtime code.
-- [ ] Resolve `RAP-M4`: normalize top-unlabeled representative typing/payload mapping (`thumb_url` + legacy `thumbnail_url`).
-- [ ] Resolve `PAG-M1`: replace origin-derived `wp-admin` URL construction with localized/admin-configured links.
-- [ ] Resolve `PAG-M2`: move roster media metadata REST calls out of `pages/` into `js/admin/api/` shared transport.
+- [x] Resolve `HK-M3`: add browser-capability fallback in `useJobCoordination`.
+- [x] Resolve `HK-M4`: move workbench media transport into a dedicated API module with shared request semantics.
+- [x] Resolve `HK-M5`: avoid age-only purge for persisted active jobs.
+- [x] Resolve `RAP-M1`: align `api/recognition/index.ts` exports and remove deep `clusterApi` imports from runtime code.
+- [x] Resolve `RAP-M4`: normalize top-unlabeled representative typing/payload mapping (`thumb_url` + legacy `thumbnail_url`).
+- [x] Resolve `PAG-M1`: replace origin-derived `wp-admin` URL construction with localized/admin-configured links.
+- [x] Resolve `PAG-M2`: move roster media metadata REST calls out of `pages/` into `js/admin/api/` shared transport.
 
 ## Phase 4: Resolve Test Placeholder Debt
 
@@ -389,6 +389,32 @@ Audit scope for this addendum:
 - [x] Re-run all baseline checks from this document.
 - [ ] Reclassify findings and capture post-cleanup severity/category counts.
 - [ ] Publish a post-cleanup findings delta note in `docs/tasks/4.0/4.13.0/`.
+
+## Carry-Forward Items (Pre-Existing / Cross-Audit)
+
+Items discovered during cleanup verification that were **not introduced** by cleanup commits (`f7ff6f8..HEAD`) but remain open in the codebase. Included here for tracking continuity.
+
+### From 4.12.0 Branch Audit (Overlapping WP Plugin Files)
+
+| ID | Severity | Category | Finding | Evidence | Status |
+|---|---|---|---|---|---|
+| 4.12-M14 | MEDIUM | ANTIPATTERN | Non-null assertions (`!`) on nullable API data in `SuggestionReviewPanel.tsx`. Originally flagged as `suggestion.identity_media_url!` and `suggestion.representative_bbox!` suppressing nullable types without guards. | `js/admin/pages/workbench/identity-clusters/SuggestionReviewPanel.tsx` — current grep shows no remaining `!` postfix assertions on properties; the component was rewritten during the feature branch. | **Verify** — appears resolved by component rewrite but needs explicit confirmation. |
+| 4.12-M15 | MEDIUM | ANTIPATTERN | `fetchApi` returned `undefined as T` for empty/204 responses, typing `undefined` as the expected interface and causing runtime errors on property access. | `js/admin/utils/http.ts:29` — return type is now `Promise<T \| undefined>`, and `undefined` is returned directly (not cast). `return payload as T` on L53 casts parsed JSON from `unknown`, which is the standard pattern. | **Resolved** — `undefined as T` eliminated; return type correctly unions `T \| undefined`. |
+
+### Pre-Existing Style / Documentation Items
+
+| ID | Severity | Category | Finding | Evidence | Recommended Action |
+|---|---|---|---|---|---|
+| CF-L1 | LOW | ANTIPATTERN | `--acx-color-danger` CSS custom property has three divergent fallback hex values across SCSS files: `#a00` (workbench L286), `#b42318` (workbench L363), `#ef4444` (cluster-panels L105). | `js/admin/styles/components/_workbench.scss:286`, `_workbench.scss:363`, `_cluster-panels.scss:105` | Unify fallback values to a single canonical hex (e.g., the design-token source value) across all `var(--acx-color-danger, …)` usages. |
+| CF-L2 | LOW | GAP | Unstructured `TODO: Restore tier-based limits post-MVP` in `trait-batch-limits.php` class docblock. References `stability-audit-2026-01-20.md` on the next line but lacks a structured tracking ID like `TODO(…)`. | `src/support/trait-batch-limits.php:16` | Convert to structured format, e.g., `TODO(post-mvp-tiers):`, or add an issue reference. |
+
+### Phase Mapping
+
+- **Phase 3** should include `CF-L1` (SCSS token fallback unification) and `CF-L2` (structured TODO format).
+- **Phase 3** should verify `4.12-M14` (confirm no non-null assertions remain post-rewrite).
+- `4.12-M15` requires no further action (resolved).
+
+---
 
 ## Success Criteria
 

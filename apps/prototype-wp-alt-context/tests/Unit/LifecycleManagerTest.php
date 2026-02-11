@@ -66,6 +66,43 @@ class LifecycleManagerTest extends TestCase
         );
     }
 
+    public function testActivateCreatesProjectionTablesViaDbDelta(): void
+    {
+        $this->manager->activate();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertIsArray($queries);
+        $this->assertCount(3, $queries);
+
+        $clustersSql = $queries[0];
+        $membersSql = $queries[1];
+        $syncSql = $queries[2];
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_clusters', $clustersSql);
+        $this->assertStringContainsString('representative_thumb_path', $clustersSql);
+        $this->assertStringContainsString('identity_count', $clustersSql);
+        $this->assertStringContainsString('created_at', $clustersSql);
+        $this->assertStringContainsString('updated_at', $clustersSql);
+        $this->assertStringContainsString('last_synced_at', $clustersSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_identity_members', $membersSql);
+        $this->assertStringContainsString('bbox_json', $membersSql);
+        $this->assertStringContainsString('attachment_lookup', $membersSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_sync_state', $syncSql);
+        $this->assertStringContainsString('last_snapshot_version', $syncSql);
+    }
+
+    public function testActivateProjectionDbDeltaIsIdempotentAcrossReactivation(): void
+    {
+        $this->manager->activate();
+        $this->manager->activate();
+
+        $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
+        $this->assertCount(6, $queries);
+        $this->assertStringNotContainsString('DROP TABLE', implode("\n", $queries));
+    }
+
     /**
      * Test uninstall removes version option.
      */

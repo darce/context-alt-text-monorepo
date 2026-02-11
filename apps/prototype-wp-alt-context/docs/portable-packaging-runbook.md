@@ -85,6 +85,50 @@ wp cron event list --fields=hook,next_run --format=table
 3. In production, configure true cron to trigger WP-Cron reliably.
 4. Keep a manual admin sync control available for recovery when cron is delayed.
 
+## Sovereign Snapshot Projection Smoke (Phase 1 Foundation)
+
+Run this in a standalone WordPress install with the plugin activated:
+
+```bash
+wp eval '
+$tenant = md5(get_site_url());
+$projector = new AltContext\Sovereign\Sync\SnapshotProjector(
+    new AltContext\Sovereign\Repositories\ClustersRepository(),
+    new AltContext\Sovereign\Repositories\IdentityMembersRepository(),
+    new AltContext\Sovereign\Repositories\SyncStateRepository()
+);
+$projector->project($tenant, [
+    "snapshot_version" => 1,
+    "clusters" => [[
+        "cluster_uuid" => "smoke-cluster-1",
+        "label" => "Smoke User",
+        "curation_state" => "uncurated",
+        "is_user_confirmed" => false,
+        "identity_count" => 1,
+        "representative_media_id" => 101
+    ]],
+    "members" => [[
+        "identity_uuid" => "smoke-identity-1",
+        "cluster_uuid" => "smoke-cluster-1",
+        "attachment_id" => 101,
+        "bbox" => ["x" => 10, "y" => 20, "width" => 30, "height" => 40],
+        "image_width" => 1000,
+        "image_height" => 800,
+        "similarity" => 0.9
+    ]]
+]);
+echo "snapshot projected\n";
+'
+```
+
+Verify rows landed:
+
+```bash
+wp db query "SELECT COUNT(*) AS clusters FROM wp_acx_clusters;"
+wp db query "SELECT COUNT(*) AS members FROM wp_acx_identity_members;"
+wp db query "SELECT stream_name,last_snapshot_version FROM wp_acx_sync_state;"
+```
+
 ## Multisite Scope
 
 Current plugin header is `Network: false`.

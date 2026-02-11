@@ -15,6 +15,7 @@ Human-readable documentation of the live integration between WordPress plugin an
 | File                                                   | Description                             |
 | ------------------------------------------------------ | --------------------------------------- |
 | [recognition-clustering.md](recognition-clustering.md) | Recognition HTTP API (`/recognition/*`) |
+| [cluster-snapshot-api.md](cluster-snapshot-api.md)     | Snapshot export API (`/tenants/{tenant_id}/clusters/snapshot`) |
 
 ### Security & Integration
 

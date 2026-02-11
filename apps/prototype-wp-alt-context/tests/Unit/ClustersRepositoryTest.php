@@ -51,7 +51,8 @@ class ClustersRepositoryTest extends TestCase
         $mergedSql = implode("\n", $queries);
         $this->assertStringContainsString('DELETE FROM `wp_acx_clusters`', $mergedSql);
         $this->assertStringContainsString('is_user_confirmed = 0', $mergedSql);
-        $this->assertStringContainsString('FIND_IN_SET(cluster_uuid', $mergedSql);
+        $this->assertStringContainsString('cluster_uuid NOT IN', $mergedSql);
+        $this->assertStringNotContainsString('FIND_IN_SET(cluster_uuid', $mergedSql);
 
         $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $mergedSql);
         $this->assertStringContainsString('label = IF(is_user_confirmed = 1, label, VALUES(label))', $mergedSql);

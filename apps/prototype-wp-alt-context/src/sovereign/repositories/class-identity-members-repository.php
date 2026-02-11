@@ -4,25 +4,31 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/trait-prepares-sql-queries.php';
+
 use function absint;
+use function array_fill;
 use function array_filter;
+use function array_merge;
 use function array_map;
+use function array_unique;
 use function array_values;
 use function gmdate;
+use function implode;
 use function is_array;
 use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
-use function preg_match_all;
-use function preg_replace;
+use function preg_match;
 use function sprintf;
-use function strpos;
 use function trim;
 use function wp_json_encode;
 
 class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
+	use PreparesSqlQueries;
+
 	private string $members_table_name;
 	private string $clusters_table_name;
 
@@ -44,7 +50,13 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {
 		global $wpdb;
 
-		if ( '' === trim( $tenant_id ) || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
 			return;
 		}
 
@@ -70,7 +82,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 			)
 		);
 
-		$this->delete_stale_non_curated_rows( $tenant_id, $incoming_identity_ids );
+		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_identity_ids );
+		$this->delete_orphan_rows();
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		foreach ( $normalized_members as $member ) {
@@ -95,7 +108,6 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 					FROM %i c
 					WHERE c.cluster_uuid = %s
 						AND c.tenant_id = %s
-						AND c.is_user_confirmed = 0
 				)
 				ON DUPLICATE KEY UPDATE
 					cluster_uuid = VALUES(cluster_uuid),
@@ -116,7 +128,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 					$now_utc,
 					$this->clusters_table_name,
 					$cluster_uuid,
-					$tenant_id,
+					$normalized_tenant_id,
 					$similarity_value,
 				)
 			);
@@ -191,17 +203,48 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 			return;
 		}
 
+		$valid_identity_ids = $this->sanitize_uuid_list( $incoming_identity_ids );
+		if ( empty( $valid_identity_ids ) ) {
+			return;
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $valid_identity_ids ), '%s' ) );
 		$sql = $this->prepare_query(
 			"DELETE m FROM %i m
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			WHERE c.tenant_id = %s
 				AND c.is_user_confirmed = 0
-				AND FIND_IN_SET(m.identity_uuid, %s) = 0",
+				AND m.identity_uuid NOT IN ($placeholders)",
+			array_merge(
+				array(
+					$this->members_table_name,
+					$this->clusters_table_name,
+					$tenant_id,
+				),
+				$valid_identity_ids
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
+	private function delete_orphan_rows(): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$sql = $this->prepare_query(
+			"DELETE m FROM %i m
+			LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			WHERE c.cluster_uuid IS NULL",
 			array(
 				$this->members_table_name,
 				$this->clusters_table_name,
-				$tenant_id,
-				implode( ',', $incoming_identity_ids ),
 			)
 		);
 
@@ -217,7 +260,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	private function normalize_similarity_value( array $member ): string {
 		$value = $member['similarity'] ?? $member['match_similarity'] ?? null;
 		if ( ! is_numeric( $value ) ) {
-			return 'NULL';
+			return '';
 		}
 
 		return (string) (float) $value;
@@ -313,42 +356,24 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	}
 
 	/**
-	 * @param array<int,mixed> $args
+	 * @param string[] $candidate_ids
+	 * @return string[]
 	 */
-	private function prepare_query( string $query, array $args ): ?string {
-		global $wpdb;
+	private function sanitize_uuid_list( array $candidate_ids ): array {
+		$normalized_ids = array_map(
+			static function ( $candidate ): string {
+				return trim( (string) $candidate );
+			},
+			$candidate_ids
+		);
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) ) {
-			return null;
-		}
-
-		$supports_identifier_placeholders = method_exists( $wpdb, 'has_cap' ) && true === $wpdb->has_cap( 'identifier_placeholders' );
-		if ( ! $supports_identifier_placeholders && false !== strpos( $query, '%i' ) ) {
-			$matches = array();
-			preg_match_all( '/%[sdfi]/', $query, $matches );
-
-			$value_args = array();
-			foreach ( $matches[0] as $index => $placeholder ) {
-				$arg = $args[ $index ] ?? '';
-				if ( '%i' === $placeholder ) {
-					$query = (string) preg_replace( '/%i/', $this->escape_identifier( (string) $arg ), $query, 1 );
-					continue;
-				}
-
-				$value_args[] = $arg;
+		$valid_ids = array_filter(
+			$normalized_ids,
+			static function ( string $value ): bool {
+				return '' !== $value && 1 === preg_match( '/^[A-Za-z0-9-]+$/', $value );
 			}
+		);
 
-			$args = $value_args;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query string is assembled from fixed templates and escaped identifiers.
-		$prepared = $wpdb->prepare( $query, ...$args );
-		return is_string( $prepared ) && '' !== $prepared ? $prepared : null;
-	}
-
-	private function escape_identifier( string $identifier ): string {
-		$sanitized = preg_replace( '/[^A-Za-z0-9_$.]/', '', $identifier );
-		$value     = is_string( $sanitized ) && '' !== $sanitized ? $sanitized : 'invalid_identifier';
-		return sprintf( '`%s`', $value );
+		return array_values( array_unique( $valid_ids ) );
 	}
 }

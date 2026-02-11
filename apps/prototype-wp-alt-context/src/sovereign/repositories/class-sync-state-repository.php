@@ -4,18 +4,19 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/trait-prepares-sql-queries.php';
+
 use function gmdate;
 use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
-use function preg_match_all;
-use function preg_replace;
 use function sprintf;
-use function strpos;
 use function trim;
 
 class SyncStateRepository implements SyncStateRepositoryInterface {
+	use PreparesSqlQueries;
+
 	private string $table_name;
 
 	public function __construct( ?string $table_name = null ) {
@@ -32,11 +33,17 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 	public function upsert_snapshot_version( string $tenant_id, int $snapshot_version ): void {
 		global $wpdb;
 
-		if ( '' === trim( $tenant_id ) || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
 			return;
 		}
 
-		$stream_name = $this->stream_name_for_tenant( $tenant_id );
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$stream_name = $this->stream_name_for_tenant( $normalized_tenant_id );
 		$sql         = $this->prepare_query(
 			'INSERT INTO %i
 				(stream_name, last_snapshot_version, updated_at)
@@ -62,7 +69,12 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
-		if ( '' === $normalized_tenant_id || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
 			return 0;
 		}
 
@@ -85,45 +97,5 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 
 	private function stream_name_for_tenant( string $tenant_id ): string {
 		return sprintf( 'tenant:%s:clusters', trim( $tenant_id ) );
-	}
-
-	/**
-	 * @param array<int,mixed> $args
-	 */
-	private function prepare_query( string $query, array $args ): ?string {
-		global $wpdb;
-
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) ) {
-			return null;
-		}
-
-		$supports_identifier_placeholders = method_exists( $wpdb, 'has_cap' ) && true === $wpdb->has_cap( 'identifier_placeholders' );
-		if ( ! $supports_identifier_placeholders && false !== strpos( $query, '%i' ) ) {
-			$matches = array();
-			preg_match_all( '/%[sdfi]/', $query, $matches );
-
-			$value_args = array();
-			foreach ( $matches[0] as $index => $placeholder ) {
-				$arg = $args[ $index ] ?? '';
-				if ( '%i' === $placeholder ) {
-					$query = (string) preg_replace( '/%i/', $this->escape_identifier( (string) $arg ), $query, 1 );
-					continue;
-				}
-
-				$value_args[] = $arg;
-			}
-
-			$args = $value_args;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query string is assembled from fixed templates and escaped identifiers.
-		$prepared = $wpdb->prepare( $query, ...$args );
-		return is_string( $prepared ) && '' !== $prepared ? $prepared : null;
-	}
-
-	private function escape_identifier( string $identifier ): string {
-		$sanitized = preg_replace( '/[^A-Za-z0-9_$.]/', '', $identifier );
-		$value     = is_string( $sanitized ) && '' !== $sanitized ? $sanitized : 'invalid_identifier';
-		return sprintf( '`%s`', $value );
 	}
 }

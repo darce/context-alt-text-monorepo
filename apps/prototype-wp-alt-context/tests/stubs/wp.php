@@ -1507,6 +1507,11 @@ if (!isset($GLOBALS['wpdb'])) {
             return addcslashes($text, '_%');
         }
 
+        public function has_cap(string $cap): bool
+        {
+            return $cap === 'identifier_placeholders';
+        }
+
         public function get_results($query, $output = OBJECT)
         {
             $this->queries[] = (string) $query;

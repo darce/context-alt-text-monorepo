@@ -4,26 +4,33 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Repositories;
 
+require_once __DIR__ . '/trait-prepares-sql-queries.php';
+
 use function absint;
+use function array_fill;
 use function array_filter;
+use function array_merge;
 use function array_map;
+use function array_unique;
 use function array_values;
 use function count;
 use function gmdate;
+use function implode;
 use function in_array;
 use function is_array;
+use function is_bool;
 use function is_numeric;
 use function is_object;
 use function is_string;
 use function max;
 use function method_exists;
-use function preg_match_all;
-use function preg_replace;
+use function preg_match;
 use function sprintf;
-use function strpos;
 use function trim;
 
 class ClustersRepository implements ClustersRepositoryInterface {
+	use PreparesSqlQueries;
+
 	private string $table_name;
 
 	public function __construct( ?string $table_name = null ) {
@@ -43,7 +50,13 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	public function merge_snapshot_for_tenant( string $tenant_id, array $clusters, int $snapshot_version ): void {
 		global $wpdb;
 
-		if ( '' === trim( $tenant_id ) || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
 			return;
 		}
 
@@ -67,7 +80,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			)
 		);
 
-		$this->delete_stale_non_curated_rows( $tenant_id, $incoming_ids );
+		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_ids );
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		foreach ( $normalized_clusters as $cluster ) {
@@ -96,7 +109,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 				array(
 					$this->table_name,
 					$cluster_uuid,
-					$tenant_id,
+					$normalized_tenant_id,
 					$label,
 					$this->normalize_curation_state( $cluster ),
 					$thumb_path,
@@ -122,7 +135,13 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0 ): array {
 		global $wpdb;
 
-		if ( '' === trim( $tenant_id ) || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
 			return array();
 		}
 
@@ -132,7 +151,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			'SELECT * FROM %i WHERE tenant_id = %s ORDER BY updated_at DESC LIMIT %d OFFSET %d',
 			array(
 				$this->table_name,
-				$tenant_id,
+				$normalized_tenant_id,
 				$normalized_limit,
 				$normalized_offset,
 			)
@@ -202,15 +221,23 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			return;
 		}
 
+		$valid_cluster_ids = $this->sanitize_uuid_list( $incoming_cluster_ids );
+		if ( empty( $valid_cluster_ids ) ) {
+			return;
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $valid_cluster_ids ), '%s' ) );
 		$sql = $this->prepare_query(
-			'DELETE FROM %i
+			"DELETE FROM %i
 			WHERE tenant_id = %s
 				AND is_user_confirmed = 0
-				AND FIND_IN_SET(cluster_uuid, %s) = 0',
-			array(
-				$this->table_name,
-				$tenant_id,
-				implode( ',', $incoming_cluster_ids ),
+				AND cluster_uuid NOT IN ($placeholders)",
+			array_merge(
+				array(
+					$this->table_name,
+					$tenant_id,
+				),
+				$valid_cluster_ids
 			)
 		);
 
@@ -312,42 +339,24 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	/**
-	 * @param array<int,mixed> $args
+	 * @param string[] $candidate_ids
+	 * @return string[]
 	 */
-	private function prepare_query( string $query, array $args ): ?string {
-		global $wpdb;
+	private function sanitize_uuid_list( array $candidate_ids ): array {
+		$normalized_ids = array_map(
+			static function ( $candidate ): string {
+				return trim( (string) $candidate );
+			},
+			$candidate_ids
+		);
 
-		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) ) {
-			return null;
-		}
-
-		$supports_identifier_placeholders = method_exists( $wpdb, 'has_cap' ) && true === $wpdb->has_cap( 'identifier_placeholders' );
-		if ( ! $supports_identifier_placeholders && false !== strpos( $query, '%i' ) ) {
-			$matches = array();
-			preg_match_all( '/%[sdfi]/', $query, $matches );
-
-			$value_args = array();
-			foreach ( $matches[0] as $index => $placeholder ) {
-				$arg = $args[ $index ] ?? '';
-				if ( '%i' === $placeholder ) {
-					$query = (string) preg_replace( '/%i/', $this->escape_identifier( (string) $arg ), $query, 1 );
-					continue;
-				}
-
-				$value_args[] = $arg;
+		$valid_ids = array_filter(
+			$normalized_ids,
+			static function ( string $value ): bool {
+				return '' !== $value && 1 === preg_match( '/^[A-Za-z0-9-]+$/', $value );
 			}
+		);
 
-			$args = $value_args;
-		}
-
-		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query string is assembled from fixed templates and escaped identifiers.
-		$prepared = $wpdb->prepare( $query, ...$args );
-		return is_string( $prepared ) && '' !== $prepared ? $prepared : null;
-	}
-
-	private function escape_identifier( string $identifier ): string {
-		$sanitized = preg_replace( '/[^A-Za-z0-9_$.]/', '', $identifier );
-		$value     = is_string( $sanitized ) && '' !== $sanitized ? $sanitized : 'invalid_identifier';
-		return sprintf( '`%s`', $value );
+		return array_values( array_unique( $valid_ids ) );
 	}
 }

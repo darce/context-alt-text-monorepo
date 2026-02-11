@@ -1,0 +1,71 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Tests\Unit;
+
+use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
+use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Tests\TestCase;
+
+/**
+ * @covers \AltContext\Sovereign\Sync\SnapshotProjector
+ * @covers \AltContext\Sovereign\Repositories\ClustersRepository
+ * @covers \AltContext\Sovereign\Repositories\IdentityMembersRepository
+ * @covers \AltContext\Sovereign\Repositories\SyncStateRepository
+ */
+class SovereignProjectionIntegrationTest extends TestCase
+{
+    public function testFixtureSnapshotProjectionWritesAllLocalReadModelTables(): void
+    {
+        $projector = new SnapshotProjector(
+            new ClustersRepository(),
+            new IdentityMembersRepository(),
+            new SyncStateRepository()
+        );
+
+        $projector->project(
+            'tenant-integration',
+            [
+                'snapshot_version' => 31,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-int-1',
+                        'label' => 'Daniel',
+                        'curation_state' => 'confirmed',
+                        'is_user_confirmed' => true,
+                        'identity_count' => 2,
+                        'representative_media_id' => 901,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-int-1',
+                        'cluster_uuid' => 'cluster-int-1',
+                        'attachment_id' => 901,
+                        'bbox' => [
+                            'x' => 10,
+                            'y' => 20,
+                            'width' => 50,
+                            'height' => 60,
+                        ],
+                        'image_width' => 1000,
+                        'image_height' => 800,
+                        'similarity' => 0.91,
+                    ],
+                ],
+            ]
+        );
+
+        global $wpdb;
+        $queries = implode("\n", $wpdb->queries);
+
+        $this->assertStringContainsString('START TRANSACTION', $queries);
+        $this->assertStringContainsString('INSERT INTO `wp_acx_clusters`', $queries);
+        $this->assertStringContainsString('INSERT INTO `wp_acx_identity_members`', $queries);
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_state`', $queries);
+        $this->assertStringContainsString('COMMIT', $queries);
+    }
+}

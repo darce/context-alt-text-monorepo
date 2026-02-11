@@ -1,0 +1,354 @@
+<?php
+
+declare(strict_types=1);
+
+namespace AltContext\Sovereign\Repositories;
+
+use function absint;
+use function array_filter;
+use function array_map;
+use function array_values;
+use function gmdate;
+use function is_array;
+use function is_numeric;
+use function is_object;
+use function is_string;
+use function max;
+use function method_exists;
+use function preg_match_all;
+use function preg_replace;
+use function sprintf;
+use function strpos;
+use function trim;
+use function wp_json_encode;
+
+class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
+	private string $members_table_name;
+	private string $clusters_table_name;
+
+	public function __construct( ?string $members_table_name = null, ?string $clusters_table_name = null ) {
+		global $wpdb;
+
+		$prefix = 'wp_';
+		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
+			$prefix = $wpdb->prefix;
+		}
+
+		$this->members_table_name  = $members_table_name ?? $prefix . 'acx_identity_members';
+		$this->clusters_table_name = $clusters_table_name ?? $prefix . 'acx_clusters';
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $members
+	 */
+	public function merge_snapshot_for_tenant( string $tenant_id, array $members, int $snapshot_version ): void {
+		global $wpdb;
+
+		if ( '' === trim( $tenant_id ) || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$normalized_members = array_values(
+			array_filter(
+				$members,
+				static function ( $member ): bool {
+					return is_array( $member )
+						&& '' !== trim( (string) ( $member['identity_uuid'] ?? $member['identity_id'] ?? '' ) )
+						&& '' !== trim( (string) ( $member['cluster_uuid'] ?? $member['cluster_id'] ?? '' ) );
+				}
+			)
+		);
+
+		$incoming_identity_ids = array_values(
+			array_filter(
+				array_map(
+					static function ( array $member ): string {
+						return trim( (string) ( $member['identity_uuid'] ?? $member['identity_id'] ?? '' ) );
+					},
+					$normalized_members
+				)
+			)
+		);
+
+		$this->delete_stale_non_curated_rows( $tenant_id, $incoming_identity_ids );
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		foreach ( $normalized_members as $member ) {
+			$identity_uuid = trim( (string) ( $member['identity_uuid'] ?? $member['identity_id'] ?? '' ) );
+			$cluster_uuid  = trim( (string) ( $member['cluster_uuid'] ?? $member['cluster_id'] ?? '' ) );
+			if ( '' === $identity_uuid || '' === $cluster_uuid ) {
+				continue;
+			}
+
+			$attachment_id    = absint( $member['attachment_id'] ?? $member['media_id'] ?? 0 );
+			$similarity_value = $this->normalize_similarity_value( $member );
+			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
+			$bbox_json        = $this->encode_bbox_json( $member );
+
+			$sql = $this->prepare_query(
+				"INSERT INTO %i
+					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, created_at, updated_at)
+				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), %s, %s
+				FROM DUAL
+				WHERE EXISTS (
+					SELECT 1
+					FROM %i c
+					WHERE c.cluster_uuid = %s
+						AND c.tenant_id = %s
+						AND c.is_user_confirmed = 0
+				)
+				ON DUPLICATE KEY UPDATE
+					cluster_uuid = VALUES(cluster_uuid),
+					attachment_id = VALUES(attachment_id),
+					bbox_json = VALUES(bbox_json),
+					thumb_path = VALUES(thumb_path),
+					similarity = NULLIF(%s, ''),
+					updated_at = VALUES(updated_at)",
+				array(
+					$this->members_table_name,
+					$identity_uuid,
+					$cluster_uuid,
+					$attachment_id,
+					$bbox_json,
+					$thumb_path,
+					$similarity_value,
+					$now_utc,
+					$now_utc,
+					$this->clusters_table_name,
+					$cluster_uuid,
+					$tenant_id,
+					$similarity_value,
+				)
+			);
+
+			if ( is_string( $sql ) && '' !== $sql ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+				$wpdb->query( $sql );
+			}
+		}
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0 ): array {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_limit  = max( 1, $limit );
+		$normalized_offset = max( 0, $offset );
+		$sql               = $this->prepare_query(
+			'SELECT * FROM %i WHERE cluster_uuid = %s ORDER BY updated_at DESC LIMIT %d OFFSET %d',
+			array(
+				$this->members_table_name,
+				$normalized_cluster_uuid,
+				$normalized_limit,
+				$normalized_offset,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * @param string[] $incoming_identity_ids
+	 */
+	private function delete_stale_non_curated_rows( string $tenant_id, array $incoming_identity_ids ): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		if ( empty( $incoming_identity_ids ) ) {
+			$sql = $this->prepare_query(
+				"DELETE m FROM %i m
+				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				WHERE c.tenant_id = %s
+					AND c.is_user_confirmed = 0",
+				array(
+					$this->members_table_name,
+					$this->clusters_table_name,
+					$tenant_id,
+				)
+			);
+
+			if ( is_string( $sql ) && '' !== $sql ) {
+				// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+				$wpdb->query( $sql );
+			}
+
+			return;
+		}
+
+		$sql = $this->prepare_query(
+			"DELETE m FROM %i m
+			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			WHERE c.tenant_id = %s
+				AND c.is_user_confirmed = 0
+				AND FIND_IN_SET(m.identity_uuid, %s) = 0",
+			array(
+				$this->members_table_name,
+				$this->clusters_table_name,
+				$tenant_id,
+				implode( ',', $incoming_identity_ids ),
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
+	/**
+	 * @param array<string,mixed> $member
+	 */
+	private function normalize_similarity_value( array $member ): string {
+		$value = $member['similarity'] ?? $member['match_similarity'] ?? null;
+		if ( ! is_numeric( $value ) ) {
+			return 'NULL';
+		}
+
+		return (string) (float) $value;
+	}
+
+	/**
+	 * @param array<string,mixed> $member
+	 */
+	private function normalize_thumb_path( array $member, string $identity_uuid, int $attachment_id ): string {
+		$thumb_path = trim( (string) ( $member['thumb_path'] ?? $member['thumbnail_path'] ?? '' ) );
+		if ( '' !== $thumb_path ) {
+			return $thumb_path;
+		}
+
+		if ( $attachment_id > 0 ) {
+			return sprintf( 'acx://identity/%s/attachment/%d', $identity_uuid, $attachment_id );
+		}
+
+		return '';
+	}
+
+	/**
+	 * @param array<string,mixed> $member
+	 */
+	private function encode_bbox_json( array $member ): string {
+		$bbox = $member['bbox'] ?? array();
+		if ( ! is_array( $bbox ) ) {
+			$bbox = array();
+		}
+
+		$pixels = $this->extract_pixels( $bbox );
+		$normalized_bbox = $this->extract_normalized_bbox( $bbox, $member, $pixels );
+		$payload = array(
+			'pixels'           => $pixels,
+			'normalized'       => $normalized_bbox,
+			'coordinate_space' => 'original_image',
+		);
+
+		$json = wp_json_encode( $payload );
+		return is_string( $json ) && '' !== $json ? $json : '{}';
+	}
+
+	/**
+	 * @param array<string,mixed> $bbox
+	 * @return array<string,int>
+	 */
+	private function extract_pixels( array $bbox ): array {
+		$source = $bbox['pixels'] ?? $bbox;
+		if ( ! is_array( $source ) ) {
+			$source = array();
+		}
+
+		return array(
+			'x'      => max( 0, absint( $source['x'] ?? 0 ) ),
+			'y'      => max( 0, absint( $source['y'] ?? 0 ) ),
+			'width'  => max( 0, absint( $source['width'] ?? 0 ) ),
+			'height' => max( 0, absint( $source['height'] ?? 0 ) ),
+		);
+	}
+
+	/**
+	 * @param array<string,mixed> $bbox
+	 * @param array<string,mixed> $member
+	 * @param array<string,int> $pixels
+	 * @return array<string,float>
+	 */
+	private function extract_normalized_bbox( array $bbox, array $member, array $pixels ): array {
+		$normalized = $bbox['normalized'] ?? null;
+		if ( is_array( $normalized )
+			&& isset( $normalized['x'], $normalized['y'], $normalized['width'], $normalized['height'] )
+			&& is_numeric( $normalized['x'] )
+			&& is_numeric( $normalized['y'] )
+			&& is_numeric( $normalized['width'] )
+			&& is_numeric( $normalized['height'] )
+		) {
+			return array(
+				'x'      => round( (float) $normalized['x'], 6 ),
+				'y'      => round( (float) $normalized['y'], 6 ),
+				'width'  => round( (float) $normalized['width'], 6 ),
+				'height' => round( (float) $normalized['height'], 6 ),
+			);
+		}
+
+		$image_width  = absint( $member['image_width'] ?? $bbox['image_width'] ?? 0 );
+		$image_height = absint( $member['image_height'] ?? $bbox['image_height'] ?? 0 );
+
+		return array(
+			'x'      => $image_width > 0 ? round( $pixels['x'] / $image_width, 6 ) : 0.0,
+			'y'      => $image_height > 0 ? round( $pixels['y'] / $image_height, 6 ) : 0.0,
+			'width'  => $image_width > 0 ? round( $pixels['width'] / $image_width, 6 ) : 0.0,
+			'height' => $image_height > 0 ? round( $pixels['height'] / $image_height, 6 ) : 0.0,
+		);
+	}
+
+	/**
+	 * @param array<int,mixed> $args
+	 */
+	private function prepare_query( string $query, array $args ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) ) {
+			return null;
+		}
+
+		$supports_identifier_placeholders = method_exists( $wpdb, 'has_cap' ) && true === $wpdb->has_cap( 'identifier_placeholders' );
+		if ( ! $supports_identifier_placeholders && false !== strpos( $query, '%i' ) ) {
+			$matches = array();
+			preg_match_all( '/%[sdfi]/', $query, $matches );
+
+			$value_args = array();
+			foreach ( $matches[0] as $index => $placeholder ) {
+				$arg = $args[ $index ] ?? '';
+				if ( '%i' === $placeholder ) {
+					$query = (string) preg_replace( '/%i/', $this->escape_identifier( (string) $arg ), $query, 1 );
+					continue;
+				}
+
+				$value_args[] = $arg;
+			}
+
+			$args = $value_args;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query string is assembled from fixed templates and escaped identifiers.
+		$prepared = $wpdb->prepare( $query, ...$args );
+		return is_string( $prepared ) && '' !== $prepared ? $prepared : null;
+	}
+
+	private function escape_identifier( string $identifier ): string {
+		$sanitized = preg_replace( '/[^A-Za-z0-9_$.]/', '', $identifier );
+		$value     = is_string( $sanitized ) && '' !== $sanitized ? $sanitized : 'invalid_identifier';
+		return sprintf( '`%s`', $value );
+	}
+}

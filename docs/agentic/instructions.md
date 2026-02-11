@@ -87,6 +87,16 @@ If a task seems to require external changes, STOP and propose an alternative wit
 
 Delete-over-flag is the default. Re-introduce features behind tests only when truly needed.
 
+### Quality Gates Must Be Invocable
+
+Every `composer`/`npm` verification gate script must be tested for invocability — not just defined. A script that fails on invocation (wrong arguments, missing targets) rather than on real violations is invisible rot. It provides false confidence that the gate is green.
+
+_Discovered when `composer cs-check` was defined but non-runnable, silently skipping PHP code-style enforcement for an unknown duration._
+
+### No Debug Artifacts in Version Control
+
+Do not track debug output files (`test_output.txt`, log dumps, etc.) in Git. Add them to `.gitignore`. Tracked debug artifacts ship with deployment-focused branches and create noise.
+
 ### Consolidated Checklists in Task Documents
 
 All task/planning documents MUST consolidate checklists at the **bottom** of the document.
@@ -139,19 +149,23 @@ All task/planning documents MUST consolidate checklists at the **bottom** of the
 
 **Enforcement:** Do not scatter `- [ ]` items throughout narrative sections. Move all to consolidated checklist.
 
-### Naming Convention: acx\_\* Prefix
+### Naming Convention: acx\_\* / ACX\_\* Prefix
 
 > [!WARNING]
 > The `cat_*` prefix (e.g., `cat_roster_entries`, `wp cat-roster`) is **legacy** from a previous implementation.
+> The `alt_context_*` prefix (e.g., `alt_context_version`) is **legacy** from early development. It has been consolidated to `acx_*`.
 >
 > Current prefixes are:
 >
-> - **WordPress options/meta**: `acx_*` (e.g., `acx_roster_entries`)
+> - **WordPress options/meta**: `acx_*` (e.g., `acx_roster_entries`, `acx_version`)
+> - **PHP constants (plugin-defined)**: `ACX_*` (e.g., `ACX_PLUGIN_FILE`, `ACX_VERSION`)
+> - **PHP constants (deployment/wp-config.php)**: `ACX_*` (e.g., `ACX_RECOGNITION_URL`, `ACX_RECOGNITION_API_KEY`)
 > - **REST API namespace**: `acx/v1/`
 > - **PHP namespace**: `AltContext\`
 > - **Text domain / slug**: `alt-context`
+> - **Filter hooks**: `acx_*` (e.g., `acx_recognition_base_url`)
 >
-> If you encounter `cat_*` references in documentation, they may be outdated.
+> If you encounter `cat_*` or `alt_context_*` references in code or documentation, they are outdated and should be updated.
 
 ---
 
@@ -441,11 +455,13 @@ const { data, isLoading, error, refetch } = useQuery({
 
    ```tsx
    // BAD
-   <Img src={item.url!} />
+   <Img src={item.url!} />;
 
    // GOOD
    const url = item.url;
-   if (url) { <Img src={url} /> }
+   if (url) {
+     <Img src={url} />;
+   }
    ```
 
 2. **No `undefined as T` or `x as T` for API return types.** If `fetchApi` can return `undefined` (204, empty body), the return type must be `Promise<T | undefined>`. Casting `undefined as T` gives callers a lie.
@@ -461,6 +477,18 @@ const { data, isLoading, error, refetch } = useQuery({
 7. **API calls go through the API module.** Components must not import `fetchApi` directly and build URLs with string interpolation. All API calls should go through a dedicated function in the relevant API module (e.g., `clusterApi.ts`) for mockability and consistency.
 
 8. **Use `URLSearchParams` for query strings.** String interpolation (`` `?limit=${n}&tenant_id=${id}` ``) fails on special characters. Use `new URLSearchParams({ limit: String(n), tenant_id: id })` instead.
+
+> The following rules were distilled from the 4.13.0 web-deployment cleanup audit.
+
+9. **No REST transport in page or hook layers.** Pages (`js/admin/pages/`) and hooks (`js/admin/hooks/`) must not construct their own `fetch()` calls with custom nonce/base-URL plumbing. All HTTP calls go through `js/admin/api/` modules. Duplicating transport logic creates inconsistent error handling and nonce resolution across the app.
+
+10. **Browser API capability guards.** Code using `crypto.randomUUID`, `BroadcastChannel`, `navigator.locks`, or other APIs not universally available must check for availability and degrade gracefully (e.g., single-tab primary mode when `BroadcastChannel` is missing). Tests must not paper over the gap by always providing mocks.
+
+11. **No origin-derived admin URLs.** Do not construct WordPress admin links via `window.location.origin + '/wp-admin/...'`. This breaks on subdirectory installs, reverse proxies, and URL-rewritten sites. Localize the canonical admin URL from PHP via `wp_localize_script` and consume it in the frontend.
+
+12. **Complete barrel exports.** If an API module uses a barrel file (`index.ts`), all public functions must be re-exported from it. Deep imports that bypass the barrel break the module boundary, prevent tree-shaking analysis, and make consumer audits unreliable.
+
+13. **API types must match payload reality.** If the backend sends both `thumb_url` and legacy `thumbnail_url`, the TypeScript interface must declare both (e.g., `thumb_url?: string | null`). Normalize variant shapes once in the API layer — do not cast or alias in individual consumers.
 
 ### Accessibility Requirements
 
@@ -497,6 +525,16 @@ const { data, isLoading, error, refetch } = useQuery({
 - Routes registered under `acx/v1/` namespace
 - Return WP_REST_Response with appropriate status codes
 - Include helpful error messages with WP_Error codes
+
+**WordPress Plugin Rules (Lessons Learned):**
+
+> These rules were distilled from the 4.13.0 web-deployment cleanup audit. Violating them creates orphaned surfaces, silent failures, and deployment hazards.
+
+1. **No orphaned route registrations.** Every `register_rest_route()` must have at least one frontend consumer. Audit registered routes for consumers before they accumulate — dead routes expand attack surface and confuse API documentation.
+2. **Symmetric create/destroy for plugin-owned tables.** Every `dbDelta()` / `CREATE TABLE` must have a corresponding `DROP TABLE IF EXISTS` in the uninstall lifecycle (`LifecycleManager::uninstall()`). Establish the teardown contract before creating the table.
+3. **Fail fast on missing build assets.** Admin SPA bootstrap must report explicitly (admin notice + `error_log`) when the Vite manifest or compiled assets are missing or unreadable. Silent failure renders a blank admin page with no diagnostic trail.
+4. **No allow-listed slugs without registered pages.** If a page slug appears in a permission or enqueue allowlist (e.g., `SUPPORTED_PAGE_SLUGS`), a corresponding menu page must be registered. Dead allowlist entries mislead code readers and waste enqueue cycles.
+5. **Strict boolean parameter parsing.** Use `rest_sanitize_boolean()` for REST query/body params intended as booleans. PHP treats the string `'false'` as truthy, so `if ($param)` silently enables debug/flag surfaces that users intended to disable.
 
 ### Recognition Service (Python/FastAPI)
 
@@ -552,7 +590,7 @@ make install  # Faster, skips insightface
 8. **Migration ↔ model parity.** After any schema change, verify the migration and ORM model define identical constraints. Run `alembic check` to detect drift.
 9. **No duplicate definitions.** Exceptions, constants, and helpers must have exactly one canonical location. Cross-layer duplication (e.g., `ClusterNotFoundError` in both domain and application) causes import confusion.
 10. **Extract shared repository utilities.** UUID coercion, media-identity bootstrap, and similar boilerplate must live in a shared module (e.g., `infrastructure/repositories/_helpers.py`), not be copy-pasted across repository files.
-11. **Scope `except` clauses to the exact operation they guard.** A broad `except ValueError` (or any typed catch) that wraps an entire method body will catch unrelated errors from downstream calls — turning real bugs into silent "not found" responses. Wrap only the single call you intend to guard and let other exceptions propagate. *Discovered when `reject()` caught a `ValueError` from an incomplete enum in `_to_domain()` because the `except` wrapped `update_status()`, `create_cannot_link()`, and `add_block()` together.*
+11. **Scope `except` clauses to the exact operation they guard.** A broad `except ValueError` (or any typed catch) that wraps an entire method body will catch unrelated errors from downstream calls — turning real bugs into silent "not found" responses. Wrap only the single call you intend to guard and let other exceptions propagate. _Discovered when `reject()` caught a `ValueError` from an incomplete enum in `_to_domain()` because the `except` wrapped `update_status()`, `create_cannot_link()`, and `add_block()` together._
 12. **No redundant router/dependency wiring.** When a parent router already `include_router`s its sub-routers, do not also register those sub-routers individually on the app. Duplicate registration multiplies endpoint handlers (3× in the suggestion case), wastes memory, and produces confusing `/docs` output. Audit `include_router` calls to ensure every router is registered exactly once.
 
 **Standards:**
@@ -823,14 +861,14 @@ For multi-session tasks, use a lightweight `CURRENT_TASK.md` file at the monorep
 
 **Key sections:**
 
-| Section | Purpose |
-|---------|---------|
-| **Objective** | 1-2 sentences so agent immediately knows the goal |
-| **Progress** | Checkboxes with `← ACTIVE` marker on current item |
-| **Key Files** | Table of relevant files with context-specific notes |
-| **Verification Commands** | Copy-paste commands to check current state |
-| **Next Agent Instructions** | Specific steps for the next session to pick up |
-| **Session Log** | Append-only log of what each session discovered |
+| Section                     | Purpose                                             |
+| --------------------------- | --------------------------------------------------- |
+| **Objective**               | 1-2 sentences so agent immediately knows the goal   |
+| **Progress**                | Checkboxes with `← ACTIVE` marker on current item   |
+| **Key Files**               | Table of relevant files with context-specific notes |
+| **Verification Commands**   | Copy-paste commands to check current state          |
+| **Next Agent Instructions** | Specific steps for the next session to pick up      |
+| **Session Log**             | Append-only log of what each session discovered     |
 
 **Example usage:**
 
@@ -838,13 +876,16 @@ For multi-session tasks, use a lightweight `CURRENT_TASK.md` file at the monorep
 ## Progress
 
 ### Completed
+
 - [x] Added batch fetch method to ClusterRepository
 - [x] Unit tests passing
 
 ### In Progress
+
 - [ ] Integration test with real database ← **ACTIVE**
 
 ### Remaining
+
 - [ ] Frontend investigation if UI hang persists
 ```
 
@@ -992,6 +1033,7 @@ repo.get_curriculum_t = AsyncMock(return_value=0.5)  # Matches schema default
 #### 9. No Permanently Skipped Tests
 
 Tests marked `@pytest.mark.skip` or `it.skip()` without a linked issue or TODO date are dead code that creates false coverage confidence. Either:
+
 - Remove the test (if the feature is abandoned)
 - Complete the test (if the feature shipped)
 - Add a comment with an issue reference and expected resolution (if blocked)
@@ -1074,6 +1116,12 @@ Retries in tests cause flaky timing, extra network calls, and `act()` warnings f
 #### 14. Use One Injection Strategy Per Dependency
 
 Do not use both `app.dependency_overrides[dep]` and `monkeypatch.setattr(module, "dep", ...)` for the same dependency. If the resolution path changes, one strategy silently becomes dead code. Pick one — prefer FastAPI's `dependency_overrides` for endpoint-injected deps.
+
+#### 15. Test Removed Surfaces Explicitly
+
+When a route, hook, export, or runtime surface is intentionally removed, add an explicit test asserting its absence. This prevents accidental re-introduction during future refactors or merges. A simple assertion (e.g., `expect(module.removedFn).toBeUndefined()` or a route-registration snapshot test) costs little and guards the removal decision permanently.
+
+_Discovered when removed REST routes (`training-stage`, `recover-orphans`, `cluster-events`) had no absence assertions, making it easy to silently re-register them._
 
 ### Test Pyramid
 
@@ -1377,9 +1425,9 @@ All implementation plans in `docs/tasks/` MUST include:
 3. **Patterns to Follow** — Code snippets showing the pattern to implement
 4. **Functions to Change** — Table with file paths, line numbers, and specific changes
 5. **Related Files** — Complete list of files that will be touched
-6. **Consolidated Task Checklist** — Phased checkboxes with time estimates:
+6. **Consolidated Task Checklist** — Phased checkboxes:
    - `### Completed` — Already done items
-   - `### Phase N: Description (~X min)` — Grouped by logical phase
+   - `### Phase N: Description` — Grouped by logical phase
    - `### Stretch Goals` — Nice-to-haves that won't block completion
 
 **Example structure:**
@@ -1409,17 +1457,17 @@ All implementation plans in `docs/tasks/` MUST include:
 
 - [x] Analyze current state
 
-### Phase 1: Scaffolding (~10 min)
+### Phase 1: Scaffolding
 
 - [ ] Add method signature to Protocol
 - [ ] Add NotImplementedError stub
 
-### Phase 2: Implementation (~20 min)
+### Phase 2: Implementation
 
 - [ ] Implement SqlAlchemy version
 - [ ] Implement Fake version
 
-### Phase 3: Tests (~15 min)
+### Phase 3: Tests
 
 - [ ] Unit test for happy path
 - [ ] Unit test for edge cases
@@ -1429,7 +1477,6 @@ All implementation plans in `docs/tasks/` MUST include:
 **Why this structure?**
 - Enables incremental progress with clear checkpoints
 - Supports handoff between sessions
-- Makes time estimates visible for planning
 - Separates "must do" from "nice to have"
 
 ### Mermaid Diagrams

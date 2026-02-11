@@ -1423,6 +1423,10 @@ if (!isset($GLOBALS['wpdb'])) {
     {
         /** @var array<int,string> */
         public array $queries = [];
+        /** @var array<string,mixed> */
+        public array $queryResults = [];
+        /** @var mixed */
+        public $defaultQueryResult = true;
         public string $prefix = 'wp_';
         public string $postmeta = 'wp_postmeta';
         public string $term_relationships = 'wp_term_relationships';
@@ -1437,8 +1441,14 @@ if (!isset($GLOBALS['wpdb'])) {
 
         public function query($sql)
         {
-            $this->queries[] = (string) $sql;
-            return true;
+            $normalizedSql = trim((string) $sql);
+            $this->queries[] = $normalizedSql;
+
+            if (array_key_exists($normalizedSql, $this->queryResults)) {
+                return $this->queryResults[$normalizedSql];
+            }
+
+            return $this->defaultQueryResult;
         }
 
         public function get_charset_collate(): string
@@ -1452,7 +1462,7 @@ if (!isset($GLOBALS['wpdb'])) {
                 return $query;
             }
 
-            $segments = preg_split('/(%s|%d|%f)/', $query, -1, PREG_SPLIT_DELIM_CAPTURE);
+            $segments = preg_split('/(%s|%d|%f|%i)/', $query, -1, PREG_SPLIT_DELIM_CAPTURE);
             if ($segments === false) {
                 return $query;
             }
@@ -1476,6 +1486,13 @@ if (!isset($GLOBALS['wpdb'])) {
                 if ($segment === '%f') {
                     $value = $args[$argIndex++] ?? 0.0;
                     $result .= (string) (float) $value;
+                    continue;
+                }
+
+                if ($segment === '%i') {
+                    $value = $args[$argIndex++] ?? '';
+                    $identifier = str_replace('`', '', (string) $value);
+                    $result .= '`' . $identifier . '`';
                     continue;
                 }
 
@@ -1600,6 +1617,8 @@ if (!isset($GLOBALS['wpdb'])) {
         public function reset(): void
         {
             $this->queries = [];
+            $this->queryResults = [];
+            $this->defaultQueryResult = true;
             $this->mockResults = [];
             $this->mockRow = null;
             $this->mockVar = null;
@@ -1609,6 +1628,40 @@ if (!isset($GLOBALS['wpdb'])) {
     }
 
     $GLOBALS['wpdb'] = new WPDBStub();
+}
+
+if (!function_exists('dbDelta')) {
+    /**
+     * Record dbDelta invocations for lifecycle schema tests.
+     *
+     * @param string|array<int,string> $queries SQL string or list of SQL strings.
+     * @return array<int,string>
+     */
+    function dbDelta($queries = '')
+    {
+        if (!isset($GLOBALS['__ac_dbdelta_queries']) || !is_array($GLOBALS['__ac_dbdelta_queries'])) {
+            $GLOBALS['__ac_dbdelta_queries'] = [];
+        }
+
+        $sqlList = is_array($queries) ? $queries : [$queries];
+        $executed = [];
+
+        foreach ($sqlList as $sql) {
+            if (!is_string($sql)) {
+                continue;
+            }
+
+            $normalized = trim($sql);
+            if ($normalized === '') {
+                continue;
+            }
+
+            $GLOBALS['__ac_dbdelta_queries'][] = $normalized;
+            $executed[] = $normalized;
+        }
+
+        return $executed;
+    }
 }
 
 if (!function_exists('flush_rewrite_rules')) {

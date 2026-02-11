@@ -51,6 +51,7 @@ abstract class TestCase extends PHPUnitTestCase
         $GLOBALS['__ac_get_posts_results'] = [];
         $GLOBALS['__ac_posts'] = [];
         $GLOBALS['__ac_json_response'] = null;
+        $GLOBALS['__ac_dbdelta_queries'] = [];
 
         // Reset wpdb stub
         if (isset($GLOBALS['wpdb']) && method_exists($GLOBALS['wpdb'], 'reset')) {

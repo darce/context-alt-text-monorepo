@@ -5,6 +5,7 @@
 > Individual phases spawn task plans (`TASK_PLAN.template.md`) for **how**.
 >
 > Key differences from task plans:
+>
 > - No "Functions to Change" or code patterns (too granular for a roadmap)
 > - Phases have exit criteria, not just checklists
 > - External dependencies and parallel workstreams are first-class
@@ -45,8 +46,8 @@
 
 ### Design Decisions
 
-| Decision | Rationale |
-| --- | --- |
+| Decision                         | Rationale                                  |
+| -------------------------------- | ------------------------------------------ |
 | [e.g., No taxonomy for clusters] | [Why this was chosen over the alternative] |
 
 ### Data Model
@@ -60,10 +61,12 @@
 **Goal**: [One sentence.]
 
 Deliverables:
+
 - [Deliverable]
 - [Deliverable]
 
 Exit criteria:
+
 - [Observable outcome that proves the phase is done]
 
 ### Phase 2: [Title]
@@ -71,24 +74,26 @@ Exit criteria:
 **Goal**: [One sentence.]
 
 Deliverables:
+
 - [Deliverable]
 
 Exit criteria:
+
 - [Observable outcome]
 
 ## External Dependencies
 
-| Dependency | Owner | Status | Blocks |
-| --- | --- | --- | --- |
+| Dependency                | Owner                | Status                             | Blocks                  |
+| ------------------------- | -------------------- | ---------------------------------- | ----------------------- |
 | [e.g., Snapshot endpoint] | [e.g., Backend team] | [Not started / In progress / Done] | [Phase N exit criteria] |
 
 ## Code Anchors
 
-| Layer | File | Note |
-| --- | --- | --- |
-| Plugin | `path/to/file.php` | [Current role and what changes] |
-| Backend | `path/to/file.py` | [Current role] |
-| Frontend | `path/to/file.ts` | [Current role] |
+| Layer    | File               | Note                            |
+| -------- | ------------------ | ------------------------------- |
+| Plugin   | `path/to/file.php` | [Current role and what changes] |
+| Backend  | `path/to/file.py`  | [Current role]                  |
+| Frontend | `path/to/file.ts`  | [Current role]                  |
 
 ## Risks and Mitigations
 

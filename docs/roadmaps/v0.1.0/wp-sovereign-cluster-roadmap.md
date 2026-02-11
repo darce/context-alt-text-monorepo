@@ -63,13 +63,13 @@ What's missing:
 
 ### Design Decisions
 
-| Decision | Rationale |
-| --- | --- |
-| No `acx_identity_cluster` taxonomy | Clusters are computed identity groupings that change with re-clustering, not content-taxonomic concepts. Taxonomy overhead (slugs, term counts, archive pages) adds no value. UI fetches via REST API, not `WP_Query`. |
-| Plugin-owned tables via `dbDelta` | Multiple faces per attachment cannot be modeled with post-meta. Identity-level data requires its own schema. |
-| Pull-first sync (v0.1.0) | Simplest viable sync. Plugin pulls snapshots on demand or schedule. No outbox, no operation IDs, no dead-letter. |
-| WP-Cron for v0.1.0, Action Scheduler for v0.2+ | WP-Cron has zero dependencies and is sufficient for eventual consistency. Action Scheduler adds retry/backoff/dead-letter when outbox pattern is introduced. |
-| Curation-first conflict policy | User curation wins unconditionally. Snapshot pull skips clusters with user-confirmed curation state. Backend suggestions propose but never overwrite curated ground truth. |
+| Decision                                       | Rationale                                                                                                                                                                                                              |
+| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| No `acx_identity_cluster` taxonomy             | Clusters are computed identity groupings that change with re-clustering, not content-taxonomic concepts. Taxonomy overhead (slugs, term counts, archive pages) adds no value. UI fetches via REST API, not `WP_Query`. |
+| Plugin-owned tables via `dbDelta`              | Multiple faces per attachment cannot be modeled with post-meta. Identity-level data requires its own schema.                                                                                                           |
+| Pull-first sync (v0.1.0)                       | Simplest viable sync. Plugin pulls snapshots on demand or schedule. No outbox, no operation IDs, no dead-letter.                                                                                                       |
+| WP-Cron for v0.1.0, Action Scheduler for v0.2+ | WP-Cron has zero dependencies and is sufficient for eventual consistency. Action Scheduler adds retry/backoff/dead-letter when outbox pattern is introduced.                                                           |
+| Curation-first conflict policy                 | User curation wins unconditionally. Snapshot pull skips clusters with user-confirmed curation state. Backend suggestions propose but never overwrite curated ground truth.                                             |
 
 ### North-Star Behavior
 
@@ -119,17 +119,18 @@ What's missing:
 
 ### Background Scheduling Strategy
 
-| Concern | WP-Cron (v0.1.0) | Action Scheduler (v0.2+) |
-| --- | --- | --- |
-| Zero dependencies | Yes | No (bundle `woocommerce/action-scheduler` via Composer, ~200KB) |
-| Retry/backoff | Manual | Built-in |
-| Dead-letter / failure visibility | Manual | Built-in admin UI |
-| Concurrency safety | None | Row-level claim locking |
-| Job history/audit | None | Searchable log |
-| Sufficient for pull-only sync | Yes | Overkill |
-| Sufficient for outbox with retry | Awkward | Purpose-built |
+| Concern                          | WP-Cron (v0.1.0) | Action Scheduler (v0.2+)                                        |
+| -------------------------------- | ---------------- | --------------------------------------------------------------- |
+| Zero dependencies                | Yes              | No (bundle `woocommerce/action-scheduler` via Composer, ~200KB) |
+| Retry/backoff                    | Manual           | Built-in                                                        |
+| Dead-letter / failure visibility | Manual           | Built-in admin UI                                               |
+| Concurrency safety               | None             | Row-level claim locking                                         |
+| Job history/audit                | None             | Searchable log                                                  |
+| Sufficient for pull-only sync    | Yes              | Overkill                                                        |
+| Sufficient for outbox with retry | Awkward          | Purpose-built                                                   |
 
 WP-Cron registration on activation:
+
 - `wp_schedule_event(time(), 'hourly', 'acx_sync_pull_snapshot')`
 - Simple retry: `wp_schedule_single_event(time() + $backoff, 'acx_retry_sync', [$args])`
 
@@ -201,34 +202,34 @@ Exit criteria:
 
 ## External Dependencies
 
-| Dependency | Owner | Status | Blocks |
-| --- | --- | --- | --- |
-| Snapshot endpoint `GET /tenants/{tenant_id}/clusters/snapshot` | Backend workstream | **Not started** — no contract doc, no route, no implementation | Phase 1 exit criteria (local projection requires data to project) |
-| Persistent event store for delta/event endpoint | Backend workstream | Not started | v0.2+ scope only |
-| Plugin packaging (v4.13.1) | Plugin workstream | In progress — [packaging plan](../../tasks/4.0/4.13.1/wp-plugin-portable-packaging-plan.md) | Sovereign code must ship in standalone ZIP |
-| Endpoint resolution hardening (constant → option → filter) | Plugin workstream (4.13.1 Phase 2) | Not started | Not blocking, but production deployments need configurable endpoints |
+| Dependency                                                     | Owner                              | Status                                                                                      | Blocks                                                               |
+| -------------------------------------------------------------- | ---------------------------------- | ------------------------------------------------------------------------------------------- | -------------------------------------------------------------------- |
+| Snapshot endpoint `GET /tenants/{tenant_id}/clusters/snapshot` | Backend workstream                 | **Not started** — no contract doc, no route, no implementation                              | Phase 1 exit criteria (local projection requires data to project)    |
+| Persistent event store for delta/event endpoint                | Backend workstream                 | Not started                                                                                 | v0.2+ scope only                                                     |
+| Plugin packaging (v4.13.1)                                     | Plugin workstream                  | In progress — [packaging plan](../../tasks/4.0/4.13.1/wp-plugin-portable-packaging-plan.md) | Sovereign code must ship in standalone ZIP                           |
+| Endpoint resolution hardening (constant → option → filter)     | Plugin workstream (4.13.1 Phase 2) | Not started                                                                                 | Not blocking, but production deployments need configurable endpoints |
 
 ## Code Anchors
 
 > Updated to reflect post-decomposition architecture (commit `5b92720`).
 
-| Layer | File | Note |
-| --- | --- | --- |
-| Plugin | `src/api/class-recognition-controller.php` | Composition root (153 lines) — delegates to 5 sub-controllers. Phase 4 replaces proxy reads with local facade reads. |
-| Plugin | `src/api/class-clusters-controller.php` | Read-only cluster queries + thumbnail hydration (189 lines). Phase 2 refactors to read local projection. |
-| Plugin | `src/api/class-cluster-mutations-controller.php` | Cluster mutations (297 lines). Phase 3 adds dual-write to local + proxy. |
-| Plugin | `src/api/class-media-identities-controller.php` | Identity queries (90 lines). Phase 2 refactors to read local projection. |
-| Plugin | `src/api/class-suggestions-controller.php` | Suggestion CRUD (234 lines). Remains proxy-only (suggestions are backend-computed). |
-| Plugin | `src/api/class-abstract-recognition-proxy-controller.php` | Shared proxy/retry base (101 lines). Endpoint resolution is option-only; packaging plan adds constant/filter precedence. |
-| Plugin | `src/api/class-api.php` | Route registration, workbench/roster endpoints (242 lines). |
-| Plugin | `src/support/class-life-cycle-manager.php` | Lifecycle hooks (84 lines). Declares `OWNED_TABLE_SUFFIXES` and `drop_tables()` — no `dbDelta` creation yet. Phase 1 adds schema creation. |
-| Frontend | `js/admin/api/recognition/clusterApi.ts` (+ `*Mutations.ts`, `*Members.ts`, `*Queries.ts`) | Cluster API layer. Phase 2 may need cache/stale-indicator awareness. |
-| Frontend | `js/admin/api/recognition/identityApi.ts` (+ `*ActionsApi.ts`, `*QueriesApi.ts`) | Identity API layer. |
-| Frontend | `js/admin/api/recognition/scanApi.ts` | Scan/analysis API layer. Unchanged by sovereign roadmap. |
-| Frontend | `js/admin/hooks/*` | React hooks for recognition features. |
-| Backend | `recognition/interface_adapters/http/routers/*` | FastAPI route handlers (analyze, clusters, suggestions, events, media, diagnostics, health). |
-| Backend | `recognition/application/orchestration/cluster_service.py` | Cluster orchestration logic. |
-| Backend | `recognition/application/events/broadcaster.py` | **In-memory SSE fanout only** — no persistent event store, no event IDs, no replay. Cannot be repurposed for snapshot/delta sync. |
+| Layer    | File                                                                                       | Note                                                                                                                                       |
+| -------- | ------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| Plugin   | `src/api/class-recognition-controller.php`                                                 | Composition root (153 lines) — delegates to 5 sub-controllers. Phase 4 replaces proxy reads with local facade reads.                       |
+| Plugin   | `src/api/class-clusters-controller.php`                                                    | Read-only cluster queries + thumbnail hydration (189 lines). Phase 2 refactors to read local projection.                                   |
+| Plugin   | `src/api/class-cluster-mutations-controller.php`                                           | Cluster mutations (297 lines). Phase 3 adds dual-write to local + proxy.                                                                   |
+| Plugin   | `src/api/class-media-identities-controller.php`                                            | Identity queries (90 lines). Phase 2 refactors to read local projection.                                                                   |
+| Plugin   | `src/api/class-suggestions-controller.php`                                                 | Suggestion CRUD (234 lines). Remains proxy-only (suggestions are backend-computed).                                                        |
+| Plugin   | `src/api/class-abstract-recognition-proxy-controller.php`                                  | Shared proxy/retry base (101 lines). Endpoint resolution is option-only; packaging plan adds constant/filter precedence.                   |
+| Plugin   | `src/api/class-api.php`                                                                    | Route registration, workbench/roster endpoints (242 lines).                                                                                |
+| Plugin   | `src/support/class-life-cycle-manager.php`                                                 | Lifecycle hooks (84 lines). Declares `OWNED_TABLE_SUFFIXES` and `drop_tables()` — no `dbDelta` creation yet. Phase 1 adds schema creation. |
+| Frontend | `js/admin/api/recognition/clusterApi.ts` (+ `*Mutations.ts`, `*Members.ts`, `*Queries.ts`) | Cluster API layer. Phase 2 may need cache/stale-indicator awareness.                                                                       |
+| Frontend | `js/admin/api/recognition/identityApi.ts` (+ `*ActionsApi.ts`, `*QueriesApi.ts`)           | Identity API layer.                                                                                                                        |
+| Frontend | `js/admin/api/recognition/scanApi.ts`                                                      | Scan/analysis API layer. Unchanged by sovereign roadmap.                                                                                   |
+| Frontend | `js/admin/hooks/*`                                                                         | React hooks for recognition features.                                                                                                      |
+| Backend  | `recognition/interface_adapters/http/routers/*`                                            | FastAPI route handlers (analyze, clusters, suggestions, events, media, diagnostics, health).                                               |
+| Backend  | `recognition/application/orchestration/cluster_service.py`                                 | Cluster orchestration logic.                                                                                                               |
+| Backend  | `recognition/application/events/broadcaster.py`                                            | **In-memory SSE fanout only** — no persistent event store, no event IDs, no replay. Cannot be repurposed for snapshot/delta sync.          |
 
 Diagram references:
 

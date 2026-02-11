@@ -29,6 +29,18 @@ Required headers:
 
 - `X-API-Key` or `Authorization: Bearer <token>` (service deployment dependent)
 - `X-Tenant-ID` may be sent by plugin proxy, but path param is canonical for this route
+- `Accept: application/json`
+
+Content negotiation:
+
+- Success and error payloads MUST use `Content-Type: application/json; charset=utf-8`
+- Non-JSON payloads MUST be treated by plugin clients as transport failures and retried as transient errors
+
+Timeout expectations:
+
+- Client request timeout target: 15 seconds
+- Backend target p95 response time: <= 5 seconds for tenants up to 10k identities
+- If timeout is exceeded, plugin preserves local projection and retries later (no destructive local deletes on timeout)
 
 ## Response (200)
 
@@ -100,6 +112,41 @@ Normalization source:
 - `400`: malformed tenant id
 - `401` or `403`: auth failure
 - `404`: tenant snapshot stream not found
+- `429`: rate limited (retry allowed)
 - `5xx`: backend snapshot generation failure
 
 When backend returns non-2xx, plugin sync should preserve existing local rows and retry later.
+
+## Retry and Backoff Semantics
+
+- Retryable responses: `408`, `429`, and any `5xx` status.
+- Non-retryable responses: `400`, `401`, `403`, `404`, `422`.
+- Backoff policy:
+  - Attempt 1: immediate
+  - Attempt 2: +30 seconds
+  - Attempt 3: +120 seconds
+  - Attempt 4+: +300 seconds capped
+- If `Retry-After` header is present on `429` or `503`, clients should prefer that delay over default backoff.
+- After max retries in a sync cycle, keep last known local projection unchanged and schedule next routine pull.
+
+## Rate Limit Contract
+
+- `429` responses should include:
+  - `Retry-After: <seconds>`
+  - `X-RateLimit-Limit: <integer>`
+  - `X-RateLimit-Remaining: <integer>`
+  - `X-RateLimit-Reset: <unix_epoch_seconds>`
+- Clients must treat missing rate-limit headers as retryable transient failures using default backoff.
+
+## Pagination Contract (Forward-Compatible)
+
+v0.1.0 permits single-response snapshots for small tenants. To support large tenants without breaking clients, backend implementations should support cursor pagination with stable ordering:
+
+- Request query params:
+  - `cursor` (optional opaque token from previous page)
+  - `page_size` (optional, default 1000, max 5000)
+- Response envelope additions:
+  - `next_cursor` (string|null)
+  - `has_more` (boolean)
+- `snapshot_version` MUST remain constant across all pages for one snapshot pull.
+- Plugin client must not project partial pages; it should buffer until `has_more=false`, then project in one transaction.

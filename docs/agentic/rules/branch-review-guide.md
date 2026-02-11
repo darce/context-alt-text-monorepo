@@ -2,13 +2,15 @@
 
 > **Purpose:** Structured checklist and metrics for reviewing feature branches before merge.
 > Distilled from the 4.12.0 branch audit (52 findings) and existing project standards.
+>
+> **Relationship to `instructions.md`:** This guide is a review _lens_ on the canonical rules in [`instructions.md`](../instructions.md). Checklist items reference instruction sections rather than restating them. Load this guide for reviews; load `instructions.md` for development.
 
 ---
 
 ## Table of Contents
 
 1. [How to Use This Guide](#how-to-use-this-guide)
-2. [Automated Checks (Gate)](#automated-checks-gate)
+2. [Automated Checks (Precondition)](#automated-checks-precondition)
 3. [Manual Review Checklist](#manual-review-checklist)
 4. [Metric Thresholds](#metric-thresholds)
 5. [Finding Categories](#finding-categories)
@@ -21,13 +23,13 @@
 
 ### When
 
-Run this review on every feature branch **before merge to `main`**. The automated gate (Section 2) should pass with zero errors. The manual checklist (Section 3) is a structured sweep for issues automation cannot catch.
+Run this review on every feature branch **before merge to `main`**. Automated checks (Section 2) must have passed **before submitting for review**. The manual checklist (Section 3) is a structured sweep for issues automation cannot catch.
 
 ### Who
 
 The reviewer can be human or agentic. When an agent performs the review, it must:
 
-1. Run all automated checks and report results
+1. Confirm automated checks passed (do NOT re-run them — see Section 2)
 2. Walk through each manual checklist section, citing specific files and line numbers
 3. Classify findings using the severity guide (Section 6)
 4. Produce a report using the template (Section 7)
@@ -38,209 +40,210 @@ Review only files in the branch diff (`git diff --name-only main...HEAD`). Do no
 
 ---
 
-## Automated Checks (Gate)
+## Automated Checks (Precondition)
 
-All automated checks must pass with zero errors before manual review begins. Run from the monorepo root using the CI pipeline:
+> **The developer/agent submitting the branch for review is responsible for running all automated checks and ensuring they pass with zero errors.** The reviewer does NOT re-run these during review — doing so consumes significant tokens/time for information the submitter already has.
 
-### Python (Backend)
+### Submitter Responsibility
 
-```bash
-cd apps/prototype-description-service && make check 2>&1 | tail -30
-```
+Before requesting review, the submitter must run and confirm zero errors on:
 
-This runs `ruff check .`, `mypy .`, and `pytest` in sequence. All three must pass.
+| Check                         | Command                                                                                                        | Notes                                                       |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
+| Python (ruff + mypy + pytest) | `cd apps/prototype-description-service && make check`                                                          | All three must pass. Skip if no Python files in diff.       |
+| TypeScript types              | `cd apps/prototype-wp-alt-context && npm run typecheck`                                                        |                                                             |
+| Frontend tests                | `cd apps/prototype-wp-alt-context && npm run test -- --run`                                                    |                                                             |
+| ESLint                        | `cd apps/prototype-wp-alt-context && npm run lint`                                                             |                                                             |
+| Architecture compliance       | `cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js`                            | Zero errors; warnings are informational                     |
+| PHP static analysis           | `cd apps/prototype-wp-alt-context && composer phpstan`                                                         | Skip if not configured in `composer.json`                   |
+| Cyclomatic complexity         | `cd apps/prototype-description-service && python -m radon cc --min C --show-complexity --average recognition/` | Grade C+ functions must be justified. Skip if no Python.    |
 
-### Frontend (TypeScript)
+### Reviewer Responsibility
 
-```bash
-cd apps/prototype-wp-alt-context && npm run typecheck 2>&1 | tail -20
-cd apps/prototype-wp-alt-context && npm run test -- --run 2>&1 | tail -30
-cd apps/prototype-wp-alt-context && npm run lint 2>&1 | tail -20
-```
-
-### Frontend Architecture
-
-```bash
-cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js 2>&1
-```
-
-Zero errors required. Warnings are informational.
-
-### PHP
-
-```bash
-cd apps/prototype-wp-alt-context && composer phpstan 2>&1 | tail -20
-```
-
-### Cyclomatic Complexity (Python)
-
-```bash
-cd apps/prototype-description-service
-PYENV_VERSION=description-service python -m radon cc --min C --show-complexity --average recognition/ 2>&1
-```
-
-Any function scoring **C or worse** (complexity > 10) must be reviewed. See [Metric Thresholds](#cyclomatic-complexity) below.
-
-> **Setup:** If `radon` is not installed, add it to dev dependencies: `pip install radon` and add `"radon>=6.0.0"` to `pyproject.toml` `[project.optional-dependencies] dev`.
+- **Verify** the submitter reports all checks passed (commit message, PR description, or review request).
+- **Spot-check only** if a specific finding during manual review suggests a check may have been missed (e.g., a type error visible in the diff implies `typecheck` wasn't run).
+- **Do NOT re-run the full suite** — this is wasted work if checks already passed.
 
 ---
 
 ## Manual Review Checklist
 
-Work through each section sequentially. Check the box when the section is clean.
+Work through each section sequentially. Check the box when the section is clean. Each item references its canonical rule in [`instructions.md`](../instructions.md) — consult that document for full rationale and code examples.
 
 ### 3.1 — Correctness
 
-- [ ] **Migration ↔ Model parity**: Any schema changes in `001_identity_schema.py` must have matching constraints in `db/models/identity.py`. Run `alembic check` to detect drift.
-- [ ] **No unreachable code**: Dead branches inside conditionals (e.g., `if x:` inside `else` where `x` is known `None`).
-- [ ] **No duplicate field declarations**: Pydantic models, dataclasses — no field declared twice (second silently wins).
-- [ ] **API contract alignment**: Response schemas match the contract in `docs/agentic/contracts/`. New fields have tests.
+- [ ] **Migration ↔ Model parity** — constraints match between migration and ORM model. _(Hexagonal Layer Rule #8)_
+- [ ] **No unreachable code** — dead branches inside conditionals.
+- [ ] **No duplicate field declarations** — Pydantic models, dataclasses. _(Hexagonal Layer Rule #9)_
+- [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
 
 ### 3.2 — Type Safety
 
-**Python:**
+**Python** _(Hexagonal Layer Rules #2, #3, #5)_:
+
 - [ ] No `object` parameters — use the domain type or a Protocol.
-- [ ] No `getattr()` + `callable()` guards on service protocols — declare methods on the Protocol.
+- [ ] No `getattr()` + `callable()` guards — declare methods on the Protocol.
 - [ ] No `contextlib.suppress(Exception)` — catch specific exceptions and log.
 
-**TypeScript:**
+**TypeScript** _(TypeScript Safety Rules #1–3)_:
+
 - [ ] No non-null assertions (`!`) on API data — use type guards.
 - [ ] No `undefined as T` or `x as T` casts — use proper union return types.
 - [ ] No ad-hoc query keys — all keys through `queryKeys` factory.
 
 ### 3.3 — Architecture Boundaries
 
+_(Hexagonal Layer Rules #1, #4, #6, #9, #12; Curation-First Precedence)_
+
 - [ ] **No raw SQL in the application layer** — `text()` calls only in `infrastructure/repositories/`.
-- [ ] **No presentation DTOs in the domain or application layer** — API response shapes belong in `interface_adapters/schemas/`. Application services must return domain types; the interface adapter maps to DTOs at the HTTP boundary.
-- [ ] **No default-instantiating settings** — `ClusteringSettings()` inside a function bypasses DI. Inject as parameter.
-- [ ] **No cross-layer exception duplication** — each exception class has exactly one canonical definition.
-- [ ] **No redundant router/dependency wiring** — when a parent router already `include_router`s its sub-routers, those sub-routers must not also be registered individually on the app. Each router registered exactly once.
-- [ ] **No time-based gates on curated state** — do not use cooldown windows, TTLs, or expiry timers to gate re-evaluation of user curation decisions (rejections, acceptances, labels). The gate must be a data delta (e.g., representative set changed), never elapsed time. Time assumes constant usage cadence which cannot be guaranteed.
+- [ ] **No presentation DTOs in domain or application layer** — API response shapes in `interface_adapters/schemas/`.
+- [ ] **No default-instantiating settings** — inject via DI, don't construct defaults inside functions.
+- [ ] **No cross-layer exception duplication** — one canonical definition per exception.
+- [ ] **No redundant router/dependency wiring** — each router registered exactly once.
+- [ ] **No time-based gates on curated state** — gate on data deltas, never elapsed time.
 
 ### 3.4 — Code Duplication
 
-- [ ] **Shared repository utilities** — UUID coercion, media-identity bootstrap, etc. live in `_helpers.py`, not copy-pasted.
-- [ ] **Shared test stubs** — Protocol stubs used in 3+ files are extracted to `tests/stubs.py`.
-- [ ] **One canonical fake per protocol** — no divergent fake implementations of the same Protocol across test files. Multiple fakes with different stored types drift independently and miss Protocol changes.
-- [ ] **No duplicate methods** — Protocol interfaces have no aliased methods (e.g., both `block()` and `add_block()`).
-- [ ] **Frontend components** — shared algorithms (face crop, badge styles) are in reusable components, not inlined.
+_(Hexagonal Layer Rule #10; Testing Standards #10, #11)_
+
+- [ ] **Shared repository utilities** — UUID coercion, media-identity bootstrap in `_helpers.py`.
+- [ ] **Shared test stubs** — Protocol stubs used in 3+ files extracted to `tests/stubs.py`.
+- [ ] **One canonical fake per protocol** — no divergent fakes across test files.
+- [ ] **No duplicate methods** — Protocol interfaces have no aliased methods.
+- [ ] **Frontend components** — shared algorithms in reusable components, not inlined.
 
 ### 3.5 — Error Handling
 
-- [ ] **LIKE wildcard escaping** — any user-supplied string in `ilike()` escapes `%` and `_`.
-- [ ] **No bare exception suppression** — every `except Exception` logs at `WARNING` minimum with `exc_info=True`.
-- [ ] **Scoped exception clauses** — each `try/except` wraps only the single operation it guards, not the entire method body. A broad `except ValueError` (or similar typed catch) that spans multiple calls will silently swallow unrelated errors from downstream operations (e.g., enum conversion, domain mapping) and misreport them as "not found".
-- [ ] **Consistent gate fallbacks** — all code paths that bypass the assignment gate apply the same checks (blocks AND constraints).
+_(Hexagonal Layer Rules #2, #7, #11)_
+
+- [ ] **LIKE wildcard escaping** — user-supplied strings in `ilike()` escape `%` and `_`.
+- [ ] **No bare exception suppression** — `except Exception` logs at `WARNING` minimum.
+- [ ] **Scoped exception clauses** — `try/except` wraps only the single operation it guards.
+- [ ] **Consistent gate fallbacks** — all bypass paths apply the same checks (blocks AND constraints).
 
 ### 3.6 — Frontend Specific
 
-- [ ] **No `!important` in SCSS** — increase selector specificity instead.
-- [ ] **Design tokens for colors** — hex literals should be CSS custom properties with fallbacks.
-- [ ] **No inline styles for layout** — grid/flex patterns belong in SCSS classes.
-- [ ] **API calls go through API modules** — components don't import `fetchApi` directly.
+_(TypeScript Safety Rules #4–8, #9–13)_
+
+- [ ] **No `!important` in SCSS** — increase selector specificity.
+- [ ] **Design tokens for colors** — hex literals as CSS custom properties.
+- [ ] **No inline styles for layout** — grid/flex patterns in SCSS classes.
+- [ ] **API calls go through API modules** — no direct `fetchApi` imports in components.
 - [ ] **`URLSearchParams` for query strings** — no string interpolation for URL params.
 
 ### 3.7 — PHP / WordPress
 
-- [ ] **Superglobal sanitization** — `$_GET`/`$_POST` access uses `sanitize_key()`, `sanitize_text_field()`, or `absint()`.
-- [ ] **One transport per parameter** — same value not sent in both POST body and query params.
+_(Backend Guidelines → WordPress Plugin → Security; WordPress Plugin Rules)_
+
+- [ ] **Superglobal sanitization** — `sanitize_key()`, `sanitize_text_field()`, or `absint()`.
+- [ ] **One transport per parameter** — same value not in both POST body and query params.
 - [ ] **Nonce verification** — all state-mutating endpoints check nonces.
 - [ ] **Capability checks** — admin endpoints verify `current_user_can()`.
 
 ### 3.8 — Tests
 
-- [ ] **No permanently skipped tests** — every `@pytest.mark.skip` / `it.skip()` has an issue reference or is removed.
-- [ ] **No empty test bodies** — `pass`/`...` tests inflate pass counts and must be completed or deleted.
+_(Testing Standards #9–14)_
+
+- [ ] **No permanently skipped tests** — every skip has an issue reference or is removed.
+- [ ] **No empty test bodies** — `pass`/`...` tests must be completed or deleted.
 - [ ] **No false-positive fakes** — test fakes are configurable, not hardcoded to return `None`/empty.
 - [ ] **`retry: false` in QueryClient** — test QueryClients disable retries.
-- [ ] **Single injection strategy** — don't mix `dependency_overrides` and `monkeypatch.setattr` for the same dep.
-- [ ] **Adequate coverage for new components** — each new UI component has tests for: render, loading, error, and primary interaction.
+- [ ] **Single injection strategy** — don't mix `dependency_overrides` and `monkeypatch.setattr`.
+- [ ] **Adequate coverage for new components** — render, loading, error, and primary interaction.
 
 ### 3.9 — Documentation & Cleanup
 
-- [ ] **No stale comments** — "TODO", "assuming this", "will verify" comments resolved or removed.
+- [ ] **No stale comments** — "TODO", "assuming this", "will verify" resolved or removed.
 - [ ] **No duplicate imports** — each symbol imported once per file.
-- [ ] **Docstrings complete** — no empty `Raises:` or `Returns:` sections in docstrings.
-- [ ] **Function-level imports justified** — standard deps (`numpy`, `json`) should be at module scope unless there's a genuine cold-start reason.
+- [ ] **Docstrings complete** — no empty `Raises:` or `Returns:` sections.
+- [ ] **Function-level imports justified** — standard deps at module scope unless genuine cold-start reason.
+
+### 3.10 — Bug-Finding Heuristics
+
+Pattern-compliance checks (§3.1–3.9) catch structural violations. This section guides the reviewer to trace data flow and logic to find **runtime bugs** that automation misses. Work through each heuristic on every non-trivial function in the diff.
+
+#### Variable identity after normalization
+
+When a function normalizes an input early (e.g., `$normalized = trim($input)`), trace **every** subsequent reference to verify the normalized variable is used, never the original. Common failure: guard validates `$normalized`, but a downstream call or SQL binding still passes `$input`.
+
+_Real example: `merge_snapshot_for_tenant()` trims `$tenant_id` into `$normalized_tenant_id` but a nested method call still received the raw `$tenant_id`._
+
+#### Data-flow through SQL binding
+
+For each SQL query with placeholders, verify the full chain: value origin → transformation → placeholder binding → database interpretation.
+
+- [ ] Placeholder count matches argument count (especially with dynamic `$placeholders` strings).
+- [ ] Arguments are in correct positional order matching their placeholders.
+- [ ] Sentinel/default values survive the binding mechanism. If a function returns `'NULL'` (string) and it's bound via `%s`, the database receives the **string** `'NULL'`, not SQL `NULL`. Trace what the database actually stores.
+- [ ] `NULLIF()`, `COALESCE()`, `IF()` wrappers use the correct comparison value for the sentinel (e.g., `NULLIF(%s, '')` requires the sentinel to be `''`, not `'NULL'`).
+
+#### Guard condition vs business rule alignment
+
+For each `WHERE` clause, `if` guard, or existence check, state the business rule in plain language, then verify the SQL/code implements exactly that rule — no more, no less.
+
+- [ ] Curation guards protect the **correct scope**. A guard meant to protect cluster-level fields should not inadvertently block operations on related entities (e.g., blocking member inserts for confirmed clusters when only cluster label/state should be protected).
+- [ ] Deletion guards exclude the correct rows. `NOT IN` vs `FIND_IN_SET` vs `NOT EXISTS` have different semantics for NULL, empty sets, and multi-value strings.
+- [ ] Early returns match their stated purpose. An early return for "empty input" should not also skip cleanup operations that should always run.
+
+#### SQL function semantic correctness
+
+Audit SQL functions used with dynamic data for semantic edge cases:
+
+- [ ] `FIND_IN_SET(col, %s)` — the set argument is a single comma-separated string; a data value containing a comma corrupts the set boundary. Prefer `NOT IN (...)` with individual placeholders.
+- [ ] `GREATEST()` / `LEAST()` — any `NULL` argument makes the result `NULL` in MySQL.
+- [ ] `IF(condition, a, b)` — verify the condition evaluates against the **current** row state, not the incoming `VALUES()`.
+- [ ] `ON DUPLICATE KEY UPDATE` — verify which fields refresh unconditionally vs which are guarded. Accidentally guarding a field that should refresh (or vice versa) is a silent data bug.
+
+#### Cross-method contract bugs
+
+When method A transforms data and passes it to method B:
+
+- [ ] Transformation output matches method B's expected input type and format.
+- [ ] Error returns / null returns from B are checked by A.
+- [ ] If A filters/validates a collection then passes a derivative (e.g., extracted IDs), verify the derivative is computed **from the filtered set**, not from the original unfiltered input.
+
+#### Boundary value sweep
+
+For each function accepting numeric or collection inputs, mentally substitute:
+
+- [ ] **Empty** — empty array, empty string, zero. Does the function degrade gracefully or produce invalid SQL / divide-by-zero?
+- [ ] **Single element** — array with one item. Does `implode()` produce valid SQL? Does a loop body work on first-and-only iteration?
+- [ ] **Large input** — what happens at 10k+ items? Does a `NOT IN (...)` clause with 10k placeholders hit MySQL limits? Is there an unbounded `LEFT JOIN` scan on every call?
 
 ---
 
 ## Metric Thresholds
 
-### File Size (Significant Lines)
-
-Enforced by `check-architecture-compliance.js`. Significant lines = non-blank, non-comment.
-
-| File Type | Max Lines | Enforcement |
-|-----------|-----------|-------------|
-| Component (`.tsx`) | 300 | Error |
-| Route / Page | 400 | Error |
-| Hook | 200 | Error |
-| Utility | 150 | Error |
-| API module | 175 | Error |
-| Test file | No limit | — |
-| Type definitions | No limit | — |
-
-### Hook Usage (per component/route file)
-
-Enforced by `check-architecture-compliance.js`.
-
-| Metric | Max | Resolution |
-|--------|-----|------------|
-| `useState` calls | 5 | Use `useReducer` for complex state |
-| `useEffect` calls | 3 | Extract to custom hooks |
-| Custom hooks called | 8 | Split component or compose hooks |
+> Canonical size limits and hook counts are defined in [`instructions.md` → Frontend Guidelines → Component Rules](../instructions.md#component-rules) and enforced by `check-architecture-compliance.js`. This section covers thresholds the reviewer checks manually during review.
 
 ### Python Function Size
 
-| Metric | Target | Max | Resolution |
-|--------|--------|-----|------------|
-| Lines per function | < 30 | 40 | Extract helper functions |
-| Parameters per function | < 5 | 7 | Use a parameter object / dataclass |
+| Metric                  | Target | Max | Resolution                         |
+| ----------------------- | ------ | --- | ---------------------------------- |
+| Lines per function      | < 30   | 40  | Extract helper functions           |
+| Parameters per function | < 5    | 7   | Use a parameter object / dataclass |
 
 ### Cyclomatic Complexity
 
-Cyclomatic complexity measures the number of independent paths through a function. It directly correlates with the number of tests needed for full branch coverage and is the best single predictor of defects in a function.
+**Tool:** [radon](https://radon.readthedocs.io/) for Python. ESLint `complexity` rule for TypeScript (not currently enabled).
 
-**Tool:** [radon](https://radon.readthedocs.io/) for Python. ESLint `complexity` rule for TypeScript (not currently enabled — see note below).
+| Grade   | Range | Action                                              |
+| ------- | ----- | --------------------------------------------------- |
+| **A**   | 1–5   | No action needed.                                   |
+| **B**   | 6–10  | Acceptable. Review if function could be simplified. |
+| **C**   | 11–15 | **Requires justification.** Flag in review.         |
+| **D**   | 16–20 | **Must refactor.**                                  |
+| **E/F** | 21+   | **Block merge.**                                    |
 
-**Thresholds (per function):**
-
-| Grade | Range | Action |
-|-------|-------|--------|
-| **A** | 1–5 | No action needed. Simple, well-composed function. |
-| **B** | 6–10 | Acceptable. Review if function could be simplified. |
-| **C** | 11–15 | **Requires justification.** Flag in review — usually means the function does too much. |
-| **D** | 16–20 | **Must refactor.** Extract branches into helper functions or use strategy pattern. |
-| **E/F** | 21+ | **Block merge.** Function is untestable and unmaintainable. |
-
-**Why these values?**
-
-- **10 is the industry standard baseline** (McCabe's original 1976 paper, adopted by SEI/CERT, SonarQube, and most static analysis tools).
-- **15 as a soft ceiling** because repository methods and FastAPI endpoint handlers with multiple query parameters often land at 11–13 legitimately — requiring all of those to be under 10 would force premature abstraction.
-- **20 as a hard ceiling** because above 20 a function cannot be meaningfully unit-tested (too many paths) and even experienced developers struggle to hold the branching in their head.
-
-**Typical offenders in this codebase:** Repository `_to_domain` converters, refresh service orchestration methods, and clustering dispatch functions. These are worth periodic review.
-
-> **TypeScript note:** ESLint's `complexity` rule can be enabled in `eslint.config.mjs` with `'complexity': ['warn', 15]`. Not currently active — add when the team is ready to enforce.
-
-### Test Coverage Delta
-
-Not currently automated. Future CI integration should ensure:
-
-| Metric | Threshold |
-|--------|-----------|
-| New code line coverage | ≥ 80% |
-| New branch coverage | ≥ 70% |
-| No untested public functions | 0 |
+**Typical offenders:** Repository `_to_domain` converters, refresh service orchestration methods, clustering dispatch functions.
 
 ### SCSS Metrics
 
-| Metric | Threshold | Resolution |
-|--------|-----------|------------|
-| `!important` count | 0 | Increase selector specificity |
-| Raw hex colors (outside `var()` fallbacks) | 0 | Use `--acx-*` custom properties |
-| Max selector nesting depth | 4 | Flatten or restructure |
+| Metric                                     | Threshold | Resolution                      |
+| ------------------------------------------ | --------- | ------------------------------- |
+| `!important` count                         | 0         | Increase selector specificity   |
+| Raw hex colors (outside `var()` fallbacks) | 0         | Use `--acx-*` custom properties |
+| Max selector nesting depth                 | 4         | Flatten or restructure          |
 
 ---
 
@@ -248,22 +251,22 @@ Not currently automated. Future CI integration should ensure:
 
 Each finding is classified into one of four categories:
 
-| Category | Icon | Description | Example |
-|----------|------|-------------|---------|
-| **ANTIPATTERN** | :warning: | Code that works but violates established patterns, creating maintenance risk | `contextlib.suppress(Exception)`, non-null assertions on API data |
-| **DEAD_CODE** | :wastebasket: | Unreachable code, unused parameters, duplicate declarations, permanently skipped tests | Duplicate Pydantic field, `pass`-only test body |
-| **COMPLEXITY** | :tangled: | Unnecessary duplication, overly complex functions, missing abstractions | Copy-pasted stubs across 4 test files, sequential mutation loop |
-| **GAP** | :hole: | Missing functionality, incomplete contracts, missing tests | Protocol method not declared, missing pose fields in construction |
+| Category        | Icon          | Description                                                                            | Example                                                           |
+| --------------- | ------------- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| **ANTIPATTERN** | :warning:     | Code that works but violates established patterns, creating maintenance risk           | `contextlib.suppress(Exception)`, non-null assertions on API data |
+| **DEAD_CODE**   | :wastebasket: | Unreachable code, unused parameters, duplicate declarations, permanently skipped tests | Duplicate Pydantic field, `pass`-only test body                   |
+| **COMPLEXITY**  | :tangled:     | Unnecessary duplication, overly complex functions, missing abstractions                | Copy-pasted stubs across 4 test files, sequential mutation loop   |
+| **GAP**         | :hole:        | Missing functionality, incomplete contracts, missing tests                             | Protocol method not declared, missing pose fields in construction |
 
 ---
 
 ## Severity Classification
 
-| Severity | Criteria | Action |
-|----------|----------|--------|
-| **HIGH** | Causes incorrect behavior, data corruption, type unsafety at build time, or > 200 lines of unnecessary duplication | Must fix before merge |
-| **MEDIUM** | Violates architecture rules, creates maintenance burden, defeats type checking, or reduces test reliability | Should fix before merge; defer only with justification |
-| **LOW** | Style issues, minor cleanup, small duplications, informational improvements | Fix in the same branch if easy; otherwise note for next pass |
+| Severity   | Criteria                                                                                                           | Action                                                       |
+| ---------- | ------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------ |
+| **HIGH**   | Causes incorrect behavior, data corruption, type unsafety at build time, or > 200 lines of unnecessary duplication | Must fix before merge                                        |
+| **MEDIUM** | Violates architecture rules, creates maintenance burden, defeats type checking, or reduces test reliability        | Should fix before merge; defer only with justification       |
+| **LOW**    | Style issues, minor cleanup, small duplications, informational improvements                                        | Fix in the same branch if easy; otherwise note for next pass |
 
 ---
 
@@ -282,26 +285,26 @@ Use this structure when producing a review report. Save to `docs/tasks/<version>
 
 ## Summary
 
-| Severity | Count |
-|----------|-------|
-| **HIGH** | N |
-| **MEDIUM** | N |
-| **LOW** | N |
-| **Total** | **N** |
+| Severity   | Count |
+| ---------- | ----- |
+| **HIGH**   | N     |
+| **MEDIUM** | N     |
+| **LOW**    | N     |
+| **Total**  | **N** |
 
 ---
 
-## Automated Check Results
+## Automated Check Results (reported by submitter)
 
-| Check | Result |
-|-------|--------|
-| `make check` (ruff + mypy + pytest) | :white_check_mark: / :x: |
-| `npm run typecheck` | :white_check_mark: / :x: |
-| `npm run test -- --run` | :white_check_mark: / :x: |
-| `npm run lint` | :white_check_mark: / :x: |
-| `check-architecture-compliance.js` | :white_check_mark: / :x: (N warnings) |
-| `composer phpstan` | :white_check_mark: / :x: |
-| Cyclomatic complexity (radon, grade C+) | N functions flagged |
+| Check                                   | Result                                |
+| --------------------------------------- | ------------------------------------- |
+| `make check` (ruff + mypy + pytest)     | :white_check_mark: / :x:              |
+| `npm run typecheck`                     | :white_check_mark: / :x:              |
+| `npm run test -- --run`                 | :white_check_mark: / :x:              |
+| `npm run lint`                          | :white_check_mark: / :x:              |
+| `check-architecture-compliance.js`      | :white_check_mark: / :x: (N warnings) |
+| `composer phpstan`                      | :white_check_mark: / :x:              |
+| Cyclomatic complexity (radon, grade C+) | N functions flagged                   |
 
 ---
 
@@ -309,9 +312,9 @@ Use this structure when producing a review report. Save to `docs/tasks/<version>
 
 ### H-1 · <Title>
 
-| | |
-|---|---|
-| **Files** | `path/to/file.py` LN |
+|              |                                            |
+| ------------ | ------------------------------------------ |
+| **Files**    | `path/to/file.py` LN                       |
 | **Category** | ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP |
 
 <Description of finding with specific code references.>
@@ -319,9 +322,11 @@ Use this structure when producing a review report. Save to `docs/tasks/<version>
 <!-- Repeat for each HIGH finding -->
 
 ## MEDIUM Severity
+
 <!-- Same structure -->
 
 ## LOW Severity
+
 <!-- Same structure -->
 
 ---
@@ -329,12 +334,15 @@ Use this structure when producing a review report. Save to `docs/tasks/<version>
 ## Recommended Fix Order
 
 ### Phase 1 — Correctness (before merge)
+
 1. **H-1** — <one-line summary>
 
 ### Phase 2 — Robustness (soon after merge)
+
 2. **H-N** — <one-line summary>
 
 ### Phase 3 — Maintainability (tech debt backlog)
+
 3. **M-N** — <one-line summary>
 
 ---
@@ -342,15 +350,19 @@ Use this structure when producing a review report. Save to `docs/tasks/<version>
 # Consolidated Checklist
 
 ## Phase 1 — Correctness (before merge)
+
 - [ ] **H-1** — <action item>
 
 ## Phase 2 — Robustness
+
 - [ ] **M-1** — <action item>
 
 ## Phase 3 — Maintainability
+
 - [ ] **L-1** — <action item>
 
 ## Success Criteria
+
 - [ ] Zero HIGH findings remaining
 - [ ] `make check` passes
 - [ ] `npm run typecheck` passes with zero new errors

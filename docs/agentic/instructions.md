@@ -294,6 +294,8 @@ Never fabricate benchmark numbers, latency claims, or metrics. If data is unavai
 9. Accessibility pass: keyboard navigation, ARIA labels
 10. Run full test suite locally before committing
 11. Commit with Conventional Commits format
+12. **Before requesting review**: Run all automated checks from the [Branch Review Guide](rules/branch-review-guide.md#automated-checks-precondition) and confirm zero errors. The reviewer will NOT re-run them.
+13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](rules/branch-review-guide.md#310--bug-finding-heuristics) checklist (variable identity after normalization, SQL binding data-flow, guard-vs-rule alignment, boundary values). Fixing these before submission eliminates the most common roundtrip findings.
 
 **Development Approach: Gradual Layering**
 

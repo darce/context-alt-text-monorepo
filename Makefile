@@ -12,7 +12,7 @@
 #
 
 .PHONY: help mcp-start mcp-stop mcp-restart mcp-status mcp-run \
-        check-all lint-all test-all clean-all
+        check-all check-frontend lint-all test-all clean-all
 
 # Default target
 help:
@@ -28,13 +28,14 @@ help:
 	@echo ""
 	@echo "Cross-Repo Operations:"
 	@echo "  make check-all    - Run all checks (lint + types + tests)"
+	@echo "  make check-frontend - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all     - Run linters for all apps"
 	@echo "  make test-all     - Run tests for all apps"
 	@echo "  make clean-all    - Clean cache files in all apps"
 	@echo ""
 	@echo "App-Specific Commands:"
 	@echo "  cd apps/prototype-description-service && make help"
-	@echo "  cd apps/prototype-wp-alt-context && npm run help"
+	@echo "  cd apps/prototype-wp-alt-context && make help"
 
 # =============================================================================
 # MCP Server Commands
@@ -64,13 +65,19 @@ check-all: lint-all test-all
 	@echo ""
 	@echo "✅ All monorepo checks passed!"
 
+check-frontend:
+	@echo "=== Frontend checks (WordPress plugin) ==="
+	@cd apps/prototype-wp-alt-context && make check
+	@echo ""
+	@echo "✅ Frontend checks passed!"
+
 # Lint all apps
 lint-all:
 	@echo "=== Linting Python (backend) ==="
 	@cd apps/prototype-description-service && make lint
 	@echo ""
 	@echo "=== Linting TypeScript (frontend) ==="
-	@cd apps/prototype-wp-alt-context && npm run lint --silent
+	@cd apps/prototype-wp-alt-context && make lint
 	@echo ""
 	@echo "=== Linting PHP (plugin) ==="
 	@cd apps/prototype-wp-alt-context && composer cs-check || true
@@ -83,7 +90,7 @@ test-all:
 	@cd apps/prototype-description-service && make test
 	@echo ""
 	@echo "=== Testing TypeScript (frontend) ==="
-	@cd apps/prototype-wp-alt-context && npm run test -- --run
+	@cd apps/prototype-wp-alt-context && make test
 	@echo ""
 	@echo "✅ Tests complete"
 

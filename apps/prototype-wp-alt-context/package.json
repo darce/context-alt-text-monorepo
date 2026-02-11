@@ -19,6 +19,7 @@
     "arch": "node scripts/check-architecture-compliance.js",
     "arch:tips": "node scripts/check-architecture-compliance.js --tips",
     "arch:verbose": "node scripts/check-architecture-compliance.js --tips --verbose",
+    "check": "npm run lint && npm run typecheck && npm run arch && npm run test -- --run",
     "check:all": "npm run lint:fix && npm run format:fix && npm run typecheck && npm run arch:verbose && npm run test",
     "typecheck": "tsc --noEmit --project tsconfig.type-check.json",
     "generate:contracts": "json-schema-to-typescript ../../packages/shared-contracts/schemas/*.json -o js/admin/api/generated",

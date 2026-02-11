@@ -10,6 +10,8 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use RuntimeException;
 use Throwable;
 
+use function do_action;
+use function function_exists;
 use function is_array;
 use function is_object;
 use function method_exists;
@@ -38,7 +40,9 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 	public function project( string $tenant_id, array $snapshot ): void {
 		global $wpdb;
 
-		if ( '' === trim( $tenant_id ) ) {
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard();
 			return;
 		}
 
@@ -56,9 +60,9 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 			$clusters         = is_array( $snapshot['clusters'] ?? null ) ? $snapshot['clusters'] : array();
 			$members          = is_array( $snapshot['members'] ?? null ) ? $snapshot['members'] : array();
 
-			$this->clusters_repository->merge_snapshot_for_tenant( $tenant_id, $clusters, $snapshot_version );
-			$this->members_repository->merge_snapshot_for_tenant( $tenant_id, $members, $snapshot_version );
-			$this->sync_state_repository->upsert_snapshot_version( $tenant_id, $snapshot_version );
+			$this->clusters_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $clusters, $snapshot_version );
+			$this->members_repository->merge_snapshot_for_tenant( $normalized_tenant_id, $members, $snapshot_version );
+			$this->sync_state_repository->upsert_snapshot_version( $normalized_tenant_id, $snapshot_version );
 
 			$committed = false !== $wpdb->query( 'COMMIT' );
 			if ( ! $committed ) {
@@ -67,6 +71,22 @@ class SnapshotProjector implements SnapshotProjectorInterface {
 		} catch ( Throwable $throwable ) {
 			$wpdb->query( 'ROLLBACK' );
 			throw $throwable;
+		}
+	}
+
+	private function log_empty_tenant_id_guard(): void {
+		if ( function_exists( 'do_action' ) ) {
+			do_action(
+				'acx_sovereign_warning',
+				'empty_tenant_id',
+				array(
+					'method' => __METHOD__,
+				)
+			);
+		}
+
+		if ( function_exists( '_doing_it_wrong' ) ) {
+			_doing_it_wrong( __METHOD__, 'Tenant ID must be non-empty for snapshot projection.', '4.13.1' );
 		}
 	}
 }

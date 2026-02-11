@@ -88,6 +88,32 @@ class SnapshotProjectorTest extends TestCase
 
         $projector->project('tenant-c', ['snapshot_version' => 3, 'clusters' => [], 'members' => []]);
     }
+
+    public function testProjectWithEmptyTenantIdDispatchesWarningAndSkipsDatabaseWork(): void
+    {
+        $warnings = [];
+        add_action(
+            'acx_sovereign_warning',
+            static function (string $code, array $context) use (&$warnings): void {
+                $warnings[] = [$code, $context['method'] ?? ''];
+            },
+            10,
+            2
+        );
+
+        $projector = new SnapshotProjector(
+            new SnapshotProjectorClustersSpy(),
+            new SnapshotProjectorMembersSpy(),
+            new SnapshotProjectorSyncStateSpy()
+        );
+
+        $projector->project('  ', ['snapshot_version' => 4, 'clusters' => [], 'members' => []]);
+
+        global $wpdb;
+        $this->assertSame([], $wpdb->queries);
+        $this->assertCount(1, $warnings);
+        $this->assertSame('empty_tenant_id', $warnings[0][0]);
+    }
 }
 
 class SnapshotProjectorClustersSpy implements ClustersRepositoryInterface

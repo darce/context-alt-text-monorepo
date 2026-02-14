@@ -55,7 +55,7 @@ export default tseslint.config(
         {
           selector: 'Program',
           message:
-            'Use TypeScript (.ts/.tsx) for new modules in js/. Request an exception in docs/architecture/rules if required.',
+            'Use TypeScript (.ts/.tsx) for new modules in js/. Request an exception in docs/agentic/rules if required.'
         },
       ],
     },

@@ -6,7 +6,7 @@
 /**
  * Architecture Compliance Checker
  *
- * Enforces architecture standards from docs/architecture/rules/component-architecture-patterns.md:
+ * Enforces architecture standards from docs/agentic/rules/component-architecture-patterns.md:
  *
  * Checks:
  * 1. Component file size limits (300 lines for components, 400 for routes)
@@ -497,7 +497,7 @@ function checkFile(filePath) {
       message: `File exceeds ${fileType} size limit: ${lineCount}/${maxLines} lines`,
       actual: lineCount,
       limit: maxLines,
-      fix: `Split into smaller ${fileType === 'route' ? 'components' : 'modules'}. See docs/architecture/rules/component-architecture-patterns.md`,
+      fix: `Split into smaller ${fileType === 'route' ? 'components' : 'modules'}. See docs/agentic/rules/component-architecture-patterns.md`,
     });
   }
 
@@ -619,7 +619,7 @@ function printReport(results) {
   if (errors.length > 0) {
     console.log(
       colors.yellow +
-        'Fix errors before merging. See docs/architecture/rules/component-architecture-patterns.md' +
+        'Fix errors before merging. See docs/agentic/rules/component-architecture-patterns.md' +
         colors.reset +
         '\n',
     );

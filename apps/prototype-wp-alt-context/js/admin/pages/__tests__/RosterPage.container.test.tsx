@@ -120,11 +120,7 @@ describe('RosterPage route container', () => {
   });
 
   it('[PAG-M3] bootstraps active tab from the query string', () => {
-    window.history.pushState(
-      {},
-      '',
-      '/wp-admin/admin.php?page=alt-context-roster&tab=clusters',
-    );
+    window.history.pushState({}, '', '/wp-admin/admin.php?page=alt-context-roster&tab=clusters');
 
     render(<RosterPage />);
 

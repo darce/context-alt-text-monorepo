@@ -150,11 +150,7 @@ export const ClusterDrawerPanel = ({
                 onDragStart={createFaceDragStart(identity.identity_id)}
                 onDragEnd={onFaceDragEnd}
               >
-                <a
-                  href={mediaEditUrl(identity.media_id)}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+                <a href={mediaEditUrl(identity.media_id)} target="_blank" rel="noopener noreferrer">
                   <IdentityThumbnail identity={identity} mediaMeta={mediaMap[identity.media_id]} size={128} />
                 </a>
                 <figcaption>

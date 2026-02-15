@@ -154,4 +154,26 @@ abstract class AbstractRecognitionProxyController implements RecognitionRouteCon
 
 		return in_array( $scheme, array( 'http', 'https' ), true ) && '' !== $host;
 	}
+
+	/**
+	 * Determine if local projection should be used based on sync state.
+	 *
+	 * @param \AltContext\Sovereign\Repositories\SyncStateRepositoryInterface $sync_state_repository
+	 * @param string $tenant_id
+	 * @return bool
+	 */
+	protected function should_use_local_projection_gate( $sync_state_repository, string $tenant_id ): bool {
+		$normalized = trim( $tenant_id );
+		if ( '' === $normalized ) {
+			return false;
+		}
+
+		$version = $sync_state_repository->get_snapshot_version( $normalized );
+		$updated_at = $sync_state_repository->get_last_updated( $normalized );
+		if ( $version > 0 || ( is_string( $updated_at ) && '' !== trim( $updated_at ) ) ) {
+			return true;
+		}
+
+		return false;
+	}
 }

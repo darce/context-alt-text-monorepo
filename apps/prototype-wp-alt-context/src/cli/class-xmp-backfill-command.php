@@ -67,7 +67,6 @@ class XmpBackfillCommand extends \WP_CLI_Command {
 
 		if ( empty( $media_ids ) ) {
 			\WP_CLI::error( 'No media IDs provided. Pass IDs directly or use --all.' );
-			return;
 		}
 
 		\WP_CLI::log( sprintf( 'Embedding XMP metrics for %d attachments...', count( $media_ids ) ) );

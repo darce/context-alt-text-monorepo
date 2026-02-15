@@ -1,11 +1,16 @@
+includes:
+  - vendor/szepeviktor/phpstan-wordpress/extension.neon
+
 parameters:
   level: 5
   paths:
     - src
     - alt-context.php
-  phpVersion: 80000
+  phpVersion: 80200
+  scanDirectories:
+    - tests/stubs
   bootstrapFiles:
     - tests/stubs/wp.php
-  stubFiles:
-    - vendor/php-stubs/wordpress-stubs/wordpress-stubs.php
-  reportUnmatchedIgnoredErrors: true
+    - tests/stubs/acx-constants.php
+  treatPhpDocTypesAsCertain: false
+  reportUnmatchedIgnoredErrors: false

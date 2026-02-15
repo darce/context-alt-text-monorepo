@@ -1373,38 +1373,8 @@ if (!function_exists('wp_get_environment_type')) {
     }
 }
 
-if (!class_exists('WP_Query')) {
-    class WP_Query
-    {
-        private array $vars = [];
-        private bool $mainQuery;
-
-        public function __construct(bool $mainQuery = true)
-        {
-            $this->mainQuery = $mainQuery;
-        }
-
-        public function is_main_query(): bool
-        {
-            return $this->mainQuery;
-        }
-
-        public function set($key, $value): void
-        {
-            $this->vars[$key] = $value;
-        }
-
-        public function get($key, $default = null)
-        {
-            return $this->vars[$key] ?? $default;
-        }
-
-        public function get_vars(): array
-        {
-            return $this->vars;
-        }
-    }
-}
+// WP_Query is provided by szepeviktor/phpstan-wordpress extension stubs.
+// Do NOT redefine it here — the minimal stub conflicts with the real signature.
 
 if (!defined('OBJECT')) {
     define('OBJECT', 'OBJECT');

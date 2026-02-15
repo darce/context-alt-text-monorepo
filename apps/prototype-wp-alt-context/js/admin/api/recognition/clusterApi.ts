@@ -17,8 +17,4 @@ export {
 
 export { fetchClusterMembers, removeClusterMember } from './clusterApiMembers';
 
-export {
-  listRecognitionClusters,
-  getRecognitionCluster,
-  fetchTopUnlabeledClusters,
-} from './clusterApiQueries';
+export { listRecognitionClusters, getRecognitionCluster, fetchTopUnlabeledClusters } from './clusterApiQueries';

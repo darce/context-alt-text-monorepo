@@ -11,6 +11,7 @@ export interface ApiConfig {
   adminUrls?: AdminUrlsConfig;
   max_media_per_batch?: number | string; // wp_localize_script may coerce to string
   devMode?: boolean | string | number; // wp_localize_script may convert to "1" or ""
+  recognitionUrlFallback?: boolean | string | number;
 }
 
 export interface NormalizedConfig {
@@ -21,6 +22,7 @@ export interface NormalizedConfig {
   adminUrls: AdminUrlsConfig;
   maxMediaPerBatch: number;
   devMode: boolean;
+  recognitionUrlFallback: boolean;
 }
 
 // NOTE: Batch limits removed for MVP. Previously 50, now set high to disable chunking.
@@ -34,6 +36,11 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
   const rawMax = Number(raw.max_media_per_batch ?? DEFAULT_MAX_MEDIA_PER_BATCH);
   const maxMediaPerBatch = Number.isFinite(rawMax) && rawMax > 0 ? rawMax : DEFAULT_MAX_MEDIA_PER_BATCH;
   const devMode = raw.devMode === true || raw.devMode === 'true' || raw.devMode === '1' || raw.devMode === 1;
+  const recognitionUrlFallback =
+    raw.recognitionUrlFallback === true ||
+    raw.recognitionUrlFallback === 'true' ||
+    raw.recognitionUrlFallback === '1' ||
+    raw.recognitionUrlFallback === 1;
   const adminUrls = {
     mediaEditBase: normalizeOptionalString(raw.adminUrls?.mediaEditBase),
     rosterClusters: normalizeOptionalString(raw.adminUrls?.rosterClusters),
@@ -47,6 +54,7 @@ export const normalizeConfig = (raw: ApiConfig): NormalizedConfig => {
     adminUrls,
     maxMediaPerBatch,
     devMode,
+    recognitionUrlFallback,
   };
 };
 

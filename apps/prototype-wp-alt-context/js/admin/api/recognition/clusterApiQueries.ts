@@ -1,11 +1,6 @@
 import { fetchRequiredApi, stripTrailingSlash } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
-import type {
-  ClusterListParams,
-  ClusterSummary,
-  TopUnlabeledCluster,
-  TopUnlabeledRepresentative,
-} from './types';
+import type { ClusterListParams, ClusterSummary, TopUnlabeledCluster, TopUnlabeledRepresentative } from './types';
 
 type TopUnlabeledRepresentativePayload = Omit<TopUnlabeledRepresentative, 'thumb_url'> & {
   thumb_url?: string | null;

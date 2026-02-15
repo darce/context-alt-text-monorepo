@@ -10,6 +10,7 @@ require_once __DIR__ . '/class-analysis-jobs-controller.php';
 require_once __DIR__ . '/class-clusters-controller.php';
 require_once __DIR__ . '/class-cluster-mutations-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
+require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
 
 use WP_Error;
@@ -21,14 +22,31 @@ class RecognitionController {
 	private ClustersController $clustersController;
 	private ClusterMutationsController $clusterMutationsController;
 	private MediaIdentitiesController $mediaIdentitiesController;
+	private SyncStatusController $syncStatusController;
 	private SuggestionsController $suggestionsController;
 
-	public function __construct() {
-		$this->analysisJobsController = new AnalysisJobsController();
-		$this->clustersController = new ClustersController();
-		$this->clusterMutationsController = new ClusterMutationsController();
-		$this->mediaIdentitiesController = new MediaIdentitiesController();
-		$this->suggestionsController = new SuggestionsController();
+	/**
+	 * @param ?AnalysisJobsController     $analysis_jobs_controller     Optional for testing.
+	 * @param ?ClustersController         $clusters_controller          Optional for testing.
+	 * @param ?ClusterMutationsController $cluster_mutations_controller Optional for testing.
+	 * @param ?MediaIdentitiesController  $media_identities_controller  Optional for testing.
+	 * @param ?SyncStatusController       $sync_status_controller       Optional for testing.
+	 * @param ?SuggestionsController      $suggestions_controller       Optional for testing.
+	 */
+	public function __construct(
+		?AnalysisJobsController $analysis_jobs_controller = null,
+		?ClustersController $clusters_controller = null,
+		?ClusterMutationsController $cluster_mutations_controller = null,
+		?MediaIdentitiesController $media_identities_controller = null,
+		?SyncStatusController $sync_status_controller = null,
+		?SuggestionsController $suggestions_controller = null
+	) {
+		$this->analysisJobsController = $analysis_jobs_controller ?? new AnalysisJobsController();
+		$this->clustersController = $clusters_controller ?? new ClustersController();
+		$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController();
+		$this->mediaIdentitiesController = $media_identities_controller ?? new MediaIdentitiesController();
+		$this->syncStatusController = $sync_status_controller ?? new SyncStatusController();
+		$this->suggestionsController = $suggestions_controller ?? new SuggestionsController();
 	}
 
 	public function register_routes(): void {
@@ -36,6 +54,7 @@ class RecognitionController {
 		$this->clustersController->register_routes();
 		$this->clusterMutationsController->register_routes();
 		$this->mediaIdentitiesController->register_routes();
+		$this->syncStatusController->register_routes();
 		$this->suggestionsController->register_routes();
 	}
 

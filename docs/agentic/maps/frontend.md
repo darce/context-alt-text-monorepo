@@ -39,19 +39,19 @@ js/admin/
 
 ## New Hooks (v4.10.3)
 
-| Hook                    | Purpose                                       |
-| ----------------------- | --------------------------------------------- |
-| `useJobProgressStream`  | SSE connection for real-time progress updates |
-| `useJobPersistence`     | Persist job IDs to localStorage for refresh   |
-| `useJobCoordination`    | BroadcastChannel for multi-tab sync           |
+| Hook                   | Purpose                                       |
+| ---------------------- | --------------------------------------------- |
+| `useJobProgressStream` | SSE connection for real-time progress updates |
+| `useJobPersistence`    | Persist job IDs to localStorage for refresh   |
+| `useJobCoordination`   | BroadcastChannel for multi-tab sync           |
 
 ## Test Entry Points
 
-| Scope       | Path                           | When to Use                     |
-| ----------- | ------------------------------ | ------------------------------- |
-| Component   | `js/**/*.test.tsx`             | UI behavior, user interactions  |
-| Hook        | `js/admin/hooks/__tests__/`    | Data fetching, state management |
-| Integration | `js/tests/`                    | Full page flows                 |
+| Scope       | Path                        | When to Use                     |
+| ----------- | --------------------------- | ------------------------------- |
+| Component   | `js/**/*.test.tsx`          | UI behavior, user interactions  |
+| Hook        | `js/admin/hooks/__tests__/` | Data fetching, state management |
+| Integration | `js/tests/`                 | Full page flows                 |
 
 ## Key Diagrams
 
@@ -59,13 +59,11 @@ js/admin/
 - [frontend-uml/media-selection-workflow.mmd](../diagrams/frontend-uml/media-selection-workflow.mmd) — Media selection UX
 - [frontend-uml/sequence-complete-workflow.mmd](../diagrams/frontend-uml/sequence-complete-workflow.mmd) — End-to-end sequence
 
-## Component Rules (from instructions.md)
+## Guidelines
 
-- Max **300 lines** per component file
-- Max **5 useState** hooks (use `useReducer` for complex state)
-- Max **3 useEffect** hooks (prefer derived state)
-- Max **10 props** (split component if exceeded)
-- Always use Radix UI primitives for accessibility
+Full frontend rules: [rules/frontend-guidelines.md](../rules/frontend-guidelines.md)
+
+Key limits: max 300 lines/component, max 5 `useState`, max 3 `useEffect`, max 10 props. Always use Radix UI primitives for accessibility.
 
 ## Common Tasks
 

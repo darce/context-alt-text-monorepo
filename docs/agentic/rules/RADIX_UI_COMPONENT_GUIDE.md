@@ -19,12 +19,12 @@ Prefer Radix UI primitives over custom implementations for consistent, accessibl
 
 These are ready to use in `js/components/ui/`:
 
-| Package | Wrapper | Use For |
-|---------|---------|---------|
-| `@radix-ui/react-tooltip` | `Tooltip.tsx` | Icon buttons, abbreviations, status indicators |
-| `@radix-ui/react-progress` | `Progress.tsx` | File uploads, long operations |
-| `@radix-ui/react-separator` | - | Visual dividers |
-| `@radix-ui/react-slot` | `Button.tsx` | Composable buttons |
+| Package                     | Wrapper        | Use For                                        |
+| --------------------------- | -------------- | ---------------------------------------------- |
+| `@radix-ui/react-tooltip`   | `Tooltip.tsx`  | Icon buttons, abbreviations, status indicators |
+| `@radix-ui/react-progress`  | `Progress.tsx` | File uploads, long operations                  |
+| `@radix-ui/react-separator` | -              | Visual dividers                                |
+| `@radix-ui/react-slot`      | `Button.tsx`   | Composable buttons                             |
 
 ---
 
@@ -33,26 +33,32 @@ These are ready to use in `js/components/ui/`:
 ### Tooltip (installed)
 
 ```tsx
-import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent } from "@/components/ui/tooltip";
+import {
+  TooltipProvider,
+  TooltipRoot,
+  TooltipTrigger,
+  TooltipContent,
+} from "@/components/ui/tooltip";
 
 <TooltipProvider>
   <TooltipRoot>
     <TooltipTrigger asChild>
-      <button className="cat-button cat-button--icon">
+      <button className="acx-button acx-button--icon">
         <RefreshIcon />
         <span className="screen-reader-text">
-          {__("Refresh", "context-alt-text")}
+          {__("Refresh", "alt-context")}
         </span>
       </button>
     </TooltipTrigger>
     <TooltipContent side="top">
-      {__("Refresh the roster data", "context-alt-text")}
+      {__("Refresh the roster data", "alt-context")}
     </TooltipContent>
   </TooltipRoot>
-</TooltipProvider>
+</TooltipProvider>;
 ```
 
 **Rules:**
+
 - Always include screen reader text in the trigger
 - Keep tooltip text to 1-2 sentences
 - Wrap app root with `TooltipProvider` once
@@ -62,7 +68,7 @@ import { TooltipProvider, TooltipRoot, TooltipTrigger, TooltipContent } from "@/
 ```tsx
 import { Progress } from "@/components/ui/progress";
 
-<Progress value={progress} max={100} />
+<Progress value={progress} max={100} />;
 ```
 
 ### Separator (installed)
@@ -70,7 +76,7 @@ import { Progress } from "@/components/ui/progress";
 ```tsx
 import { Separator } from "@radix-ui/react-separator";
 
-<Separator orientation="horizontal" className="cat-separator" />
+<Separator orientation="horizontal" className="acx-separator" />;
 ```
 
 ---
@@ -81,35 +87,35 @@ When you need a component not yet installed, follow this priority order:
 
 ### High Priority (install when needed)
 
-| Use Case | Package | Size |
-|----------|---------|------|
+| Use Case                  | Package                  | Size  |
+| ------------------------- | ------------------------ | ----- |
 | Dropdowns with 3+ options | `@radix-ui/react-select` | 35 kB |
-| Modals/dialogs | `@radix-ui/react-dialog` | 18 kB |
-| Form validation | `@radix-ui/react-form` | 5 kB |
-| Form labels | `@radix-ui/react-label` | 2 kB |
+| Modals/dialogs            | `@radix-ui/react-dialog` | 18 kB |
+| Form validation           | `@radix-ui/react-form`   | 5 kB  |
+| Form labels               | `@radix-ui/react-label`  | 2 kB  |
 
 ### Medium Priority
 
-| Use Case | Package | Size |
-|----------|---------|------|
-| View switching | `@radix-ui/react-tabs` | 6 kB |
-| Collapsible sections | `@radix-ui/react-accordion` | 9 kB |
-| Non-modal overlays | `@radix-ui/react-popover` | 15 kB |
+| Use Case             | Package                     | Size  |
+| -------------------- | --------------------------- | ----- |
+| View switching       | `@radix-ui/react-tabs`      | 6 kB  |
+| Collapsible sections | `@radix-ui/react-accordion` | 9 kB  |
+| Non-modal overlays   | `@radix-ui/react-popover`   | 15 kB |
 
 ### Low Priority
 
-| Use Case | Package | Size |
-|----------|---------|------|
-| Boolean toggles | `@radix-ui/react-switch` | 3 kB |
+| Use Case              | Package                       | Size |
+| --------------------- | ----------------------------- | ---- |
+| Boolean toggles       | `@radix-ui/react-switch`      | 3 kB |
 | 3-5 exclusive options | `@radix-ui/react-radio-group` | 8 kB |
-| Multiple selection | `@radix-ui/react-checkbox` | 3 kB |
-| Numeric ranges | `@radix-ui/react-slider` | 6 kB |
+| Multiple selection    | `@radix-ui/react-checkbox`    | 3 kB |
+| Numeric ranges        | `@radix-ui/react-slider`      | 6 kB |
 
 ### Installation Steps
 
 1. `npm install @radix-ui/react-{component}`
 2. Create wrapper in `js/components/ui/{component}.tsx`
-3. Apply BEM classes: `cat-{component}`, `cat-{component}--variant`
+3. Apply BEM classes: `acx-{component}`, `acx-{component}--variant`
 4. Add TypeScript types extending Radix props
 5. Write behavior tests (not implementation tests)
 6. Run axe-core accessibility audit
@@ -125,7 +131,7 @@ Merge Radix behavior with your components:
 ```tsx
 // Radix primitive renders as your Button
 <Dialog.Trigger asChild>
-  <Button variant="primary">{__("Open", "context-alt-text")}</Button>
+  <Button variant="primary">{__("Open", "alt-context")}</Button>
 </Dialog.Trigger>
 ```
 
@@ -140,6 +146,7 @@ Merge Radix behavior with your components:
 ```
 
 Use controlled when you need to:
+
 - Coordinate with other state
 - Validate before closing
 - Prevent closing conditionally
@@ -149,21 +156,22 @@ Use controlled when you need to:
 Radix adds state attributes for CSS:
 
 ```scss
-.cat-dialog-overlay[data-state="open"] {
+.acx-dialog-overlay[data-state="open"] {
   animation: fadeIn 200ms ease-out;
 }
 
-.cat-select-item[data-highlighted] {
+.acx-select-item[data-highlighted] {
   background-color: var(--color-primary-50);
 }
 
-.cat-select-item[data-disabled] {
+.acx-select-item[data-disabled] {
   opacity: 0.5;
   cursor: not-allowed;
 }
 ```
 
 **Available attributes:**
+
 - `data-state`: "open" | "closed"
 - `data-disabled`: present when disabled
 - `data-highlighted`: keyboard focus
@@ -179,11 +187,11 @@ Every Radix component must have:
 
 ```tsx
 // Visible label
-<Label htmlFor="email">{__("Email", "context-alt-text")}</Label>
+<Label htmlFor="email">{__("Email", "alt-context")}</Label>
 <input id="email" type="email" />
 
 // Or aria-label for icon buttons
-<button aria-label={__("Close", "context-alt-text")}>
+<button aria-label={__("Close", "alt-context")}>
   <CrossIcon />
 </button>
 ```
@@ -191,11 +199,9 @@ Every Radix component must have:
 ### 2. Screen Reader Text
 
 ```tsx
-<button className="cat-button cat-button--icon">
+<button className="acx-button acx-button--icon">
   <RefreshIcon />
-  <span className="screen-reader-text">
-    {__("Refresh", "context-alt-text")}
-  </span>
+  <span className="screen-reader-text">{__("Refresh", "alt-context")}</span>
 </button>
 ```
 
@@ -203,9 +209,9 @@ Every Radix component must have:
 
 ```tsx
 <Dialog.Content>
-  <Dialog.Title>{__("Delete Item", "context-alt-text")}</Dialog.Title>
+  <Dialog.Title>{__("Delete Item", "alt-context")}</Dialog.Title>
   <Dialog.Description>
-    {__("This action cannot be undone.", "context-alt-text")}
+    {__("This action cannot be undone.", "alt-context")}
   </Dialog.Description>
 </Dialog.Content>
 ```
@@ -213,6 +219,7 @@ Every Radix component must have:
 ### 4. Keyboard Navigation
 
 Test every component with:
+
 - Tab / Shift+Tab
 - Arrow keys
 - Enter / Space
@@ -225,7 +232,7 @@ All user-visible strings through WordPress i18n:
 ```tsx
 import { __ } from "@wordpress/i18n";
 
-<Label>{__("First Name", "context-alt-text")}</Label>
+<Label>{__("First Name", "alt-context")}</Label>;
 ```
 
 ---
@@ -240,7 +247,7 @@ import userEvent from "@testing-library/user-event";
 
 test("dialog opens and closes", async () => {
   const user = userEvent.setup();
-  
+
   render(
     <Dialog>
       <DialogTrigger>Open</DialogTrigger>
@@ -248,14 +255,14 @@ test("dialog opens and closes", async () => {
         <DialogTitle>Title</DialogTitle>
         <DialogClose>Close</DialogClose>
       </DialogContent>
-    </Dialog>
+    </Dialog>,
   );
 
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
-  
+
   await user.click(screen.getByText("Open"));
   expect(screen.getByRole("dialog")).toBeInTheDocument();
-  
+
   await user.click(screen.getByText("Close"));
   expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
 });

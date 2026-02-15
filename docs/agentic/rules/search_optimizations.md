@@ -50,7 +50,7 @@ Once the recognition MVP is in a stable state, follow the sequence below to evol
 
 - Define a staged rollout (internal, canary sites, production) with rollback playbooks for each optimization phase.
 - Update developer docs and playbooks (`recognition-service-tasks.md`, onboarding guides) to reflect the new index architecture and operational requirements.
-- Archive post-mortem notes, benchmark results, and configuration tweaks in `docs/architecture/records/` for future engineers.
+- Archive post-mortem notes, benchmark results, and configuration tweaks in `docs/agentic/` for future engineers.
 
 ---
 

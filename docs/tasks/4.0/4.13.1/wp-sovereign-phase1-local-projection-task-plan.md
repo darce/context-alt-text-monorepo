@@ -1,5 +1,7 @@
 # WordPress Sovereign Phase 1: Local Projection Task Plan (v4.13.1 Follow-up)
 
+> **Status: CLOSED** (2026-02-14). All plugin-side deliverables complete. Remaining external dependencies and stretch goals carried forward to [Phase 2 task plan](wp-sovereign-phase2-read-path-flip-task-plan.md).
+
 ## Problem Statement
 
 The plugin is now packageable and portable, but cluster UX is still proxy-first and depends on live backend availability. The roadmap requires a sovereign local projection so previously computed clusters remain available and curation can move toward local durability. This task defines the next actionable slice for the current branch: local projection foundations and snapshot ingestion scaffolding.
@@ -357,20 +359,20 @@ protected function get_snapshot_endpoint_path(): string {
 
 ## External Dependencies (Tracked, Not Gated by Plugin Slice)
 
-- [ ] Backend team finalizes `GET /tenants/{tenant_id}/clusters/snapshot` contract with payload schema and version semantics.
-- [ ] Backend team implements snapshot route and tests in `apps/prototype-description-service`.
+- [~] Backend team finalizes `GET /tenants/{tenant_id}/clusters/snapshot` contract with payload schema and version semantics. **Carried forward to [Phase 2 task plan](wp-sovereign-phase2-read-path-flip-task-plan.md).**
+- [~] Backend team implements snapshot route and tests in `apps/prototype-description-service`. **Carried forward to [Phase 2 task plan](wp-sovereign-phase2-read-path-flip-task-plan.md).**
 - [x] Plugin task references backend dependency status (owner/date/blocker) without blocking local schema/repository delivery.
 
 ## Stretch Goals
 
 - [x] Add `wp cron event` verification commands to runbook for pre-Phase-3 operability checks.
-- [ ] Add optional admin diagnostics panel for last snapshot version and last sync timestamp.
+- [~] Add optional admin diagnostics panel for last snapshot version and last sync timestamp. **Carried forward to [Phase 2 task plan](wp-sovereign-phase2-read-path-flip-task-plan.md).**
 
 ## Success Criteria
 
 - [x] Activating the plugin creates all three projection tables idempotently in a clean WordPress install.
 - [x] Snapshot fixture ingestion populates local tables and persists monotonic sync version state.
 - [x] Projection re-ingestion preserves curated local state and updates only non-authoritative fields.
-- [ ] Snapshot endpoint contract/route dependency is explicitly tracked with owner/date and blocker status.
+- [~] Snapshot endpoint contract/route dependency is explicitly tracked with owner/date and blocker status. **Carried forward to [Phase 2 task plan](wp-sovereign-phase2-read-path-flip-task-plan.md).**
 - [x] Team can begin roadmap Phase 2 (local-first read flip) without additional schema or projection scaffolding work.
 - [x] Document explicitly states this task covers storage foundation only and does not by itself satisfy roadmap Phase 1 UI local-read exit criteria.

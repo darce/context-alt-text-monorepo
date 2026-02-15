@@ -6,23 +6,23 @@ Human-readable documentation of the live integration between WordPress plugin an
 
 ### WordPress REST API (WP → FastAPI Proxy)
 
-| File                                   | Description                                                                 |
-| -------------------------------------- | --------------------------------------------------------------------------- |
+| File                                   | Description                                             |
+| -------------------------------------- | ------------------------------------------------------- |
 | [clustering-api.md](clustering-api.md) | Recognition endpoints (`/wp-json/acx/v1/recognition/*`) |
 
 ### Recognition Service (FastAPI)
 
-| File                                                   | Description                             |
-| ------------------------------------------------------ | --------------------------------------- |
-| [recognition-clustering.md](recognition-clustering.md) | Recognition HTTP API (`/recognition/*`) |
+| File                                                   | Description                                                    |
+| ------------------------------------------------------ | -------------------------------------------------------------- |
+| [recognition-clustering.md](recognition-clustering.md) | Recognition HTTP API (`/recognition/*`)                        |
 | [cluster-snapshot-api.md](cluster-snapshot-api.md)     | Snapshot export API (`/tenants/{tenant_id}/clusters/snapshot`) |
 
 ### Security & Integration
 
-| File                                                           | Description                                  |
-| -------------------------------------------------------------- | -------------------------------------------- |
-| [security.md](security.md)                                     | API key auth, tenant isolation, RLS policies |
-| [wordpress-backend-contract.md](wordpress-backend-contract.md) | Progressive learning workflow (reference)    |
+| File                                                                 | Description                                  |
+| -------------------------------------------------------------------- | -------------------------------------------- |
+| [security.md](security.md)                                           | API key auth, tenant isolation, RLS policies |
+| [wordpress-backend-contract.md](wordpress-backend-contract.md)       | Progressive learning workflow (reference)    |
 | [recognition-media-xmp-mapping.md](recognition-media-xmp-mapping.md) | Face payload to XMP persistence mapping      |
 
 ## Machine-Readable Schemas
@@ -55,7 +55,7 @@ $tenant_id = md5(get_site_url());  // 32-char hex string
 
 - Header: `Authorization: Bearer <api_key>` or `X-Api-Key: <api_key>`
 - Development: Use `DEV_API_KEYS` environment variable
-- WordPress: Stored in `context_alt_text_recognition_api_key` option
+- WordPress: Stored in `acx_recognition_api_key` option
 
 ### Request Flow
 

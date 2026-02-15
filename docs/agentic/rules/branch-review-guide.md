@@ -48,15 +48,15 @@ Review only files in the branch diff (`git diff --name-only main...HEAD`). Do no
 
 Before requesting review, the submitter must run and confirm zero errors on:
 
-| Check                         | Command                                                                                                        | Notes                                                       |
-| ----------------------------- | -------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------- |
-| Python (ruff + mypy + pytest) | `cd apps/prototype-description-service && make check`                                                          | All three must pass. Skip if no Python files in diff.       |
-| TypeScript types              | `cd apps/prototype-wp-alt-context && npm run typecheck`                                                        |                                                             |
-| Frontend tests                | `cd apps/prototype-wp-alt-context && npm run test -- --run`                                                    |                                                             |
-| ESLint                        | `cd apps/prototype-wp-alt-context && npm run lint`                                                             |                                                             |
-| Architecture compliance       | `cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js`                            | Zero errors; warnings are informational                     |
-| PHP static analysis           | `cd apps/prototype-wp-alt-context && composer phpstan`                                                         | Skip if not configured in `composer.json`                   |
-| Cyclomatic complexity         | `cd apps/prototype-description-service && python -m radon cc --min C --show-complexity --average recognition/` | Grade C+ functions must be justified. Skip if no Python.    |
+| Check                         | Command                                                                                                        | Notes                                                    |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------- |
+| Python (ruff + mypy + pytest) | `cd apps/prototype-description-service && make check`                                                          | All three must pass. Skip if no Python files in diff.    |
+| TypeScript types              | `cd apps/prototype-wp-alt-context && npm run typecheck`                                                        |                                                          |
+| Frontend tests                | `cd apps/prototype-wp-alt-context && npm run test -- --run`                                                    |                                                          |
+| ESLint                        | `cd apps/prototype-wp-alt-context && npm run lint`                                                             |                                                          |
+| Architecture compliance       | `cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js`                            | Zero errors; warnings are informational                  |
+| PHP static analysis           | `cd apps/prototype-wp-alt-context && composer phpstan`                                                         | Skip if not configured in `composer.json`                |
+| Cyclomatic complexity         | `cd apps/prototype-description-service && python -m radon cc --min C --show-complexity --average recognition/` | Grade C+ functions must be justified. Skip if no Python. |
 
 ### Reviewer Responsibility
 

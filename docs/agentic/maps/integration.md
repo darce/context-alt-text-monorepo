@@ -42,11 +42,11 @@ The Recognition Service expects this in:
 
 ## Authentication
 
-| Environment | Method                                                      |
-| ----------- | ----------------------------------------------------------- |
-| Local dev   | `DEV_API_KEYS` env var (comma-separated)                    |
-| Production  | API key in `Authorization: Bearer <key>` header             |
-| WordPress   | Key stored in `context_alt_text_recognition_api_key` option |
+| Environment | Method                                          |
+| ----------- | ----------------------------------------------- |
+| Local dev   | `DEV_API_KEYS` env var (comma-separated)        |
+| Production  | API key in `Authorization: Bearer <key>` header |
+| WordPress   | Key stored in `acx_recognition_api_key` option  |
 
 See [contracts/security.md](contracts/security.md) for full details.
 

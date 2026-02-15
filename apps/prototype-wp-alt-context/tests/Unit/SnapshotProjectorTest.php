@@ -134,7 +134,17 @@ class SnapshotProjectorClustersSpy implements ClustersRepositoryInterface
         $this->snapshotVersion = $snapshot_version;
     }
 
-    public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0): array
+    public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+    {
+        return [];
+    }
+
+    public function list_labels(string $tenant_id): array
+    {
+        return [];
+    }
+
+    public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
     {
         return [];
     }
@@ -154,7 +164,17 @@ class SnapshotProjectorMembersSpy implements IdentityMembersRepositoryInterface
         $this->members = $members;
     }
 
-    public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0): array
+    public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+    {
+        return [];
+    }
+
+    public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+    {
+        return [];
+    }
+
+    public function list_for_media_ids(string $tenant_id, array $media_ids): array
     {
         return [];
     }
@@ -172,5 +192,10 @@ class SnapshotProjectorSyncStateSpy implements SyncStateRepositoryInterface
     public function get_snapshot_version(string $tenant_id): int
     {
         return $this->snapshotVersion;
+    }
+
+    public function get_last_updated(string $tenant_id): ?string
+    {
+        return null;
     }
 }

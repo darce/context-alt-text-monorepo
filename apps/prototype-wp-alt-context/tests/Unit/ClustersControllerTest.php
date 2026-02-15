@@ -5,6 +5,11 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClustersController;
+use AltContext\Sovereign\Mappers\ClusterResponseMapper;
+use AltContext\Sovereign\Mappers\MemberResponseMapper;
+use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
+use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
+use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -75,5 +80,180 @@ class ClustersControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame('http://example.test/media/101.jpg', $data[0]['representatives'][0]['thumb_url']);
         $this->assertSame('http://example.test/media/legacy-202.jpg', $data[0]['representatives'][1]['thumb_url']);
+    }
+
+    public function testListClustersUsesLocalProjectionWhenSyncStatePresent(): void
+    {
+        $clustersRepo = new class() implements ClustersRepositoryInterface {
+            public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void {}
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-local',
+                        'label' => 'Local',
+                        'identity_count' => 1,
+                    ],
+                ];
+            }
+            public function list_labels(string $tenant_id): array {
+				return ['Local']; }
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array {
+				return []; }
+            public function find_by_uuid(string $cluster_uuid): ?array {
+				return null; }
+        };
+
+        $membersRepo = new class() implements IdentityMembersRepositoryInterface {
+            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void {}
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array
+            {
+                return [
+                    [
+                        'identity_uuid' => 'identity-1',
+                        'attachment_id' => 10,
+                        'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                    ],
+                ];
+            }
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                $result = [];
+                foreach ($cluster_uuids as $uuid) {
+                    $result[$uuid] = [
+                        [
+                            'identity_uuid' => 'identity-1',
+                            'attachment_id' => 10,
+                            'bbox_json' => '{"pixels":{"x":1,"y":2,"width":3,"height":4}}',
+                        ],
+                    ];
+                }
+                return $result;
+            }
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+				return []; }
+        };
+
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 1; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return '2026-02-14 00:00:00'; }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertArrayHasKey('clusters', $data);
+        $this->assertArrayHasKey('tenant_id', $data);
+        $this->assertSame('cluster-local', $data['clusters'][0]['id']);
+    }
+
+    public function testListClustersProxiesWhenNoLocalProjection(): void
+    {
+        $clustersRepo = new class() implements ClustersRepositoryInterface {
+            public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void {}
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array {
+				return []; }
+            public function list_labels(string $tenant_id): array {
+				return []; }
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array {
+				return []; }
+            public function find_by_uuid(string $cluster_uuid): ?array {
+				return null; }
+        };
+
+        $membersRepo = new class() implements IdentityMembersRepositoryInterface {
+            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void {}
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array {
+				return []; }
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array {
+				return []; }
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+				return []; }
+        };
+
+        // Sync repo with version 0 and no updated_at triggers proxy fallback
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        // Queue a mock HTTP response for the proxy request
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 'cluster-proxy', 'label' => 'Proxied', 'identity_count' => 5],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('cluster-proxy', $data[0]['id']);
+    }
+
+    public function testGetClusterMembersProxiesWhenNoLocalProjection(): void
+    {
+        $clustersRepo = new class() implements ClustersRepositoryInterface {
+            public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void {}
+            public function list_for_tenant(string $tenant_id, int $limit = 50, int $offset = 0, array $filters = []): array {
+				return []; }
+            public function list_labels(string $tenant_id): array {
+				return []; }
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array {
+				return []; }
+            public function find_by_uuid(string $cluster_uuid): ?array {
+				return null; }
+        };
+
+        $membersRepo = new class() implements IdentityMembersRepositoryInterface {
+            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void {}
+            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array {
+				return []; }
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array {
+				return []; }
+            public function list_for_media_ids(string $tenant_id, array $media_ids): array {
+				return []; }
+        };
+
+        // Sync repo with version 0 and no updated_at triggers proxy fallback
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        // Queue a mock HTTP response for the proxy request
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['identity_uuid' => 'id-1', 'media_id' => 10],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/cluster-123/members');
+        $request->set_param('cluster_id', 'cluster-123');
+        $response = $controller->get_cluster_members($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('id-1', $data[0]['identity_uuid']);
     }
 }

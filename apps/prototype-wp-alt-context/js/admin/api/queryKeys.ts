@@ -34,6 +34,10 @@ export const queryKeys = {
     all: ['roster'] as const,
     entries: () => [...queryKeys.roster.all, 'entries'] as const,
   },
+  sync: {
+    all: ['sync'] as const,
+    status: () => [...queryKeys.sync.all, 'status'] as const,
+  },
   suggestions: {
     all: ['suggestions'] as const,
     pending: () => [...queryKeys.suggestions.all, 'pending'] as const,

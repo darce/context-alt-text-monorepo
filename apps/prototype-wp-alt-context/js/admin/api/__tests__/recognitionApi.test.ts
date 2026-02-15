@@ -6,6 +6,7 @@ import {
   fetchPendingSuggestions,
   fetchMediaIdentities,
   fetchIdentitySuggestions,
+  fetchSyncStatus,
   fetchTopUnlabeledClusters,
   getRecognitionCluster,
   listRecognitionClusters,
@@ -269,6 +270,21 @@ describe('recognitionApi', () => {
     const url = new URL(endpoint);
     expect(url.searchParams.get('tenant_id')).toBe('tenant-1');
     expect(url.searchParams.get('limit')).toBe('3');
+  });
+
+  it('fetches sync status with nonce', async () => {
+    fetchApiMock.mockResolvedValue({
+      last_snapshot_version: 10,
+      last_synced_at: '2026-02-14 00:00:00',
+      is_stale: false,
+    });
+
+    await fetchSyncStatus();
+
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
+      method: 'GET',
+      restNonce: 'nonce-123',
+    });
   });
 
   it('keeps undismiss cluster operation on the DELETE contract', async () => {

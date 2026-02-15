@@ -82,3 +82,4 @@ __pycache__/
 
 # MCP server logs
 logs/mcp-server*.log
+.mcp-server.pid

@@ -140,8 +140,9 @@ public function get_sync_status(WP_REST_Request $request): WP_REST_Response {
 ```tsx
 const useSyncStatus = () => {
   return useQuery({
-    queryKey: ['acx', 'sync-status'],
-    queryFn: () => apiFetch<SyncStatus>({ path: '/acx/v1/recognition/sync-status' }),
+    queryKey: ["acx", "sync-status"],
+    queryFn: () =>
+      apiFetch<SyncStatus>({ path: "/acx/v1/recognition/sync-status" }),
     staleTime: 60_000,
     refetchInterval: 120_000,
   });
@@ -150,34 +151,34 @@ const useSyncStatus = () => {
 
 ## Functions to Change
 
-| File | Change |
-| --- | --- |
-| `src/sovereign/repositories/class-clusters-repository.php` | Add `search` and `labeled_only` filters to `list_for_tenant()`. Add `list_labels()` and `list_top_unlabeled()` methods. |
-| `src/sovereign/repositories/interface-clusters-repository.php` | Add method signatures for new query methods. |
-| `src/sovereign/repositories/class-identity-members-repository.php` | Add `list_for_media_ids()` method (SELECT by attachment_id IN (...)). |
-| `src/sovereign/repositories/interface-identity-members-repository.php` | Add `list_for_media_ids()` signature. |
-| `src/sovereign/repositories/class-sync-state-repository.php` | Add `get_last_updated()` method. |
-| `src/sovereign/mappers/class-cluster-response-mapper.php` | **New.** Maps repository rows to backend-compatible JSON shapes. |
-| `src/sovereign/mappers/class-member-response-mapper.php` | **New.** Maps member rows to backend-compatible JSON shapes. |
-| `src/api/class-clusters-controller.php` | Inject repositories + mapper. Replace proxy reads with local-first + fallback pattern. |
-| `src/api/class-media-identities-controller.php` | Inject member repository + mapper. Replace proxy read with local-first grouping. |
-| `src/api/class-recognition-controller.php` | Wire repositories and mappers into sub-controller construction. |
-| `src/api/class-api.php` | Register sync-status REST route. |
-| `js/admin/api/recognition/syncApi.ts` | **New.** `fetchSyncStatus()` API call. |
-| `js/admin/hooks/useSyncStatus.ts` | **New.** React Query hook for sync status. |
-| `js/admin/components/SyncStatusIndicator.tsx` | **New.** Displays last-sync time and stale warning. |
+| File                                                                   | Change                                                                                                                  |
+| ---------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- |
+| `src/sovereign/repositories/class-clusters-repository.php`             | Add `search` and `labeled_only` filters to `list_for_tenant()`. Add `list_labels()` and `list_top_unlabeled()` methods. |
+| `src/sovereign/repositories/interface-clusters-repository.php`         | Add method signatures for new query methods.                                                                            |
+| `src/sovereign/repositories/class-identity-members-repository.php`     | Add `list_for_media_ids()` method (SELECT by attachment_id IN (...)).                                                   |
+| `src/sovereign/repositories/interface-identity-members-repository.php` | Add `list_for_media_ids()` signature.                                                                                   |
+| `src/sovereign/repositories/class-sync-state-repository.php`           | Add `get_last_updated()` method.                                                                                        |
+| `src/sovereign/mappers/class-cluster-response-mapper.php`              | **New.** Maps repository rows to backend-compatible JSON shapes.                                                        |
+| `src/sovereign/mappers/class-member-response-mapper.php`               | **New.** Maps member rows to backend-compatible JSON shapes.                                                            |
+| `src/api/class-clusters-controller.php`                                | Inject repositories + mapper. Replace proxy reads with local-first + fallback pattern.                                  |
+| `src/api/class-media-identities-controller.php`                        | Inject member repository + mapper. Replace proxy read with local-first grouping.                                        |
+| `src/api/class-recognition-controller.php`                             | Wire repositories and mappers into sub-controller construction.                                                         |
+| `src/api/class-api.php`                                                | Register sync-status REST route.                                                                                        |
+| `js/admin/api/recognition/syncApi.ts`                                  | **New.** `fetchSyncStatus()` API call.                                                                                  |
+| `js/admin/hooks/useSyncStatus.ts`                                      | **New.** React Query hook for sync status.                                                                              |
+| `js/admin/components/SyncStatusIndicator.tsx`                          | **New.** Displays last-sync time and stale warning.                                                                     |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `docs/epics/v0.1.0/wp-sovereign-cluster-epic.md` | Source epic; Phase 2 definition and exit criteria. |
-| `docs/tasks/4.0/4.13.1/wp-sovereign-phase1-local-projection-task-plan.md` | Phase 1 foundation this task builds on (closed). |
-| `src/sovereign/sync/class-snapshot-projector.php` | Unchanged; already complete for write side. |
-| `src/api/class-cluster-mutations-controller.php` | Remains proxy-only. Phase 3 adds dual-write. |
-| `src/api/class-suggestions-controller.php` | Remains proxy-only. Suggestions are backend-computed. |
-| `docs/agentic/contracts/cluster-snapshot-api.md` | Snapshot contract (draft); backend dependency for live data. |
-| `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Backend snapshot route implementation target. |
+| File                                                                                         | Note                                                         |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
+| `docs/epics/v0.1.0/wp-sovereign-cluster-epic.md`                                             | Source epic; Phase 2 definition and exit criteria.           |
+| `docs/tasks/4.0/4.13.1/wp-sovereign-phase1-local-projection-task-plan.md`                    | Phase 1 foundation this task builds on (closed).             |
+| `src/sovereign/sync/class-snapshot-projector.php`                                            | Unchanged; already complete for write side.                  |
+| `src/api/class-cluster-mutations-controller.php`                                             | Remains proxy-only. Phase 3 adds dual-write.                 |
+| `src/api/class-suggestions-controller.php`                                                   | Remains proxy-only. Suggestions are backend-computed.        |
+| `docs/agentic/contracts/cluster-snapshot-api.md`                                             | Snapshot contract (draft); backend dependency for live data. |
+| `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Backend snapshot route implementation target.                |
 
 ---
 
@@ -185,71 +186,74 @@ const useSyncStatus = () => {
 
 ## Phase 0: Scaffolding
 
-- [ ] Add `ClusterResponseMapper` and `MemberResponseMapper` class shells with typed method signatures.
-- [ ] Add `list_labels()`, `list_top_unlabeled()` method stubs to `ClustersRepositoryInterface`.
-- [ ] Add `list_for_media_ids()` stub to `IdentityMembersRepositoryInterface`.
-- [ ] Add `get_last_updated()` stub to `SyncStateRepositoryInterface`.
-- [ ] Add test stubs for new repository methods, mappers, and controller local-read paths.
-- [ ] Verify scaffolds compile: `composer test`, `composer cs-check`, `npm run typecheck`.
+- [x] Add `ClusterResponseMapper` and `MemberResponseMapper` class shells with typed method signatures.
+- [x] Add `list_labels()`, `list_top_unlabeled()` method stubs to `ClustersRepositoryInterface`.
+- [x] Add `list_for_media_ids()` stub to `IdentityMembersRepositoryInterface`.
+- [x] Add `get_last_updated()` stub to `SyncStateRepositoryInterface`.
+- [x] Add test stubs for new repository methods, mappers, and controller local-read paths.
+- [x] Verify scaffolds compile: `composer test`, `composer cs-check`, `npm run typecheck`.
 
 ## Phase 1: Repository Query Extensions
 
-- [ ] Implement `search` filter in `ClustersRepository::list_for_tenant()` (`WHERE label LIKE %search%`).
-- [ ] Implement `labeled_only` filter (`WHERE label IS NOT NULL AND label != ''`).
-- [ ] Implement `list_labels()` (`SELECT DISTINCT label WHERE tenant_id = ? AND label IS NOT NULL`).
-- [ ] Implement `list_top_unlabeled()` (filter by empty label, order by identity_count DESC, include representative data).
-- [ ] Implement `IdentityMembersRepository::list_for_media_ids()` (SELECT by attachment_id IN with cluster join for tenant scope).
-- [ ] Implement `SyncStateRepository::get_last_updated()`.
-- [ ] Add unit tests for all new query methods with fixture data.
+- [x] Implement `search` filter in `ClustersRepository::list_for_tenant()` (`WHERE label LIKE %search%`).
+- [x] Implement `labeled_only` filter (`WHERE label IS NOT NULL AND label != ''`).
+- [x] Implement `list_labels()` (`SELECT DISTINCT label WHERE tenant_id = ? AND label IS NOT NULL`).
+- [x] Implement `list_top_unlabeled()` (filter by empty label, order by identity_count DESC, include representative data).
+- [x] Implement `IdentityMembersRepository::list_for_media_ids()` (SELECT by attachment_id IN with cluster join for tenant scope).
+- [x] Implement `SyncStateRepository::get_last_updated()`.
+- [x] Add unit tests for all new query methods with fixture data.
 
 ## Phase 2: Response Mappers
 
-- [ ] Implement `ClusterResponseMapper::map_cluster_list()` and `::map_cluster_row()`.
-- [ ] Implement `ClusterResponseMapper::map_cluster_detail()` (single cluster with expanded fields).
-- [ ] Implement `ClusterResponseMapper::map_labels_list()`.
-- [ ] Implement `MemberResponseMapper::map_cluster_members()`.
-- [ ] Implement `MemberResponseMapper::map_media_identities()` (grouped by attachment_id).
-- [ ] Resolve representative thumbnail URLs (local `acx://` keys to `wp_get_attachment_url()` URLs).
-- [ ] Add mapper tests verifying output matches expected backend JSON shapes.
+- [x] Implement `ClusterResponseMapper::map_cluster_list()` and `::map_cluster_row()`.
+- [x] Implement `ClusterResponseMapper::map_cluster_detail()` (single cluster with expanded fields).
+- [x] Implement `ClusterResponseMapper::map_labels_list()`.
+- [x] Implement `MemberResponseMapper::map_cluster_members()`.
+- [x] Implement `MemberResponseMapper::map_media_identities()` (grouped by attachment_id).
+- [x] Resolve representative thumbnail URLs (local `acx://` keys to `wp_get_attachment_url()` URLs).
+- [x] Add mapper tests verifying output matches expected backend JSON shapes.
 
 ## Phase 3: Controller Read-Path Flip
 
-- [ ] Modify `ClustersController` constructor to accept repositories + mapper.
-- [ ] Flip `list_clusters()` to local-first with proxy fallback.
-- [ ] Flip `get_cluster_detail()` to local-first with proxy fallback.
-- [ ] Flip `get_cluster_members()` to local-first with proxy fallback.
-- [ ] Flip `list_cluster_labels()` to local-first with proxy fallback.
-- [ ] Flip `list_top_unlabeled_clusters()` to local-first with proxy fallback.
-- [ ] Modify `MediaIdentitiesController` to read local projection with proxy fallback.
-- [ ] Update `RecognitionController` composition root to wire repositories and mappers.
-- [ ] Add controller tests verifying local-read path returns expected responses.
-- [ ] Add controller tests verifying proxy fallback when local projection is empty.
+- [x] Modify `ClustersController` constructor to accept repositories + mapper.
+- [x] Flip `list_clusters()` to local-first with proxy fallback.
+- [x] Flip `get_cluster_detail()` to local-first with proxy fallback.
+- [x] Flip `get_cluster_members()` to local-first with proxy fallback.
+- [x] Flip `list_cluster_labels()` to local-first with proxy fallback.
+- [x] Flip `list_top_unlabeled_clusters()` to local-first with proxy fallback.
+- [x] Modify `MediaIdentitiesController` to read local projection with proxy fallback.
+- [x] Update `RecognitionController` composition root to wire repositories and mappers.
+- [x] Add controller tests verifying local-read path returns expected responses.
+- [x] Add controller tests verifying proxy fallback when local projection is empty.
 
 ## Phase 4: Sync Status Endpoint and Frontend
 
-- [ ] Register `GET acx/v1/recognition/sync-status` route in `class-api.php`.
-- [ ] Implement sync-status handler returning `last_snapshot_version`, `last_synced_at`, `is_stale`.
-- [ ] Add `syncApi.ts` with `fetchSyncStatus()`.
-- [ ] Add `useSyncStatus` React Query hook with polling.
-- [ ] Add `SyncStatusIndicator` component displaying last-sync time and stale warning.
-- [ ] Integrate indicator into cluster list view.
-- [ ] Add frontend tests for sync status hook and indicator component.
+- [x] Register `GET acx/v1/recognition/sync-status` route in `class-api.php`.
+- [x] Implement sync-status handler returning `last_snapshot_version`, `last_synced_at`, `is_stale`.
+- [x] Add `syncApi.ts` with `fetchSyncStatus()`.
+- [x] Add `useSyncStatus` React Query hook with polling.
+- [x] Add `SyncStatusIndicator` component displaying last-sync time and stale warning.
+- [x] Integrate indicator into cluster list view.
+- [x] Add frontend tests for sync status hook and indicator component.
 
 ## Phase 5: Verification Gate
 
-- [ ] All existing tests pass (PHP + JS).
-- [ ] New repository query tests pass with fixture data.
-- [ ] New mapper tests verify backend-compatible JSON shapes.
-- [ ] Controller tests verify local-first reads and proxy fallback.
+- [x] `composer test` passes with zero failures.
+- [x] `composer phpstan` passes with zero errors.
+- [x] `npm run test` passes with zero failures.
+- [x] All existing tests pass (PHP + JS).
+- [x] New repository query tests pass with fixture data.
+- [x] New mapper tests verify backend-compatible JSON shapes.
+- [x] Controller tests verify local-first reads and proxy fallback.
 - [ ] Manual smoke: activate plugin with projected fixture data, disable backend, confirm cluster list renders.
 
 ## External Dependencies (Carried from Phase 1)
 
-| Dependency | Owner | Last Updated | Status | Blocker |
-| --- | --- | --- | --- | --- |
-| `GET /tenants/{tenant_id}/clusters/snapshot` contract finalized | recognition-service | 2026-02-10 | Not started | Required for live snapshot pulls; plugin fixture projection is complete |
-| `GET /tenants/{tenant_id}/clusters/snapshot` route implemented | recognition-service | 2026-02-10 | Not started | Backend API required before end-to-end sync validation |
-| Snapshot endpoint dependency tracked with owner/date/blocker | this plan | 2026-02-14 | Tracked above | -- |
+| Dependency                                                      | Owner               | Last Updated | Status        | Blocker                                                                 |
+| --------------------------------------------------------------- | ------------------- | ------------ | ------------- | ----------------------------------------------------------------------- |
+| `GET /tenants/{tenant_id}/clusters/snapshot` contract finalized | recognition-service | 2026-02-10   | Not started   | Required for live snapshot pulls; plugin fixture projection is complete |
+| `GET /tenants/{tenant_id}/clusters/snapshot` route implemented  | recognition-service | 2026-02-10   | Not started   | Backend API required before end-to-end sync validation                  |
+| Snapshot endpoint dependency tracked with owner/date/blocker    | this plan           | 2026-02-14   | Tracked above | --                                                                      |
 
 ## Stretch Goals (Carried from Phase 1)
 
@@ -257,9 +261,9 @@ const useSyncStatus = () => {
 
 ## Success Criteria
 
-- [ ] Cluster list, detail, members, labels, and top-unlabeled endpoints read from local projection when data exists.
+- [x] Cluster list, detail, members, labels, and top-unlabeled endpoints read from local projection when data exists.
 - [ ] Disabling backend connectivity does not empty cluster UI when local projection has data.
-- [ ] Proxy fallback activates transparently when local projection is uninitialized.
-- [ ] Frontend displays sync status indicator with last-sync time.
-- [ ] Snapshot endpoint contract/route dependency is explicitly tracked with owner/date and blocker status.
-- [ ] All six automated gates pass after changes.
+- [x] Proxy fallback activates transparently when local projection is uninitialized.
+- [x] Frontend displays sync status indicator with last-sync time.
+- [x] Snapshot endpoint contract/route dependency is explicitly tracked with owner/date and blocker status.
+- [x] All six automated gates pass after changes.

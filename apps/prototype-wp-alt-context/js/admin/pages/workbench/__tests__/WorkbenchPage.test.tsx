@@ -291,6 +291,28 @@ describe('WorkbenchPage', () => {
     );
   });
 
+  it('shows a warning when recognition URL fallback is active', () => {
+    setupScanMutation('success');
+    window.AltContextAdmin = {
+      nonce: 'test-nonce',
+      endpoints: {
+        recognition: 'http://localhost:8000',
+        recognitionClusters: 'http://localhost:8000/clusters',
+      },
+      tenant_id: 'test-tenant',
+      recognitionUrlFallback: true,
+    };
+    resetConfigCache();
+
+    renderWorkbench();
+
+    expect(
+      screen.getByText(
+        'Alt Context is using the local recognition URL fallback (http://localhost:8000). Configure acx_recognition_url or ACX_RECOGNITION_URL for this environment.',
+      ),
+    ).toBeInTheDocument();
+  });
+
   it('surfaces scan errors in the UI', async () => {
     setupScanMutation('error');
     const { queryClient } = renderWorkbench();

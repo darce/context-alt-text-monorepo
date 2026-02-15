@@ -7,8 +7,10 @@ import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
 import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
 import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
+import { getConfig } from '../api/config';
 import { MediaSelection } from './workbench/MediaSelection';
 import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from './workbench/identity-clusters';
+import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
 
 const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
@@ -101,6 +103,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [perPage, setPerPage] = useState<number>(() => getStoredMediaPageSize());
+  const { recognitionUrlFallback } = getConfig();
   const [clusterPanel, dispatchClusterPanel] = React.useReducer(clusterPanelReducer, {
     mode: 'none',
     clusterId: null,
@@ -255,6 +258,14 @@ export const WorkbenchPage = (): React.JSX.Element => {
         </TabsList>
 
         <div className="acx-workbench__panels">
+          {recognitionUrlFallback && (
+            <div className="acx-notice acx-notice--warning">
+              {__(
+                'Alt Context is using the local recognition URL fallback (http://localhost:8000). Configure acx_recognition_url or ACX_RECOGNITION_URL for this environment.',
+                'alt-context',
+              )}
+            </div>
+          )}
           {!isOnline && (
             <div className="acx-notice acx-notice--warning">
               {__('Network connection lost. Reconnecting…', 'alt-context')}
@@ -287,6 +298,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
               etaSeconds={etaSeconds}
               isSynced={!isPrimary && !!latestJobId}
             />
+            <SyncStatusIndicator />
             {!isScanRunning && !hasIdentities && <NoMediaPanel />}
             {clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
               <ClusterReviewPanel

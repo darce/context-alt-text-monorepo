@@ -99,10 +99,10 @@ Exit criteria:
 - Activating the plugin creates all three projection tables idempotently.
 - Fixture snapshot ingestion populates local tables and preserves curated state on re-ingestion.
 
-### Phase 2: Read-Path Flip (Offline First) -- NOT STARTED
+### Phase 2: Read-Path Flip (Offline First) -- COMPLETED
 
-> **Status**: not-started
-> **Task plans**: [wp-sovereign-phase2-read-path-flip-task-plan.md](../../tasks/4.0/4.13.1/wp-sovereign-phase2-read-path-flip-task-plan.md) (new)
+> **Status**: completed
+> **Task plans**: [wp-sovereign-phase2-read-path-flip-task-plan.md](../../tasks/4.0/4.13.1/wp-sovereign-phase2-read-path-flip-task-plan.md)
 
 **Goal**: Plugin reads local projection first; backend becomes optional for cluster views.
 
@@ -119,7 +119,7 @@ Exit criteria:
 ### Phase 3: Local-First Writes and Pull Sync -- NOT STARTED
 
 > **Status**: not-started
-> **Task plans**: not yet scoped
+> **Task plans**: [wp-sovereign-phase3-dual-write-task-plan.md](../../tasks/4.0/4.13.1/wp-sovereign-phase3-dual-write-task-plan.md)
 
 **Goal**: Curation actions persist locally even during backend outage; scheduled sync keeps projection current.
 
@@ -202,12 +202,12 @@ Exit criteria:
 - [x] Snapshot API contract drafted.
 - [x] All branch audit findings resolved (H-1, M-1..5, L-1..4).
 
-## Phase 2: Read-Path Flip -- NOT STARTED
+## Phase 2: Read-Path Flip -- COMPLETED
 
-- [ ] Refactor `ClustersController` to read local projection first.
-- [ ] Refactor `ClusterMutationsController` reads to use local projection.
-- [ ] Refactor `MediaIdentitiesController` to read local projection.
-- [ ] Surface sync status and stale age in UI.
+- [x] Refactor `ClustersController` to read local projection first.
+- [x] Refactor `ClusterMutationsController` (read path analysis complete).
+- [x] Refactor `MediaIdentitiesController` to read local projection.
+- [x] Surface sync status and stale age in UI.
 - [ ] (Backend parallel) Build snapshot endpoint.
 
 ## Phase 3: Local-First Writes and Pull Sync -- NOT STARTED

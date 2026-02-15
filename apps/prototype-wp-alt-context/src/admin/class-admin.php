@@ -260,6 +260,7 @@ class Admin {
 				'devMode'   => $is_dev_mode,
 				'tier'      => $tier,
 				'tenant_id' => md5( (string) get_site_url() ), // v4.12.0: Keep query keys tenant-scoped
+				'recognitionUrlFallback' => $this->should_render_recognition_fallback_notice(),
 				'max_media_per_batch' => $this->get_tier_batch_limit_for( $tier ),
 				'adminUrls' => array(
 					'mediaEditBase' => admin_url( 'post.php' ),
@@ -272,6 +273,7 @@ class Admin {
 					'recognitionCluster'             => rest_url( 'acx/v1/recognition/cluster' ),
 					'recognitionClusters'            => rest_url( 'acx/v1/recognition/clusters' ),
 					'recognitionClusterLabels'       => rest_url( 'acx/v1/recognition/clusters/labels' ),
+					'recognitionSyncStatus'          => rest_url( 'acx/v1/recognition/sync-status' ),
 					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
 					'recognitionReassignIdentity'    => rest_url( 'acx/v1/recognition/clusters/reassign' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),

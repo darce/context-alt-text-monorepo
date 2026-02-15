@@ -64,7 +64,7 @@ jobs:
           echo "✅ Radix UI usage enforced (no native select/dialog/checkbox/radio)" >> $GITHUB_STEP_SUMMARY
           echo "✅ All tests passing" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
-          echo "See [Architecture Rules](../../docs/architecture/rules/) for standards." >> $GITHUB_STEP_SUMMARY
+          echo "See [Architecture Rules](../../docs/agentic/rules/) for standards." >> $GITHUB_STEP_SUMMARY
 
   lint-formatting:
     name: Check Code Formatting

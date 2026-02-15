@@ -264,9 +264,3 @@ It follows the same pattern used by production systems like:
 - Google Photos (client-side scanning + server-side matching)
 - Facebook (browser preview + server confirmation)
 
-## Related Documentation
-
-- [Face Recognition Tasks](./face_recognition_tasks.md) - Implementation overview
-- [Recognition Service Validation](./recognition_service_validation_2025-10-11.md) - API contract details
-- [IdentifyController.php](../../apps/wp-context-alt-text/src/Recognition/IdentifyController.php) - Backend implementation
-- [usePeopleSuggestions.ts](../../apps/wp-context-alt-text/js/hooks/usePeopleSuggestions.ts) - Frontend hook

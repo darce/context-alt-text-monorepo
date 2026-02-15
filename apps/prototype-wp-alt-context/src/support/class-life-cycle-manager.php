@@ -113,6 +113,7 @@ class LifecycleManager {
 
 			require_once $upgrade_path;
 
+			/** @phpstan-ignore booleanNot.alwaysTrue */
 			if ( ! function_exists( 'dbDelta' ) ) {
 				return;
 			}

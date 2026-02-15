@@ -41,4 +41,14 @@ class SyncStateRepositoryTest extends TestCase
 
         $this->assertSame(21, $value);
     }
+
+    public function testGetLastUpdatedReturnsTimestampString(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '2026-02-14 01:02:03';
+
+        $value = $this->repository->get_last_updated('tenant-sync');
+
+        $this->assertSame('2026-02-14 01:02:03', $value);
+    }
 }

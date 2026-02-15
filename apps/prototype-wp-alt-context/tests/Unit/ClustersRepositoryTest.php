@@ -96,6 +96,46 @@ class ClustersRepositoryTest extends TestCase
         $this->assertSame('cluster-list', $rows[0]['cluster_uuid']);
     }
 
+    public function testListForTenantAddsSearchAndLabelFilters(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $this->repository->list_for_tenant('tenant-search', 25, 5, [
+            'search' => 'Alice',
+            'labeled_only' => true,
+        ]);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("label IS NOT NULL", $sql);
+        $this->assertStringContainsString("label LIKE", $sql);
+    }
+
+    public function testListLabelsReturnsDistinctLabels(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [
+            ['label' => 'Alice'],
+            ['label' => 'Bob'],
+        ];
+
+        $labels = $this->repository->list_labels('tenant-labels');
+
+        $this->assertSame(['Alice', 'Bob'], $labels);
+    }
+
+    public function testListTopUnlabeledQueriesByIdentityCount(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $this->repository->list_top_unlabeled('tenant-top', 7);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("identity_count DESC", $sql);
+        $this->assertStringContainsString("label IS NULL", $sql);
+    }
+
     public function testFindByUuidReturnsNullWhenRowMissing(): void
     {
         global $wpdb;

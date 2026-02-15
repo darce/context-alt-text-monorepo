@@ -15,9 +15,24 @@ interface ClustersRepositoryInterface {
 	/**
 	 * Return tenant-scoped projected clusters.
 	 *
+	 * @param array<string,mixed> $filters
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0 ): array;
+	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array() ): array;
+
+	/**
+	 * Return labels present in projected clusters for a tenant.
+	 *
+	 * @return string[]
+	 */
+	public function list_labels( string $tenant_id ): array;
+
+	/**
+	 * Return top unlabeled clusters for a tenant.
+	 *
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_top_unlabeled( string $tenant_id, int $limit = 10 ): array;
 
 	/**
 	 * Return one projected cluster row when present.

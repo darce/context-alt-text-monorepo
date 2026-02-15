@@ -16,6 +16,17 @@ spl_autoload_register(static function (string $class): void {
 
     if (is_readable($path)) {
         require_once $path;
+        return;
+    }
+
+    $parts = explode('/', str_replace('\\', '/', $relative));
+    $className = array_pop($parts);
+    $directories = array_map('strtolower', $parts);
+    $kebab = strtolower((string) preg_replace('/([a-z0-9])([A-Z])/', '$1-$2', $className));
+    $fallback = __DIR__ . '/../src/' . implode('/', $directories) . '/class-' . $kebab . '.php';
+
+    if (is_readable($fallback)) {
+        require_once $fallback;
     }
 });
 

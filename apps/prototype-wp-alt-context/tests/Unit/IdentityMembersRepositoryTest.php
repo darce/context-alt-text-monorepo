@@ -143,6 +143,26 @@ class IdentityMembersRepositoryTest extends TestCase
         $this->assertSame('id-list', $rows[0]['identity_uuid']);
     }
 
+    public function testListForMediaIdsScopesByTenantAndMediaIds(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'identity_uuid' => 'id-1',
+                'cluster_uuid' => 'cluster-1',
+                'attachment_id' => 55,
+                'cluster_label' => 'Label',
+            ],
+        ];
+
+        $rows = $this->repository->list_for_media_ids('tenant-media', [55, 56]);
+
+        $this->assertCount(1, $rows);
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('attachment_id IN (55, 56)', $sql);
+        $this->assertStringContainsString('tenant-media', $sql);
+    }
+
     /**
      * @param array<int,string> $queries
      */

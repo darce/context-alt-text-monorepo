@@ -25,6 +25,11 @@ npm run typecheck                    # TypeScript
 cd apps/prototype-wp-alt-context
 composer test                        # PHPUnit
 composer phpstan                     # Static analysis
+
+# Full Plugin Checks (WordPress plugin)
+cd apps/prototype-wp-alt-context
+make check                           # All checks: lint + types + arch + JS tests + PHP tests + phpcs + phpstan
+make fix                             # Auto-fix ESLint, Prettier, PHPCBF then run make check
 ```
 
 ---

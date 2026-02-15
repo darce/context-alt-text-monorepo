@@ -75,6 +75,57 @@ Additional security rules:
 
 ---
 
+## Repository & Query Patterns
+
+### Avoid N+1 Queries in Loops
+
+Never call a repository method inside a `foreach` loop over parent records. Use a batch method with `WHERE column IN (...)` instead.
+
+```php
+// BAD: N+1 — one query per cluster
+foreach ($cluster_rows as $row) {
+    $members[$row['uuid']] = $repo->list_for_cluster($row['uuid']);
+}
+
+// GOOD: Single query with ROW_NUMBER() window function for per-group limits
+public function list_for_cluster_uuids(array $uuids, int $limit_per_cluster): array {
+    $placeholders = implode(',', array_fill(0, count($uuids), '%s'));
+    $sql = "SELECT * FROM (
+        SELECT *, ROW_NUMBER() OVER (PARTITION BY cluster_uuid ORDER BY updated_at DESC) AS rn
+        FROM {$this->table}
+        WHERE cluster_uuid IN ($placeholders)
+    ) ranked WHERE rn <= %d";
+    // ... execute and group by cluster_uuid in PHP
+}
+```
+
+### Tenant-Scoped Queries (Defense in Depth)
+
+Even when filtering by a globally-unique UUID, prefer adding a `tenant_id` JOIN or WHERE clause. UUID uniqueness is an implementation assumption; tenant scoping is a security invariant.
+
+```php
+// Acceptable but fragile:
+SELECT * FROM members WHERE cluster_uuid = %s
+
+// Preferred — defense in depth:
+SELECT m.* FROM members m
+  JOIN clusters c ON m.cluster_uuid = c.cluster_uuid
+  WHERE m.cluster_uuid = %s AND c.tenant_id = %s
+```
+
+---
+
+## Trait Extraction Rules
+
+When extracting duplicated methods into a PHP trait:
+
+1. **Copy signatures verbatim.** Do not "improve" parameter types, add clamping, or change nullability during extraction. The trait must be a drop-in replacement.
+2. **Run `composer dump-autoload` after creating the trait file.** Composer's classmap does not detect new files automatically.
+3. **Remove the original methods from both classes.** Leaving them shadows the trait methods, making the trait dead code.
+4. **Verify with `php -l` on all three files** (trait + both consumers) before running tests.
+
+---
+
 ## Taxonomy Capability Model
 
 When registering custom taxonomies (e.g., roster entity associations):
@@ -116,4 +167,21 @@ composer test        # PHPUnit
 composer phpstan     # Static analysis (level 8)
 composer phpcs       # Code style (PSR-12 + WPCS)
 composer cs-check    # Code style check (alias)
+```
+
+### Troubleshooting: phpstan missing
+
+If `composer phpstan` fails with `vendor/bin/phpstan: No such file or directory`, the lock file is missing `phpstan/phpstan`.
+
+Fix:
+
+```bash
+cd apps/prototype-wp-alt-context
+composer require --dev phpstan/phpstan:^1.12
+```
+
+Then re-run:
+
+```bash
+composer phpstan
 ```

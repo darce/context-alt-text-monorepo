@@ -17,5 +17,21 @@ interface IdentityMembersRepositoryInterface {
 	 *
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0 ): array;
+	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null ): array;
+
+	/**
+	 * Return member rows for multiple cluster UUIDs in a single query.
+	 *
+	 * @param string[] $cluster_uuids
+	 * @return array<string,array<int,array<string,mixed>>> Indexed by cluster_uuid
+	 */
+	public function list_for_cluster_uuids( array $cluster_uuids, int $limit_per_cluster ): array;
+
+	/**
+	 * Return member rows for attachment IDs scoped to a tenant.
+	 *
+	 * @param int[] $media_ids
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_for_media_ids( string $tenant_id, array $media_ids ): array;
 }

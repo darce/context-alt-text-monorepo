@@ -130,9 +130,10 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	}
 
 	/**
+	 * @param array<string,mixed> $filters
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0 ): array {
+	public function list_for_tenant( string $tenant_id, int $limit = 50, int $offset = 0, array $filters = array() ): array {
 		global $wpdb;
 
 		$normalized_tenant_id = trim( $tenant_id );
@@ -145,15 +146,115 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			return array();
 		}
 
+		$search       = trim( (string) ( $filters['search'] ?? '' ) );
+		$labeled_only = true === ( $filters['labeled_only'] ?? false );
+
 		$normalized_limit  = max( 1, $limit );
 		$normalized_offset = max( 0, $offset );
-		$sql               = $this->prepare_query(
-			'SELECT * FROM %i WHERE tenant_id = %s ORDER BY updated_at DESC LIMIT %d OFFSET %d',
+
+		$conditions = array( 'tenant_id = %s' );
+		$args       = array( $this->table_name, $normalized_tenant_id );
+
+		if ( $labeled_only ) {
+			$conditions[] = "label IS NOT NULL AND label != ''";
+		}
+
+		if ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
+			$conditions[] = 'label LIKE %s';
+			$args[]       = '%' . $wpdb->esc_like( $search ) . '%';
+		}
+
+		$sql = $this->prepare_query(
+			sprintf(
+				'SELECT * FROM %%i WHERE %s ORDER BY updated_at DESC LIMIT %%d OFFSET %%d',
+				implode( ' AND ', $conditions )
+			),
+			array_merge(
+				$args,
+				array(
+					$normalized_limit,
+					$normalized_offset,
+				)
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * @return string[]
+	 */
+	public function list_labels( string $tenant_id ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$sql = $this->prepare_query(
+			"SELECT DISTINCT label FROM %i WHERE tenant_id = %s AND label IS NOT NULL AND label != '' ORDER BY label ASC",
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$labels = array();
+		foreach ( $rows as $row ) {
+			$label = trim( (string) ( $row['label'] ?? '' ) );
+			if ( '' !== $label ) {
+				$labels[] = $label;
+			}
+		}
+
+		return array_values( array_unique( $labels ) );
+	}
+
+	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_top_unlabeled( string $tenant_id, int $limit = 10 ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_limit = max( 1, $limit );
+		$sql              = $this->prepare_query(
+			"SELECT * FROM %i WHERE tenant_id = %s AND (label IS NULL OR label = '') ORDER BY identity_count DESC, updated_at DESC LIMIT %d",
 			array(
 				$this->table_name,
 				$normalized_tenant_id,
 				$normalized_limit,
-				$normalized_offset,
 			)
 		);
 

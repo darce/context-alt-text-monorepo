@@ -95,6 +95,41 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		return max( 0, (int) $value );
 	}
 
+	public function get_last_updated( string $tenant_id ): ?string {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return null;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT updated_at FROM %i WHERE stream_name = %s LIMIT 1',
+			array(
+				$this->table_name,
+				$this->stream_name_for_tenant( $normalized_tenant_id ),
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
+	}
+
 	private function stream_name_for_tenant( string $tenant_id ): string {
 		return sprintf( 'tenant:%s:clusters', trim( $tenant_id ) );
 	}

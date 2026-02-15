@@ -143,7 +143,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	/**
 	 * @return array<int,array<string,mixed>>
 	 */
-	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0 ): array {
+	public function list_for_cluster( string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null ): array {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
@@ -153,13 +153,176 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 		$normalized_limit  = max( 1, $limit );
 		$normalized_offset = max( 0, $offset );
-		$sql               = $this->prepare_query(
-			'SELECT * FROM %i WHERE cluster_uuid = %s ORDER BY updated_at DESC LIMIT %d OFFSET %d',
-			array(
-				$this->members_table_name,
-				$normalized_cluster_uuid,
-				$normalized_limit,
-				$normalized_offset,
+
+		// When tenant_id is provided, JOIN to clusters table for defense-in-depth
+		if ( null !== $tenant_id && '' !== trim( $tenant_id ) ) {
+			$sql = $this->prepare_query(
+				'SELECT m.* FROM %i m
+				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+				WHERE m.cluster_uuid = %s AND c.tenant_id = %s
+				ORDER BY m.updated_at DESC LIMIT %d OFFSET %d',
+				array(
+					$this->members_table_name,
+					$this->clusters_table_name,
+					$normalized_cluster_uuid,
+					trim( $tenant_id ),
+					$normalized_limit,
+					$normalized_offset,
+				)
+			);
+		} else {
+			// Legacy path: UUID-only filtering (relies on UUID uniqueness)
+			$sql = $this->prepare_query(
+				'SELECT * FROM %i WHERE cluster_uuid = %s ORDER BY updated_at DESC LIMIT %d OFFSET %d',
+				array(
+					$this->members_table_name,
+					$normalized_cluster_uuid,
+					$normalized_limit,
+					$normalized_offset,
+				)
+			);
+		}
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		return is_array( $rows ) ? $rows : array();
+	}
+
+	/**
+	 * @param string[] $cluster_uuids
+	 * @return array<string,array<int,array<string,mixed>>>
+	 */
+	public function list_for_cluster_uuids( array $cluster_uuids, int $limit_per_cluster ): array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_uuids = array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						static function ( $uuid ): string {
+							return trim( (string) $uuid );
+						},
+						$cluster_uuids
+					),
+					static function ( string $uuid ): bool {
+						return '' !== $uuid;
+					}
+				)
+			)
+		);
+
+		if ( empty( $normalized_uuids ) ) {
+			return array();
+		}
+
+		$normalized_limit = max( 1, $limit_per_cluster );
+		$placeholders     = implode( ', ', array_fill( 0, count( $normalized_uuids ), '%s' ) );
+
+		// Use ROW_NUMBER() window function to limit results per cluster
+		$sql = $this->prepare_query(
+			"SELECT * FROM (
+				SELECT *, ROW_NUMBER() OVER (PARTITION BY cluster_uuid ORDER BY updated_at DESC) as rn
+				FROM %i
+				WHERE cluster_uuid IN ($placeholders)
+			) subquery WHERE rn <= %d",
+			array_merge(
+				array( $this->members_table_name ),
+				$normalized_uuids,
+				array( $normalized_limit )
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		// Group results by cluster_uuid
+		$members_by_cluster = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			if ( ! isset( $members_by_cluster[ $cluster_uuid ] ) ) {
+				$members_by_cluster[ $cluster_uuid ] = array();
+			}
+
+			// Remove the ROW_NUMBER column before returning
+			unset( $row['rn'] );
+			$members_by_cluster[ $cluster_uuid ][] = $row;
+		}
+
+		return $members_by_cluster;
+	}
+
+	/**
+	 * @param int[] $media_ids
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function list_for_media_ids( string $tenant_id, array $media_ids ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$normalized_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						static function ( $media_id ): int {
+							return absint( $media_id );
+						},
+						$media_ids
+					)
+				)
+			)
+		);
+
+		if ( empty( $normalized_ids ) ) {
+			return array();
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $normalized_ids ), '%d' ) );
+		$sql          = $this->prepare_query(
+			"SELECT m.*, c.label AS cluster_label, c.curation_state, c.is_user_confirmed
+			FROM %i m
+			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			WHERE c.tenant_id = %s AND m.attachment_id IN ($placeholders)
+			ORDER BY m.updated_at DESC",
+			array_merge(
+				array(
+					$this->members_table_name,
+					$this->clusters_table_name,
+					$normalized_tenant_id,
+				),
+				$normalized_ids
 			)
 		);
 

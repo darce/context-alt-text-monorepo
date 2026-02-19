@@ -962,6 +962,18 @@ if (!function_exists('wp_schedule_single_event')) {
     }
 }
 
+if (!function_exists('wp_schedule_event')) {
+    function wp_schedule_event($timestamp, $recurrence, $hook, $args = []): void
+    {
+        $key = $hook . '::' . md5(serialize($args));
+        $GLOBALS['__ac_scheduled'][$key] = [
+            'timestamp' => $timestamp,
+            'recurrence' => $recurrence,
+            'args' => $args,
+        ];
+    }
+}
+
 if (!function_exists('wp_clear_scheduled_hook')) {
     function wp_clear_scheduled_hook($hook, $args = []): void
     {

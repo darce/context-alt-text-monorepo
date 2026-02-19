@@ -3,6 +3,9 @@
 declare(strict_types=1);
 
 require_once __DIR__ . '/stubs/wp.php';
+require_once __DIR__ . '/stubs/class-null-clusters-repository.php';
+require_once __DIR__ . '/stubs/class-null-identity-members-repository.php';
+require_once __DIR__ . '/stubs/class-null-sync-state-repository.php';
 
 spl_autoload_register(static function (string $class): void {
     $prefix = 'AltContext\\';
@@ -27,6 +30,17 @@ spl_autoload_register(static function (string $class): void {
 
     if (is_readable($fallback)) {
         require_once $fallback;
+        return;
+    }
+
+    if (str_ends_with($className, 'Interface')) {
+        $baseName = substr($className, 0, -9);
+        $baseKebab = strtolower((string) preg_replace('/([a-z0-9])([A-Z])/', '$1-$2', $baseName));
+        $interfacePath = __DIR__ . '/../src/' . implode('/', $directories) . '/interface-' . $baseKebab . '.php';
+
+        if (is_readable($interfacePath)) {
+            require_once $interfacePath;
+        }
     }
 });
 

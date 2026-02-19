@@ -86,6 +86,105 @@ class SovereignProjectionIntegrationTest extends TestCase
     }
 
     /**
+     * Verifies that user-curated labels survive a subsequent snapshot projection.
+     *
+     * The SQL uses `IF(is_user_confirmed = 1, label, VALUES(label))` so that once
+     * a cluster is user-confirmed the snapshot cannot overwrite the label.
+     */
+    public function testSnapshotPreservesUserCuratedLabelsOnSubsequentProjection(): void
+    {
+        $projector = new SnapshotProjector(
+            new ClustersRepository(),
+            new IdentityMembersRepository(),
+            new SyncStateRepository()
+        );
+
+        // First projection: cluster arrives as user_confirmed with curated label.
+        $projector->project(
+            'tenant-label-test',
+            [
+                'snapshot_version' => 10,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-curated',
+                        'label' => 'Curated Name',
+                        'curation_state' => 'confirmed',
+                        'is_user_confirmed' => true,
+                        'identity_count' => 1,
+                        'representative_media_id' => 500,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-curated-1',
+                        'cluster_uuid' => 'cluster-curated',
+                        'attachment_id' => 500,
+                    ],
+                ],
+            ]
+        );
+
+        // Reset query log before second projection.
+        global $wpdb;
+        $wpdb->queries = [];
+
+        // Second projection: same cluster_uuid arrives with a different label.
+        $projector->project(
+            'tenant-label-test',
+            [
+                'snapshot_version' => 11,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-curated',
+                        'label' => 'Machine Label',
+                        'curation_state' => 'auto',
+                        'is_user_confirmed' => false,
+                        'identity_count' => 1,
+                        'representative_media_id' => 500,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-curated-1',
+                        'cluster_uuid' => 'cluster-curated',
+                        'attachment_id' => 500,
+                    ],
+                ],
+            ]
+        );
+
+        $queries = $wpdb->queries;
+        $clusterInsert = $this->findQueryContaining($queries, 'INSERT INTO `wp_acx_clusters`');
+
+        // The ON DUPLICATE KEY UPDATE guard must preserve the user-curated label.
+        $this->assertStringContainsString(
+            'IF(is_user_confirmed = 1, label, VALUES(label))',
+            $clusterInsert,
+            'Cluster upsert must guard user-curated labels with is_user_confirmed check'
+        );
+
+        // The incoming row carries the machine label, but the SQL guard keeps
+        // the curated one (this is tested at the SQL level since our stub $wpdb
+        // does not actually execute queries — the guard is structural).
+        $this->assertStringContainsString("'Machine Label'", $clusterInsert);
+        $this->assertStringContainsString("'cluster-curated'", $clusterInsert);
+
+        // Curation state is also guarded.
+        $this->assertStringContainsString(
+            'IF(is_user_confirmed = 1, curation_state, VALUES(curation_state))',
+            $clusterInsert,
+            'Curation state must also be preserved for user-confirmed clusters'
+        );
+
+        // snapshot_version uses GREATEST to avoid rollback.
+        $this->assertStringContainsString(
+            'GREATEST(snapshot_version, VALUES(snapshot_version))',
+            $clusterInsert,
+            'Snapshot version must use GREATEST to prevent rollback'
+        );
+    }
+
+    /**
      * @param array<int,string> $queries
      */
     private function findQueryContaining(array $queries, string $needle): string

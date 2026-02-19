@@ -4,6 +4,8 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -28,8 +30,10 @@ use function wp_schedule_single_event;
 class ClusterMutationsController extends AbstractRecognitionProxyController {
 	private const XMP_REFRESH_CLUSTER_HOOK = 'acx_refresh_xmp_for_clusters';
 	private const XMP_REFRESH_DELAY_SECONDS = 1;
+	private ClustersRepositoryInterface $clusters_repository;
 
-	public function __construct() {
+	public function __construct( ?ClustersRepositoryInterface $clusters_repository = null ) {
+		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		add_action( self::XMP_REFRESH_CLUSTER_HOOK, array( $this, 'refresh_xmp_for_cluster_ids_async' ), 10, 2 );
 	}
 
@@ -174,6 +178,8 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_label', 'Label cannot be empty.', array( 'status' => 400 ) );
 		}
 
+		$this->clusters_repository->update_label( $cluster_id, $label );
+
 		$payload = array(
 			'tenant_id' => $this->get_tenant_id(),
 			'label'     => $label,
@@ -190,6 +196,8 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
+		$this->clusters_repository->dismiss( $cluster_id );
+
 		return $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
@@ -203,6 +211,8 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		if ( '' === $cluster_id ) {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
+
+		$this->clusters_repository->undismiss( $cluster_id );
 
 		return $this->proxy_request(
 			'DELETE',

@@ -13,6 +13,7 @@ require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
 
+use AltContext\Sovereign\Repositories\ClustersRepository;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -43,7 +44,7 @@ class RecognitionController {
 	) {
 		$this->analysisJobsController = $analysis_jobs_controller ?? new AnalysisJobsController();
 		$this->clustersController = $clusters_controller ?? new ClustersController();
-		$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController();
+		$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( new ClustersRepository() );
 		$this->mediaIdentitiesController = $media_identities_controller ?? new MediaIdentitiesController();
 		$this->syncStatusController = $sync_status_controller ?? new SyncStatusController();
 		$this->suggestionsController = $suggestions_controller ?? new SuggestionsController();

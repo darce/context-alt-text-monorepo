@@ -12,22 +12,30 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function apply_filters;
 use function is_array;
+use function is_string;
+use function max;
 use function min;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
+use function strtotime;
+use function time;
+use function trim;
 use function wp_get_attachment_url;
 
 class ClustersController extends AbstractRecognitionProxyController {
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
+	private ?SyncPullJobInterface $sync_pull_job;
 	private ClusterResponseMapper $cluster_mapper;
 	private MemberResponseMapper $member_mapper;
 
@@ -35,12 +43,14 @@ class ClustersController extends AbstractRecognitionProxyController {
 		?ClustersRepositoryInterface $clusters_repository = null,
 		?IdentityMembersRepositoryInterface $members_repository = null,
 		?SyncStateRepositoryInterface $sync_state_repository = null,
+		?SyncPullJobInterface $sync_pull_job = null,
 		?ClusterResponseMapper $cluster_mapper = null,
 		?MemberResponseMapper $member_mapper = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->sync_pull_job = $sync_pull_job;
 		$this->cluster_mapper = $cluster_mapper ?? new ClusterResponseMapper();
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
 	}
@@ -320,6 +330,41 @@ class ClustersController extends AbstractRecognitionProxyController {
 	}
 
 	private function should_use_local_projection( string $tenant_id ): bool {
-		return $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
+		$has_projection = $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
+		if ( ! $has_projection ) {
+			return false;
+		}
+
+		// If projection is stale, attempt on-demand sync.
+		// Wrap in try/catch so a projector failure degrades to stale data
+		// instead of crashing the request.
+		$updated_at = $this->sync_state_repository->get_last_updated( $tenant_id );
+		if ( $this->is_projection_stale( $updated_at ) && null !== $this->sync_pull_job ) {
+			try {
+				$this->sync_pull_job->perform( $tenant_id );
+			} catch ( \Throwable $e ) {
+				// Swallow — stale projection is still usable.
+			}
+		}
+
+		return true;
+	}
+
+	private function is_projection_stale( ?string $updated_at ): bool {
+		if ( ! is_string( $updated_at ) || '' === trim( $updated_at ) ) {
+			return true;
+		}
+
+		$timestamp = strtotime( $updated_at );
+		if ( false === $timestamp ) {
+			return true;
+		}
+
+		$threshold = (int) apply_filters( 'acx_sync_stale_threshold_seconds', 3600 );
+		$threshold = max( 60, $threshold );
+
+		$age = max( 0, time() - $timestamp );
+
+		return $age > $threshold;
 	}
 }

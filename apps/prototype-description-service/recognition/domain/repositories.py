@@ -307,6 +307,22 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def get_snapshot(
+        self, tenant_id: str
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        """Get complete cluster snapshot for tenant projection.
+
+        Args:
+            tenant_id: Tenant UUID string.
+
+        Returns:
+            Tuple of (clusters, member_tuples, snapshot_version) where:
+            - clusters: All clusters for the tenant
+            - member_tuples: List of (IdentityMember, MediaIdentity) pairs
+            - snapshot_version: Monotonic version number (unix timestamp of max cluster updated_at)
+        """
+        ...
+
 
 class MemberRepository(Protocol):
     """Abstract interface for cluster member persistence."""

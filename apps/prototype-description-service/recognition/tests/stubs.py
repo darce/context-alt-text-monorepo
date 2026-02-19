@@ -266,3 +266,12 @@ class NullClusterRepository(ClusterRepository):
             if cluster.tenant_id == tenant_id
             and (cluster.label is None or cluster.label.startswith("cluster-") or not cluster.user_confirmed)
         ]
+
+    async def get_snapshot(
+        self, tenant_id: str
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
+        """Get snapshot data for tests - returns clusters with empty members."""
+        clusters = [cluster for cluster in self._clusters_by_id.values() if cluster.tenant_id == tenant_id]
+        # Return clusters with empty members and a simple version number
+        snapshot_version = 1
+        return (clusters, [], snapshot_version)

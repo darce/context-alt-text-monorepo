@@ -528,8 +528,23 @@ def api_client(
     return TestClient(app)
 
 
-def seed_cluster(fake_cluster_service: FakeClusterService, tenant_id: str, label: str = "test") -> ClusterResponse:
-    """Helper to seed a fake cluster for API tests."""
+def seed_cluster(
+    fake_cluster_service: FakeClusterService,
+    tenant_id: str,
+    label: str = "test",
+    fake_cluster_repository: FakeClusterRepository | None = None,
+) -> ClusterResponse:
+    """Helper to seed a fake cluster for API tests.
+
+    Seeds both the FakeClusterService (used by cluster services) and FakeClusterRepository
+    (used by repository-based endpoints like snapshot) in a single call.
+
+    Args:
+        fake_cluster_service: The service to seed
+        tenant_id: The tenant ID
+        label: The cluster label (default "test")
+        fake_cluster_repository: Optional repository to also seed. If provided, seeds both stores.
+    """
     cluster = ClusterResponse(
         id=str(uuid.uuid4()),
         tenant_id=str(tenant_id),
@@ -540,4 +555,9 @@ def seed_cluster(fake_cluster_service: FakeClusterService, tenant_id: str, label
         representatives=[],
     )
     fake_cluster_service.clusters.append(cluster)
+
+    # Also seed the repository if provided
+    if fake_cluster_repository:
+        fake_cluster_repository.seed(cluster.id, tenant_id, label=label, identity_count=1)
+
     return cluster

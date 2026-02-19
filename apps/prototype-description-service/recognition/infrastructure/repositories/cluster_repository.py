@@ -996,6 +996,57 @@ class SqlAlchemyClusterRepository(ClusterRepository):
             centroid=centroid,
         )
 
+    async def get_snapshot(
+        self, tenant_id: str
+    ) -> tuple[list[IdentityCluster], list[tuple[DomainMember, DomainIdentity]], int]:
+        """Get complete cluster snapshot for tenant projection."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None:
+            return ([], [], 0)
+
+        # Fetch all clusters
+        clusters_stmt: Select[tuple[ClusterModel]] = (
+            select(ClusterModel)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .options(selectinload(ClusterModel.representatives).selectinload(IdentityClusterRepresentative.identity))
+            .order_by(ClusterModel.created_at)
+        )
+        clusters_result = await self._session.execute(clusters_stmt)
+        cluster_models = list(clusters_result.scalars().all())
+
+        # Compute snapshot_version from max updated_at
+        max_updated_at = max((c.updated_at for c in cluster_models), default=datetime(1970, 1, 1, tzinfo=UTC))
+        snapshot_version = int(max_updated_at.timestamp())
+
+        # Fetch all members with identity data
+        members_stmt = (
+            select(IdentityMemberModel, MediaIdentity)
+            .join(MediaIdentity, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .join(ClusterModel, IdentityMemberModel.cluster_id == ClusterModel.id)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .order_by(IdentityMemberModel.cluster_id, IdentityMemberModel.assigned_at)
+        )
+        members_result = await self._session.execute(members_stmt)
+        member_rows = list(members_result.all())
+
+        # Convert to domain objects
+        clusters = [self._to_domain(model) for model in cluster_models]
+
+        members_with_identities: list[tuple[DomainMember, DomainIdentity]] = []
+        for member_model, identity_model in member_rows:
+            domain_member = DomainMember(
+                id=str(member_model.id),
+                cluster_id=str(member_model.cluster_id),
+                identity_id=str(member_model.identity_id),
+                similarity=float(member_model.similarity),
+                tenant_id=str(member_model.tenant_id) if member_model.tenant_id else None,
+                assigned_at=member_model.assigned_at if isinstance(member_model.assigned_at, datetime) else None,
+            )
+            domain_identity = self._to_domain_identity(identity_model, cluster_id=str(member_model.cluster_id))
+            members_with_identities.append((domain_member, domain_identity))
+
+        return (clusters, members_with_identities, snapshot_version)
+
     def _to_domain_identity(self, model: MediaIdentity, *, cluster_id: str | None = None) -> DomainIdentity:
         """Convert MediaIdentity ORM model to domain representation."""
         return DomainIdentity(

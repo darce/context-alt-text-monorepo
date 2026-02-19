@@ -29,7 +29,7 @@ Guiding principles: accuracy over volume, explicit user control (no auto-labelin
 
 - **Greenfield policy** -- no production users, no existing data to preserve. Clean rewrites over shims. No long-lived feature flags.
 - **Backend schema baseline** -- changes fold into `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py`.
-- **Snapshot endpoint does not exist** -- `GET /tenants/{tenant_id}/clusters/snapshot` is a parallel backend workstream.
+- **Snapshot endpoint does not exist** -- `GET /tenants/{tenant_uuid}/clusters/snapshot` is a parallel backend workstream.
 - **WP-Cron for v0.1.0** -- Action Scheduler deferred to v0.2+.
 - **Plugin packaging** -- sovereign code must ship in standalone plugin ZIP per the portable packaging plan.
 
@@ -45,13 +45,13 @@ Guiding principles: accuracy over volume, explicit user control (no auto-labelin
 
 ### Design Decisions
 
-| Decision                                       | Rationale                                                                                                        |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| No `acx_identity_cluster` taxonomy             | Clusters are computed groupings that change with re-clustering; taxonomy overhead adds no value.                  |
-| Plugin-owned tables via `dbDelta`              | Multiple faces per attachment cannot be modeled with post-meta.                                                   |
-| Pull-first sync (v0.1.0)                       | Simplest viable sync. No outbox, no operation IDs, no dead-letter.                                               |
-| WP-Cron for v0.1.0, Action Scheduler for v0.2+ | WP-Cron has zero dependencies and is sufficient for eventual consistency.                                        |
-| Curation-first conflict policy                 | User curation wins unconditionally. Snapshot pull skips curated fields. Backend suggestions never overwrite.      |
+| Decision                                       | Rationale                                                                                                    |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
+| No `acx_identity_cluster` taxonomy             | Clusters are computed groupings that change with re-clustering; taxonomy overhead adds no value.             |
+| Plugin-owned tables via `dbDelta`              | Multiple faces per attachment cannot be modeled with post-meta.                                              |
+| Pull-first sync (v0.1.0)                       | Simplest viable sync. No outbox, no operation IDs, no dead-letter.                                           |
+| WP-Cron for v0.1.0, Action Scheduler for v0.2+ | WP-Cron has zero dependencies and is sufficient for eventual consistency.                                    |
+| Curation-first conflict policy                 | User curation wins unconditionally. Snapshot pull skips curated fields. Backend suggestions never overwrite. |
 
 ### North-Star Behavior
 
@@ -72,7 +72,7 @@ Guiding principles: accuracy over volume, explicit user control (no auto-labelin
 
 ### API Evolution
 
-- **v0.1.0**: `GET /tenants/{tenant_id}/clusters/snapshot` (full cluster state with monotonic version)
+- **v0.1.0**: `GET /tenants/{tenant_uuid}/clusters/snapshot` (full cluster state with monotonic version)
 - **v0.2+**: Delta/event endpoint, idempotent mutation ingest, conflict metadata
 
 ## Phased Delivery
@@ -146,34 +146,40 @@ Deliverables:
 - Replace runtime proxy dependency for cluster reads with local service facade.
 - Keep backend integration as sync/compute pipeline, not blocking UI.
 - Update architecture diagrams and contracts to final sovereign model.
+- Remove obsolete `thumbnail_url` persistence pipeline (backend DB column, domain objects, response schemas, repository reads, `ThumbnailSettings` config, `StaticFiles` mount).
+- Simplify plugin thumbnail resolution: remove dead `is_http_url()` branch in `resolve_thumb_url()`, remove `thumbnail_url` proxy-response fallback in `ClustersController`, consider replacing `thumb_path` / `representative_thumb_path` `acx://` URI indirection with direct `attachment_id` usage.
+- Clean up frontend: remove never-populated `thumbnail_url` fields from TS types, remove dead fast-path in `IdentityThumbnail`, collapse dual `thumb_url`/`thumbnail_url` on cluster representative types.
+
+Note: Thumbnails are derived at render time from `bbox_json` + WordPress media attachment URLs via CSS cropping (`FaceThumbnail` component). No thumbnail images are persisted. The `acx://` URI scheme is an indirection layer encoding `attachment_id`, which is already stored directly on `wp_acx_identity_members`.
 
 Exit criteria:
 
 - Plugin is operational for cluster browsing/curation during backend outage and after service disconnect.
+- No dead `thumbnail_url` columns, config classes, static-file mounts, or always-null response fields remain in backend or plugin.
 
 ## External Dependencies
 
-| Dependency                                                     | Owner               | Status          | Blocks                                            |
-| -------------------------------------------------------------- | ------------------- | --------------- | ------------------------------------------------- |
-| Snapshot endpoint `GET /tenants/{tenant_id}/clusters/snapshot` | Backend workstream  | **Not started** | Phase 2 exit criteria (needs data to project)     |
-| Persistent event store for delta/event endpoint                | Backend workstream  | Not started     | v0.2+ scope only                                  |
-| Plugin packaging (v4.13.1)                                     | Plugin workstream   | **Completed**   | --                                                |
+| Dependency                                                     | Owner              | Status          | Blocks                                        |
+| -------------------------------------------------------------- | ------------------ | --------------- | --------------------------------------------- |
+| Snapshot endpoint `GET /tenants/{tenant_uuid}/clusters/snapshot` | Backend workstream | **Not started** | Phase 2 exit criteria (needs data to project) |
+| Persistent event store for delta/event endpoint                | Backend workstream | Not started     | v0.2+ scope only                              |
+| Plugin packaging (v4.13.1)                                     | Plugin workstream  | **Completed**   | --                                            |
 
 ## Code Anchors
 
-| Layer    | File                                                  | Note                                                                                     |
-| -------- | ----------------------------------------------------- | ---------------------------------------------------------------------------------------- |
-| Plugin   | `src/api/class-recognition-controller.php`            | Composition root delegating to 5 sub-controllers. Phase 4 replaces proxy with facade.    |
-| Plugin   | `src/api/class-clusters-controller.php`               | Read-only cluster queries. Phase 2 refactors to read local projection.                   |
-| Plugin   | `src/api/class-cluster-mutations-controller.php`      | Cluster mutations. Phase 3 adds dual-write to local + proxy.                             |
-| Plugin   | `src/api/class-media-identities-controller.php`       | Identity queries. Phase 2 refactors to read local projection.                            |
-| Plugin   | `src/api/class-abstract-recognition-proxy-controller.php` | Shared proxy/retry base with constant/option/filter endpoint resolution.             |
-| Plugin   | `src/support/class-life-cycle-manager.php`            | Lifecycle hooks. Schema creation via `dbDelta` now implemented.                          |
-| Plugin   | `src/sovereign/repositories/`                         | Cluster, member, sync-state repositories (Phase 1 complete).                             |
-| Plugin   | `src/sovereign/sync/class-snapshot-projector.php`     | Curation-safe snapshot ingestion (Phase 1 complete).                                     |
-| Frontend | `js/admin/api/recognition/clusterApi*.ts`             | Cluster API layer. Phase 2 may need cache/stale-indicator awareness.                     |
-| Backend  | `recognition/interface_adapters/http/routers/*`       | FastAPI route handlers.                                                                  |
-| Backend  | `recognition/application/events/broadcaster.py`       | In-memory SSE fanout only -- cannot be repurposed for snapshot/delta sync.               |
+| Layer    | File                                                      | Note                                                                                  |
+| -------- | --------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| Plugin   | `src/api/class-recognition-controller.php`                | Composition root delegating to 5 sub-controllers. Phase 4 replaces proxy with facade. |
+| Plugin   | `src/api/class-clusters-controller.php`                   | Read-only cluster queries. Phase 2 refactors to read local projection.                |
+| Plugin   | `src/api/class-cluster-mutations-controller.php`          | Cluster mutations. Phase 3 adds dual-write to local + proxy.                          |
+| Plugin   | `src/api/class-media-identities-controller.php`           | Identity queries. Phase 2 refactors to read local projection.                         |
+| Plugin   | `src/api/class-abstract-recognition-proxy-controller.php` | Shared proxy/retry base with constant/option/filter endpoint resolution.              |
+| Plugin   | `src/support/class-life-cycle-manager.php`                | Lifecycle hooks. Schema creation via `dbDelta` now implemented.                       |
+| Plugin   | `src/sovereign/repositories/`                             | Cluster, member, sync-state repositories (Phase 1 complete).                          |
+| Plugin   | `src/sovereign/sync/class-snapshot-projector.php`         | Curation-safe snapshot ingestion (Phase 1 complete).                                  |
+| Frontend | `js/admin/api/recognition/clusterApi*.ts`                 | Cluster API layer. Phase 2 may need cache/stale-indicator awareness.                  |
+| Backend  | `recognition/interface_adapters/http/routers/*`           | FastAPI route handlers.                                                               |
+| Backend  | `recognition/application/events/broadcaster.py`           | In-memory SSE fanout only -- cannot be repurposed for snapshot/delta sync.            |
 
 ## Risks and Mitigations
 
@@ -220,6 +226,10 @@ Exit criteria:
 
 - [ ] Replace proxy reads with local service facade.
 - [ ] Update architecture diagrams and contracts.
+- [ ] Backend: drop `thumbnail_url` column (migration), remove `ThumbnailSettings`, remove `StaticFiles` mount, remove `_fetch_cluster_thumbnails()`, strip `thumbnail_url` from domain objects / response schemas / repository reads.
+- [ ] Plugin: simplify `resolve_thumb_url()` (remove dead HTTP-URL branch), remove `thumbnail_url` fallback in `ClustersController`, evaluate replacing `acx://` thumb-path indirection with direct `attachment_id` lookup.
+- [ ] Frontend: remove `thumbnail_url` from TS types (`ClusterIdentity`, `TopUnlabeledRepresentative`, suggestion types), remove dead `IdentityThumbnail` fast-path, collapse dual `thumb_url`/`thumbnail_url` fields.
+- [ ] Delete stale `.mypy_cache` artifacts for removed `thumbnail_service`.
 
 ## Deferred (post-v0.1.0)
 

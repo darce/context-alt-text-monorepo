@@ -1,69 +1,39 @@
 ---
-description: Start/stop the MCP server for AI agent tooling
+description: Troubleshoot MCP server for AI agent tooling
 ---
 
-**Purpose**: Control the unified MCP server that provides code intelligence tools across the entire monorepo.
+**Purpose**: The MCP server provides monorepo-specific code intelligence (10 tools). VS Code manages its lifecycle automatically via `.vscode/mcp.json` -- no manual start/stop needed.
 
-**When to use**:
+**When to use this workflow**: Only when MCP tools are not appearing or behaving unexpectedly.
 
-- Starting a development session with AI agents
-- Enabling `search_code`, `trace_api_endpoint`, `find_react_component` tools
-- Debugging MCP server issues
+**Tools provided (10 total)**: `trace_api_endpoint`, `find_react_component`, `find_react_hook`, `find_wp_action`, `find_wp_rest_route`, `find_php_class`, `list_frontend_tests`, `get_context_map`, `get_api_contract`, `get_instructions`
 
-**Prerequisites**: Python 3.11+ with fastmcp installed (`pip install fastmcp`). If you use pyenv, ensure `pyenv` is on your PATH so the script can run `pyenv exec python`.
-
-**Tools provided by MCP server**:
-
-- `search_code` - Search across all languages
-- `find_definition` - Find symbol definitions
-- `trace_api_endpoint` - Trace endpoints across PHP→Python→TS
-- `find_react_component` / `find_react_hook` - React-specific search
-- `find_wp_action` / `find_wp_rest_route` - WordPress-specific search
-- `get_context_map` / `get_api_contract` - Load documentation
+> Generic operations use Copilot built-ins (`grep_search`, `read_file`, `list_dir`, `get_errors`, `semantic_search`, `list_code_usages`) and Pylance MCP tools.
 
 ---
 
-1. Check MCP server status
+**Troubleshooting steps:**
 
-```bash
-cd /Users/daniel/Development/context-alt-text-monorepo && ./scripts/mcp/mcp-server.sh status
+1. Check if VS Code sees the server
+
+```
+Command Palette > MCP: List Servers > "context-alt-text" should show 10 tools
 ```
 
-2. Start MCP server (if not running)
+2. Test the server manually (should block on stdin, Ctrl+C to exit)
 
 ```bash
-cd /Users/daniel/Development/context-alt-text-monorepo && ./scripts/mcp/mcp-server.sh start
+cd /Users/daniel/Development/context-alt-text-monorepo && ./scripts/mcp/mcp-server.sh run
 ```
 
-3. View server log (last 20 lines)
+3. Verify fastmcp is installed in the pyenv virtualenv
 
 ```bash
-tail -20 /Users/daniel/Development/context-alt-text-monorepo/logs/mcp-server.log 2>/dev/null || echo "No log file yet"
+pyenv exec pip show fastmcp
 ```
+
+4. Check VS Code Output panel > "MCP" for error messages
 
 ---
 
-**Other commands**:
-
-```bash
-# Stop the server
-make mcp-stop
-
-# Restart the server
-make mcp-restart
-
-# Run in foreground (for debugging)
-make mcp-run
-```
-
----
-
-**VS Code integration**
-
-VS Code uses the same entry point as the CLI: `scripts/mcp/mcp-server.sh run`.  
-The `.vscode/mcp.json` file is configured to call that script and to inherit your
-pyenv environment (via `PYENV_ROOT`/`PYENV_VERSION` if set).
-
-If VS Code can’t find `pyenv`, ensure your system PATH includes it (or set
-`PYENV_ROOT` in your shell environment so VS Code inherits it).
-```
+**Architecture**: `.vscode/mcp.json` > `scripts/mcp/mcp-server.sh run` > `unified_server.py` (stdio transport). VS Code spawns the process and communicates via stdin/stdout.

@@ -8,6 +8,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 
+from recognition.domain.cluster import IdentityCluster
 from recognition.domain.job import Job, JobStatus, JobType
 from recognition.domain.repositories import IdentityMember
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
@@ -59,8 +60,9 @@ class _FakeClusterRepository:
 class FakeClusterForRepo:
     """Minimal cluster object returned by FakeClusterRepository."""
 
-    def __init__(self, cluster_id: str, label: str | None = None, identity_count: int = 1) -> None:
+    def __init__(self, cluster_id: str, tenant_id: str, label: str | None = None, identity_count: int = 1) -> None:
         self.id = cluster_id
+        self.tenant_id = tenant_id
         self.label = label
         self.identity_count = identity_count
         self.user_confirmed = bool(label)
@@ -77,8 +79,14 @@ class FakeClusterRepository:
     def __init__(self) -> None:
         self.clusters: dict[str, FakeClusterForRepo] = {}
 
-    def seed(self, cluster_id: str, label: str | None = None, identity_count: int = 1) -> None:
-        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, label, identity_count)
+    def seed(
+        self,
+        cluster_id: str,
+        tenant_id: str = "00000000-0000-0000-0000-000000000000",
+        label: str | None = None,
+        identity_count: int = 1,
+    ) -> None:
+        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, tenant_id, label, identity_count)
 
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
@@ -119,6 +127,30 @@ class FakeClusterRepository:
             return False
         cluster.dismissed_at = None
         return True
+
+    async def get_snapshot(
+        self, tenant_id: str
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, object]], int]:
+        """Get snapshot data for tests - returns empty members list."""
+        # Filter clusters by tenant_id and convert to IdentityCluster domain objects
+        clusters_for_tenant = [c for c in self.clusters.values() if c.tenant_id == tenant_id]
+        identity_clusters = [
+            IdentityCluster(
+                id=c.id,
+                tenant_id=c.tenant_id,
+                label=c.label,
+                is_labeled=c.is_labeled,
+                identity_count=c.identity_count,
+                user_confirmed=c.user_confirmed,
+                created_at=c.created_at,
+                dismissed_at=c.dismissed_at,
+                representatives=c.representatives,
+            )
+            for c in clusters_for_tenant
+        ]
+        # Return clusters with empty members and a simple version number
+        snapshot_version = int(datetime.now(tz=UTC).timestamp())
+        return (identity_clusters, [], snapshot_version)
 
 
 class FakeJobRepository:

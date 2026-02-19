@@ -105,6 +105,20 @@ ensure_postgres() {
   echo "[prototype-local] PostgreSQL is ready." >&2
 }
 
+run_postgres_query() {
+  local db_host="$1"
+  local db_port="$2"
+  local db_user="$3"
+  local db_pass="$4"
+  local sql="$5"
+
+  if [[ -n "${db_pass}" ]]; then
+    PGPASSWORD="${db_pass}" psql -h "${db_host}" -p "${db_port}" -U "${db_user}" -d postgres -tAc "${sql}"
+  else
+    psql -h "${db_host}" -p "${db_port}" -U "${db_user}" -d postgres -tAc "${sql}"
+  fi
+}
+
 check_database_exists() {
   local db_name="${DB_NAME:-}"
   if [[ -z "${db_name}" ]]; then
@@ -113,17 +127,40 @@ check_database_exists() {
 
   local db_host="${PGHOST:-localhost}"
   local db_port="${PGPORT:-5432}"
-  local admin_user="${ADMIN_PGUSER:-${PGUSER:-}}"
-  local admin_pass="${ADMIN_PGPASSWORD:-${PGPASSWORD:-}}"
+  local default_admin_user
+  default_admin_user="$(whoami)"
+  local admin_user="${ADMIN_PGUSER:-${PGUSER:-${default_admin_user}}}"
+  local admin_pass="${ADMIN_PGPASSWORD-${PGPASSWORD:-}}"
+  local allow_admin_fallback="${ALLOW_ADMIN_FALLBACK:-1}"
+
+  if ! run_postgres_query "${db_host}" "${db_port}" "${admin_user}" "${admin_pass}" "SELECT 1" >/dev/null 2>&1; then
+    if [[ "${allow_admin_fallback}" != "1" ]]; then
+      echo "[prototype-local] Unable to connect to PostgreSQL as admin user ${admin_user}." >&2
+      echo "[prototype-local] ALLOW_ADMIN_FALLBACK=${allow_admin_fallback}; refusing fallback. Fix ADMIN_PGUSER/ADMIN_PGPASSWORD." >&2
+      exit 1
+    fi
+
+    if run_postgres_query "${db_host}" "${db_port}" "${admin_user}" "" "SELECT 1" >/dev/null 2>&1; then
+      echo "[prototype-local] Admin password rejected for role ${admin_user}; retrying without password." >&2
+      admin_pass=""
+    elif [[ "${admin_user}" != "${default_admin_user}" ]] && run_postgres_query "${db_host}" "${db_port}" "${default_admin_user}" "" "SELECT 1" >/dev/null 2>&1; then
+      echo "[prototype-local] Admin role ${admin_user} is unavailable; falling back to ${default_admin_user}." >&2
+      admin_user="${default_admin_user}"
+      admin_pass=""
+    else
+      echo "[prototype-local] Unable to connect to PostgreSQL as admin user ${admin_user}." >&2
+      echo "[prototype-local] Set ADMIN_PGUSER to a valid local superuser (often ${default_admin_user} for Homebrew PostgreSQL)." >&2
+      exit 1
+    fi
+  fi
 
   local exists
-  if [[ -n "${admin_pass}" ]]; then
-    exists="$(PGPASSWORD="${admin_pass}" psql -h "${db_host}" -p "${db_port}" -U "${admin_user}" -d postgres -tAc \
-      "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" 2>/dev/null || true)"
-  else
-    exists="$(psql -h "${db_host}" -p "${db_port}" -U "${admin_user}" -d postgres -tAc \
-      "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" 2>/dev/null || true)"
+  if ! exists="$(run_postgres_query "${db_host}" "${db_port}" "${admin_user}" "${admin_pass}" \
+    "SELECT 1 FROM pg_database WHERE datname = '${db_name}'" 2>/dev/null)"; then
+    echo "[prototype-local] Failed to query PostgreSQL database catalog as ${admin_user}." >&2
+    exit 1
   fi
+  exists="${exists//[[:space:]]/}"
 
   if [[ "${exists}" != "1" ]]; then
     echo "[prototype-local] Database ${db_name} not found." >&2

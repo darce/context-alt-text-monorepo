@@ -80,6 +80,6 @@ __pycache__/
 .eggs/
 *.egg-info/
 
-# MCP server logs
-logs/mcp-server*.log
-.mcp-server.pid
+# Logs (all service / tool logs)
+logs/
+apps/prototype-description-service/logs/

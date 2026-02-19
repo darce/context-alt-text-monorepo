@@ -103,6 +103,34 @@ app.dependency_overrides[get_cluster_repo] = lambda: FakeClusterRepository()
 # AVOID mixing with monkeypatch for the same dependency
 ```
 
+### Path Parameter Names Must Not Collide With Dependency Query Parameters
+
+FastAPI validates parameter sources across the **entire transitive dependency tree** of each route at module-load time. If any dependency (or sub-dependency) declares `param_name` as `Query` and the route URL contains `{param_name}` as a path segment, all test files that import the app will fail with:
+
+```
+AssertionError: Cannot use `Query` for path param 'param_name'
+```
+
+**Common trigger:** `get_session` depends on `get_tenant_id_optional`, which declares `tenant_id: Query`. Any route with `{tenant_id}` in its path that transitively depends on `get_session` (e.g., through `get_cluster_repository`) will collide -- even if the route never directly calls `get_tenant_id`.
+
+**Fix:** Rename the path segment to avoid the reserved name:
+
+```python
+# BAD: {tenant_id} collides with tenant_id: Query in get_session dep chain
+@router.get("/tenants/{tenant_id}/clusters/snapshot")
+async def snapshot(tenant_id: str, repo=Depends(get_cluster_repository)): ...
+#                                        ^^ get_cluster_repository -> get_session
+#                                           -> get_tenant_id_optional(tenant_id: Query)
+
+# GOOD: {tenant_uuid} avoids the reserved name
+@router.get("/tenants/{tenant_uuid}/clusters/snapshot")
+async def snapshot(tenant_uuid: str, repo=Depends(get_cluster_repository)):
+    tenant_id = tenant_uuid  # alias for internal use
+    ...
+```
+
+**Rule of thumb:** Before adding `{name}` to a route path, grep for `name.*Query` in `recognition/interface_adapters/http/deps/` to check for collisions.
+
 ---
 
 ## Test Organization

@@ -19,11 +19,11 @@ This contract defines the v0.1.0 snapshot payload required for plugin-side sover
 
 ## Endpoint
 
-- `GET /tenants/{tenant_id}/clusters/snapshot`
+- `GET /tenants/{tenant_uuid}/clusters/snapshot`
 
 Path params:
 
-- `tenant_id`: stable tenant key (`md5(get_site_url())` from plugin)
+- `tenant_uuid`: stable tenant key (`md5(get_site_url())` from plugin). Named `tenant_uuid` (not `tenant_id`) to avoid a FastAPI path/query parameter collision -- `tenant_id` is reserved as a `Query` parameter in the session dependency chain.
 
 Required headers:
 

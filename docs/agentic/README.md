@@ -35,13 +35,13 @@ docs/agentic/
 
 ## Directory Purposes
 
-| Directory    | Contents                                                                  |
-| ------------ | ------------------------------------------------------------------------- |
-| `contracts/` | API schemas, endpoint documentation, security patterns                    |
-| `diagrams/`  | UML and architecture diagrams in Mermaid format                           |
-| `maps/`      | Context maps with key entry points per domain                             |
-| `rules/`     | Domain-specific guidelines, architecture rules, and workflow guides       |
-| `templates/` | Reusable templates for task tracking and documentation                    |
+| Directory    | Contents                                                            |
+| ------------ | ------------------------------------------------------------------- |
+| `contracts/` | API schemas, endpoint documentation, security patterns              |
+| `diagrams/`  | UML and architecture diagrams in Mermaid format                     |
+| `maps/`      | Context maps with key entry points per domain                       |
+| `rules/`     | Domain-specific guidelines, architecture rules, and workflow guides |
+| `templates/` | Reusable templates for task tracking and documentation              |
 
 ## Related
 

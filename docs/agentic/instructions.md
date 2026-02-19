@@ -28,12 +28,12 @@ flowchart TB
 
 Choose your domain to load targeted context. **Always load the testing guide** alongside your role guidelines — we practice TDD.
 
-| Role                          | Context Map                                | Guidelines                                                               | Testing Guide                                                  | Key Entry Points                      |
-| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | -------------------------------------------------------------- | ------------------------------------- |
-| **Backend (Python)**          | [maps/backend.md](maps/backend.md)         | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)             | `apps/prototype-description-service/` |
-| **Frontend (React/TS)**       | [maps/frontend.md](maps/frontend.md)       | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md)     | `apps/prototype-wp-alt-context/js/`   |
-| **PHP Plugin**                | [maps/php-plugin.md](maps/php-plugin.md)   | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)                   | `apps/prototype-wp-alt-context/src/`  |
-| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md)     | `docs/agentic/contracts/`             |
+| Role                          | Context Map                                | Guidelines                                                               | Testing Guide                                              | Key Entry Points                      |
+| ----------------------------- | ------------------------------------------ | ------------------------------------------------------------------------ | ---------------------------------------------------------- | ------------------------------------- |
+| **Backend (Python)**          | [maps/backend.md](maps/backend.md)         | [rules/backend-python-guidelines.md](rules/backend-python-guidelines.md) | [rules/testing-python.md](rules/testing-python.md)         | `apps/prototype-description-service/` |
+| **Frontend (React/TS)**       | [maps/frontend.md](maps/frontend.md)       | [rules/frontend-guidelines.md](rules/frontend-guidelines.md)             | [rules/testing-typescript.md](rules/testing-typescript.md) | `apps/prototype-wp-alt-context/js/`   |
+| **PHP Plugin**                | [maps/php-plugin.md](maps/php-plugin.md)   | [rules/backend-php-guidelines.md](rules/backend-php-guidelines.md)       | [rules/testing-php.md](rules/testing-php.md)               | `apps/prototype-wp-alt-context/src/`  |
+| **Cross-Service Integration** | [maps/integration.md](maps/integration.md) | [contracts/](contracts/)                                                 | [rules/testing-principles.md](rules/testing-principles.md) | `docs/agentic/contracts/`             |
 
 ### Additional Routing
 
@@ -48,9 +48,9 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Component architecture patterns     | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md) |
 | Radix UI / accessibility primitives | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)               |
 | Roster auto-resolve vs pending      | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)       |
-| Embedding search evolution           | [rules/search_optimizations.md](rules/search_optimizations.md)                       |
-| Why /identify endpoint exists        | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
-| Face/Identity nomenclature (ADR)     | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
+| Embedding search evolution          | [rules/search_optimizations.md](rules/search_optimizations.md)                       |
+| Why /identify endpoint exists       | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
+| Face/Identity nomenclature (ADR)    | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
 | MCP tooling / testing commands      | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
 
 ---

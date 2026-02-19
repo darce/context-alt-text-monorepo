@@ -225,7 +225,6 @@ Permission check → Only authorized users can label
 Think of it like a security guard system:
 
 1. **Camera (MediaPipe)**: Detects motion, captures frame
-
    - Fast, local, always-on
    - Sends alert: "Person detected at location X,Y"
 
@@ -263,4 +262,3 @@ It follows the same pattern used by production systems like:
 - Apple Photos (on-device detection + iCloud sync)
 - Google Photos (client-side scanning + server-side matching)
 - Facebook (browser preview + server confirmation)
-

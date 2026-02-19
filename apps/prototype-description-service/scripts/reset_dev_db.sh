@@ -69,14 +69,29 @@ fi
 export DB_HOST DB_PORT DB_USER DB_PASS DB_NAME
 
 # Admin user for creating databases (your macOS username for peer auth)
-ADMIN_USER="${ADMIN_PGUSER:-$(whoami)}"
+DEFAULT_ADMIN_USER="$(whoami)"
+PREFERRED_ADMIN_USER="${ADMIN_PGUSER:-${DEFAULT_ADMIN_USER}}"
+PREFERRED_ADMIN_PASS="${ADMIN_PGPASSWORD:-}"
+ADMIN_USER="${PREFERRED_ADMIN_USER}"
+ADMIN_PASS="${PREFERRED_ADMIN_PASS}"
+ALLOW_ADMIN_FALLBACK="${ALLOW_ADMIN_FALLBACK:-1}"
 
 cd "${PROJECT_ROOT}"
 
 # Helper to run psql as admin
+can_connect_as_admin() {
+  local user="$1"
+  local pass="$2"
+  if [[ -n "${pass}" ]]; then
+    PGPASSWORD="${pass}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${user}" -d postgres -tAc "SELECT 1" >/dev/null 2>&1
+  else
+    psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${user}" -d postgres -tAc "SELECT 1" >/dev/null 2>&1
+  fi
+}
+
 run_admin_psql() {
-  if [[ -n "${ADMIN_PGPASSWORD:-}" ]]; then
-    PGPASSWORD="${ADMIN_PGPASSWORD}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${ADMIN_USER}" "$@"
+  if [[ -n "${ADMIN_PASS}" ]]; then
+    PGPASSWORD="${ADMIN_PASS}" psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${ADMIN_USER}" "$@"
   else
     # Use peer auth (no password needed for local macOS user)
     psql -h "${DB_HOST}" -p "${DB_PORT}" -U "${ADMIN_USER}" "$@"
@@ -87,6 +102,27 @@ echo "[reset-dev-db] Checking PostgreSQL is running..." >&2
 if ! pg_isready -h "${DB_HOST}" -p "${DB_PORT}" >/dev/null 2>&1; then
   echo "[reset-dev-db] PostgreSQL is not running. Start it with: brew services start postgresql@17" >&2
   exit 1
+fi
+
+if ! can_connect_as_admin "${ADMIN_USER}" "${ADMIN_PASS}"; then
+  if [[ "${ALLOW_ADMIN_FALLBACK}" != "1" ]]; then
+    echo "[reset-dev-db] Cannot connect to PostgreSQL as admin role \"${ADMIN_USER}\"." >&2
+    echo "[reset-dev-db] ALLOW_ADMIN_FALLBACK=${ALLOW_ADMIN_FALLBACK}; refusing fallback. Fix ADMIN_PGUSER/ADMIN_PGPASSWORD." >&2
+    exit 1
+  fi
+
+  if can_connect_as_admin "${ADMIN_USER}" ""; then
+    echo "[reset-dev-db] Admin password rejected for role \"${ADMIN_USER}\"; retrying without password." >&2
+    ADMIN_PASS=""
+  elif [[ "${ADMIN_USER}" != "${DEFAULT_ADMIN_USER}" ]] && can_connect_as_admin "${DEFAULT_ADMIN_USER}" ""; then
+    echo "[reset-dev-db] Admin role \"${ADMIN_USER}\" is unavailable; falling back to \"${DEFAULT_ADMIN_USER}\"." >&2
+    ADMIN_USER="${DEFAULT_ADMIN_USER}"
+    ADMIN_PASS=""
+  else
+    echo "[reset-dev-db] Cannot connect to PostgreSQL as admin role \"${ADMIN_USER}\"." >&2
+    echo "[reset-dev-db] Set ADMIN_PGUSER to a valid local superuser (often \"${DEFAULT_ADMIN_USER}\" for Homebrew PostgreSQL)." >&2
+    exit 1
+  fi
 fi
 
 echo "[reset-dev-db] Terminating existing connections to \"${DB_NAME}\"..." >&2
@@ -112,7 +148,12 @@ run_admin_psql -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_identit
 run_admin_psql -d "${DB_NAME}" -c "DROP FUNCTION IF EXISTS mark_dirty_on_media_identities() CASCADE;" >/dev/null 2>&1
 
 echo "[reset-dev-db] Applying migrations as ${DB_USER}..." >&2
-PGHOST="${DB_HOST}" PGPORT="${DB_PORT}" PGUSER="${DB_USER}" PGPASSWORD="${DB_PASS}" python -m alembic -c db/alembic.ini upgrade head
+POSTGRES_SYNC_DSN="postgresql+psycopg://${DB_USER}:${DB_PASS}@${DB_HOST}:${DB_PORT}/${DB_NAME}" \
+PGHOST="${DB_HOST}" \
+PGPORT="${DB_PORT}" \
+PGUSER="${DB_USER}" \
+PGPASSWORD="${DB_PASS}" \
+python -m alembic -c db/alembic.ini upgrade head
 
 echo "[reset-dev-db] Setting up test user for RLS testing..." >&2
 TEST_USER="${TEST_PGUSER:-recognition_test_user}"

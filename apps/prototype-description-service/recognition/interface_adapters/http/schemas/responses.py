@@ -359,10 +359,56 @@ class AsyncSplitClusterResponse(BaseModel):
     message: str = "Split operation queued"
 
 
+class ClusterSnapshotMemberResponse(BaseModel):
+    """Cluster member in the snapshot payload.
+
+    Matches contracts/cluster-snapshot-api.md schema.
+    """
+
+    identity_uuid: str
+    cluster_uuid: str
+    attachment_id: int
+    bbox: FaceBoxResponse
+    image_width: int
+    image_height: int
+    thumb_path: str
+    similarity: float
+
+
+class ClusterSnapshotClusterResponse(BaseModel):
+    """Cluster summary in the snapshot payload.
+
+    Matches contracts/cluster-snapshot-api.md schema.
+    """
+
+    cluster_uuid: str
+    label: str | None
+    curation_state: Literal["active", "dismissed", "confirmed"]
+    is_user_confirmed: bool
+    identity_count: int
+    representative_thumb_path: str | None
+
+
+class ClusterSnapshotResponse(BaseModel):
+    """Full snapshot response for tenant cluster state.
+
+    Matches contracts/cluster-snapshot-api.md schema.
+    """
+
+    tenant_id: str
+    snapshot_version: int
+    generated_at: datetime
+    clusters: list[ClusterSnapshotClusterResponse]
+    members: list[ClusterSnapshotMemberResponse]
+
+
 __all__ = [
     "BboxResponse",
     "ClusterResponse",
     "ClusteringJobStatusResponse",
+    "ClusterSnapshotClusterResponse",
+    "ClusterSnapshotMemberResponse",
+    "ClusterSnapshotResponse",
     "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",
     "HealthCheckResponse",

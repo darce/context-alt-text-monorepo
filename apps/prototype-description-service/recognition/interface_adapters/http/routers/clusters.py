@@ -49,6 +49,9 @@ from recognition.interface_adapters.http.schemas.responses import (
     ClusteringJobStatusResponse,
     ClusterMemberResponse,
     ClusterResponse,
+    ClusterSnapshotClusterResponse,
+    ClusterSnapshotMemberResponse,
+    ClusterSnapshotResponse,
     CreateClusterForIdentityResponse,
     FaceBoxResponse,
     JobProgressResponse,
@@ -154,6 +157,112 @@ async def list_clusters(
         include_outliers=include_outliers,
         labeled_only=labeled_only,
         search=search,
+    )
+
+
+def _build_cluster_responses(
+    clusters: list,
+) -> list[ClusterSnapshotClusterResponse]:
+    """Build cluster snapshot responses from domain cluster objects."""
+    responses: list[ClusterSnapshotClusterResponse] = []
+    for cluster in clusters:
+        curation_state = "dismissed" if cluster.dismissed_at else ("confirmed" if cluster.user_confirmed else "active")
+
+        # Get representative thumb path
+        representative_thumb_path = None
+        if cluster.representatives and len(cluster.representatives) > 0:
+            rep = cluster.representatives[0]
+            if rep.identity_id:
+                # Format: acx://cluster/{cluster_uuid}/media/{media_id}
+                representative_thumb_path = f"acx://cluster/{cluster.id}/media/{rep.media_id}"
+
+        responses.append(
+            ClusterSnapshotClusterResponse(
+                cluster_uuid=str(cluster.id),
+                label=cluster.label,
+                curation_state=curation_state,
+                is_user_confirmed=cluster.user_confirmed,
+                identity_count=cluster.identity_count,
+                representative_thumb_path=representative_thumb_path,
+            )
+        )
+    return responses
+
+
+def _build_member_responses(
+    members_with_identities: list,
+) -> list[ClusterSnapshotMemberResponse]:
+    """Build member snapshot responses from member/identity pairs."""
+    responses: list[ClusterSnapshotMemberResponse] = []
+    for member, identity in members_with_identities:
+        # Note: bbox coordinates may be None for some detections; default to 0
+        bbox_x = identity.bbox_x or 0
+        bbox_y = identity.bbox_y or 0
+
+        # Note: MediaIdentity doesn't store full image dimensions.
+        # Consumer resolves dimensions from WordPress media metadata (wp_postmeta).
+        image_width = 0
+        image_height = 0
+
+        responses.append(
+            ClusterSnapshotMemberResponse(
+                identity_uuid=identity.id,
+                cluster_uuid=member.cluster_id,
+                attachment_id=int(identity.media_id),
+                bbox=FaceBoxResponse(
+                    x=bbox_x,
+                    y=bbox_y,
+                    width=identity.bbox_width,
+                    height=identity.bbox_height,
+                ),
+                image_width=image_width,
+                image_height=image_height,
+                thumb_path=f"acx://identity/{identity.id}/attachment/{identity.media_id}",
+                similarity=member.similarity,
+            )
+        )
+    return responses
+
+
+@router.get("/tenants/{tenant_uuid}/clusters/snapshot", response_model=ClusterSnapshotResponse)
+async def get_tenant_cluster_snapshot(
+    tenant_uuid: str,
+    auth=Depends(require_auth),
+    repo=Depends(get_cluster_repository),
+) -> ClusterSnapshotResponse:
+    """Get complete cluster snapshot for WordPress plugin projection.
+
+    Returns all clusters and members for a tenant in a single response,
+    formatted per contracts/cluster-snapshot-api.md.
+
+    Note: Path param is ``tenant_uuid`` (not ``tenant_id``) to avoid a FastAPI
+    collision with ``get_tenant_id_optional`` which declares ``tenant_id`` as
+    ``Query`` in the transitive dep chain (get_cluster_repository -> get_session
+    -> get_tenant_id_optional). See rule 13 in backend-python-guidelines.
+    """
+    tenant_id = tenant_uuid  # canonical internal name
+
+    # Verify auth if tenant claim exists
+    if auth and auth.tenant_claim and auth.tenant_claim != tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    # Get snapshot data
+    clusters, members_with_identities, snapshot_version = await repo.get_snapshot(tenant_id)
+
+    if not clusters and not members_with_identities:
+        # Return 404 if tenant has no clusters (unknown tenant or empty tenant)
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for tenant")
+
+    # Build responses
+    cluster_responses = _build_cluster_responses(clusters)
+    member_responses = _build_member_responses(members_with_identities)
+
+    return ClusterSnapshotResponse(
+        tenant_id=tenant_uuid,
+        snapshot_version=snapshot_version,
+        generated_at=datetime.now(tz=UTC),
+        clusters=cluster_responses,
+        members=member_responses,
     )
 
 

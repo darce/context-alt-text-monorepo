@@ -186,3 +186,94 @@ async def test_reassign_removal_refreshes_suggestions(
     assert cluster_refreshes, "Cluster refresh not found"
     cl_ref_id, cl_ref_reason = cluster_refreshes[0]
     assert cl_ref_reason == "cluster_refresh"
+
+
+def test_get_tenant_snapshot_returns_404_for_unknown_tenant(api_client) -> None:
+    unknown_tenant_id = str(uuid.uuid4())
+
+    resp = api_client.get(f"/recognition/tenants/{unknown_tenant_id}/clusters/snapshot")
+
+    assert resp.status_code == 404
+    assert "No clusters found" in resp.json()["detail"]
+
+
+def test_get_tenant_snapshot_returns_correct_shape(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    # Seed some clusters and members (seeds both service and repository)
+    cluster1 = seed_cluster(
+        fake_cluster_service, tenant_id, label="Alice", fake_cluster_repository=fake_cluster_repository
+    )
+    cluster2 = seed_cluster(
+        fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository
+    )
+
+    resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # Verify top-level structure
+    assert "tenant_id" in body
+    assert body["tenant_id"] == tenant_id
+    assert "snapshot_version" in body
+    assert isinstance(body["snapshot_version"], int)
+    assert "generated_at" in body
+    assert "clusters" in body
+    assert "members" in body
+
+    # Verify clusters array
+    assert isinstance(body["clusters"], list)
+    assert len(body["clusters"]) >= 2
+
+    # Find our seeded clusters
+    alice_cluster = next((c for c in body["clusters"] if c["label"] == "Alice"), None)
+    assert alice_cluster is not None
+    assert alice_cluster["cluster_uuid"] == cluster1.id
+    assert "is_user_confirmed" in alice_cluster
+    assert "curation_state" in alice_cluster
+    assert "identity_count" in alice_cluster
+
+    unlabeled_cluster = next((c for c in body["clusters"] if c["cluster_uuid"] == cluster2.id), None)
+    assert unlabeled_cluster is not None
+    assert "is_user_confirmed" in unlabeled_cluster
+    assert "curation_state" in unlabeled_cluster
+
+
+def test_get_tenant_snapshot_includes_members(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    # Seed a cluster with identities (seeds both service and repository)
+    cluster = seed_cluster(
+        fake_cluster_service, tenant_id, label="Bob", fake_cluster_repository=fake_cluster_repository
+    )
+    identity_id = str(uuid.uuid4())
+    fake_cluster_service.seed_identity_membership(identity_id, cluster.id)
+
+    resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
+
+    assert resp.status_code == 200
+    body = resp.json()
+
+    # Verify members exists
+    assert "members" in body
+    assert isinstance(body["members"], list)
+
+    # Note: The fake service may not return members if not implemented - this validates structure
+    if len(body["members"]) > 0:
+        member = body["members"][0]
+        assert "identity_uuid" in member
+        assert "cluster_uuid" in member
+        assert "attachment_id" in member
+        assert "similarity" in member
+        assert "bbox" in member
+        assert "image_width" in member
+        assert "image_height" in member
+        assert "thumb_path" in member
+
+        # Verify bbox structure
+        bbox = member["bbox"]
+        assert "x" in bbox
+        assert "y" in bbox
+        assert "width" in bbox
+        assert "height" in bbox

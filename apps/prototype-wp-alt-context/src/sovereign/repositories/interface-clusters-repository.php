@@ -40,4 +40,19 @@ interface ClustersRepositoryInterface {
 	 * @return array<string,mixed>|null
 	 */
 	public function find_by_uuid( string $cluster_uuid ): ?array;
+
+	/**
+	 * Update the label for a single cluster and mark it as user confirmed.
+	 */
+	public function update_label( string $cluster_uuid, string $label ): void;
+
+	/**
+	 * Mark a cluster as dismissed and user confirmed.
+	 */
+	public function dismiss( string $cluster_uuid ): void;
+
+	/**
+	 * Clear dismissal on a cluster and mark it as user confirmed.
+	 */
+	public function undismiss( string $cluster_uuid ): void;
 }

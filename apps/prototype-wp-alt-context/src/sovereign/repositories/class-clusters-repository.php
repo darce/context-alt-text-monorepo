@@ -295,6 +295,94 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return is_array( $row ) ? $row : null;
 	}
 
+	public function update_label( string $cluster_uuid, string $label ): void {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		$normalized_label        = trim( $label );
+		if ( '' === $normalized_cluster_uuid || '' === $normalized_label ) {
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET label = %s, is_user_confirmed = 1, updated_at = %s WHERE cluster_uuid = %s',
+			array(
+				$this->table_name,
+				$normalized_label,
+				$now_utc,
+				$normalized_cluster_uuid,
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
+	public function dismiss( string $cluster_uuid ): void {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid ) {
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET curation_state = %s, is_user_confirmed = 1, updated_at = %s WHERE cluster_uuid = %s',
+			array(
+				$this->table_name,
+				'dismissed',
+				$now_utc,
+				$normalized_cluster_uuid,
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
+	public function undismiss( string $cluster_uuid ): void {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid ) {
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET curation_state = %s, is_user_confirmed = 1, updated_at = %s WHERE cluster_uuid = %s',
+			array(
+				$this->table_name,
+				'active',
+				$now_utc,
+				$normalized_cluster_uuid,
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
 	/**
 	 * @param string[] $incoming_cluster_ids
 	 */

@@ -68,6 +68,7 @@ recognition/
 10. **Extract shared repository utilities.** UUID coercion, media-identity bootstrap, and similar boilerplate must live in a shared module (e.g., `infrastructure/repositories/_helpers.py`), not be copy-pasted across repository files.
 11. **Scope `except` clauses to the exact operation they guard.** A broad `except ValueError` that wraps an entire method body will catch unrelated errors from downstream calls -- turning real bugs into silent "not found" responses. Wrap only the single call you intend to guard and let other exceptions propagate.
 12. **No redundant router/dependency wiring.** When a parent router already `include_router`s its sub-routers, do not also register those sub-routers individually on the app. Duplicate registration multiplies endpoint handlers.
+13. **No path/query parameter name collisions across the dependency tree.** FastAPI validates parameter sources across the entire transitive dependency chain of each route at module-load time. If any sub-dependency declares `param_name` as `Query` and the route URL contains `{param_name}`, the app fails to start. Rename the path segment to avoid the reserved name (e.g., `{tenant_uuid}` instead of `{tenant_id}` when `get_session` transitively depends on `get_tenant_id_optional`).
 
 ---
 

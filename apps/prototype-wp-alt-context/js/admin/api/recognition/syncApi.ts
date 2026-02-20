@@ -1,11 +1,19 @@
 import { fetchRequiredApi } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
-import type { SyncStatusResponse } from './types';
+import type { SyncStatusResponse, SyncTriggerResponse } from './types';
 
 export const fetchSyncStatus = async (): Promise<SyncStatusResponse> => {
   const endpoint = getEndpoint('recognitionSyncStatus');
   return fetchRequiredApi<SyncStatusResponse>(endpoint, {
     method: 'GET',
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const triggerSync = async (): Promise<SyncTriggerResponse> => {
+  const endpoint = getEndpoint('recognitionSyncTrigger');
+  return fetchRequiredApi<SyncTriggerResponse>(endpoint, {
+    method: 'POST',
     restNonce: getConfig().nonce,
   });
 };

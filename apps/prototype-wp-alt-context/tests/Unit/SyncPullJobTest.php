@@ -46,6 +46,22 @@ class SyncPullJobTest extends TestCase
         $this->assertSame('', $projector->tenantId);
     }
 
+    public function testSyncPullReturnsFalseWhenProjectorThrows(): void
+    {
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 12,
+            'clusters' => [['cluster_uuid' => 'cluster-1']],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobThrowingProjector();
+
+        $job = new SyncPullJob($client, $projector);
+
+        $result = $job->perform('tenant-throw');
+
+        $this->assertFalse($result);
+    }
+
     public function testSyncPullReturnsFalseOnNonArrayPayload(): void
     {
         // Client returns a string instead of an array — SyncPullJob must guard with is_array().
@@ -74,6 +90,60 @@ class SyncPullJobTest extends TestCase
         $this->assertFalse($result);
         $this->assertSame('', $projector->tenantId, 'Projector must NOT be called on empty tenant_id failure');
     }
+
+    public function testSyncPullSkipsFetchWhenCooldownTransientIsSet(): void
+    {
+        set_transient('acx_sync_cooldown_' . md5('tenant-cooldown'), 1, 30);
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 1,
+            'clusters' => [],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $job = new SyncPullJob($client, $projector);
+        $result = $job->perform('tenant-cooldown');
+
+        $this->assertFalse($result);
+        $this->assertSame('', $projector->tenantId);
+    }
+
+    public function testSyncPullRetriesAfterTransientDeletion(): void
+    {
+        $key = 'acx_sync_cooldown_' . md5('tenant-retry');
+        set_transient($key, 1, 30);
+        delete_transient($key);
+
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 2,
+            'clusters' => [['cluster_uuid' => 'cluster-2']],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $job = new SyncPullJob($client, $projector);
+        $result = $job->perform('tenant-retry');
+
+        $this->assertTrue($result);
+        $this->assertSame('tenant-retry', $projector->tenantId);
+    }
+
+    public function testPerformBypassCooldownRunsEvenWhenCooldownIsSet(): void
+    {
+        set_transient('acx_sync_cooldown_' . md5('tenant-bypass'), 1, 30);
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 3,
+            'clusters' => [['cluster_uuid' => 'cluster-3']],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $job = new SyncPullJob($client, $projector);
+        $result = $job->perform_bypass_cooldown('tenant-bypass');
+
+        $this->assertTrue($result);
+        $this->assertSame('tenant-bypass', $projector->tenantId);
+    }
 }
 
 class SyncPullJobSnapshotClient extends SnapshotClient
@@ -101,6 +171,14 @@ class SyncPullJobProjectorSpy implements SnapshotProjectorInterface
     {
         $this->tenantId = $tenant_id;
         $this->snapshotVersion = (int) ($snapshot['snapshot_version'] ?? 0);
+    }
+}
+
+class SyncPullJobThrowingProjector implements SnapshotProjectorInterface
+{
+    public function project(string $tenant_id, array $snapshot): void
+    {
+        throw new \RuntimeException('projector failed');
     }
 }
 

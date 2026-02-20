@@ -942,6 +942,18 @@ if (!function_exists('set_transient')) {
     }
 }
 
+if (!function_exists('delete_transient')) {
+    function delete_transient($transient): bool
+    {
+        if (!isset($GLOBALS['__ac_transients'])) {
+            return true;
+        }
+
+        unset($GLOBALS['__ac_transients'][$transient]);
+        return true;
+    }
+}
+
 if (!function_exists('wp_next_scheduled')) {
     function wp_next_scheduled($hook, $args = [])
     {
@@ -1426,11 +1438,23 @@ if (!isset($GLOBALS['wpdb'])) {
             $normalizedSql = trim((string) $sql);
             $this->queries[] = $normalizedSql;
 
+            $result = $this->defaultQueryResult;
             if (array_key_exists($normalizedSql, $this->queryResults)) {
-                return $this->queryResults[$normalizedSql];
+                $result = $this->queryResults[$normalizedSql];
             }
 
-            return $this->defaultQueryResult;
+            if ($result === false || $result === null) {
+                $this->rows_affected = 0;
+                return $result;
+            }
+
+            if (is_int($result)) {
+                $this->rows_affected = $result;
+                return $result;
+            }
+
+            $this->rows_affected = preg_match('/^(UPDATE|DELETE|INSERT)\b/i', $normalizedSql) ? 1 : 0;
+            return $result;
         }
 
         public function get_charset_collate(): string

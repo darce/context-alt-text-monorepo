@@ -115,9 +115,9 @@ refactor/clustering-pipeline
 
 ---
 
-## Session State with CURRENT_TASK.md
+## Session State with MCP Handoff + CURRENT_TASK.md
 
-For multi-session tasks, use a lightweight `CURRENT_TASK.md` file at the monorepo root to preserve context across agent sessions.
+For multi-session tasks, use MCP handoff state tools as the source of truth and treat `CURRENT_TASK.md` as a generated view.
 
 **When to use:**
 
@@ -133,11 +133,11 @@ For multi-session tasks, use a lightweight `CURRENT_TASK.md` file at the monorep
 
 **Workflow:**
 
-1. Copy template: `cp docs/agentic/templates/CURRENT_TASK.template.md CURRENT_TASK.md`
-2. Fill in objective, context, and initial task breakdown
-3. Update progress at end of each session
-4. Add session log entry with discoveries/blockers
-5. Delete file when task is complete
+1. Initialize or update active task via MCP `set_handoff_state`.
+2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
+3. Read compact snapshot at session start via `get_handoff_state`.
+4. Regenerate markdown view on demand via `generate_current_task_md`.
+5. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)
 

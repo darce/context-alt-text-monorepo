@@ -40,6 +40,7 @@ export type {
   PendingMergeSuggestionsResponse,
   SuggestionActionResponse,
   SyncStatusResponse,
+  SyncTriggerResponse,
 } from './types';
 
 // Scan operations
@@ -75,4 +76,4 @@ export {
 } from './identityApi';
 
 // Sync status
-export { fetchSyncStatus } from './syncApi';
+export { fetchSyncStatus, triggerSync } from './syncApi';

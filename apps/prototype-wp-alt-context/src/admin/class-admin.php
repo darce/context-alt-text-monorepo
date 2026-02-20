@@ -274,6 +274,7 @@ class Admin {
 					'recognitionClusters'            => rest_url( 'acx/v1/recognition/clusters' ),
 					'recognitionClusterLabels'       => rest_url( 'acx/v1/recognition/clusters/labels' ),
 					'recognitionSyncStatus'          => rest_url( 'acx/v1/recognition/sync-status' ),
+					'recognitionSyncTrigger'         => rest_url( 'acx/v1/recognition/sync/trigger' ),
 					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
 					'recognitionReassignIdentity'    => rest_url( 'acx/v1/recognition/clusters/reassign' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),

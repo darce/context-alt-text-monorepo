@@ -2,6 +2,7 @@ import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
 import { useSyncStatus } from '../../hooks/useSyncStatus';
+import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 
 const formatTimestamp = (value: string | null | undefined): string | null => {
   if (!value) {
@@ -16,6 +17,7 @@ const formatTimestamp = (value: string | null | undefined): string | null => {
 
 export const SyncStatusIndicator = (): React.JSX.Element | null => {
   const { data, isError, isLoading } = useSyncStatus();
+  const syncTrigger = useSyncTrigger(data?.is_stale ?? false);
 
   if (isLoading) {
     return null;
@@ -25,6 +27,48 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     return (
       <div className="acx-sync-status acx-sync-status--warning">
         <span className="acx-sync-status__label">{__('Sync status unavailable', 'alt-context')}</span>
+      </div>
+    );
+  }
+
+  // Show syncing state while trigger is in progress and stale.
+  if (data.is_stale && syncTrigger.isPending) {
+    return (
+      <div className="acx-sync-status acx-sync-status--syncing">
+        <span className="acx-sync-status__label">{__('Syncing…', 'alt-context')}</span>
+        <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+      </div>
+    );
+  }
+
+  // Show success notification after sync completes
+  if (syncTrigger.isSuccess && syncTrigger.data?.synced) {
+    const syncedAt = formatTimestamp(syncTrigger.data.last_synced_at);
+    return (
+      <div className="acx-sync-status acx-sync-status--success">
+        <span className="acx-sync-status__label">
+          {syncedAt
+            ? sprintf(__('Sync completed: %s', 'alt-context'), syncedAt)
+            : __('Sync completed', 'alt-context')}
+        </span>
+        <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
+      </div>
+    );
+  }
+
+  // Sync was attempted but the service is unreachable.
+  if (data.is_stale && ((syncTrigger.isSuccess && !syncTrigger.data?.synced) || syncTrigger.isError)) {
+    return (
+      <div className="acx-sync-status acx-sync-status--syncing">
+        <span className="acx-sync-status__label">{__('Waiting for service…', 'alt-context')}</span>
+        <button
+          type="button"
+          className="button button-link"
+          onClick={() => syncTrigger.mutate()}
+          disabled={syncTrigger.isPending}
+        >
+          {__('Retry', 'alt-context')}
+        </button>
       </div>
     );
   }

@@ -85,6 +85,26 @@
   &--warning {
     border-color: var(--acx-color-warning-border, #f59e0b);
   }
+
+  &--syncing {
+    border-color: var(--acx-color-info-border, #3b82f6);
+    animation: acx-pulse 1.5s ease-in-out infinite;
+  }
+
+  &--success {
+    border-color: var(--acx-color-success-border, #22c55e);
+  }
+}
+
+@keyframes acx-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.7;
+  }
 }
 
 .acx-media-selection {

@@ -13,6 +13,7 @@ import {
   mergeCluster,
   revertMergeCluster,
   scanFaces,
+  triggerSync,
   undismissCluster,
   updateClusterLabel,
 } from '../recognition';
@@ -296,6 +297,23 @@ describe('recognitionApi', () => {
       method: 'DELETE',
       restNonce: 'nonce-123',
       signal: undefined,
+    });
+  });
+
+  it('triggers sync with POST method', async () => {
+    fetchApiMock.mockResolvedValue({
+      synced: true,
+      reason: 'ok',
+      last_snapshot_version: 1,
+      last_synced_at: '2026-02-18 10:00:00',
+      is_stale: false,
+    });
+
+    await triggerSync();
+
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
+      method: 'POST',
+      restNonce: 'nonce-123',
     });
   });
 });

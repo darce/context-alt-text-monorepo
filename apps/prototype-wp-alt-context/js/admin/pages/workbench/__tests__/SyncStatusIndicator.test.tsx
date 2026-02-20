@@ -1,14 +1,23 @@
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { UseQueryResult } from '@tanstack/react-query';
-import type { SyncStatusResponse } from '../../../api/recognition';
+import type { UseMutationResult } from '@tanstack/react-query';
+import type { SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
 
 const mockReturn = {
   data: null as SyncStatusResponse | null | undefined,
   isLoading: false,
   isError: false,
 };
+
+const mockTrigger = {
+  isPending: false,
+  isSuccess: false,
+  isError: false,
+  data: null as SyncTriggerResponse | null | undefined,
+  mutate: vi.fn(),
+} as unknown as UseMutationResult<SyncTriggerResponse, Error, void, unknown>;
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -19,6 +28,10 @@ vi.mock('../../../hooks/useSyncStatus', () => ({
   useSyncStatus: () => mockReturn as unknown as UseQueryResult<SyncStatusResponse>,
 }));
 
+vi.mock('../../../hooks/useSyncTrigger', () => ({
+  useSyncTrigger: () => mockTrigger,
+}));
+
 // Static import AFTER vi.mock hoisting
 import { SyncStatusIndicator } from '../SyncStatusIndicator';
 
@@ -27,6 +40,11 @@ describe('SyncStatusIndicator', () => {
     mockReturn.data = null;
     mockReturn.isLoading = false;
     mockReturn.isError = false;
+    (mockTrigger as { mutate: ReturnType<typeof vi.fn> }).mutate.mockClear();
+    (mockTrigger as Record<string, unknown>).isPending = false;
+    (mockTrigger as Record<string, unknown>).isSuccess = false;
+    (mockTrigger as Record<string, unknown>).isError = false;
+    (mockTrigger as Record<string, unknown>).data = null;
   });
 
   it('renders stale status badge when is_stale is true', () => {
@@ -66,5 +84,86 @@ describe('SyncStatusIndicator', () => {
     render(<SyncStatusIndicator />);
 
     expect(screen.getByText('Sync status unavailable')).toBeInTheDocument();
+  });
+
+  it('renders syncing state when trigger is pending', () => {
+    mockReturn.data = { last_snapshot_version: 0, last_synced_at: null, is_stale: true };
+    (mockTrigger as Record<string, unknown>).isPending = true;
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Syncing…')).toBeInTheDocument();
+    expect(screen.getByText('In Progress')).toBeInTheDocument();
+  });
+
+  it('renders success state after sync completes', () => {
+    mockReturn.data = { last_snapshot_version: 1, last_synced_at: '2026-02-18 10:00:00', is_stale: false };
+    (mockTrigger as Record<string, unknown>).isSuccess = true;
+    (mockTrigger as Record<string, unknown>).data = {
+      synced: true,
+      reason: 'ok',
+      last_snapshot_version: 1,
+      last_synced_at: '2026-02-18 10:00:00',
+      is_stale: false,
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText(/Sync completed/)).toBeInTheDocument();
+    expect(screen.getByText('Fresh')).toBeInTheDocument();
+  });
+
+  it('renders waiting-for-service state when sync was attempted but failed', () => {
+    mockReturn.data = { last_snapshot_version: 0, last_synced_at: null, is_stale: true };
+    (mockTrigger as Record<string, unknown>).isSuccess = true;
+    (mockTrigger as Record<string, unknown>).data = {
+      synced: false,
+      reason: 'sync_failed',
+      last_snapshot_version: 0,
+      last_synced_at: null,
+      is_stale: true,
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('renders waiting-for-service state on trigger error', () => {
+    mockReturn.data = { last_snapshot_version: 0, last_synced_at: null, is_stale: true };
+    (mockTrigger as Record<string, unknown>).isError = true;
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Retry' })).toBeInTheDocument();
+  });
+
+  it('calls mutate when retry is clicked', () => {
+    mockReturn.data = { last_snapshot_version: 0, last_synced_at: null, is_stale: true };
+    (mockTrigger as Record<string, unknown>).isError = true;
+
+    render(<SyncStatusIndicator />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
+    expect((mockTrigger as { mutate: ReturnType<typeof vi.fn> }).mutate).toHaveBeenCalledTimes(1);
+  });
+
+  it('does not stay in waiting-for-service when stale flag clears', () => {
+    mockReturn.data = { last_snapshot_version: 2, last_synced_at: '2026-02-19 13:00:00', is_stale: false };
+    (mockTrigger as Record<string, unknown>).isSuccess = true;
+    (mockTrigger as Record<string, unknown>).data = {
+      synced: false,
+      reason: 'sync_failed',
+      last_snapshot_version: 2,
+      last_synced_at: '2026-02-19 13:00:00',
+      is_stale: false,
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
+    expect(screen.getByText(/Last sync/)).toBeInTheDocument();
   });
 });

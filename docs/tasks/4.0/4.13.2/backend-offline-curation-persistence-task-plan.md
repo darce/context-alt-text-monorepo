@@ -168,7 +168,7 @@ Note: `ClusterMutationsController` must receive the **shared** `$sync_repo` so m
 | `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/src/sovereign/repositories/interface-sync-state-repository.php` | 8 | Add `touch_local_curation_marker( string $tenant_id ): void` method to interface. |
 | `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php` | 33 | Implement `touch_local_curation_marker()` with `INSERT … ON DUPLICATE KEY UPDATE updated_at = epoch` (forces staleness whether row is new or pre-existing). |
 | `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/src/sovereign/repositories/interface-clusters-repository.php` | 50 | Change `update_label()`, `dismiss()`, `undismiss()` return types from `void` to `int` (affected row count). |
-| `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php` | 298 | Update `update_label()`, `dismiss()`, `undismiss()` implementations to return `(int) $wpdb->rows_affected`. |
+| `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php` | 298 | Update `update_label()`, `dismiss()`, `undismiss()` implementations to return affected row count from `wpdb->query()` (`int`, fallback `0`). |
 | `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/tests/Unit/ClusterMutationsControllerDualWriteTest.php` | 27 | Add failing-first assertions for sync-state touch on proxy failure. |
 | `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/tests/Unit/ClustersControllerTest.php` | 87 | Add regression test: after local mutation marker, list endpoints stay local even when backend unavailable. |
 | `/Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context/tests/Unit/SyncPullJobTest.php` | 20 | Add test proving projector exception returns `false` (no throw). |
@@ -198,56 +198,56 @@ Note: `ClusterMutationsController` must receive the **shared** `$sync_repo` so m
 
 ## Phase 0: Scaffolding
 
-- [ ] Add `touch_local_curation_marker()` to `SyncStateRepositoryInterface` and `NullSyncStateRepository` stub.
-- [ ] Change `ClustersRepositoryInterface` mutation methods (`update_label`, `dismiss`, `undismiss`) from `void` to `int` return type. Update implementations to return `(int) $wpdb->rows_affected`. Update `NullClustersRepository` stub.
-- [ ] Add/extend test doubles for `SyncStateRepositoryInterface` in mutation/controller tests.
-- [ ] Add `delete_transient()` stub to `tests/stubs/wp.php` (currently missing — only `get_transient`/`set_transient` are stubbed). Without it, cooldown-expiry tests cannot simulate TTL expiry via explicit deletion. Implementation: `unset( $GLOBALS['__ac_transients'][$transient] )`.
-- [ ] Add failing regression tests for offline label persistence flow before implementation.
-- [ ] Add failing test for `SyncPullJob` projector exception handling.
-- [ ] Add failing test for undismiss state (`'uncurated'` + `is_user_confirmed=0`).
-- [ ] Verify scaffolds compile: `cd /Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context && composer test`.
+- [x] Add `touch_local_curation_marker()` to `SyncStateRepositoryInterface` and `NullSyncStateRepository` stub.
+- [x] Change `ClustersRepositoryInterface` mutation methods (`update_label`, `dismiss`, `undismiss`) from `void` to `int` return type. Update implementations to return affected row count from `wpdb->query()` (`int`, fallback `0`). Update `NullClustersRepository` stub.
+- [x] Add/extend test doubles for `SyncStateRepositoryInterface` in mutation/controller tests.
+- [x] Add `delete_transient()` stub to `tests/stubs/wp.php` (currently missing — only `get_transient`/`set_transient` are stubbed). Without it, cooldown-expiry tests cannot simulate TTL expiry via explicit deletion. Implementation: `unset( $GLOBALS['__ac_transients'][$transient] )`.
+- [x] Add failing regression tests for offline label persistence flow before implementation.
+- [x] Add failing test for `SyncPullJob` projector exception handling.
+- [x] Add failing test for undismiss state (`'uncurated'` + `is_user_confirmed=0`).
+- [x] Verify scaffolds compile: `cd /Users/daniel/Development/context-alt-text-monorepo/apps/prototype-wp-alt-context && composer test`.
 
 ## Phase 1: Correctness Fixes (Offline Persistence)
 
-- [ ] Implement `touch_local_curation_marker()` in `SyncStateRepository` using `INSERT … ON DUPLICATE KEY UPDATE updated_at = '1970-01-01 00:00:00'` (opens gate AND forces staleness whether row is new or pre-existing).
-- [ ] Inject `SyncStateRepositoryInterface` into `ClusterMutationsController` constructor.
-- [ ] After each local mutation write, use repository return value (`$affected > 0`) before calling `touch_local_curation_marker()` (prevents opening gate onto empty tables when no prior sync has populated rows; avoids reliance on global `$wpdb->rows_affected`).
-- [ ] Update `ClustersRepository::undismiss()` to `curation_state = 'uncurated'` AND `is_user_confirmed = 0`. Matches backend semantics: undismiss clears `dismissed_at` + keeps `user_confirmed=False` → snapshot emits `"active"` (normalized to `"uncurated"`). Setting `is_user_confirmed=0` allows the merge guard to overwrite the row on next sync.
-- [ ] Add `'active'` as explicit accepted value in `normalize_curation_state()` mapping to `'uncurated'`.
-- [ ] Ensure mutation handlers keep local-first write semantics when proxy fails.
+- [x] Implement `touch_local_curation_marker()` in `SyncStateRepository` using `INSERT … ON DUPLICATE KEY UPDATE updated_at = '1970-01-01 00:00:00'` (opens gate AND forces staleness whether row is new or pre-existing).
+- [x] Inject `SyncStateRepositoryInterface` into `ClusterMutationsController` constructor.
+- [x] After each local mutation write, use repository return value (`$affected > 0`) before calling `touch_local_curation_marker()` (prevents opening gate onto empty tables when no prior sync has populated rows; avoids reliance on global `$wpdb->rows_affected`).
+- [x] Update `ClustersRepository::undismiss()` to `curation_state = 'uncurated'` AND `is_user_confirmed = 0`. Matches backend semantics: undismiss clears `dismissed_at` + keeps `user_confirmed=False` → snapshot emits `"active"` (normalized to `"uncurated"`). Setting `is_user_confirmed=0` allows the merge guard to overwrite the row on next sync.
+- [x] Add `'active'` as explicit accepted value in `normalize_curation_state()` mapping to `'uncurated'`.
+- [x] Ensure mutation handlers keep local-first write semantics when proxy fails.
 
 ## Phase 2: Runtime Sync Wiring & Resilience
 
-- [ ] Wire non-null `SyncPullJob` in default `RecognitionController` composition.
-- [ ] Ensure `ClustersController` default path receives shared repositories + sync job.
-- [ ] Wire shared `SyncStateRepository` into `ClusterMutationsController` construction in `RecognitionController`.
-- [ ] Add try/catch in `SyncPullJob::perform()` around projector call and return `false` on throwable.
-- [ ] Add transient-based sync-attempt cooldown (30s TTL) to `SyncPullJob` using `set_transient`/`get_transient` so the cooldown persists across PHP requests (in-memory cooldowns are ineffective in WP's request-per-process model).
-- [ ] Add bootstrap sync: after successful proxy-read fallback in `ClustersController`, call `SyncPullJob::perform_bypass_cooldown()` inline to seed local tables immediately. If the inline call returns `false`, schedule `wp_schedule_single_event( time(), 'acx_bootstrap_sync', [ $tenant_id ] )` as a safety-net retry (guarded by `wp_next_scheduled()`). Do **not** schedule the cron when inline succeeds.
-- [ ] Register `acx_bootstrap_sync` action handler via `add_action( 'acx_bootstrap_sync', … )` in `ClustersController::__construct` (or equivalent composition point). The callback must also use `perform_bypass_cooldown()` since the cooldown from the failed inline attempt may still be active. Without this registration the scheduled cron event is a no-op. Follow the same pattern as `ClusterMutationsController::__construct` line 37.
+- [x] Wire non-null `SyncPullJob` in default `RecognitionController` composition.
+- [x] Ensure `ClustersController` default path receives shared repositories + sync job.
+- [x] Wire shared `SyncStateRepository` into `ClusterMutationsController` construction in `RecognitionController`.
+- [x] Add try/catch in `SyncPullJob::perform()` around projector call and return `false` on throwable.
+- [x] Add transient-based sync-attempt cooldown (30s TTL) to `SyncPullJob` using `set_transient`/`get_transient` so the cooldown persists across PHP requests (in-memory cooldowns are ineffective in WP's request-per-process model).
+- [x] Add bootstrap sync: after successful proxy-read fallback in `ClustersController`, call `SyncPullJob::perform_bypass_cooldown()` inline to seed local tables immediately. If the inline call returns `false`, schedule `wp_schedule_single_event( time(), 'acx_bootstrap_sync', [ $tenant_id ] )` as a safety-net retry (guarded by `wp_next_scheduled()`). Do **not** schedule the cron when inline succeeds.
+- [x] Register `acx_bootstrap_sync` action handler via `add_action( 'acx_bootstrap_sync', … )` in `ClustersController::__construct` (or equivalent composition point). The callback must also use `perform_bypass_cooldown()` since the cooldown from the failed inline attempt may still be active. Without this registration the scheduled cron event is a no-op. Follow the same pattern as `ClusterMutationsController::__construct` line 37.
 
 ## Phase 3: Tests
 
-- [ ] Unit: offline mutation updates local row and sync-state marker even on proxy failure.
-- [ ] Unit: mutation that affects zero rows (no prior sync) does NOT touch sync-state marker.
-- [ ] Unit: post-mutation list reads local projection when backend is unreachable.
-- [ ] Unit: `SyncPullJob::perform()` returns `false` when projector throws.
-- [ ] Unit: `SyncPullJob::perform()` skips fetch when transient cooldown is set after failure.
-- [ ] Unit: `SyncPullJob::perform()` retries after transient is deleted (simulating expiry). Note: WP test stubs store transients without TTL handling, so tests must explicitly `delete_transient()` to model expiry rather than relying on time passage. Requires `delete_transient()` stub added in Phase 0.
-- [ ] Unit: `RecognitionController` default wiring includes sync job and shared sync-state repo in mutations controller.
-- [ ] Unit: undismiss stores `curation_state = 'uncurated'` AND `is_user_confirmed = 0` (not `'active'`, not `'confirmed'` with confirmed=1).
-- [ ] Unit: `normalize_curation_state()` explicitly maps `'active'` to `'uncurated'`.
-- [ ] Unit: `touch_local_curation_marker()` forces staleness even when sync-state row already exists with recent `updated_at`.
-- [ ] Unit: `update_label()`, `dismiss()`, `undismiss()` return affected row count (0 when no matching row, 1 when row exists).
-- [ ] Unit: successful proxy-read fallback calls `SyncPullJob::perform_bypass_cooldown()` inline to seed local tables.
-- [ ] Unit: inline bootstrap does NOT schedule cron when inline sync succeeds.
-- [ ] Unit: inline bootstrap schedules `acx_bootstrap_sync` cron only when inline sync returns `false`.
-- [ ] Unit: firing `acx_bootstrap_sync` cron event invokes `SyncPullJob::perform_bypass_cooldown()` with correct tenant context (callback execution correctness, not just registration).
-- [ ] Unit: bootstrap `perform_bypass_cooldown()` executes even when cooldown transient is active (proves cooldown bypass).
-- [ ] Unit: `acx_bootstrap_sync` action handler is registered in `ClustersController::__construct` (cron event without handler is a no-op).
-- [ ] Unit: duplicate proxy-read fallback does not double-schedule (guarded by `wp_next_scheduled`).
-- [ ] Unit: failed proxy-read (non-2xx / `WP_Error`) does NOT trigger inline bootstrap sync.
-- [ ] Unit: failed proxy-read does NOT schedule `acx_bootstrap_sync` cron event.
+- [x] Unit: offline mutation updates local row and sync-state marker even on proxy failure.
+- [x] Unit: mutation that affects zero rows (no prior sync) does NOT touch sync-state marker.
+- [x] Unit: post-mutation list reads local projection when backend is unreachable.
+- [x] Unit: `SyncPullJob::perform()` returns `false` when projector throws.
+- [x] Unit: `SyncPullJob::perform()` skips fetch when transient cooldown is set after failure.
+- [x] Unit: `SyncPullJob::perform()` retries after transient is deleted (simulating expiry). Note: WP test stubs store transients without TTL handling, so tests must explicitly `delete_transient()` to model expiry rather than relying on time passage. Requires `delete_transient()` stub added in Phase 0.
+- [x] Unit: `RecognitionController` default wiring includes sync job and shared sync-state repo in mutations controller.
+- [x] Unit: undismiss stores `curation_state = 'uncurated'` AND `is_user_confirmed = 0` (not `'active'`, not `'confirmed'` with confirmed=1).
+- [x] Unit: `normalize_curation_state()` explicitly maps `'active'` to `'uncurated'`.
+- [x] Unit: `touch_local_curation_marker()` forces staleness even when sync-state row already exists with recent `updated_at`.
+- [x] Unit: `update_label()`, `dismiss()`, `undismiss()` return affected row count (0 when no matching row, 1 when row exists).
+- [x] Unit: successful proxy-read fallback calls `SyncPullJob::perform_bypass_cooldown()` inline to seed local tables.
+- [x] Unit: inline bootstrap does NOT schedule cron when inline sync succeeds.
+- [x] Unit: inline bootstrap schedules `acx_bootstrap_sync` cron only when inline sync returns `false`.
+- [x] Unit: firing `acx_bootstrap_sync` cron event invokes `SyncPullJob::perform_bypass_cooldown()` with correct tenant context (callback execution correctness, not just registration).
+- [x] Unit: bootstrap `perform_bypass_cooldown()` executes even when cooldown transient is active (proves cooldown bypass).
+- [x] Unit: `acx_bootstrap_sync` action handler is registered in `ClustersController::__construct` (cron event without handler is a no-op).
+- [x] Unit: duplicate proxy-read fallback does not double-schedule (guarded by `wp_next_scheduled`).
+- [x] Unit: failed proxy-read (non-2xx / `WP_Error`) does NOT trigger inline bootstrap sync.
+- [x] Unit: failed proxy-read does NOT schedule `acx_bootstrap_sync` cron event.
 - [ ] Manual smoke: run backend down/up scenario and verify label persistence + reconciliation using local WP service workflow.
 
 ## Stretch Goals
@@ -265,10 +265,10 @@ Note: `ClusterMutationsController` must receive the **shared** `$sync_repo` so m
 
 - [ ] Offline label/dismiss/undismiss persists across reloads without backend connectivity (after at least one successful cluster read that bootstraps local projection).
 - [ ] After backend restart, reconciliation fires on next read and does not erase locally confirmed curation.
-- [ ] Default runtime path performs stale-check sync pulls (no null sync job in production wiring).
-- [ ] First successful proxy-read fallback seeds local tables via inline `SyncPullJob::perform_bypass_cooldown()` (one-time latency, cooldown-bypassed). Cron safety net scheduled only on inline failure.
-- [ ] `touch_local_curation_marker()` forces staleness even when sync-state row already exists with recent `updated_at`.
-- [ ] Repeated sync failures do not add latency beyond transient-based cooldown period (30s TTL, persists across requests).
-- [ ] Undismiss writes `curation_state='uncurated'` + `is_user_confirmed=0`, matching backend snapshot semantics and allowing merge guard to overwrite on reconciliation.
-- [ ] Repository mutation methods return affected row count; controller does not depend on global `$wpdb` state.
-- [ ] `composer test` and `composer phpstan` pass; any failures are explicitly triaged in this task.
+- [x] Default runtime path performs stale-check sync pulls (no null sync job in production wiring).
+- [x] First successful proxy-read fallback seeds local tables via inline `SyncPullJob::perform_bypass_cooldown()` (one-time latency, cooldown-bypassed). Cron safety net scheduled only on inline failure.
+- [x] `touch_local_curation_marker()` forces staleness even when sync-state row already exists with recent `updated_at`.
+- [x] Repeated sync failures do not add latency beyond transient-based cooldown period (30s TTL, persists across requests).
+- [x] Undismiss writes `curation_state='uncurated'` + `is_user_confirmed=0`, matching backend snapshot semantics and allowing merge guard to overwrite on reconciliation.
+- [x] Repository mutation methods return affected row count; controller does not depend on global `$wpdb` state.
+- [x] `composer test` and `composer phpstan` pass; any failures are explicitly triaged in this task.

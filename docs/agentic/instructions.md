@@ -244,7 +244,7 @@ User curation decisions are ground truth. Never use time-based heuristics to ove
 | [templates/TASK_PLAN.template.md](templates/TASK_PLAN.template.md)       | New implementation plan under `docs/tasks/`                              |
 | [templates/EPIC.template.md](templates/EPIC.template.md)                 | Bounded multi-phase capability epic under `docs/epics/`                  |
 | [templates/ROADMAP.template.md](templates/ROADMAP.template.md)           | Multi-phase architectural roadmap under `docs/roadmaps/`                 |
-| [templates/CURRENT_TASK.template.md](templates/CURRENT_TASK.template.md) | Multi-session task tracking (copy to monorepo root as `CURRENT_TASK.md`) |
+| [templates/CURRENT_TASK.template.md](templates/CURRENT_TASK.template.md) | Fallback template for manual multi-session tracking when MCP handoff tools are unavailable |
 
 ### Implementation Plan Requirements
 

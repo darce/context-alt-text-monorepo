@@ -303,54 +303,54 @@ Note: `~250,000` daily savings is achievable only under stricter assumptions (fo
 
 ## Phase 0: Scaffolding
 
-- [ ] Add sqlite bootstrap helpers in `unified_server.py` (connection, pragmas, schema init).
-- [ ] Add typed request/response contracts for each new MCP handoff tool.
-- [ ] Add no-op stubs for the 6 tools returning clear TODO messages.
-- [ ] Add `.task-state/` to `.gitignore`.
-- [ ] Add documented defaults for compact read limits (`5/5/3/3`) and optional `task_ref` auto-default behavior.
+- [x] Add sqlite bootstrap helpers in `unified_server.py` (connection, pragmas, schema init).
+- [x] Add typed request/response contracts for each new MCP handoff tool.
+- [x] Implemented full tool behavior directly (stubs superseded).
+- [x] Add `.task-state/` to `.gitignore`.
+- [x] Add documented defaults for compact read limits (`5/5/3/3`) and optional `task_ref` auto-default behavior.
 
 ## Phase 1: Schema and Storage Layer
 
-- [ ] Implement schema creation for all 5 tables + indexes.
-- [ ] Implement singleton upsert for `handoff_state` with revision conflict detection.
-- [ ] Implement CRUD helpers for blockers/actions and append helpers for decisions/tests.
-- [ ] Ensure all write paths capture provenance fields when provided.
+- [x] Implement schema creation for all 5 tables + indexes.
+- [x] Implement singleton upsert for `handoff_state` with revision conflict detection.
+- [x] Implement CRUD helpers for blockers/actions and append helpers for decisions/tests.
+- [x] Ensure all write paths capture provenance fields when provided.
 
 ## Phase 2: MCP Tool Implementation
 
-- [ ] Implement `set_handoff_state` with cold-start-safe upsert plus revision guard.
-- [ ] Implement `get_handoff_state` compact mode with top-N limits.
-- [ ] Implement `record_decision` append path.
-- [ ] Implement `update_next_actions` add/update/status transitions.
-- [ ] Implement `record_test_result` with required `passed`, optional `exit_code`, and summary.
-- [ ] Implement `report_blocker` add/resolve/reopen behaviors.
+- [x] Implement `set_handoff_state` with cold-start-safe upsert plus revision guard.
+- [x] Implement `get_handoff_state` compact mode with top-N limits.
+- [x] Implement `record_decision` append path.
+- [x] Implement `update_next_actions` add/update/status transitions.
+- [x] Implement `record_test_result` with required `passed`, optional `exit_code`, and summary.
+- [x] Implement `report_blocker` add/resolve/reopen behaviors.
 
 ## Phase 3: Generated Markdown View
 
-- [ ] Implement markdown renderer from DB state to `CURRENT_TASK.md`.
-- [ ] Add explicit render trigger (manual invocation), not automatic render on every write.
-- [ ] Add deterministic ordering and `DO NOT EDIT` header.
-- [ ] Ensure generated output mirrors compact MCP state categories.
+- [x] Implement markdown renderer from DB state to `CURRENT_TASK.md`.
+- [x] Add explicit render trigger (manual invocation), not automatic render on every write.
+- [x] Add deterministic ordering and `DO NOT EDIT` header.
+- [x] Ensure generated output mirrors compact MCP state categories.
 
 ## Phase 4: Verification and Documentation
 
-- [ ] Add tests for schema bootstrap idempotency.
-- [ ] Add tests for revision conflict behavior.
-- [ ] Add tests for blocker/action status constraints.
-- [ ] Add tests for compact response token discipline (top-N behavior).
-- [ ] Update `docs/agentic/BOOTSTRAP.md` with usage examples and updated tool count (16 custom MCP tools).
-- [ ] Update `docs/agentic/instructions.md` workflow guidance.
+- [x] Add tests for schema bootstrap idempotency.
+- [x] Add tests for revision conflict behavior.
+- [x] Add tests for blocker/action status constraints.
+- [x] Add tests for compact response token discipline (top-N behavior).
+- [x] Update `docs/agentic/BOOTSTRAP.md` with usage examples and updated tool count (21 custom MCP tools).
+- [x] Update `docs/agentic/instructions.md` workflow guidance.
 
 ## Stretch Goals
 
-- [ ] Add `export_handoff_state` and `import_handoff_state` tools for optional cross-machine sharing.
-- [ ] Add `archive_task_state(task_ref)` to support multiple concurrent task histories.
-- [ ] Add optional read-only dashboard query for quick terminal inspection.
+- [x] Add `export_handoff_state` and `import_handoff_state` tools for optional cross-machine sharing.
+- [x] Add `archive_task_state(task_ref)` to support multiple concurrent task histories.
+- [x] Add optional read-only dashboard query for quick terminal inspection.
 
 ## Success Criteria
 
-- [ ] Agents can hand off state without editing markdown manually.
-- [ ] `get_handoff_state` returns sufficient context in a compact payload.
-- [ ] Parallel writes to `handoff_state` cannot silently overwrite each other.
-- [ ] `CURRENT_TASK.md` is reproducible from sqlite state and remains human-reviewable.
-- [ ] Existing MCP tools remain functional with no regressions.
+- [x] Agents can hand off state without editing markdown manually.
+- [x] `get_handoff_state` returns sufficient context in a compact payload.
+- [x] Parallel writes to `handoff_state` cannot silently overwrite each other.
+- [x] `CURRENT_TASK.md` is reproducible from sqlite state and remains human-reviewable.
+- [x] Existing MCP tools remain functional with no regressions.

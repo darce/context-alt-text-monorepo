@@ -55,11 +55,11 @@ VS Code spawns the MCP server process on demand and communicates via stdin/stdou
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → "context-alt-text" should show **10 tools**.
+Command Palette → `MCP: List Servers` → "context-alt-text" should show **21 custom tools**.
 
-### Available Tools (10 total)
+### Available Tools (21 custom total)
 
-These tools handle cross-boundary and domain-specific queries. For generic operations, use Copilot built-ins (`grep_search`, `read_file`, `list_dir`, `get_errors`, `semantic_search`, `list_code_usages`) or Pylance MCP tools.
+These tools handle cross-boundary and domain-specific queries. For generic operations, use editor-native tools (for example, `search_code`, `find_definition`, `read_file`, `list_dir`, diagnostics) or Pylance MCP tools.
 
 | Category        | Tool                   | When to Use                                       |
 | --------------- | ---------------------- | ------------------------------------------------- |
@@ -73,6 +73,17 @@ These tools handle cross-boundary and domain-specific queries. For generic opera
 | **PHP/WP**      | `find_wp_action`       | Find WordPress action/filter hooks                |
 |                 | `find_wp_rest_route`   | Find REST API route registrations                 |
 |                 | `find_php_class`       | Find PHP class definitions                        |
+| **Handoff**     | `set_handoff_state`    | Set/update active task with revision guard        |
+|                 | `get_handoff_state`    | Retrieve compact handoff snapshot (token efficient) |
+|                 | `record_decision`      | Append a key decision + rationale                 |
+|                 | `update_next_actions`  | Add/complete/reprioritize action queue items      |
+|                 | `record_test_result`   | Record verified checks (`passed` + optional exit code) |
+|                 | `report_blocker`       | Add/resolve/reopen blockers                       |
+|                 | `generate_current_task_md` | Generate deterministic `CURRENT_TASK.md` from SQLite state |
+|                 | `export_handoff_state` | Export task snapshot JSON for cross-machine sharing |
+|                 | `import_handoff_state` | Import task snapshot JSON (merge/replace)         |
+|                 | `archive_task_state`   | Archive completed task state snapshot             |
+|                 | `get_handoff_dashboard` | Read-only multi-task activity summary             |
 
 Tools are prefixed with `mcp_context-alt-t_` when invoked by agents.
 
@@ -84,6 +95,16 @@ If tools don't appear in VS Code:
 2. Ensure pyenv virtualenv has `fastmcp`: `pyenv exec pip show fastmcp`
 3. Test manually: `./scripts/mcp/mcp-server.sh run` (should block on stdin)
 4. Check VS Code Output panel → "MCP" for error messages
+
+### Handoff State Defaults
+
+- SQLite path: `.task-state/handoff.db` (local workspace state)
+- Compact read defaults in `get_handoff_state`:
+  - blockers: `5`
+  - actions: `5`
+  - decisions: `3`
+  - tests: `3`
+- `task_ref` is optional for write tools; if omitted, tools use active `handoff_state.task_ref`.
 
 ---
 

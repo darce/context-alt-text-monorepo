@@ -134,6 +134,7 @@ class ClustersRepositoryTest extends TestCase
         $sql = implode("\n", $wpdb->queries);
         $this->assertStringContainsString("identity_count DESC", $sql);
         $this->assertStringContainsString("label IS NULL", $sql);
+        $this->assertStringContainsString("curation_state <> 'dismissed'", $sql);
     }
 
     public function testFindByUuidReturnsNullWhenRowMissing(): void

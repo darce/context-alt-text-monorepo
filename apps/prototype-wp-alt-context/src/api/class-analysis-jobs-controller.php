@@ -14,6 +14,7 @@ use function do_action;
 use function get_transient;
 use function get_current_user_id;
 use function get_site_url;
+use function gmdate;
 use function in_array;
 use function is_array;
 use function is_wp_error;
@@ -154,6 +155,9 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 				'tenant_id' => $this->get_tenant_id(),
 			)
 		);
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return $this->build_offline_job_status_response( $job_id );
+		}
 
 		if ( $response instanceof WP_REST_Response ) {
 			$data = $response->get_data();
@@ -337,6 +341,33 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 			array(
 				'tenant_id' => $this->get_tenant_id(),
 			)
+		);
+	}
+
+	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
+		if ( is_wp_error( $response ) ) {
+			return true;
+		}
+
+		return $response->get_status() >= 500;
+	}
+
+	private function build_offline_job_status_response( string $job_id ): WP_REST_Response {
+		$now = gmdate( 'c' );
+		return new WP_REST_Response(
+			array(
+				'id'          => $job_id,
+				'type'        => 'analyze',
+				'status'      => 'failed',
+				'progress'    => array(
+					'completed' => 0,
+					'total'     => 0,
+				),
+				'started_at'  => $now,
+				'finished_at' => $now,
+				'message'     => 'Recognition backend unavailable.',
+			),
+			200
 		);
 	}
 

@@ -44,15 +44,15 @@ interface ClustersRepositoryInterface {
 	/**
 	 * Update the label for a single cluster and mark it as user confirmed.
 	 */
-	public function update_label( string $cluster_uuid, string $label ): void;
+	public function update_label( string $cluster_uuid, string $label ): int;
 
 	/**
 	 * Mark a cluster as dismissed and user confirmed.
 	 */
-	public function dismiss( string $cluster_uuid ): void;
+	public function dismiss( string $cluster_uuid ): int;
 
 	/**
-	 * Clear dismissal on a cluster and mark it as user confirmed.
+	 * Clear dismissal on a cluster and return it to uncurated state.
 	 */
-	public function undismiss( string $cluster_uuid ): void;
+	public function undismiss( string $cluster_uuid ): int;
 }

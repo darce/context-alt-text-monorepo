@@ -51,4 +51,17 @@ class SyncStateRepositoryTest extends TestCase
 
         $this->assertSame('2026-02-14 01:02:03', $value);
     }
+
+    public function testTouchLocalCurationMarkerBackdatesUpdatedAtToEpoch(): void
+    {
+        $this->repository->touch_local_curation_marker('tenant-sync');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_state` (stream_name, last_snapshot_version, updated_at)', $sql);
+        $this->assertStringContainsString("'tenant:tenant-sync:clusters'", $sql);
+        $this->assertStringContainsString("'1970-01-01 00:00:00'", $sql);
+        $this->assertStringContainsString('ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)', $sql);
+    }
 }

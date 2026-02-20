@@ -23,39 +23,45 @@ class ClustersRepositoryMutationTest extends TestCase
     public function testUpdateLabelScaffold(): void
     {
         global $wpdb;
+        $wpdb->defaultQueryResult = 1;
 
-        $this->repository->update_label('cluster-123', 'Ada Lovelace');
+        $result = $this->repository->update_label('cluster-123', 'Ada Lovelace');
 
         $this->assertCount(1, $wpdb->queries);
         $query = $wpdb->queries[0];
         $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET label = 'Ada Lovelace'", $query);
         $this->assertStringContainsString('is_user_confirmed = 1', $query);
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-123'", $query);
+        $this->assertSame(1, $result);
     }
 
     public function testDismissScaffold(): void
     {
         global $wpdb;
+        $wpdb->defaultQueryResult = 1;
 
-        $this->repository->dismiss('cluster-456');
+        $result = $this->repository->dismiss('cluster-456');
 
         $this->assertCount(1, $wpdb->queries);
         $query = $wpdb->queries[0];
         $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET curation_state = 'dismissed'", $query);
         $this->assertStringContainsString('is_user_confirmed = 1', $query);
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-456'", $query);
+        $this->assertSame(1, $result);
     }
 
     public function testUndismissScaffold(): void
     {
         global $wpdb;
+        $wpdb->defaultQueryResult = 1;
 
-        $this->repository->undismiss('cluster-789');
+        $result = $this->repository->undismiss('cluster-789');
 
         $this->assertCount(1, $wpdb->queries);
         $query = $wpdb->queries[0];
-        $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET curation_state = 'active'", $query);
-        $this->assertStringContainsString('is_user_confirmed = 1', $query);
+        $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET curation_state = 'uncurated'", $query);
+        $this->assertStringContainsString('is_user_confirmed = 0', $query);
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-789'", $query);
+        $this->assertSame(1, $result);
     }
 }

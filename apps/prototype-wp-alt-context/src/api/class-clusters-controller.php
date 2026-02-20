@@ -4,6 +4,20 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/../sovereign/mappers/class-cluster-response-mapper.php';
+require_once __DIR__ . '/../sovereign/mappers/class-member-response-mapper.php';
+require_once __DIR__ . '/../sovereign/repositories/interface-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/interface-identity-members-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
+require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
+require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
+require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
+
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Sovereign\Repositories\ClustersRepository;
@@ -12,15 +26,21 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\SnapshotClient;
+use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Sovereign\Sync\SyncPullJob;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
 
+use function add_action;
 use function absint;
 use function apply_filters;
+use function do_action;
 use function is_array;
 use function is_string;
+use function is_wp_error;
 use function max;
 use function min;
 use function rest_sanitize_boolean;
@@ -30,8 +50,11 @@ use function strtotime;
 use function time;
 use function trim;
 use function wp_get_attachment_url;
+use function wp_next_scheduled;
+use function wp_schedule_single_event;
 
 class ClustersController extends AbstractRecognitionProxyController {
+	private const BOOTSTRAP_SYNC_HOOK = 'acx_bootstrap_sync';
 	private ClustersRepositoryInterface $clusters_repository;
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -53,6 +76,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$this->sync_pull_job = $sync_pull_job;
 		$this->cluster_mapper = $cluster_mapper ?? new ClusterResponseMapper();
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
+		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );
 	}
 
 	public function register_routes(): void {
@@ -128,12 +152,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$members_by_cluster = $this->load_members_by_cluster( $rows, 4 );
 			$clusters = $this->cluster_mapper->map_cluster_list( $rows, $members_by_cluster );
 
-			$payload = array(
-				'clusters' => $clusters,
-				'tenant_id' => $tenant_id,
-			);
-
-			return new WP_REST_Response( $payload, 200 );
+			return new WP_REST_Response( $clusters, 200 );
 		}
 
 		$query = array(
@@ -150,7 +169,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$query['search'] = $search;
 		}
 
-		return $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
+		$response = $this->proxy_request( 'GET', '/recognition/clusters', array(), $query );
+		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 	}
 
 	public function list_top_unlabeled_clusters( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -162,12 +182,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 			$members_by_cluster = $this->load_members_by_cluster( $clusters, 4 );
 			$unlabeled_items = $this->cluster_mapper->map_top_unlabeled_clusters( $clusters, $members_by_cluster, $tenant_id );
 
-			$payload = array(
-				'clusters' => $unlabeled_items,
-				'tenant_id' => $tenant_id,
-			);
-
-			return new WP_REST_Response( $payload, 200 );
+			return new WP_REST_Response( $unlabeled_items, 200 );
 		}
 
 		$query = array(
@@ -176,6 +191,9 @@ class ClustersController extends AbstractRecognitionProxyController {
 		);
 
 		$response = $this->proxy_request( 'GET', '/recognition/clusters/top-unlabeled', array(), $query );
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return new WP_REST_Response( array(), 200 );
+		}
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
 		}
@@ -183,6 +201,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 		if ( 200 !== $response->get_status() ) {
 			return $response;
 		}
+
+		$this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 
 		$data = $response->get_data();
 		if ( ! is_array( $data ) ) {
@@ -242,7 +262,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 			'tenant_id' => $tenant_id,
 		);
 
-		return $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
+		$response = $this->proxy_request( 'GET', '/recognition/clusters/labels', array(), $query );
+		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 	}
 
 	public function get_cluster_detail( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -268,12 +289,13 @@ class ClustersController extends AbstractRecognitionProxyController {
 			);
 		}
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/clusters/%s', $cluster_id ),
 			array(),
 			array( 'tenant_id' => $tenant_id )
 		);
+		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
 	}
 
 	public function get_cluster_members( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -299,12 +321,31 @@ class ClustersController extends AbstractRecognitionProxyController {
 			return new WP_REST_Response( $payload, 200 );
 		}
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/clusters/%s/members', $cluster_id ),
 			array(),
 			array( 'tenant_id' => $tenant_id )
 		);
+		return $this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
+	}
+
+	public function perform_bootstrap_sync( string $tenant_id ): void {
+		$sync_pull_job = $this->resolve_sync_pull_job();
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id || null === $sync_pull_job ) {
+			return;
+		}
+
+		$sync_pull_job->perform_bypass_cooldown( $normalized_tenant_id );
+	}
+
+	public function get_clusters_repository(): ClustersRepositoryInterface {
+		return $this->clusters_repository;
+	}
+
+	public function get_sync_state_repository(): SyncStateRepositoryInterface {
+		return $this->sync_state_repository;
 	}
 
 	/**
@@ -338,16 +379,86 @@ class ClustersController extends AbstractRecognitionProxyController {
 		// If projection is stale, attempt on-demand sync.
 		// Wrap in try/catch so a projector failure degrades to stale data
 		// instead of crashing the request.
-		$updated_at = $this->sync_state_repository->get_last_updated( $tenant_id );
-		if ( $this->is_projection_stale( $updated_at ) && null !== $this->sync_pull_job ) {
+		$updated_at    = $this->sync_state_repository->get_last_updated( $tenant_id );
+		$sync_pull_job = $this->resolve_sync_pull_job();
+		if ( $this->is_projection_stale( $updated_at ) && null !== $sync_pull_job ) {
 			try {
-				$this->sync_pull_job->perform( $tenant_id );
+				$sync_pull_job->perform( $tenant_id );
 			} catch ( \Throwable $e ) {
-				// Swallow — stale projection is still usable.
+				do_action(
+					'acx_sync_pull_failed',
+					array(
+						'tenant_id' => $tenant_id,
+						'context' => 'stale_projection_read',
+						'message' => $e->getMessage(),
+					)
+				);
 			}
 		}
 
 		return true;
+	}
+
+	private function maybe_bootstrap_after_proxy_read( string $tenant_id, WP_REST_Response|WP_Error $response ): WP_REST_Response|WP_Error {
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		if ( $response->get_status() < 200 || $response->get_status() >= 300 ) {
+			return $response;
+		}
+
+		$sync_pull_job = $this->resolve_sync_pull_job();
+		if ( null === $sync_pull_job ) {
+			return $response;
+		}
+
+		$inline_ok = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
+		if ( ! $inline_ok ) {
+			$args = array( $tenant_id );
+			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, $args ) ) {
+				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, $args );
+			}
+		}
+
+		return $response;
+	}
+
+	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
+		if ( null !== $this->sync_pull_job ) {
+			return $this->sync_pull_job;
+		}
+
+		try {
+			$this->sync_pull_job = new SyncPullJob(
+				new SnapshotClient(),
+				new SnapshotProjector(
+					$this->clusters_repository,
+					$this->members_repository,
+					$this->sync_state_repository
+				)
+			);
+		} catch ( \Throwable $e ) {
+			do_action(
+				'acx_recognition_composition_failed',
+				array(
+					'message' => $e->getMessage(),
+					'controller' => __CLASS__,
+					'context' => 'clusters_lazy_sync_pull_job',
+				)
+			);
+			return null;
+		}
+
+		return $this->sync_pull_job;
+	}
+
+	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
+		if ( is_wp_error( $response ) ) {
+			return true;
+		}
+
+		return $response->get_status() >= 500;
 	}
 
 	private function is_projection_stale( ?string $updated_at ): bool {

@@ -12,11 +12,30 @@ require_once __DIR__ . '/class-cluster-mutations-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
+require_once __DIR__ . '/../sovereign/repositories/interface-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/interface-identity-members-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
+require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
+require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
+require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
+require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
 
 use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
+use AltContext\Sovereign\Sync\SnapshotClient;
+use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Sovereign\Sync\SyncPullJob;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
+use Throwable;
+
+use function do_action;
 
 class RecognitionController {
 	private AnalysisJobsController $analysisJobsController;
@@ -43,10 +62,43 @@ class RecognitionController {
 		?SuggestionsController $suggestions_controller = null
 	) {
 		$this->analysisJobsController = $analysis_jobs_controller ?? new AnalysisJobsController();
-		$this->clustersController = $clusters_controller ?? new ClustersController();
-		$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( new ClustersRepository() );
+		$sync_pull_job = null;
+		if ( null !== $clusters_controller ) {
+			$this->clustersController = $clusters_controller;
+		} else {
+			try {
+				$clusters_repository = new ClustersRepository();
+				$members_repository  = new IdentityMembersRepository();
+				$sync_repository     = new SyncStateRepository();
+				$snapshot_projector  = new SnapshotProjector( $clusters_repository, $members_repository, $sync_repository );
+				$sync_pull_job       = new SyncPullJob( new SnapshotClient(), $snapshot_projector );
+				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job );
+				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( $clusters_repository, $sync_repository );
+			} catch ( Throwable $throwable ) {
+				do_action(
+					'acx_recognition_composition_failed',
+					array(
+						'message' => $throwable->getMessage(),
+						'controller' => __CLASS__,
+					)
+				);
+				$this->clustersController = new ClustersController();
+				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController();
+			}
+		}
+		if ( null !== $cluster_mutations_controller ) {
+			$this->clusterMutationsController = $cluster_mutations_controller;
+		} elseif ( ! isset( $this->clusterMutationsController ) ) {
+			$this->clusterMutationsController = new ClusterMutationsController(
+				$this->clustersController->get_clusters_repository(),
+				$this->clustersController->get_sync_state_repository()
+			);
+		}
 		$this->mediaIdentitiesController = $media_identities_controller ?? new MediaIdentitiesController();
-		$this->syncStatusController = $sync_status_controller ?? new SyncStatusController();
+		$this->syncStatusController = $sync_status_controller ?? new SyncStatusController(
+			null,
+			$sync_pull_job ?? null
+		);
 		$this->suggestionsController = $suggestions_controller ?? new SuggestionsController();
 	}
 

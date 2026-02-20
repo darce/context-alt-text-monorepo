@@ -39,7 +39,7 @@ class SnapshotClientTest extends TestCase
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
-        $this->assertStringContainsString('/tenants/tenant-default/clusters/snapshot', $calls[0]['url']);
+        $this->assertStringContainsString('/recognition/tenants/tenant-default/clusters/snapshot', $calls[0]['url']);
     }
 
     public function testFetchSnapshotUsesFilterableEndpointPath(): void
@@ -68,6 +68,30 @@ class SnapshotClientTest extends TestCase
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
         $this->assertStringContainsString('/snapshot/export/tenant-filtered', $calls[0]['url']);
+    }
+
+    public function testFetchSnapshotNormalizesCompactUuidTenantInDefaultPath(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'snapshot_version' => 21,
+                'clusters' => [],
+                'members' => [],
+            ]),
+        ]);
+
+        $result = $this->client->fetch_snapshot('cc42f496c7e15631b3b5cfa270c763f8');
+
+        $this->assertIsArray($result);
+        $this->assertSame(21, $result['snapshot_version']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString(
+            '/recognition/tenants/cc42f496-c7e1-5631-b3b5-cfa270c763f8/clusters/snapshot',
+            $calls[0]['url']
+        );
     }
 
     public function testFetchSnapshotReturnsErrorWhenPayloadInvalid(): void

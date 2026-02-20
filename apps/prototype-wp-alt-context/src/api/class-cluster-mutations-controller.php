@@ -6,6 +6,8 @@ namespace AltContext\Api;
 
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
+use AltContext\Sovereign\Repositories\SyncStateRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -20,6 +22,7 @@ use function do_action;
 use function get_current_user_id;
 use function in_array;
 use function is_array;
+use function is_wp_error;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
@@ -31,9 +34,14 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	private const XMP_REFRESH_CLUSTER_HOOK = 'acx_refresh_xmp_for_clusters';
 	private const XMP_REFRESH_DELAY_SECONDS = 1;
 	private ClustersRepositoryInterface $clusters_repository;
+	private SyncStateRepositoryInterface $sync_state_repository;
 
-	public function __construct( ?ClustersRepositoryInterface $clusters_repository = null ) {
+	public function __construct(
+		?ClustersRepositoryInterface $clusters_repository = null,
+		?SyncStateRepositoryInterface $sync_state_repository = null
+	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
+		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		add_action( self::XMP_REFRESH_CLUSTER_HOOK, array( $this, 'refresh_xmp_for_cluster_ids_async' ), 10, 2 );
 	}
 
@@ -178,7 +186,10 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_label', 'Label cannot be empty.', array( 'status' => 400 ) );
 		}
 
-		$this->clusters_repository->update_label( $cluster_id, $label );
+		$affected_rows = $this->clusters_repository->update_label( $cluster_id, $label );
+		if ( $affected_rows > 0 ) {
+			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		}
 
 		$payload = array(
 			'tenant_id' => $this->get_tenant_id(),
@@ -196,14 +207,31 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$this->clusters_repository->dismiss( $cluster_id );
+		$local_cluster_exists = is_array( $this->clusters_repository->find_by_uuid( $cluster_id ) );
+		$affected_rows = $this->clusters_repository->dismiss( $cluster_id );
+		if ( $affected_rows > 0 ) {
+			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		}
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'POST',
 			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
 			array(),
 			array( 'tenant_id' => $this->get_tenant_id() )
 		);
+
+		if ( $this->should_treat_not_found_as_idempotent_success( $response, $affected_rows, $local_cluster_exists ) ) {
+			return new WP_REST_Response(
+				array(
+					'dismissed' => true,
+					'synced' => false,
+					'reason' => 'already_dismissed_remote',
+				),
+				200
+			);
+		}
+
+		return $response;
 	}
 
 	public function undismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -212,14 +240,31 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$this->clusters_repository->undismiss( $cluster_id );
+		$local_cluster_exists = is_array( $this->clusters_repository->find_by_uuid( $cluster_id ) );
+		$affected_rows = $this->clusters_repository->undismiss( $cluster_id );
+		if ( $affected_rows > 0 ) {
+			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		}
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'DELETE',
 			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
 			array(),
 			array( 'tenant_id' => $this->get_tenant_id() )
 		);
+
+		if ( $this->should_treat_not_found_as_idempotent_success( $response, $affected_rows, $local_cluster_exists ) ) {
+			return new WP_REST_Response(
+				array(
+					'dismissed' => false,
+					'synced' => false,
+					'reason' => 'already_undismissed_remote',
+				),
+				200
+			);
+		}
+
+		return $response;
 	}
 
 	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -451,6 +496,22 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		foreach ( array_values( array_unique( $media_ids ) ) as $media_id ) {
 			do_action( 'acx_recognition_complete', $media_id, $context );
 		}
+	}
+
+	private function should_treat_not_found_as_idempotent_success(
+		WP_REST_Response|WP_Error $response,
+		int $affected_rows,
+		bool $local_cluster_exists
+	): bool {
+		if ( ! $local_cluster_exists && $affected_rows <= 0 ) {
+			return false;
+		}
+
+		if ( is_wp_error( $response ) ) {
+			return false;
+		}
+
+		return 404 === $response->get_status();
 	}
 
 	/**

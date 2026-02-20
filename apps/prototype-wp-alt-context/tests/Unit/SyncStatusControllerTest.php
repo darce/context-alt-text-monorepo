@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\SyncStatusController;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -19,9 +20,10 @@ class SyncStatusControllerTest extends TestCase
         $syncRepo = new class() implements SyncStateRepositoryInterface {
             public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
-				return 12; }
+					return 12; }
             public function get_last_updated(string $tenant_id): ?string {
-				return '2026-02-14 00:00:00'; }
+					return '2026-02-14 00:00:00'; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -42,12 +44,13 @@ class SyncStatusControllerTest extends TestCase
         $syncRepo = new class($oldTimestamp) implements SyncStateRepositoryInterface {
             private string $timestamp;
             public function __construct(string $timestamp) {
-				$this->timestamp = $timestamp; }
+					$this->timestamp = $timestamp; }
             public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
-				return 5; }
+					return 5; }
             public function get_last_updated(string $tenant_id): ?string {
-				return $this->timestamp; }
+					return $this->timestamp; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -66,12 +69,13 @@ class SyncStatusControllerTest extends TestCase
         $syncRepo = new class($recentTimestamp) implements SyncStateRepositoryInterface {
             private string $timestamp;
             public function __construct(string $timestamp) {
-				$this->timestamp = $timestamp; }
+					$this->timestamp = $timestamp; }
             public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
-				return 5; }
+					return 5; }
             public function get_last_updated(string $tenant_id): ?string {
-				return $this->timestamp; }
+					return $this->timestamp; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -87,9 +91,10 @@ class SyncStatusControllerTest extends TestCase
         $syncRepo = new class() implements SyncStateRepositoryInterface {
             public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
-				return 0; }
+					return 0; }
             public function get_last_updated(string $tenant_id): ?string {
-				return null; }
+					return null; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -98,5 +103,126 @@ class SyncStatusControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is null');
+    }
+
+    public function testTriggerSyncBuildsLazySyncJobWhenNoSyncPullJobInjected(): void
+    {
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
+        };
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '"invalid"',
+        ]);
+
+        $controller = new SyncStatusController($syncRepo, null);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_failed', $data['reason']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/tenants/', $calls[0]['url']);
+    }
+
+    public function testTriggerSyncReturnsSyncedTrueOnSuccess(): void
+    {
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 10);
+
+        $syncRepo = new class($recentTimestamp) implements SyncStateRepositoryInterface {
+            private string $timestamp;
+            public function __construct(string $timestamp) {
+				$this->timestamp = $timestamp; }
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 3; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return $this->timestamp; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): bool {
+				return true; }
+            public function perform_bypass_cooldown(string $tenant_id): bool {
+				return true; }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('ok', $data['reason']);
+        $this->assertSame(3, $data['last_snapshot_version']);
+        $this->assertSame($recentTimestamp, $data['last_synced_at']);
+        $this->assertFalse($data['is_stale']);
+    }
+
+    public function testTriggerSyncReturnsSyncedFalseOnFailure(): void
+    {
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): bool {
+				return false; }
+            public function perform_bypass_cooldown(string $tenant_id): bool {
+				return false; }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_failed', $data['reason']);
+        $this->assertTrue($data['is_stale']);
+    }
+
+    public function testTriggerSyncHandlesExceptionGracefully(): void
+    {
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): bool {
+				return false; }
+            public function perform_bypass_cooldown(string $tenant_id): bool {
+                throw new \RuntimeException('Connection refused');
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_failed', $data['reason']);
     }
 }

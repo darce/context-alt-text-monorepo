@@ -10,4 +10,6 @@ interface SyncStateRepositoryInterface {
 	public function get_snapshot_version( string $tenant_id ): int;
 
 	public function get_last_updated( string $tenant_id ): ?string;
+
+	public function touch_local_curation_marker( string $tenant_id ): void;
 }

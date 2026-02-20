@@ -250,7 +250,12 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$normalized_limit = max( 1, $limit );
 		$sql              = $this->prepare_query(
-			"SELECT * FROM %i WHERE tenant_id = %s AND (label IS NULL OR label = '') ORDER BY identity_count DESC, updated_at DESC LIMIT %d",
+			"SELECT * FROM %i
+			WHERE tenant_id = %s
+				AND (label IS NULL OR label = '')
+				AND (curation_state IS NULL OR curation_state <> 'dismissed')
+			ORDER BY identity_count DESC, updated_at DESC
+			LIMIT %d",
 			array(
 				$this->table_name,
 				$normalized_tenant_id,
@@ -295,17 +300,17 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return is_array( $row ) ? $row : null;
 	}
 
-	public function update_label( string $cluster_uuid, string $label ): void {
+	public function update_label( string $cluster_uuid, string $label ): int {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
 		$normalized_label        = trim( $label );
 		if ( '' === $normalized_cluster_uuid || '' === $normalized_label ) {
-			return;
+			return 0;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+			return 0;
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
@@ -321,20 +326,25 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		if ( is_string( $sql ) && '' !== $sql ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $sql );
+			$query_result = $wpdb->query( $sql );
+			if ( is_int( $query_result ) ) {
+				return $query_result;
+			}
 		}
+
+		return 0;
 	}
 
-	public function dismiss( string $cluster_uuid ): void {
+	public function dismiss( string $cluster_uuid ): int {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
 		if ( '' === $normalized_cluster_uuid ) {
-			return;
+			return 0;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+			return 0;
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
@@ -350,37 +360,47 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		if ( is_string( $sql ) && '' !== $sql ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $sql );
+			$query_result = $wpdb->query( $sql );
+			if ( is_int( $query_result ) ) {
+				return $query_result;
+			}
 		}
+
+		return 0;
 	}
 
-	public function undismiss( string $cluster_uuid ): void {
+	public function undismiss( string $cluster_uuid ): int {
 		global $wpdb;
 
 		$normalized_cluster_uuid = trim( $cluster_uuid );
 		if ( '' === $normalized_cluster_uuid ) {
-			return;
+			return 0;
 		}
 
 		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
-			return;
+			return 0;
 		}
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-			'UPDATE %i SET curation_state = %s, is_user_confirmed = 1, updated_at = %s WHERE cluster_uuid = %s',
-			array(
-				$this->table_name,
-				'active',
-				$now_utc,
-				$normalized_cluster_uuid,
-			)
-		);
+				'UPDATE %i SET curation_state = %s, is_user_confirmed = 0, updated_at = %s WHERE cluster_uuid = %s',
+				array(
+					$this->table_name,
+					'uncurated',
+					$now_utc,
+					$normalized_cluster_uuid,
+				)
+			);
 
 		if ( is_string( $sql ) && '' !== $sql ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
-			$wpdb->query( $sql );
+			$query_result = $wpdb->query( $sql );
+			if ( is_int( $query_result ) ) {
+				return $query_result;
+			}
 		}
+
+		return 0;
 	}
 
 	/**
@@ -468,6 +488,10 @@ class ClustersRepository implements ClustersRepositoryInterface {
 	 */
 	private function normalize_curation_state( array $cluster ): string {
 		$state = trim( (string) ( $cluster['curation_state'] ?? '' ) );
+		if ( 'active' === $state ) {
+			return 'uncurated';
+		}
+
 		if ( in_array( $state, array( 'uncurated', 'confirmed', 'dismissed' ), true ) ) {
 			return $state;
 		}

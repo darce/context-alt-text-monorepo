@@ -9,6 +9,7 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
+use function is_wp_error;
 use function sanitize_text_field;
 use function sprintf;
 
@@ -122,12 +123,22 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'threshold' => (float) ( $request->get_param( 'threshold' ) ?? 0.6 ),
 		);
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'GET',
 			sprintf( '/recognition/identities/%s/suggestions', $identity_id ),
 			array(),
 			$query
 		);
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return new WP_REST_Response(
+				array(
+					'matches' => array(),
+				),
+				200
+			);
+		}
+
+		return $response;
 	}
 
 	public function get_pending_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -137,12 +148,17 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
 		);
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'GET',
 			'/recognition/suggestions',
 			array(),
 			$query
 		);
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
+		}
+
+		return $response;
 	}
 
 	public function get_pending_merge_suggestions( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -152,12 +168,17 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'offset'    => absint( $request->get_param( 'offset' ) ?? 0 ),
 		);
 
-		return $this->proxy_request(
+		$response = $this->proxy_request(
 			'GET',
 			'/recognition/suggestions/merge',
 			array(),
 			$query
 		);
+		if ( $this->is_proxy_unavailable( $response ) ) {
+			return $this->empty_pending_suggestions_response( (int) $query['limit'], (int) $query['offset'] );
+		}
+
+		return $response;
 	}
 
 	public function accept_suggestion( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -229,6 +250,26 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			'POST',
 			sprintf( '/recognition/suggestions/merge/%s/reject', $suggestion_id ),
 			$payload
+		);
+	}
+
+	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
+		if ( is_wp_error( $response ) ) {
+			return true;
+		}
+
+		return $response->get_status() >= 500;
+	}
+
+	private function empty_pending_suggestions_response( int $limit, int $offset ): WP_REST_Response {
+		return new WP_REST_Response(
+			array(
+				'suggestions' => array(),
+				'total'       => 0,
+				'limit'       => $limit,
+				'offset'      => $offset,
+			),
+			200
 		);
 	}
 }

@@ -31,9 +31,15 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return null;
 	}
 
-	public function update_label( string $cluster_uuid, string $label ): void {}
+	public function update_label( string $cluster_uuid, string $label ): int {
+		return 0;
+	}
 
-	public function dismiss( string $cluster_uuid ): void {}
+	public function dismiss( string $cluster_uuid ): int {
+		return 0;
+	}
 
-	public function undismiss( string $cluster_uuid ): void {}
+	public function undismiss( string $cluster_uuid ): int {
+		return 0;
+	}
 }

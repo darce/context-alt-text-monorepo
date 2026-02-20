@@ -51,6 +51,32 @@ class RecognitionControllerTest extends TestCase
         );
     }
 
+    public function testDefaultCompositionWiresSyncJobAndSharedSyncStateRepository(): void
+    {
+        $controller = new RecognitionController();
+        $recognitionReflection = new \ReflectionClass($controller);
+
+        $clustersControllerProperty = $recognitionReflection->getProperty('clustersController');
+        $clustersController = $clustersControllerProperty->getValue($controller);
+
+        $clusterMutationsControllerProperty = $recognitionReflection->getProperty('clusterMutationsController');
+        $clusterMutationsController = $clusterMutationsControllerProperty->getValue($controller);
+
+        $clustersControllerReflection = new \ReflectionClass($clustersController);
+        $syncPullJobProperty = $clustersControllerReflection->getProperty('sync_pull_job');
+        $syncPullJob = $syncPullJobProperty->getValue($clustersController);
+        $this->assertNotNull($syncPullJob);
+
+        $clustersSyncStateProperty = $clustersControllerReflection->getProperty('sync_state_repository');
+        $clustersSyncState = $clustersSyncStateProperty->getValue($clustersController);
+
+        $mutationsReflection = new \ReflectionClass($clusterMutationsController);
+        $mutationsSyncStateProperty = $mutationsReflection->getProperty('sync_state_repository');
+        $mutationsSyncState = $mutationsSyncStateProperty->getValue($clusterMutationsController);
+
+        $this->assertSame($clustersSyncState, $mutationsSyncState);
+    }
+
     /**
      * Test that batch limits allow significantly more than old 50 limit.
      */

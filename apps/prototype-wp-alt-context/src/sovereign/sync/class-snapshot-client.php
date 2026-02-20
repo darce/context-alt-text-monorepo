@@ -10,9 +10,12 @@ use WP_REST_Response;
 
 use function apply_filters;
 use function is_array;
+use function preg_match;
 use function rawurlencode;
 use function sanitize_text_field;
 use function sprintf;
+use function strtolower;
+use function substr;
 use function trim;
 
 class SnapshotClient extends AbstractRecognitionProxyController {
@@ -25,7 +28,7 @@ class SnapshotClient extends AbstractRecognitionProxyController {
 	}
 
 	public function fetch_snapshot( string $tenant_id ): array|WP_Error {
-		$normalized_tenant_id = sanitize_text_field( trim( $tenant_id ) );
+		$normalized_tenant_id = $this->normalize_tenant_id_for_path( $tenant_id );
 		if ( '' === $normalized_tenant_id ) {
 			return new WP_Error( 'invalid_tenant_id', 'Tenant ID is required for snapshot fetch.', array( 'status' => 400 ) );
 		}
@@ -61,12 +64,34 @@ class SnapshotClient extends AbstractRecognitionProxyController {
 	}
 
 	protected function get_snapshot_endpoint_path(): string {
-		$default_path  = '/tenants/%s/clusters/snapshot';
+		$default_path  = '/recognition/tenants/%s/clusters/snapshot';
 		$filtered_path = apply_filters( 'acx_snapshot_endpoint_path', $default_path );
 		if ( is_string( $filtered_path ) && '' !== trim( $filtered_path ) ) {
 			return trim( $filtered_path );
 		}
 
 		return $default_path;
+	}
+
+	private function normalize_tenant_id_for_path( string $tenant_id ): string {
+		$normalized = sanitize_text_field( trim( $tenant_id ) );
+		if ( '' === $normalized ) {
+			return '';
+		}
+
+		// Backend auth compares canonical UUID strings. Normalize compact 32-hex IDs.
+		if ( 1 === preg_match( '/^[a-fA-F0-9]{32}$/', $normalized ) ) {
+			$hex = strtolower( $normalized );
+			return sprintf(
+				'%s-%s-%s-%s-%s',
+				substr( $hex, 0, 8 ),
+				substr( $hex, 8, 4 ),
+				substr( $hex, 12, 4 ),
+				substr( $hex, 16, 4 ),
+				substr( $hex, 20, 12 )
+			);
+		}
+
+		return $normalized;
 	}
 }

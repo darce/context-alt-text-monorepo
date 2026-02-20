@@ -132,6 +132,26 @@ class AnalysisJobsControllerTest extends TestCase
         $this->assertSame([[303, $jobId]], $captured);
     }
 
+    public function testGetJobStatusReturnsOfflineFailurePayloadWhenProxyUnavailable(): void
+    {
+        $jobId = '33333333-3333-3333-3333-333333333333';
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/' . $jobId);
+        $request->set_param('job_id', $jobId);
+        $response = $this->controller->get_job_status($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame($jobId, $data['id'] ?? null);
+        $this->assertSame('failed', $data['status'] ?? null);
+        $this->assertSame('analyze', $data['type'] ?? null);
+        $this->assertSame('Recognition backend unavailable.', $data['message'] ?? null);
+    }
+
     /**
      * @return array<string,mixed>|null
      */

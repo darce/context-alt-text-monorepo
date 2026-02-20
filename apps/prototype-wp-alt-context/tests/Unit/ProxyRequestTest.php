@@ -59,10 +59,10 @@ class ProxyRequestTest extends TestCase
             'body' => '{"status": "completed", "job_id": "test-123"}',
         ]);
 
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
         $request->set_param('job_id', 'test-123');
 
-        $result = $this->controller->get_job_status($request);
+        $result = $this->controller->cancel_job($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
         $this->assertSame(200, $result->get_status());
@@ -108,10 +108,10 @@ class ProxyRequestTest extends TestCase
             'body' => '{"status":"completed"}',
         ]);
 
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
         $request->set_param('job_id', 'test-123');
 
-        $result = $this->controller->get_job_status($request);
+        $result = $this->controller->cancel_job($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
 
@@ -133,10 +133,10 @@ class ProxyRequestTest extends TestCase
             'body' => '{"status":"completed"}',
         ]);
 
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
         $request->set_param('job_id', 'test-123');
 
-        $result = $this->controller->get_job_status($request);
+        $result = $this->controller->cancel_job($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
 
@@ -183,10 +183,10 @@ class ProxyRequestTest extends TestCase
             'body' => '{"status":"completed"}',
         ]);
 
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
         $request->set_param('job_id', 'test-123');
 
-        $result = $this->controller->get_job_status($request);
+        $result = $this->controller->cancel_job($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
 
@@ -342,10 +342,10 @@ class ProxyRequestTest extends TestCase
             'body' => '{"error": "server down"}',
         ]);
 
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
         $request->set_param('job_id', 'test-123');
 
-        $result = $this->controller->get_job_status($request);
+        $result = $this->controller->cancel_job($request);
 
         // Should return the 500 response after max retries
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
@@ -365,10 +365,10 @@ class ProxyRequestTest extends TestCase
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection refused'));
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection refused'));
 
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/jobs/123/cancel');
         $request->set_param('job_id', 'test-123');
 
-        $result = $this->controller->get_job_status($request);
+        $result = $this->controller->cancel_job($request);
 
         // Should return the WP_Error after max retries
         $this->assertTrue(is_wp_error($result), 'Should return WP_Error after max network retries');

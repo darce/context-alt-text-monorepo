@@ -86,6 +86,64 @@ class ClustersControllerTest extends TestCase
         $this->assertSame('http://example.test/media/legacy-202.jpg', $data[0]['representatives'][1]['thumb_url']);
     }
 
+    public function testTopUnlabeledClustersReturnsEmptyPayloadWhenProxyUnavailable(): void
+    {
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $this->controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([], $response->get_data());
+    }
+
+    public function testTopUnlabeledOfflineReturnsBareArray(): void
+    {
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-unlabeled',
+                        'label' => null,
+                        'identity_count' => 3,
+                    ],
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [];
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-02-14 00:00:00';
+            }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
+        $response = $controller->list_top_unlabeled_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $data = $response->get_data();
+        $this->assertIsArray($data);
+        $this->assertArrayNotHasKey('clusters', $data);
+        $this->assertArrayNotHasKey('tenant_id', $data);
+        $this->assertSame('cluster-unlabeled', $data[0]['id']);
+    }
+
     public function testListClustersUsesLocalProjectionWhenSyncStatePresent(): void
     {
         $clustersRepo = new class() extends NullClustersRepository {
@@ -144,9 +202,14 @@ class ClustersControllerTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertArrayHasKey('clusters', $data);
-        $this->assertArrayHasKey('tenant_id', $data);
-        $this->assertSame('cluster-local', $data['clusters'][0]['id']);
+        $this->assertIsArray($data);
+        $this->assertSame('cluster-local', $data[0]['id']);
+
+        // Offline must return a bare array — no { clusters, tenant_id } envelope.
+        // The frontend calls fetchRequiredApi<ClusterSummary[]> and casts the raw
+        // JSON body directly, so an envelope would silently produce an empty UI.
+        $this->assertArrayNotHasKey('clusters', $data);
+        $this->assertArrayNotHasKey('tenant_id', $data);
     }
 
     public function testListClustersProxiesWhenNoLocalProjection(): void
@@ -173,6 +236,106 @@ class ClustersControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertSame('cluster-proxy', $data[0]['id']);
+    }
+
+    public function testSuccessfulProxyReadTriggersInlineBootstrapSyncWithoutSchedulingCron(): void
+    {
+        $syncRepo = new NullSyncStateRepository();
+        $syncSpy = new ClustersControllerSyncPullSpy();
+
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            $syncRepo,
+            $syncSpy,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertTrue($syncSpy->performedBypass);
+        $this->assertFalse($syncSpy->performed);
+        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+    }
+
+    public function testFailedInlineBootstrapSchedulesCronRetry(): void
+    {
+        $syncRepo = new NullSyncStateRepository();
+        $syncJob = new ClustersControllerFailingSyncPull();
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            $syncRepo,
+            $syncJob,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                ['id' => 'cluster-proxy', 'label' => 'Proxied'],
+            ]),
+        ]);
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertCount(1, $GLOBALS['__ac_scheduled']);
+    }
+
+    public function testFailedProxyReadDoesNotTriggerBootstrapSyncOrCron(): void
+    {
+        $syncRepo = new NullSyncStateRepository();
+        $syncSpy = new ClustersControllerSyncPullSpy();
+        $controller = new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            $syncRepo,
+            $syncSpy,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
+        $response = $controller->list_clusters($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertFalse($syncSpy->performedBypass);
+        $this->assertCount(0, $GLOBALS['__ac_scheduled']);
+    }
+
+    public function testBootstrapCronCallbackInvokesBypassSyncWithTenant(): void
+    {
+        $syncSpy = new ClustersControllerSyncPullSpy();
+        new ClustersController(
+            new NullClustersRepository(),
+            new NullIdentityMembersRepository(),
+            new NullSyncStateRepository(),
+            $syncSpy,
+            new ClusterResponseMapper(),
+            new MemberResponseMapper()
+        );
+
+        do_action('acx_bootstrap_sync', 'tenant-cron');
+
+        $this->assertTrue($syncSpy->performedBypass);
+        $this->assertSame('tenant-cron', $syncSpy->tenantIdBypass);
     }
 
     public function testGetClusterMembersProxiesWhenNoLocalProjection(): void
@@ -252,8 +415,8 @@ class ClustersControllerTest extends TestCase
 
         // Even though sync was triggered, stale data is still served immediately
         $data = $response->get_data();
-        $this->assertArrayHasKey('clusters', $data);
-        $this->assertSame('cluster-stale', $data['clusters'][0]['id']);
+        $this->assertIsArray($data);
+        $this->assertSame('cluster-stale', $data[0]['id']);
     }
 
     public function testStaleProjectionServesStaleDataWhenSyncFails(): void
@@ -306,8 +469,8 @@ class ClustersControllerTest extends TestCase
         $this->assertSame(200, $response->get_status());
 
         $data = $response->get_data();
-        $this->assertArrayHasKey('clusters', $data);
-        $this->assertSame('cluster-resilient', $data['clusters'][0]['id']);
+        $this->assertIsArray($data);
+        $this->assertSame('cluster-resilient', $data[0]['id']);
     }
 
     public function testNullSyncPullJobDoesNotCrashOnStaleProjection(): void
@@ -350,12 +513,22 @@ class ClustersControllerTest extends TestCase
             new MemberResponseMapper()
         );
 
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => '"invalid"',
+        ]);
+
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters');
         $response = $controller->list_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
-        $this->assertSame('cluster-no-sync', $data['clusters'][0]['id']);
+        $this->assertIsArray($data);
+        $this->assertSame('cluster-no-sync', $data[0]['id']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/tenants/', $calls[0]['url']);
     }
 }
 
@@ -363,6 +536,8 @@ class ClustersControllerSyncPullSpy implements SyncPullJobInterface
 {
     public bool $performed = false;
     public string $tenantId = '';
+    public bool $performedBypass = false;
+    public string $tenantIdBypass = '';
 
     public function perform(string $tenant_id): bool
     {
@@ -370,11 +545,23 @@ class ClustersControllerSyncPullSpy implements SyncPullJobInterface
         $this->tenantId = $tenant_id;
         return true;
     }
+
+    public function perform_bypass_cooldown(string $tenant_id): bool
+    {
+        $this->performedBypass = true;
+        $this->tenantIdBypass = $tenant_id;
+        return true;
+    }
 }
 
 class ClustersControllerFailingSyncPull implements SyncPullJobInterface
 {
     public function perform(string $tenant_id): bool
+    {
+        return false;
+    }
+
+    public function perform_bypass_cooldown(string $tenant_id): bool
     {
         return false;
     }

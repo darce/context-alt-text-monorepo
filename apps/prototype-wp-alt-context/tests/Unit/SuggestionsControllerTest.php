@@ -66,4 +66,46 @@ class SuggestionsControllerTest extends TestCase
         $this->assertSame('7', (string) ($query['offset'] ?? ''));
         $this->assertNotEmpty($query['tenant_id'] ?? '');
     }
+
+    public function testGetPendingSuggestionsReturnsEmptyPayloadWhenProxyUnavailable(): void
+    {
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions');
+        $request->set_param('limit', 25);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->get_pending_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame([], $data['suggestions'] ?? null);
+        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertSame(25, $data['limit'] ?? null);
+        $this->assertSame(0, $data['offset'] ?? null);
+    }
+
+    public function testGetPendingMergeSuggestionsReturnsEmptyPayloadWhenProxyUnavailable(): void
+    {
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/suggestions/merge');
+        $request->set_param('limit', 10);
+        $request->set_param('offset', 0);
+
+        $response = $this->controller->get_pending_merge_suggestions($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame([], $data['suggestions'] ?? null);
+        $this->assertSame(0, $data['total'] ?? null);
+        $this->assertSame(10, $data['limit'] ?? null);
+        $this->assertSame(0, $data['offset'] ?? null);
+    }
 }

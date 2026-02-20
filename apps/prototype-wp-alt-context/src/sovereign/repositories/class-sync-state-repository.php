@@ -130,6 +130,37 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		return '' !== $normalized ? $normalized : null;
 	}
 
+	public function touch_local_curation_marker( string $tenant_id ): void {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$stream_name = $this->stream_name_for_tenant( $normalized_tenant_id );
+		$sql         = $this->prepare_query(
+			'INSERT INTO %i (stream_name, last_snapshot_version, updated_at)
+			VALUES (%s, 0, %s)
+			ON DUPLICATE KEY UPDATE updated_at = VALUES(updated_at)',
+			array(
+				$this->table_name,
+				$stream_name,
+				'1970-01-01 00:00:00',
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
+	}
+
 	private function stream_name_for_tenant( string $tenant_id ): string {
 		return sprintf( 'tenant:%s:clusters', trim( $tenant_id ) );
 	}

@@ -23,9 +23,15 @@ export const useMediaIdentities = (mediaIds: number[], enabled = true) =>
     queryKey: queryKeys.media.identitiesByIds(mediaIds),
     queryFn: () => fetchMediaIdentities(mediaIds),
     enabled: enabled && mediaIds.length > 0,
+    retry: false,
     staleTime: 15_000,
     placeholderData: (previousData) => previousData,
     // Auto-poll every 3 seconds when there are identities pending cluster assignment.
     // This provides automatic updates when clustering completes without manual refresh.
-    refetchInterval: (query) => (hasPendingClustering(query.state.data) ? 3000 : false),
+    refetchInterval: (query) => {
+      if (query.state.status === 'error') {
+        return false;
+      }
+      return hasPendingClustering(query.state.data) ? 3000 : false;
+    },
   });

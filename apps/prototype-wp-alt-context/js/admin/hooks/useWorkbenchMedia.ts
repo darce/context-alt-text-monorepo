@@ -6,9 +6,10 @@ import {
   fetchWorkbenchMedia,
   type WorkbenchMediaItem as WorkbenchMediaItemSchema,
   type WorkbenchMediaResponse as WorkbenchMediaApiResponse,
+  type WorkbenchMediaStatus,
 } from '../api/workbenchMediaApi';
 import { queryKeys } from '../api/queryKeys';
-import { fetchMediaIdentities, type MediaIdentitiesResponse, type DetectedIdentity } from '../api/recognition';
+import { type DetectedIdentity } from '../api/recognition';
 
 type WorkbenchMediaItem = WorkbenchMediaItemSchema & {
   identities?: DetectedIdentity[];
@@ -20,15 +21,16 @@ interface Params {
   page: number;
   perPage: number;
   search?: string;
+  status?: WorkbenchMediaStatus;
   enabled: boolean;
 }
 
-export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) => {
+export const useWorkbenchMedia = ({ page, perPage, search, status = 'all', enabled }: Params) => {
   const queryClient = useQueryClient();
 
   const mediaQuery = useQuery<WorkbenchMediaResponse, Error>({
-    queryKey: queryKeys.media.workbenchPage({ page, perPage, search }),
-    queryFn: () => fetchWorkbenchMedia({ page, perPage, search }),
+    queryKey: queryKeys.media.workbenchPage({ page, perPage, search, status }),
+    queryFn: () => fetchWorkbenchMedia({ page, perPage, search, status }),
     placeholderData: (previousData) => previousData,
     enabled,
   });
@@ -54,33 +56,14 @@ export const useWorkbenchMedia = ({ page, perPage, search, enabled }: Params) =>
       return;
     }
 
-    let canceled = false;
-    const nextKey = queryKeys.media.workbenchPage({ page: nextPage, perPage, search });
-    const prefetchNextPage = async (): Promise<void> => {
-      const nextData = await queryClient.fetchQuery<WorkbenchMediaResponse>({
+    const nextKey = queryKeys.media.workbenchPage({ page: nextPage, perPage, search, status });
+    void queryClient
+      .fetchQuery<WorkbenchMediaResponse>({
         queryKey: nextKey,
-        queryFn: () => fetchWorkbenchMedia({ page: nextPage, perPage, search }),
-      });
-
-      if (canceled || !nextData) {
-        return;
-      }
-      const nextMediaIds = nextData.items.map((item) => item.id);
-      if (nextMediaIds.length === 0) {
-        return;
-      }
-      await queryClient.prefetchQuery<MediaIdentitiesResponse>({
-        queryKey: queryKeys.media.identitiesByIds(nextMediaIds),
-        queryFn: () => fetchMediaIdentities(nextMediaIds),
-      });
-    };
-
-    void prefetchNextPage().catch(() => undefined);
-
-    return () => {
-      canceled = true;
-    };
-  }, [mediaQuery.isSuccess, mediaQuery.data?.totalPages, page, perPage, search, queryClient]);
+        queryFn: () => fetchWorkbenchMedia({ page: nextPage, perPage, search, status }),
+      })
+      .catch(() => undefined);
+  }, [mediaQuery.isSuccess, mediaQuery.data?.totalPages, page, perPage, search, status, queryClient]);
 
   return {
     ...mediaQuery,

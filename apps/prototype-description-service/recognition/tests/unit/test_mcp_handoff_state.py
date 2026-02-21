@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.mcp import unified_server as mcp_server  # noqa: E402
+from scripts.mcp import unified_server as mcp_server  # type: ignore[import-untyped] # noqa: E402
 
 
 @pytest.fixture()
@@ -35,7 +35,9 @@ def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
 
 def _parse(payload: str) -> dict:
-    return json.loads(payload)
+    import typing
+
+    return typing.cast(dict, json.loads(payload))
 
 
 def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
@@ -68,10 +70,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
                 "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives')"
             )
         }
-        review_finding_columns = {
-            row[1]
-            for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()
-        }
+        review_finding_columns = {row[1] for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()}
 
     assert first_tables == expected_tables
     assert second_tables == expected_tables

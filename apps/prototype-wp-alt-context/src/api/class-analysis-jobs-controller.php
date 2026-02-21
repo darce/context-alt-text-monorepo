@@ -344,14 +344,6 @@ class AnalysisJobsController extends AbstractRecognitionProxyController {
 		);
 	}
 
-	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
-		if ( is_wp_error( $response ) ) {
-			return true;
-		}
-
-		return $response->get_status() >= 500;
-	}
-
 	private function build_offline_job_status_response( string $job_id ): WP_REST_Response {
 		$now = gmdate( 'c' );
 		return new WP_REST_Response(

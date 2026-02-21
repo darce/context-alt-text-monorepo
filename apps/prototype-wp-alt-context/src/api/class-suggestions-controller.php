@@ -9,7 +9,6 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function absint;
-use function is_wp_error;
 use function sanitize_text_field;
 use function sprintf;
 
@@ -251,14 +250,6 @@ class SuggestionsController extends AbstractRecognitionProxyController {
 			sprintf( '/recognition/suggestions/merge/%s/reject', $suggestion_id ),
 			$payload
 		);
-	}
-
-	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
-		if ( is_wp_error( $response ) ) {
-			return true;
-		}
-
-		return $response->get_status() >= 500;
 	}
 
 	private function empty_pending_suggestions_response( int $limit, int $offset ): WP_REST_Response {

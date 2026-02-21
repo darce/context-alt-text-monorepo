@@ -25,6 +25,9 @@ use function register_rest_route;
 use function rest_ensure_response;
 use function sanitize_text_field;
 use function update_option;
+use function wp_get_attachment_image_sizes;
+use function wp_get_attachment_image_src;
+use function wp_get_attachment_image_srcset;
 use function wp_get_attachment_image_url;
 use function wp_get_attachment_metadata;
 use function wp_get_object_terms;
@@ -135,7 +138,13 @@ class Api {
 		$items = array_map(
 			function ( int $attachment_id ): array {
 				$alt_text = get_post_meta( $attachment_id, '_wp_attachment_image_alt', true );
-				$thumb    = wp_get_attachment_image_url( $attachment_id, 'full' );
+				$thumb_medium = wp_get_attachment_image_src( $attachment_id, 'medium' );
+				$thumb_url    = wp_get_attachment_image_url( $attachment_id, 'full' );
+				$thumb        = is_array( $thumb_medium ) && isset( $thumb_medium[0] ) ? $thumb_medium[0] : $thumb_url;
+				$thumb_width  = is_array( $thumb_medium ) && isset( $thumb_medium[1] ) ? (int) $thumb_medium[1] : null;
+				$thumb_height = is_array( $thumb_medium ) && isset( $thumb_medium[2] ) ? (int) $thumb_medium[2] : null;
+				$thumb_srcset = wp_get_attachment_image_srcset( $attachment_id, 'medium' );
+				$thumb_sizes  = wp_get_attachment_image_sizes( $attachment_id, 'medium' );
 				$meta     = wp_get_attachment_metadata( $attachment_id );
 				$terms    = wp_get_object_terms( $attachment_id, 'post_tag', array( 'fields' => 'names' ) );
 				$xmp_persist = get_post_meta( $attachment_id, 'acx_xmp_persist_last_result', true );
@@ -146,6 +155,12 @@ class Api {
 					'title'        => get_the_title( $attachment_id ),
 					'status'       => '' === trim( (string) $alt_text ) ? 'missing' : 'complete',
 					'thumbnailUrl' => false === $thumb ? null : $thumb,
+					'thumbnailSrcset' => is_string( $thumb_srcset ) ? $thumb_srcset : null,
+					'thumbnailSizes'  => is_string( $thumb_sizes ) ? $thumb_sizes : null,
+					'thumbnailDimensions' => array(
+						'width'  => $thumb_width,
+						'height' => $thumb_height,
+					),
 					'altText'      => '' === trim( (string) $alt_text ) ? null : $alt_text,
 					'mimeType'     => get_post_mime_type( $attachment_id ),
 					'editUrl'      => get_edit_post_link( $attachment_id, '' ),
@@ -201,7 +216,7 @@ class Api {
 			'status'   => array(
 				'description' => 'Filter by media status.',
 				'type'        => 'string',
-				'default'     => 'missing',
+				'default'     => 'all',
 				'enum'        => array( 'missing', 'all' ),
 			),
 		);

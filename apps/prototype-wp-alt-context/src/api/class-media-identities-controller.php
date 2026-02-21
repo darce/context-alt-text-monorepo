@@ -15,7 +15,6 @@ use WP_REST_Response;
 
 use function absint;
 use function is_array;
-use function is_wp_error;
 use function rest_sanitize_boolean;
 use function trim;
 
@@ -128,13 +127,5 @@ class MediaIdentitiesController extends AbstractRecognitionProxyController {
 
 	private function should_use_local_projection( string $tenant_id ): bool {
 		return $this->should_use_local_projection_gate( $this->sync_state_repository, $tenant_id );
-	}
-
-	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
-		if ( is_wp_error( $response ) ) {
-			return true;
-		}
-
-		return $response->get_status() >= 500;
 	}
 }

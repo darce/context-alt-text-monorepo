@@ -36,17 +36,14 @@ use WP_REST_Response;
 
 use function add_action;
 use function absint;
-use function apply_filters;
 use function do_action;
 use function is_array;
 use function is_string;
-use function is_wp_error;
 use function max;
 use function min;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
-use function strtotime;
 use function time;
 use function trim;
 use function wp_get_attachment_url;
@@ -451,31 +448,5 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		return $this->sync_pull_job;
-	}
-
-	private function is_proxy_unavailable( WP_REST_Response|WP_Error $response ): bool {
-		if ( is_wp_error( $response ) ) {
-			return true;
-		}
-
-		return $response->get_status() >= 500;
-	}
-
-	private function is_projection_stale( ?string $updated_at ): bool {
-		if ( ! is_string( $updated_at ) || '' === trim( $updated_at ) ) {
-			return true;
-		}
-
-		$timestamp = strtotime( $updated_at );
-		if ( false === $timestamp ) {
-			return true;
-		}
-
-		$threshold = (int) apply_filters( 'acx_sync_stale_threshold_seconds', 3600 );
-		$threshold = max( 60, $threshold );
-
-		$age = max( 0, time() - $timestamp );
-
-		return $age > $threshold;
 	}
 }

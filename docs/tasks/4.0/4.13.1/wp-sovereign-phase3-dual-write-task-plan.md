@@ -292,8 +292,8 @@ _Replaces cron-based background sync. All sync is triggered by user interaction.
 - [x] Integration test: snapshot ingestion preserves locally curated labels (`is_user_confirmed = 1` rows survive merge). _(SovereignProjectionIntegrationTest)_
 - [x] Integration test: stale-check triggers sync on read path and serves fresh data. _(ClustersControllerTest)_
 - [x] Integration test: stale-check sync failure still returns stale local data (graceful degradation). _(ClustersControllerTest)_
-- [ ] Manual smoke: label a cluster with backend stopped, restart backend, open clusters UI, confirm sync fires and label persists.
-- [ ] Manual smoke: run full cycle -- clusters load from proxy, trigger analysis, stop backend, clusters still render from local.
+- [x] Manual smoke: label a cluster with backend stopped, restart backend, open clusters UI, confirm sync fires and label persists. _(2026-02-21: backend-down PATCH returned proxy failure, local label persisted; backend-up sync-status reported fresh `last_synced_at`; label remained on detail read)_
+- [x] Manual smoke: run full cycle -- clusters load from proxy, trigger analysis, stop backend, clusters still render from local. _(2026-02-21: analyze POST accepted while backend+worker running; backend stopped; cluster list/detail continued returning 200 from local projection)_
 
 ### Audit Remediation (deferred from branch audit)
 
@@ -313,12 +313,12 @@ _Moved to standalone task plan: [`thumbnail-deprecation-task-plan.md`](thumbnail
 
 ## Success Criteria
 
-- [ ] Label updates are reflected in `wp_acx_clusters` immediately (local write).
-- [ ] Dismissing/undismissing a cluster persists `curation_state` to `wp_acx_clusters` locally.
-- [ ] Disabling backend during a mutation does NOT prevent the local update from persisting.
-- [ ] `last_synced_at` updates on user-triggered sync (stale-check on read path, or after analysis job completes).
-- [ ] No unsolicited background HTTP traffic -- every remote call is traceable to a user action.
-- [ ] Snapshot ingestion does NOT overwrite rows where `is_user_confirmed = 1`.
-- [ ] `composer test` passes with zero failures.
-- [ ] `composer phpstan` reports zero errors.
-- [ ] Backend `make check` passes (ruff + mypy + pytest).
+- [x] Label updates are reflected in `wp_acx_clusters` immediately (local write).
+- [x] Dismissing/undismissing a cluster persists `curation_state` to `wp_acx_clusters` locally.
+- [x] Disabling backend during a mutation does NOT prevent the local update from persisting.
+- [x] `last_synced_at` updates on user-triggered sync (stale-check on read path, or after analysis job completes).
+- [x] No unsolicited background HTTP traffic -- every remote call is traceable to a user action.
+- [x] Snapshot ingestion does NOT overwrite rows where `is_user_confirmed = 1`.
+- [x] `composer test` passes with zero failures.
+- [x] `composer phpstan` reports zero errors.
+- [x] Backend `make check` passes (ruff + mypy + pytest).

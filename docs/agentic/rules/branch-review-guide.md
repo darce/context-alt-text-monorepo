@@ -154,7 +154,8 @@ Call `record_review_finding` with:
 2. Use `list_review_findings(status="all")` if you need full finding-by-finding verification.
 3. Call `record_decision` summarizing the review (finding count by severity, session ID).
 4. Call `generate_current_task_md` to regenerate `CURRENT_TASK.md` with findings visible.
-5. Include `Handoff updated: yes` in the response.
+5. If this review concludes the task, run `handoff_close_check(enforce=True)` before final handoff.
+6. Include `Handoff updated: yes` in the response.
 
 Do not use direct `sqlite3` shell queries for MCP handoff verification when these tools are available.
 

@@ -116,23 +116,23 @@ Exit criteria:
 
 - Disabling backend connectivity no longer removes existing cluster UI data.
 
-### Phase 3: Local-First Writes and Pull Sync -- NOT STARTED
+### Phase 3: Local-First Writes and Pull Sync -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plans**: [wp-sovereign-phase3-dual-write-task-plan.md](../../tasks/4.0/4.13.1/wp-sovereign-phase3-dual-write-task-plan.md)
 
-**Goal**: Curation actions persist locally even during backend outage; scheduled sync keeps projection current.
+**Goal**: Curation actions persist locally even during backend outage; on-demand sync keeps projection current.
 
 Deliverables:
 
 - User curation actions write to local state AND forward to backend via existing proxy (dual-write, no outbox).
-- Register WP-Cron scheduled event for periodic snapshot pull (`acx_sync_pull_snapshot`).
-- If backend is unreachable during curation write, local state is persisted; remote write is retried on next scheduled sync.
+- On-demand sync pull on read path stale-check (`SyncPullJob`), with bootstrap sync strategy for first projection seed.
+- If backend is unreachable during curation write, local state is persisted; sync reconciliation occurs on the next user-triggered sync path.
 
 Exit criteria:
 
 - User actions are durable locally.
-- Scheduled sync keeps local projection current when backend is available.
+- User-triggered sync keeps local projection current when backend is available.
 
 ### Phase 4: Remove Hard Runtime Dependency -- NOT STARTED
 
@@ -161,7 +161,7 @@ Exit criteria:
 
 | Dependency                                                     | Owner              | Status          | Blocks                                        |
 | -------------------------------------------------------------- | ------------------ | --------------- | --------------------------------------------- |
-| Snapshot endpoint `GET /tenants/{tenant_uuid}/clusters/snapshot` | Backend workstream | **Not started** | Phase 2 exit criteria (needs data to project) |
+| Snapshot endpoint `GET /tenants/{tenant_uuid}/clusters/snapshot` | Backend workstream | **Completed** | Unblocked |
 | Persistent event store for delta/event endpoint                | Backend workstream | Not started     | v0.2+ scope only                              |
 | Plugin packaging (v4.13.1)                                     | Plugin workstream  | **Completed**   | --                                            |
 
@@ -214,13 +214,13 @@ Exit criteria:
 - [x] Refactor `ClusterMutationsController` (read path analysis complete).
 - [x] Refactor `MediaIdentitiesController` to read local projection.
 - [x] Surface sync status and stale age in UI.
-- [ ] (Backend parallel) Build snapshot endpoint.
+- [x] (Backend parallel) Build snapshot endpoint.
 
-## Phase 3: Local-First Writes and Pull Sync -- NOT STARTED
+## Phase 3: Local-First Writes and Pull Sync -- COMPLETED
 
-- [ ] Dual-write curation mutations (local + proxy).
-- [ ] Register WP-Cron scheduled event (`acx_sync_pull_snapshot`).
-- [ ] Handle backend-unreachable gracefully with local persistence.
+- [x] Dual-write curation mutations (local + proxy).
+- [x] Implement on-demand stale-check sync pull (`SyncPullJob`) on read-path entry.
+- [x] Handle backend-unreachable gracefully with local persistence.
 
 ## Phase 4: Hard Dependency Removal -- NOT STARTED
 

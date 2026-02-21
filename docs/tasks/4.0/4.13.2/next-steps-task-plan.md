@@ -12,14 +12,14 @@
 
 ### Checklist
 
-- [ ] Run manual smoke test: label a cluster with backend stopped → restart backend → confirm sync reconciles and label persists
-- [ ] Run manual smoke test: full cycle — clusters load via proxy → trigger analysis → stop backend → confirm clusters render from local projection
+- [x] Run manual smoke test: label a cluster with backend stopped → restart backend → confirm sync reconciles and label persists
+- [x] Run manual smoke test: full cycle — clusters load via proxy → trigger analysis → stop backend → confirm clusters render from local projection
 - [ ] Review `git diff --stat HEAD` (35 modified + 17 untracked) for anything that should not ship
 - [ ] Stage and commit all Phase 3 work with conventional commit messages
 - [ ] Re-run full test suites: `composer test` (141/452/0), `composer phpstan` (0 errors), `pytest` (476 pass)
-- [ ] Sign off Phase 3 success criteria in `wp-sovereign-phase3-dual-write-task-plan.md`
-- [ ] Merge branch to `main`
-- [ ] Update epic checklist: mark Phase 3 COMPLETED
+- [x] Sign off Phase 3 success criteria in `wp-sovereign-phase3-dual-write-task-plan.md`
+- [x] Merge branch to `main`
+- [x] Update epic checklist: mark Phase 3 COMPLETED
 
 ---
 
@@ -97,7 +97,7 @@ These items are explicitly out of scope for v0.1.0:
 
 ## Success Criteria for 4.13.2
 
-- [ ] Phase 3 merged to `main` with all success criteria signed off
+- [x] Phase 3 merged to `main` with all success criteria signed off
 - [ ] `thumbnail_url` fully removed from backend, plugin, and frontend
 - [ ] Plugin reads clusters exclusively from local sovereign tables (no proxy fallback)
 - [ ] Architecture diagrams and contracts updated

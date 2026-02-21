@@ -6,7 +6,7 @@
 
 ## Objective
 
-Remove all `thumbnail_url` plumbing from the Python recognition service -- domain models, Pydantic schemas, repository queries, router mappings, config, and the `MediaIdentity` SQLAlchemy column -- and produce the Alembic migration that physically drops the column.
+Remove all `thumbnail_url` plumbing from the Python recognition service -- domain models, Pydantic schemas, repository queries, router mappings, config, and the `MediaIdentity` SQLAlchemy column -- and remove the baseline schema column definition per greenfield policy (no forward Alembic migration).
 
 ## Context
 
@@ -33,7 +33,7 @@ Phase 3 (Dual-Write + Pull Sync) is merged to `main`. The epic's next gate is re
 | `apps/prototype-description-service/recognition/interface_adapters/http/routers/suggestions.py` | Remove `thumbnail_url` mappings |
 | `apps/prototype-description-service/recognition/interface_adapters/http/deps/stores.py` | Remove `"thumbnail_url"` from identity payload |
 | `apps/prototype-description-service/recognition/application/regression_harness/report_builder.py` | Remove conditional `thumbnail_url` block |
-| `apps/prototype-description-service/db/migrations/versions/` | New migration: `DROP COLUMN thumbnail_url` |
+| `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py` | Remove baseline `thumbnail_url` column definition (greenfield policy) |
 
 ## Technical Notes
 
@@ -56,7 +56,7 @@ pytest recognition/tests/ -q   # full suite; baseline is 476 passed
 1. Read `docs/tasks/4.0/4.13.1/thumbnail-deprecation-task-plan.md` (Functions to Change tables for full line-level inventory).
 2. Start with `settings.py` and `api/main.py` (config removal -- zero risk).
 3. Work down through domain models, then repositories, then schemas, then routers.
-4. After all application-layer changes pass `make check`, create the Alembic migration.
+4. After all application-layer changes pass `make check`, remove `thumbnail_url` from `db/migrations/versions/001_identity_schema.py` (no new migration).
 5. When done, continue with `v0.1.0-completion-task-plan.md` Phase 2 (Plugin cleanup).
 
 ---
@@ -68,6 +68,31 @@ pytest recognition/tests/ -q   # full suite; baseline is 476 passed
 - Phase 0 (Merge Phase 3 to main) confirmed complete; smoke tests signed off.
 - Phase 0.5 (Workbench media decoupling from sync state) confirmed complete; findings resolved.
 - This task plan created for Phase 1 execution.
+
+### 2026-02-21 - Session 2 (Handoff Review Corrections)
+
+- Corrected contradictory migration guidance:
+  - Removed references to creating a new Alembic migration for `thumbnail_url` drop.
+  - Standardized on greenfield policy: edit baseline migration `001_identity_schema.py` directly.
+- Corrected invalid verification command:
+  - Replaced `make db-reset` with `make reset` (actual Makefile target).
+
+### 2026-02-21 - Session 3 (Review Findings Recorded)
+
+- [MEDIUM][GAP] Cross-doc mismatch remains:
+  - `docs/tasks/4.0/4.13.3/v0.1.0-completion-task-plan.md` Phase 1 checklist still includes:
+    - "Create Alembic migration: `ALTER TABLE media_identities DROP COLUMN thumbnail_url`"
+    - "Test migration up/down on dev database"
+  - This conflicts with greenfield baseline-only schema policy now documented in:
+    - `docs/tasks/4.0/4.13.3/thumbnail-deprecation-phase1-task-plan.md`
+    - `docs/tasks/4.0/4.13.1/thumbnail-deprecation-task-plan.md`
+  - Follow-up needed: align completion-plan Phase 1 checklist to baseline-edit + `make reset`.
+
+### 2026-02-21 - Session 4 (Cross-Doc Alignment Closed)
+
+- Follow-up from Session 3 resolved:
+  - `v0.1.0-completion-task-plan.md` Phase 1 checklist now aligns to baseline-only schema policy.
+  - Baseline migration guidance and `make reset` command are consistent across Phase 1 + completion docs.
 
 ---
 
@@ -98,5 +123,5 @@ pytest recognition/tests/ -q   # full suite; baseline is 476 passed
 ## Phase 1-B: Remove Column from Baseline Schema
 
 - [ ] Remove `thumbnail_url` column definition from the baseline migration (`db/migrations/versions/001_identity_schema.py`).
-- [ ] Run `make db-reset` to wipe and rebuild the dev database from the updated baseline.
+- [ ] Run `make reset` to wipe and rebuild the dev database from the updated baseline.
 - [ ] Verify: `make check`.

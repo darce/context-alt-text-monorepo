@@ -56,8 +56,6 @@ class RecognitionFilter(logging.Filter):
 
     def filter(self, record: logging.LogRecord) -> bool:
         name = record.name
-        if name.startswith("recognition.infrastructure.thumbnail"):
-            return False
         if name.startswith("recognition.infrastructure.file"):
             return False
         allowed = (

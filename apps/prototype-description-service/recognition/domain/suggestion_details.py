@@ -30,16 +30,13 @@ class SuggestionDetails:
     cluster_identity_count: int | None = None
     identity_media_id: int | None = None
     identity_media_url: str | None = None
-    identity_thumbnail_url: str | None = None
     identity_bbox: FaceBox | None = None
     representative_media_id: int | None = None
     representative_media_url: str | None = None
-    representative_thumbnail_url: str | None = None
     representative_bbox: FaceBox | None = None
     suggested_label: str | None = None
     suggested_label_source: str | None = None
     suggested_label_confidence: float | None = None
-    cluster_thumbnails: list[str] | None = None
 
 
 @dataclass
@@ -58,9 +55,7 @@ class MergeSuggestionDetails:
     cluster_b_identity_count: int | None = None
     cluster_a_representative_media_id: int | None = None
     cluster_a_representative_media_url: str | None = None
-    cluster_a_representative_thumbnail_url: str | None = None
     cluster_a_representative_bbox: FaceBox | None = None
     cluster_b_representative_media_id: int | None = None
     cluster_b_representative_media_url: str | None = None
-    cluster_b_representative_thumbnail_url: str | None = None
     cluster_b_representative_bbox: FaceBox | None = None

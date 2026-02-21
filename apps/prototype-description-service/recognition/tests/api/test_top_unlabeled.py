@@ -76,7 +76,6 @@ async def test_get_top_unlabeled_includes_representative_crop_fields(
             bbox_y=8,
             bbox_width=40,
             bbox_height=30,
-            thumbnail_url="http://example.test/thumb/101.jpg",
             is_user_selected=False,
         )
     ]
@@ -93,7 +92,6 @@ async def test_get_top_unlabeled_includes_representative_crop_fields(
     rep = body[0]["representatives"][0]
     assert rep["media_url"] == "http://example.test/media/101.jpg"
     assert rep["bbox"] == {"x": 12, "y": 8, "width": 40, "height": 30}
-    assert rep["thumb_url"] == "http://example.test/thumb/101.jpg"
 
 
 @pytest.mark.asyncio

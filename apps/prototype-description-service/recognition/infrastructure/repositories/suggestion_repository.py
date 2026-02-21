@@ -131,13 +131,7 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
             else None,
             identity_media_id=int(identity.media_id) if identity and identity.media_id is not None else None,
             identity_media_url=identity.media_url if identity else None,
-            identity_thumbnail_url=identity.thumbnail_url if identity else None,
-            identity_bbox=self._build_bbox(identity),
-            representative_media_id=int(representative.media_id)
-            if representative and representative.media_id is not None
-            else None,
             representative_media_url=representative.media_url if representative else None,
-            representative_thumbnail_url=representative.thumbnail_url if representative else None,
             representative_bbox=self._build_bbox(representative),
         )
 
@@ -188,37 +182,6 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         result = await self._session.execute(stmt)
         return [self._to_domain(row) for row in result.scalars().all()]
 
-    async def _fetch_cluster_thumbnails(
-        self,
-        cluster_ids: Sequence[uuid.UUID],
-        *,
-        per_cluster_limit: int = 9,
-    ) -> dict[uuid.UUID, list[str]]:
-        """Fetch recent member thumbnails per cluster using a window function."""
-        if not cluster_ids:
-            return {}
-
-        subq = (
-            select(
-                IdentityMember.cluster_id,
-                MediaIdentity.thumbnail_url,
-                func.row_number()
-                .over(partition_by=IdentityMember.cluster_id, order_by=MediaIdentity.created_at.desc())
-                .label("rn"),
-            )
-            .join(MediaIdentity, IdentityMember.identity_id == MediaIdentity.id)
-            .where(IdentityMember.cluster_id.in_(cluster_ids))
-            .where(MediaIdentity.thumbnail_url.isnot(None))
-        ).subquery()
-
-        thumb_stmt = select(subq.c.cluster_id, subq.c.thumbnail_url).where(subq.c.rn <= per_cluster_limit)
-        thumb_res = await self._session.execute(thumb_stmt)
-
-        thumbnails: dict[uuid.UUID, list[str]] = {}
-        for cid, url in thumb_res.all():
-            thumbnails.setdefault(cid, []).append(url)
-        return thumbnails
-
     async def list_pending_with_details(self, tenant_id: str, limit: int, offset: int) -> list[SuggestionDetails]:
         """Return pending suggestions with identity + cluster details.
 
@@ -266,18 +229,11 @@ class SqlAlchemySuggestionRepository(SuggestionRepository):
         result = await self._session.execute(stmt)
         rows = result.scalars().unique().all()
 
-        # Attach recent member thumbnails for each target cluster.
-        cluster_ids = [row.suggested_cluster_id for row in rows]
-        thumbnails_map = await self._fetch_cluster_thumbnails(cluster_ids, per_cluster_limit=9)
-
         details_list = []
         for model in rows:
             details = self._to_details(model)
             if model.resolution == SuggestionStatus.ACCEPTED.value:
                 details.status = SuggestionStatus.PENDING.value
-            if details.cluster_id:
-                cid_uuid = uuid.UUID(details.cluster_id)
-                details.cluster_thumbnails = thumbnails_map.get(cid_uuid, [])
 
             details_list.append(details)
 

@@ -33,7 +33,6 @@ class ClusterRepresentative:
     bbox_width: int | None = None
     bbox_height: int | None = None
     image_phash: str | None = None
-    thumbnail_url: str | None = None  # For top-unlabeled API response
     is_user_selected: bool = False  # User pinned this rep
     is_provisional: bool = False  # Added during batch, pending confirmation
     debug_metrics: dict[str, Any] | None = None

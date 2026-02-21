@@ -242,22 +242,13 @@ class ProxyRequestTest extends TestCase
     }
 
     /**
-     * Test proxy request retries on 500 error.
+     * UI read requests should fail fast without internal retries.
      */
-    public function testProxyRequestRetriesOn500Error(): void
+    public function testProxyRequestUiReadDoesNotRetryOn500Error(): void
     {
-        // Queue: 500, 500, 200
         $this->queueHttpResponse([
             'response' => ['code' => 500, 'message' => 'Internal Server Error'],
             'body' => '{"error": "temporary failure"}',
-        ]);
-        $this->queueHttpResponse([
-            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
-            'body' => '{"error": "temporary failure"}',
-        ]);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '{"status": "success"}',
         ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
@@ -265,13 +256,13 @@ class ProxyRequestTest extends TestCase
 
         $result = $this->controller->get_job_status($request);
 
-        // Should eventually succeed
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
+        // get_job_status maps proxy-unavailable into a synthetic offline 200 payload.
         $this->assertSame(200, $result->get_status());
 
-        // Should have made 3 attempts
         $calls = $this->getHttpCalls();
-        $this->assertCount(3, $calls, 'Should retry twice after initial 500 errors');
+        $this->assertCount(1, $calls, 'UI reads should fast-fail without retries');
+        $this->assertSame(2, $calls[0]['args']['timeout'] ?? null);
     }
 
     /**
@@ -298,29 +289,43 @@ class ProxyRequestTest extends TestCase
     }
 
     /**
-     * Test proxy request retries on WP_Error (network failure).
+     * UI read requests should fail fast on transport errors.
      */
-    public function testProxyRequestRetriesOnNetworkError(): void
+    public function testProxyRequestUiReadDoesNotRetryOnNetworkError(): void
     {
-        // Queue: WP_Error, WP_Error, success
         $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
-        $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection reset'));
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => '{"status": "success"}',
-        ]);
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
         $request->set_param('job_id', 'test-123');
 
         $result = $this->controller->get_job_status($request);
 
-        // Should eventually succeed
         $this->assertInstanceOf(\WP_REST_Response::class, $result);
+        // get_job_status maps proxy-unavailable into a synthetic offline 200 payload.
         $this->assertSame(200, $result->get_status());
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(3, $calls, 'Should retry after network errors');
+        $this->assertCount(1, $calls, 'UI reads should not retry transport failures');
+        $this->assertSame(2, $calls[0]['args']['timeout'] ?? null);
+    }
+
+    public function testProxyRequestOpensCircuitAfterConsecutiveUiReadFailures(): void
+    {
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
+        $this->queueHttpResponse(new WP_Error('http_request_failed', 'Connection timed out'));
+
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/jobs/123');
+        $request->set_param('job_id', 'test-123');
+
+        $this->controller->get_job_status($request);
+        $this->controller->get_job_status($request);
+
+        $callsAfterFailures = $this->getHttpCalls();
+        $this->assertCount(2, $callsAfterFailures, 'First two requests should hit remote and open circuit.');
+
+        $this->controller->get_job_status($request);
+        $callsAfterCircuit = $this->getHttpCalls();
+        $this->assertCount(2, $callsAfterCircuit, 'Open circuit should short-circuit without a third HTTP call.');
     }
 
     /**

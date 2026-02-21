@@ -335,7 +335,7 @@ async def get_top_unlabeled_clusters(
                     RepresentativeResponse(
                         id=str(rep.id),
                         media_id=rep.media_id or 0,
-                        thumb_url=rep.thumbnail_url,
+                        thumb_url=None,
                         media_url=rep.media_url,
                         bbox=(
                             FaceBoxResponse(
@@ -424,7 +424,6 @@ async def list_cluster_members(
                 width=int(identity.bbox_width),
                 height=int(identity.bbox_height),
             ),
-            thumbnail_url=identity.thumbnail_url,
             media_url=identity.media_url,
         )
         for identity, similarity in members_with_similarity

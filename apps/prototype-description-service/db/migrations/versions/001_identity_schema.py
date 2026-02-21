@@ -83,7 +83,6 @@ def upgrade() -> None:
         sa.Column("age", sa.Integer(), nullable=True),
         sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
         sa.Column("quality_score", sa.Float(), nullable=True),
-        sa.Column("thumbnail_url", sa.String(length=500)),
         sa.Column("image_phash", sa.String(length=64), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(

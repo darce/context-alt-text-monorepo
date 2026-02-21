@@ -60,7 +60,6 @@ class MediaIdentity(Base):
     gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True)
 
-    thumbnail_url: Mapped[str | None] = mapped_column(String(500))
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()

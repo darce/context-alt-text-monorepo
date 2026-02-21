@@ -211,7 +211,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                 MediaIdentity.bbox_y,
                 MediaIdentity.bbox_width,
                 MediaIdentity.bbox_height,
-                MediaIdentity.thumbnail_url,
             )
             .join(MediaIdentity, MediaIdentity.id == IdentityMemberModel.identity_id)
             .where(IdentityMemberModel.cluster_id.in_(cluster_uuids))
@@ -245,7 +244,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                     bbox_y=int(row.bbox_y) if row.bbox_y is not None else None,
                     bbox_width=int(row.bbox_width) if row.bbox_width is not None else None,
                     bbox_height=int(row.bbox_height) if row.bbox_height is not None else None,
-                    thumbnail_url=row.thumbnail_url,
                 )
             )
 
@@ -733,7 +731,7 @@ class SqlAlchemyClusterRepository(ClusterRepository):
     async def get_member_identities_with_similarity(self, cluster_id: str) -> list[tuple[MediaIdentity, float]]:
         """Return identity ORM records with their membership similarity for a cluster.
 
-        Unlike get_member_identities, this returns the raw ORM model with thumbnail_url
+        Unlike get_member_identities, this returns the raw ORM model
         and the similarity score from the member record, for API responses.
         """
         stmt = (
@@ -967,7 +965,6 @@ class SqlAlchemyClusterRepository(ClusterRepository):
                         bbox_y=bbox_y,
                         bbox_width=bbox_width,
                         bbox_height=bbox_height,
-                        thumbnail_url=identity.thumbnail_url if identity_loaded else None,
                         is_user_selected=bool(rep.is_user_selected),
                         is_provisional=bool(rep.is_provisional),
                         debug_metrics=debug_metrics,

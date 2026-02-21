@@ -28,18 +28,13 @@ use Throwable;
 use WP_REST_Request;
 use WP_REST_Response;
 
-use function apply_filters;
 use function do_action;
-use function is_string;
-use function max;
-use function strtotime;
-use function time;
-use function trim;
 
 class SyncStatusController extends AbstractRecognitionProxyController {
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
 	private ?string $sync_pull_job_error;
+	private bool $sync_pull_job_resolution_failed;
 
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
@@ -48,6 +43,7 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->sync_pull_job = $sync_pull_job;
 		$this->sync_pull_job_error = null;
+		$this->sync_pull_job_resolution_failed = false;
 	}
 
 	public function register_routes(): void {
@@ -119,13 +115,16 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'last_synced_at'        => $updated,
 				'is_stale'              => $this->is_projection_stale( $updated ),
 			),
-				200
-			);
+			200
+		);
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
 		if ( null !== $this->sync_pull_job ) {
 			return $this->sync_pull_job;
+		}
+		if ( $this->sync_pull_job_resolution_failed ) {
+			return null;
 		}
 
 		try {
@@ -139,6 +138,7 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			);
 		} catch ( Throwable $e ) {
 			$this->sync_pull_job_error = $e->getMessage();
+			$this->sync_pull_job_resolution_failed = true;
 			do_action(
 				'acx_recognition_composition_failed',
 				array(
@@ -151,23 +151,5 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		}
 
 		return $this->sync_pull_job;
-	}
-
-	private function is_projection_stale( ?string $updated_at ): bool {
-		if ( ! is_string( $updated_at ) || '' === trim( $updated_at ) ) {
-			return true;
-		}
-
-		$timestamp = strtotime( $updated_at );
-		if ( false === $timestamp ) {
-			return true;
-		}
-
-		$threshold = (int) apply_filters( 'acx_sync_stale_threshold_seconds', 3600 );
-		$threshold = max( 60, $threshold );
-
-		$age = max( 0, time() - $timestamp );
-
-		return $age > $threshold;
 	}
 }

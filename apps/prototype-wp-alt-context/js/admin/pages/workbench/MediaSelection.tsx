@@ -5,6 +5,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { UseQueryResult } from '@tanstack/react-query';
 
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
+import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { IdentityClusterList } from './identity-clusters';
 import { mediaEditUrl } from './Panels';
 import type { MediaIdentitiesResponse } from '../../api/recognition';
@@ -18,6 +19,8 @@ interface Props {
   statusMessage: string;
   searchQuery: string;
   onSearchChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  statusFilter: WorkbenchMediaStatus;
+  onStatusFilterChange: (status: WorkbenchMediaStatus) => void;
   selection: Record<string, boolean>;
   onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
   onToggleAll: (checked: boolean) => void;
@@ -38,6 +41,8 @@ export const MediaSelection = ({
   statusMessage,
   searchQuery,
   onSearchChange,
+  statusFilter,
+  onStatusFilterChange,
   selection,
   onToggleRow,
   onToggleAll,
@@ -61,6 +66,8 @@ export const MediaSelection = ({
         <MediaSelectionToolbar
           searchQuery={searchQuery}
           onSearchChange={onSearchChange}
+          statusFilter={statusFilter}
+          onStatusFilterChange={onStatusFilterChange}
           statusMessage={statusMessage}
           isError={isError}
           onRetry={onRetry}
@@ -110,6 +117,8 @@ export const MediaSelection = ({
 interface MediaSelectionToolbarProps {
   searchQuery: string;
   onSearchChange: (event: ChangeEvent<HTMLInputElement>) => void;
+  statusFilter: WorkbenchMediaStatus;
+  onStatusFilterChange: (status: WorkbenchMediaStatus) => void;
   statusMessage: string;
   isError: boolean;
   onRetry?: () => void;
@@ -118,6 +127,8 @@ interface MediaSelectionToolbarProps {
 const MediaSelectionToolbar = ({
   searchQuery,
   onSearchChange,
+  statusFilter,
+  onStatusFilterChange,
   statusMessage,
   isError,
   onRetry,
@@ -134,6 +145,38 @@ const MediaSelectionToolbar = ({
       value={searchQuery}
       onChange={onSearchChange}
     />
+    <div className="acx-media-selection__status-filter">
+      <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
+      <Select.Root value={statusFilter} onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}>
+        <Select.Trigger
+          className="acx-media-selection__status-filter-trigger"
+          aria-labelledby="acx-media-status-label"
+        >
+          <Select.Value />
+          <Select.Icon className="acx-media-selection__status-filter-icon">
+            <ChevronDown aria-hidden="true" size={16} />
+          </Select.Icon>
+        </Select.Trigger>
+        <Select.Portal>
+          <Select.Content className="acx-media-selection__status-filter-content" position="popper" sideOffset={6}>
+            <Select.Viewport className="acx-media-selection__status-filter-viewport">
+              <Select.Item value="all" className="acx-media-selection__status-filter-item">
+                <Select.ItemText>{__('All media', 'alt-context')}</Select.ItemText>
+                <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
+                  <Check aria-hidden="true" size={14} />
+                </Select.ItemIndicator>
+              </Select.Item>
+              <Select.Item value="missing" className="acx-media-selection__status-filter-item">
+                <Select.ItemText>{__('Missing alt text', 'alt-context')}</Select.ItemText>
+                <Select.ItemIndicator className="acx-media-selection__status-filter-indicator">
+                  <Check aria-hidden="true" size={14} />
+                </Select.ItemIndicator>
+              </Select.Item>
+            </Select.Viewport>
+          </Select.Content>
+        </Select.Portal>
+      </Select.Root>
+    </div>
 
     <div className="acx-media-selection__toolbar-actions">
       <span className="acx-media-selection__status">{statusMessage}</span>
@@ -163,6 +206,9 @@ const MediaSelectionPagination = ({
   onPerPageChange,
   onPageChange,
 }: MediaSelectionPaginationProps) => {
+  const boundedTotalPages = Math.max(1, totalPages);
+  const boundedCurrentPage = Math.min(Math.max(1, currentPage), boundedTotalPages);
+
   const handlePerPageChange = (value: string) => {
     const selected = Number(value);
     if (!Number.isFinite(selected)) {
@@ -177,16 +223,20 @@ const MediaSelectionPagination = ({
       role="navigation"
       aria-label={__('Media pagination', 'alt-context')}
     >
-      <button type="button" onClick={() => onPageChange(Math.max(1, currentPage - 1))} disabled={currentPage === 1}>
+      <button
+        type="button"
+        onClick={() => onPageChange(Math.max(1, boundedCurrentPage - 1))}
+        disabled={boundedCurrentPage <= 1}
+      >
         {__('Previous', 'alt-context')}
       </button>
       <span>
-        {__('Page', 'alt-context')} {currentPage} {__('of', 'alt-context')} {totalPages}
+        {__('Page', 'alt-context')} {boundedCurrentPage} {__('of', 'alt-context')} {boundedTotalPages}
       </span>
       <button
         type="button"
-        onClick={() => onPageChange(Math.min(totalPages, currentPage + 1))}
-        disabled={currentPage === totalPages}
+        onClick={() => onPageChange(Math.min(boundedTotalPages, boundedCurrentPage + 1))}
+        disabled={boundedCurrentPage >= boundedTotalPages}
       >
         {__('Next', 'alt-context')}
       </button>
@@ -195,7 +245,6 @@ const MediaSelectionPagination = ({
         <Select.Root value={String(perPage)} onValueChange={handlePerPageChange}>
           <Select.Trigger
             className="acx-media-selection__page-size-trigger"
-            aria-label={__('Images per page', 'alt-context')}
             aria-labelledby="acx-media-page-size-label"
           >
             <Select.Value />
@@ -234,7 +283,7 @@ const renderRows = ({
   onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
   selection: Record<string, boolean>;
 }) => {
-  if (isLoading) {
+  if (isLoading && items.length === 0) {
     return (
       <tr>
         <td colSpan={4}>{__('Loading media…', 'alt-context')}</td>
@@ -250,8 +299,10 @@ const renderRows = ({
     );
   }
 
-  return items.map((item) => {
+  return items.map((item, index) => {
     const key = item.id.toString();
+    const eagerLoad = index < 8;
+    const thumbDimensions = item.thumbnailDimensions;
     return (
       <tr key={key}>
         <td>
@@ -266,9 +317,15 @@ const renderRows = ({
             {item.thumbnailUrl ? (
               <img
                 src={item.thumbnailUrl}
+                srcSet={item.thumbnailSrcset ?? undefined}
+                sizes={item.thumbnailSizes ?? undefined}
                 alt={item.altText ?? item.title}
                 className="acx-media-selection__thumb acx-media-selection__thumb--thumb"
-                loading="lazy"
+                loading={eagerLoad ? 'eager' : 'lazy'}
+                fetchPriority={eagerLoad ? 'high' : 'auto'}
+                decoding="async"
+                width={thumbDimensions?.width ?? undefined}
+                height={thumbDimensions?.height ?? undefined}
               />
             ) : (
               <span className="acx-media-selection__thumb acx-media-selection__thumb--placeholder" />

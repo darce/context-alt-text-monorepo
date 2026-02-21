@@ -12,7 +12,7 @@ REPO_ROOT = Path(__file__).resolve().parents[5]
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from scripts.mcp import unified_server as mcp_server
+from scripts.mcp import unified_server as mcp_server  # noqa: E402
 
 
 @pytest.fixture()
@@ -68,9 +68,20 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
                 "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives')"
             )
         }
+        review_finding_columns = {
+            row[1]
+            for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()
+        }
 
     assert first_tables == expected_tables
     assert second_tables == expected_tables
+    assert {
+        "resolution_notes",
+        "reopen_count",
+        "last_reopen_reason",
+        "last_reopened_at",
+        "updated_at",
+    }.issubset(review_finding_columns)
 
 
 def test_set_handoff_state_revision_conflict(isolated_handoff: dict) -> None:
@@ -122,15 +133,14 @@ def test_blocker_constraints_enforced(isolated_handoff: dict) -> None:
         )
     )
 
-    with pytest.raises(sqlite3.IntegrityError):
-        with mcp_server._get_db_connection() as conn:
-            conn.execute(
-                """
+    with pytest.raises(sqlite3.IntegrityError), mcp_server._get_db_connection() as conn:
+        conn.execute(
+            """
                 INSERT INTO blockers (task_ref, description, status, resolved_at)
                 VALUES (?, ?, 'resolved', NULL)
                 """,
-                ("4.12.0", "Resolved without timestamp"),
-            )
+            ("4.12.0", "Resolved without timestamp"),
+        )
 
     add_resp = _parse(
         mcp_server.report_blocker(
@@ -332,15 +342,28 @@ def test_update_review_finding_status_and_resolved_at(isolated_handoff: dict) ->
     assert fixed["finding"]["branch"] == "feature/review"
     assert fixed["finding"]["commit_sha"] == "abc123"
 
-    reopened = _parse(
+    reopen_missing_reason = _parse(
         mcp_server.update_review_finding(
             finding_db_id=finding_id,
             status="open",
         )
     )
+    assert reopen_missing_reason["ok"] is False
+    assert "reopen_reason is required" in reopen_missing_reason["error"]
+
+    reopened = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=finding_id,
+            status="open",
+            reopen_reason="Regression observed in latest handoff update.",
+        )
+    )
     assert reopened["ok"] is True
     assert reopened["finding"]["status"] == "open"
     assert reopened["finding"]["resolved_at"] is None
+    assert reopened["finding"]["reopen_count"] == 1
+    assert reopened["finding"]["last_reopen_reason"] == "Regression observed in latest handoff update."
+    assert reopened["finding"]["last_reopened_at"] is not None
 
 
 def test_update_review_finding_rejects_invalid_status_and_task_mismatch(isolated_handoff: dict) -> None:
@@ -410,6 +433,48 @@ def test_record_review_finding_accepts_structured_details_and_actor_fallback(iso
     assert finding["fix"] == "Extract helper"
     assert finding["agent"] == "codex"
     assert finding["branch"] == "feature/demo"
+
+
+def test_record_review_finding_rerecord_reopens_with_marker_reason(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="4.12.0",
+            objective="Re-record reopen behavior",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="s-review",
+            finding_id="M-11",
+            severity="medium",
+            file_path="scripts/mcp/unified_server.py",
+            description="Original finding",
+        )
+    )
+    _parse(
+        mcp_server.update_review_finding(
+            finding_id="M-11",
+            status="fixed",
+        )
+    )
+
+    rerecorded = _parse(
+        mcp_server.record_review_finding(
+            session="s-review-rerecord",
+            finding_id="M-11",
+            severity="medium",
+            file_path="scripts/mcp/unified_server.py",
+            description="Re-recorded after follow-up review",
+        )
+    )
+
+    assert rerecorded["ok"] is True
+    assert rerecorded["reopened"] is True
+    assert rerecorded["finding"]["status"] == "open"
+    assert rerecorded["finding"]["reopen_count"] == 1
+    assert rerecorded["finding"]["last_reopen_reason"] == "Re-recorded via review-record."
+    assert rerecorded["finding"]["last_reopened_at"] is not None
 
 
 def test_list_review_findings_filters_and_pagination(isolated_handoff: dict) -> None:
@@ -544,6 +609,7 @@ def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -
         mcp_server.update_review_finding(
             finding_db_id=int(deferred_finding["finding"]["id"]),
             status="deferred",
+            resolution_notes="Deferred for summary coverage.",
         )
     )
 
@@ -630,3 +696,62 @@ def test_generate_current_task_md_with_nested_tool_wrapper(
     assert payload["written"] is False
     assert "CURRENT_TASK" in payload["markdown"]
     assert "Nested wrapper objective" in payload["markdown"]
+
+
+def test_handoff_close_check_allows_no_active_task_when_configured(isolated_handoff: dict) -> None:
+    response = _parse(mcp_server.handoff_close_check(allow_no_active_task=True, enforce=True))
+    assert response["ok"] is True
+    assert response["skipped"] is True
+    assert response["ready_to_close"] is True
+
+
+def test_handoff_close_check_enforce_fails_then_passes(isolated_handoff: dict) -> None:
+    initialized = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="4.12.0",
+            objective="Close-check lifecycle",
+            status="in_progress",
+        )
+    )
+    assert initialized["ok"] is True
+
+    _parse(
+        mcp_server.record_review_finding(
+            session="s-close-check",
+            finding_id="M-12",
+            severity="medium",
+            file_path="scripts/mcp/unified_server.py",
+            description="Close-check should fail while this is open",
+        )
+    )
+
+    not_ready = _parse(mcp_server.handoff_close_check(enforce=True))
+    assert not_ready["ok"] is False
+    assert not_ready["ready_to_close"] is False
+    assert not_ready["checks"]["open_review_findings"]["count"] == 1
+
+    _parse(
+        mcp_server.update_review_finding(
+            finding_id="M-12",
+            status="fixed",
+        )
+    )
+
+    revision = int(initialized["active"]["revision"])
+    moved_done = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="4.12.0",
+            objective="Close-check lifecycle",
+            status="done",
+            expected_revision=revision,
+        )
+    )
+    assert moved_done["ok"] is True
+    assert moved_done["active"]["revision"] == revision + 1
+
+    _parse(mcp_server.generate_current_task_md(task_ref="4.12.0", write_file=True))
+
+    ready = _parse(mcp_server.handoff_close_check(enforce=True))
+    assert ready["ok"] is True
+    assert ready["ready_to_close"] is True
+    assert ready["checks"]["current_task_sync"]["is_in_sync"] is True

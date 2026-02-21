@@ -445,8 +445,6 @@ async def generate_canonical_report(
             # Only include optional fields if present
             if rep.diversity_score is not None:
                 rep_entry["diversity_score"] = float(rep.diversity_score)
-            if identity.thumbnail_url:
-                rep_entry["thumbnail_url"] = identity.thumbnail_url
             if identity.media_url:
                 rep_entry["media_url"] = identity.media_url
             final_representatives.append(rep_entry)

@@ -231,7 +231,6 @@ class MediaIdentityService:
                     "y": row.MediaIdentity.bbox_y,
                 },
                 "confidence": row.MediaIdentity.confidence,
-                "thumbnail_url": row.MediaIdentity.thumbnail_url,
                 "media_url": row.MediaIdentity.media_url,
             }
 

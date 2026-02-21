@@ -180,16 +180,13 @@ class FakeSuggestion:
         cluster_identity_count: int | None = None,
         identity_media_id: int | None = None,
         identity_media_url: str | None = None,
-        identity_thumbnail_url: str | None = None,
         identity_bbox: FakeFaceBox | None = None,
         representative_media_id: int | None = None,
         representative_media_url: str | None = None,
-        representative_thumbnail_url: str | None = None,
         representative_bbox: FakeFaceBox | None = None,
         suggested_label: str | None = None,
         suggested_label_source: str | None = None,
         suggested_label_confidence: float | None = None,
-        cluster_thumbnails: list[str] | None = None,
     ) -> None:
         self.id = str(uuid.uuid4())
         self.identity_id = identity_id
@@ -201,16 +198,13 @@ class FakeSuggestion:
         self.cluster_identity_count = cluster_identity_count
         self.identity_media_id = identity_media_id
         self.identity_media_url = identity_media_url
-        self.identity_thumbnail_url = identity_thumbnail_url
         self.identity_bbox = identity_bbox
         self.representative_media_id = representative_media_id
         self.representative_media_url = representative_media_url
-        self.representative_thumbnail_url = representative_thumbnail_url
         self.representative_bbox = representative_bbox
         self.suggested_label = suggested_label
         self.suggested_label_source = suggested_label_source
         self.suggested_label_confidence = suggested_label_confidence
-        self.cluster_thumbnails = cluster_thumbnails
 
     def as_details(self) -> SimpleNamespace:
         """Return a detail-shaped suggestion with string status."""
@@ -225,16 +219,13 @@ class FakeSuggestion:
             cluster_identity_count=self.cluster_identity_count,
             identity_media_id=self.identity_media_id,
             identity_media_url=self.identity_media_url,
-            identity_thumbnail_url=self.identity_thumbnail_url,
             identity_bbox=self.identity_bbox,
             representative_media_id=self.representative_media_id,
             representative_media_url=self.representative_media_url,
-            representative_thumbnail_url=self.representative_thumbnail_url,
             representative_bbox=self.representative_bbox,
             suggested_label=self.suggested_label,
             suggested_label_source=self.suggested_label_source,
             suggested_label_confidence=self.suggested_label_confidence,
-            cluster_thumbnails=self.cluster_thumbnails,
         )
 
 
@@ -357,7 +348,6 @@ class FakeMediaIdentity:
         self.cluster_id = cluster_id
         self.bbox = {"width": 1, "height": 1, "x": 0, "y": 0}
         self.confidence = 0.99
-        self.thumbnail_url = "http://example.test/thumb.jpg"
         self.media_url = "http://example.test/media.jpg"
         self.pose_pitch = 10.0
         self.pose_yaw = -5.0
@@ -390,7 +380,6 @@ class FakeMediaIdentityService:
                 "is_auto_label": True,
                 "bbox": identity.bbox,
                 "confidence": identity.confidence,
-                "thumbnail_url": identity.thumbnail_url,
                 "media_url": identity.media_url,
             }
             if include_debug:

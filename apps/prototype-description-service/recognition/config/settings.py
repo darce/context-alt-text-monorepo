@@ -16,13 +16,6 @@ from recognition.application.settings import ClusteringSettings
 from recognition.application.settings.scan import ScanSettings
 
 
-class ThumbnailSettings(BaseModel):
-    """Settings for serving generated thumbnails."""
-
-    base_url: str | None = None
-    storage_dir: Path = Path("logs/thumbnails")
-
-
 class InsightFaceSettings(BaseModel):
     """Settings for InsightFace face detection and embedding."""
 
@@ -59,7 +52,6 @@ class RecognitionSettings(BaseModel):
 
     model_config = ConfigDict(arbitrary_types_allowed=True)
 
-    thumbnail: ThumbnailSettings = Field(default_factory=ThumbnailSettings)
     insightface: InsightFaceSettings = Field(default_factory=InsightFaceSettings)
     identity_detection: IdentityDetectionSettings = Field(default_factory=IdentityDetectionSettings)
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)

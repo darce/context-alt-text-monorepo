@@ -35,7 +35,7 @@ class ClusterMemberResponse(BaseModel):
     """Cluster member with identity details for review panels.
 
     Matches the frontend ClusterIdentity type with identity_id, media_id as int,
-    similarity, confidence, full bbox, and optional thumbnail_url.
+    similarity, confidence, and full bbox.
     """
 
     identity_id: str
@@ -43,7 +43,6 @@ class ClusterMemberResponse(BaseModel):
     similarity: float
     confidence: float
     bbox: FaceBoxResponse
-    thumbnail_url: str | None = None
     media_url: str | None = None
 
 
@@ -55,7 +54,6 @@ class IdentityResponse(BaseModel):
     media_id: str
     bbox: BboxResponse
     confidence: float
-    thumbnail_url: str | None = None
 
     @field_validator("id", "tenant_id", "media_id")
     @classmethod
@@ -103,7 +101,6 @@ class RepresentativeResponse(BaseModel):
 
     id: str
     media_id: str | int
-    thumb_url: str | None = None
     media_url: str | None = None
     bbox: FaceBoxResponse | None = None
     is_pinned: bool = Field(False, alias="is_user_selected")
@@ -167,16 +164,13 @@ class SuggestionResponse(BaseModel):
     cluster_identity_count: int | None = None
     identity_media_id: int | None = None
     identity_media_url: str | None = None
-    identity_thumbnail_url: str | None = None
     identity_bbox: FaceBoxResponse | None = None
     representative_media_id: int | None = None
     representative_media_url: str | None = None
-    representative_thumbnail_url: str | None = None
     representative_bbox: FaceBoxResponse | None = None
     suggested_label: str | None = None
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
     suggested_label_confidence: float | None = None
-    cluster_thumbnails: list[str] = Field(default_factory=list)
 
     @field_validator("id", "identity_id", "cluster_id")
     @classmethod
@@ -198,11 +192,9 @@ class MergeSuggestionResponse(BaseModel):
     cluster_b_identity_count: int | None = None
     cluster_a_representative_media_id: int | None = None
     cluster_a_representative_media_url: str | None = None
-    cluster_a_representative_thumbnail_url: str | None = None
     cluster_a_representative_bbox: FaceBoxResponse | None = None
     cluster_b_representative_media_id: int | None = None
     cluster_b_representative_media_url: str | None = None
-    cluster_b_representative_thumbnail_url: str | None = None
     cluster_b_representative_bbox: FaceBoxResponse | None = None
 
     @field_validator("id", "cluster_a_id", "cluster_b_id")
@@ -371,7 +363,6 @@ class ClusterSnapshotMemberResponse(BaseModel):
     bbox: FaceBoxResponse
     image_width: int
     image_height: int
-    thumb_path: str
     similarity: float
 
 
@@ -386,7 +377,6 @@ class ClusterSnapshotClusterResponse(BaseModel):
     curation_state: Literal["active", "dismissed", "confirmed"]
     is_user_confirmed: bool
     identity_count: int
-    representative_thumb_path: str | None
 
 
 class ClusterSnapshotResponse(BaseModel):

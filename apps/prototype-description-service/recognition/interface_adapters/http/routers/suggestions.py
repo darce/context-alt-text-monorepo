@@ -290,16 +290,13 @@ def _to_response_with_details(suggestion: SuggestionDetails) -> SuggestionRespon
         cluster_identity_count=suggestion.cluster_identity_count,
         identity_media_id=suggestion.identity_media_id,
         identity_media_url=suggestion.identity_media_url,
-        identity_thumbnail_url=suggestion.identity_thumbnail_url,
         identity_bbox=identity_bbox,
         representative_media_id=suggestion.representative_media_id,
         representative_media_url=suggestion.representative_media_url,
-        representative_thumbnail_url=suggestion.representative_thumbnail_url,
         representative_bbox=representative_bbox,
         suggested_label=suggestion.suggested_label,
         suggested_label_source=suggestion.suggested_label_source.value if suggestion.suggested_label_source else None,
         suggested_label_confidence=suggestion.suggested_label_confidence,
-        cluster_thumbnails=suggestion.cluster_thumbnails or [],
     )
 
 
@@ -345,7 +342,6 @@ def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> 
         cluster_b_identity_count=getattr(suggestion, "cluster_b_identity_count", None),
         cluster_a_representative_media_id=getattr(suggestion, "cluster_a_representative_media_id", None),
         cluster_a_representative_media_url=getattr(suggestion, "cluster_a_representative_media_url", None),
-        cluster_a_representative_thumbnail_url=getattr(suggestion, "cluster_a_representative_thumbnail_url", None),
         cluster_a_representative_bbox=FaceBoxResponse(
             x=cluster_a_bbox.x,
             y=cluster_a_bbox.y,
@@ -356,7 +352,6 @@ def _to_merge_response(suggestion: MergeSuggestion | MergeSuggestionDetails) -> 
         else None,
         cluster_b_representative_media_id=getattr(suggestion, "cluster_b_representative_media_id", None),
         cluster_b_representative_media_url=getattr(suggestion, "cluster_b_representative_media_url", None),
-        cluster_b_representative_thumbnail_url=getattr(suggestion, "cluster_b_representative_thumbnail_url", None),
         cluster_b_representative_bbox=FaceBoxResponse(
             x=cluster_b_bbox.x,
             y=cluster_b_bbox.y,

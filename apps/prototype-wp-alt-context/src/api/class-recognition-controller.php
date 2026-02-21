@@ -12,17 +12,6 @@ require_once __DIR__ . '/class-cluster-mutations-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
-require_once __DIR__ . '/../sovereign/repositories/interface-clusters-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/class-clusters-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/interface-identity-members-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/class-identity-members-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/interface-sync-state-repository.php';
-require_once __DIR__ . '/../sovereign/repositories/class-sync-state-repository.php';
-require_once __DIR__ . '/../sovereign/sync/interface-snapshot-projector.php';
-require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
-require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
-require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
-require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
 
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;

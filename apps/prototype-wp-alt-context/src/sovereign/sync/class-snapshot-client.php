@@ -4,9 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
-use AltContext\Api\AbstractRecognitionProxyController;
 use WP_Error;
 use WP_REST_Response;
+
+require_once __DIR__ . '/class-snapshot-client-transport.php';
 
 use function apply_filters;
 use function is_array;
@@ -18,13 +19,15 @@ use function strtolower;
 use function substr;
 use function trim;
 
-class SnapshotClient extends AbstractRecognitionProxyController {
-	public function register_routes(): void {
-		// Intentionally empty. Snapshot client is not a public REST controller.
+class SnapshotClient {
+	private SnapshotClientTransport $transport;
+
+	public function __construct( ?SnapshotClientTransport $transport = null ) {
+		$this->transport = $transport ?? new SnapshotClientTransport();
 	}
 
 	public function fetch_current_tenant_snapshot(): array|WP_Error {
-		return $this->fetch_snapshot( $this->get_tenant_id() );
+		return $this->fetch_snapshot( $this->transport->tenant_id() );
 	}
 
 	public function fetch_snapshot( string $tenant_id ): array|WP_Error {
@@ -39,7 +42,7 @@ class SnapshotClient extends AbstractRecognitionProxyController {
 			$path = '/' . $path;
 		}
 
-		$response = $this->proxy_request( 'GET', $path, array(), array() );
+		$response = $this->transport->request( 'GET', $path, array(), array() );
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
 			return $response;
 		}
@@ -63,7 +66,7 @@ class SnapshotClient extends AbstractRecognitionProxyController {
 		return $data;
 	}
 
-	protected function get_snapshot_endpoint_path(): string {
+	private function get_snapshot_endpoint_path(): string {
 		$default_path  = '/recognition/tenants/%s/clusters/snapshot';
 		$filtered_path = apply_filters( 'acx_snapshot_endpoint_path', $default_path );
 		if ( is_string( $filtered_path ) && '' !== trim( $filtered_path ) ) {

@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all mcp mcp-start
+.PHONY: help check-all check-frontend lint-all test-all clean-all mcp mcp-start handoff-close-check handoff-integrity-check
 
 # Default target
 help:
@@ -33,6 +33,10 @@ help:
 	@echo "  make mcp          - Start the MCP server for AI agents manually"
 	@echo "  VS Code auto-manages via .vscode/mcp.json — no manual start needed."
 	@echo "  See docs/agentic/BOOTSTRAP.md for details."
+	@echo ""
+	@echo "Handoff Integrity:"
+	@echo "  make handoff-close-check    - Enforce close-readiness on active handoff task"
+	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
 
 # =============================================================================
 # Cross-Repo Checks
@@ -109,6 +113,14 @@ dashboard:
 # Print full handoff state
 state:
 	@$(PYTHON) scripts/mcp/unified_server.py state
+
+# Validate that active handoff state is ready to close
+handoff-close-check:
+	@$(PYTHON) scripts/mcp/unified_server.py handoff-close-check --enforce
+
+# CI/local guard for parser + lifecycle + close-check integrity
+handoff-integrity-check:
+	@$(PYTHON) scripts/mcp/handoff_integrity_guard.py
 
 # =============================================================================
 # Development Shortcuts

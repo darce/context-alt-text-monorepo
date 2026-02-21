@@ -1,5 +1,6 @@
 ## Deferred (Document as Tech Debt)
 
+- [ ] **#12** Add deterministic E2E/smoke automation path for sovereign WordPress flows — _Plan: `docs/tasks/tech-debt/e2e-smoke-automation-path.md` (Playwright + WP-CLI + reproducible outage testing, CI-ready)_
 - [ ] **#4** Extract lighter session-rebind in chunk loop instead of full `cluster_service_builder` rebuild (`clustering.py`) — _Defer: perf impact is marginal; avoid new abstraction until chunking pattern stabilizes_
 - [ ] **#5** Add lightweight ID-only cluster query for surfacing (avoid eager-loading reps/centroids when only IDs/labels needed) — _Defer: broader refactor; current limit=1000 is adequate; revisit when tenant cluster counts approach 500+_
 - [ ] **#9** Add `typeof` guards at `wp.hooks` usage sites, not just warn-and-continue (`main.tsx` + downstream consumers) — _Defer: keep rendering, guard at usage sites only; not a regression_

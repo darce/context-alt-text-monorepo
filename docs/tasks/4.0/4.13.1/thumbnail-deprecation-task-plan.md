@@ -9,7 +9,7 @@ The `thumbnail_url` field on `MediaIdentity` was designed for server-generated f
 - **Backend-first**: Drop the column and remove backend fields first. Once the backend no longer emits `thumbnail_url`, downstream consumers can be simplified without backward-compat shims.
 - **Preserve `acx://` indirection**: The `acx://cluster/{uuid}/media/{id}` URI scheme used by snapshot sync is _not_ part of this deprecation. It resolves to `wp_get_attachment_url()` and is actively used. Evaluate simplifying it in a separate task.
 - **Preserve WP attachment thumbnails**: `WorkbenchMediaItem.thumbnailUrl` (WP media library `thumbnail` size) is unrelated to face crop thumbnails and must not be touched.
-- **Migration safety**: The Alembic migration to drop the column must be backward-compatible (the column is nullable and never read by application code after the backend changes land).
+- **Greenfield schema policy**: This repository is greenfield; apply schema changes directly to baseline migration `db/migrations/versions/001_identity_schema.py` and reset local DB. Do not add a forward migration for this column removal.
 
 ## Terminology
 
@@ -46,9 +46,10 @@ What's actively used (must NOT be removed):
 
 Strip `thumbnail_url` from domain models, response schemas, repository reads, router mappings, and config. This makes the backend stop emitting `thumbnail_url` in API responses.
 
-### Phase 2: Backend -- Drop Column via Migration
+### Phase 2: Backend -- Remove Column from Baseline Schema
 
-Create an Alembic migration to `DROP COLUMN thumbnail_url` from `media_identities`. This is safe because:
+Remove `thumbnail_url` from baseline migration `db/migrations/versions/001_identity_schema.py` and rebuild local databases via `make reset`. This is safe because:
+- The project is greenfield and baseline-first for schema changes.
 - The column is nullable and always NULL.
 - After Phase 1, no application code reads it.
 
@@ -202,7 +203,7 @@ useEffect(() => {
 
 | File | Note |
 | --- | --- |
-| `db/migrations/versions/001_identity_schema.py` | Historical migration defining the column. Do NOT modify -- add a new migration. |
+| `db/migrations/versions/001_identity_schema.py` | Baseline schema source of truth in greenfield policy. Modify directly to remove `thumbnail_url`. |
 | `recognition/interface_adapters/http/routers/clusters.py` L176–177, L220 | `acx://` URI generation for snapshot sync. Not in scope but related. |
 | `src/sovereign/mappers/class-cluster-response-mapper.php` L243 | `extract_media_id_from_thumb_path()` parses `acx://`. Not in scope. |
 | `packages/shared-contracts/schemas/workbench-media-item.schema.json` | `thumbnailUrl` is WP attachment thumbnail. Not in scope. |
@@ -235,10 +236,10 @@ useEffect(() => {
 - [ ] Update backend tests: remove `thumbnail_url` from conftest fakes, test fixtures, and assertions.
 - [ ] Verify: `make check` (ruff + mypy + pytest).
 
-## Phase 2: Backend -- Drop Column Migration
+## Phase 2: Backend -- Remove Column from Baseline Schema
 
-- [ ] Create Alembic migration: `ALTER TABLE media_identities DROP COLUMN thumbnail_url`.
-- [ ] Test migration up/down locally against development database.
+- [ ] Remove `thumbnail_url` column from `db/migrations/versions/001_identity_schema.py`.
+- [ ] Run `make reset` in `apps/prototype-description-service` to rebuild schema from updated baseline.
 - [ ] Verify: `make check`.
 
 ## Phase 3: Plugin -- Remove Backward-Compat Shims

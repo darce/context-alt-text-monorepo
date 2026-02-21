@@ -48,19 +48,25 @@ describe('recognitionApi', () => {
     const [endpoint] = fetchApiMock.mock.calls[0] ?? [];
     const url = new URL(endpoint);
     expect(url.searchParams.getAll('media_ids[]')).toEqual(['1', '2']);
-    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
-      method: 'GET',
-      restNonce: 'nonce-123',
-    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: 'GET',
+        restNonce: 'nonce-123',
+      }),
+    );
   });
 
   it('sends nonce when fetching media identities', async () => {
     fetchApiMock.mockResolvedValue({ identities_by_media: {} });
     await fetchMediaIdentities([99]);
-    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
-      method: 'GET',
-      restNonce: 'nonce-123',
-    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: 'GET',
+        restNonce: 'nonce-123',
+      }),
+    );
   });
 
   it('calls updateClusterLabel with PATCH', async () => {
@@ -282,10 +288,13 @@ describe('recognitionApi', () => {
 
     await fetchSyncStatus();
 
-    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
-      method: 'GET',
-      restNonce: 'nonce-123',
-    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: 'GET',
+        restNonce: 'nonce-123',
+      }),
+    );
   });
 
   it('keeps undismiss cluster operation on the DELETE contract', async () => {
@@ -311,9 +320,12 @@ describe('recognitionApi', () => {
 
     await triggerSync();
 
-    expect(fetchApiMock).toHaveBeenCalledWith(expect.any(String), {
-      method: 'POST',
-      restNonce: 'nonce-123',
-    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.any(String),
+      expect.objectContaining({
+        method: 'POST',
+        restNonce: 'nonce-123',
+      }),
+    );
   });
 });

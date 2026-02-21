@@ -1,9 +1,12 @@
+import type { WorkbenchMediaStatus } from './workbenchMediaApi';
+
 import type { ClusterListParams } from './recognition/types';
 
 export interface WorkbenchMediaParams {
   page: number;
   perPage: number;
   search?: string;
+  status?: WorkbenchMediaStatus;
 }
 
 export const queryKeys = {

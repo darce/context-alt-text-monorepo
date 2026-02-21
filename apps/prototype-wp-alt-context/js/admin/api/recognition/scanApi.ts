@@ -7,6 +7,7 @@
 import { fetchRequiredApi } from '../../utils/http';
 import { getEndpoint, getConfig } from '../config';
 import type { AnalyzeRequest, AnalyzeResponse, JobStatusResponse, ClusterResponse } from './types';
+import { createRecognitionTimeoutSignal } from './requestTimeout';
 
 const getMaxMediaPerBatch = (): number => getConfig().maxMediaPerBatch;
 
@@ -35,6 +36,7 @@ export const scanFaces = async (request: AnalyzeRequest): Promise<AnalyzeRespons
     method: 'POST',
     body,
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(5_000),
   });
 };
 
@@ -60,6 +62,7 @@ export const fetchScanStatus = async (jobId: string): Promise<JobStatusResponse>
   return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}`, {
     method: 'GET',
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(2_000),
   });
 };
 
@@ -70,6 +73,7 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
   return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}${separator}cancel`, {
     method: 'POST',
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(5_000),
   });
 };
 
@@ -82,5 +86,6 @@ export const clusterFaces = async (mode: 'sync' | 'async' = 'async'): Promise<Cl
       mode,
     },
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(5_000),
   });
 };

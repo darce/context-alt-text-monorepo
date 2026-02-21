@@ -175,42 +175,6 @@ class RecognitionControllerTest extends TestCase
         $this->assertSame('too_many_media_ids', $result->get_error_code());
     }
 
-    public function testTopUnlabeledClustersHydrateThumbnailFallbacks(): void
-    {
-        $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                [
-                    'id' => 'cluster-1',
-                    'representatives' => [
-                        [
-                            'id' => 'rep-1',
-                            'media_id' => 101,
-                            'thumb_url' => null,
-                        ],
-                        [
-                            'id' => 'rep-2',
-                            'media_id' => 202,
-                            'thumbnail_url' => 'http://example.test/media/legacy-202.jpg',
-                        ],
-                    ],
-                ],
-            ]),
-        ]);
-
-        $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
-        $response = $this->controller->list_top_unlabeled_clusters($request);
-
-        $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertSame(200, $response->get_status());
-
-        $data = $response->get_data();
-        $this->assertSame('http://example.test/media/101.jpg', $data[0]['representatives'][0]['thumb_url']);
-        $this->assertSame('http://example.test/media/legacy-202.jpg', $data[0]['representatives'][1]['thumb_url']);
-    }
-
     public function testDismissClusterProxiesToBackend(): void
     {
         $clusterId = 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae';

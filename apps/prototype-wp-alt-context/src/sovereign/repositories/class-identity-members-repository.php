@@ -433,7 +433,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 	 * @param array<string,mixed> $member
 	 */
 	private function normalize_thumb_path( array $member, string $identity_uuid, int $attachment_id ): string {
-		$thumb_path = trim( (string) ( $member['thumb_path'] ?? $member['thumbnail_path'] ?? '' ) );
+		$thumb_path = trim( (string) ( $member['thumb_path'] ?? '' ) );
 		if ( '' !== $thumb_path ) {
 			return $thumb_path;
 		}

@@ -17,7 +17,9 @@ require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 
+use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Mappers\ClusterResponseMapper;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
 use AltContext\Sovereign\Repositories\ClustersRepository;
@@ -58,6 +60,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private ?SyncPullJobInterface $sync_pull_job;
 	private ClusterResponseMapper $cluster_mapper;
 	private MemberResponseMapper $member_mapper;
+	private ClusterFacade $cluster_facade;
 
 	public function __construct(
 		?ClustersRepositoryInterface $clusters_repository = null,
@@ -65,7 +68,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 		?SyncStateRepositoryInterface $sync_state_repository = null,
 		?SyncPullJobInterface $sync_pull_job = null,
 		?ClusterResponseMapper $cluster_mapper = null,
-		?MemberResponseMapper $member_mapper = null
+		?MemberResponseMapper $member_mapper = null,
+		?ClusterFacade $cluster_facade = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
@@ -73,6 +77,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$this->sync_pull_job = $sync_pull_job;
 		$this->cluster_mapper = $cluster_mapper ?? new ClusterResponseMapper();
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
+		$this->cluster_facade = $cluster_facade ?? new ClusterFacade( $this->clusters_repository, $this->members_repository );
 		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );
 	}
 
@@ -174,77 +179,21 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$tenant_id = $this->get_tenant_id();
 		$limit     = absint( $request->get_param( 'limit' ) ?? 10 );
 
-		if ( $this->should_use_local_projection( $tenant_id ) ) {
-			$clusters = $this->clusters_repository->list_top_unlabeled( $tenant_id, $limit );
-			$members_by_cluster = $this->load_members_by_cluster( $clusters, 4 );
-			$unlabeled_items = $this->cluster_mapper->map_top_unlabeled_clusters( $clusters, $members_by_cluster, $tenant_id );
-
-			return new WP_REST_Response( $unlabeled_items, 200 );
-		}
-
-		$query = array(
-			'tenant_id' => $tenant_id,
-			'limit'     => $limit,
-		);
-
-		$response = $this->proxy_request( 'GET', '/recognition/clusters/top-unlabeled', array(), $query );
-		if ( $this->is_proxy_unavailable( $response ) ) {
+		if ( ! $this->should_use_local_projection( $tenant_id ) ) {
+			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, array( $tenant_id ) ) ) {
+				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, array( $tenant_id ) );
+			}
 			return new WP_REST_Response( array(), 200 );
 		}
-		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return $response;
-		}
 
-		if ( 200 !== $response->get_status() ) {
-			return $response;
-		}
+		$sovereign_data = $this->cluster_facade->list_top_unlabeled( $tenant_id, $limit );
+		$unlabeled_items = $this->cluster_mapper->map_top_unlabeled_clusters(
+			$sovereign_data['clusters'],
+			$sovereign_data['members'],
+			$tenant_id
+		);
 
-		$this->maybe_bootstrap_after_proxy_read( $tenant_id, $response );
-
-		$data = $response->get_data();
-		if ( ! is_array( $data ) ) {
-			return $response;
-		}
-
-		foreach ( $data as $cluster_index => $cluster ) {
-			if ( ! is_array( $cluster ) ) {
-				continue;
-			}
-			if ( ! isset( $cluster['representatives'] ) || ! is_array( $cluster['representatives'] ) ) {
-				continue;
-			}
-
-			foreach ( $cluster['representatives'] as $rep_index => $rep ) {
-				if ( ! is_array( $rep ) ) {
-					continue;
-				}
-
-				$thumb_url = $rep['thumb_url'] ?? null;
-				if ( ( ! is_string( $thumb_url ) || '' === $thumb_url ) && isset( $rep['thumbnail_url'] ) ) {
-					$legacy_thumb = $rep['thumbnail_url'];
-					if ( is_string( $legacy_thumb ) && '' !== $legacy_thumb ) {
-						$thumb_url = $legacy_thumb;
-					}
-				}
-
-				if ( ( ! is_string( $thumb_url ) || '' === $thumb_url ) && isset( $rep['media_id'] ) ) {
-					$media_id = absint( $rep['media_id'] );
-					if ( $media_id > 0 ) {
-						$fallback_url = wp_get_attachment_url( $media_id );
-						if ( is_string( $fallback_url ) && '' !== $fallback_url ) {
-							$thumb_url = $fallback_url;
-						}
-					}
-				}
-
-				$cluster['representatives'][ $rep_index ]['thumb_url'] = is_string( $thumb_url ) && '' !== $thumb_url ? $thumb_url : null;
-			}
-
-			$data[ $cluster_index ] = $cluster;
-		}
-
-		$response->set_data( $data );
-		return $response;
+		return new WP_REST_Response( $unlabeled_items, 200 );
 	}
 
 	public function list_cluster_labels( WP_REST_Request $request ): WP_REST_Response|WP_Error {

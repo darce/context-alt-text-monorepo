@@ -12,7 +12,9 @@ require_once __DIR__ . '/class-cluster-mutations-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
+require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 
+use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
@@ -33,6 +35,7 @@ class RecognitionController {
 	private MediaIdentitiesController $mediaIdentitiesController;
 	private SyncStatusController $syncStatusController;
 	private SuggestionsController $suggestionsController;
+	private ClusterFacade $clusterFacade;
 
 	/**
 	 * @param ?AnalysisJobsController     $analysis_jobs_controller     Optional for testing.
@@ -61,7 +64,8 @@ class RecognitionController {
 				$sync_repository     = new SyncStateRepository();
 				$snapshot_projector  = new SnapshotProjector( $clusters_repository, $members_repository, $sync_repository );
 				$sync_pull_job       = new SyncPullJob( new SnapshotClient(), $snapshot_projector );
-				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job );
+				$this->clusterFacade = new ClusterFacade( $clusters_repository, $members_repository );
+				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job, null, null, $this->clusterFacade );
 				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( $clusters_repository, $sync_repository );
 			} catch ( Throwable $throwable ) {
 				do_action(
@@ -71,7 +75,8 @@ class RecognitionController {
 						'controller' => __CLASS__,
 					)
 				);
-				$this->clustersController = new ClustersController();
+				$this->clusterFacade = new ClusterFacade( new ClustersRepository(), new IdentityMembersRepository() );
+				$this->clustersController = new ClustersController( null, null, null, null, null, null, $this->clusterFacade );
 				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController();
 			}
 		}

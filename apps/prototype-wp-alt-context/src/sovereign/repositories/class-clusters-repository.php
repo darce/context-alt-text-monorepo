@@ -532,7 +532,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 					continue;
 				}
 
-				$thumb_path = trim( (string) ( $representative['thumb_path'] ?? $representative['thumbnail_path'] ?? '' ) );
+				$thumb_path = trim( (string) ( $representative['thumb_path'] ?? '' ) );
 				if ( '' !== $thumb_path ) {
 					return $thumb_path;
 				}

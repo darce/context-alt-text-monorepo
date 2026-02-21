@@ -24,11 +24,6 @@ trait MapsResponseFields {
 	 * @param array<string,mixed> $member_row
 	 */
 	private function resolve_thumb_url( array $member_row, int $media_id ): ?string {
-		$thumb_path = trim( (string) ( $member_row['thumb_path'] ?? '' ) );
-		if ( '' !== $thumb_path && $this->is_http_url( $thumb_path ) ) {
-			return $thumb_path;
-		}
-
 		if ( $media_id > 0 ) {
 			$attachment_url = wp_get_attachment_url( $media_id );
 			if ( is_string( $attachment_url ) && '' !== trim( $attachment_url ) ) {
@@ -53,13 +48,6 @@ trait MapsResponseFields {
 		}
 
 		return null;
-	}
-
-	/**
-	 * Check if a string is a valid HTTP(S) URL.
-	 */
-	private function is_http_url( string $value ): bool {
-		return 0 === strpos( $value, 'http://' ) || 0 === strpos( $value, 'https://' );
 	}
 
 	/**

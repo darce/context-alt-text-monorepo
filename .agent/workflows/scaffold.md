@@ -12,15 +12,13 @@ description: Create new service/component skeleton (scaffolding-first)
 
 **Prerequisites**: Knowledge of what you're building
 
-This command helps create new domain services or React components following the scaffolding-first pattern.
+This workflow helps create new domain services or React components following the scaffolding-first pattern.
 
-1. Ask what to scaffold: service (Python), component (React), or hook (React)
+1. Ask what to scaffold: service (Python), component (React), or hook (React).
 
-2. For Python service, create skeleton:
+2. For a Python service, use your **`write_to_file`** tool to create a file at `apps/prototype-description-service/recognition/application/_new_service.py` with the following skeleton:
 
-```bash
-cd apps/prototype-description-service
-cat > recognition/application/_new_service.py << 'EOF'
+```python
 """
 TODO: Rename this file and update class name.
 
@@ -53,16 +51,12 @@ class NewService:
 
     async def execute(self, input_data: str) -> str:
         raise NotImplementedError("TODO: Implement this method")
-EOF
-echo "Created: recognition/application/_new_service.py"
-echo "Next: Rename file, update class name, write tests first!"
 ```
+*(After creating: Rename file, update class name, and write tests first!)*
 
-3. For React component:
+3. For a React component, use your **`write_to_file`** tool to create a file at `apps/prototype-wp-alt-context/js/admin/components/_NewComponent.tsx` with the following skeleton:
 
-```bash
-cd apps/prototype-wp-alt-context/js/admin
-cat > components/_NewComponent.tsx << 'EOF'
+```tsx
 /**
  * TODO: Rename this file and component.
  *
@@ -78,7 +72,5 @@ export function NewComponent({ value }: NewComponentProps): JSX.Element {
   // TODO: Implement component
   return <div>NewComponent: {value}</div>;
 }
-EOF
-echo "Created: components/_NewComponent.tsx"
-echo "Next: Rename, add to index, write tests first!"
 ```
+*(After creating: Rename, add to index, and write tests first!)*

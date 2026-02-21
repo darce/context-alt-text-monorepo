@@ -793,7 +793,7 @@ def _insert_import_findings(
                 description, fix, status, session, agent, branch, commit_sha,
                 resolution_notes, reopen_count, last_reopen_reason, last_reopened_at,
                 resolved_at, created_at, updated_at
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 task_ref,

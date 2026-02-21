@@ -75,8 +75,8 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
   } = useQuery({
     queryKey: queryKeys.suggestions.pending(),
     queryFn: () => fetchPendingSuggestions(SUGGESTION_PAGE_SIZE, 0),
-    refetchInterval: (query) => (query.state.status === 'error' ? false : 30000),
-    retry: 1,
+    refetchInterval: false,
+    retry: false,
   });
 
   const {
@@ -88,8 +88,8 @@ export const SuggestionReviewPanel = ({ onLabel, onReview }: SuggestionReviewPan
   } = useQuery({
     queryKey: queryKeys.suggestions.mergePending(),
     queryFn: () => fetchPendingMergeSuggestions(10, 0),
-    refetchInterval: (query) => (query.state.status === 'error' ? false : 30000),
-    retry: 1,
+    refetchInterval: false,
+    retry: false,
   });
 
   const acceptMutation = useMutation({

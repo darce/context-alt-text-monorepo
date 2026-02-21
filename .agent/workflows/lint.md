@@ -16,26 +16,8 @@ description: Run all linters across the monorepo
 
 Run linters for all languages:
 
-1. Python linting (ruff) with correct pyenv
+1. Run root Makefile lint-all (handles Python, TS, and PHP)
 
 ```bash
-cd apps/prototype-description-service && ~/.pyenv/versions/description-service/bin/ruff check . 2>&1 | head -30
-```
-
-2. Python type checking (mypy)
-
-```bash
-cd apps/prototype-description-service && ~/.pyenv/versions/description-service/bin/mypy . 2>&1 | head -30
-```
-
-3. TypeScript/ESLint
-
-```bash
-cd apps/prototype-wp-alt-context && npm run lint 2>&1 | head -30
-```
-
-4. PHP static analysis
-
-```bash
-cd apps/prototype-wp-alt-context && composer phpstan 2>&1 | head -30
+make lint-all
 ```

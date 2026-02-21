@@ -11,12 +11,14 @@ const mockReturn = {
   isError: false,
 };
 
+const mutateSpy = vi.fn();
+
 const mockTrigger = {
   isPending: false,
   isSuccess: false,
   isError: false,
   data: null as SyncTriggerResponse | null | undefined,
-  mutate: vi.fn(),
+  mutate: mutateSpy,
 } as unknown as UseMutationResult<SyncTriggerResponse, Error, void, unknown>;
 
 vi.mock('@wordpress/i18n', () => ({
@@ -40,7 +42,7 @@ describe('SyncStatusIndicator', () => {
     mockReturn.data = null;
     mockReturn.isLoading = false;
     mockReturn.isError = false;
-    (mockTrigger as { mutate: ReturnType<typeof vi.fn> }).mutate.mockClear();
+    mutateSpy.mockClear();
     (mockTrigger as Record<string, unknown>).isPending = false;
     (mockTrigger as Record<string, unknown>).isSuccess = false;
     (mockTrigger as Record<string, unknown>).isError = false;
@@ -54,6 +56,7 @@ describe('SyncStatusIndicator', () => {
 
     expect(screen.getByText('Stale')).toBeInTheDocument();
     expect(screen.getByText(/Last sync/)).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: 'Sync now' })).toBeInTheDocument();
   });
 
   it('renders fresh badge when is_stale is false', () => {
@@ -147,7 +150,16 @@ describe('SyncStatusIndicator', () => {
     render(<SyncStatusIndicator />);
 
     fireEvent.click(screen.getByRole('button', { name: 'Retry' }));
-    expect((mockTrigger as { mutate: ReturnType<typeof vi.fn> }).mutate).toHaveBeenCalledTimes(1);
+    expect(mutateSpy).toHaveBeenCalledTimes(1);
+  });
+
+  it('calls mutate when sync now is clicked in stale idle state', () => {
+    mockReturn.data = { last_snapshot_version: 2, last_synced_at: '2026-02-14 00:00:00', is_stale: true };
+
+    render(<SyncStatusIndicator />);
+
+    fireEvent.click(screen.getByRole('button', { name: 'Sync now' }));
+    expect(mutateSpy).toHaveBeenCalledTimes(1);
   });
 
   it('does not stay in waiting-for-service when stale flag clears', () => {

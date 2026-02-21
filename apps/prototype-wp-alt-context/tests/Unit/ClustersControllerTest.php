@@ -50,54 +50,81 @@ class ClustersControllerTest extends TestCase
         $this->assertNotContains('/recognition/media-identities', $routes);
     }
 
-    public function testTopUnlabeledClustersHydrateThumbnailFallbacks(): void
+    public function testTopUnlabeledClustersHydrateThumbnailFallbacksFromLocalProjection(): void
     {
         $GLOBALS['__ac_attachment_urls'][101] = 'http://example.test/media/101.jpg';
 
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                [
-                    'id' => 'cluster-1',
-                    'representatives' => [
+        $clustersRepo = new class() extends NullClustersRepository {
+            public function list_top_unlabeled(string $tenant_id, int $limit = 10): array
+            {
+                return [
+                    [
+                        'cluster_uuid' => 'cluster-1',
+                        'label' => null,
+                        'identity_count' => 1,
+                    ]
+                ];
+            }
+        };
+
+        $membersRepo = new class() extends NullIdentityMembersRepository {
+            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array
+            {
+                return [
+                    'cluster-1' => [
                         [
-                            'id' => 'rep-1',
                             'media_id' => 101,
-                            'thumb_url' => null,
-                        ],
-                        [
-                            'id' => 'rep-2',
-                            'media_id' => 202,
-                            'thumbnail_url' => 'http://example.test/media/legacy-202.jpg',
-                        ],
-                    ],
-                ],
-            ]),
-        ]);
+                            'cluster_uuid' => 'cluster-1',
+                            'distance' => 0.0,
+                        ]
+                    ]
+                ];
+            }
+        };
+
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 1;
+            }
+        };
+
+        $controller = new ClustersController($clustersRepo, $membersRepo, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
-        $response = $this->controller->list_top_unlabeled_clusters($request);
+        $response = $controller->list_top_unlabeled_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
 
         $data = $response->get_data();
         $this->assertSame('http://example.test/media/101.jpg', $data[0]['representatives'][0]['thumb_url']);
-        $this->assertSame('http://example.test/media/legacy-202.jpg', $data[0]['representatives'][1]['thumb_url']);
     }
 
-    public function testTopUnlabeledClustersReturnsEmptyPayloadWhenProxyUnavailable(): void
+    public function testTopUnlabeledClustersReturnsEmptyArrayAndSchedulesBootstrapWhenProjectionUnavailable(): void
     {
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return null;
+            }
+        };
+        $controller = new ClustersController(null, null, $syncRepo, null, new ClusterResponseMapper(), new MemberResponseMapper());
 
         $request = new WP_REST_Request('GET', '/acx/v1/recognition/clusters/top-unlabeled');
-        $response = $this->controller->list_top_unlabeled_clusters($request);
+        $response = $controller->list_top_unlabeled_clusters($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
         $this->assertSame([], $response->get_data());
+
+        // Verify that the bootstrap sync hook was scheduled.
+        $tenant_id = md5((string) get_site_url());
+        $this->assertNotFalse(wp_next_scheduled('acx_bootstrap_sync', [$tenant_id]));
+
+        // Ensure no proxy/HTTP calls are made as part of the local projection strategy.
+        $this->assertCount(0, $this->getHttpCalls());
     }
 
     public function testTopUnlabeledOfflineReturnsBareArray(): void

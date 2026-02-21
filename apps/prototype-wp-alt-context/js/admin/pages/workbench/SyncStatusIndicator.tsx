@@ -47,9 +47,7 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     return (
       <div className="acx-sync-status acx-sync-status--success">
         <span className="acx-sync-status__label">
-          {syncedAt
-            ? sprintf(__('Sync completed: %s', 'alt-context'), syncedAt)
-            : __('Sync completed', 'alt-context')}
+          {syncedAt ? sprintf(__('Sync completed: %s', 'alt-context'), syncedAt) : __('Sync completed', 'alt-context')}
         </span>
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
       </div>
@@ -82,7 +80,17 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     <div className={`acx-sync-status${data.is_stale ? ' acx-sync-status--warning' : ''}`}>
       <span className="acx-sync-status__label">{label}</span>
       {data.is_stale ? (
-        <span className="acx-sync-status__badge">{__('Stale', 'alt-context')}</span>
+        <>
+          <span className="acx-sync-status__badge">{__('Stale', 'alt-context')}</span>
+          <button
+            type="button"
+            className="button button-link"
+            onClick={() => syncTrigger.mutate()}
+            disabled={syncTrigger.isPending}
+          >
+            {__('Sync now', 'alt-context')}
+          </button>
+        </>
       ) : (
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
       )}

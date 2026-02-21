@@ -1997,10 +1997,20 @@ def find_php_class(class_name: str) -> str:
 def _cli() -> None:
     """CLI for direct tool invocation from terminal."""
     import sys
+    import json
     import argparse
 
+    custom_commands = {
+        "dashboard", "state", "task", "set", "decision", "action", "blocker", "test",
+        "review-record", "review-update", "review-list", "review-get", "review-summary"
+    }
+
+    if len(sys.argv) == 1 or sys.argv[1] not in custom_commands and sys.argv[1] not in ["-h", "--help"]:
+        mcp.run()
+        return
+
     parser = argparse.ArgumentParser(description="MCP Tool CLI")
-    subparsers = parser.add_subparsers(dest="command")
+    subparsers = parser.add_subparsers(dest="cli_command", required=True)
 
     # Read-only commands
     subparsers.add_parser("dashboard", help="Print handoff dashboard")
@@ -2040,38 +2050,95 @@ def _cli() -> None:
     p_test.add_argument("--passed", action="store_true")
     p_test.add_argument("--result")
     p_test.add_argument("--session", default="cli")
+    
+    # Review Findings
+    p_find_rec = subparsers.add_parser("review-record", help="Record a review finding")
+    p_find_rec.add_argument("--file_path", required=True)
+    p_find_rec.add_argument("--line_start", type=int)
+    p_find_rec.add_argument("--line_end", type=int)
+    p_find_rec.add_argument("--description", required=True)
+    p_find_rec.add_argument("--category", required=True, choices=["ANTIPATTERN", "DEAD_CODE", "COMPLEXITY", "GAP", "OTHER"])
+    p_find_rec.add_argument("--severity", required=True, choices=["HIGH", "MEDIUM", "LOW"])
+    p_find_rec.add_argument("--suggested_fix")
+    p_find_rec.add_argument("--session", default="cli")
+
+    p_find_upd = subparsers.add_parser("review-update", help="Update a review finding")
+    p_find_upd.add_argument("--id", type=int, required=True)
+    p_find_upd.add_argument("--status", choices=["open", "resolved", "ignored"])
+    p_find_upd.add_argument("--resolution_notes")
+    p_find_upd.add_argument("--session", default="cli")
+
+    p_find_list = subparsers.add_parser("review-list", help="List review findings")
+    p_find_list.add_argument("--task_ref")
+    p_find_list.add_argument("--status")
+    p_find_list.add_argument("--severity")
+    
+    p_find_get = subparsers.add_parser("review-get", help="Get a review finding")
+    p_find_get.add_argument("--id", type=int, required=True)
+
+    p_find_sum = subparsers.add_parser("review-summary", help="Get a summary of review findings")
+    p_find_sum.add_argument("--task_ref")
 
     args = parser.parse_args()
 
+    def process_result(json_str: str) -> None:
+        try:
+            parsed = json.loads(json_str)
+            print(json.dumps(parsed, indent=2))
+            if parsed.get("ok") is False:
+                sys.exit(1)
+        except json.JSONDecodeError:
+            print(json_str)
+            # If not JSON, assume success print (though all tools return JSON)
+
     # Dispatch
     with _get_db_connection() as conn:
-        if args.command == "dashboard":
-            print(get_handoff_dashboard())
-        elif args.command == "state":
-            print(get_handoff_state(task_ref=args.task_ref, verbose=True))
-        elif args.command == "task":
-            print(generate_current_task_md(task_ref=args.task_ref, write_file=True))
-        elif args.command == "set":
-            print(set_handoff_state(
+        if args.cli_command == "dashboard":
+            process_result(get_handoff_dashboard())
+        elif args.cli_command == "state":
+            process_result(get_handoff_state(task_ref=args.task_ref, verbose=True))
+        elif args.cli_command == "task":
+            process_result(generate_current_task_md(task_ref=args.task_ref, write_file=True))
+        elif args.cli_command == "set":
+            process_result(set_handoff_state(
                 task_ref=args.task_ref, objective=args.objective, status=args.status,
                 expected_revision=args.expected_revision
             ))
-        elif args.command == "decision":
-            print(record_decision(session=args.session, decision=args.decision, rationale=args.rationale))
-        elif args.command == "action":
-            print(update_next_actions(
+        elif args.cli_command == "decision":
+            process_result(record_decision(session=args.session, decision=args.decision, rationale=args.rationale))
+        elif args.cli_command == "action":
+            process_result(update_next_actions(
                 operation=args.op, action_id=args.id, action=args.text,
                 priority=args.priority, status=args.status
             ))
-        elif args.command == "blocker":
-            print(report_blocker(operation=args.op, description=args.description, blocker_id=args.id))
-        elif args.command == "test":
-            print(record_test_result(
+        elif args.cli_command == "blocker":
+            process_result(report_blocker(operation=args.op, description=args.description, blocker_id=args.id))
+        elif args.cli_command == "test":
+            process_result(record_test_result(
                 session=args.session, command=args.command, passed=args.passed, result=args.result
             ))
-        else:
-            parser.print_help()
-
+        elif args.cli_command == "review-record":
+            details = {}
+            if args.line_start is not None:
+                details["line_start"] = args.line_start
+            if args.line_end is not None:
+                details["line_end"] = args.line_end
+            if args.suggested_fix:
+                details["suggested_fix"] = args.suggested_fix
+            process_result(record_review_finding(
+                session=args.session, file_path=args.file_path, description=args.description, 
+                category=args.category, severity=args.severity, details=details
+            ))
+        elif args.cli_command == "review-update":
+            process_result(update_review_finding(
+                finding_id=args.id, status=args.status, resolution_notes=args.resolution_notes, session=args.session
+            ))
+        elif args.cli_command == "review-list":
+            process_result(list_review_findings(task_ref=args.task_ref, status=args.status, severity=args.severity))
+        elif args.cli_command == "review-get":
+            process_result(get_review_finding(finding_id=args.id))
+        elif args.cli_command == "review-summary":
+            process_result(get_review_findings_summary(task_ref=args.task_ref))
 
 if __name__ == "__main__":
     _cli()

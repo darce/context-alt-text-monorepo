@@ -50,14 +50,14 @@ VS Code spawns the MCP server process on demand and communicates via stdin/stdou
 
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
-- Python 3.11+ virtualenv with `fastmcp` installed (the `description-service` pyenv env)
+- Python 3.11+ virtualenv with `fastmcp>=3,<4` installed (the `description-service` pyenv env)
 - Ripgrep installed (`brew install ripgrep` on macOS)
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → "context-alt-text" should show **21 custom tools**.
+Command Palette → `MCP: List Servers` → "context-alt-text" should show **26 custom tools**.
 
-### Available Tools (21 custom total)
+### Available Tools (26 custom total)
 
 These tools handle cross-boundary and domain-specific queries. For generic operations, use editor-native tools (for example, `search_code`, `find_definition`, `read_file`, `list_dir`, diagnostics) or Pylance MCP tools.
 
@@ -79,6 +79,11 @@ These tools handle cross-boundary and domain-specific queries. For generic opera
 |                 | `update_next_actions`  | Add/complete/reprioritize action queue items      |
 |                 | `record_test_result`   | Record verified checks (`passed` + optional exit code) |
 |                 | `report_blocker`       | Add/resolve/reopen blockers                       |
+|                 | `record_review_finding` | Record structured review findings                 |
+|                 | `update_review_finding` | Update finding lifecycle status                   |
+|                 | `list_review_findings` | List findings with filters/pagination             |
+|                 | `get_review_finding`   | Fetch one finding by DB id within a task          |
+|                 | `get_review_findings_summary` | Compact counts + recent finding updates      |
 |                 | `generate_current_task_md` | Generate deterministic `CURRENT_TASK.md` from SQLite state |
 |                 | `export_handoff_state` | Export task snapshot JSON for cross-machine sharing |
 |                 | `import_handoff_state` | Import task snapshot JSON (merge/replace)         |
@@ -104,7 +109,12 @@ If tools don't appear in VS Code:
   - actions: `5`
   - decisions: `3`
   - tests: `3`
-- `task_ref` is optional for write tools; if omitted, tools use active `handoff_state.task_ref`.
+  - findings: `10`
+- Write tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`, `record_review_finding`, `update_review_finding`) target the active task only.
+- To write to a different task, switch active state first with `set_handoff_state(...)`.
+- Optional write provenance is passed as `actor={ "agent"?: str, "branch"?: str, "commit_sha"?: str }`.
+- Optional review finding details are passed as `details={ "line_start"?: int, "line_end"?: int, "fix"?: str }`.
+- For finding verification/history, use `get_review_findings_summary` or `list_review_findings` instead of direct SQLite queries.
 
 ---
 

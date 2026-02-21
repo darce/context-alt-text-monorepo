@@ -12,6 +12,7 @@ import {
   type PendingMergeSuggestionApiResponse,
   type PendingSuggestionApiResponse,
 } from './identitySuggestionMappers';
+import { createRecognitionTimeoutSignal } from './requestTimeout';
 
 export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIdentitiesResponse> => {
   if (mediaIds.length === 0) {
@@ -31,6 +32,7 @@ export const fetchMediaIdentities = async (mediaIds: number[]): Promise<MediaIde
   return fetchRequiredApi<MediaIdentitiesResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(2_000),
   });
 };
 
@@ -43,6 +45,7 @@ export const fetchIdentitySuggestions = async (identityId: string, topK = 5): Pr
   return fetchRequiredApi<IdentitySuggestionsResponse>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(2_000),
   });
 };
 
@@ -55,6 +58,7 @@ export const fetchPendingSuggestions = async (limit = 10, offset = 0): Promise<P
   const response = await fetchRequiredApi<PendingSuggestionsResponse | PendingSuggestionApiResponse[]>(url.toString(), {
     method: 'GET',
     restNonce: getConfig().nonce,
+    signal: createRecognitionTimeoutSignal(2_000),
   });
 
   return mapPendingSuggestions(response, limit, offset);
@@ -74,6 +78,7 @@ export const fetchPendingMergeSuggestions = async (
     {
       method: 'GET',
       restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(2_000),
     },
   );
 

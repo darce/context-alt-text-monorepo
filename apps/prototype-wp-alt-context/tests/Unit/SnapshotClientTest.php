@@ -106,4 +106,29 @@ class SnapshotClientTest extends TestCase
         $this->assertTrue(is_wp_error($result));
         $this->assertSame('invalid_snapshot_payload', $result->get_error_code());
     }
+
+    public function testFetchSnapshotUsesBackgroundRetryPolicy(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 500, 'message' => 'Internal Server Error'],
+            'body' => '{"error":"temporary"}',
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'snapshot_version' => 22,
+                'clusters' => [],
+                'members' => [],
+            ]),
+        ]);
+
+        $result = $this->client->fetch_snapshot('tenant-retry');
+
+        $this->assertIsArray($result);
+        $this->assertSame(22, $result['snapshot_version']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls, 'Background sync should retry transient 5xx responses.');
+        $this->assertSame(30, $calls[0]['args']['timeout'] ?? null);
+    }
 }

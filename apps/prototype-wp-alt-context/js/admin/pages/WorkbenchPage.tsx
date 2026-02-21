@@ -103,6 +103,7 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
   const [perPage, setPerPage] = useState<number>(() => getStoredMediaPageSize());
+  const [knownTotalPages, setKnownTotalPages] = useState<number | null>(null);
   const { recognitionUrlFallback } = getConfig();
   const [clusterPanel, dispatchClusterPanel] = React.useReducer(clusterPanelReducer, {
     mode: 'none',
@@ -111,12 +112,22 @@ export const WorkbenchPage = (): React.JSX.Element => {
 
   const { jobId, jobHistory, jobStatuses, rememberJob, selectJob, clearHistory } = useRecognitionJobHistory();
   const { selection, selectedMedia, toggleRow, toggleAll, isPageFullySelected } = useMediaSelectionState();
-  const { searchQuery, currentPage, setCurrentPage, handleSearchChange, normalizedSearch } = useWorkbenchFilters();
+  const {
+    searchQuery,
+    currentPage,
+    setCurrentPage,
+    handleSearchChange,
+    normalizedSearch,
+    statusFilter,
+    handleStatusChange,
+  } = useWorkbenchFilters();
+  const clampedPage = Math.min(Math.max(1, currentPage), knownTotalPages ?? currentPage);
 
   const mediaQuery = useWorkbenchMedia({
-    page: currentPage,
+    page: clampedPage,
     perPage,
     search: normalizedSearch,
+    status: statusFilter,
     enabled: activeSection === TAB_IDS.scan,
   });
 
@@ -127,6 +138,20 @@ export const WorkbenchPage = (): React.JSX.Element => {
   const hasIdentities = mediaItems.length > 0;
   const allPageRowsChecked = isPageFullySelected(mediaItems);
   const identityQuery = mediaQuery.identitiesQuery;
+
+  useEffect(() => {
+    if (currentPage === clampedPage) {
+      return;
+    }
+    setCurrentPage(clampedPage);
+  }, [clampedPage, currentPage, setCurrentPage]);
+
+  useEffect(() => {
+    if (!mediaData) {
+      return;
+    }
+    setKnownTotalPages(mediaData.totalPages);
+  }, [mediaData]);
 
   const {
     isScanRunning,
@@ -321,16 +346,18 @@ export const WorkbenchPage = (): React.JSX.Element => {
             )}
             <MediaSelection
               items={mediaItems}
-              isLoading={mediaQuery.isFetching}
+              isLoading={mediaQuery.isPending && mediaItems.length === 0}
               isError={mediaQuery.isError}
               onRetry={mediaQuery.isError ? () => void mediaQuery.refetch() : undefined}
               statusMessage={statusMessage}
               searchQuery={searchQuery}
               onSearchChange={handleSearchChange}
+              statusFilter={statusFilter}
+              onStatusFilterChange={handleStatusChange}
               selection={selection}
               onToggleRow={toggleRow}
               onToggleAll={(checked) => toggleAll(mediaItems, checked)}
-              currentPage={currentPage}
+              currentPage={clampedPage}
               totalPages={totalPages}
               perPage={perPage}
               onPerPageChange={handlePerPageChange}

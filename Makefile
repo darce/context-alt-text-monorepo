@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all
+.PHONY: help check-all check-frontend lint-all test-all clean-all mcp mcp-start
 
 # Default target
 help:
@@ -30,6 +30,7 @@ help:
 	@echo "  cd apps/prototype-wp-alt-context && make help"
 	@echo ""
 	@echo "MCP Server (AI Agent Tooling):"
+	@echo "  make mcp          - Start the MCP server for AI agents manually"
 	@echo "  VS Code auto-manages via .vscode/mcp.json — no manual start needed."
 	@echo "  See docs/agentic/BOOTSTRAP.md for details."
 
@@ -80,6 +81,34 @@ clean-all:
 	@cd apps/prototype-wp-alt-context && rm -rf node_modules/.cache 2>/dev/null || true
 	@echo ""
 	@echo "✅ All caches cleaned"
+
+# =============================================================================
+# MCP Server (Manual Start)
+# =============================================================================
+
+mcp: mcp-start
+
+mcp-start:
+	@echo "Starting MCP Server manually..."
+	@./scripts/mcp/mcp-server.sh run
+
+# =============================================================================
+# Handoff / Task State
+# =============================================================================
+
+PYTHON ?= PYENV_VERSION=description-service pyenv exec python
+
+# Generate CURRENT_TASK.md from handoff DB
+task:
+	@$(PYTHON) scripts/mcp/unified_server.py task
+
+# Print handoff dashboard
+dashboard:
+	@$(PYTHON) scripts/mcp/unified_server.py dashboard
+
+# Print full handoff state
+state:
+	@$(PYTHON) scripts/mcp/unified_server.py state
 
 # =============================================================================
 # Development Shortcuts

@@ -37,11 +37,10 @@ Phase 3 (Dual-Write + Pull Sync) is merged to `main`. The epic's next gate is re
 
 ## Technical Notes
 
+- **Greenfield project -- no data migration required.** Per the Greenfield Policy in `GEMINI.md`, the database is wiped and rebuilt after every schema change. There is no production data to preserve. The correct approach is to **remove `thumbnail_url` directly from the baseline migration** (`db/migrations/versions/001_identity_schema.py`) and from the SQLAlchemy model -- do NOT create a new forward Alembic migration.
 - `acx://` URI resolution (`resolve_representative_thumb_path`, `normalize_thumb_path`) is **not** in scope -- it is actively used and must not be touched.
 - `WorkbenchMediaItem.thumbnailUrl` (WP attachment thumbnail) is **not** in scope.
-- The Alembic migration is safe: the column has always been nullable and always `NULL`. No data loss.
 - After removing `_fetch_cluster_thumbnails()`, verify `list_pending_with_details()` no longer passes a thumbnail dict to `_to_details()`.
-- Do NOT modify `db/migrations/versions/001_identity_schema.py` -- add a new migration file.
 
 ## Verification Commands
 
@@ -96,8 +95,8 @@ pytest recognition/tests/ -q   # full suite; baseline is 476 passed
 - [ ] Update backend tests: remove `thumbnail_url` from conftest fakes, test fixtures, and assertions.
 - [ ] Verify: `make check` (ruff + mypy + pytest).
 
-## Phase 1-B: Backend -- Drop Column Migration
+## Phase 1-B: Remove Column from Baseline Schema
 
-- [ ] Create Alembic migration: `ALTER TABLE media_identities DROP COLUMN thumbnail_url`.
-- [ ] Test migration up/down locally against development database.
+- [ ] Remove `thumbnail_url` column definition from the baseline migration (`db/migrations/versions/001_identity_schema.py`).
+- [ ] Run `make db-reset` to wipe and rebuild the dev database from the updated baseline.
 - [ ] Verify: `make check`.

@@ -1,4 +1,4 @@
-.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan
+.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp
 
 help:
 	@echo "Available commands:"
@@ -10,6 +10,7 @@ help:
 	@echo "  make test       - Run frontend tests (vitest run)"
 	@echo "  make test-watch - Run frontend tests in watch mode"
 	@echo "  make check-php  - Run plugin PHP checks (cs, phpunit, phpstan)"
+	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 
 check:
 	@npm run check
@@ -53,3 +54,6 @@ phpstan:
 		exit 1; \
 	fi
 	@composer phpstan
+
+mcp:
+	@cd ../.. && make mcp-start

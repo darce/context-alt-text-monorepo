@@ -19,8 +19,9 @@ For every unit of work (feature slice, bug fix, refactor):
 9. Accessibility pass: keyboard navigation, ARIA labels
 10. Run full test suite locally before committing
 11. Commit with Conventional Commits format
-12. **Before requesting review**: Run all automated checks from the [Branch Review Guide](branch-review-guide.md#automated-checks-precondition) and confirm zero errors
-13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#310--bug-finding-heuristics) checklist
+12. **Before requesting review**: Run required automated checks from the [Branch Review Guide](branch-review-guide.md#how-to-use-this-guide) and confirm zero errors
+13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
+14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, and import/update paths preserve payload/provenance integrity
 
 ---
 

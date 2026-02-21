@@ -27,32 +27,26 @@ Run this review on every feature branch **before merge to `main`**.
 
 The reviewer can be human or agentic. When an agent performs the review:
 
-1. Confirm automated checks passed (do NOT re-run them — see below)
-2. Walk through each checklist section, citing specific files and line numbers
-3. Classify findings using the severity guide below
-4. Produce a report using the template at the end of this file
+1. Walk through each checklist section, citing specific files and line numbers
+2. Classify findings using the severity guide and categories below
+3. Record each finding into MCP via `record_review_finding` (see MCP Handoff Integration)
+4. Do **not** produce a report file unless the user explicitly requests one
 
 ### Scope
 
-Review only files in the branch diff (`git diff --name-only main...HEAD`).
+Review only **uncommitted working-directory changes** (`git status` / `git diff --name-only`), not the full branch history against `main`. The goal is to review what will be in the next commit, not re-review already-committed work.
 
----
+For a full branch audit before merge, use `git diff --name-only main...HEAD` instead.
 
-## Automated Checks (Precondition)
+### Dev Tooling (Lightweight Review)
 
-> The submitter is responsible for running all checks and confirming zero errors before requesting review. The reviewer does NOT re-run these.
+Files under `scripts/mcp/`, MCP test files, and other dev tooling do **not** require the full checklist treatment. Apply a lightweight review:
 
-| Check                         | Command                                                                                | Notes                                 |
-| ----------------------------- | -------------------------------------------------------------------------------------- | ------------------------------------- |
-| Python (ruff + mypy + pytest) | `cd apps/prototype-description-service && make check`                                  | Skip if no Python files in diff       |
-| TypeScript types              | `cd apps/prototype-wp-alt-context && npm run typecheck`                                |                                       |
-| Frontend tests                | `cd apps/prototype-wp-alt-context && npm run test -- --run`                            |                                       |
-| ESLint                        | `cd apps/prototype-wp-alt-context && npm run lint`                                     |                                       |
-| Architecture compliance       | `cd apps/prototype-wp-alt-context && node scripts/check-architecture-compliance.js`    | Zero errors; warnings informational   |
-| PHP static analysis           | `cd apps/prototype-wp-alt-context && composer phpstan`                                 |                                       |
-| Cyclomatic complexity         | `cd apps/prototype-description-service && python -m radon cc --min C --show-complexity --average recognition/` | Grade C+ must be justified |
+- Correctness: does the tool do what it claims?
+- Obvious bugs: off-by-one, missing error handling, SQL injection
+- Skip: metric thresholds, architecture boundary checks, Protocol typing
 
-Reviewer responsibility: **verify** the submitter reports all checks passed. **Spot-check only** if a finding during manual review suggests a check was missed.
+Dev tooling findings should still be recorded via `record_review_finding` but are never HIGH severity unless they corrupt production data or state.
 
 ---
 
@@ -66,6 +60,10 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **No unreachable code** — dead branches inside conditionals.
 - [ ] **No duplicate field declarations** — Pydantic models, dataclasses.
 - [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
+- [ ] **Stale/offline path remains user-recoverable** — automation flags/defaults cannot remove an explicit manual recovery action.
+- [ ] **Interactive timeout parity** — related remote calls use a shared timeout helper and consistent timeout budgets.
+- [ ] **Import/restore payload validation** — malformed snapshot shapes fail fast with explicit errors (never silent success).
+- [ ] **Provenance preservation** — status/update operations do not overwrite original creator metadata.
 
 ### Code Duplication
 
@@ -100,6 +98,15 @@ These items apply regardless of language. Stack-specific items are in the langua
 
 **Boundary value sweep:** For each function accepting numeric or collection inputs, mentally substitute empty, single element, and large (10k+) inputs.
 
+**Retry lifecycle traps:** For visibility/focus/interval retries, verify both sides:
+
+- [ ] Per-cycle retry guards prevent duplicate concurrent attempts.
+- [ ] Guard reset happens only on intentional state transitions (for example fresh -> stale), so retries are neither infinite nor permanently disabled.
+
+**Import strictness check:** Feed one malformed import payload variant during review (`snapshot` wrong type or required shape missing) and verify the tool returns `ok: false` with an explicit error.
+
+**Mutable-record provenance:** For lifecycle/status updates, confirm updater context does not erase original creator metadata (`agent`, `branch`, `commit_sha`).
+
 ---
 
 ## Finding Categories
@@ -123,7 +130,47 @@ These items apply regardless of language. Stack-specific items are in the langua
 
 ---
 
+## MCP Handoff Integration (MANDATORY for Agents)
+
+After completing the review, every finding **must** be recorded into the MCP handoff database for cross-agent visibility. Do not rely solely on the markdown report.
+
+### After Each Finding
+
+Call `record_review_finding` with:
+
+| Parameter      | Value                                                           |
+| -------------- | --------------------------------------------------------------- |
+| `session`      | Current session identifier (e.g., `2026-02-20-copilot-review`)  |
+| `finding_id`   | Short ID matching the report (e.g., `H-1`, `M-2`, `L-3`)       |
+| `severity`     | `high`, `medium`, or `low`                                      |
+| `file_path`    | Relative path from monorepo root                                |
+| `description`  | One-paragraph description with code references                  |
+| `details`      | Optional object: `{ "line_start"?: int, "line_end"?: int, "fix"?: str }` |
+| `actor`        | Optional object: `{ "agent"?: str, "branch"?: str, "commit_sha"?: str }` |
+
+### After All Findings Recorded
+
+1. Call `get_review_findings_summary` to confirm severity/status counts for the task.
+2. Use `list_review_findings(status="all")` if you need full finding-by-finding verification.
+3. Call `record_decision` summarizing the review (finding count by severity, session ID).
+4. Call `generate_current_task_md` to regenerate `CURRENT_TASK.md` with findings visible.
+5. Include `Handoff updated: yes` in the response.
+
+Do not use direct `sqlite3` shell queries for MCP handoff verification when these tools are available.
+
+### Severity Mapping
+
+The MCP `severity` field maps directly to this guide's severity levels:
+
+- `HIGH` -> `high` -- must fix before merge
+- `MEDIUM` -> `medium` -- should fix; defer only with justification
+- `LOW` -> `low` -- fix if easy; otherwise next pass
+
+---
+
 ## Review Report Template
+
+> **Only produce this file when the user explicitly requests a written report.** Findings recorded via `record_review_finding` are the canonical store.
 
 Save to `docs/tasks/<version>/<branch-name>-branch-audit-findings.md`.
 

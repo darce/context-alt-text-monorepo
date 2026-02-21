@@ -2053,13 +2053,13 @@ def _cli() -> None:
     
     # Review Findings
     p_find_rec = subparsers.add_parser("review-record", help="Record a review finding")
+    p_find_rec.add_argument("--finding_id", required=True, help="Short identifier e.g. H-1, M-3")
     p_find_rec.add_argument("--file_path", required=True)
     p_find_rec.add_argument("--line_start", type=int)
     p_find_rec.add_argument("--line_end", type=int)
     p_find_rec.add_argument("--description", required=True)
-    p_find_rec.add_argument("--category", required=True, choices=["ANTIPATTERN", "DEAD_CODE", "COMPLEXITY", "GAP", "OTHER"])
-    p_find_rec.add_argument("--severity", required=True, choices=["HIGH", "MEDIUM", "LOW"])
-    p_find_rec.add_argument("--suggested_fix")
+    p_find_rec.add_argument("--severity", required=True, choices=["high", "medium", "low"])
+    p_find_rec.add_argument("--fix")
     p_find_rec.add_argument("--session", default="cli")
 
     p_find_upd = subparsers.add_parser("review-update", help="Update a review finding")
@@ -2118,23 +2118,27 @@ def _cli() -> None:
                 session=args.session, command=args.command, passed=args.passed, result=args.result
             ))
         elif args.cli_command == "review-record":
-            details = {}
+            details: ReviewFindingDetails = {}
             if args.line_start is not None:
                 details["line_start"] = args.line_start
             if args.line_end is not None:
                 details["line_end"] = args.line_end
-            if args.suggested_fix:
-                details["suggested_fix"] = args.suggested_fix
+            if args.fix:
+                details["fix"] = args.fix
             process_result(record_review_finding(
-                session=args.session, file_path=args.file_path, description=args.description, 
-                category=args.category, severity=args.severity, details=details
+                session=args.session, finding_id=args.finding_id, file_path=args.file_path,
+                description=args.description, severity=args.severity, details=details
             ))
         elif args.cli_command == "review-update":
             process_result(update_review_finding(
                 finding_id=args.id, status=args.status, resolution_notes=args.resolution_notes, session=args.session
             ))
         elif args.cli_command == "review-list":
-            process_result(list_review_findings(task_ref=args.task_ref, status=args.status, severity=args.severity))
+            process_result(list_review_findings(
+                task_ref=args.task_ref,
+                status=args.status or "all",
+                severity=args.severity or "all",
+            ))
         elif args.cli_command == "review-get":
             process_result(get_review_finding(finding_id=args.id))
         elif args.cli_command == "review-summary":

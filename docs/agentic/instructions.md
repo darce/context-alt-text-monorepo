@@ -52,6 +52,7 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Why /identify endpoint exists       | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
 | Face/Identity nomenclature (ADR)    | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
 | MCP tooling / testing commands      | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
+| **Antigravity Agents (`/` cmds)**   | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**    |
 
 ---
 
@@ -154,6 +155,80 @@ All task/planning documents MUST consolidate checklists at the **bottom** of the
 > [!WARNING]
 > The `cat_*` and `alt_context_*` prefixes are **legacy**. If encountered in code or documentation, update them to `acx_*`.
 
+### MCP Handoff Contract (MANDATORY)
+
+You are one of multiple concurrent agents. MCP handoff tools are required for task state coordination.
+
+Before any code exploration:
+
+1. Call `get_handoff_state(task_ref="<task>")`.
+2. If no active state exists, call `set_handoff_state(...)` to initialize it.
+3. Do not use manual edits to `CURRENT_TASK.md` for state tracking.
+
+During work:
+
+1. Record non-trivial decisions with `record_decision(..., actor={ agent?, branch?, commit_sha? })`.
+2. Add/update/complete task steps with `update_next_actions(..., actor={ ... })`.
+3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
+4. Record verification commands with `record_test_result(..., actor={ ... })`.
+5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
+6. Update finding status with `update_review_finding(..., actor={ ... })`.
+7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
+
+Write-tool targeting rule:
+
+- Write tools target the **active task only**.
+- To write against a different task, switch active state first via `set_handoff_state(...)`.
+
+Before final response:
+
+1. Mark completed/skipped actions via `update_next_actions(...)`.
+2. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
+3. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
+4. Include a one-line status marker in the response: `Handoff updated: yes`.
+
+Read discipline:
+
+- Do not query `.task-state/handoff.db` directly when MCP tools are available.
+- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
+
+State integrity invariants:
+
+- Treat import/restore payloads as untrusted input. Validate payload shape and required object types before writes; malformed payloads must return `ok: false` (never silent success/no-op).
+- Preserve write provenance on mutable records (for example review findings): creation metadata (`agent`, `branch`, `commit_sha`) is immutable once set; status updates may fill missing fields but must not overwrite recorded provenance.
+
+Failure policy:
+
+- If MCP handoff tools are unavailable, stop normal implementation work.
+- Record/report the blocker, and include: `Handoff updated: no (tool unavailable)`.
+- **Antigravity Agents ONLY**: Use predefined terminal commands in `.agent/workflows/` (e.g., `make task`, `make dashboard`) to query/orchestrate task state if native MCP tools are unconfigured. Do not attempt raw SQLite writes.
+- Use `templates/CURRENT_TASK.template.md` only as fallback when MCP handoff is unavailable.
+
+Completion gate:
+
+- A task response is incomplete if MCP handoff was not updated.
+
+### Branch Review Trigger (MANDATORY)
+
+When a user request matches any of these patterns, **load and follow** [rules/branch-review-guide.md](rules/branch-review-guide.md) before starting the review:
+
+- "review" + ("implementation" | "code" | "changes" | "branch" | "PR" | "diff")
+- "audit" + ("branch" | "code")
+- "propose improvements" | "flag gaps" | "flag bugs"
+- Any request to evaluate uncommitted or branch-scoped changes for quality
+
+**Procedure:**
+
+1. Read `rules/branch-review-guide.md` (process + checklist + report template).
+2. Read the relevant stack guide(s) based on files in the diff.
+3. Walk the common checklist + stack-specific checklist, citing files and lines.
+4. Classify each finding using the defined categories (ANTIPATTERN / DEAD_CODE / COMPLEXITY / GAP) and severities (HIGH / MEDIUM / LOW).
+5. Call `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })` for each finding.
+6. Produce the markdown report using the template.
+7. Call `record_decision(..., actor={ ... })` summarizing the review + `generate_current_task_md(...)`.
+
+**Do NOT** perform ad-hoc reviews. The guide exists to ensure consistent, structured, cross-agent-visible output.
+
 ---
 
 ## Core Engineering Principles
@@ -195,6 +270,14 @@ Never claim a bug is fixed without verifying in production/staging logs. A unit 
 ### 9. Curation-First Precedence
 
 User curation decisions are ground truth. Never use time-based heuristics to override them. The correct gate is always a **data delta**: did the underlying evidence change since the user's decision? If yes, surface as a new proposal. If no, respect the decision indefinitely.
+
+### 10. User-Recoverable Remote Flows
+
+Remote-dependent UI states must remain recoverable when automation fails or stalls.
+
+- Stale/offline states MUST expose at least one explicit user-triggered recovery action (for example, `Sync now`).
+- Auto-retry logic (visibility/focus/interval) MUST be bounded per stale cycle and must re-arm only on explicit state transitions.
+- Interactive recognition API calls MUST use explicit timeout budgets via a shared timeout helper; do not leave outlier calls unbounded.
 
 ---
 

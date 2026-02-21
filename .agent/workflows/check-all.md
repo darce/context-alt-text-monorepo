@@ -14,26 +14,8 @@ description: Run full CI check (lint + types + tests)
 
 Run complete CI validation before committing:
 
-1. Python checks via Makefile (handles pyenv)
+1. Run root Makefile check-all (handles all languages: Python, TS, PHP)
 
 ```bash
-cd apps/prototype-description-service && make check 2>&1 | tail -30
-```
-
-// turbo 2. Frontend TypeScript check
-
-```bash
-cd apps/prototype-wp-alt-context && npm run typecheck 2>&1 | tail -20
-```
-
-// turbo 3. Frontend tests
-
-```bash
-cd apps/prototype-wp-alt-context && npm run test -- --run 2>&1 | tail -30
-```
-
-// turbo 4. PHP static analysis
-
-```bash
-cd apps/prototype-wp-alt-context && composer phpstan 2>&1 | tail -20
+make check-all
 ```

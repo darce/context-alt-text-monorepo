@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 use function do_action;
+use function esc_html;
 use function function_exists;
 use function is_object;
 use function is_string;
@@ -67,7 +68,7 @@ trait PreparesSqlQueries {
 		}
 
 		if ( function_exists( '_doing_it_wrong' ) ) {
-			_doing_it_wrong( __METHOD__, 'Tenant ID must be non-empty for sovereign projection operations.', '4.13.1' );
+			_doing_it_wrong( esc_html( $method ), 'Tenant ID must be non-empty for sovereign projection operations.', '4.13.1' );
 		}
 	}
 }

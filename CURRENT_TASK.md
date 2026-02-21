@@ -3,26 +3,31 @@
 _DO NOT EDIT: generated from .task-state/handoff.db._
 
 ## Objective
-Fix MCP CLI implementation issues
+Plugin Thumbnail Deprecation Phase 2 Completion
 
 ## Active Status
 - task_ref: `4.13.3`
-- status: `in_progress`
-- revision: `9`
-- updated_at: `2026-02-21 01:35:18`
+- status: `done`
+- revision: `14`
+- updated_at: `2026-02-21 05:05:36`
 
 ## Open Blockers
-- [#4] Workbench remains unusable under recognition-service outage and large media libraries: page 2 navigation can stall >60s due to enrichment/proxy waits, page 1 thumbnails stream in over minutes instead of painting quickly, and returning to page 1 triggers delayed thumbnail visibility again. Need architectural decoupling so media listing/thumbnail rendering are independent of enrichment and expensive image payloads.
+- None
 
 ## Pending Next Actions
-- (P2) [#8] Remove sync-on-read side effects from cluster/media read paths; move all sync pulls to explicit background jobs/hooks.
-- (P2) [#13] Add frontend fetch timeouts via AbortSignal.timeout() for all interactive recognition API calls in http.ts / recognition API modules (currently no client-side timeout exists).
-- (P2) [#14] Define and enforce Phase 0.5 acceptance SLOs: p95 page switch < 1.5s with recognition offline, first 20 thumbnails visible < 2s on warm cache, and back-navigation thumbnail rehydrate < 1s.
-- (P3) [#9] Change enrichment query rendering (identities, suggestions) to stale-while-revalidate: keep prior data visible during refetch, show inline error badges on failure instead of blocking UI. Media rows already use placeholderData.
-- (P6) [#12] Add offline performance budgets and regression tests for page switch and thumbnail paint latency.
-- (P20) [#3] Commit FastMCP v3 follow-up files and rerun relevant quality gates
+- None
 
 ## Recent Decisions
+- [#51] Re-verified H-phase2-branch-1 and M-phase2-branch-2 implementation status.
+- [#50] Completed full branch review for thumbnail-deprecation phase2 work using branch-review-guide + PHP checklist. Recorded 2 open findings (1 high, 1 medium).
+- [#49] Completed Phase 2 and 3 of the Plugin Thumbnail Deprecation. Verified offline-first reads via ClusterFacade and stripped legacy thumbnail_url shims while preserving frontend compatibility (deferred member/identity mappers to Phase 3).
+- [#48] Reviewed current handoff robustness changes using branch-review-guide lightweight dev-tooling rules; no implementation bugs/findings identified in new close-check, CI guard, or docs policy wiring.
+- [#47] Implemented ClusterFacade to orchestrate sovereign reads, removing legacy thumbnail_url shims from the plugin layers.
+- [#46] Implemented handoff robustness items 6/7/8: added handoff_close_check tool+CLI, CI handoff-integrity workflow/guard script, and explicit DB-as-source-of-truth policy docs.
+- [#45] Generated thumbnail-deprecation-phase2-task-plan.md covering plugin shim removal (thumbnail_url mappers + dead is_http_url path) and proxy-to-facade refactor (ClusterFacade). Line numbers verified live against plugin source.
+- [#44] Completed Phase 1 of backend thumbnail deprecation: removed thumbnail_url and related fields from domain, models, repositories, and API schemas. Verified with baseline migration reset.
+- [#43] Completed Phase 1 of backend thumbnail deprecation: removed thumbnail_url and related fields from domain, models, repositories, and API schemas. Verified with baseline migration reset.
+- [#42] Created thumbnail-deprecation-phase1-task-plan.md in docs/tasks/4.0/4.13.3/ as the execution document for the next phase of the v0.1.0 epic.
 - [#41] Completed 4 MCP CLI fixes locally and verified via python test suite.
 - [#40] CLI fallback for handoff writes is directionally correct but current entrypoint breaks MCP stdio startup and is not safe to adopt as-is.
 - [#39] Added tool-calling CLI support to unified_server.py to allow terminal-based orchestration for Antigravity agents.
@@ -66,6 +71,10 @@ Fix MCP CLI implementation issues
 - [#2] Identity enrichment path should remain non-blocking for media rendering
 
 ## Latest Verified Tests
+- [#40] `PYENV_VERSION=description-service pyenv exec python scripts/mcp/handoff_integrity_guard.py` -> `pass`
+- [#39] `make check` -> `pass`
+- [#38] `make reset` -> `pass`
+- [#37] `make reset` -> `pass`
 - [#36] `PYENV_VERSION=description-service pytest apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py -q` -> `pass`
 - [#35] `PYENV_VERSION=description-service pytest apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py -q` -> `pass`
 - [#34] `PYENV_VERSION=description-service pytest apps/prototype-description-service/recognition/tests/unit/test_mcp_handoff_state.py -q` -> `pass`

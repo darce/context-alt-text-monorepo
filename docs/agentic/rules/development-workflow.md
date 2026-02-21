@@ -21,7 +21,7 @@ For every unit of work (feature slice, bug fix, refactor):
 11. Commit with Conventional Commits format
 12. **Before requesting review**: Run required automated checks from the [Branch Review Guide](branch-review-guide.md#how-to-use-this-guide) and confirm zero errors
 13. **Self-review with bug-finding heuristics**: Walk your diff through the [Bug-Finding Heuristics](branch-review-guide.md#bug-finding-heuristics-universal) checklist
-14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, and import/update paths preserve payload/provenance integrity
+14. **Regression trap sweep (handoff-learned)**: Verify stale/offline flows keep manual recovery, remote calls use shared timeout helpers, retry loops are per-cycle bounded, import/update paths preserve payload/provenance integrity, and reopened findings include explicit rationale
 
 ---
 
@@ -120,6 +120,12 @@ refactor/clustering-pipeline
 
 For multi-session tasks, use MCP handoff state tools as the source of truth and treat `CURRENT_TASK.md` as a generated view.
 
+Source-of-truth policy:
+
+- `.task-state/handoff.db` is authoritative for agent state.
+- `CURRENT_TASK.md` is derived output; never hand-edit it as the canonical tracker.
+- If markdown drifts from DB, regenerate (`generate_current_task_md`) and continue from DB state.
+
 **When to use:**
 
 - Tasks spanning multiple sessions (> 1 hour of work)
@@ -137,8 +143,9 @@ For multi-session tasks, use MCP handoff state tools as the source of truth and 
 1. Initialize or update active task via MCP `set_handoff_state`.
 2. Record session outcomes via MCP tools (`record_decision`, `update_next_actions`, `record_test_result`, `report_blocker`).
 3. Read compact snapshot at session start via `get_handoff_state`.
-4. Regenerate markdown view on demand via `generate_current_task_md`.
-5. Use template fallback only when MCP tooling is unavailable.
+4. Before close/final handoff, run `handoff_close_check(enforce=True)` and resolve all failures.
+5. Regenerate markdown view on demand via `generate_current_task_md`.
+6. Use template fallback only when MCP tooling is unavailable.
 
 **Template location:** [templates/CURRENT_TASK.template.md](../templates/CURRENT_TASK.template.md)
 

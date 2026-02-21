@@ -165,6 +165,12 @@ Before any code exploration:
 2. If no active state exists, call `set_handoff_state(...)` to initialize it.
 3. Do not use manual edits to `CURRENT_TASK.md` for state tracking.
 
+Authoritative state policy:
+
+- `.task-state/handoff.db` is the source of truth for agent coordination state.
+- `CURRENT_TASK.md` is a generated projection only; never treat manual markdown edits as authoritative state.
+- If markdown and DB disagree, regenerate markdown from DB (`generate_current_task_md(...)`) and continue from DB state.
+
 During work:
 
 1. Record non-trivial decisions with `record_decision(..., actor={ agent?, branch?, commit_sha? })`.
@@ -172,7 +178,10 @@ During work:
 3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
 4. Record verification commands with `record_test_result(..., actor={ ... })`.
 5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
-6. Update finding status with `update_review_finding(..., actor={ ... })`.
+6. Update finding status with `update_review_finding(status=..., finding_id=..., resolution_notes?=str, reopen_reason?=str, actor={ ... })` (prefer logical `finding_id`, not DB row id).
+   - `resolution_notes` is required when status is `wontfix` or `deferred`.
+   - `reopen_reason` is required when transitioning a finding from non-open back to `open` (or use `reopen_review_finding(...)`).
+   - Keep notes concise (1-2 lines) to preserve handoff signal quality.
 7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
 
 Write-tool targeting rule:
@@ -184,8 +193,10 @@ Before final response:
 
 1. Mark completed/skipped actions via `update_next_actions(...)`.
 2. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
-3. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
-4. Include a one-line status marker in the response: `Handoff updated: yes`.
+3. Run `reconcile_review_findings(...)` and resolve any integrity violations.
+4. Run `handoff_close_check(enforce=True)` and resolve all reported failures before closing.
+5. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)` when needed (review write tools also auto-refresh it).
+6. Include a one-line status marker in the response: `Handoff updated: yes`.
 
 Read discipline:
 
@@ -196,6 +207,8 @@ State integrity invariants:
 
 - Treat import/restore payloads as untrusted input. Validate payload shape and required object types before writes; malformed payloads must return `ok: false` (never silent success/no-op).
 - Preserve write provenance on mutable records (for example review findings): creation metadata (`agent`, `branch`, `commit_sha`) is immutable once set; status updates may fill missing fields but must not overwrite recorded provenance.
+- Keep provenance complete: writes must stamp non-empty `agent` and `branch` metadata so `handoff_close_check` provenance gates can pass.
+- Reopen transitions must be explicit and traceable: include a concise reopen rationale and avoid silently flipping findings back to `open`.
 
 Failure policy:
 

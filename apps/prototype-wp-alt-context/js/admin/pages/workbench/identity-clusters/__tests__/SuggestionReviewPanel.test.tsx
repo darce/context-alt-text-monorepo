@@ -93,8 +93,8 @@ describe('SuggestionReviewPanel', () => {
 
     await waitFor(
       () => {
-        expect(fetchPendingSuggestionsMock).toHaveBeenCalledTimes(2);
-        expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalledTimes(2);
+        expect(fetchPendingSuggestionsMock).toHaveBeenCalledTimes(1);
+        expect(fetchPendingMergeSuggestionsMock).toHaveBeenCalledTimes(1);
       },
       { timeout: 3000 },
     );

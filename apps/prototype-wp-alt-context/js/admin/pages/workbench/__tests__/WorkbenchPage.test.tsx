@@ -241,8 +241,10 @@ describe('WorkbenchPage', () => {
       searchQuery: '',
       normalizedSearch: '',
       currentPage: 1,
+      statusFilter: 'all',
       setCurrentPage,
       handleSearchChange: vi.fn(),
+      handleStatusChange: vi.fn(),
     });
 
     mockUseScanStatus.mockReturnValue(
@@ -395,14 +397,49 @@ describe('WorkbenchPage', () => {
     );
   });
 
+  it('clamps current page when total pages shrink', async () => {
+    setupScanMutation('success');
+    mockUseWorkbenchFilters.mockReturnValue({
+      searchQuery: '',
+      normalizedSearch: '',
+      currentPage: 2,
+      statusFilter: 'all',
+      setCurrentPage,
+      handleSearchChange: vi.fn(),
+      handleStatusChange: vi.fn(),
+    });
+
+    mockUseWorkbenchMedia.mockReturnValue({
+      ...createMockQuery<WorkbenchMediaResponse>({
+        data: { items: [baseMediaItem], total: 1, totalPages: 1 },
+        isFetching: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+      itemsWithIdentities: [baseMediaItem],
+      identitiesQuery: createMockQuery<MediaIdentitiesResponse>({
+        data: { identities_by_media: {} },
+        refetch: prefetchIdentities,
+      }),
+    });
+
+    renderWorkbench();
+
+    await waitFor(() => {
+      expect(setCurrentPage).toHaveBeenCalledWith(1);
+    });
+  });
+
   it('persists media page size selection and resets to page 1', async () => {
     setupScanMutation('success');
     mockUseWorkbenchFilters.mockReturnValue({
       searchQuery: '',
       normalizedSearch: '',
       currentPage: 2,
+      statusFilter: 'all',
       setCurrentPage,
       handleSearchChange: vi.fn(),
+      handleStatusChange: vi.fn(),
     });
 
     renderWorkbench();

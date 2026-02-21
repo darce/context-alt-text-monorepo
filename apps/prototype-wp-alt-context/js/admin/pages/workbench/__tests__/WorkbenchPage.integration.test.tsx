@@ -223,7 +223,10 @@ describe('WorkbenchPage (integration-lite)', () => {
       },
     });
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
-    client.setQueryData(queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '' }), mediaResponse);
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      mediaResponse,
+    );
     client.setQueryData(queryKeys.media.identitiesByIds([11]), {
       identities_by_media: { '11': [] },
     });
@@ -247,5 +250,86 @@ describe('WorkbenchPage (integration-lite)', () => {
     });
 
     expect(await screen.findByText(/Starting scan/i)).toBeInTheDocument();
+  });
+
+  it('renders page 2 media when the queue has multiple pages', async () => {
+    const pageOneResponse = {
+      items: [
+        {
+          id: 101,
+          title: 'Photo Page One',
+          altText: null,
+          status: 'missing',
+          thumbnailUrl: null,
+          mimeType: 'image/jpeg',
+          editUrl: '#',
+          updatedAt: '2025-01-01T00:00:00Z',
+          dimensions: { width: 1200, height: 800 },
+          tags: [],
+        },
+      ],
+      total: 2,
+      totalPages: 2,
+    };
+    const pageTwoResponse = {
+      items: [
+        {
+          id: 102,
+          title: 'Photo Page Two',
+          altText: 'Alt text available',
+          status: 'complete',
+          thumbnailUrl: null,
+          mimeType: 'image/jpeg',
+          editUrl: '#',
+          updatedAt: '2025-01-02T00:00:00Z',
+          dimensions: { width: 1200, height: 800 },
+          tags: [],
+        },
+      ],
+      total: 2,
+      totalPages: 2,
+    };
+
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '101': [], '102': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      pageOneResponse,
+    );
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 2, perPage: 10, search: '', status: 'all' }),
+      pageTwoResponse,
+    );
+    client.setQueryData(queryKeys.media.identitiesByIds([101]), { identities_by_media: { '101': [] } });
+    client.setQueryData(queryKeys.media.identitiesByIds([102]), { identities_by_media: { '102': [] } });
+
+    renderWithClient(client);
+
+    expect(await screen.findByText('Photo Page One')).toBeInTheDocument();
+
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('button', { name: 'Next' }));
+
+    expect(await screen.findByText('Photo Page Two')).toBeInTheDocument();
+    expect(screen.queryByText('Photo Page One')).not.toBeInTheDocument();
   });
 });

@@ -49,12 +49,12 @@ describe('useSyncTrigger', () => {
     vi.useRealTimers();
   });
 
-  it('does not auto-trigger when projection is not stale', async () => {
+  it('does not auto-trigger by default when projection is stale', async () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(failedSyncResponse);
 
     const { wrapper, queryClient } = createWrapper();
-    renderHook(() => useSyncTrigger(false), { wrapper });
+    renderHook(() => useSyncTrigger(true), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -64,12 +64,12 @@ describe('useSyncTrigger', () => {
     queryClient.clear();
   });
 
-  it('triggers once when stale and does not auto-retry on an interval', async () => {
+  it('triggers once when stale if auto-trigger is explicitly enabled', async () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(failedSyncResponse);
 
     const { wrapper, queryClient } = createWrapper();
-    renderHook(() => useSyncTrigger(true), { wrapper });
+    renderHook(() => useSyncTrigger(true, true), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -85,12 +85,12 @@ describe('useSyncTrigger', () => {
     queryClient.clear();
   });
 
-  it('re-attempts once when stale transitions from false back to true', async () => {
+  it('re-attempts once when stale transitions from false back to true (auto mode)', async () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(successfulSyncResponse);
 
     const { wrapper, queryClient } = createWrapper();
-    const { rerender } = renderHook(({ isStale }) => useSyncTrigger(isStale), {
+    const { rerender } = renderHook(({ isStale }) => useSyncTrigger(isStale, true), {
       wrapper,
       initialProps: { isStale: true },
     });
@@ -114,7 +114,7 @@ describe('useSyncTrigger', () => {
     queryClient.clear();
   });
 
-  it('retries once when tab becomes visible while stale', async () => {
+  it('does not retry on tab visibility changes after already attempting in current stale cycle', async () => {
     const triggerSyncMock = vi.mocked(recognitionApi.triggerSync);
     triggerSyncMock.mockResolvedValue(failedSyncResponse);
 
@@ -124,7 +124,7 @@ describe('useSyncTrigger', () => {
     });
 
     const { wrapper, queryClient } = createWrapper();
-    renderHook(() => useSyncTrigger(true), { wrapper });
+    renderHook(() => useSyncTrigger(true, true), { wrapper });
 
     await act(async () => {
       await Promise.resolve();
@@ -140,7 +140,7 @@ describe('useSyncTrigger', () => {
       await Promise.resolve();
     });
 
-    expect(triggerSyncMock).toHaveBeenCalledTimes(2);
+    expect(triggerSyncMock).toHaveBeenCalledTimes(1);
     queryClient.clear();
   });
 });

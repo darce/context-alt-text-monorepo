@@ -84,7 +84,7 @@ describe('useWorkbenchMedia', () => {
     const { result } = renderHook(() => useWorkbenchMedia({ page: 1, perPage: 10, enabled: true }), { wrapper });
 
     await waitFor(() => {
-      expect(fetchWorkbenchMediaMock).toHaveBeenCalledWith({ page: 1, perPage: 10, search: undefined });
+      expect(fetchWorkbenchMediaMock).toHaveBeenCalledWith({ page: 1, perPage: 10, search: undefined, status: 'all' });
     });
 
     await act(async () => {

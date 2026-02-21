@@ -175,7 +175,6 @@ class ClusterResponseMapper {
 			'id' => trim( (string) ( $member_row['identity_uuid'] ?? '' ) ),
 			'media_id' => $media_id,
 			'thumb_url' => $this->resolve_thumb_url( $member_row, $media_id ),
-			'thumbnail_url' => $this->resolve_thumb_url( $member_row, $media_id ),
 			'media_url' => $this->resolve_media_url( $media_id ),
 			'bbox' => $this->extract_bbox_pixels( $member_row['bbox_json'] ?? null ),
 			'is_pinned' => false,

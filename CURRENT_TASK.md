@@ -3,13 +3,13 @@
 _DO NOT EDIT: generated from .task-state/handoff.db._
 
 ## Objective
-Plugin Thumbnail Deprecation Phase 2 Completion
+v0.1.0 Sovereign Final Cleanup: Outstanding and Deferred Closure
 
 ## Active Status
 - task_ref: `4.13.3`
 - status: `done`
-- revision: `14`
-- updated_at: `2026-02-21 05:05:36`
+- revision: `19`
+- updated_at: `2026-02-21 20:08:53`
 
 ## Open Blockers
 - None
@@ -18,6 +18,8 @@ Plugin Thumbnail Deprecation Phase 2 Completion
 - None
 
 ## Recent Decisions
+- [#53] Enforced handoff-id-first review reporting policy
+- [#52] Created consolidated outstanding/deferred cleanup task plan
 - [#51] Re-verified H-phase2-branch-1 and M-phase2-branch-2 implementation status.
 - [#50] Completed full branch review for thumbnail-deprecation phase2 work using branch-review-guide + PHP checklist. Recorded 2 open findings (1 high, 1 medium).
 - [#49] Completed Phase 2 and 3 of the Plugin Thumbnail Deprecation. Verified offline-first reads via ClusterFacade and stripped legacy thumbnail_url shims while preserving frontend compatibility (deferred member/identity mappers to Phase 3).

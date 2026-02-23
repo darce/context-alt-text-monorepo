@@ -176,10 +176,15 @@ check_database_exists() {
 
 find_scan_worker_pids() {
   if command -v pgrep >/dev/null 2>&1; then
-    pgrep -f "recognition/worker/scan_worker.py" || true
+    pgrep -f "recognition/worker/scan_worker.py" 2>/dev/null || true
     return
   fi
   ps -ax | awk '/recognition\/worker\/scan_worker\.py/ && !/awk/ {print $1}'
+}
+
+find_port_listener_pids() {
+  local port="$1"
+  { lsof -ti tcp:"${port}" 2>/dev/null || true; } | sort -u
 }
 
 start_scan_worker() {
@@ -237,29 +242,39 @@ stop_service() {
   local port="${PORT:-${DEFAULT_PORT}}"
   echo "[prototype-local] Attempting to stop processes on port ${port}..." >&2
 
-  local pids_str
-  pids_str="$(lsof -ti tcp:"${port}" 2>/dev/null || true)"
-  if [[ -z "${pids_str}" ]]; then
-    echo "[prototype-local] No process bound to port ${port}." >&2
-    pkill -f "uvicorn api.main:app" >/dev/null 2>&1 && echo "[prototype-local] Terminated matching uvicorn process." >&2 || true
-    return
-  fi
+  local pass
+  local listeners
+  for pass in 1 2 3 4 5; do
+    listeners="$(find_port_listener_pids "${port}")"
+    if [[ -z "${listeners}" ]]; then
+      break
+    fi
 
-  for pid in ${pids_str}; do
-    echo "[prototype-local] Terminating PID ${pid}" >&2
-    kill -TERM "${pid}" >/dev/null 2>&1 || true
+    if (( pass <= 2 )); then
+      echo "[prototype-local] Sending SIGTERM to PID(s): ${listeners}" >&2
+      for pid in ${listeners}; do
+        kill -TERM "${pid}" >/dev/null 2>&1 || true
+      done
+    else
+      echo "[prototype-local] Sending SIGKILL to PID(s): ${listeners}" >&2
+      for pid in ${listeners}; do
+        kill -KILL "${pid}" >/dev/null 2>&1 || true
+      done
+    fi
+
+    sleep 1
   done
-  sleep 1
 
-  if lsof -ti tcp:"${port}" >/dev/null; then
-    echo "[prototype-local] Processes still alive; sending SIGKILL." >&2
-    for pid in ${pids_str}; do
-      kill -KILL "${pid}" >/dev/null 2>&1 || true
-    done
+  listeners="$(find_port_listener_pids "${port}")"
+  if [[ -n "${listeners}" ]]; then
+    echo "[prototype-local] Port ${port} still busy (PID(s): ${listeners}); trying uvicorn pattern cleanup." >&2
+    pkill -f "uvicorn api.main:app" >/dev/null 2>&1 || true
+    sleep 1
+    listeners="$(find_port_listener_pids "${port}")"
   fi
 
-  if lsof -ti tcp:"${port}" >/dev/null; then
-    echo "[prototype-local] Warning: port ${port} remains in use." >&2
+  if [[ -n "${listeners}" ]]; then
+    echo "[prototype-local] Warning: port ${port} remains in use by PID(s): ${listeners}" >&2
   else
     echo "[prototype-local] Port ${port} is free." >&2
   fi

@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "context-alt-text-handoff": {
+      "command": "/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh",
+      "args": [
+        "run"
+      ]
+    }
+  }
+}

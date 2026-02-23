@@ -20,7 +20,7 @@ describe('IdentityThumbnail', () => {
   });
 
   it('uses backend-provided thumbnail when available', () => {
-    render(<IdentityThumbnail identity={{ ...identity, thumbnail_url: 'https://example.com/thumb.jpg' }} size={96} />);
+    render(<IdentityThumbnail identity={{ ...identity, thumb_url: 'https://example.com/thumb.jpg' }} size={96} />);
     const image = screen.getByRole('img');
     expect(image).toHaveAttribute('src', 'https://example.com/thumb.jpg');
   });

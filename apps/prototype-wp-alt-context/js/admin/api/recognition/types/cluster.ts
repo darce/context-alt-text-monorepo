@@ -18,7 +18,6 @@ export interface TopUnlabeledRepresentative {
   id: string;
   media_id: number;
   thumb_url?: string | null;
-  thumbnail_url?: string | null;
   media_url?: string | null;
   bbox?: BoundingBox | null;
   is_pinned: boolean;

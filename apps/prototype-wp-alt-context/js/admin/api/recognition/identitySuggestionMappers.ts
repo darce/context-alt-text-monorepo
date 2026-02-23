@@ -16,16 +16,15 @@ export interface PendingSuggestionApiResponse {
   cluster_identity_count?: number | null;
   identity_media_id?: number | null;
   identity_media_url?: string | null;
-  identity_thumbnail_url?: string | null;
+  identity_thumb_url?: string | null;
   identity_bbox?: BoundingBox | null;
   representative_media_id?: number | null;
   representative_media_url?: string | null;
-  representative_thumbnail_url?: string | null;
+  representative_thumb_url?: string | null;
   representative_bbox?: BoundingBox | null;
   suggested_label?: string | null;
   suggested_label_source?: 'identity' | 'roster' | 'similar_cluster' | 'none' | null;
   suggested_label_confidence?: number | null;
-  cluster_thumbnails?: string[] | null;
 }
 
 export interface PendingMergeSuggestionApiResponse {
@@ -40,11 +39,11 @@ export interface PendingMergeSuggestionApiResponse {
   cluster_b_identity_count?: number | null;
   cluster_a_representative_media_id?: number | null;
   cluster_a_representative_media_url?: string | null;
-  cluster_a_representative_thumbnail_url?: string | null;
+  cluster_a_representative_thumb_url?: string | null;
   cluster_a_representative_bbox?: BoundingBox | null;
   cluster_b_representative_media_id?: number | null;
   cluster_b_representative_media_url?: string | null;
-  cluster_b_representative_thumbnail_url?: string | null;
+  cluster_b_representative_thumb_url?: string | null;
   cluster_b_representative_bbox?: BoundingBox | null;
 }
 
@@ -69,16 +68,15 @@ export const mapPendingSuggestions = (
     cluster_identity_count: suggestion.cluster_identity_count ?? null,
     identity_media_id: suggestion.identity_media_id ?? null,
     identity_media_url: suggestion.identity_media_url ?? null,
-    identity_thumbnail_url: suggestion.identity_thumbnail_url ?? null,
+    identity_thumb_url: suggestion.identity_thumb_url ?? null,
     identity_bbox: suggestion.identity_bbox ?? null,
     representative_media_id: suggestion.representative_media_id ?? null,
     representative_media_url: suggestion.representative_media_url ?? null,
-    representative_thumbnail_url: suggestion.representative_thumbnail_url ?? null,
+    representative_thumb_url: suggestion.representative_thumb_url ?? null,
     representative_bbox: suggestion.representative_bbox ?? null,
     suggested_label: suggestion.suggested_label ?? null,
     suggested_label_source: suggestion.suggested_label_source ?? null,
     suggested_label_confidence: suggestion.suggested_label_confidence ?? null,
-    cluster_thumbnails: suggestion.cluster_thumbnails ?? [],
   }));
 
   return {
@@ -110,11 +108,11 @@ export const mapPendingMergeSuggestions = (
     cluster_b_identity_count: suggestion.cluster_b_identity_count ?? null,
     cluster_a_representative_media_id: suggestion.cluster_a_representative_media_id ?? null,
     cluster_a_representative_media_url: suggestion.cluster_a_representative_media_url ?? null,
-    cluster_a_representative_thumbnail_url: suggestion.cluster_a_representative_thumbnail_url ?? null,
+    cluster_a_representative_thumb_url: suggestion.cluster_a_representative_thumb_url ?? null,
     cluster_a_representative_bbox: suggestion.cluster_a_representative_bbox ?? null,
     cluster_b_representative_media_id: suggestion.cluster_b_representative_media_id ?? null,
     cluster_b_representative_media_url: suggestion.cluster_b_representative_media_url ?? null,
-    cluster_b_representative_thumbnail_url: suggestion.cluster_b_representative_thumbnail_url ?? null,
+    cluster_b_representative_thumb_url: suggestion.cluster_b_representative_thumb_url ?? null,
     cluster_b_representative_bbox: suggestion.cluster_b_representative_bbox ?? null,
   }));
 

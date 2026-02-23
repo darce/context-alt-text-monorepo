@@ -21,7 +21,7 @@ export interface ClusterIdentity {
   confidence: number;
   clustering_pending?: boolean;
   bbox: BoundingBox;
-  thumbnail_url?: string | null;
+  thumb_url?: string | null;
   media_url?: string | null;
 }
 
@@ -67,7 +67,7 @@ export interface DetectedIdentity {
   confidence: number;
   similarity: number | null;
   detected_at?: string;
-  thumbnail_url?: string | null;
+  thumb_url?: string | null;
   media_url?: string | null;
   debug_metrics?: DebugMetrics | null;
 }

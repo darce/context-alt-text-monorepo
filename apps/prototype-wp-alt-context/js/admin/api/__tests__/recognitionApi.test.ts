@@ -157,7 +157,6 @@ describe('recognitionApi', () => {
       representative_similarity: 0.87,
       avg_member_similarity: 0.87,
       confidence_score: 0.87,
-      cluster_thumbnails: [],
     });
   });
 
@@ -242,8 +241,7 @@ describe('recognitionApi', () => {
             id: 'rep-1',
             media_id: 101,
             is_pinned: false,
-            thumb_url: null,
-            thumbnail_url: 'http://example.test/thumb-101.jpg',
+            thumb_url: 'http://example.test/thumb-101.jpg',
             media_url: ' ',
             bbox: null,
           },
@@ -252,7 +250,6 @@ describe('recognitionApi', () => {
             media_id: 202,
             is_pinned: false,
             thumb_url: 'http://example.test/thumb-202.jpg',
-            thumbnail_url: null,
             media_url: 'http://example.test/media-202.jpg',
             bbox: null,
           },
@@ -264,12 +261,10 @@ describe('recognitionApi', () => {
 
     expect(result[0]?.representatives[0]).toMatchObject({
       thumb_url: 'http://example.test/thumb-101.jpg',
-      thumbnail_url: 'http://example.test/thumb-101.jpg',
       media_url: null,
     });
     expect(result[0]?.representatives[1]).toMatchObject({
       thumb_url: 'http://example.test/thumb-202.jpg',
-      thumbnail_url: 'http://example.test/thumb-202.jpg',
       media_url: 'http://example.test/media-202.jpg',
     });
 

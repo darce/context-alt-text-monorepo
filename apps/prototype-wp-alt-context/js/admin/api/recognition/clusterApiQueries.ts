@@ -21,11 +21,10 @@ const normalizeOptionalUrl = (value: unknown): string | null => {
 const normalizeTopUnlabeledRepresentative = (
   representative: TopUnlabeledRepresentativePayload,
 ): TopUnlabeledRepresentative => {
-  const normalizedThumb = normalizeOptionalUrl(representative.thumb_url ?? representative.thumbnail_url ?? null);
+  const normalizedThumb = normalizeOptionalUrl(representative.thumb_url ?? null);
   return {
     ...representative,
     thumb_url: normalizedThumb,
-    thumbnail_url: normalizeOptionalUrl(representative.thumbnail_url ?? normalizedThumb),
     media_url: normalizeOptionalUrl(representative.media_url ?? null),
     bbox: representative.bbox ?? null,
   };

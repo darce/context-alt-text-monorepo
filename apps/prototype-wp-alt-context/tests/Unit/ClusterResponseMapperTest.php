@@ -47,7 +47,7 @@ class ClusterResponseMapperTest extends TestCase
         $this->assertSame('cluster-1', $payload[0]['id']);
         $this->assertSame('Alice', $payload[0]['label']);
         $this->assertSame('identity-1', $payload[0]['sample_identities'][0]['identity_id']);
-        $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['thumbnail_url']);
+        $this->assertSame('http://example.test/media/12.jpg', $payload[0]['sample_identities'][0]['thumb_url']);
     }
 
     public function testMapTopUnlabeledClustersIncludesRepresentatives(): void

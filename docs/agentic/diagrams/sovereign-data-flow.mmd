@@ -1,0 +1,21 @@
+flowchart TD
+    subgraph Backend["Recognition Service"]
+        DB[(PostgreSQL)]
+        API["Snapshot Endpoint"]
+    end
+
+    subgraph Plugin["WordPress Plugin"]
+        Projector["Sovereign Projector"]
+        LocalDB[(WP Database)]
+        UI["Admin UI"]
+    end
+
+    DB -->|"get_snapshot()"| API
+    API -->|"JSON Snapshot Payload"| Projector
+    Projector -->|"Project Rows (Atomic Transaction)"| LocalDB
+    LocalDB -->|"Local Read Path"| UI
+    UI -->|"User Curation"| LocalDB
+    LocalDB -.->|"Delta/Sync (Future)"| DB
+
+    style Projector fill:#f9f,stroke:#333,stroke-width:2px
+    style API fill:#bbf,stroke:#333,stroke-width:2px

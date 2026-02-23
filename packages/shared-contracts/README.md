@@ -10,6 +10,7 @@ packages/shared-contracts/
 │   └── roster-roundtrip.sample.json   # Sample roster sync payload
 └── schemas/
     ├── coverage-stats.schema.json
+    ├── recognition-cluster-snapshot.schema.json
     ├── recognition-job.schema.json
     ├── recognition-observation.schema.json
     ├── roster-entry.schema.json

@@ -25,6 +25,7 @@ use AltContext\Admin\Menu;
 use AltContext\Api\Api;
 use AltContext\Api\XmpEmbedController;
 use AltContext\AltContext;
+use AltContext\Cli\ResetProjectionCommand;
 use AltContext\Cli\XmpBackfillCommand;
 use AltContext\Media\XmpPersistenceFactory;
 use AltContext\Support\LifecycleManager;
@@ -154,6 +155,7 @@ function acx_register_cli_commands(): void
     }
 
     WP_CLI::add_command('acx xmp-backfill', new XmpBackfillCommand());
+    WP_CLI::add_command('acx reset-projection', new ResetProjectionCommand());
 }
 
 /**

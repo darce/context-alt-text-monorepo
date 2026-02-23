@@ -178,4 +178,22 @@ describe('SyncStatusIndicator', () => {
     expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
     expect(screen.getByText(/Last sync/)).toBeInTheDocument();
   });
+
+  it('renders connected-no-clusters state on no_remote_data reason', () => {
+    mockReturn.data = { last_snapshot_version: 0, last_synced_at: null, is_stale: true };
+    (mockTrigger as Record<string, unknown>).isSuccess = true;
+    (mockTrigger as Record<string, unknown>).data = {
+      synced: true,
+      reason: 'no_remote_data',
+      last_snapshot_version: 0,
+      last_synced_at: null,
+      is_stale: true,
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText(/Service connected/)).toBeInTheDocument();
+    expect(screen.getByText(/no clusters yet/)).toBeInTheDocument();
+    expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
+  });
 });

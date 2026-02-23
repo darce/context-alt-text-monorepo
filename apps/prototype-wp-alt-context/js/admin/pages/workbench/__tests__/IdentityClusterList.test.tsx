@@ -123,7 +123,6 @@ const baseIdentity = {
   confidence: 0.9,
   similarity: 0.9,
   detected_at: '',
-  thumbnail_url: null,
 };
 
 interface Deferred<T> {

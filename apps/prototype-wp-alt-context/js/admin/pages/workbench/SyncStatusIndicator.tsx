@@ -41,6 +41,15 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     );
   }
 
+  // Sync succeeded but no clusters exist yet — show informational state.
+  if (syncTrigger.isSuccess && syncTrigger.data?.synced && syncTrigger.data.reason === 'no_remote_data') {
+    return (
+      <div className="acx-sync-status acx-sync-status--info">
+        <span className="acx-sync-status__label">{__('Service connected — no clusters yet', 'alt-context')}</span>
+      </div>
+    );
+  }
+
   // Show success notification after sync completes
   if (syncTrigger.isSuccess && syncTrigger.data?.synced) {
     const syncedAt = formatTimestamp(syncTrigger.data.last_synced_at);

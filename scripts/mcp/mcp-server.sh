@@ -19,6 +19,13 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONOREPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+# Source .env if it exists at monorepo root to pick up GEMINI_API_KEY
+if [ -f "$MONOREPO_ROOT/.env" ]; then
+    set -a
+    source "$MONOREPO_ROOT/.env"
+    set +a
+fi
 SERVER_SCRIPT="$SCRIPT_DIR/unified_server.py"
 
 # Ensure common tools (ripgrep, etc.) are in PATH for VS Code spawned processes
@@ -66,7 +73,7 @@ fi
 case "${1:-run}" in
     run)
         cd "$MONOREPO_ROOT"
-        exec "${PYTHON_CMD[@]}" "$SERVER_SCRIPT"
+        exec "${PYTHON_CMD[@]}" "$SERVER_SCRIPT" mcp
         ;;
     *)
         echo "MCP Server Entry Point"

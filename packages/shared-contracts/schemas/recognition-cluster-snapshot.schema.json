@@ -1,0 +1,113 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "$id": "https://context-alt-text.dev/schemas/recognition-cluster-snapshot.schema.json",
+  "title": "Recognition Cluster Snapshot",
+  "description": "Tenant cluster snapshot payload returned by the recognition service and projected by the WordPress plugin.",
+  "type": "object",
+  "required": ["tenant_id", "snapshot_version", "generated_at", "clusters", "members"],
+  "properties": {
+    "tenant_id": {
+      "type": "string",
+      "description": "Unique tenant identifier (site hash)."
+    },
+    "snapshot_version": {
+      "type": "integer",
+      "description": "Monotonic version number for the tenant's snapshot state."
+    },
+    "generated_at": {
+      "type": "string",
+      "format": "date-time",
+      "description": "ISO 8601 timestamp when the snapshot was generated."
+    },
+    "clusters": {
+      "type": "array",
+      "description": "List of clusters for the tenant.",
+      "items": {
+        "type": "object",
+        "required": ["cluster_uuid", "label", "curation_state", "is_user_confirmed", "identity_count"],
+        "properties": {
+          "cluster_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique cluster identifier."
+          },
+          "label": {
+            "type": ["string", "null"],
+            "description": "Human-readable label for the cluster."
+          },
+          "curation_state": {
+            "type": "string",
+            "enum": ["active", "confirmed", "dismissed"],
+            "description": "Current curation state of the cluster."
+          },
+          "is_user_confirmed": {
+            "type": "boolean",
+            "description": "Whether a user has explicitly confirmed this cluster's identity."
+          },
+          "identity_count": {
+            "type": "integer",
+            "minimum": 0,
+            "description": "Number of identities currently assigned to this cluster."
+          },
+          "representative_thumb_path": {
+            "type": ["string", "null"],
+            "description": "ACX-formatted path to the representative thumbnail."
+          }
+        }
+      }
+    },
+    "members": {
+      "type": "array",
+      "description": "List of identities (members) and their cluster assignments.",
+      "items": {
+        "type": "object",
+        "required": ["identity_uuid", "cluster_uuid", "attachment_id", "bbox", "image_width", "image_height", "thumb_path", "similarity"],
+        "properties": {
+          "identity_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "Unique identity identifier."
+          },
+          "cluster_uuid": {
+            "type": "string",
+            "format": "uuid",
+            "description": "ID of the cluster this identity belongs to."
+          },
+          "attachment_id": {
+            "type": "integer",
+            "description": "WordPress attachment ID for the source media."
+          },
+          "bbox": {
+            "type": "object",
+            "description": "Bounding box of the face in pixel coordinates.",
+            "required": ["x", "y", "width", "height"],
+            "properties": {
+              "x": { "type": "integer" },
+              "y": { "type": "integer" },
+              "width": { "type": "integer" },
+              "height": { "type": "integer" }
+            }
+          },
+          "image_width": {
+            "type": "integer",
+            "description": "Original image width."
+          },
+          "image_height": {
+            "type": "integer",
+            "description": "Original image height."
+          },
+          "thumb_path": {
+            "type": "string",
+            "description": "ACX-formatted path to the identity thumbnail."
+          },
+          "similarity": {
+            "type": "number",
+            "minimum": 0,
+            "maximum": 1,
+            "description": "Confidence score of the cluster assignment."
+          }
+        }
+      }
+    }
+  }
+}

@@ -59,8 +59,6 @@ export const SuggestionCard = ({
     suggestion.identity_media_url && suggestion.identity_bbox
       ? { mediaUrl: suggestion.identity_media_url, bbox: suggestion.identity_bbox }
       : null;
-  const clusterThumbnails = suggestion.cluster_thumbnails ?? [];
-  const showGrid = clusterThumbnails.length > 1;
   const representativeFace =
     suggestion.representative_media_url && suggestion.representative_bbox
       ? { mediaUrl: suggestion.representative_media_url, bbox: suggestion.representative_bbox }
@@ -84,14 +82,8 @@ export const SuggestionCard = ({
           <span className="acx-suggestion-card__face-label">{__('Candidate', 'alt-context')}</span>
         </div>
 
-        <div className={`acx-suggestion-card__face ${showGrid ? 'acx-suggestion-card__face--grid' : ''}`}>
-          {showGrid ? (
-            <div className="acx-face-grid-preview acx-face-grid-preview--cluster">
-              {clusterThumbnails.slice(0, 4).map((url, idx) => (
-                <img key={idx} src={url} alt="" className="acx-face-grid-preview__image" />
-              ))}
-            </div>
-          ) : representativeFace ? (
+        <div className="acx-suggestion-card__face">
+          {representativeFace ? (
             <FaceThumbnail
               mediaUrl={representativeFace.mediaUrl}
               bbox={representativeFace.bbox}

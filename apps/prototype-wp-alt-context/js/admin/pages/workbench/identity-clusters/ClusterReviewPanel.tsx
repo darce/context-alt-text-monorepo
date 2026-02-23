@@ -86,9 +86,9 @@ export const ClusterReviewPanel = ({ clusterId, onClose }: ClusterReviewPanelPro
             {members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-member-card">
                 <div className="acx-cluster-member-card__thumbnail">
-                  {member.thumbnail_url ? (
+                  {member.thumb_url ? (
                     <img
-                      src={member.thumbnail_url}
+                      src={member.thumb_url}
                       alt={__('Cluster member', 'alt-context')}
                       className="acx-cluster-member-card__image"
                     />

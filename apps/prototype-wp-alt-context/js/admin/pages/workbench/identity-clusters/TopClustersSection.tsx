@@ -30,7 +30,7 @@ const TOP_UNLABELED_LIMIT = 20;
 const resolveRepresentativeThumbUrl = (
   representative: TopUnlabeledCluster['representatives'][number],
 ): string | null => {
-  const rawUrl = representative.thumb_url ?? representative.thumbnail_url ?? null;
+  const rawUrl = representative.thumb_url ?? null;
   if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
     return null;
   }

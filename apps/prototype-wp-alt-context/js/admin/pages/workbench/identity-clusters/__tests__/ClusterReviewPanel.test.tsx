@@ -72,7 +72,7 @@ describe('ClusterReviewPanel', () => {
         similarity: 0.95,
         confidence: 0.99,
         bbox: { x: 0, y: 0, width: 10, height: 10 },
-        thumbnail_url: 'http://example.test/thumb.jpg',
+        thumb_url: 'http://example.test/thumb.jpg',
       },
     ]);
     removeClusterMemberMock.mockResolvedValue(undefined);
@@ -111,7 +111,7 @@ describe('ClusterReviewPanel', () => {
         similarity: 0.91,
         confidence: 0.98,
         bbox: { x: 12, y: 24, width: 48, height: 48 },
-        thumbnail_url: null,
+        thumb_url: null,
         media_url: 'http://example.test/media/member-2.jpg',
       },
     ]);
@@ -162,7 +162,7 @@ describe('ClusterReviewPanel', () => {
         similarity: 0.88,
         confidence: 0.92,
         bbox: { x: 2, y: 2, width: 20, height: 20 },
-        thumbnail_url: 'http://example.test/thumb-3.jpg',
+        thumb_url: 'http://example.test/thumb-3.jpg',
       },
     ]);
 

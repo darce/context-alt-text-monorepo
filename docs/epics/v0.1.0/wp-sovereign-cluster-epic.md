@@ -29,7 +29,7 @@ Guiding principles: accuracy over volume, explicit user control (no auto-labelin
 
 - **Greenfield policy** -- no production users, no existing data to preserve. Clean rewrites over shims. No long-lived feature flags.
 - **Backend schema baseline** -- changes fold into `apps/prototype-description-service/db/migrations/versions/001_identity_schema.py`.
-- **Snapshot endpoint does not exist** -- `GET /tenants/{tenant_uuid}/clusters/snapshot` is a parallel backend workstream.
+- **Snapshot endpoint implemented** -- `GET /tenants/{tenant_uuid}/clusters/snapshot` is active and finalized.
 - **WP-Cron for v0.1.0** -- Action Scheduler deferred to v0.2+.
 - **Plugin packaging** -- sovereign code must ship in standalone plugin ZIP per the portable packaging plan.
 
@@ -134,9 +134,9 @@ Exit criteria:
 - User actions are durable locally.
 - User-triggered sync keeps local projection current when backend is available.
 
-### Phase 4: Remove Hard Runtime Dependency -- NOT STARTED
+### Phase 4: Remove Hard Runtime Dependency -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plans**: not yet scoped
 
 **Goal**: Backend becomes compute/sync peer only; cluster UX is fully sovereign.
@@ -222,18 +222,18 @@ Exit criteria:
 - [x] Implement on-demand stale-check sync pull (`SyncPullJob`) on read-path entry.
 - [x] Handle backend-unreachable gracefully with local persistence.
 
-## Phase 4: Hard Dependency Removal -- NOT STARTED
+## Phase 4: Hard Dependency Removal -- COMPLETED
 
-- [ ] Replace proxy reads with local service facade.
-- [ ] Update architecture diagrams and contracts.
-- [ ] Backend: drop `thumbnail_url` column (migration), remove `ThumbnailSettings`, remove `StaticFiles` mount, remove `_fetch_cluster_thumbnails()`, strip `thumbnail_url` from domain objects / response schemas / repository reads.
-- [ ] Plugin: simplify `resolve_thumb_url()` (remove dead HTTP-URL branch), remove `thumbnail_url` fallback in `ClustersController`, evaluate replacing `acx://` thumb-path indirection with direct `attachment_id` lookup.
-- [ ] Frontend: remove `thumbnail_url` from TS types (`ClusterIdentity`, `TopUnlabeledRepresentative`, suggestion types), remove dead `IdentityThumbnail` fast-path, collapse dual `thumb_url`/`thumbnail_url` fields.
-- [ ] Delete stale `.mypy_cache` artifacts for removed `thumbnail_service`.
+- [x] Replace proxy reads with local service facade.
+- [x] Update architecture diagrams and contracts.
+- [x] Backend: drop `thumbnail_url` column (migration), remove `ThumbnailSettings`, remove `StaticFiles` mount, remove `_fetch_cluster_thumbnails()`, strip `thumbnail_url` from domain objects / response schemas / repository reads.
+- [x] Plugin: simplify `resolve_thumb_url()` (remove dead HTTP-URL branch), remove `thumbnail_url` fallback in `ClustersController`, evaluate replacing `acx://` thumb-path indirection with direct `attachment_id` lookup.
+- [x] Frontend: remove `thumbnail_url` from TS types (`ClusterIdentity`, `TopUnlabeledRepresentative`, suggestion types), remove dead `IdentityThumbnail` fast-path, collapse dual `thumb_url`/`thumbnail_url` fields.
+- [x] Delete stale `.mypy_cache` artifacts for removed `thumbnail_service`.
 
 ## Deferred (post-v0.1.0)
 
-- [ ] Outbox table (`wp_acx_cluster_operations`) with operation IDs.
-- [ ] Action Scheduler migration for retry/backoff/dead-letter.
-- [ ] Delta/event endpoint and idempotent mutation ingest.
-- [ ] Drift reconciliation and conflict review queue.
+- [ ] Outbox table (`wp_acx_cluster_operations`) with operation IDs. [Plan](../../tasks/4.0/4.13.3/v0.2-sovereign-outbox-task-plan.md)
+- [ ] Action Scheduler migration for retry/backoff/dead-letter. [Plan](../../tasks/4.0/4.13.3/v0.2-sovereign-action-scheduler-task-plan.md)
+- [ ] Delta/event endpoint and idempotent mutation ingest. [Plan](../../tasks/4.0/4.13.3/v0.2-sovereign-delta-ingest-task-plan.md)
+- [ ] Drift reconciliation and conflict review queue. [Plan](../../tasks/4.0/4.13.3/v0.2-sovereign-drift-reconciliation-task-plan.md)

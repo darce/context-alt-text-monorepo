@@ -31,6 +31,7 @@ help:
 	@echo ""
 	@echo "MCP Server (AI Agent Tooling):"
 	@echo "  make mcp          - Start the MCP server for AI agents manually"
+	@echo "  make gemini-cli-setup - Register the MCP server with gemini-cli"
 	@echo "  VS Code auto-manages via .vscode/mcp.json — no manual start needed."
 	@echo "  See docs/agentic/BOOTSTRAP.md for details."
 	@echo ""
@@ -95,6 +96,12 @@ mcp: mcp-start
 mcp-start:
 	@echo "Starting MCP Server manually..."
 	@./scripts/mcp/mcp-server.sh run
+
+gemini-cli-setup:
+	@echo "Registering unified_server.py with gemini-cli..."
+	@gemini mcp add context-alt-text-handoff "$(shell pwd)/scripts/mcp/mcp-server.sh" run
+	@echo "✓ MCP server 'context-alt-text-handoff' registered with gemini-cli"
+	@echo "💡 Tip: Store your API key in a .env file at the monorepo root to keep it out of your .zshrc."
 
 # =============================================================================
 # Handoff / Task State

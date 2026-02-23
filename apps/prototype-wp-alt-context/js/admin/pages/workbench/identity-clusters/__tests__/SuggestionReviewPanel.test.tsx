@@ -524,44 +524,8 @@ describe('SuggestionReviewPanel', () => {
     });
   });
 
-  it('renders face grid when cluster thumbnails are present', async () => {
-    const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
-    const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
-    const pendingResponse: PendingSuggestionsResponse = {
-      suggestions: [
-        {
-          id: 'sugg-grid',
-          identity_id: 'identity-g',
-          suggested_cluster_id: 'cluster-g',
-          representative_similarity: 0.95,
-          avg_member_similarity: 0.9,
-          cluster_label: 'Grid Cluster',
-          cluster_identity_count: 10,
-          cluster_thumbnails: [
-            'http://example.com/1.jpg',
-            'http://example.com/2.jpg',
-            'http://example.com/3.jpg',
-            'http://example.com/4.jpg',
-          ],
-        },
-      ],
-      total: 1,
-      limit: 10,
-      offset: 0,
-    };
-    fetchPendingSuggestionsMock.mockResolvedValue(pendingResponse);
-    fetchPendingMergeSuggestionsMock.mockResolvedValue({ suggestions: [], total: 0, limit: 10, offset: 0 });
-
-    const { container } = renderPanel();
-
-    await waitFor(() => {
-      expect(fetchPendingSuggestionsMock).toHaveBeenCalled();
-    });
-
-    expect(container.querySelector('.acx-face-grid-preview')).toBeInTheDocument();
-    const gridImages = container.querySelectorAll('.acx-face-grid-preview img');
-    expect(gridImages.length).toBe(4);
-  });
+  // Case removed: "renders face grid when cluster thumbnails are present"
+  // as cluster_thumbnails is deprecated and grid rendering was removed in favor of representatives.
 
   it('renders "Is this {label}?" when a suggested label is present', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
@@ -580,7 +544,6 @@ describe('SuggestionReviewPanel', () => {
           suggested_label: 'Inferred Name',
           suggested_label_source: 'identity',
           cluster_identity_count: 4,
-          cluster_thumbnails: [],
         },
       ],
       total: 1,
@@ -620,7 +583,6 @@ describe('SuggestionReviewPanel', () => {
           suggested_label: null,
           suggested_label_source: 'none',
           cluster_identity_count: 2,
-          cluster_thumbnails: [],
         },
       ],
       total: 1,
@@ -659,7 +621,6 @@ describe('SuggestionReviewPanel', () => {
           avg_member_similarity: 0.85,
           cluster_label: 'Review Me',
           cluster_identity_count: 5,
-          cluster_thumbnails: [],
         },
       ],
       total: 1,
@@ -837,14 +798,14 @@ describe('SuggestionReviewPanel', () => {
     expect(await screen.findByText(/Are these the same person/)).toBeInTheDocument();
   });
 
-  it('renders top cluster thumbnails from legacy thumbnail_url field', async () => {
+  it('renders top cluster thumbnails from thumb_url field', async () => {
     const fetchPendingSuggestionsMock = vi.mocked(fetchPendingSuggestions);
     const fetchPendingMergeSuggestionsMock = vi.mocked(fetchPendingMergeSuggestions);
     const fetchTopUnlabeledClustersMock = vi.mocked(fetchTopUnlabeledClusters);
-    const legacyRepresentative = {
+    const representative = {
       id: 'rep-1',
       media_id: 101,
-      thumbnail_url: 'http://example.test/media/face-101.jpg',
+      thumb_url: 'http://example.test/media/face-101.jpg',
       is_pinned: false,
     } as TopUnlabeledCluster['representatives'][number];
 
@@ -855,7 +816,7 @@ describe('SuggestionReviewPanel', () => {
         id: 'cluster-top-1',
         label: null,
         identity_count: 3,
-        representatives: [legacyRepresentative],
+        representatives: [representative],
         tenant_id: 'test-tenant-id',
         user_confirmed: false,
         is_labeled: false,
@@ -934,9 +895,13 @@ describe('SuggestionReviewPanel', () => {
     expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'No' })).toBeInTheDocument();
 
-    const thumbImages = container.querySelectorAll<HTMLImageElement>('.acx-top-cluster-card__thumb img');
+    const thumbImages = container.querySelectorAll<HTMLImageElement>(
+      '.acx-top-cluster-card__thumb img, .acx-top-cluster-card__thumb [role="img"]',
+    );
     expect(thumbImages).toHaveLength(1);
-    expect(thumbImages[0]?.getAttribute('src')).toContain('pinned.jpg');
+    // FaceThumbnail might render a div with background-image or a canvas, but here it's simple fallback img
+    const srcAttr = thumbImages[0]?.getAttribute('src') ?? thumbImages[0]?.style.backgroundImage;
+    expect(srcAttr).toContain('pinned.jpg');
 
     const user = userEvent.setup();
     await user.click(screen.getByRole('button', { name: 'Yes' }));

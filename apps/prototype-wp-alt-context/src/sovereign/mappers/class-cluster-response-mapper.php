@@ -160,7 +160,7 @@ class ClusterResponseMapper {
 			'confidence' => $this->normalize_confidence_value( $member_row ),
 			'clustering_pending' => false,
 			'bbox' => $bbox,
-			'thumbnail_url' => $this->resolve_thumb_url( $member_row, $media_id ),
+			'thumb_url' => $this->resolve_thumb_url( $member_row, $media_id ),
 			'media_url' => $this->resolve_media_url( $media_id ),
 		);
 	}

@@ -131,4 +131,20 @@ class SnapshotClientTest extends TestCase
         $this->assertCount(2, $calls, 'Background sync should retry transient 5xx responses.');
         $this->assertSame(30, $calls[0]['args']['timeout'] ?? null);
     }
+
+    public function testFetchSnapshotReturnsEmptySnapshotOn404(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 404, 'message' => 'Not Found'],
+            'body' => json_encode(['detail' => 'No clusters found for tenant']),
+        ]);
+
+        $result = $this->client->fetch_snapshot('tenant-empty');
+
+        $this->assertIsArray($result);
+        $this->assertSame(0, $result['snapshot_version']);
+        $this->assertSame([], $result['clusters']);
+        $this->assertSame([], $result['members']);
+        $this->assertTrue($result['empty']);
+    }
 }

@@ -225,4 +225,32 @@ class SyncStatusControllerTest extends TestCase
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_failed', $data['reason']);
     }
+
+    public function testTriggerSyncReturnsNoRemoteDataReasonOnEmptyTenant(): void
+    {
+        $syncRepo = new class() implements SyncStateRepositoryInterface {
+            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+            public function get_snapshot_version(string $tenant_id): int {
+				return 0; }
+            public function get_last_updated(string $tenant_id): ?string {
+				return null; }
+            public function touch_local_curation_marker(string $tenant_id): void {}
+        };
+
+        $syncJob = new class() implements SyncPullJobInterface {
+            public function perform(string $tenant_id): bool {
+				return true; }
+            public function perform_bypass_cooldown(string $tenant_id): bool {
+				return true; }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame('no_remote_data', $data['reason']);
+        $this->assertSame(0, $data['last_snapshot_version']);
+    }
 }

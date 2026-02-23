@@ -363,6 +363,7 @@ class ClusterSnapshotMemberResponse(BaseModel):
     bbox: FaceBoxResponse
     image_width: int
     image_height: int
+    thumb_path: str
     similarity: float
 
 
@@ -377,6 +378,7 @@ class ClusterSnapshotClusterResponse(BaseModel):
     curation_state: Literal["active", "dismissed", "confirmed"]
     is_user_confirmed: bool
     identity_count: int
+    representative_thumb_path: str | None = None
 
 
 class ClusterSnapshotResponse(BaseModel):

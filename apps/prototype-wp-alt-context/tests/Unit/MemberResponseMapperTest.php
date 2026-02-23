@@ -36,6 +36,7 @@ class MemberResponseMapperTest extends TestCase
         $payload = $this->mapper->map_cluster_members($rows);
 
         $this->assertSame('identity-50', $payload[0]['identity_id']);
+        $this->assertSame('http://example.test/media/50.jpg', $payload[0]['thumb_url']);
         $this->assertSame('http://example.test/media/50.jpg', $payload[0]['media_url']);
     }
 

@@ -144,6 +144,24 @@ class SyncPullJobTest extends TestCase
         $this->assertTrue($result);
         $this->assertSame('tenant-bypass', $projector->tenantId);
     }
+
+    public function testSyncPullProjectsEmptySnapshot(): void
+    {
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 0,
+            'clusters' => [],
+            'members' => [],
+            'empty' => true,
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $job = new SyncPullJob($client, $projector);
+        $result = $job->perform('tenant-empty');
+
+        $this->assertTrue($result, 'Empty snapshot should be projected successfully');
+        $this->assertSame('tenant-empty', $projector->tenantId);
+        $this->assertSame(0, $projector->snapshotVersion);
+    }
 }
 
 class SyncPullJobSnapshotClient extends SnapshotClient

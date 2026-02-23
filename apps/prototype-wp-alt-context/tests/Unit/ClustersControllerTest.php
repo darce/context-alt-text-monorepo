@@ -62,7 +62,7 @@ class ClustersControllerTest extends TestCase
                         'cluster_uuid' => 'cluster-1',
                         'label' => null,
                         'identity_count' => 1,
-                    ]
+                    ],
                 ];
             }
         };
@@ -76,8 +76,8 @@ class ClustersControllerTest extends TestCase
                             'media_id' => 101,
                             'cluster_uuid' => 'cluster-1',
                             'distance' => 0.0,
-                        ]
-                    ]
+                        ],
+                    ],
                 ];
             }
         };

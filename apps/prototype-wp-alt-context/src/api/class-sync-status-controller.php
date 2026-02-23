@@ -110,13 +110,23 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		return new WP_REST_Response(
 			array(
 				'synced'                => $success,
-				'reason'                => $success ? 'ok' : 'sync_failed',
+				'reason'                => $this->determine_sync_reason( $success, $version ),
 				'last_snapshot_version' => $version,
 				'last_synced_at'        => $updated,
 				'is_stale'              => $this->is_projection_stale( $updated ),
 			),
 			200
 		);
+	}
+
+	private function determine_sync_reason( bool $success, ?int $version ): string {
+		if ( ! $success ) {
+			return 'sync_failed';
+		}
+		if ( 0 === $version || null === $version ) {
+			return 'no_remote_data';
+		}
+		return 'ok';
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {

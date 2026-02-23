@@ -48,6 +48,16 @@ class SnapshotClient {
 		}
 
 		if ( $response->get_status() >= 400 ) {
+			// 404 = no clusters for this tenant; return an empty snapshot.
+			if ( 404 === $response->get_status() ) {
+				return array(
+					'snapshot_version' => 0,
+					'clusters'         => array(),
+					'members'          => array(),
+					'tenant_id'        => $tenant_id,
+					'empty'            => true,
+				);
+			}
 			return new WP_Error(
 				'snapshot_fetch_failed',
 				'Snapshot endpoint returned an error status.',

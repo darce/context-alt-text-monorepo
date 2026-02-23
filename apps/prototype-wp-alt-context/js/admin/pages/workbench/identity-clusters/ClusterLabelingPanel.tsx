@@ -196,8 +196,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
           ) : members && members.length > 0 ? (
             members.map((member) => (
               <div key={member.identity_id} className="acx-cluster-labeling-panel__face">
-                {member.thumbnail_url ? (
-                  <img src={member.thumbnail_url} alt="" className="acx-face-thumbnail" />
+                {member.thumb_url ? (
+                  <img src={member.thumb_url} alt="" className="acx-face-thumbnail" />
                 ) : member.media_url && member.bbox ? (
                   <FaceThumbnail mediaUrl={member.media_url} bbox={member.bbox} size="lg" />
                 ) : (

@@ -25,16 +25,15 @@ export interface PendingSuggestion {
   cluster_identity_count?: number | null;
   identity_media_id?: number | null;
   identity_media_url?: string | null;
-  identity_thumbnail_url?: string | null;
+  identity_thumb_url?: string | null;
   identity_bbox?: BoundingBox | null;
   representative_media_id?: number | null;
   representative_media_url?: string | null;
-  representative_thumbnail_url?: string | null;
+  representative_thumb_url?: string | null;
   representative_bbox?: BoundingBox | null;
   suggested_label?: string | null;
   suggested_label_source?: 'identity' | 'roster' | 'similar_cluster' | 'none' | null;
   suggested_label_confidence?: number | null;
-  cluster_thumbnails?: string[];
 }
 
 export interface PendingSuggestionsResponse {
@@ -64,11 +63,11 @@ export interface PendingMergeSuggestion {
   cluster_b_identity_count?: number | null;
   cluster_a_representative_media_id?: number | null;
   cluster_a_representative_media_url?: string | null;
-  cluster_a_representative_thumbnail_url?: string | null;
+  cluster_a_representative_thumb_url?: string | null;
   cluster_a_representative_bbox?: BoundingBox | null;
   cluster_b_representative_media_id?: number | null;
   cluster_b_representative_media_url?: string | null;
-  cluster_b_representative_thumbnail_url?: string | null;
+  cluster_b_representative_thumb_url?: string | null;
   cluster_b_representative_bbox?: BoundingBox | null;
 }
 

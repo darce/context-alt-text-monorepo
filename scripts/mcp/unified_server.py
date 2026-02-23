@@ -3029,18 +3029,10 @@ def _cli() -> None:
     import json
     import argparse
 
-    custom_commands = {
-        "dashboard", "state", "task", "set", "decision", "action", "blocker", "test",
-        "review-record", "review-update", "review-reopen", "review-list", "review-get", "review-summary",
-        "review-reconcile", "handoff-close-check",
-    }
-
-    if len(sys.argv) == 1 or sys.argv[1] not in custom_commands and sys.argv[1] not in ["-h", "--help"]:
-        mcp.run()
-        return
-
     parser = argparse.ArgumentParser(description="MCP Tool CLI")
     subparsers = parser.add_subparsers(dest="cli_command", required=True)
+    
+    subparsers.add_parser("mcp", help="Run the MCP server (stdio transport)")
 
     # Read-only commands
     subparsers.add_parser("dashboard", help="Print handoff dashboard")
@@ -3093,13 +3085,15 @@ def _cli() -> None:
     p_find_rec.add_argument("--session", default="cli")
 
     p_find_upd = subparsers.add_parser("review-update", help="Update a review finding")
+    p_find_upd.add_argument("--status", choices=sorted(REVIEW_FINDING_STATUSES), required=True)
     p_find_upd_group = p_find_upd.add_mutually_exclusive_group(required=True)
     p_find_upd_group.add_argument("--finding_id", help="Logical finding identifier (preferred), e.g. M-taskplan-3")
     p_find_upd_group.add_argument("--id", dest="finding_db_id", type=int, help="Legacy DB row id")
-    p_find_upd.add_argument("--status", choices=sorted(REVIEW_FINDING_STATUSES), required=True)
     p_find_upd.add_argument("--resolution_notes")
     p_find_upd.add_argument("--reopen_reason")
     p_find_upd.add_argument("--session", default="cli")
+    p_find_upd.add_argument("--agent")
+    p_find_upd.add_argument("--branch")
 
     p_find_reopen = subparsers.add_parser("review-reopen", help="Reopen a review finding with required reason")
     p_find_reopen_group = p_find_reopen.add_mutually_exclusive_group(required=True)
@@ -3149,7 +3143,9 @@ def _cli() -> None:
             # If not JSON, assume success print (though all tools return JSON)
 
     # Dispatch
-    if args.cli_command == "dashboard":
+    if args.cli_command == "mcp":
+        mcp.run(show_banner=False)
+    elif args.cli_command == "dashboard":
         process_result(get_handoff_dashboard())
     elif args.cli_command == "state":
         process_result(get_handoff_state(task_ref=args.task_ref, verbose=True))
@@ -3214,6 +3210,7 @@ def _cli() -> None:
                 resolution_notes=args.resolution_notes,
                 reopen_reason=args.reopen_reason,
                 session=args.session,
+                actor={"agent": args.agent, "branch": args.branch} if args.agent or args.branch else None,
             )
         )
     elif args.cli_command == "review-reopen":

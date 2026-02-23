@@ -32,6 +32,10 @@ The reviewer can be human or agentic. When an agent performs the review:
 3. Record each finding into MCP via `record_review_finding` (see MCP Handoff Integration)
 4. Do **not** produce a report file unless the user explicitly requests one
 
+Hard rule for agent responses:
+- Do not present a finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
+- If a finding is discussed before recording, immediately record it and then reference its `finding_id`.
+
 ### Scope
 
 Review only **uncommitted working-directory changes** (`git status` / `git diff --name-only`), not the full branch history against `main`. The goal is to review what will be in the next commit, not re-review already-committed work.

@@ -7,6 +7,7 @@ Mermaid diagrams documenting the Context Alt Text system architecture.
 | Diagram                                                                | Purpose                    | When to Use                        |
 | ---------------------------------------------------------------------- | -------------------------- | ---------------------------------- |
 | [system-overview.mmd](system-overview.mmd)                             | High-level system map      | Understanding overall architecture |
+| [sovereign-data-flow.mmd](sovereign-data-flow.mmd)                     | Sovereign synchronization flow | Understanding v0.1.0 sync mechanics |
 | [backend-uml/agent-quick-start.mmd](backend-uml/agent-quick-start.mmd) | API routing                | Finding code for endpoints         |
 | [backend-uml/job-progress-flow.mmd](backend-uml/job-progress-flow.mmd) | SSE job progress flow      | Debugging backend progress streams |
 

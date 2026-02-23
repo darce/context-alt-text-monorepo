@@ -1,6 +1,6 @@
 ---
 title: Tenant Cluster Snapshot API
-status: draft
+status: finalized
 owners:
   - plugin-platform
   - recognition-service
@@ -12,6 +12,7 @@ description: Contract for backend snapshot export consumed by sovereign local pr
 ## Scope
 
 This contract defines the v0.1.0 snapshot payload required for plugin-side sovereign projection.
+The machine-readable schema for this contract is located at [recognition-cluster-snapshot.schema.json](../../../packages/shared-contracts/schemas/recognition-cluster-snapshot.schema.json).
 
 - Route owner: recognition service (`apps/prototype-description-service`)
 - Consumer: WordPress plugin sovereign projector (`apps/prototype-wp-alt-context`)

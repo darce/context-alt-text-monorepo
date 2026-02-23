@@ -22,7 +22,7 @@ export const IdentityThumbnail = ({
   const [croppedSrc, setCroppedSrc] = React.useState<string | null>(null);
 
   React.useEffect(() => {
-    if (identity.thumbnail_url) {
+    if (identity.thumb_url) {
       setCroppedSrc(null);
       return;
     }
@@ -100,9 +100,9 @@ export const IdentityThumbnail = ({
     return () => {
       cancelled = true;
     };
-  }, [identity.thumbnail_url, identity.bbox, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size]);
+  }, [identity.thumb_url, identity.bbox, mediaMeta?.height, mediaMeta?.url, mediaMeta?.width, size]);
 
-  const resolvedSrc = identity.thumbnail_url ?? croppedSrc ?? mediaMeta?.url ?? null;
+  const resolvedSrc = identity.thumb_url ?? croppedSrc ?? mediaMeta?.url ?? null;
 
   if (!resolvedSrc) {
     return <div className="acx-cluster-card__face--placeholder" aria-hidden="true" />;

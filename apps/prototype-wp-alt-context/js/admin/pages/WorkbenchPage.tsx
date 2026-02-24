@@ -12,6 +12,7 @@ import { MediaSelection } from './workbench/MediaSelection';
 import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from './workbench/identity-clusters';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { BatchPanel, ConfirmPanel, RecentJobsPanel, ScanActionPanel, rosterClustersUrl } from './workbench/Panels';
+import { ErrorBoundary } from '../../components/ErrorBoundary';
 
 const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
 const DEFAULT_MEDIA_PAGE_SIZE = MEDIA_PAGE_SIZE_OPTIONS[0];
@@ -176,7 +177,6 @@ export const WorkbenchPage = (): React.JSX.Element => {
         rememberJob(jobIds[0]);
       }
       setClusterMessage(null);
-      setActiveSection(TAB_IDS.confirm);
     },
     onScanError: (message) => {
       setScanError(message);
@@ -325,25 +325,27 @@ export const WorkbenchPage = (): React.JSX.Element => {
             />
             <SyncStatusIndicator />
             {!isScanRunning && !hasIdentities && <NoMediaPanel />}
-            {clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
-              <ClusterReviewPanel
-                clusterId={clusterPanel.clusterId}
-                onClose={() => dispatchClusterPanel({ type: 'close' })}
-              />
-            ) : clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
-              <ClusterLabelingPanel
-                clusterId={clusterPanel.clusterId}
-                onClose={() => dispatchClusterPanel({ type: 'close' })}
-                onLabel={() => {
-                  dispatchClusterPanel({ type: 'close' });
-                }}
-              />
-            ) : (
-              <SuggestionReviewPanel
-                onLabel={(clusterId) => dispatchClusterPanel({ type: 'open_label', clusterId })}
-                onReview={(clusterId) => dispatchClusterPanel({ type: 'open_review', clusterId })}
-              />
-            )}
+            <ErrorBoundary>
+              {clusterPanel.mode === 'review' && clusterPanel.clusterId ? (
+                <ClusterReviewPanel
+                  clusterId={clusterPanel.clusterId}
+                  onClose={() => dispatchClusterPanel({ type: 'close' })}
+                />
+              ) : clusterPanel.mode === 'label' && clusterPanel.clusterId ? (
+                <ClusterLabelingPanel
+                  clusterId={clusterPanel.clusterId}
+                  onClose={() => dispatchClusterPanel({ type: 'close' })}
+                  onLabel={() => {
+                    dispatchClusterPanel({ type: 'close' });
+                  }}
+                />
+              ) : (
+                <SuggestionReviewPanel
+                  onLabel={(clusterId) => dispatchClusterPanel({ type: 'open_label', clusterId })}
+                  onReview={(clusterId) => dispatchClusterPanel({ type: 'open_review', clusterId })}
+                />
+              )}
+            </ErrorBoundary>
             <MediaSelection
               items={mediaItems}
               isLoading={mediaQuery.isPending && mediaItems.length === 0}

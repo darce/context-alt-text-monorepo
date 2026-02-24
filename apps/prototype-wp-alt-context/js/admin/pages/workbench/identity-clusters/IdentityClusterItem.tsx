@@ -138,6 +138,7 @@ export const IdentityClusterItem = ({ cluster }: IdentityClusterItemProps): Reac
     onMergeSuccess: handleMergeSuccess,
     onRevertSuccess,
     onError: handleMutationError,
+    onAbort: resetSaveStatus,
   });
 
   const { handleCancel, handleConfirmSuggestion, handleSave } = useClusterSaveHandlers({

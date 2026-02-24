@@ -21,6 +21,7 @@ interface UseClusterLabelMutationsOptions {
   onMergeSuccess?: (result: MergeClusterResponse) => void;
   onRevertSuccess?: () => void;
   onError?: (error: string) => void;
+  onAbort?: () => void;
   cancelIdentityQueries: () => Promise<void>;
   invalidateQueries: () => void;
   updateCachedClusterLabel: (targetClusterId: string, nextLabel: string) => void;
@@ -34,6 +35,7 @@ export const useClusterLabelMutations = ({
   onMergeSuccess,
   onRevertSuccess,
   onError,
+  onAbort,
   cancelIdentityQueries,
   invalidateQueries,
   updateCachedClusterLabel,
@@ -62,6 +64,7 @@ export const useClusterLabelMutations = ({
     onError: (err: unknown) => {
       if (isAbortError(err)) {
         invalidateQueries();
+        onAbort?.();
         return;
       }
       invalidateQueries();
@@ -101,6 +104,7 @@ export const useClusterLabelMutations = ({
     },
     onError: (err: unknown) => {
       if (isAbortError(err)) {
+        onAbort?.();
         return;
       }
       const message = err instanceof Error ? err.message : String(err);

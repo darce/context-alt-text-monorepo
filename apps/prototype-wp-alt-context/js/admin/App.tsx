@@ -4,6 +4,7 @@ import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { DashboardPage } from './pages/DashboardPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
+import { ErrorBoundary } from '../components/ErrorBoundary';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -24,9 +25,9 @@ export const App = (): React.JSX.Element => {
     <QueryClientProvider client={queryClient}>
       <HashRouter>
         <Routes>
-          <Route path="/dashboard" element={<DashboardPage />} />
-          <Route path="/workbench" element={<WorkbenchPage />} />
-          <Route path="/roster" element={<RosterPage />} />
+          <Route path="/dashboard" element={<ErrorBoundary><DashboardPage /></ErrorBoundary>} />
+          <Route path="/workbench" element={<ErrorBoundary><WorkbenchPage /></ErrorBoundary>} />
+          <Route path="/roster" element={<ErrorBoundary><RosterPage /></ErrorBoundary>} />
           <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
         </Routes>
       </HashRouter>
@@ -58,15 +59,17 @@ const determineInitialRoute = (): RoutePath => {
 
 const extractRouteFromHash = (): RoutePath | null => {
   const hash = window.location.hash.replace('#', '').trim();
-  if (hash === '/workbench') {
+  const path = hash.split('?')[0];
+  
+  if (path === '/workbench') {
     return '/workbench';
   }
 
-  if (hash === '/roster') {
+  if (path === '/roster') {
     return '/roster';
   }
 
-  if (hash === '/dashboard') {
+  if (path === '/dashboard') {
     return '/dashboard';
   }
 

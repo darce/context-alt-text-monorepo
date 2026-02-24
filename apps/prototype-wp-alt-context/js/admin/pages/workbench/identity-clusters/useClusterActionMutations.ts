@@ -19,6 +19,7 @@ interface UseClusterActionMutationsOptions {
   identityCount?: number;
   onRenameSuccess?: (newLabel: string) => void;
   onError?: (error: string) => void;
+  onAbort?: () => void;
   invalidateQueries: () => void;
 }
 
@@ -46,6 +47,7 @@ export const useClusterActionMutations = ({
   identityCount,
   onRenameSuccess,
   onError,
+  onAbort,
   invalidateQueries,
 }: UseClusterActionMutationsOptions) => {
   const reassignMutation = useMutation({
@@ -61,6 +63,7 @@ export const useClusterActionMutations = ({
     },
     onError: (err: unknown) => {
       if (isAbortError(err)) {
+        onAbort?.();
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -88,6 +91,7 @@ export const useClusterActionMutations = ({
     },
     onError: (err: unknown) => {
       if (isAbortError(err)) {
+        onAbort?.();
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -107,6 +111,7 @@ export const useClusterActionMutations = ({
     },
     onError: (err: unknown) => {
       if (isAbortError(err)) {
+        onAbort?.();
         return;
       }
       const message = err instanceof Error ? err.message : String(err);
@@ -142,6 +147,7 @@ export const useClusterActionMutations = ({
     },
     onError: (err: unknown) => {
       if (isAbortError(err)) {
+        onAbort?.();
         return;
       }
       const message = err instanceof Error ? err.message : String(err);

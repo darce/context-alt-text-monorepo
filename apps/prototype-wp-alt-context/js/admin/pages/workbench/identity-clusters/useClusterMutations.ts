@@ -29,6 +29,8 @@ interface UseClusterMutationsOptions {
   onRevertSuccess?: () => void;
   /** Callback on any error */
   onError?: (error: string) => void;
+  /** Callback on abort to reset UI status without error */
+  onAbort?: () => void;
 }
 
 export const useClusterMutations = ({
@@ -40,6 +42,7 @@ export const useClusterMutations = ({
   onMergeSuccess,
   onRevertSuccess,
   onError,
+  onAbort,
 }: UseClusterMutationsOptions) => {
   const queryClient = useQueryClient();
 
@@ -101,6 +104,7 @@ export const useClusterMutations = ({
     onMergeSuccess,
     onRevertSuccess,
     onError,
+    onAbort,
     cancelIdentityQueries,
     invalidateQueries,
     updateCachedClusterLabel,
@@ -111,6 +115,7 @@ export const useClusterMutations = ({
     identityCount,
     onRenameSuccess,
     onError,
+    onAbort,
     invalidateQueries,
   });
 

@@ -44,37 +44,17 @@ The Recognition Service expects this in:
 
 | Environment | Method                                          |
 | ----------- | ----------------------------------------------- |
-| Local dev   | `DEV_API_KEYS` env var (comma-separated)        |
+| Local dev   | `RECOGNITION_ALLOWED_API_KEYS` env var (comma-separated) |
 | Production  | API key in `Authorization: Bearer <key>` header |
 | WordPress   | Key stored in `acx_recognition_api_key` option  |
 
-See [contracts/security.md](contracts/security.md) for full details.
-
-## Contract Files
-
-### Human-Readable (docs/agentic/contracts/)
-
-| File                            | Scope                                   |
-| ------------------------------- | --------------------------------------- |
-| `clustering-api.md`             | WP REST endpoints that proxy to FastAPI |
-| `recognition-clustering.md`     | FastAPI endpoint specifications         |
-| `security.md`                   | API key auth, tenant isolation, RLS     |
-| `wordpress-backend-contract.md` | Legacy progressive learning (reference) |
-
-### Machine-Readable (packages/shared-contracts/)
-
-| File                                       | Generated Types            |
-| ------------------------------------------ | -------------------------- |
-| `schemas/recognition-job.schema.json`      | Job status response        |
-| `schemas/roster-entry.schema.json`         | Roster entry model         |
-| `schemas/workbench-media-item.schema.json` | Media item with identities |
-| `schemas/coverage-stats.schema.json`       | Dashboard coverage stats   |
+See [../contracts/security.md](../contracts/security.md) for full details.
 
 ## Key Diagrams
 
-- [diagrams/system-overview.mmd](diagrams/system-overview.mmd) — Full system architecture
-- [diagrams/backend-uml/agent-quick-start.mmd](diagrams/backend-uml/agent-quick-start.mmd) — API routing
-- [diagrams/frontend-uml/proxy-boundary.mmd](diagrams/frontend-uml/proxy-boundary.mmd) — Proxy layer detail
+- [../diagrams/system-overview.mmd](../diagrams/system-overview.mmd) — Full system architecture
+- [../diagrams/backend-uml/agent-quick-start.mmd](../diagrams/backend-uml/agent-quick-start.mmd) — API routing
+- [../diagrams/frontend-uml/proxy-boundary.mmd](../diagrams/frontend-uml/proxy-boundary.mmd) — Proxy layer detail
 
 ## Common Tasks
 
@@ -83,7 +63,7 @@ See [contracts/security.md](contracts/security.md) for full details.
 1. **Define contract** in `docs/agentic/contracts/clustering-api.md`
 2. **FastAPI**: Add router in `recognition/interface_adapters/http/routers/`
 3. **PHP proxy**: Add route in `RecognitionController.php`
-4. **Frontend**: Add API client in `js/src/admin/api/`
+4. **Frontend**: Add API client in `js/admin/api/`
 5. **Tests**: API test (Python), integration test (PHP), component test (React)
 
 ### Change request/response shape

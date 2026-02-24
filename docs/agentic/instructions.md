@@ -49,7 +49,7 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | Radix UI / accessibility primitives | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)               |
 | Roster auto-resolve vs pending      | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)       |
 | Embedding search evolution          | [rules/search_optimizations.md](rules/search_optimizations.md)                       |
-| Why /identify endpoint exists       | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
+| Detection vs identification boundary | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
 | Face/Identity nomenclature (ADR)    | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
 | MCP tooling / testing commands      | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
 | **Antigravity Agents (`/` cmds)**   | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**    |

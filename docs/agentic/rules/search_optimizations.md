@@ -32,7 +32,7 @@ Once the recognition MVP is in a stable state, follow the sequence below to evol
 
 - Run controlled benchmarks covering roster sizes up to target scale (e.g., 50k identities) and measure p95 latency, recall@K, and memory usage.
 - Tune ANN hyperparameters (ef_construction, M for HNSW; nlist, nprobe for IVF) to hit latency targets without unacceptable recall loss.
-- Update `/api/v0/service/info` to surface index statistics (entries loaded, build time, last refresh).
+- Surface index statistics (entries loaded, build time, last refresh) via `GET /recognition/health` or a dedicated info endpoint.
 
 ## 6. Streamline Updates & Backfills
 

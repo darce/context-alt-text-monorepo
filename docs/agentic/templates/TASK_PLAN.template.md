@@ -1,7 +1,7 @@
 # Task Plan Template
 
 > Use this template for all implementation plans under `docs/tasks/`.
-> See `docs/agentic/instructions.md` §"Implementation Plan Requirements" and §"Consolidated Checklists" for the rules this template enforces.
+> See `docs/agentic/instructions.md` §"Consolidated Checklists" for the rules this template enforces.
 
 ---
 
@@ -72,7 +72,7 @@
 - [ ] Add `raise NotImplementedError("TODO: ...")` stubs.
 - [ ] Create test files with `@pytest.mark.skip("scaffold")` or `it.todo()` stubs.
 - [ ] Update API contracts in `docs/agentic/contracts/` if cross-layer.
-- [ ] Verify scaffolds compile: `mypy .` / `npm run type-check`.
+- [ ] Verify scaffolds compile: `mypy .` / `npm run typecheck`.
 
 ## Phase 1: [Description]
 

@@ -13,36 +13,6 @@
 | 🔥 5     | `docs/agentic/contracts/recognition-clustering.md`                                | API contract specification                          |
 | 🔥 6     | `docs/agentic/ADR-001-face-identity-nomenclature.md`                              | Face* (infra) vs *Identity (domain) naming boundary |
 
-## Architecture Layers
-
-```
-recognition/
-├── interface_adapters/http/     # FastAPI routers (HTTP boundary)
-│   ├── routers/
-│   │   ├── analyze.py           # POST /analyze, GET /jobs/{id}
-│   │   ├── clusters.py          # CRUD for clusters
-│   │   ├── suggestions.py       # Accept/reject suggestions
-│   │   ├── media.py             # Media identity queries
-│   │   ├── jobs.py              # SSE progress streaming
-│   │   └── diagnostics.py       # Health & observability
-│   └── dependencies.py          # Dependency injection
-├── application/                 # Use cases / orchestration
-│   ├── scan/                    # Scan queue service
-│   ├── orchestration/           # Cluster service, incremental clustering
-│   ├── assignment/              # Assignment gate + checks (WELL-STRUCTURED)
-│   ├── discovery/               # Representative, centroid, graph discovery
-│   ├── clustering/              # HAC, representative-only clustering
-│   └── suggestions/             # Suggestion service
-├── domain/                      # Core business entities
-│   ├── entities/                # Identity, Cluster, Member
-│   └── repositories.py          # Repository protocols
-├── infrastructure/              # External adapters
-│   ├── repositories/            # SQLAlchemy repos
-│   └── embedding/               # InsightFace wrapper
-└── worker/                      # Background job processing
-    └── scan_worker.py           # Scan + clustering job handler
-```
-
 ## Test Entry Points
 
 | Scope       | Path                             | When to Use                                |

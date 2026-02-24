@@ -6,52 +6,19 @@
 
 | Priority | File                                                 | Purpose              |
 | -------- | ---------------------------------------------------- | -------------------- |
-| 🔥 1     | `apps/prototype-wp-alt-context/js/src/admin/App.tsx` | React app entry      |
-| 🔥 2     | `apps/prototype-wp-alt-context/js/src/admin/pages/`  | Page components      |
-| 🔥 3     | `apps/prototype-wp-alt-context/js/src/admin/hooks/`  | Data fetching hooks  |
-| 🔥 4     | `apps/prototype-wp-alt-context/js/src/admin/api/`    | API client layer     |
+| 🔥 1     | `apps/prototype-wp-alt-context/js/admin/App.tsx`     | React app entry      |
+| 🔥 2     | `apps/prototype-wp-alt-context/js/admin/pages/`      | Page components      |
+| 🔥 3     | `apps/prototype-wp-alt-context/js/admin/hooks/`      | Data fetching hooks  |
+| 🔥 4     | `apps/prototype-wp-alt-context/js/admin/api/`        | API client layer     |
 | 🔥 5     | `docs/agentic/contracts/clustering-api.md`           | WP REST API contract |
-
-## Component Architecture
-
-```
-js/admin/
-├── App.tsx                      # Router + providers + QueryClient
-├── pages/                       # Route-level components
-│   ├── DashboardPage.tsx        # Coverage stats, quick actions
-│   ├── WorkbenchPage.tsx        # Media + clustering UI (primary)
-│   └── RosterPage.tsx           # Identity management
-├── components/                  # Reusable UI components
-│   ├── clusters/                # Cluster cards, lists
-│   ├── media/                   # Media grid, selection
-│   └── shared/                  # Buttons, dialogs, etc.
-├── hooks/                       # React Query hooks + state management
-│   ├── useRecognitionHooks.ts   # Scan, cluster operations
-│   ├── useMediaIdentities.ts    # Media identity queries
-│   ├── useJobProgressStream.ts  # SSE progress (v4.10.3+)
-│   ├── useJobPersistence.ts     # localStorage job tracking (v4.10.3+)
-│   └── useJobCoordination.ts    # Multi-tab BroadcastChannel (v4.10.3+)
-└── api/                         # Typed API clients
-    ├── scanApi.ts               # POST /analyze
-    ├── clusterApi.ts            # Cluster CRUD
-    └── recognition/types/       # Shared TypeScript types
-```
-
-## New Hooks (v4.10.3)
-
-| Hook                   | Purpose                                       |
-| ---------------------- | --------------------------------------------- |
-| `useJobProgressStream` | SSE connection for real-time progress updates |
-| `useJobPersistence`    | Persist job IDs to localStorage for refresh   |
-| `useJobCoordination`   | BroadcastChannel for multi-tab sync           |
 
 ## Test Entry Points
 
 | Scope       | Path                        | When to Use                     |
 | ----------- | --------------------------- | ------------------------------- |
-| Component   | `js/**/*.test.tsx`          | UI behavior, user interactions  |
+| Component   | `js/components/__tests__/`  | Reusable UI behavior            |
 | Hook        | `js/admin/hooks/__tests__/` | Data fetching, state management |
-| Integration | `js/tests/`                 | Full page flows                 |
+| Integration | `js/admin/pages/__tests__/` | Full page flows                 |
 
 ## Key Diagrams
 
@@ -76,9 +43,9 @@ Key limits: max 300 lines/component, max 5 `useState`, max 3 `useEffect`, max 10
 
 ### Add API integration
 
-1. Define types in `js/src/types/`
-2. Create API client in `js/src/admin/api/`
-3. Create React Query hook in `js/src/admin/hooks/`
+1. Define request/response types in `js/admin/api/recognition/types/`
+2. Create API client in `js/admin/api/`
+3. Create React Query hook in `js/admin/hooks/`
 4. Connect to component via hook
 
 ### Fix accessibility issue

@@ -41,24 +41,24 @@ API keys are stored in the `api_keys` database table with the following structur
 
 ## Environment Variables
 
-| Variable                 | Default         | Description                                        |
-| ------------------------ | --------------- | -------------------------------------------------- |
-| `AUTH_ENABLED`           | `true`          | Enable/disable authentication globally             |
-| `DEV_API_KEYS`           | (empty)         | Comma-separated list of dev keys for local testing |
-| `API_KEY_HEADER`         | `Authorization` | Header name for API key extraction                 |
-| `API_KEY_HASH_ALGORITHM` | `sha256`        | Algorithm for key hashing                          |
-| `MAX_PAGE_SIZE`          | `100`           | Maximum allowed page size for list endpoints       |
+| Variable                           | Default         | Description                                        |
+| ---------------------------------- | --------------- | -------------------------------------------------- |
+| `RECOGNITION_AUTH_ENABLED`         | `true`          | Enable/disable authentication globally             |
+| `RECOGNITION_ALLOWED_API_KEYS`     | (empty)         | Comma-separated list of dev keys for local testing |
+| `RECOGNITION_API_KEY_HEADER`       | `Authorization` | Header name for API key extraction                 |
+| `RECOGNITION_API_KEY_HASH_ALGORITHM` | `sha256`      | Algorithm for key hashing                          |
+| `RECOGNITION_MAX_PAGE_SIZE`        | `500`           | Maximum allowed page size for list endpoints       |
 
 ### Example Configuration
 
 ```bash
 # Production
-export AUTH_ENABLED=true
-export API_KEY_HEADER=Authorization
+export RECOGNITION_AUTH_ENABLED=true
+export RECOGNITION_API_KEY_HEADER=Authorization
 
 # Development/Testing
-export AUTH_ENABLED=true
-export DEV_API_KEYS=dev-key-1,dev-key-2
+export RECOGNITION_AUTH_ENABLED=true
+export RECOGNITION_ALLOWED_API_KEYS=dev-key-1,dev-key-2
 ```
 
 ## Tenant Isolation
@@ -177,17 +177,4 @@ $response = wp_remote_post($api_url . '/analyze', [
 
 ## Future Enhancements
 
-The following security features are planned for future sprints:
 
-- [ ] Role-based access control (RBAC) with scopes
-- [ ] API key rotation and expiration
-- [ ] Rate limiting per tenant
-- [ ] Audit logging for sensitive operations
-- [ ] OAuth2/OIDC support for enterprise deployments
-
----
-
-## Related Documentation
-
-- [WordPress Backend Contract](./wordpress-backend-contract.md)
-- [Recognition Service API Plan](../tasks/4.0/4.2.4/recognition_service_api_plan.md)

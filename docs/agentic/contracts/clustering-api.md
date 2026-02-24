@@ -81,7 +81,9 @@ Response (sync mode):
 
 ## POST /recognition/clusters/recover-orphans
 
-Re-cluster orphaned identities (proxy to `/recognition/clusters/recover-orphans`).
+> **Backend-only** -- no WordPress proxy route exists for this endpoint.
+
+Re-cluster orphaned identities (direct call to `/recognition/clusters/recover-orphans`).
 
 Request body:
 
@@ -363,7 +365,6 @@ The following proxy routes exist in WordPress but the backend endpoints are not
 implemented in the recognition service yet (expect 404 until wired):
 
 - `GET /recognition/clusters/labels`
-- `GET /recognition/training-stage`
 - `POST /recognition/clusters/revert-merge`
 
 The recognition service does support representative pinning, but the WordPress

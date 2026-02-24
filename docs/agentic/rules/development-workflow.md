@@ -74,7 +74,7 @@ This ensures:
 - [ ] All public function/method signatures exist with full type hints
 - [ ] Docstrings describe Args, Returns, Raises (no implementation details)
 - [ ] Bodies contain only `raise NotImplementedError("TODO: <specific task>")`
-- [ ] `PYENV_VERSION=description-service mypy .` (from `apps/prototype-description-service/`) or `npm run type-check` (TS) passes with zero errors
+- [ ] `PYENV_VERSION=description-service mypy .` (from `apps/prototype-description-service/`) or `npm run typecheck` (TS) passes with zero errors
 - [ ] Test file exists with `@pytest.mark.skip("scaffold")` or `it.todo()` stubs
 - [ ] Cross-layer contracts (if any) are documented in `docs/agentic/contracts/`
 

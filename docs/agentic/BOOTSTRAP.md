@@ -55,43 +55,11 @@ VS Code spawns the MCP server process on demand and communicates via stdin/stdou
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → "context-alt-text" should show **29 custom tools**.
+Command Palette → `MCP: List Servers` → "context-alt-text" should show this server and its custom tools.
 
-### Available Tools (29 custom total)
+### Available Tools
 
 These tools handle cross-boundary and domain-specific queries. For generic operations, use editor-native tools (for example, `search_code`, `find_definition`, `read_file`, `list_dir`, diagnostics) or Pylance MCP tools.
-
-| Category        | Tool                   | When to Use                                       |
-| --------------- | ---------------------- | ------------------------------------------------- |
-| **Cross-Layer** | `trace_api_endpoint`   | Trace endpoint across PHP→Python→TS layers        |
-| **Context**     | `get_context_map`      | Load domain context (backend/frontend/php)        |
-|                 | `get_api_contract`     | Load API contract documentation                   |
-|                 | `get_instructions`     | Load engineering instructions                     |
-| **React/TS**    | `find_react_component` | Find React component definitions                  |
-|                 | `find_react_hook`      | Find custom React hooks                           |
-|                 | `list_frontend_tests`  | List test files, optionally filtered by component |
-| **PHP/WP**      | `find_wp_action`       | Find WordPress action/filter hooks                |
-|                 | `find_wp_rest_route`   | Find REST API route registrations                 |
-|                 | `find_php_class`       | Find PHP class definitions                        |
-| **Handoff**     | `set_handoff_state`    | Set/update active task with revision guard        |
-|                 | `get_handoff_state`    | Retrieve compact handoff snapshot (token efficient) |
-|                 | `record_decision`      | Append a key decision + rationale                 |
-|                 | `update_next_actions`  | Add/complete/reprioritize action queue items      |
-|                 | `record_test_result`   | Record verified checks (`passed` + optional exit code) |
-|                 | `report_blocker`       | Add/resolve/reopen blockers                       |
-|                 | `record_review_finding` | Record structured review findings                 |
-|                 | `update_review_finding` | Update finding lifecycle status                   |
-|                 | `reopen_review_finding` | Reopen a finding with required rationale          |
-|                 | `list_review_findings` | List findings with filters/pagination             |
-|                 | `get_review_finding`   | Fetch one finding by DB id within a task          |
-|                 | `get_review_findings_summary` | Compact counts + recent finding updates      |
-|                 | `reconcile_review_findings` | Validate/repair review finding integrity checks |
-|                 | `handoff_close_check` | Enforce close readiness (done + no open blockers/actions/findings + sync) |
-|                 | `generate_current_task_md` | Generate deterministic `CURRENT_TASK.md` from SQLite state |
-|                 | `export_handoff_state` | Export task snapshot JSON for cross-machine sharing |
-|                 | `import_handoff_state` | Import task snapshot JSON (merge/replace)         |
-|                 | `archive_task_state`   | Archive completed task state snapshot             |
-|                 | `get_handoff_dashboard` | Read-only multi-task activity summary             |
 
 Tools are prefixed with `mcp_context-alt-t_` when invoked by agents.
 
@@ -133,13 +101,52 @@ Handoff guard commands:
 
 ---
 
-## Context Value Hierarchy
+## MCP Handoff Protocol
 
-| Asset                 | Cold Start Value | When to Use                                   |
-| --------------------- | ---------------- | --------------------------------------------- |
-| **Contracts**         | Highest          | Cross-boundary work, API changes              |
-| **Python API Tests**  | High             | Service implementation, behavior verification |
-| **Integration Tests** | High             | Database patterns, RLS, repository queries    |
-| **Frontend Hooks**    | Medium           | Job state, SSE, multi-tab coordination        |
-| **UML Diagrams**      | Medium           | Architecture understanding, flow questions    |
-| **PHP Tests**         | Low              | Currently scaffolding only                    |
+Before any code exploration:
+
+1. Call `get_handoff_state(task_ref="<task>")`.
+2. If no active state exists, call `set_handoff_state(...)` to initialize it.
+3. Do not use manual edits to `CURRENT_TASK.md` for state tracking.
+
+During work:
+
+1. Record non-trivial decisions with `record_decision(..., actor={ agent?, branch?, commit_sha? })`.
+2. Add/update/complete task steps with `update_next_actions(..., actor={ ... })`.
+3. Record blockers immediately with `report_blocker(..., actor={ ... })`.
+4. Record verification commands with `record_test_result(..., actor={ ... })`.
+5. Record/code-review findings with `record_review_finding(..., details={ line_start?, line_end?, fix? }, actor={ ... })`.
+6. Update finding status with `update_review_finding(..., actor={ ... })`.
+7. Validate review state using `get_review_findings_summary(...)` and `list_review_findings(...)` (not direct `sqlite3` queries).
+
+Write-tool targeting rule:
+
+- Write tools target the **active task only**.
+- To write against a different task, switch active state first via `set_handoff_state(...)`.
+
+Before final response:
+
+1. Mark completed/skipped actions via `update_next_actions(...)`.
+2. Update singleton state via `set_handoff_state(..., expected_revision=<current>, actor={ ... })`.
+3. Regenerate `CURRENT_TASK.md` using `generate_current_task_md(...)`.
+4. Include a one-line status marker in the response: `Handoff updated: yes`.
+
+Read discipline:
+
+- Do not query `.task-state/handoff.db` directly when MCP tools are available.
+- Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
+
+State integrity invariants:
+
+- Treat import/restore payloads as untrusted input. Validate payload shape and required object types before writes; malformed payloads must return `ok: false` (never silent success/no-op).
+- Preserve write provenance on mutable records (for example review findings): creation metadata (`agent`, `branch`, `commit_sha`) is immutable once set; status updates may fill missing fields but must not overwrite recorded provenance.
+
+Failure policy:
+
+- If MCP handoff tools are unavailable, stop normal implementation work.
+- Record/report the blocker, and include: `Handoff updated: no (tool unavailable)`.
+- Use `templates/CURRENT_TASK.template.md` only as fallback when MCP handoff is unavailable.
+
+Completion gate:
+
+- A task response is incomplete if MCP handoff was not updated.

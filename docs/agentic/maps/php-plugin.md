@@ -12,29 +12,6 @@
 | 🔥 4     | `apps/prototype-wp-alt-context/src/Security/`    | Nonce, capability checks  |
 | 🔥 5     | `docs/agentic/contracts/clustering-api.md`       | WP REST API contract      |
 
-## Plugin Structure
-
-```
-apps/prototype-wp-alt-context/
-├── alt-context.php              # Plugin bootstrap
-├── src/
-│   ├── Api/                     # REST controllers
-│   │   ├── RecognitionController.php    # Route registration
-│   │   ├── RecognitionProxyController.php # Backend forwarding
-│   │   └── MediaController.php  # WordPress media queries
-│   ├── Recognition/             # Recognition service integration
-│   │   ├── RecognitionClient.php        # HTTP client
-│   │   └── RecognitionSettings.php      # API key, URL config
-│   ├── Security/                # Auth & validation
-│   │   ├── NonceVerifier.php    # Nonce validation
-│   │   └── CapabilityChecker.php # User permissions
-│   ├── Admin/                   # Admin pages
-│   └── Database/                # Custom tables
-├── js/                          # React frontend (see frontend.md)
-├── tests/                       # PHPUnit tests
-└── vendor/                      # Composer dependencies
-```
-
 ## Test Entry Points
 
 | Scope       | Path                 | When to Use            |

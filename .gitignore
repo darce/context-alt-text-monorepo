@@ -83,4 +83,7 @@ __pycache__/
 # Logs (all service / tool logs)
 logs/
 apps/prototype-description-service/logs/
+
+# Operational ephemera (local)
+CURRENT_TASK.md
 .task-state/

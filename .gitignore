@@ -87,3 +87,6 @@ apps/prototype-description-service/logs/
 # Operational ephemera (local)
 CURRENT_TASK.md
 .task-state/
+
+# local logs
+/docs/agentic/oci-example/*.log

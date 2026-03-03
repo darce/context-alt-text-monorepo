@@ -38,8 +38,10 @@ UX reliability (Phase 1) is sequenced first because:
 - **Frontend reliability and UX clarity** (no backend dependency).
 - Deterministic E2E/smoke automation for sovereign flows (local + outage + recovery).
 - Production backend deployment path (containers, envs, persistence, restart behavior).
+- **Production server provisioning** (Oracle Cloud PAYG, ARM instance, DNS/TLS, WP demo).
 - Internet-facing security baseline (auth hardening, origin policy, rate limiting, key rotation).
 - Observability baseline (structured logs, health/readiness, correlation IDs, latency metrics).
+- **User-account DB infrastructure slot** (Postgres database provisioned; schema design is post-v0.2.0).
 
 ### Explicitly Out of Scope (Post-v0.2.0)
 
@@ -204,8 +206,8 @@ Exit criteria:
 ### Phase 3: Deployment Baseline
 
 > **Status**: not-started
-> **Dependencies**: external (VPS/provider + DNS decisions)
-> **Task plan source**: [self-hosting-implementation.md](../../tasks/4.0/4.13.0/self-hosting-implementation.md)
+> **Dependencies**: Phase 6 (server provisioned)
+> **Epic source**: [self-hosting-epic.md](./self-hosting-epic.md)
 
 **Goal**: A new operator can deploy backend + database with one documented path.
 
@@ -251,6 +253,7 @@ Exit criteria:
 ### Phase 5: Observability Baseline
 
 > **Status**: not-started
+> **Dependencies**: Phase 6 (deployed backend to observe)
 
 **Goal**: Failures are diagnosable without attaching debuggers or manual SSH spelunking.
 
@@ -265,6 +268,41 @@ Exit criteria:
 
 - Operators can answer "is it up, is it ready, why did this fail?" from logs/metrics alone.
 - Correlation ID links WordPress-triggered actions to backend requests.
+
+---
+
+### Phase 6: Production Server Provisioning
+
+> **Status**: not-started -- ready to start (no code dependency)
+> **Dependencies**: none (infrastructure provisioning; unblocks Phase 3)
+> **Epic source**: [self-hosting-epic.md](./self-hosting-epic.md)
+
+**Goal**: Provision and verify production server infrastructure so that Phase 3 (deployment baseline) has a target environment.
+
+**Approach**: Oracle Cloud Pay-As-You-Go (PAYG) account with Always Free ARM instance. See [self-hosting-epic.md -- Oracle PAYG Evaluation](./self-hosting-epic.md#oracle-cloud-pay-as-you-go-payg-evaluation----production-backend) for full rationale.
+
+**Why PAYG over Free Tier**: PAYG accounts retain all Always Free benefits ($0/mo for ARM instances) but receive **higher provisioning priority**, eliminating the well-documented "Out of host capacity" lottery that blocks Free Tier users for days or months. Budget alerts are the safety net against accidental charges.
+
+Deliverables:
+
+- **Oracle Cloud PAYG account**: Created and upgraded from Free Tier. Budget alerts configured at $1/$5/$10.
+- **Backend compute instance**: `VM.Standard.A1.Flex` (4 ARM cores, 24GB RAM, 200GB boot volume). Docker + Docker Compose installed. Firewall restricted to 443/HTTPS ingress.
+- **ARM compatibility verified**: Full dependency stack (onnxruntime, insightface, opencv, psycopg2/asyncpg, pgvector) confirmed working on aarch64. Integration test suite passes.
+- **DNS + TLS**: Domain pointed to instance. TLS via Cloudflare free tier or Caddy auto-TLS.
+- **User-account DB scope**: Second logical database (`acx_accounts`) provisioned in the same Postgres instance alongside recognition DB. Schema design is a separate task; infrastructure slot is reserved.
+- **WordPress demo page**: Shared PHP hosting (~$2-5/mo) or WP on the Oracle VPS. ACX plugin installed and configured to point at backend API.
+- **End-to-end smoke**: WP plugin triggers recognition request, backend processes it, response displayed in plugin UI.
+
+Exit criteria:
+
+- Oracle PAYG instance is running and accessible via HTTPS.
+- `docker compose up` on the instance starts FastAPI + Postgres successfully.
+- InsightFace model downloads once and persists across container restarts.
+- Budget alerts are active and verified (test alert triggered).
+- WP demo page loads and can communicate with backend API.
+- Fallback plan documented: Hetzner CX22 (~$4.35/mo) if Oracle proves unreliable.
+
+**Cost target**: $0/mo backend + ~$2-5/mo WP hosting = ~$2-5/mo total.
 
 ## Important Follow-On Epic Stub (Tracked Here)
 
@@ -296,7 +334,9 @@ This v0.2.0 production epic intentionally does not gate release on the items bel
 
 | Dependency | Owner | Status | Blocks |
 | --- | --- | --- | --- |
-| VPS/provider + DNS/TLS decisions | Project owner | Not started | Phase 3 |
+| VPS/provider + DNS/TLS decisions | Project owner | In progress | Phase 3, Phase 6 |
+| Oracle Cloud PAYG account setup + ARM verification | Project owner | Not started | Phase 6 |
+| WP demo hosting provisioning | Project owner | Not started | Phase 6 |
 | CI secret provisioning for smoke/runtime tests | Project owner | Not started | Phase 2, Phase 3 |
 | Final policy choices for origin allowlist and key rotation cadence | Product/engineering | Not started | Phase 4 |
 
@@ -314,6 +354,7 @@ This v0.2.0 production epic intentionally does not gate release on the items bel
 | Plugin API | `src/api/class-sync-status-controller.php` | Sync status contract |
 | Backend snapshot | `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Snapshot endpoint contract |
 | Backend deploy | `apps/prototype-description-service/` | Deployment + health/metrics implementation area |
+| Hosting epic | `docs/epics/v0.2.0/self-hosting-epic.md` | Server provisioning, Oracle PAYG eval, cost analysis |
 | QA Automation | `apps/prototype-wp-alt-context/tests/e2e/` | Proposed smoke gate location |
 
 ## Risks and Mitigations
@@ -326,6 +367,10 @@ This v0.2.0 production epic intentionally does not gate release on the items bel
   - Mitigation: structured logging + readiness contracts before release cut.
 - **UX ambiguity under outage**: users cannot distinguish "empty", "stale", and "in progress".
   - Mitigation: explicit sync state modeling and UI copy contracts.
+- **Oracle ARM compatibility risk**: aarch64 wheels may not exist for all dependencies (especially `insightface`).
+  - Mitigation: Hetzner CX22 x86 at ~$4.35/mo is the documented fallback. Test ARM compatibility locally on Apple Silicon before provisioning.
+- **Oracle PAYG billing risk**: accidental non-free resource provisioning could generate charges.
+  - Mitigation: budget alerts at $1/$5/$10; restrict provisioning to Always Free shapes only.
 
 ## Success Metrics
 
@@ -335,6 +380,8 @@ This v0.2.0 production epic intentionally does not gate release on the items bel
 - API security controls behave deterministically (auth/origin/rate/rotation).
 - Operators can debug a failed sync from logs and health/ready endpoints.
 - Workbench state transitions are bounded and user-visible under backend failure.
+- Production server provisioned and serving recognition requests at $0-5/mo.
+- WP demo page accessible and functional for product demonstrations.
 
 ---
 
@@ -393,6 +440,22 @@ This v0.2.0 production epic intentionally does not gate release on the items bel
 - [ ] Add `/health` and `/ready` endpoints with dependency checks.
 - [ ] Add latency and error metrics by endpoint class.
 - [ ] Document operator diagnostics flow/runbook.
+
+## Phase 6: Production Server Provisioning -- NOT STARTED (READY TO START)
+
+- [ ] Create Oracle Cloud account and upgrade to PAYG.
+- [ ] Configure budget alerts ($1 / $5 / $10 thresholds).
+- [ ] Provision `VM.Standard.A1.Flex` instance (4 ARM / 24GB / 200GB).
+- [ ] Verify ARM aarch64 compatibility for all Python dependencies.
+- [ ] Install Docker + Docker Compose on the instance.
+- [ ] Configure firewall (443/HTTPS ingress only).
+- [ ] Set up DNS + TLS (Cloudflare or Caddy auto-TLS).
+- [ ] Deploy recognition service container and verify model cache persistence.
+- [ ] Provision second Postgres database (`acx_accounts`) for future user-account store.
+- [ ] Provision WP demo page (shared PHP hosting or Oracle VPS).
+- [ ] Install ACX plugin on demo WP and configure backend URL.
+- [ ] Run end-to-end smoke test (WP -> backend -> recognition -> response).
+- [ ] Document fallback plan (Hetzner CX22 at ~$4.35/mo).
 
 ## Follow-On Stub: Sync Expansion + UX Continuity -- TRACKED
 

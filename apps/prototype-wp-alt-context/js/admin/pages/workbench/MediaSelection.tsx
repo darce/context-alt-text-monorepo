@@ -10,50 +10,36 @@ import { IdentityClusterList } from './identity-clusters';
 import { mediaEditUrl } from './Panels';
 import type { MediaIdentitiesResponse } from '../../api/recognition';
 import { Checkbox } from '../../../components/ui/checkbox';
+import { useWorkbenchContext } from './WorkbenchContext';
 
-interface Props {
-  items: WorkbenchMediaItem[];
-  isLoading: boolean;
-  isError: boolean;
-  onRetry?: () => void;
-  statusMessage: string;
-  searchQuery: string;
-  onSearchChange: (event: ChangeEvent<HTMLInputElement>) => void;
-  statusFilter: WorkbenchMediaStatus;
-  onStatusFilterChange: (status: WorkbenchMediaStatus) => void;
-  selection: Record<string, boolean>;
-  onToggleRow: (item: WorkbenchMediaItem, checked: boolean) => void;
-  onToggleAll: (checked: boolean) => void;
-  currentPage: number;
-  totalPages: number;
-  perPage: number;
-  onPerPageChange: (perPage: number) => void;
-  onPageChange: (page: number) => void;
-  areAllPageRowsChecked: boolean;
-  identityQuery: UseQueryResult<MediaIdentitiesResponse, Error>;
-}
+export const MediaSelection = (): React.JSX.Element => {
+  const {
+    mediaQuery,
+    statusMessage,
+    searchQuery,
+    handleSearchChange: onSearchChange,
+    statusFilter,
+    handleStatusChange: onStatusFilterChange,
+    selection,
+    toggleRow,
+    toggleAll,
+    currentPage,
+    perPage,
+    setPerPage: onPerPageChange,
+    setCurrentPage: onPageChange,
+  } = useWorkbenchContext();
 
-export const MediaSelection = ({
-  items,
-  isLoading,
-  isError,
-  onRetry,
-  statusMessage,
-  searchQuery,
-  onSearchChange,
-  statusFilter,
-  onStatusFilterChange,
-  selection,
-  onToggleRow,
-  onToggleAll,
-  currentPage,
-  totalPages,
-  perPage,
-  onPerPageChange,
-  onPageChange,
-  areAllPageRowsChecked,
-  identityQuery,
-}: Props): React.JSX.Element => {
+  const mediaData = mediaQuery.data;
+  const items = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
+  const isLoading = mediaQuery.isPending && items.length === 0;
+  const isError = mediaQuery.isError;
+  const onRetry = () => void mediaQuery.refetch();
+  const totalPages = mediaData?.totalPages ?? 1;
+  const areAllPageRowsChecked = items.length > 0 && items.every((item: WorkbenchMediaItem) => selection[item.id.toString()]);
+  const identityQuery = mediaQuery.identitiesQuery;
+
+  const onToggleAll = (checked: boolean) => toggleAll(items, checked);
+  const onToggleRow = (item: WorkbenchMediaItem, checked: boolean) => toggleRow(item, checked);
   const identityStatusMessage = identityQuery.isLoading
     ? __('Loading identity data…', 'alt-context')
     : identityQuery.isError

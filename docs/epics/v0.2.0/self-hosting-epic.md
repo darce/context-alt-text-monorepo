@@ -1,12 +1,21 @@
-# Self-Hosting & Multi-Server Connectivity
+# Self-Hosting & Multi-Server Connectivity (Epic)
 
-Revised hosting options for MVP and a future GPU/CUDA self-hosting path.
+> **Status**: active -- provisioning phase
+> **Parent**: [production-readiness-epic.md](./production-readiness-epic.md) Phase 6
+> **Revision**: Mar 2026 -- promoted from task doc to epic; added Oracle PAYG evaluation, user-account DB scope, WP demo page scope.
+
+Hosting architecture, provider evaluation, and deployment path for the recognition service backend, a future user-account database, and a WordPress demo frontend.
 
 ---
 
 ## Problem Statement
 
 The recognition service currently runs primarily in a local-first or local-only environment. To support production rollouts, the backend service (FastAPI) must be capable of running on a separate server (VPS, Cloud Run, Hugging Face Spaces, etc.) while securely connecting to a separate WordPress frontend server running the plugin.
+
+Additionally, the production system requires:
+
+1. **User-account database** (not yet built) -- multi-tenant auth/account store, separate from the recognition Postgres.
+2. **WordPress demo page** -- a publicly accessible WP instance running the plugin for demonstration purposes. This can live on cheap shared hosting or on the same backend VPS if resource contention is acceptable.
 
 ---
 
@@ -167,9 +176,228 @@ Based on the actual codebase (`pyproject.toml`, `api/main.py`, `recognition/conf
 | **Vultr**        | High Frequency | 4 vCPU      | 8GB  | 256GB | $24/mo                | INT4 quantized | NVMe, faster model loading               |
 | **Oracle Cloud** | Ampere A1      | 4 ARM cores | 24GB | 200GB | **Free tier**         | FP16 full      | Best option if ARM wheels work           |
 
-> **Note on Oracle Cloud Free Tier:** 4 ARM Ampere A1 cores + 24GB RAM + 200GB boot volume — permanently free. 24GB is more than enough for InsightFace + Phi-3.5 FP16 concurrently. The catch: ARM architecture means you need `aarch64` builds of onnxruntime, opencv, and torch. PyTorch and transformers both have official ARM wheels. Verify `insightface` wheel availability. If it works, this is unbeatable.
+> **Note on Oracle Cloud Free Tier:** 4 ARM Ampere A1 cores + 24GB RAM + 200GB boot volume -- permanently free. 24GB is more than enough for InsightFace + Phi-3.5 FP16 concurrently. The catch: ARM architecture means you need `aarch64` builds of onnxruntime, opencv, and torch. PyTorch and transformers both have official ARM wheels. Verify `insightface` wheel availability. If it works, this is unbeatable.
 
 > **Note on INT4 quantization:** The archived `Phi3ModelLoader` already supports `load_in_4bit` via `bitsandbytes` (CUDA-only currently). For CPU-only VPS, consider GGUF quantized models via `llama-cpp-python` as an alternative path to reduce RAM to ~4–5GB for the VLM component.
+
+---
+
+### Oracle Cloud Pay-As-You-Go (PAYG) Evaluation -- Production Backend
+
+> **Decision**: Attempt Oracle Cloud as the primary backend host. Use PAYG account tier.
+
+#### Why PAYG over Free Tier
+
+The Oracle Cloud Always Free tier offers 4 ARM Ampere A1 cores, 24GB RAM, and 200GB boot volume at $0/mo -- on paper, the best option for hosting the description service. However, the Free Tier has a well-documented **"Out of host capacity"** problem:
+
+- Free Tier ARM instances are capacity-constrained in most regions. Users routinely report running automated retry scripts for **days to months** before an instance is provisioned ([community thread](https://www.reddit.com/r/oraclecloud/comments/on2e25/resolving_oracle_cloud_out_of_capacity_issue_and/)).
+- Oracle periodically reclaims "idle" Free Tier instances, which can terminate workloads without warning.
+- Free Tier accounts have the lowest provisioning priority.
+
+**PAYG resolves these issues:**
+
+| Aspect | Free Tier | Pay-As-You-Go |
+| --- | --- | --- |
+| Instance provisioning priority | Lowest -- capacity errors are common | **Higher priority** -- significantly reduces "Out of host capacity" errors |
+| Always Free resources | 4 ARM cores / 24GB / 200GB | **Same Always Free resources included at $0** |
+| Idle instance reclamation | Yes -- Oracle may terminate "idle" instances | **No** -- PAYG instances are not subject to idle reclamation |
+| Additional resource types | Limited | Unlocks more OCI resource types (Kubernetes, flexible shapes, etc.) |
+| Billing risk | None | Minimal if budget alerts are configured (Always Free shapes remain $0) |
+| Account setup | Credit card required | Credit card required |
+
+**Key insight from community experience (2024 update):** "Upgrading to Pay As You Go [...] you'll continue to enjoy all the free benefits without any additional cost, but you'll also receive priority for launching instances and are less likely to face 'Out of host capacity' errors."
+
+#### PAYG Suitability for Current State (InsightFace Only)
+
+The description service in its current state runs **InsightFace only** (no VLM/Phi-3.5). This is the lightest possible production footprint:
+
+| Resource | Requirement | Oracle Always Free (PAYG) |
+| --- | --- | --- |
+| RAM | ~4GB (FastAPI + InsightFace + Postgres) | 24GB available -- **6x headroom** |
+| CPU | 2 cores sufficient | 4 ARM cores -- **adequate** |
+| Disk | ~2GB (app + models + DB) | 200GB boot volume -- **massive headroom** |
+| Model cache | ~600MB (InsightFace buffalo_l) | Persistent disk -- **no cold-start penalty** |
+| Network | HTTPS ingress | 10TB/mo outbound egress included |
+| Cost | $0/mo target | **$0/mo** (Always Free shapes on PAYG account) |
+
+**Verdict: Oracle Cloud PAYG is an excellent fit for the current InsightFace-only state.** The Always Free ARM instance provides 6x the RAM needed, persistent disk for model cache, and $0/mo operating cost. PAYG account tier eliminates the provisioning lottery that plagues Free Tier accounts.
+
+#### PAYG Risk Mitigations
+
+1. **Set budget alerts immediately** after upgrading to PAYG. Configure alerts at $1, $5, and $10 thresholds. Always Free shapes should not generate charges, but alerts are the safety net.
+2. **Tag all resources** with `project: acx` for cost attribution.
+3. **Do not provision non-free shapes** without explicit budget approval. Stick to `VM.Standard.A1.Flex` (Always Free ARM) and `VM.Standard.E2.1.Micro` (Always Free x86).
+4. **Monitor the OCI Cost Analysis dashboard** weekly during the first month.
+5. **Backup plan**: If Oracle proves unreliable, Hetzner CX22 at ~$4.35/mo is the immediate fallback.
+
+#### ARM Compatibility Checklist (Must Verify Before Provisioning)
+
+- [ ] `onnxruntime` has `aarch64` wheel for Python 3.12
+- [ ] `insightface` installs cleanly on `aarch64` (or can be built from source)
+- [ ] `opencv-python-headless` has `aarch64` wheel
+- [ ] `numpy`, `pillow`, `httpx` -- expected to work (pure Python or well-supported)
+- [ ] `psycopg2-binary` or `asyncpg` has `aarch64` wheel
+- [ ] PostgreSQL 17 + pgvector Docker image available for `arm64`
+- [ ] Full integration test suite passes on ARM Docker (can test locally on Apple Silicon)
+
+> **Note:** Apple Silicon (M-series) is also ARM64/aarch64. The development environment already runs on this architecture, which is a strong signal that ARM wheels exist for all critical dependencies.
+
+---
+
+### OCI VM Provisioning Steps
+
+This section documents the high-level procedure for provisioning a `VM.Standard.A1.Flex` instance on Oracle Cloud Infrastructure (OCI) using Terraform. The detailed task plan with file-by-file implementation is in `docs/tasks/5.0/oci-vm-provisioning-task-plan.md`.
+
+#### Prerequisites
+
+| Prerequisite | Status | Detail |
+| --- | --- | --- |
+| OCI account (PAYG) | Required | Upgrade from Free Tier to PAYG for provisioning priority |
+| OCI CLI | Verified | v3.74.0 installed via Homebrew; config at `~/.oci/config` |
+| Terraform | Verified | v1.5.7 installed via Homebrew |
+| API signing key | Verified | Fingerprint `ac:72:f7:2f:d9:e9:a3:7b:9c:70:f1:46:b8:09:1c:d0` |
+| SSH keypair | Required | For instance access; generate or reuse existing |
+| OCI budget alerts | Required | Configure $1 / $5 / $10 thresholds immediately after PAYG upgrade |
+
+#### Target Instance Specification
+
+| Resource | Value |
+| --- | --- |
+| Shape | `VM.Standard.A1.Flex` (ARM Ampere, Always Free) |
+| OCPUs | 4 |
+| Memory | 24 GB |
+| Boot volume | 200 GB |
+| OS image | `Canonical-Ubuntu-24.04-aarch64-2026.01.29-0` |
+| Image OCID | `ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a` |
+| Region | `us-ashburn-1` (home region, required for Always Free) |
+| Availability Domains | `saEG:US-ASHBURN-AD-1`, `AD-2`, `AD-3` (cycle all three for capacity) |
+
+#### Infrastructure Layout
+
+New Terraform configuration will live at `infra/oci/` in the monorepo root:
+
+```text
+infra/oci/
+  main.tf              # VCN, subnet, security list, compute instance
+  variables.tf         # Tenancy/user/compartment/SSH variables
+  outputs.tf           # Public IP, SSH command, backend URL
+  cloud-init.yaml      # Docker + Postgres + app service bootstrap
+  retry-apply.sh       # AD-cycling retry for "Out of host capacity"
+  terraform.tfvars.example  # Template (no secrets committed)
+  .gitignore           # Exclude .terraform/, *.tfstate*, terraform.tfvars
+```
+
+#### Terraform Resources (High Level)
+
+Adapted from the proven pattern in `docs/agentic/oci-example/`:
+
+1. **Networking**: VCN (`10.0.0.0/16`) + public subnet (`10.0.1.0/24`) + internet gateway + route table
+2. **Security List**: Ingress SSH (22, restricted CIDR), HTTPS (443), FastAPI (8000, optional for dev); egress all
+3. **Compute**: `VM.Standard.A1.Flex` with 4 OCPU / 24 GB memory, 200 GB boot volume, cloud-init user data
+4. **Outputs**: Public IP, SSH command, backend URL
+
+#### Cloud-Init Bootstrap (High Level)
+
+The cloud-init script configures the instance on first boot:
+
+1. **System updates** + unattended-upgrades
+2. **Docker + Docker Compose** installation (ARM64 packages)
+3. **fail2ban** for SSH brute-force protection
+4. **Application directory**: `/opt/acx-backend/` with `secrets/`, `logs/`, `data/` subdirs
+5. **Systemd service** (`acx-backend.service`) running `docker compose up` from `/opt/acx-backend/`
+6. **Log rotation** for Docker container logs (10MB max, 3 rotations)
+7. **Anti-idle keepalive** cron (every 6 hours): health check + minimal CPU activity to prevent Free Tier reclamation
+8. **Firewall** (iptables/nftables): allow 22, 443, 8000; deny all other inbound
+
+#### Capacity Retry Strategy
+
+OCI ARM instances frequently return "Out of host capacity" errors, even on PAYG accounts. The retry strategy (adapted from `docs/agentic/oci-example/retry-apply.sh`):
+
+1. Cycle through all 3 Availability Domains (`AD-1`, `AD-2`, `AD-3`)
+2. Run `terraform apply` with the current AD
+3. If "Out of host capacity" error: wait configurable interval (default 60s), try next AD
+4. If real error: abort immediately
+5. On success: send macOS notification, log the provisioned AD
+6. Support background (`nohup`) mode for unattended retries
+
+#### Key OCI CLI Commands (Reference)
+
+```bash
+# List availability domains
+oci iam availability-domain list --compartment-id "$COMPARTMENT_OCID"
+
+# List Ubuntu 24.04 ARM images
+oci compute image list \
+  --compartment-id "$COMPARTMENT_OCID" \
+  --operating-system "Canonical Ubuntu" \
+  --operating-system-version "24.04" \
+  --shape "VM.Standard.A1.Flex" \
+  --sort-by TIMECREATED --sort-order DESC --limit 5
+
+# Check existing instances
+oci compute instance list --compartment-id "$COMPARTMENT_OCID" \
+  --lifecycle-state RUNNING
+
+# Budget alert setup (after PAYG upgrade)
+oci budgets budget create \
+  --compartment-id "$TENANCY_OCID" \
+  --amount 5 --reset-period MONTHLY \
+  --target-type COMPARTMENT \
+  --targets "[\"$COMPARTMENT_OCID\"]" \
+  --display-name "acx-spend-alert"
+```
+
+#### Differences from oci-example Reference
+
+| Aspect | oci-example (marketing-backend) | ACX deployment |
+| --- | --- | --- |
+| Shape config | 1 OCPU / 6 GB RAM | **4 OCPU / 24 GB RAM** (maximize Always Free) |
+| OS image | Ubuntu 22.04 aarch64 | **Ubuntu 24.04 aarch64** (latest LTS) |
+| App directory | `/opt/marketing-backend/` | **`/opt/acx-backend/`** |
+| Service name | `marketing-backend.service` | **`acx-backend.service`** |
+| Ports | 3000 (Node.js) | **8000 (FastAPI/Uvicorn)**, 443 (HTTPS via Caddy) |
+| Runtime | Node.js / Docker | **Python 3.12 / Docker** |
+| Database | External | **PostgreSQL 17 + pgvector (co-located in Docker Compose)** |
+| Model cache | N/A | **`/opt/acx-backend/data/models/` (~600MB InsightFace)** |
+| Reverse proxy | None (direct port) | **Caddy** (auto-TLS, reverse proxy to :8000) |
+
+---
+
+### User-Account Database Scope (Not Yet Built)
+
+The production system will require a user-account store separate from the recognition Postgres. This is **not yet designed** and is scoped here at the infrastructure level only.
+
+**What needs to exist:**
+
+- Multi-tenant account records (WordPress site registrations, API key associations).
+- Billing/quota metadata (if/when usage limits are introduced).
+- Authentication state for API key lifecycle (creation, rotation, revocation).
+
+**Infrastructure options (to be decided):**
+
+| Option | Hosting | Cost | Notes |
+| --- | --- | --- | --- |
+| Same Postgres on backend VPS | Co-located, separate database | $0 | Simplest. Adequate for MVP volumes. |
+| Managed Postgres (Neon/Supabase) | External | $0-25/mo | Better if account DB needs higher availability than inference DB. |
+| Separate micro-VPS | Dedicated | ~$3-5/mo | Overkill for MVP. |
+
+**Recommendation for MVP:** Add a second database in the same Postgres instance on the backend VPS. Separate logical databases (`acx_recognition`, `acx_accounts`) sharing the same Postgres server. Migrate to managed DB only when operational requirements demand it.
+
+---
+
+### WordPress Demo Page Scope
+
+A publicly accessible WordPress instance running the ACX plugin for demonstration.
+
+**Options evaluated:**
+
+| Option | Cost | Pros | Cons |
+| --- | --- | --- | --- |
+| **Shared PHP hosting** (Hostinger/Namecheap) | ~$2-5/mo | Cheapest. Dedicated to WP. Clean separation from backend. | Separate server to manage. |
+| **WP on the Oracle VPS** | $0 | Free. Single box. | Resource contention with inference. Nginx/Caddy config complexity. PHP + Python on same box. |
+| **WordPress.com hosted** | ~$4-25/mo | Zero ops. | Plugin installation restrictions on lower tiers. May not support custom plugins. |
+
+**Recommendation:** Cheap shared PHP hosting (~$2-5/mo) is the most economical option that maintains clean separation. The backend VPS should be dedicated to inference + DB. If budget is the absolute priority and demo traffic is minimal, WP on the Oracle VPS is viable but adds operational complexity.
 
 **Phase 1 recommendation: Hetzner CX22 (€4.35/mo).** 4GB RAM is sufficient for FastAPI + InsightFace + Postgres.
 
@@ -477,6 +705,26 @@ Per-second = L4 GPU **0.0001867** + CPU (4 × **0.000018**) + RAM (16 × **0.000
 - [x] Tier recommendations documented (Frontend / Backend / Database)
 - [x] HuggingFace Spaces cold-start problem analyzed with persistent VPS alternative
 - [x] Concrete MVP stack costed (~$7.35/mo)
+- [x] Promoted from task doc to epic (`docs/epics/v0.2.0/self-hosting-epic.md`)
+- [x] Oracle Cloud PAYG evaluation completed (recommended for InsightFace-only)
+- [x] User-account DB infrastructure scoped (second database in same Postgres)
+- [x] WP demo page hosting scoped (shared PHP hosting recommended)
+
+### Server Provisioning (Oracle Cloud PAYG)
+
+- [ ] Create Oracle Cloud account and upgrade to PAYG
+- [ ] Configure budget alerts ($1 / $5 / $10 thresholds)
+- [ ] Provision `VM.Standard.A1.Flex` instance (4 ARM cores / 24GB RAM / 200GB disk)
+- [ ] Verify ARM compatibility: run full dependency install + integration test suite
+- [ ] Install Docker + Docker Compose on the instance
+- [ ] Configure firewall rules (ingress: 443/HTTPS only; SSH via OCI bastion or VPN)
+- [ ] Set up DNS + TLS (Cloudflare free tier or Caddy auto-TLS)
+- [ ] Deploy recognition service via Docker Compose
+- [ ] Verify InsightFace model download + cache persistence across container restart
+- [ ] Verify Postgres data persistence across container restart
+- [ ] Provision WP demo hosting (shared PHP host or Oracle VPS)
+- [ ] Install + configure ACX plugin pointing to backend
+- [ ] End-to-end smoke test: WP plugin -> backend API -> recognition -> response
 
 ### Phase 0: Scaffolding
 

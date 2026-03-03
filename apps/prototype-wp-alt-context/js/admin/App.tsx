@@ -15,7 +15,7 @@ const queryClient = new QueryClient({
     },
   },
 });
-const DEFAULT_ROUTE: RoutePath = '/dashboard';
+import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
 
 export const App = (): React.JSX.Element => {
   const initialRoute = useMemo(() => determineInitialRoute(), []);
@@ -34,8 +34,6 @@ export const App = (): React.JSX.Element => {
     </QueryClientProvider>
   );
 };
-
-type RoutePath = '/dashboard' | '/workbench' | '/roster';
 
 const determineInitialRoute = (): RoutePath => {
   const hashRoute = extractRouteFromHash();
@@ -57,32 +55,3 @@ const determineInitialRoute = (): RoutePath => {
   return DEFAULT_ROUTE;
 };
 
-const extractRouteFromHash = (): RoutePath | null => {
-  const hash = window.location.hash.replace('#', '').trim();
-  const path = hash.split('?')[0];
-  
-  if (path === '/workbench') {
-    return '/workbench';
-  }
-
-  if (path === '/roster') {
-    return '/roster';
-  }
-
-  if (path === '/dashboard') {
-    return '/dashboard';
-  }
-
-  return null;
-};
-
-const ensureHashInitialized = (initialRoute: RoutePath): void => {
-  if (typeof window === 'undefined') {
-    return;
-  }
-
-  const current = extractRouteFromHash();
-  if (!current) {
-    window.location.hash = `#${initialRoute}`;
-  }
-};

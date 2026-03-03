@@ -10,6 +10,7 @@ import { useClusterActions } from './roster/hooks/useClusterActions';
 import { ClusterGrid } from './roster/ClusterGrid';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
+import { useTabParam } from '../hooks/useTabParam';
 const ROSTER_TABS = {
   entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
   clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
@@ -18,7 +19,10 @@ const ROSTER_TABS = {
 type RosterTab = (typeof ROSTER_TABS)[keyof typeof ROSTER_TABS]['id'];
 
 export const RosterPage = (): React.JSX.Element => {
-  const [activeTab, setActiveTab] = React.useState<RosterTab>(ROSTER_TABS.entries.id);
+  const [activeTab, setActiveTab] = useTabParam<RosterTab>('tab', ROSTER_TABS.entries.id, [
+    ROSTER_TABS.entries.id,
+    ROSTER_TABS.clusters.id,
+  ]);
   const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
@@ -47,13 +51,6 @@ export const RosterPage = (): React.JSX.Element => {
     onCommitSettled: dragDrop.resetDragState,
   });
 
-  React.useEffect(() => {
-    const url = new URL(window.location.href);
-    const tabParam = url.searchParams.get('tab');
-    if (tabParam === ROSTER_TABS.clusters.id || tabParam === ROSTER_TABS.entries.id) {
-      setActiveTab(tabParam);
-    }
-  }, []);
 
   const handleDropFace = (targetClusterId: string | null): void => {
     const payload = dragDrop.dragPayload;

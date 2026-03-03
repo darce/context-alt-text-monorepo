@@ -1,0 +1,316 @@
+#cloud-config
+# Cloud-init configuration for OCI VM.Standard.E2.1.Micro
+# Provisions Docker, Docker Compose, and prepares for backend deployment
+#
+# This script runs once on first boot after instance creation.
+# Logs: /var/log/cloud-init-output.log
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - apt-transport-https
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - git
+  - make
+  - wget
+  - htop
+  - vim
+  - unattended-upgrades
+  - fail2ban
+
+# Create application directories
+runcmd:
+  # ---------------------------------------------------------------------------
+  # Install Docker
+  # ---------------------------------------------------------------------------
+  - echo "==> Installing Docker..."
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg | gpg --dearmor -o /usr/share/keyrings/docker-archive-keyring.gpg
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/docker-archive-keyring.gpg] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+  - docker --version
+
+  # ---------------------------------------------------------------------------
+  # Configure Docker for memory-constrained environment (1GB VM)
+  # ---------------------------------------------------------------------------
+  - echo "==> Configuring Docker daemon..."
+  - mkdir -p /etc/docker
+  - |
+    cat > /etc/docker/daemon.json <<EOF
+    {
+      "log-driver": "json-file",
+      "log-opts": {
+        "max-size": "10m",
+        "max-file": "3"
+      },
+      "storage-driver": "overlay2",
+      "default-ulimits": {
+        "nofile": {
+          "Name": "nofile",
+          "Hard": 64000,
+          "Soft": 64000
+        }
+      }
+    }
+    EOF
+  - systemctl restart docker
+  # ---------------------------------------------------------------------------
+  # Configure automatic security updates
+  # ---------------------------------------------------------------------------
+  - echo "==> Configuring automatic security updates..."
+  - |
+    cat > /etc/apt/apt.conf.d/50unattended-upgrades <<EOF
+    Unattended-Upgrade::Allowed-Origins {
+      "\${distro_id}:\${distro_codename}-security";
+      "\${distro_id}ESMApps:\${distro_codename}-apps-security";
+      "\${distro_id}ESM:\${distro_codename}-infra-security";
+    };
+    Unattended-Upgrade::AutoFixInterruptedDpkg "true";
+    Unattended-Upgrade::MinimalSteps "true";
+    Unattended-Upgrade::Remove-Unused-Kernel-Packages "true";
+    Unattended-Upgrade::Remove-Unused-Dependencies "true";
+    Unattended-Upgrade::Automatic-Reboot "false";
+    EOF
+
+  # ---------------------------------------------------------------------------
+  # Configure fail2ban for SSH brute-force protection
+  # ---------------------------------------------------------------------------
+  - echo "==> Configuring fail2ban..."
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+
+  # ---------------------------------------------------------------------------
+  # Create application structure
+  # ---------------------------------------------------------------------------
+  - echo "==> Creating application directories..."
+  - mkdir -p /opt/marketing-backend
+  - mkdir -p /opt/marketing-backend/logs/backend
+  - mkdir -p /opt/marketing-backend/logs/postgres
+  - mkdir -p /opt/marketing-backend/secrets
+  - chown -R ubuntu:ubuntu /opt/marketing-backend
+
+  # ---------------------------------------------------------------------------
+  # Set up systemd service for Docker Compose (backend + postgres)
+  # ---------------------------------------------------------------------------
+  - echo "==> Creating systemd service for marketing backend..."
+  - |
+    cat > /etc/systemd/system/marketing-backend.service <<EOF
+    [Unit]
+    Description=Marketing Backend (Docker Compose)
+    Requires=docker.service
+    After=docker.service
+
+    [Service]
+    Type=oneshot
+    RemainAfterExit=yes
+    WorkingDirectory=/opt/marketing-backend
+    ExecStart=/usr/bin/docker compose -f docker-compose.oci.yml up -d
+    ExecStop=/usr/bin/docker compose -f docker-compose.oci.yml down
+    TimeoutStartSec=300
+
+    [Install]
+    WantedBy=multi-user.target
+    EOF
+  - systemctl daemon-reload
+  # Do NOT enable yet - service will be enabled manually after code deployment
+
+  # ---------------------------------------------------------------------------
+  # Configure log rotation
+  # ---------------------------------------------------------------------------
+  - echo "==> Configuring log rotation..."
+  - |
+    cat > /etc/logrotate.d/marketing-backend <<EOF
+    /opt/marketing-backend/logs/backend/*.log {
+      daily
+      rotate 7
+      compress
+      delaycompress
+      missingok
+      notifempty
+      create 0640 ubuntu ubuntu
+    }
+    /opt/marketing-backend/logs/postgres/*.log {
+      daily
+      rotate 7
+      compress
+      delaycompress
+      missingok
+      notifempty
+      create 0640 ubuntu ubuntu
+    }
+    EOF
+
+  # ---------------------------------------------------------------------------
+  # Set up monitoring script to prevent idle reclamation
+  # ---------------------------------------------------------------------------
+  - echo "==> Creating anti-idle monitoring script..."
+  - |
+    cat > /usr/local/bin/marketing-keepalive.sh <<'EOF'
+    #!/bin/bash
+    # Prevent OCI idle reclamation by generating minimal activity
+    # Runs every 6 hours via cron
+    # OCI reclaims instances with <20% CPU/network/memory for 7 days
+
+    LOG_FILE="/var/log/marketing-keepalive.log"
+
+    echo "[$(date)] Running keepalive..." >> "$LOG_FILE"
+
+    # Check backend health
+    curl -s http://localhost:3000/health >> "$LOG_FILE" 2>&1
+
+    # Generate minimal CPU activity (1-2% peak)
+    timeout 5s yes > /dev/null 2>&1
+
+    # Log container stats
+    docker stats --no-stream --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}" >> "$LOG_FILE" 2>&1
+
+    echo "[$(date)] Keepalive complete" >> "$LOG_FILE"
+    EOF
+  - chmod +x /usr/local/bin/marketing-keepalive.sh
+  # Add cron job (every 6 hours: 00:00, 06:00, 12:00, 18:00)
+  - echo "0 */6 * * * /usr/local/bin/marketing-keepalive.sh" | crontab -u ubuntu -
+
+  # ---------------------------------------------------------------------------
+  # Final setup message
+  # ---------------------------------------------------------------------------
+  - echo "==> Cloud-init provisioning complete!"
+  - echo "==> Next steps:"
+  - echo "    1. SSH into the instance: ssh ubuntu@<public-ip>"
+  - echo "    2. Clone repository to /opt/marketing-backend"
+  - echo "    3. Create secrets files in /opt/marketing-backend/secrets/"
+  - echo "    4. Copy .env.oci.example to .env.oci and configure"
+  - echo "    5. Build and start: docker compose -f docker-compose.oci.yml up -d"
+  - echo "    6. Check logs: docker compose -f docker-compose.oci.yml logs -f"
+  - echo "    7. Enable auto-start: sudo systemctl enable marketing-backend"
+
+# Write completion marker
+write_files:
+  - path: /opt/marketing-backend/README.md
+    owner: ubuntu:ubuntu
+    permissions: "0644"
+    content: |
+      # Marketing Backend - OCI Deployment
+
+      ## Post-Provisioning Setup
+
+      1. **Clone repository**:
+         ```bash
+         cd /opt/marketing-backend
+         # Clone your repo or rsync files from local machine
+         ```
+
+      2. **Create secrets** (generate random strings with `openssl rand -hex 32`):
+         ```bash
+         # Database password (24+ chars)
+         echo "your-secure-db-password" > secrets/db_password.txt
+         
+         # IP hash pepper (32+ chars)
+         openssl rand -hex 32 > secrets/ip_hash_pepper.txt
+         
+         # Admin API key (24+ chars)
+         openssl rand -hex 24 > secrets/admin_api_key.txt
+         
+         chmod 600 secrets/*.txt
+         ```
+
+      3. **Configure environment**:
+         ```bash
+         cp .env.oci.example .env.oci
+         vim .env.oci  # Update CORS_ALLOWED_ORIGINS, PRIVACY_CONTACT_EMAIL, etc.
+         ```
+
+      4. **Build and start**:
+         ```bash
+         docker compose -f docker-compose.oci.yml build
+         docker compose -f docker-compose.oci.yml up -d
+         ```
+
+      5. **Run migrations**:
+         ```bash
+         docker compose -f docker-compose.oci.yml exec backend sh -c "npx prisma migrate deploy"
+         ```
+
+      6. **Check health**:
+         ```bash
+         curl http://localhost:3000/health
+         docker compose -f docker-compose.oci.yml logs -f
+         ```
+
+      7. **Enable auto-start on boot**:
+         ```bash
+         sudo systemctl enable marketing-backend
+         sudo systemctl start marketing-backend
+         ```
+
+      ## Useful Commands
+
+      ```bash
+      # View logs
+      docker compose -f docker-compose.oci.yml logs -f
+      docker compose -f docker-compose.oci.yml logs -f backend
+      docker compose -f docker-compose.oci.yml logs -f postgres
+
+      # Restart services
+      docker compose -f docker-compose.oci.yml restart
+      docker compose -f docker-compose.oci.yml restart backend
+
+      # Stop services
+      docker compose -f docker-compose.oci.yml down
+
+      # Rebuild after code changes
+      docker compose -f docker-compose.oci.yml build
+      docker compose -f docker-compose.oci.yml up -d
+
+      # Check container stats
+      docker stats
+
+      # Shell into backend container
+      docker compose -f docker-compose.oci.yml exec backend sh
+
+      # Prisma Studio (access via SSH tunnel)
+      docker compose -f docker-compose.oci.yml exec backend npx prisma studio
+      # Then: ssh -L 5555:localhost:5555 ubuntu@<public-ip>
+      # Browser: http://localhost:5555
+
+      # Database backup
+      docker compose -f docker-compose.oci.yml exec postgres pg_dump -U altcontext altcontext_prod > backup.sql
+
+      # View system resources
+      htop
+      df -h
+      free -m
+      ```
+
+      ## Monitoring
+
+      - **Health check**: `curl http://localhost:3000/health`
+      - **Container status**: `docker compose -f docker-compose.oci.yml ps`
+      - **System logs**: `sudo journalctl -u marketing-backend -f`
+      - **Cloud-init logs**: `sudo cat /var/log/cloud-init-output.log`
+      - **Keepalive logs**: `sudo cat /var/log/marketing-keepalive.log`
+
+      ## Troubleshooting
+
+      **Backend won't start (OOM):**
+      - Check: `dmesg | grep -i "out of memory"`
+      - Solution: Reduce container memory limits in docker-compose.oci.yml
+
+      **Postgres connection refused:**
+      - Check: `docker compose -f docker-compose.oci.yml logs postgres`
+      - Wait for health check: `docker compose -f docker-compose.oci.yml ps` (should show "healthy")
+
+      **Port 3000 not accessible from outside:**
+      - Check security list rules in OCI Console
+      - Verify firewall: `sudo ufw status` (should be inactive by default on Ubuntu)
+
+      **Instance idle reclamation warning:**
+      - Backend must maintain >20% CPU/network/memory over 7-day windows
+      - Keepalive script runs every 6 hours (check `/var/log/marketing-keepalive.log`)
+      - Monitor metrics in OCI Console: Compute > Instances > Metrics

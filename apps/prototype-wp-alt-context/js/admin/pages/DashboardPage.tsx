@@ -7,7 +7,16 @@ import { __ } from '@wordpress/i18n';
  * Displays a hero section with contextual copy so the React bundle
  * immediately communicates that it has mounted correctly inside wp-admin.
  */
+import { useMediaStats } from '../hooks/useMediaStats';
+import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
+import { rosterClustersUrl } from './workbench/Panels';
+
 export const DashboardPage = (): React.JSX.Element => {
+  const { stats, isLoading: isStatsLoading } = useMediaStats();
+  const { jobHistory, jobStatuses } = useRecognitionJobHistory();
+
+  const coveragePercent = Math.round(stats.coverage);
+
   return (
     <section className="acx-dashboard__shell" aria-labelledby="acx-dashboard-title">
       <header className="acx-dashboard__hero">
@@ -16,31 +25,76 @@ export const DashboardPage = (): React.JSX.Element => {
           {__('Alt Context Dashboard', 'alt-context')}
         </h1>
         <p className="acx-dashboard__subtitle">
-          {__(
-            'Welcome to the new single-page admin experience. This screen will soon display coverage insights, recent activity, and shortcuts into the workbench.',
-            'alt-context',
-          )}
+          {__('Monitor your library coverage and manage identity recognition jobs.', 'alt-context')}
         </p>
       </header>
 
-      <div className="acx-dashboard__panels">
-        <section className="acx-dashboard__panel">
-          <h2>{__('Getting Started', 'alt-context')}</h2>
-          <p>
-            {__(
-              'The React application is now running inside wp-admin. Use this panel to verify the SPA mount point and begin wiring live data.',
-              'alt-context',
-            )}
-          </p>
+      <div className="acx-dashboard__grid">
+        <section className="acx-dashboard__panel acx-dashboard__panel--stats">
+          <h2>{__('Library Coverage', 'alt-context')}</h2>
+          {isStatsLoading ? (
+            <p>{__('Loading coverage insights…', 'alt-context')}</p>
+          ) : (
+            <div className="acx-dashboard__stats-grid">
+              <div className="acx-dashboard__stat">
+                <span className="acx-dashboard__stat-value">{stats.total}</span>
+                <span className="acx-dashboard__stat-label">{__('Total Media', 'alt-context')}</span>
+              </div>
+              <div className="acx-dashboard__stat">
+                <span className="acx-dashboard__stat-value">{stats.missing}</span>
+                <span className="acx-dashboard__stat-label">{__('Missing Alt Text', 'alt-context')}</span>
+              </div>
+              <div className="acx-dashboard__stat acx-dashboard__stat--highlight">
+                <span className="acx-dashboard__stat-value">{coveragePercent}%</span>
+                <span className="acx-dashboard__stat-label">{__('Coverage', 'alt-context')}</span>
+              </div>
+            </div>
+          )}
+          <progress
+            className="acx-dashboard__progress"
+            value={coveragePercent}
+            max={100}
+            aria-label={__('Alt text coverage', 'alt-context')}
+          />
         </section>
 
         <section className="acx-dashboard__panel">
-          <h2>{__('Next Steps', 'alt-context')}</h2>
-          <ul>
-            <li>{__('Connect the recognition service endpoint.', 'alt-context')}</li>
-            <li>{__('Surface coverage metrics from wp-admin APIs.', 'alt-context')}</li>
-            <li>{__('Link to the workbench, roster, and account settings routes.', 'alt-context')}</li>
-          </ul>
+          <h2>{__('Quick Actions', 'alt-context')}</h2>
+          <div className="acx-dashboard__actions">
+            <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
+              <h3>{__('Analysis Queue', 'alt-context')}</h3>
+              <p>{__('Scan your library for faces and identities.', 'alt-context')}</p>
+            </a>
+            <a href="#/workbench?tab=confirm" className="acx-dashboard__action-card">
+              <h3>{__('Review Hub', 'alt-context')}</h3>
+              <p>{__('Cluster detected embeddings into known identities.', 'alt-context')}</p>
+            </a>
+            <a href={rosterClustersUrl()} className="acx-dashboard__action-card">
+              <h3>{__('Managed Identities', 'alt-context')}</h3>
+              <p>{__('View and merge identity clusters in the roster.', 'alt-context')}</p>
+            </a>
+          </div>
+        </section>
+
+        <section className="acx-dashboard__panel">
+          <h2>{__('Recent Activity', 'alt-context')}</h2>
+          {jobHistory.length === 0 ? (
+            <p>{__('No recent recognition jobs found.', 'alt-context')}</p>
+          ) : (
+            <ul className="acx-dashboard__activity-list">
+              {jobHistory.map((id) => (
+                <li key={id} className="acx-dashboard__activity-item">
+                  <span className="acx-dashboard__activity-id">{id}</span>
+                  <span className="acx-dashboard__activity-status">
+                    {jobStatuses[id] ?? __('Checking status…', 'alt-context')}
+                  </span>
+                  <a href={`#/workbench?tab=confirm&jobId=${id}`} className="acx-link-button">
+                    {__('View Details', 'alt-context')}
+                  </a>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
       </div>
     </section>

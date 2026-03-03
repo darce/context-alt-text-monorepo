@@ -264,75 +264,75 @@ export const WorkbenchProvider = WorkbenchContext.Provider;
 
 ## Phase 0: Scaffolding
 
-- [ ] Create `js/components/ErrorBoundary.tsx` with class component skeleton and `handleRetry`.
-- [ ] Create `js/components/__tests__/ErrorBoundary.test.tsx` with `it.todo()` stubs for: renders children, catches error and shows fallback, retry resets error state.
-- [ ] Create `js/admin/hooks/useTabParam.ts` with type signature and `throw new Error('TODO')`.
-- [ ] Create `js/admin/hooks/__tests__/useTabParam.test.tsx` with `it.todo()` stubs for: reads param from URL, defaults when missing, sets param on change.
-- [ ] Create `js/admin/hooks/useScrollRestoration.ts` with type signature and TODO stub.
-- [ ] Create `js/admin/hooks/__tests__/useScrollRestoration.test.ts` with `it.todo()` stubs.
-- [ ] Create `js/admin/pages/workbench/ScanTabContent.tsx` as empty component skeleton.
-- [ ] Create `js/admin/pages/workbench/BatchTabContent.tsx` as empty component skeleton.
-- [ ] Create `js/admin/pages/workbench/ConfirmTabContent.tsx` as empty component skeleton.
-- [ ] Verify scaffolds compile: `npm run typecheck`.
+- [x] Create `js/components/ErrorBoundary.tsx` with class component skeleton and `handleRetry`.
+- [x] Create `js/components/__tests__/ErrorBoundary.test.tsx` with `it.todo()` stubs for: renders children, catches error and shows fallback, retry resets error state.
+- [x] Create `js/admin/hooks/useTabParam.ts` with type signature and `throw new Error('TODO')`.
+- [x] Create `js/admin/hooks/__tests__/useTabParam.test.tsx` with `it.todo()` stubs for: reads param from URL, defaults when missing, sets param on change.
+- [x] Create `js/admin/hooks/useScrollRestoration.ts` with type signature and TODO stub.
+- [x] Create `js/admin/hooks/__tests__/useScrollRestoration.test.ts` with `it.todo()` stubs.
+- [x] Create `js/admin/pages/workbench/ScanTabContent.tsx` as empty component skeleton.
+- [x] Create `js/admin/pages/workbench/BatchTabContent.tsx` as empty component skeleton.
+- [x] Create `js/admin/pages/workbench/ConfirmTabContent.tsx` as empty component skeleton.
+- [x] Verify scaffolds compile: `npm run typecheck`.
 
 ## Phase 1a: Critical Fixes
 
-- [ ] **Test (red)**: `ErrorBoundary.test.tsx` -- error in child renders fallback UI with retry button.
-- [ ] **Implement**: `ErrorBoundary` class component with `getDerivedStateFromError` and `handleRetry`.
-- [ ] **Test (green)**: verify error boundary catches and retry resets.
-- [ ] **Test (red)**: `ErrorBoundary.test.tsx` -- renders children normally when no error.
-- [ ] **Implement**: add children pass-through in `render()`.
-- [ ] **Integrate**: wrap each `<Route>` in `App.tsx` with `<ErrorBoundary>`.
-- [ ] **Integrate**: wrap identity-cluster panel block in `WorkbenchPage.tsx` L330-350 with `<ErrorBoundary>`.
-- [ ] **Test (red)**: `useClusterLabelMutations` -- rename/merge abort triggers `onAbort`.
-- [ ] **Fix**: add `onAbort` callback to `useClusterLabelMutations` (rename + merge abort branches).
-- [ ] **Test (red)**: `useClusterActionMutations` -- assignToCluster/createClusterForIdentity abort triggers `onAbort`.
-- [ ] **Fix**: add `onAbort` callback to `useClusterActionMutations` (reassign, assignToCluster, createClusterForIdentity, split abort branches).
-- [ ] **Fix**: thread `onAbort` through `useClusterMutations` to both hooks; wire `onAbort: resetSaveStatus` in `IdentityClusterItem`.
-- [ ] **Test (green)**: abort resets `saveStatus` to idle without surfacing a user-facing error message.
-- [ ] **Test (red)**: `WorkbenchPage` -- scan complete does NOT change active tab.
-- [ ] **Fix**: `WorkbenchPage.tsx` L179 -- remove `setActiveSection(TAB_IDS.confirm)`, add toast/notification.
-- [ ] **Test (green)**: verify active tab unchanged after scan complete.
-- [ ] Run full test suite: `npm run test`.
+- [x] **Test (red)**: `ErrorBoundary.test.tsx` -- error in child renders fallback UI with retry button.
+- [x] **Implement**: `ErrorBoundary` class component with `getDerivedStateFromError` and `handleRetry`.
+- [x] **Test (green)**: verify error boundary catches and retry resets.
+- [x] **Test (red)**: `ErrorBoundary.test.tsx` -- renders children normally when no error.
+- [x] **Implement**: add children pass-through in `render()`.
+- [x] **Integrate**: wrap each `<Route>` in `App.tsx` with `<ErrorBoundary>`.
+- [x] **Integrate**: wrap identity-cluster panel block in `WorkbenchPage.tsx` L330-350 with `<ErrorBoundary>`.
+- [x] **Test (red)**: `useClusterLabelMutations` -- rename/merge abort triggers `onAbort`.
+- [x] **Fix**: add `onAbort` callback to `useClusterLabelMutations` (rename + merge abort branches).
+- [x] **Test (red)**: `useClusterActionMutations` -- assignToCluster/createClusterForIdentity abort triggers `onAbort`.
+- [x] **Fix**: add `onAbort` callback to `useClusterActionMutations` (reassign, assignToCluster, createClusterForIdentity, split abort branches).
+- [x] **Fix**: thread `onAbort` through `useClusterMutations` to both hooks; wire `onAbort: resetSaveStatus` in `IdentityClusterItem`.
+- [x] **Test (green)**: abort resets `saveStatus` to idle without surfacing a user-facing error message.
+- [x] **Test (red)**: `WorkbenchPage` -- scan complete does NOT change active tab.
+- [x] **Fix**: `WorkbenchPage.tsx` L179 -- remove `setActiveSection(TAB_IDS.confirm)`, add toast/notification.
+- [x] **Test (green)**: verify active tab unchanged after scan complete.
+- [x] Run full test suite: `npm run test`.
 
 ## Phase 1b: Navigation State Continuity
-
-- [ ] **Test (red)**: `useTabParam` -- returns default when URL has no param.
-- [ ] **Implement**: `useTabParam` hook using `useSearchParams`.
-- [ ] **Test (green)**: default value and URL round-trip.
-- [ ] **Test (red)**: `useTabParam` -- setting tab updates URL search param.
-- [ ] **Implement**: `setTab` callback writes to search params with `replace: true`.
-- [ ] **Test (green)**: URL reflects new tab value.
-- [ ] **Test (red)**: `App.extractRouteFromHash` handles `#/workbench?tab=confirm` without stripping query params.
-- [ ] **Fix**: update hash-route parsing/bootstrap logic to preserve query-bearing hashes.
-- [ ] **Integrate**: replace `useState` in `WorkbenchPage.tsx` L108 with `useTabParam`.
-- [ ] **Integrate**: replace `useState` + manual `useEffect` in `RosterPage.tsx` L23, L64-68 with `useTabParam`.
-- [ ] **Test (red)**: `useScrollRestoration` -- saves scroll position keyed by route.
-- [ ] **Implement**: `useScrollRestoration` hook with `sessionStorage` persistence.
-- [ ] **Test (green)**: scroll position save/restore round-trip.
-- [ ] **Integrate**: wire `useScrollRestoration` into WorkbenchPage Scan tab content.
-- [ ] **Test**: deep-linking to `#/workbench?tab=confirm` renders Confirm tab.
-- [ ] **Test**: page refresh preserves `?tab=` param and active tab.
-- [ ] Run full test suite: `npm run test`.
-
+ 
+- [x] **Test (red)**: `useTabParam` -- returns default when URL has no param.
+- [x] **Implement**: `useTabParam` hook using `useSearchParams`.
+- [x] **Test (green)**: default value and URL round-trip.
+- [x] **Test (red)**: `useTabParam` -- setting tab updates URL search param.
+- [x] **Implement**: `setTab` callback writes to search params with `replace: true`.
+- [x] **Test (green)**: URL reflects new tab value.
+- [x] **Test (red)**: `App.extractRouteFromHash` handles `#/workbench?tab=confirm` without stripping query params.
+- [x] **Fix**: update hash-route parsing/bootstrap logic to preserve query-bearing hashes.
+- [x] **Integrate**: replace `useState` in `WorkbenchPage.tsx` L108 with `useTabParam`.
+- [x] **Integrate**: replace `useState` + manual `useEffect` in `RosterPage.tsx` L23, L64-68 with `useTabParam`.
+- [x] **Test (red)**: `useScrollRestoration` -- saves scroll position keyed by route.
+- [x] **Implement**: `useScrollRestoration` hook with `sessionStorage` persistence.
+- [x] **Test (green)**: scroll position save/restore round-trip.
+- [x] **Integrate**: wire `useScrollRestoration` into WorkbenchPage Scan tab content.
+- [x] **Test**: deep-linking to `#/workbench?tab=confirm` renders Confirm tab.
+- [x] **Test**: page refresh preserves `?tab=` param and active tab.
+- [x] Run full test suite: `npm run test`.
+ 
 ## Phase 1c: Structural Improvement
-
-- [ ] Move `<SyncStatusIndicator />` from inside `TabsContent[scan]` to above `<TabsList>` in `WorkbenchPage.tsx`.
-- [ ] **Test**: SyncStatusIndicator visible when Batch or Confirm tab is active.
-- [ ] Extract `ScanTabContent` component from `WorkbenchPage` lines 310-362.
-- [ ] Extract `BatchTabContent` component from `WorkbenchPage` lines 364-385.
-- [ ] Extract `ConfirmTabContent` component from `WorkbenchPage` lines 387-415.
-- [ ] Evaluate prop threading after extraction; introduce `WorkbenchContext` only if it reduces real complexity without broad rerender churn.
-- [ ] Run full test suite: `npm run test`.
-- [ ] Run type check: `npm run typecheck`.
+ 
+- [x] Move `<SyncStatusIndicator />` from inside `TabsContent[scan]` to above `<TabsList>` in `WorkbenchPage.tsx`.
+- [x] **Test**: SyncStatusIndicator visible when Batch or Confirm tab is active.
+- [x] Extract `ScanTabContent` component from `WorkbenchPage` lines 310-362.
+- [x] Extract `BatchTabContent` component from `WorkbenchPage` lines 364-385.
+- [x] Extract `ConfirmTabContent` component from `WorkbenchPage` lines 387-415.
+- [x] Evaluate prop threading after extraction; introduce `WorkbenchContext` only if it reduces real complexity without broad rerender churn.
+- [x] Run full test suite: `npm run test`.
+- [x] Run type check: `npm run typecheck`.
 
 ## Success Criteria
 
-- [ ] Render error in any cluster component shows fallback with retry, does not crash SPA.
-- [ ] Label mutation that aborts resets `saveStatus` to `'idle'` within bounded time (test-verified).
-- [ ] Scan completion does not move the user away from their current active tab.
-- [ ] Tab state survives page refresh and navigation round-trips.
-- [ ] Deep-linking to `#/workbench?tab=confirm` works.
-- [ ] `SyncStatusIndicator` is visible on all workbench tabs.
-- [ ] Structural decomposition improves readability/testability without introducing unnecessary global state.
-- [ ] All existing 33 test files continue passing.
+- [x] Render error in any cluster component shows fallback with retry, does not crash SPA.
+- [x] Label mutation that aborts resets `saveStatus` to `'idle'` within bounded time (test-verified).
+- [x] Scan completion does not move the user away from their current active tab.
+- [x] Tab state survives page refresh and navigation round-trips.
+- [x] Deep-linking to `#/workbench?tab=confirm` works.
+- [x] `SyncStatusIndicator` is visible on all workbench tabs.
+- [x] Structural decomposition improves readability/testability without introducing unnecessary global state.
+- [x] All existing 33 test files continue passing.

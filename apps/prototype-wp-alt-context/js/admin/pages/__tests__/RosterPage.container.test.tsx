@@ -1,5 +1,6 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
+import { MemoryRouter } from 'react-router-dom';
 
 import type { ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
@@ -120,16 +121,22 @@ describe('RosterPage route container', () => {
   });
 
   it('[PAG-M3] bootstraps active tab from the query string', () => {
-    window.history.pushState({}, '', '/wp-admin/admin.php?page=alt-context-roster&tab=clusters');
-
-    render(<RosterPage />);
+    render(
+      <MemoryRouter initialEntries={['/?tab=clusters']}>
+        <RosterPage />
+      </MemoryRouter>
+    );
 
     expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
   });
 
   it('[PAG-M3] opens and closes the cluster drawer from the grid', async () => {
-    render(<RosterPage />);
+    render(
+      <MemoryRouter>
+        <RosterPage />
+      </MemoryRouter>
+    );
 
     await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
     await userEvent.click(screen.getByRole('button', { name: /Cluster One/i }));

@@ -30,6 +30,11 @@ composer phpstan                     # Static analysis
 cd apps/prototype-wp-alt-context
 make check                           # All checks: lint + types + arch + JS tests + PHP tests + phpcs + phpstan
 make fix                             # Auto-fix ESLint, Prettier, PHPCBF then run make check
+make php-cs-fix                      # PHPCBF only (mutating)
+
+# Root convenience target (mutating)
+cd ../..
+make fix-php-style                   # Runs plugin PHPCBF fixer
 ```
 
 ---

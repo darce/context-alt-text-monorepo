@@ -7,8 +7,8 @@ import { useJobStateMachine } from '../../hooks/useJobStateMachine';
 import { useWorkbenchMedia, type WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import { getConfig } from '../../api/config';
 import { useTabParam } from '../../hooks/useTabParam';
-import type { UseQueryResult } from '@tanstack/react-query';
-import type { MediaIdentitiesResponse } from '../../api/recognition';
+import type { JobProgress } from '../../api/recognition/types/scan';
+import type { ClusterResponse } from '../../api/recognition';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 
 export const TAB_IDS = {
@@ -103,7 +103,7 @@ interface WorkbenchContextValue {
   isScanRunning: boolean;
   isCancellingScan: boolean;
   statusText: string | undefined;
-  scanProgress: any;
+  scanProgress: JobProgress | null;
   etaSeconds: number | null;
   isOnline: boolean;
   isPrimary: boolean;
@@ -212,7 +212,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     onScanError: (message: string) => {
       setScanError(message);
     },
-    onClusterComplete: (data: any) => {
+    onClusterComplete: (data: ClusterResponse) => {
       setClusterMessage(
         sprintf(
           __('Created %d clusters for %d identities.', 'alt-context'),
@@ -226,10 +226,14 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     },
   });
 
-  const handleSelectJobFromHistory = (id: string): void => {
-    selectJob(id);
-    setActiveSection(TAB_IDS.confirm);
-  };
+  const handleSelectJobFromHistory = React.useCallback(
+    (id: string): void => {
+      selectJob(id);
+      setActiveSection(TAB_IDS.confirm);
+    },
+    [selectJob, setActiveSection],
+  );
+
 
   const statusMessage = useMemo(() => {
     if (mediaQuery.isFetching) {
@@ -249,13 +253,17 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     return sprintf(_n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'), totalCount);
   }, [mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, totalCount]);
 
-  const setPerPage = (nextPerPage: number) => {
-    if (!MEDIA_PAGE_SIZE_OPTIONS.includes(nextPerPage as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])) {
-      return;
-    }
-    setPerPageState(nextPerPage);
-    setCurrentPage(1);
-  };
+  const setPerPage = React.useCallback(
+    (nextPerPage: number) => {
+      if (!MEDIA_PAGE_SIZE_OPTIONS.includes(nextPerPage as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])) {
+        return;
+      }
+      setPerPageState(nextPerPage);
+      setCurrentPage(1);
+    },
+    [setCurrentPage],
+  );
+
 
   useEffect(() => {
     if (typeof window === 'undefined') {
@@ -356,6 +364,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       scanError,
       mediaItems.length,
       recognitionUrlFallback,
+      setPerPage,
     ],
   );
 

@@ -283,7 +283,9 @@ class Admin {
 					'recognitionRevertMerge'         => rest_url( 'acx/v1/recognition/clusters/revert-merge' ),
 					'recognitionCreateClusterForIdentity' => rest_url( 'acx/v1/recognition/clusters/create-for-identity' ),
 					'rosterEntries'                  => rest_url( 'acx/v1/roster/entries' ),
+					'rosterPersons'                  => rest_url( 'acx/v1/roster/persons' ),
 					'rosterClusters'                 => rest_url( 'acx/v1/roster/clusters' ),
+					'dashboardStats'                 => rest_url( 'acx/v1/dashboard/stats' ),
 				),
 			)
 		);

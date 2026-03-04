@@ -7,6 +7,7 @@ import type { MediaMap } from './hooks/useClusterMediaMap';
 import { mediaEditUrl } from '../../utils/adminUrls';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
+import { Check, X } from 'lucide-react';
 
 interface Props {
   cluster: ClusterSummary | null;
@@ -18,10 +19,9 @@ interface Props {
   onCommitCluster: (cluster: ClusterSummary, assignment: { rosterEntryId?: number; newEntryName?: string }) => void;
   isCommitting: boolean;
   rosterEntries: RosterEntry[];
-  statusMessage?: string | null;
-  errorMessage?: string | null;
   isDetailLoading: boolean;
   detailError?: string | null;
+
   onFaceDragStart: (clusterId: string, faceId: string) => void;
   onFaceDragEnd: () => void;
   onDropTargetChange: (target: string | null) => void;
@@ -40,10 +40,9 @@ export const ClusterDrawerPanel = ({
   onCommitCluster,
   isCommitting,
   rosterEntries,
-  statusMessage,
-  errorMessage,
   isDetailLoading,
   detailError,
+
   onFaceDragStart,
   onFaceDragEnd,
   onDropTargetChange,
@@ -120,20 +119,38 @@ export const ClusterDrawerPanel = ({
       <div className="acx-cluster-drawer__backdrop" onClick={onClose} />
       <aside className="acx-cluster-drawer" aria-live="polite">
         <header className="acx-cluster-drawer__header">
-          <div>
-            <p className="acx-cluster-drawer__label">{__('Cluster', 'alt-context')}</p>
-            <h3>{cluster.label || cluster.id}</h3>
-            <p>
-              {sprintf(
-                _n('%d identity', '%d identities', cluster.identity_count, 'alt-context'),
-                cluster.identity_count,
+          <div className="acx-cluster-drawer__title-group">
+            <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
+            <h3 className="acx-cluster-drawer__title">
+              {cluster.label || sprintf(__('Cluster %s', 'alt-context'), cluster.id.slice(0, 8))}
+            </h3>
+            <ul className="acx-cluster-drawer__meta">
+              <li>
+                <strong>{__('Faces:', 'alt-context')}</strong>
+                {sprintf(
+                  _n('%d identity', '%d identities', cluster.identity_count, 'alt-context'),
+                  cluster.identity_count,
+                )}
+              </li>
+              {cluster.confidence_score !== undefined && (
+                <li>
+                  <strong>{__('Confidence:', 'alt-context')}</strong>
+                  {sprintf('%d%%', Math.round(cluster.confidence_score * 100))}
+                </li>
               )}
-            </p>
+              {cluster.created_at && (
+                <li>
+                  <strong>{__('Found:', 'alt-context')}</strong>
+                  {new Date(cluster.created_at).toLocaleDateString()}
+                </li>
+              )}
+            </ul>
           </div>
-          <button type="button" className="acx-link-button" onClick={onClose}>
-            {__('Close', 'alt-context')}
+          <button type="button" className="acx-icon-button" onClick={onClose} title={__('Close', 'alt-context')}>
+            <X size={20} />
           </button>
         </header>
+
 
         <div className="acx-cluster-drawer__faces">
           {isDetailLoading ? (
@@ -192,47 +209,64 @@ export const ClusterDrawerPanel = ({
         </div>
 
         <div className="acx-cluster-drawer__assignment">
-          <label htmlFor="acx-roster-entry-select">{__('Commit to roster entry', 'alt-context')}</label>
-          <Combobox
-            options={[
-              { value: '', label: __('Select an entry', 'alt-context') },
-              ...rosterEntries.map((entry) => ({
-                value: entry.id.toString(),
-                label: entry.name,
-              })),
-              { value: 'create', label: __('Create new entry…', 'alt-context') },
-            ]}
-            value={selectedEntryId}
-            onSelect={(nextValue: string) => setSelectedEntryId(nextValue)}
-            ariaLabel={__('Commit to roster entry', 'alt-context')}
-            placeholder={__('Select an entry', 'alt-context')}
-            className="acx-cluster-drawer__select"
-            id="acx-roster-entry-select"
-          />
-
-          {selectedEntryId === 'create' && (
-            <input
-              type="text"
-              className="acx-cluster-drawer__input"
-              value={newEntryName}
-              onChange={(event) => setNewEntryName(event.target.value)}
-              placeholder={__('New roster entry name', 'alt-context')}
+          <label className="acx-cluster-drawer__section-label" htmlFor="acx-roster-entry-select">
+            {__('Assign to Identity', 'alt-context')}
+          </label>
+          <div className="acx-cluster-drawer__assignment-controls">
+            <Combobox
+              options={[
+                { value: '', label: __('Select an existing person…', 'alt-context') },
+                ...rosterEntries.map((entry) => ({
+                  value: entry.id.toString(),
+                  label: entry.name,
+                })),
+                { value: 'create', label: __('+ Create new person', 'alt-context') },
+              ]}
+              value={selectedEntryId}
+              onSelect={(nextValue: string) => setSelectedEntryId(nextValue)}
+              ariaLabel={__('Commit to roster entry', 'alt-context')}
+              placeholder={__('Assign to…', 'alt-context')}
+              className="acx-cluster-drawer__select"
+              id="acx-roster-entry-select"
             />
-          )}
 
-          <button
-            type="button"
-            className="acx-link-button"
-            onClick={handleCommit}
-            disabled={!canCommit || isCommitting}
-          >
-            {isCommitting ? __('Committing…', 'alt-context') : __('Commit to roster entry', 'alt-context')}
-          </button>
+            {selectedEntryId === 'create' && (
+              <div className="acx-cluster-drawer__new-entry">
+                <input
+                  type="text"
+                  className="acx-cluster-drawer__input"
+                  value={newEntryName}
+                  onChange={(event) => setNewEntryName(event.target.value)}
+                  placeholder={__('Enter person name…', 'alt-context')}
+                  autoFocus
+                />
+              </div>
+            )}
+
+            <button
+              type="button"
+              className="acx-button acx-button--primary acx-cluster-drawer__commit-btn"
+              onClick={handleCommit}
+              disabled={!canCommit || isCommitting}
+            >
+              {isCommitting ? (
+                <>
+                  <span className="acx-spinner" aria-hidden="true" />
+                  {__('Committing…', 'alt-context')}
+                </>
+              ) : (
+                <>
+                  <Check size={16} />
+                  {__('Confirm Assignment', 'alt-context')}
+                </>
+              )}
+            </button>
+          </div>
         </div>
 
-        {statusMessage && <p className="acx-cluster-drawer__status">{statusMessage}</p>}
-        {errorMessage && <p className="acx-cluster-drawer__status acx-cluster-drawer__status--error">{errorMessage}</p>}
+
       </aside>
     </>
+
   );
 };

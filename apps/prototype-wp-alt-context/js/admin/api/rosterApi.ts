@@ -15,6 +15,34 @@ export interface CommitClusterRequest {
   newEntryName?: string;
 }
 
+export const createPerson = async (name: string, tags: string[] = []): Promise<RosterEntry> => {
+  const endpoint = getEndpoint('rosterPersons');
+  return fetchRequiredApi<RosterEntry>(endpoint, {
+    method: 'POST',
+    body: { name, tags },
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const updatePerson = async (id: number, name?: string, tags?: string[]): Promise<RosterEntry> => {
+  const base = getEndpoint('rosterPersons');
+  const url = `${stripTrailingSlash(base)}/${id}`;
+  return fetchRequiredApi<RosterEntry>(url, {
+    method: 'PUT',
+    body: { name, tags },
+    restNonce: getConfig().nonce,
+  });
+};
+
+export const deletePerson = async (id: number): Promise<void> => {
+  const base = getEndpoint('rosterPersons');
+  const url = `${stripTrailingSlash(base)}/${id}`;
+  await fetchApi(url, {
+    method: 'DELETE',
+    restNonce: getConfig().nonce,
+  });
+};
+
 export const commitClusterToRosterEntry = async ({
   clusterId,
   rosterEntryId,

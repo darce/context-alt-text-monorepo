@@ -389,7 +389,11 @@ if (!function_exists('register_rest_route')) {
 if (!function_exists('rest_ensure_response')) {
     function rest_ensure_response($value)
     {
-        return $value;
+        if ($value instanceof WP_REST_Response || $value instanceof WP_Error) {
+            return $value;
+        }
+
+        return new WP_REST_Response($value);
     }
 }
 
@@ -1554,7 +1558,13 @@ if (!isset($GLOBALS['wpdb'])) {
 
         public function get_var($query, $x = 0, $y = 0)
         {
-            $this->queries[] = (string) $query;
+            $normalizedSql = trim((string) $query);
+            $this->queries[] = $normalizedSql;
+            
+            if (array_key_exists($normalizedSql, $this->queryResults)) {
+                return $this->queryResults[$normalizedSql];
+            }
+
             return $this->mockVar;
         }
 
@@ -1617,6 +1627,30 @@ if (!isset($GLOBALS['wpdb'])) {
                 'UPDATE %s SET %s WHERE %s',
                 $table,
                 implode(', ', $setParts),
+                implode(' AND ', $whereParts)
+            );
+
+            $this->queries[] = $sql;
+
+            return 1;
+        }
+
+        public function delete(string $table, array $where, $whereFormat = null)
+        {
+            $whereParts = [];
+            foreach ($where as $column => $value) {
+                if ($value === null) {
+                    $whereParts[] = sprintf("%s IS NULL", $column);
+                } elseif (is_numeric($value)) {
+                    $whereParts[] = sprintf("%s = %s", $column, (string) $value);
+                } else {
+                    $whereParts[] = sprintf("%s = '%s'", $column, addslashes((string) $value));
+                }
+            }
+
+            $sql = sprintf(
+                'DELETE FROM %s WHERE %s',
+                $table,
                 implode(' AND ', $whereParts)
             );
 

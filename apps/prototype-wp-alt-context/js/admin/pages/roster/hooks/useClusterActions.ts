@@ -1,30 +1,37 @@
-import { useMemo } from 'react';
+import { __, sprintf } from '@wordpress/i18n';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-
 import { queryKeys } from '../../../api/queryKeys';
 import type { AnalyzeResponse } from '../../../api/recognition';
 import { commitClusterToRosterEntry } from '../../../api/rosterApi';
-import { reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
+import { dismissCluster, mergeCluster, reassignClusterIdentity, scanFacesBatched } from '../../../api/recognition';
+import { useToast } from '../../../context/ToastContext';
 
 interface ClusterActionOptions {
   onReassignSettled?: () => void;
   onRescanSettled?: () => void;
   onCommitSettled?: () => void;
+  onBulkMergeSettled?: () => void;
+  onBulkDismissSettled?: () => void;
 }
 
 export const useClusterActions = ({
   onReassignSettled,
   onRescanSettled,
   onCommitSettled,
+  onBulkMergeSettled,
+  onBulkDismissSettled,
 }: ClusterActionOptions = {}) => {
   const queryClient = useQueryClient();
+  const { success, error: showToastError } = useToast();
 
   const reassignMutation = useMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
     mutationFn: (variables) =>
       reassignClusterIdentity({ identityId: variables.faceId, targetClusterId: variables.targetClusterId }),
     onSuccess: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      success(__('Identity assignment updated.', 'alt-context'));
     },
+    onError: (err) => showToastError(err.message),
     onSettled: onReassignSettled,
   });
 
@@ -34,9 +41,17 @@ export const useClusterActions = ({
     { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
   >({
     mutationFn: ({ cluster, mediaIds }) => scanFacesBatched({ mediaIds, sensitivity: 'high', clusterId: cluster.id }),
-    onSuccess: () => {
+    onSuccess: (data) => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      const firstJob = data[0];
+      const msg = firstJob?.id
+        ? data.length > 1
+          ? sprintf(__('Started sensitive rescan (%d batches, first job %s).', 'alt-context'), data.length, firstJob.id)
+          : sprintf(__('Started sensitive rescan (job %s).', 'alt-context'), firstJob.id)
+        : __('Started sensitive rescan.', 'alt-context');
+      success(msg);
     },
+    onError: (err) => showToastError(err.message),
     onSettled: onRescanSettled,
   });
 
@@ -51,43 +66,67 @@ export const useClusterActions = ({
       onSuccess: () => {
         void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
         void queryClient.invalidateQueries({ queryKey: queryKeys.roster.entries() });
+        success(__('Cluster committed to roster entry.', 'alt-context'));
       },
+      onError: (err) => showToastError(err.message),
       onSettled: onCommitSettled,
     },
   );
 
-  const statusMessage = useMemo(() => {
-    if (rescanMutation.isSuccess && rescanMutation.data) {
-      const firstJob = rescanMutation.data[0];
-      return firstJob?.id
-        ? rescanMutation.data.length > 1
-          ? `Started sensitive rescan (${rescanMutation.data.length} batches, first job ${firstJob.id}).`
-          : `Started sensitive rescan (job ${firstJob.id}).`
-        : 'Started sensitive rescan.';
-    }
-    if (commitMutation.isSuccess) {
-      return 'Cluster committed to roster entry.';
-    }
-    if (reassignMutation.isSuccess) {
-      return 'Identity assignment updated.';
-    }
-    return null;
-  }, [rescanMutation.data, rescanMutation.isSuccess, commitMutation.isSuccess, reassignMutation.isSuccess]);
+  const bulkMergeMutation = useMutation<void, Error, { clusterIds: string[] }>({
+    mutationFn: async ({ clusterIds }) => {
+      if (clusterIds.length < 2) {
+        return;
+      }
+      const targetId = clusterIds[0];
+      const sourceIds = clusterIds.slice(1);
+      for (const sourceId of sourceIds) {
+        await mergeCluster(sourceId, targetId);
+      }
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      success(__('Clusters merged successfully.', 'alt-context'));
+    },
+    onError: (err) => showToastError(err.message),
+    onSettled: onBulkMergeSettled,
+  });
 
-  const error = reassignMutation.error ?? rescanMutation.error ?? commitMutation.error ?? null;
+  const bulkDismissMutation = useMutation<void, Error, { clusterIds: string[] }>({
+    mutationFn: async ({ clusterIds }) => {
+      await Promise.all(clusterIds.map((id) => dismissCluster(id)));
+    },
+    onSuccess: () => {
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      success(__('Clusters dismissed.', 'alt-context'));
+    },
+    onError: (err) => showToastError(err.message),
+    onSettled: onBulkDismissSettled,
+  });
 
   const resetAll = () => {
     reassignMutation.reset();
     rescanMutation.reset();
     commitMutation.reset();
+    bulkMergeMutation.reset();
+    bulkDismissMutation.reset();
   };
 
   return {
     reassignMutation,
     rescanMutation,
     commitMutation,
-    statusMessage,
-    errorMessage: error ? error.message : null,
+    bulkMergeMutation,
+    bulkDismissMutation,
+    errorMessage:
+      reassignMutation.error?.message ??
+      rescanMutation.error?.message ??
+      commitMutation.error?.message ??
+      bulkMergeMutation.error?.message ??
+      bulkDismissMutation.error?.message ??
+      null,
     resetAll,
   };
 };
+
+

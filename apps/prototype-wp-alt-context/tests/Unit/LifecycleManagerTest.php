@@ -72,11 +72,16 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(3, $queries);
+        $this->assertCount(4, $queries);
 
-        $clustersSql = $queries[0];
-        $membersSql = $queries[1];
-        $syncSql = $queries[2];
+        $personsSql = $queries[0];
+        $clustersSql = $queries[1];
+        $membersSql = $queries[2];
+        $syncSql = $queries[3];
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_persons', $personsSql);
+        $this->assertStringContainsString('person_uuid', $personsSql);
+        $this->assertStringContainsString('reference_thumb_path', $personsSql);
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_clusters', $clustersSql);
         $this->assertStringContainsString('representative_thumb_path', $clustersSql);
@@ -99,7 +104,7 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertCount(6, $queries);
+        $this->assertCount(8, $queries);
         $this->assertStringNotContainsString('DROP TABLE', implode("\n", $queries));
     }
 
@@ -167,6 +172,7 @@ class LifecycleManagerTest extends TestCase
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_clusters`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_identity_members`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_state`', $wpdb->queries);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_persons`', $wpdb->queries);
     }
 
     /**

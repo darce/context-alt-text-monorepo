@@ -10,6 +10,7 @@ help:
 	@echo "  make test       - Run frontend tests (vitest run)"
 	@echo "  make test-watch - Run frontend tests in watch mode"
 	@echo "  make check-php  - Run plugin PHP checks (cs, phpunit, phpstan)"
+	@echo "  make php-cs-fix - Auto-fix plugin PHP style violations (PHPCBF)"
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 
@@ -44,6 +45,9 @@ check-php: php-cs phpstan
 
 php-cs:
 	@composer cs-check
+
+php-cs-fix:
+	@composer phpcbf
 
 php-test:
 	@composer test

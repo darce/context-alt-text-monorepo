@@ -27,6 +27,8 @@ use function method_exists;
 use function preg_match;
 use function sprintf;
 use function trim;
+use function str_ends_with;
+use function substr;
 
 class ClustersRepository implements ClustersRepositoryInterface {
 	use PreparesSqlQueries;
@@ -152,21 +154,27 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		$normalized_limit  = max( 1, $limit );
 		$normalized_offset = max( 0, $offset );
 
-		$conditions = array( 'tenant_id = %s' );
-		$args       = array( $this->table_name, $normalized_tenant_id );
+		$conditions    = array( 'c.tenant_id = %s' );
+		$persons_table = $this->resolve_persons_table_name();
+		$args          = array( $this->table_name, $persons_table, $normalized_tenant_id );
 
 		if ( $labeled_only ) {
-			$conditions[] = "label IS NOT NULL AND label != ''";
+			$conditions[] = "c.label IS NOT NULL AND c.label != ''";
 		}
 
 		if ( '' !== $search && method_exists( $wpdb, 'esc_like' ) ) {
-			$conditions[] = 'label LIKE %s';
+			$conditions[] = 'c.label LIKE %s';
 			$args[]       = '%' . $wpdb->esc_like( $search ) . '%';
 		}
 
 		$sql = $this->prepare_query(
 			sprintf(
-				'SELECT * FROM %%i WHERE %s ORDER BY updated_at DESC LIMIT %%d OFFSET %%d',
+				'SELECT c.*, COALESCE(p.name, c.label) as label 
+				 FROM %%i c 
+				 LEFT JOIN %%i p ON c.person_id = p.id
+				 WHERE %s 
+				 ORDER BY c.updated_at DESC 
+				 LIMIT %%d OFFSET %%d',
 				implode( ' AND ', $conditions )
 			),
 			array_merge(
@@ -249,19 +257,23 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		}
 
 		$normalized_limit = max( 1, $limit );
-		$sql              = $this->prepare_query(
-			"SELECT * FROM %i
-			WHERE tenant_id = %s
-				AND (label IS NULL OR label = '')
-				AND (curation_state IS NULL OR curation_state <> 'dismissed')
-			ORDER BY identity_count DESC, updated_at DESC
+		$persons_table    = $this->resolve_persons_table_name();
+		$sql = $this->prepare_query(
+			"SELECT c.*, COALESCE(p.name, c.label) as label 
+			FROM %i c
+			LEFT JOIN %i p ON c.person_id = p.id
+			WHERE c.tenant_id = %s
+				AND (c.label IS NULL OR c.label = '')
+				AND (c.curation_state IS NULL OR c.curation_state <> 'dismissed')
+			ORDER BY c.identity_count DESC, c.updated_at DESC
 			LIMIT %d",
-			array(
-				$this->table_name,
-				$normalized_tenant_id,
-				$normalized_limit,
-			)
-		);
+				array(
+					$this->table_name,
+					$persons_table,
+					$normalized_tenant_id,
+					$normalized_limit,
+				)
+			);
 
 		if ( ! is_string( $sql ) || '' === $sql ) {
 			return array();
@@ -283,13 +295,19 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			return null;
 		}
 
+		$persons_table = $this->resolve_persons_table_name();
 		$sql = $this->prepare_query(
-			'SELECT * FROM %i WHERE cluster_uuid = %s LIMIT 1',
-			array(
-				$this->table_name,
-				$normalized_cluster_uuid,
-			)
-		);
+			"SELECT c.*, COALESCE(p.name, c.label) as label 
+			 FROM %i c 
+			 LEFT JOIN %i p ON c.person_id = p.id
+			 WHERE c.cluster_uuid = %s 
+			 LIMIT 1",
+				array(
+					$this->table_name,
+					$persons_table,
+					$normalized_cluster_uuid,
+				)
+			);
 
 		if ( ! is_string( $sql ) || '' === $sql ) {
 			return null;
@@ -454,6 +472,14 @@ class ClustersRepository implements ClustersRepositoryInterface {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 			$wpdb->query( $sql );
 		}
+	}
+
+	private function resolve_persons_table_name(): string {
+		if ( str_ends_with( $this->table_name, 'acx_clusters' ) ) {
+			return substr( $this->table_name, 0, -12 ) . 'acx_persons';
+		}
+
+		return 'wp_acx_persons';
 	}
 
 	/**

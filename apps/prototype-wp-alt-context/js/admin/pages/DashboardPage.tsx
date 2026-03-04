@@ -9,11 +9,16 @@ import { __ } from '@wordpress/i18n';
  */
 import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
+import { useIdentityStats } from '../hooks/useIdentityStats';
 import { rosterClustersUrl } from './workbench/Panels';
+import { sprintf } from '@wordpress/i18n';
+import { OrientationCard } from './dashboard/OrientationCard';
+
 
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobHistory, jobStatuses } = useRecognitionJobHistory();
+  const { data: identityStats, isLoading: isIdentityLoading } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
 
@@ -29,7 +34,10 @@ export const DashboardPage = (): React.JSX.Element => {
         </p>
       </header>
 
+      <OrientationCard />
+
       <div className="acx-dashboard__grid">
+
         <section className="acx-dashboard__panel acx-dashboard__panel--stats">
           <h2>{__('Library Coverage', 'alt-context')}</h2>
           {isStatsLoading ? (
@@ -56,6 +64,55 @@ export const DashboardPage = (): React.JSX.Element => {
             max={100}
             aria-label={__('Alt text coverage', 'alt-context')}
           />
+        </section>
+
+        <section className="acx-dashboard__panel">
+          <h2>{__('Identity Recognition', 'alt-context')}</h2>
+          {isIdentityLoading || !identityStats ? (
+            <p>{__('Loading identity stats…', 'alt-context')}</p>
+          ) : (
+            <>
+              <div className="acx-dashboard__stats-grid">
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value">{identityStats.people_count}</span>
+                  <span className="acx-dashboard__stat-label" title={__('Total unique persons created in your roster.', 'alt-context')}>
+                    {__('People', 'alt-context')}
+                  </span>
+                </div>
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value">
+                    {identityStats.assigned_clusters_count}
+                  </span>
+                  <span className="acx-dashboard__stat-label" title={__('Clusters that have been matched to a person.', 'alt-context')}>
+                    {__('Assigned', 'alt-context')}
+                  </span>
+                </div>
+                <div className="acx-dashboard__stat acx-dashboard__stat--highlight">
+                  <span className="acx-dashboard__stat-value">
+                    {identityStats.pending_clusters_count}
+                  </span>
+                  <span className="acx-dashboard__stat-label" title={__('New clusters waiting for your review and labeling.', 'alt-context')}>
+                    {__('Pending Review', 'alt-context')}
+                  </span>
+                </div>
+
+              </div>
+              {identityStats.pending_clusters_count > 0 && (
+                <div className="acx-dashboard__guidance">
+                  <p>
+                    {sprintf(
+                      /* translators: %d: number of pending clusters */
+                      __('%d faces are waiting for names.', 'alt-context'),
+                      identityStats.pending_clusters_count
+                    )}
+                  </p>
+                  <a href="#/workbench?tab=confirm" className="acx-link-button">
+                    {__('Go to Workbench', 'alt-context')}
+                  </a>
+                </div>
+              )}
+            </>
+          )}
         </section>
 
         <section className="acx-dashboard__panel">

@@ -1,21 +1,22 @@
-import { describe, expect, it, beforeEach, afterEach, vi } from 'vitest';
-import { extractRouteFromHash, ensureHashInitialized, type RoutePath } from '../utils/routeHelpers';
+import { extractRouteFromHash, ensureHashInitialized } from '../utils/routeHelpers';
 
 describe('routeHelpers', () => {
   const originalLocation = window.location;
 
   beforeEach(() => {
     // Mock window.location
-    delete (window as any).location;
-    // @ts-ignore - JSDOM window.location type mismatch in tests
+    // @ts-expect-error - Mocking window.location for tests
+    delete window.location;
+    // @ts-expect-error - JSDOM window.location type mismatch in tests
     window.location = { ...originalLocation };
   });
 
   afterEach(() => {
-    // @ts-ignore - JSDOM window.location type mismatch in tests
+    // @ts-expect-error - JSDOM window.location type mismatch in tests
     window.location = originalLocation;
     vi.restoreAllMocks();
   });
+
 
   describe('extractRouteFromHash', () => {
     it('handles #/workbench without query params', () => {

@@ -12,6 +12,8 @@ export interface ClusterSummary {
   member_ids: string[];
   representative_identity: RepresentativeBounds;
   sample_identities: ClusterIdentity[];
+  confidence_score?: number;
+  created_at?: string;
 }
 
 export interface TopUnlabeledRepresentative {

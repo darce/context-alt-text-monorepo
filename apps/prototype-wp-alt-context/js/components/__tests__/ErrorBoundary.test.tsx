@@ -11,12 +11,20 @@ const ThrowError = ({ shouldThrow }: { shouldThrow: boolean }) => {
 };
 
 const originalConsoleError = console.error;
+const suppressExpectedError = (event: ErrorEvent) => {
+  if (event.error instanceof Error && event.error.message === 'Test error') {
+    event.preventDefault();
+  }
+};
+
 beforeAll(() => {
   console.error = vi.fn();
+  window.addEventListener('error', suppressExpectedError);
 });
 
 afterAll(() => {
   console.error = originalConsoleError;
+  window.removeEventListener('error', suppressExpectedError);
 });
 
 describe('ErrorBoundary', () => {

@@ -90,3 +90,6 @@ CURRENT_TASK.md
 
 # local logs
 /docs/agentic/oci-example/*.log
+
+# local retry logs
+/retry-apply.log

@@ -1,1 +1,0 @@
-nohup: ./retry-apply.sh: No such file or directory

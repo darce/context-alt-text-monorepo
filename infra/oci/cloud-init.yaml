@@ -1,0 +1,100 @@
+#cloud-config
+# ACX OCI bootstrap (Ubuntu 24.04 ARM)
+# Installs Docker + Docker Compose, fail2ban, and creates an app service scaffold.
+
+package_update: true
+package_upgrade: true
+
+packages:
+  - ca-certificates
+  - curl
+  - gnupg
+  - lsb-release
+  - unattended-upgrades
+  - fail2ban
+
+write_files:
+  - path: /etc/docker/daemon.json
+    permissions: "0644"
+    content: |
+      {
+        "log-driver": "json-file",
+        "log-opts": {
+          "max-size": "10m",
+          "max-file": "3"
+        },
+        "storage-driver": "overlay2"
+      }
+
+  - path: /etc/systemd/system/acx-backend.service
+    permissions: "0644"
+    content: |
+      [Unit]
+      Description=ACX Backend (Docker Compose)
+      Requires=docker.service
+      After=docker.service
+
+      [Service]
+      Type=exec
+      WorkingDirectory=/opt/acx-backend
+      ExecStart=/usr/bin/docker compose -f docker-compose.prod.yml up --remove-orphans
+      ExecStop=/usr/bin/docker compose -f docker-compose.prod.yml down
+      TimeoutStartSec=600
+
+      [Install]
+      WantedBy=multi-user.target
+
+  - path: /etc/logrotate.d/acx-backend
+    permissions: "0644"
+    content: |
+      /opt/acx-backend/logs/*.log {
+        daily
+        rotate 7
+        compress
+        delaycompress
+        missingok
+        notifempty
+        create 0640 ubuntu ubuntu
+      }
+
+  - path: /usr/local/bin/acx-keepalive.sh
+    permissions: "0755"
+    content: |
+      #!/usr/bin/env bash
+      # Anti-idle keepalive for OCI Free Tier
+      # Performs a health check and a short CPU burst once every 6 hours.
+      echo "[$(date)] Running ACX keepalive..."
+      # Minimal CPU burst (10 seconds of md5sum)
+      timeout 10s md5sum /dev/zero > /dev/null
+      # Local health check log
+      echo "[$(date)] Keepalive burst complete." >> /var/log/acx-keepalive.log
+
+runcmd:
+  # H-OCI-13: Install Docker via apt repository with GPG verification
+  - install -m 0755 -d /etc/apt/keyrings
+  - curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc
+  - chmod a+r /etc/apt/keyrings/docker.asc
+  - echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" | tee /etc/apt/sources.list.d/docker.list > /dev/null
+  - apt-get update
+  - apt-get install -y docker-ce docker-ce-cli containerd.io docker-buildx-plugin docker-compose-plugin
+  - systemctl enable docker
+  - systemctl start docker
+  - usermod -aG docker ubuntu
+  # M-OCI-10: Ensure daemon.json is applied after potential package-manager overwrite
+  - systemctl restart docker
+  # M-OCI-8: Host-level hardening with UFW
+  - ufw default deny incoming
+  - ufw default allow outgoing
+  - ufw allow 22/tcp
+  - ufw allow 443/tcp
+  - ufw --force enable
+  - systemctl enable fail2ban
+  - systemctl start fail2ban
+  - mkdir -p /opt/acx-backend/{secrets,logs,data/models,data/pgdata}
+  - chown -R ubuntu:ubuntu /opt/acx-backend
+  - chmod 750 /opt/acx-backend/secrets
+  - systemctl daemon-reload
+  - systemctl enable acx-backend.service
+  # Optional Free Tier-only keepalive pattern (disabled by default for PAYG):
+  # - (crontab -l 2>/dev/null; echo "0 */6 * * * /usr/local/bin/acx-keepalive.sh") | crontab -
+  - echo "ACX cloud-init bootstrap complete"

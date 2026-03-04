@@ -2062,18 +2062,31 @@ def list_review_findings(
 
 @mcp.tool()
 def get_review_finding(
-    finding_db_id: int,
+    finding_db_id: int | None = None,
+    finding_id: str | None = None,
     task_ref: str | None = None,
 ) -> str:
     """
-    Retrieve a single review finding by DB id for a task.
+    Retrieve a single review finding by DB id or human-readable finding_id.
+
+    Supply exactly one of:
+    - finding_db_id: integer primary key (e.g. 110)
+    - finding_id: human-readable string (e.g. "H-OCI-28")
     """
+    if finding_db_id is None and finding_id is None:
+        return _json_response({"ok": False, "error": "Provide finding_db_id (int) or finding_id (string)."})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
-        row = conn.execute(
-            "SELECT * FROM review_findings WHERE id = ? AND task_ref = ?",
-            (finding_db_id, resolved_task_ref),
-        ).fetchone()
+        if finding_db_id is not None:
+            row = conn.execute(
+                "SELECT * FROM review_findings WHERE id = ? AND task_ref = ?",
+                (finding_db_id, resolved_task_ref),
+            ).fetchone()
+        else:
+            row = conn.execute(
+                "SELECT * FROM review_findings WHERE finding_id = ? AND task_ref = ?",
+                (finding_id, resolved_task_ref),
+            ).fetchone()
         if row is None:
             return _json_response({"ok": False, "error": "Finding not found for task."})
         return _json_response(
@@ -2661,6 +2674,17 @@ def import_handoff_state(
     task_ref = payload.get("task_ref") or snapshot.get("task_ref")
     if not task_ref:
         return _json_response({"ok": False, "error": "Missing task_ref in import payload."})
+
+    for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings"):
+        items = snapshot.get(key, [])
+        if not isinstance(items, list):
+            return _json_response({"ok": False, "error": f"Invalid import payload: snapshot.{key} must be an array."})
+        for item in items:
+            if not isinstance(item, dict):
+                return _json_response({"ok": False, "error": f"Invalid import payload: items in snapshot.{key} must be objects."})
+    
+    if "active" in snapshot and snapshot["active"] is not None and not isinstance(snapshot["active"], dict):
+        return _json_response({"ok": False, "error": "Invalid import payload: snapshot.active must be an object."})
 
     with _get_db_connection() as conn:
         counts = _import_snapshot(

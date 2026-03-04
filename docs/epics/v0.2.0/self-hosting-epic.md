@@ -196,14 +196,14 @@ The Oracle Cloud Always Free tier offers 4 ARM Ampere A1 cores, 24GB RAM, and 20
 
 **PAYG resolves these issues:**
 
-| Aspect | Free Tier | Pay-As-You-Go |
-| --- | --- | --- |
-| Instance provisioning priority | Lowest -- capacity errors are common | **Higher priority** -- significantly reduces "Out of host capacity" errors |
-| Always Free resources | 4 ARM cores / 24GB / 200GB | **Same Always Free resources included at $0** |
-| Idle instance reclamation | Yes -- Oracle may terminate "idle" instances | **No** -- PAYG instances are not subject to idle reclamation |
-| Additional resource types | Limited | Unlocks more OCI resource types (Kubernetes, flexible shapes, etc.) |
-| Billing risk | None | Minimal if budget alerts are configured (Always Free shapes remain $0) |
-| Account setup | Credit card required | Credit card required |
+| Aspect                         | Free Tier                                    | Pay-As-You-Go                                                              |
+| ------------------------------ | -------------------------------------------- | -------------------------------------------------------------------------- |
+| Instance provisioning priority | Lowest -- capacity errors are common         | **Higher priority** -- significantly reduces "Out of host capacity" errors |
+| Always Free resources          | 4 ARM cores / 24GB / 200GB                   | **Same Always Free resources included at $0**                              |
+| Idle instance reclamation      | Yes -- Oracle may terminate "idle" instances | **No** -- PAYG instances are not subject to idle reclamation               |
+| Additional resource types      | Limited                                      | Unlocks more OCI resource types (Kubernetes, flexible shapes, etc.)        |
+| Billing risk                   | None                                         | Minimal if budget alerts are configured (Always Free shapes remain $0)     |
+| Account setup                  | Credit card required                         | Credit card required                                                       |
 
 **Key insight from community experience (2024 update):** "Upgrading to Pay As You Go [...] you'll continue to enjoy all the free benefits without any additional cost, but you'll also receive priority for launching instances and are less likely to face 'Out of host capacity' errors."
 
@@ -211,14 +211,14 @@ The Oracle Cloud Always Free tier offers 4 ARM Ampere A1 cores, 24GB RAM, and 20
 
 The description service in its current state runs **InsightFace only** (no VLM/Phi-3.5). This is the lightest possible production footprint:
 
-| Resource | Requirement | Oracle Always Free (PAYG) |
-| --- | --- | --- |
-| RAM | ~4GB (FastAPI + InsightFace + Postgres) | 24GB available -- **6x headroom** |
-| CPU | 2 cores sufficient | 4 ARM cores -- **adequate** |
-| Disk | ~2GB (app + models + DB) | 200GB boot volume -- **massive headroom** |
-| Model cache | ~600MB (InsightFace buffalo_l) | Persistent disk -- **no cold-start penalty** |
-| Network | HTTPS ingress | 10TB/mo outbound egress included |
-| Cost | $0/mo target | **$0/mo** (Always Free shapes on PAYG account) |
+| Resource    | Requirement                             | Oracle Always Free (PAYG)                      |
+| ----------- | --------------------------------------- | ---------------------------------------------- |
+| RAM         | ~4GB (FastAPI + InsightFace + Postgres) | 24GB available -- **6x headroom**              |
+| CPU         | 2 cores sufficient                      | 4 ARM cores -- **adequate**                    |
+| Disk        | ~2GB (app + models + DB)                | 200GB boot volume -- **massive headroom**      |
+| Model cache | ~600MB (InsightFace buffalo_l)          | Persistent disk -- **no cold-start penalty**   |
+| Network     | HTTPS ingress                           | 10TB/mo outbound egress included               |
+| Cost        | $0/mo target                            | **$0/mo** (Always Free shapes on PAYG account) |
 
 **Verdict: Oracle Cloud PAYG is an excellent fit for the current InsightFace-only state.** The Always Free ARM instance provides 6x the RAM needed, persistent disk for model cache, and $0/mo operating cost. PAYG account tier eliminates the provisioning lottery that plagues Free Tier accounts.
 
@@ -250,27 +250,27 @@ This section documents the high-level procedure for provisioning a `VM.Standard.
 
 #### Prerequisites
 
-| Prerequisite | Status | Detail |
-| --- | --- | --- |
-| OCI account (PAYG) | Required | Upgrade from Free Tier to PAYG for provisioning priority |
-| OCI CLI | Verified | v3.74.0 installed via Homebrew; config at `~/.oci/config` |
-| Terraform | Verified | v1.5.7 installed via Homebrew |
-| API signing key | Verified | Fingerprint `ac:72:f7:2f:d9:e9:a3:7b:9c:70:f1:46:b8:09:1c:d0` |
-| SSH keypair | Required | For instance access; generate or reuse existing |
-| OCI budget alerts | Required | Configure $1 / $5 / $10 thresholds immediately after PAYG upgrade |
+| Prerequisite       | Status   | Detail                                                            |
+| ------------------ | -------- | ----------------------------------------------------------------- |
+| OCI account (PAYG) | Required | Upgrade from Free Tier to PAYG for provisioning priority          |
+| OCI CLI            | Verified | v3.74.0 installed via Homebrew; config at `~/.oci/config`         |
+| Terraform          | Verified | v1.5.7 installed via Homebrew                                     |
+| API signing key    | Verified | Fingerprint `ac:72:f7:2f:d9:e9:a3:7b:9c:70:f1:46:b8:09:1c:d0`     |
+| SSH keypair        | Required | For instance access; generate or reuse existing                   |
+| OCI budget alerts  | Required | Configure $1 / $5 / $10 thresholds immediately after PAYG upgrade |
 
 #### Target Instance Specification
 
-| Resource | Value |
-| --- | --- |
-| Shape | `VM.Standard.A1.Flex` (ARM Ampere, Always Free) |
-| OCPUs | 4 |
-| Memory | 24 GB |
-| Boot volume | 200 GB |
-| OS image | `Canonical-Ubuntu-24.04-aarch64-2026.01.29-0` |
-| Image OCID | `ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a` |
-| Region | `us-ashburn-1` (home region, required for Always Free) |
-| Availability Domains | `saEG:US-ASHBURN-AD-1`, `AD-2`, `AD-3` (cycle all three for capacity) |
+| Resource             | Value                                                                              |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| Shape                | `VM.Standard.A1.Flex` (ARM Ampere, Always Free)                                    |
+| OCPUs                | 4                                                                                  |
+| Memory               | 24 GB                                                                              |
+| Boot volume          | 200 GB                                                                             |
+| OS image             | `Canonical-Ubuntu-24.04-aarch64-2026.01.29-0`                                      |
+| Image OCID           | `ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a` |
+| Region               | `us-ashburn-1` (home region, required for Always Free)                             |
+| Availability Domains | `saEG:US-ASHBURN-AD-1`, `AD-2`, `AD-3` (cycle all three for capacity)              |
 
 #### Infrastructure Layout
 
@@ -289,10 +289,10 @@ infra/oci/
 
 #### Terraform Resources (High Level)
 
-Adapted from the proven pattern in `docs/agentic/oci-example/`:
+Adapted from the ACX OCI pattern pack in `docs/agentic/oci-example/` (sanitized, pattern-only):
 
 1. **Networking**: VCN (`10.0.0.0/16`) + public subnet (`10.0.1.0/24`) + internet gateway + route table
-2. **Security List**: Ingress SSH (22, restricted CIDR), HTTPS (443), FastAPI (8000, optional for dev); egress all
+2. **Security List**: Ingress SSH (22, restricted CIDR), HTTPS (443 public), optional app-port rule for temporary debug only; egress all
 3. **Compute**: `VM.Standard.A1.Flex` with 4 OCPU / 24 GB memory, 200 GB boot volume, cloud-init user data
 4. **Outputs**: Public IP, SSH command, backend URL
 
@@ -306,12 +306,12 @@ The cloud-init script configures the instance on first boot:
 4. **Application directory**: `/opt/acx-backend/` with `secrets/`, `logs/`, `data/` subdirs
 5. **Systemd service** (`acx-backend.service`) running `docker compose up` from `/opt/acx-backend/`
 6. **Log rotation** for Docker container logs (10MB max, 3 rotations)
-7. **Anti-idle keepalive** cron (every 6 hours): health check + minimal CPU activity to prevent Free Tier reclamation
-8. **Firewall** (iptables/nftables): allow 22, 443, 8000; deny all other inbound
+7. **Anti-idle keepalive** cron (every 6 hours) only when running on Free Tier mode; skip by default on PAYG
+8. **Firewall** (iptables/nftables): allow 22 (restricted) and 443; keep app port closed unless temporary debug mode is explicitly enabled
 
 #### Capacity Retry Strategy
 
-OCI ARM instances frequently return "Out of host capacity" errors, even on PAYG accounts. The retry strategy (adapted from `docs/agentic/oci-example/retry-apply.sh`):
+OCI ARM instances frequently return "Out of host capacity" errors, even on PAYG accounts. The retry strategy (adapted from `docs/agentic/oci-example/retry-apply.sh`) is AD-cycling with non-capacity failures aborting immediately:
 
 1. Cycle through all 3 Availability Domains (`AD-1`, `AD-2`, `AD-3`)
 2. Run `terraform apply` with the current AD
@@ -349,17 +349,18 @@ oci budgets budget create \
 
 #### Differences from oci-example Reference
 
-| Aspect | oci-example (marketing-backend) | ACX deployment |
-| --- | --- | --- |
-| Shape config | 1 OCPU / 6 GB RAM | **4 OCPU / 24 GB RAM** (maximize Always Free) |
-| OS image | Ubuntu 22.04 aarch64 | **Ubuntu 24.04 aarch64** (latest LTS) |
-| App directory | `/opt/marketing-backend/` | **`/opt/acx-backend/`** |
-| Service name | `marketing-backend.service` | **`acx-backend.service`** |
-| Ports | 3000 (Node.js) | **8000 (FastAPI/Uvicorn)**, 443 (HTTPS via Caddy) |
-| Runtime | Node.js / Docker | **Python 3.12 / Docker** |
-| Database | External | **PostgreSQL 17 + pgvector (co-located in Docker Compose)** |
-| Model cache | N/A | **`/opt/acx-backend/data/models/` (~600MB InsightFace)** |
-| Reverse proxy | None (direct port) | **Caddy** (auto-TLS, reverse proxy to :8000) |
+| Aspect        | oci-example (legacy source)               | ACX deployment                                                                      |
+| ------------- | ----------------------------------------- | ----------------------------------------------------------------------------------- |
+| Shape config  | 1 OCPU / 6 GB RAM                         | **4 OCPU / 24 GB RAM** (maximize Always Free)                                       |
+| OS image      | Ubuntu 22.04 aarch64                      | **Ubuntu 24.04 aarch64** (latest LTS)                                               |
+| App directory | `/opt/marketing-backend/`                 | **`/opt/acx-backend/`**                                                             |
+| Service name  | `marketing-backend.service`               | **`acx-backend.service`**                                                           |
+| Ports         | 3000 (Node.js)                            | **443 public via reverse proxy**, 8000 internal-only (or temporary debug allowlist) |
+| Runtime       | Node.js / Docker                          | **Python 3.12 / Docker**                                                            |
+| Database      | External                                  | **PostgreSQL 17 + pgvector (co-located in Docker Compose)**                         |
+| Model cache   | N/A                                       | **`/opt/acx-backend/data/models/` (~600MB InsightFace)**                            |
+| Reverse proxy | None (direct port)                        | **Caddy** (auto-TLS, reverse proxy to :8000)                                        |
+| Repo hygiene  | Included project-specific artifacts/state | **Pattern-only pack; no tfstate/tfvars/log artifacts committed**                    |
 
 ---
 
@@ -375,11 +376,11 @@ The production system will require a user-account store separate from the recogn
 
 **Infrastructure options (to be decided):**
 
-| Option | Hosting | Cost | Notes |
-| --- | --- | --- | --- |
-| Same Postgres on backend VPS | Co-located, separate database | $0 | Simplest. Adequate for MVP volumes. |
-| Managed Postgres (Neon/Supabase) | External | $0-25/mo | Better if account DB needs higher availability than inference DB. |
-| Separate micro-VPS | Dedicated | ~$3-5/mo | Overkill for MVP. |
+| Option                           | Hosting                       | Cost     | Notes                                                             |
+| -------------------------------- | ----------------------------- | -------- | ----------------------------------------------------------------- |
+| Same Postgres on backend VPS     | Co-located, separate database | $0       | Simplest. Adequate for MVP volumes.                               |
+| Managed Postgres (Neon/Supabase) | External                      | $0-25/mo | Better if account DB needs higher availability than inference DB. |
+| Separate micro-VPS               | Dedicated                     | ~$3-5/mo | Overkill for MVP.                                                 |
 
 **Recommendation for MVP:** Add a second database in the same Postgres instance on the backend VPS. Separate logical databases (`acx_recognition`, `acx_accounts`) sharing the same Postgres server. Migrate to managed DB only when operational requirements demand it.
 
@@ -391,11 +392,11 @@ A publicly accessible WordPress instance running the ACX plugin for demonstratio
 
 **Options evaluated:**
 
-| Option | Cost | Pros | Cons |
-| --- | --- | --- | --- |
-| **Shared PHP hosting** (Hostinger/Namecheap) | ~$2-5/mo | Cheapest. Dedicated to WP. Clean separation from backend. | Separate server to manage. |
-| **WP on the Oracle VPS** | $0 | Free. Single box. | Resource contention with inference. Nginx/Caddy config complexity. PHP + Python on same box. |
-| **WordPress.com hosted** | ~$4-25/mo | Zero ops. | Plugin installation restrictions on lower tiers. May not support custom plugins. |
+| Option                                       | Cost      | Pros                                                      | Cons                                                                                         |
+| -------------------------------------------- | --------- | --------------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| **Shared PHP hosting** (Hostinger/Namecheap) | ~$2-5/mo  | Cheapest. Dedicated to WP. Clean separation from backend. | Separate server to manage.                                                                   |
+| **WP on the Oracle VPS**                     | $0        | Free. Single box.                                         | Resource contention with inference. Nginx/Caddy config complexity. PHP + Python on same box. |
+| **WordPress.com hosted**                     | ~$4-25/mo | Zero ops.                                                 | Plugin installation restrictions on lower tiers. May not support custom plugins.             |
 
 **Recommendation:** Cheap shared PHP hosting (~$2-5/mo) is the most economical option that maintains clean separation. The backend VPS should be dedicated to inference + DB. If budget is the absolute priority and demo traffic is minimal, WP on the Oracle VPS is viable but adds operational complexity.
 

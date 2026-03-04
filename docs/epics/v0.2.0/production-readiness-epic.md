@@ -85,27 +85,27 @@ Source:
 
 ### Confirmed Antipatterns (Frontend)
 
-| ID | Issue | Severity | Location |
-| --- | --- | --- | --- |
-| AP-1 | **No Error Boundaries**: render error in any cluster component crashes entire SPA | HIGH | Entire app -- no `ErrorBoundary` wrapper anywhere |
-| AP-2 | **"Saving..." hang on AbortError**: `onError` in `useClusterLabelMutations` returns early on AbortError after `invalidateQueries()` without calling the upstream `onError` callback, so `saveStatus` stays "queued" permanently | HIGH | `useClusterLabelMutations.ts` L63-66 |
-| AP-3 | **Force-navigation on scan complete**: `onScanComplete` always calls `setActiveSection(TAB_IDS.confirm)` regardless of user's current activity | MEDIUM | `WorkbenchPage.tsx` L179 |
-| AP-4 | **No scroll/page restoration**: zero `scrollRestoration` or URL-persisted pagination; users lose position on every navigation | MEDIUM | All routes |
-| AP-5 | **Tab state not URL-synced**: tabs are `useState` only; navigating away and back resets the active tab | MEDIUM | `WorkbenchPage.tsx` L108, `RosterPage.tsx` L23 |
-| AP-6 | **God-component WorkbenchPage** (~428 lines): orchestrates scan, job state, clustering, media selection, and 3 tab panels directly; passes 18+ props to MediaSelection | MEDIUM | `WorkbenchPage.tsx` |
-| AP-7 | **Massive prop drilling**: MediaSelection receives 18 props, ClusterDrawerPanel receives 20+ props; no React Context for shared state | MEDIUM | `WorkbenchPage.tsx` L321-349, `ClusterDrawerPanel.tsx` |
-| AP-8 | **DashboardPage is static placeholder**: no live data, no navigation shortcuts, no coverage summary | LOW | `DashboardPage.tsx` |
+| ID   | Issue                                                                                                                                                                                                                           | Severity | Location                                               |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- | ------------------------------------------------------ |
+| AP-1 | **No Error Boundaries**: render error in any cluster component crashes entire SPA                                                                                                                                               | HIGH     | Entire app -- no `ErrorBoundary` wrapper anywhere      |
+| AP-2 | **"Saving..." hang on AbortError**: `onError` in `useClusterLabelMutations` returns early on AbortError after `invalidateQueries()` without calling the upstream `onError` callback, so `saveStatus` stays "queued" permanently | HIGH     | `useClusterLabelMutations.ts` L63-66                   |
+| AP-3 | **Force-navigation on scan complete**: `onScanComplete` always calls `setActiveSection(TAB_IDS.confirm)` regardless of user's current activity                                                                                  | MEDIUM   | `WorkbenchPage.tsx` L179                               |
+| AP-4 | **No scroll/page restoration**: zero `scrollRestoration` or URL-persisted pagination; users lose position on every navigation                                                                                                   | MEDIUM   | All routes                                             |
+| AP-5 | **Tab state not URL-synced**: tabs are `useState` only; navigating away and back resets the active tab                                                                                                                          | MEDIUM   | `WorkbenchPage.tsx` L108, `RosterPage.tsx` L23         |
+| AP-6 | **God-component WorkbenchPage** (~428 lines): orchestrates scan, job state, clustering, media selection, and 3 tab panels directly; passes 18+ props to MediaSelection                                                          | MEDIUM   | `WorkbenchPage.tsx`                                    |
+| AP-7 | **Massive prop drilling**: MediaSelection receives 18 props, ClusterDrawerPanel receives 20+ props; no React Context for shared state                                                                                           | MEDIUM   | `WorkbenchPage.tsx` L321-349, `ClusterDrawerPanel.tsx` |
+| AP-8 | **DashboardPage is static placeholder**: no live data, no navigation shortcuts, no coverage summary                                                                                                                             | LOW      | `DashboardPage.tsx`                                    |
 
 ### Product Gaps (Frontend)
 
-| ID | Gap | Impact |
-| --- | --- | --- |
-| PG-1 | **Sync status only visible on Scan tab**: SyncStatusIndicator renders inside Scan tab content only; users on Batch/Confirm tabs have no sync visibility | MEDIUM |
-| PG-2 | **Batch tab is a thin read-only list**: no batch configuration, queue management, or progress; selection must happen on Scan tab first | MEDIUM |
-| PG-3 | **Roster Entries tab is read-only**: no create/edit/delete actions for roster entries | MEDIUM |
-| PG-4 | **No "Entries vs Clusters" explanatory copy**: operator cannot understand the distinction from UI alone | LOW |
-| PG-5 | **No loading state for SyncStatusIndicator**: returns `null` during initial fetch (invisible component) | LOW |
-| PG-6 | **Media detail exits the SPA**: clicking a media item navigates to WordPress `post.php?action=edit`, losing all SPA context | LOW (architectural constraint) |
+| ID   | Gap                                                                                                                                                     | Impact                         |
+| ---- | ------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------ |
+| PG-1 | **Sync status only visible on Scan tab**: SyncStatusIndicator renders inside Scan tab content only; users on Batch/Confirm tabs have no sync visibility | MEDIUM                         |
+| PG-2 | **Batch tab is a thin read-only list**: no batch configuration, queue management, or progress; selection must happen on Scan tab first                  | MEDIUM                         |
+| PG-3 | **Roster Entries tab is read-only**: no create/edit/delete actions for roster entries                                                                   | MEDIUM                         |
+| PG-4 | **No "Entries vs Clusters" explanatory copy**: operator cannot understand the distinction from UI alone                                                 | LOW                            |
+| PG-5 | **No loading state for SyncStatusIndicator**: returns `null` during initial fetch (invisible component)                                                 | LOW                            |
+| PG-6 | **Media detail exits the SPA**: clicking a media item navigates to WordPress `post.php?action=edit`, losing all SPA context                             | LOW (architectural constraint) |
 
 ### Production Gaps (Backend/Infra)
 
@@ -332,30 +332,30 @@ This v0.2.0 production epic intentionally does not gate release on the items bel
 
 ## External Dependencies
 
-| Dependency | Owner | Status | Blocks |
-| --- | --- | --- | --- |
-| VPS/provider + DNS/TLS decisions | Project owner | In progress | Phase 3, Phase 6 |
-| Oracle Cloud PAYG account setup + ARM verification | Project owner | Not started | Phase 6 |
-| WP demo hosting provisioning | Project owner | Not started | Phase 6 |
-| CI secret provisioning for smoke/runtime tests | Project owner | Not started | Phase 2, Phase 3 |
-| Final policy choices for origin allowlist and key rotation cadence | Product/engineering | Not started | Phase 4 |
+| Dependency                                                         | Owner               | Status      | Blocks           |
+| ------------------------------------------------------------------ | ------------------- | ----------- | ---------------- |
+| VPS/provider + DNS/TLS decisions                                   | Project owner       | In progress | Phase 3, Phase 6 |
+| Oracle Cloud PAYG account setup + ARM verification                 | Project owner       | Not started | Phase 6          |
+| WP demo hosting provisioning                                       | Project owner       | Not started | Phase 6          |
+| CI secret provisioning for smoke/runtime tests                     | Project owner       | Not started | Phase 2, Phase 3 |
+| Final policy choices for origin allowlist and key rotation cadence | Product/engineering | Not started | Phase 4          |
 
 ## Code Anchors
 
-| Layer | File/Area | Note |
-| --- | --- | --- |
-| Frontend workbench | `js/admin/pages/WorkbenchPage.tsx` | God-component decomposition target (Phase 1c) |
-| Frontend clusters | `js/admin/pages/workbench/identity-clusters/useClusterLabelMutations.ts` | "Saving..." hang: AbortError path (Phase 1a) |
-| Frontend clusters | `js/admin/pages/workbench/identity-clusters/useClusterSaveAction.ts` | Save status lifecycle (Phase 1a) |
-| Frontend sync | `js/admin/pages/workbench/SyncStatusIndicator.tsx` | Move above tabs (Phase 1c) |
-| Frontend nav | `js/admin/App.tsx` | HashRouter, tab URL sync (Phase 1b) |
-| Frontend combobox | `js/components/ui/combobox.tsx` | Untested -- add coverage (Phase 1a) |
-| Plugin sync | `src/sovereign/sync/class-sync-pull-job.php` | Pull sync behavior and failure handling |
-| Plugin API | `src/api/class-sync-status-controller.php` | Sync status contract |
-| Backend snapshot | `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Snapshot endpoint contract |
-| Backend deploy | `apps/prototype-description-service/` | Deployment + health/metrics implementation area |
-| Hosting epic | `docs/epics/v0.2.0/self-hosting-epic.md` | Server provisioning, Oracle PAYG eval, cost analysis |
-| QA Automation | `apps/prototype-wp-alt-context/tests/e2e/` | Proposed smoke gate location |
+| Layer              | File/Area                                                                                    | Note                                                 |
+| ------------------ | -------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| Frontend workbench | `js/admin/pages/WorkbenchPage.tsx`                                                           | God-component decomposition target (Phase 1c)        |
+| Frontend clusters  | `js/admin/pages/workbench/identity-clusters/useClusterLabelMutations.ts`                     | "Saving..." hang: AbortError path (Phase 1a)         |
+| Frontend clusters  | `js/admin/pages/workbench/identity-clusters/useClusterSaveAction.ts`                         | Save status lifecycle (Phase 1a)                     |
+| Frontend sync      | `js/admin/pages/workbench/SyncStatusIndicator.tsx`                                           | Move above tabs (Phase 1c)                           |
+| Frontend nav       | `js/admin/App.tsx`                                                                           | HashRouter, tab URL sync (Phase 1b)                  |
+| Frontend combobox  | `js/components/ui/combobox.tsx`                                                              | Untested -- add coverage (Phase 1a)                  |
+| Plugin sync        | `src/sovereign/sync/class-sync-pull-job.php`                                                 | Pull sync behavior and failure handling              |
+| Plugin API         | `src/api/class-sync-status-controller.php`                                                   | Sync status contract                                 |
+| Backend snapshot   | `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Snapshot endpoint contract                           |
+| Backend deploy     | `apps/prototype-description-service/`                                                        | Deployment + health/metrics implementation area      |
+| Hosting epic       | `docs/epics/v0.2.0/self-hosting-epic.md`                                                     | Server provisioning, Oracle PAYG eval, cost analysis |
+| QA Automation      | `apps/prototype-wp-alt-context/tests/e2e/`                                                   | Proposed smoke gate location                         |
 
 ## Risks and Mitigations
 

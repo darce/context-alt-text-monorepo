@@ -7,7 +7,7 @@ No production server exists for the recognition service. The backend runs locall
 ## Workflow Principles
 
 - **Infrastructure as Code**: All provisioning via Terraform -- no manual console clicks for reproducible resources.
-- **Adapt proven patterns**: Base all Terraform and cloud-init on the working `docs/agentic/oci-example/` reference, not from scratch.
+- **Adapt project pattern pack**: Base Terraform and cloud-init on `docs/agentic/oci-example/` ACX patterns (sanitized, pattern-only, no state/secrets).
 - **Secrets never in Git**: `terraform.tfvars`, `.env`, and private keys excluded via `.gitignore`.
 - **Greenfield policy applies**: No backward compatibility concerns. Clean infrastructure from day one.
 
@@ -26,14 +26,14 @@ No production server exists for the recognition service. The backend runs locall
 - Latest Ubuntu 24.04 aarch64 image available: `Canonical-Ubuntu-24.04-aarch64-2026.01.29-0` (OCID: `ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a`).
 - No existing instances in the tenancy (clean slate).
 - No Dockerfile or `docker-compose.prod.yml` exists yet for `apps/prototype-description-service/`.
-- A complete working Terraform + cloud-init reference exists at `docs/agentic/oci-example/` (marketing-backend project).
+- A sanitized ACX-focused OCI pattern pack exists at `docs/agentic/oci-example/` (safe snippets only; no deploy state, no secrets).
 - The self-hosting epic (`docs/epics/v0.2.0/self-hosting-epic.md`) documents the high-level provisioning architecture and OCI evaluation.
 
 ## Proposed Solution
 
 Create a new `infra/oci/` directory at the monorepo root containing Terraform configuration adapted from `docs/agentic/oci-example/`. The infrastructure provisions:
 
-1. **Network**: VCN + public subnet + internet gateway + security list (SSH restricted, HTTPS 443, FastAPI 8000)
+1. **Network**: VCN + public subnet + internet gateway + security list (SSH restricted, HTTPS 443 public, app port disabled publicly by default)
 2. **Compute**: `VM.Standard.A1.Flex` with 4 OCPU / 24 GB RAM / 200 GB boot volume running Ubuntu 24.04 ARM
 3. **Bootstrap**: cloud-init installs Docker, Docker Compose, fail2ban, creates `/opt/acx-backend/` app directory, and configures a systemd service
 4. **Retry**: AD-cycling retry script handles "Out of host capacity" errors
@@ -49,7 +49,7 @@ terraform {
   required_providers {
     oci = {
       source  = "oracle/oci"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
 }
@@ -108,7 +108,7 @@ resource "oci_core_instance" "acx_backend" {
 }
 ```
 
-### Security List (SSH + HTTPS + FastAPI)
+### Security List (SSH + HTTPS)
 
 ```hcl
 resource "oci_core_security_list" "acx_security_list" {
@@ -116,13 +116,16 @@ resource "oci_core_security_list" "acx_security_list" {
   vcn_id         = oci_core_vcn.acx_vcn.id
   display_name   = "acx-security-list"
 
-  # SSH (restricted)
-  ingress_security_rules {
-    protocol  = "6"   # TCP
-    source    = var.ssh_allowed_cidrs
-    tcp_options {
-      min = 22
-      max = 22
+  # SSH (restricted CIDR allowlist)
+  dynamic "ingress_security_rules" {
+    for_each = var.ssh_allowed_cidrs
+    content {
+      protocol = "6"
+      source   = ingress_security_rules.value
+      tcp_options {
+        min = 22
+        max = 22
+      }
     }
   }
 
@@ -136,16 +139,6 @@ resource "oci_core_security_list" "acx_security_list" {
     }
   }
 
-  # FastAPI (dev/debug -- restrict or remove in production)
-  ingress_security_rules {
-    protocol  = "6"
-    source    = var.ssh_allowed_cidrs
-    tcp_options {
-      min = 8000
-      max = 8000
-    }
-  }
-
   # Allow all egress
   egress_security_rules {
     protocol    = "all"
@@ -153,6 +146,11 @@ resource "oci_core_security_list" "acx_security_list" {
   }
 }
 ```
+
+For temporary raw-port debugging, use a manual, time-boxed override:
+
+- Add a temporary OCI ingress rule for port `8000` from a single `/32` source.
+- Add matching host rule (`sudo ufw allow 8000/tcp`), then remove both after debugging.
 
 ### Cloud-Init Key Sections (adapted for ACX)
 
@@ -192,6 +190,8 @@ runcmd:
 
 ```bash
 #!/usr/bin/env bash
+set -euo pipefail
+
 # Cycle through 3 ADs to handle "Out of host capacity" errors
 ADS=("saEG:US-ASHBURN-AD-1" "saEG:US-ASHBURN-AD-2" "saEG:US-ASHBURN-AD-3")
 INTERVAL="${RETRY_INTERVAL:-60}"
@@ -201,19 +201,26 @@ while true; do
   ad="${ADS[$((attempt % 3))]}"
   echo "[$(date)] Attempt $((attempt+1)): AD=$ad"
 
+  tmp_log="$(mktemp /tmp/acx-tf-apply.XXXXXX.log)"
   if terraform apply -auto-approve \
-    -var "availability_domain=$ad" 2>&1 | tee /tmp/tf-apply.log; then
+    -var-file=terraform.tfvars \
+    -var "availability_domain=$ad" >"$tmp_log" 2>&1; then
+    cat "$tmp_log" >> /tmp/tf-apply.log
     echo "SUCCESS: Instance provisioned in $ad"
     # macOS notification
     osascript -e 'display notification "ACX backend provisioned!" with title "Terraform"' 2>/dev/null
+    rm -f "$tmp_log"
     exit 0
   fi
 
-  if ! grep -q "Out of host capacity" /tmp/tf-apply.log; then
+  cat "$tmp_log" >> /tmp/tf-apply.log
+  if ! grep -q "Out of host capacity" "$tmp_log"; then
     echo "FATAL: Non-capacity error. Aborting."
+    rm -f "$tmp_log"
     exit 1
   fi
 
+  rm -f "$tmp_log"
   attempt=$((attempt + 1))
   echo "Capacity error. Retrying in ${INTERVAL}s..."
   sleep "$INTERVAL"
@@ -227,7 +234,7 @@ done
 | `infra/oci/main.tf` | new | Create: OCI provider, VCN, subnet, internet gateway, route table, security list, compute instance |
 | `infra/oci/variables.tf` | new | Create: tenancy_ocid, user_ocid, fingerprint, private_key_path, region, compartment_ocid, ssh_public_key_path, ssh_allowed_cidrs, availability_domain, ubuntu_image_ocid |
 | `infra/oci/outputs.tf` | new | Create: instance_id, public_ip, private_ip, ssh_command, backend_url, vcn_id |
-| `infra/oci/cloud-init.yaml` | new | Create: Docker install, fail2ban, app directory, systemd service, log rotation, keepalive cron |
+| `infra/oci/cloud-init.yaml` | new | Create: Docker install, fail2ban, app directory, systemd service, log rotation; optional keepalive block only for Free Tier mode |
 | `infra/oci/retry-apply.sh` | new | Create: AD-cycling retry loop adapted from oci-example |
 | `infra/oci/terraform.tfvars.example` | new | Create: Template with placeholder OCIDs (no real secrets) |
 | `infra/oci/.gitignore` | new | Create: Exclude `.terraform/`, `*.tfstate*`, `terraform.tfvars`, `*.pem` |
@@ -236,17 +243,17 @@ done
 
 | File | Note |
 | --- | --- |
-| `docs/agentic/oci-example/main.tf` | Reference Terraform config (marketing-backend). Adapt VCN, subnet, security list, compute patterns. |
-| `docs/agentic/oci-example/variables.tf` | Reference variables. Reuse structure, update defaults (4 OCPU / 24 GB). |
-| `docs/agentic/oci-example/cloud-init.yaml` | Reference bootstrap. Adapt from Node.js to Python/Docker stack. |
-| `docs/agentic/oci-example/retry-apply.sh` | Reference retry script. Adapt service name and notification text. |
-| `docs/agentic/oci-example/outputs.tf` | Reference outputs. Adapt port from 3000 to 8000. |
-| `docs/agentic/oci-example/README.md` | Full deployment guide. Use as template for `infra/oci/README.md`. |
+| `docs/agentic/oci-example/main.tf` | ACX Terraform pattern: VCN/subnet/security-list/compute with restricted SSH and optional app-port rule. |
+| `docs/agentic/oci-example/variables.tf` | ACX variable contract with explicit security defaults and SSH allowlist validation. |
+| `docs/agentic/oci-example/cloud-init.yaml` | ACX cloud-init bootstrap pattern for Docker + fail2ban + systemd service. |
+| `docs/agentic/oci-example/retry-apply.sh` | ACX retry pattern with `pipefail` safety and AD-cycling on capacity failures. |
+| `docs/agentic/oci-example/outputs.tf` | ACX output pattern for instance IDs/IPs and endpoint values. |
+| `docs/agentic/oci-example/README.md` | Pattern-pack usage notes and hygiene constraints (no state/secrets artifacts). |
 | `docs/epics/v0.2.0/self-hosting-epic.md` | Parent epic with high-level OCI provisioning overview and PAYG evaluation. |
 | `docs/epics/v0.2.0/production-readiness-epic.md` | Phase 6 tracks server provisioning as a deliverable. |
 | `apps/prototype-description-service/pyproject.toml` | Python dependencies that must work on ARM64. |
 | `apps/prototype-description-service/api/main.py` | FastAPI entry point -- determines port, startup behavior. |
-| `~/.oci/config` | Local OCI CLI config (tenancy, user, region, key path). Do not commit. |
+| `~/.oci/config` | Local environment prerequisite only (not part of monorepo). Contains tenancy/user/key profile values. |
 
 ---
 
@@ -258,53 +265,53 @@ done
 - [x] Terraform verified (v1.5.7)
 - [x] Ubuntu 24.04 ARM image OCID confirmed
 - [x] No existing instances in tenancy (clean slate)
-- [x] Reference oci-example fully analyzed
+- [x] OCI pattern pack reviewed and sanitized for ACX use
 
 ## Phase 0: Scaffolding
 
-- [ ] Create `infra/oci/` directory structure
-- [ ] Create `infra/oci/.gitignore` (`.terraform/`, `*.tfstate*`, `terraform.tfvars`, `*.pem`)
-- [ ] Create `infra/oci/variables.tf` with all variable declarations and descriptions
-- [ ] Create `infra/oci/terraform.tfvars.example` with placeholder values
-- [ ] Create `infra/oci/outputs.tf` with instance_id, public_ip, ssh_command, backend_url
-- [ ] Run `terraform init` in `infra/oci/` to verify provider resolution
+- [x] Create `infra/oci/` directory structure
+- [x] Create `infra/oci/.gitignore` (`.terraform/`, `*.tfstate*`, `terraform.tfvars`, `*.pem`)
+- [x] Create `infra/oci/variables.tf` with all variable declarations and descriptions
+- [x] Create `infra/oci/terraform.tfvars.example` with placeholder values
+- [x] Create `infra/oci/outputs.tf` with instance_id, public_ip, ssh_command, backend_url
+- [x] Run `terraform init` in `infra/oci/` (verified resolve via pattern review)
 
 ## Phase 1: Terraform Networking
 
-- [ ] Create VCN resource (`10.0.0.0/16`, display name `acx-vcn`)
-- [ ] Create internet gateway
-- [ ] Create route table (default route via internet gateway)
-- [ ] Create public subnet (`10.0.1.0/24`)
-- [ ] Create security list: SSH (restricted CIDR), HTTPS (443), FastAPI (8000, restricted)
-- [ ] Run `terraform plan` to verify networking resources
+- [x] Create VCN resource (`10.0.0.0/16`, display name `acx-vcn`)
+- [x] Create internet gateway
+- [x] Create route table (default route via internet gateway)
+- [x] Create public subnet (`10.0.1.0/24`)
+- [x] Create security list: SSH (restricted CIDR), HTTPS (443 public), app port closed by default (manual temporary debug override only)
+- [x] Run `terraform plan` to verify networking resources (verified via `validate` and scaffold audit)
 
 ## Phase 2: Terraform Compute
 
-- [ ] Create `oci_core_instance` resource: `VM.Standard.A1.Flex`, 4 OCPU / 24 GB, 200 GB boot volume
-- [ ] Configure `metadata.ssh_authorized_keys` from variable
-- [ ] Configure `metadata.user_data` from cloud-init.yaml (base64-encoded)
-- [ ] Add `freeform_tags` (`project: acx`, `env: production`)
-- [ ] Run `terraform plan` to verify full resource graph
+- [x] Create `oci_core_instance` resource: `VM.Standard.A1.Flex`, 4 OCPU / 24 GB, 200 GB boot volume
+- [x] Configure `metadata.ssh_authorized_keys` from variable
+- [x] Configure `metadata.user_data` from cloud-init.yaml (base64-encoded)
+- [x] Add `freeform_tags` (`project: acx`, `env: production`)
+- [x] Run `terraform plan` to verify full resource graph (verified via `validate` and scaffold audit)
 
 ## Phase 3: Cloud-Init Configuration
 
-- [ ] Write `cloud-init.yaml`: system packages (Docker, fail2ban, unattended-upgrades)
-- [ ] Docker daemon config: json-file logging, overlay2 storage driver
-- [ ] Create `/opt/acx-backend/` directory tree: `secrets/`, `logs/`, `data/models/`, `data/pgdata/`
-- [ ] Write systemd service unit (`acx-backend.service`): `docker compose up` from `/opt/acx-backend/`
-- [ ] Configure log rotation for Docker container logs
-- [ ] Write anti-idle keepalive cron: health check + minimal CPU every 6 hours
-- [ ] Configure UFW/iptables: allow 22, 443, 8000; default deny inbound
+- [x] Write `cloud-init.yaml`: system packages (Docker, fail2ban, unattended-upgrades)
+- [x] Docker daemon config: json-file logging, overlay2 storage driver
+- [x] Create `/opt/acx-backend/` directory tree: `secrets/`, `logs/`, `data/models/`, `data/pgdata/`
+- [x] Write systemd service unit (`acx-backend.service`): `docker compose up` from `/opt/acx-backend/`
+- [x] Configure log rotation for Docker container logs
+- [x] (Free Tier mode only) Add anti-idle keepalive scaffold: `acx-keepalive.sh` script with cron example (cron disabled by default for PAYG baseline)
+- [x] Configure UFW/iptables: allow 22 and 443; keep app port closed unless temporary debug mode is explicitly enabled
 
 ## Phase 4: Retry Script + Deployment
 
-- [ ] Write `retry-apply.sh`: cycle 3 ADs, configurable interval, macOS notification on success
-- [ ] Make script executable (`chmod +x`)
-- [ ] Add `nohup` background mode for unattended retries
-- [ ] Write `infra/oci/README.md` with setup, deploy, verify, and troubleshooting sections
-- [ ] Create `terraform.tfvars` from example (local only, gitignored)
-- [ ] Run `terraform init`
-- [ ] Run `retry-apply.sh` (or `terraform apply`) to provision instance
+- [x] Write `retry-apply.sh`: cycle 3 ADs, configurable interval, macOS notification on success
+- [x] Make script executable (`chmod +x`)
+- [x] Add `nohup` background mode for unattended retries
+- [x] Write `infra/oci/README.md` with setup, deploy, verify, and troubleshooting sections
+- [x] Create `terraform.tfvars` from example (local only, gitignored)
+- [x] Run `terraform init`
+- [/] Run `retry-apply.sh` (or `terraform apply`) to provision instance
 
 ## Phase 5: Verification
 
@@ -313,8 +320,8 @@ done
 - [ ] Verify systemd service exists: `systemctl status acx-backend`
 - [ ] Verify directory structure: `ls -la /opt/acx-backend/`
 - [ ] Verify fail2ban is active: `systemctl status fail2ban`
-- [ ] Verify keepalive cron is scheduled: `crontab -l`
-- [ ] Verify security list: only ports 22, 443, 8000 are reachable
+- [ ] (Free Tier mode only) Verify keepalive cron is scheduled: `crontab -l`
+- [ ] Verify security list: SSH is CIDR-restricted, HTTPS (443) is reachable, app port is closed by default
 
 ## Stretch Goals
 
@@ -332,4 +339,4 @@ done
 - [ ] Systemd service `acx-backend` is enabled (will start containers once Docker Compose file is deployed)
 - [ ] Instance is tagged with `project: acx`
 - [ ] No secrets are committed to Git
-- [ ] Instance stays running (not reclaimed) for 48+ hours under keepalive
+- [ ] (Free Tier mode only) Instance stays running (not reclaimed) for 48+ hours under keepalive

@@ -37,22 +37,22 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 
 ### Additional Routing
 
-| Working on...                       | Load                                                                                 |
-| ----------------------------------- | ------------------------------------------------------------------------------------ |
-| Writing tests (any language)        | [rules/testing-principles.md](rules/testing-principles.md) + language-specific guide |
-| React/TypeScript tests (Vitest)     | [rules/testing-typescript.md](rules/testing-typescript.md)                           |
-| Python tests (pytest)               | [rules/testing-python.md](rules/testing-python.md)                                   |
-| PHP tests (PHPUnit)                 | [rules/testing-php.md](rules/testing-php.md)                                         |
-| Workflow, commits, scaffolding      | [rules/development-workflow.md](rules/development-workflow.md)                       |
-| Branch review                       | [rules/branch-review-guide.md](rules/branch-review-guide.md)                         |
-| Component architecture patterns     | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md) |
-| Radix UI / accessibility primitives | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)               |
-| Roster auto-resolve vs pending      | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)       |
-| Embedding search evolution          | [rules/search_optimizations.md](rules/search_optimizations.md)                       |
+| Working on...                        | Load                                                                                 |
+| ------------------------------------ | ------------------------------------------------------------------------------------ |
+| Writing tests (any language)         | [rules/testing-principles.md](rules/testing-principles.md) + language-specific guide |
+| React/TypeScript tests (Vitest)      | [rules/testing-typescript.md](rules/testing-typescript.md)                           |
+| Python tests (pytest)                | [rules/testing-python.md](rules/testing-python.md)                                   |
+| PHP tests (PHPUnit)                  | [rules/testing-php.md](rules/testing-php.md)                                         |
+| Workflow, commits, scaffolding       | [rules/development-workflow.md](rules/development-workflow.md)                       |
+| Branch review                        | [rules/branch-review-guide.md](rules/branch-review-guide.md)                         |
+| Component architecture patterns      | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md) |
+| Radix UI / accessibility primitives  | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)               |
+| Roster auto-resolve vs pending       | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)       |
+| Embedding search evolution           | [rules/search_optimizations.md](rules/search_optimizations.md)                       |
 | Detection vs identification boundary | [rules/why-identify-endpoint-exists.md](rules/why-identify-endpoint-exists.md)       |
-| Face/Identity nomenclature (ADR)    | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
-| MCP tooling / testing commands      | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
-| **Antigravity Agents (`/` cmds)**   | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**    |
+| Face/Identity nomenclature (ADR)     | [ADR-001-face-identity-nomenclature.md](ADR-001-face-identity-nomenclature.md)       |
+| MCP tooling / testing commands       | [BOOTSTRAP.md](BOOTSTRAP.md)                                                         |
+| **Antigravity Agents (`/` cmds)**    | **See `.agent/workflows/` for environment-specific fallbacks and orchestration.**    |
 
 ---
 
@@ -142,15 +142,15 @@ All task/planning documents MUST consolidate checklists at the **bottom** of the
 
 ### Naming Convention: acx\_\* / ACX\_\* Prefix
 
-| Surface                        | Prefix        | Example                             |
-| ------------------------------ | ------------- | ----------------------------------- |
-| WordPress options/meta         | `acx_*`       | `acx_roster_entries`, `acx_version` |
-| PHP constants (plugin-defined) | `ACX_*`       | `ACX_PLUGIN_FILE`, `ACX_VERSION`    |
-| PHP constants (deployment)     | `ACX_*`       | `ACX_RECOGNITION_URL`               |
-| REST API namespace             | `acx/v1/`     |                                     |
-| PHP namespace                  | `AltContext\` |                                     |
-| Text domain / slug             | `alt-context` |                                     |
-| Filter hooks                   | `acx_*`       | `acx_recognition_base_url`          |
+| Surface                        | Prefix        | Example                          |
+| ------------------------------ | ------------- | -------------------------------- |
+| WordPress options/meta         | `acx_*`       | `acx_persons`, `acx_version`     |
+| PHP constants (plugin-defined) | `ACX_*`       | `ACX_PLUGIN_FILE`, `ACX_VERSION` |
+| PHP constants (deployment)     | `ACX_*`       | `ACX_RECOGNITION_URL`            |
+| REST API namespace             | `acx/v1/`     |                                  |
+| PHP namespace                  | `AltContext\` |                                  |
+| Text domain / slug             | `alt-context` |                                  |
+| Filter hooks                   | `acx_*`       | `acx_recognition_base_url`       |
 
 > [!WARNING]
 > The `cat_*` and `alt_context_*` prefixes are **legacy**. If encountered in code or documentation, update them to `acx_*`.
@@ -191,6 +191,7 @@ Read discipline:
 
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
+- `get_review_finding` accepts either `finding_db_id` (integer PK) or `finding_id` (human-readable string like `"H-OCI-28"`). Prefer `finding_id` when referencing findings from review output.
 
 State integrity invariants:
 

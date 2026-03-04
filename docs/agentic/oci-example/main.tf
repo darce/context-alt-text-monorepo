@@ -1,26 +1,6 @@
-# OCI Always Free Terraform Configuration
-# Marketing Backend Deployment
-# 
-# Resources created:
-# - VCN with public subnet
-# - Internet Gateway + Route Table
-# - Security List (SSH + HTTP/HTTPS)
-# - VM.Standard.A1.Flex instance (1 OCPU / 6GB RAM - Ampere ARM)
-# - 50GB boot volume (default)
-# 
-# Prerequisites:
-# - OCI CLI configured (~/.oci/config)
-# - SSH key pair for instance access
-# - Secrets files for Docker Compose
-#
-# Usage:
-#   terraform init
-#   terraform plan -var-file=terraform.tfvars
-#   terraform apply -var-file=terraform.tfvars
-
 terraform {
   required_version = ">= 1.5.0"
-  
+
   required_providers {
     oci = {
       source  = "oracle/oci"
@@ -37,172 +17,136 @@ provider "oci" {
   region           = var.region
 }
 
-# ---------------------------------------------------------------------------
-# Data Sources
-# ---------------------------------------------------------------------------
-
-# Hardcoded Ubuntu 22.04 aarch64 image for VM.Standard.A1.Flex (ARM)
-# Retrieved via: oci compute image list --compartment-id <tenancy-ocid> \
-#   --operating-system 'Canonical Ubuntu' --operating-system-version '22.04' \
-#   --shape VM.Standard.A1.Flex --sort-by TIMECREATED --sort-order DESC --limit 1
-# Image: Canonical-Ubuntu-22.04-aarch64-2026.01.29-0
-locals {
-  ubuntu_image_id = "ocid1.image.oc1.iad.aaaaaaaa3axglz7hak6fmtcrpfckybc4j7zkausb4xpbqwbfypzfsto2pdmq"
-  
-  # Hardcoded availability domain (us-ashburn-3)
-  # Retrieved via: oci iam availability-domain list --compartment-id <tenancy-ocid>
-  availability_domain = "saEG:US-ASHBURN-AD-2"
-}
-
-# ---------------------------------------------------------------------------
-# Networking
-# ---------------------------------------------------------------------------
-
-# Virtual Cloud Network
-resource "oci_core_vcn" "marketing_vcn" {
+resource "oci_core_vcn" "acx_vcn" {
   compartment_id = var.compartment_ocid
-  display_name   = "marketing-vcn"
-  dns_label      = "marketing"
+  display_name   = "acx-vcn"
+  dns_label      = "acxvcn"
   cidr_blocks    = ["10.0.0.0/16"]
 }
 
-# Internet Gateway
-resource "oci_core_internet_gateway" "marketing_igw" {
+resource "oci_core_internet_gateway" "acx_igw" {
   compartment_id = var.compartment_ocid
-  vcn_id         = oci_core_vcn.marketing_vcn.id
-  display_name   = "marketing-igw"
+  vcn_id         = oci_core_vcn.acx_vcn.id
+  display_name   = "acx-igw"
   enabled        = true
 }
 
-# Route Table
-resource "oci_core_route_table" "marketing_rt" {
+resource "oci_core_route_table" "acx_rt" {
   compartment_id = var.compartment_ocid
-  vcn_id         = oci_core_vcn.marketing_vcn.id
-  display_name   = "marketing-rt"
-  
+  vcn_id         = oci_core_vcn.acx_vcn.id
+  display_name   = "acx-rt"
+
   route_rules {
-    description       = "Default route to Internet Gateway"
+    description       = "Default route to internet"
     destination       = "0.0.0.0/0"
     destination_type  = "CIDR_BLOCK"
-    network_entity_id = oci_core_internet_gateway.marketing_igw.id
+    network_entity_id = oci_core_internet_gateway.acx_igw.id
   }
 }
 
-# Security List
-resource "oci_core_security_list" "marketing_sl" {
+resource "oci_core_security_list" "acx_sl" {
   compartment_id = var.compartment_ocid
-  vcn_id         = oci_core_vcn.marketing_vcn.id
-  display_name   = "marketing-sl"
-  
-  # Egress: Allow all outbound
+  vcn_id         = oci_core_vcn.acx_vcn.id
+  display_name   = "acx-sl"
+
   egress_security_rules {
     description = "Allow all outbound"
     destination = "0.0.0.0/0"
     protocol    = "all"
     stateless   = false
   }
-  
-  # Ingress: SSH from allowed IPs
+
   dynamic "ingress_security_rules" {
     for_each = var.ssh_allowed_cidrs
     content {
       description = "SSH from ${ingress_security_rules.value}"
       source      = ingress_security_rules.value
-      protocol    = "6" # TCP
+      protocol    = "6"
       stateless   = false
-      
+
       tcp_options {
         min = 22
         max = 22
       }
     }
   }
-  
-  # Ingress: HTTP (port 3000) from anywhere
-  ingress_security_rules {
-    description = "HTTP backend"
-    source      = "0.0.0.0/0"
-    protocol    = "6" # TCP
-    stateless   = false
-    
-    tcp_options {
-      min = 3000
-      max = 3000
-    }
-  }
-  
-  # Ingress: HTTPS (443) from anywhere (if reverse proxy added later)
+
   ingress_security_rules {
     description = "HTTPS"
     source      = "0.0.0.0/0"
-    protocol    = "6" # TCP
+    protocol    = "6"
     stateless   = false
-    
+
     tcp_options {
       min = 443
       max = 443
     }
   }
+
+  dynamic "ingress_security_rules" {
+    for_each = var.enable_app_port ? var.app_allowed_cidrs : []
+    content {
+      description = "Temporary app-port debug from ${ingress_security_rules.value}"
+      source      = ingress_security_rules.value
+      protocol    = "6"
+      stateless   = false
+
+      tcp_options {
+        min = var.app_port
+        max = var.app_port
+      }
+    }
+  }
 }
 
-# Public Subnet
-resource "oci_core_subnet" "marketing_subnet" {
-  compartment_id      = var.compartment_ocid
-  vcn_id              = oci_core_vcn.marketing_vcn.id
-  display_name        = "marketing-public-subnet"
-  dns_label           = "public"
-  cidr_block          = "10.0.1.0/24"
-  route_table_id      = oci_core_route_table.marketing_rt.id
-  security_list_ids   = [oci_core_security_list.marketing_sl.id]
+resource "oci_core_subnet" "acx_public_subnet" {
+  compartment_id             = var.compartment_ocid
+  vcn_id                     = oci_core_vcn.acx_vcn.id
+  display_name               = "acx-public-subnet"
+  dns_label                  = "public"
+  cidr_block                 = "10.0.1.0/24"
+  route_table_id             = oci_core_route_table.acx_rt.id
+  security_list_ids          = [oci_core_security_list.acx_sl.id]
   prohibit_public_ip_on_vnic = false
 }
 
-# ---------------------------------------------------------------------------
-# Compute Instance
-# ---------------------------------------------------------------------------
-
-# VM.Standard.A1.Flex (Always Free - Ampere ARM)
-# Free tier: up to 4 OCPUs + 24GB RAM total across A1 instances
-# We use 1 OCPU + 6GB RAM (default allocation)
-resource "oci_core_instance" "marketing_backend" {
+resource "oci_core_instance" "acx_backend" {
   compartment_id      = var.compartment_ocid
-  availability_domain = local.availability_domain
-  display_name        = "marketing-backend"
-  shape               = "VM.Standard.A1.Flex"
-  
+  availability_domain = var.availability_domain
+  display_name        = "acx-backend"
+  shape               = var.shape
+
   shape_config {
-    ocpus         = 1
-    memory_in_gbs = 6
+    ocpus         = var.ocpus
+    memory_in_gbs = var.memory_in_gbs
   }
-  
-  # Boot volume
+
   source_details {
     source_type             = "image"
-    source_id               = local.ubuntu_image_id
-    boot_volume_size_in_gbs = 50
+    source_id               = var.ubuntu_image_ocid
+    boot_volume_size_in_gbs = var.boot_volume_size_in_gbs
   }
-  
-  # Network
+
   create_vnic_details {
-    subnet_id        = oci_core_subnet.marketing_subnet.id
-    display_name     = "marketing-backend-vnic"
+    subnet_id        = oci_core_subnet.acx_public_subnet.id
     assign_public_ip = true
-    hostname_label   = "marketing-backend"
+    display_name     = "acx-backend-vnic"
+    hostname_label   = "acx-backend"
   }
-  
-  # SSH key
+
   metadata = {
     ssh_authorized_keys = file(pathexpand(var.ssh_public_key_path))
     user_data           = base64encode(file("${path.module}/cloud-init.yaml"))
   }
-  
-  # Prevent accidental deletion
-  preserve_boot_volume = false
-  
-  # Tags
-  freeform_tags = {
-    Environment = "production"
-    Service     = "marketing-backend"
-    ManagedBy   = "terraform"
-  }
+
+  freeform_tags = var.freeform_tags
+}
+
+data "oci_core_vnic_attachments" "acx_backend_vnics" {
+  compartment_id = var.compartment_ocid
+  instance_id    = oci_core_instance.acx_backend.id
+}
+
+data "oci_core_vnic" "acx_backend_primary_vnic" {
+  vnic_id = data.oci_core_vnic_attachments.acx_backend_vnics.vnic_attachments[0].vnic_id
 }

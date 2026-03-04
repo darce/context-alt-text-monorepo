@@ -1,0 +1,14 @@
+tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaa..."
+user_ocid        = "ocid1.user.oc1..aaaaaa..."
+fingerprint      = "ac:72:..."
+private_key_path = "~/.oci/oci_api_key.pem"
+region           = "us-ashburn-1"
+
+compartment_ocid    = "ocid1.compartment.oc1..aaaaaa..."
+ssh_public_key_path = "~/.ssh/id_rsa.pub"
+availability_domain = "saEG:US-ASHBURN-AD-1"
+# Find the latest ARM image OCID: https://docs.oracle.com/en-us/iaas/images/
+# or run: oci compute image list --compartment-id <tenancy> --shape VM.Standard.A1.Flex --operating-system Ubuntu --query data[0].id
+ubuntu_image_ocid  = "ocid1.image.oc1.iad.aaaaaaaa5hgxi6voge43kultiindj3cbcnsimyatvlmq7wt5sbm6voo2ln3a"
+
+ssh_allowed_cidrs = ["YOUR_IP/32"]

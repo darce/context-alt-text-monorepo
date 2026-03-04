@@ -1,25 +1,28 @@
-# Copy this file to terraform.tfvars and populate with actual values
-# DO NOT commit terraform.tfvars to version control (add to .gitignore)
+# Copy to terraform.tfvars (local only, do not commit)
 
-# OCI Authentication (copy from ~/.oci/config)
-tenancy_ocid     = "ocid1.tenancy.oc1..aaaaaaaarnwywmplftprwcpsytd2g5wjxht45o4jgpidrjhulnzv24qp7q5q"
-user_ocid        = "ocid1.user.oc1..aaaaaaaaqv4hxbuqwelghdxkmfnvx5w2pyysv3prgstgje5czfxh4sphrwa"
-fingerprint      = "<copy-from-oci-config>" # Get with: grep fingerprint ~/.oci/config
+# OCI auth
+# tenancy_ocid, user_ocid, and fingerprint values are available in ~/.oci/config
+tenancy_ocid     = "ocid1.tenancy.oc1..<replace>"
+user_ocid        = "ocid1.user.oc1..<replace>"
+fingerprint      = "aa:bb:cc:dd:ee:ff:00:11:22:33:44:55:66:77:88:99"
 private_key_path = "~/.oci/oci_api_key.pem"
-region           = "us-ashburn-1" # Home region (Always Free requirement)
+region           = "us-ashburn-1"
 
-# Compartment (use tenancy OCID for root compartment)
-compartment_ocid = "ocid1.tenancy.oc1..aaaaaaaarnwywmplftprwcpsytd2g5wjxht45o4jgpidrjhulnzv24qp7q5q"
+# Placement
+compartment_ocid    = "ocid1.compartment.oc1..<replace>"
+availability_domain = "saEG:US-ASHBURN-AD-1"
+ubuntu_image_ocid   = "ocid1.image.oc1.iad..<replace>"
 
-# SSH Access
-ssh_public_key_path = "~/.ssh/id_rsa.pub"
+# SSH access (restrict to your own IP/CIDR)
+ssh_public_key_path = "~/.ssh/id_ed25519.pub"
+ssh_allowed_cidrs   = ["203.0.113.10/32"]
 
-# SSH CIDR Allowlist (restrict to your IP for security)
-# Get your IP: curl -s ifconfig.me
-ssh_allowed_cidrs = [
-  "0.0.0.0/0" # WARNING: Allow SSH from anywhere - restrict in production!
-]
+# Debug app port defaults to closed
+enable_app_port = false
+# app_port = 8000
+# app_allowed_cidrs = ["203.0.113.10/32"]
 
-# Example: Restrict to specific IP
-# ssh_allowed_cidrs = ["203.0.113.42/32"]
-
+freeform_tags = {
+  project = "acx"
+  env     = "production"
+}

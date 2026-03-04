@@ -1,76 +1,71 @@
 #!/usr/bin/env bash
-# Retry terraform apply until capacity is available
-# OCI Always Free A1.Flex instances are in high demand
-# This script cycles through all 3 availability domains
-#
-# Usage: ./retry-apply.sh [interval_seconds]
-#   Runs in background, logs to retry-apply.log, notifies on success.
-# Default interval: 60 seconds
-
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
-LOG="${SCRIPT_DIR}/retry-apply.log"
-INTERVAL=${1:-60}
-ADS=("saEG:US-ASHBURN-AD-1" "saEG:US-ASHBURN-AD-2" "saEG:US-ASHBURN-AD-3")
-MAX_ATTEMPTS=16640
-
-# --- background wrapper ---
-if [[ "${__RETRY_BG:-}" != "1" ]]; then
-  export __RETRY_BG=1
-  echo "Launching retry loop in background (pid logged to retry-apply.log)"
-  echo "  Log:  tail -f ${LOG}"
-  echo "  Stop: kill \$(head -1 ${LOG})"
-  nohup "$0" "$@" > /dev/null 2>&1 &
-  disown
-  exit 0
-fi
-
 cd "$SCRIPT_DIR"
 
-# Write PID as first line so user can kill easily
-echo $$ > "$LOG"
+LOG_FILE="${LOG_FILE:-$SCRIPT_DIR/retry-apply.log}"
+TFVARS_FILE="${TFVARS_FILE:-terraform.tfvars}"
+INTERVAL="${1:-${RETRY_INTERVAL:-60}}"
+MAX_ATTEMPTS="${MAX_ATTEMPTS:-0}"
 
-log() { echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" >> "$LOG"; }
+ADS=("saEG:US-ASHBURN-AD-1" "saEG:US-ASHBURN-AD-2" "saEG:US-ASHBURN-AD-3")
+if [[ -n "${ADS_CSV:-}" ]]; then
+  IFS=',' read -r -a ADS <<< "$ADS_CSV"
+fi
 
-notify() {
-  # macOS notification + terminal bell
-  osascript -e "display notification \"$1\" with title \"OCI Deploy\"" 2>/dev/null || true
-  printf '\a'  # bell
+if [[ ! -f "$TFVARS_FILE" ]]; then
+  echo "Missing $TFVARS_FILE. Create it from terraform.tfvars.example first."
+  exit 1
+fi
+
+touch "$LOG_FILE"
+
+log() {
+  echo "[$(date '+%Y-%m-%d %H:%M:%S')] $*" | tee -a "$LOG_FILE"
 }
 
-ATTEMPT=0
-log "Starting retry loop — interval=${INTERVAL}s, max=${MAX_ATTEMPTS}"
+notify() {
+  osascript -e "display notification \"$1\" with title \"OCI Retry Apply\"" 2>/dev/null || true
+}
 
-while [ $ATTEMPT -lt $MAX_ATTEMPTS ]; do
-  for AD in "${ADS[@]}"; do
-    ATTEMPT=$((ATTEMPT + 1))
-    AD_NUM="${AD##*-}"
+attempt=0
+while true; do
+  for ad in "${ADS[@]}"; do
+    attempt=$((attempt + 1))
+    log "Attempt ${attempt}: availability_domain=${ad}"
 
-    log "Attempt ${ATTEMPT}/${MAX_ATTEMPTS} — AD-${AD_NUM}"
+    tmp_log="$(mktemp "${TMPDIR:-/tmp}/acx-oci-apply.XXXXXX.log")"
 
-    sed -i.bak "s/availability_domain = \"saEG:US-ASHBURN-AD-[0-9]\"/availability_domain = \"${AD}\"/" main.tf
-
-    if terraform apply -var-file=terraform.tfvars -auto-approve >> "$LOG" 2>&1; then
-      log "========================================="
-      log "  SUCCESS — instance created in AD-${AD_NUM}"
-      log "========================================="
-      terraform output >> "$LOG" 2>&1
-      notify "Instance created in AD-${AD_NUM}! Check retry-apply.log"
+    if terraform apply \
+      -auto-approve \
+      -var-file="$TFVARS_FILE" \
+      -var "availability_domain=$ad" >"$tmp_log" 2>&1; then
+      cat "$tmp_log" >> "$LOG_FILE"
+      rm -f "$tmp_log"
+      log "SUCCESS: Terraform apply completed in ${ad}"
+      notify "ACX OCI apply succeeded in ${ad}"
       exit 0
     fi
 
-    if ! grep -q "Out of host capacity" "$LOG"; then
-      log "ERROR: Non-capacity error. Stopping."
-      notify "Deploy FAILED — non-capacity error. Check retry-apply.log"
+    cat "$tmp_log" >> "$LOG_FILE"
+
+    if ! grep -q "Out of host capacity" "$tmp_log"; then
+      rm -f "$tmp_log"
+      log "FATAL: Non-capacity error. Aborting retry loop."
+      notify "ACX OCI apply failed (non-capacity error)"
       exit 1
     fi
 
-    log "Out of capacity AD-${AD_NUM}. Sleeping ${INTERVAL}s..."
+    rm -f "$tmp_log"
+
+    if [[ "$MAX_ATTEMPTS" -gt 0 && "$attempt" -ge "$MAX_ATTEMPTS" ]]; then
+      log "Reached MAX_ATTEMPTS=${MAX_ATTEMPTS}. Aborting."
+      notify "ACX OCI apply exhausted attempts"
+      exit 1
+    fi
+
+    log "Capacity unavailable in ${ad}. Retrying in ${INTERVAL}s."
     sleep "$INTERVAL"
   done
 done
-
-log "Max attempts reached."
-notify "Deploy gave up after ${MAX_ATTEMPTS} attempts"
-exit 1

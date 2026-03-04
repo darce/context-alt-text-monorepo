@@ -50,6 +50,15 @@ const makeCluster = (overrides: Partial<ClusterSummary> = {}): ClusterSummary =>
   ...overrides,
 });
 
+const selectionState = {
+  selectedIds: new Set<string>(),
+  toggle: vi.fn(),
+  selectRange: vi.fn(),
+  clear: vi.fn(),
+  isSelected: vi.fn(() => false),
+  count: 0,
+};
+
 describe('ClusterGrid', () => {
   it('describes empty states', () => {
     render(
@@ -60,6 +69,7 @@ describe('ClusterGrid', () => {
         onRetry={vi.fn()}
         mediaMap={{}}
         onSelectCluster={vi.fn()}
+        selection={selectionState}
         onIdentityDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
         onDropTargetChange={vi.fn()}
@@ -69,7 +79,7 @@ describe('ClusterGrid', () => {
       />,
     );
 
-    expect(screen.getByText(/No clusters have been created yet/i)).toBeInTheDocument();
+    expect(screen.getByText(/No clusters yet/i)).toBeInTheDocument();
   });
 
   it('notifies when user selects a cluster card', async () => {
@@ -84,6 +94,7 @@ describe('ClusterGrid', () => {
         onRetry={vi.fn()}
         mediaMap={{}}
         onSelectCluster={onSelect}
+        selection={selectionState}
         onIdentityDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
         onDropTargetChange={vi.fn()}
@@ -120,6 +131,7 @@ describe('ClusterGrid', () => {
         onRetry={vi.fn()}
         mediaMap={{}}
         onSelectCluster={vi.fn()}
+        selection={selectionState}
         onIdentityDragStart={vi.fn()}
         onFaceDragEnd={vi.fn()}
         onDropTargetChange={vi.fn()}
@@ -205,7 +217,7 @@ describe('ClusterDrawerPanel', () => {
     const entrySelect = screen.getByRole('combobox', { name: /Commit to roster entry/i });
     await userEvent.selectOptions(entrySelect, '42');
 
-    const commitButton = screen.getByRole('button', { name: /^Commit to roster entry$/i });
+    const commitButton = screen.getByRole('button', { name: /^Confirm Assignment$/i });
     expect(commitButton).toBeEnabled();
 
     await userEvent.click(commitButton);

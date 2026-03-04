@@ -2,13 +2,11 @@ import { ChangeEvent } from 'react';
 import * as Select from '@radix-ui/react-select';
 import { Check, ChevronDown } from 'lucide-react';
 import { __, sprintf } from '@wordpress/i18n';
-import type { UseQueryResult } from '@tanstack/react-query';
-
 import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import { IdentityClusterList } from './identity-clusters';
 import { mediaEditUrl } from './Panels';
-import type { MediaIdentitiesResponse } from '../../api/recognition';
+
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useWorkbenchContext } from './WorkbenchContext';
 

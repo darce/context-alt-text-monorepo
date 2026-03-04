@@ -50,4 +50,8 @@ export const queryKeys = {
     inline: () => [...queryKeys.suggestions.all, 'inline'] as const,
     inlineFor: (identityId: string) => [...queryKeys.suggestions.inline(), identityId] as const,
   },
+  dashboard: {
+    all: ['dashboard'] as const,
+    stats: () => [...queryKeys.dashboard.all, 'stats'] as const,
+  },
 } as const;

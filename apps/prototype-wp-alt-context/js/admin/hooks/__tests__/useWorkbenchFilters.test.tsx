@@ -1,12 +1,22 @@
 import type { ChangeEvent } from 'react';
 import { act, renderHook } from '@testing-library/react';
+import type { ReactNode } from 'react';
+import { MemoryRouter, Route, Routes } from 'react-router-dom';
 import { describe, expect, it } from 'vitest';
 
 import { useWorkbenchFilters } from '../useWorkbenchFilters';
 
+const wrapper = ({ children }: { children: ReactNode }) => (
+  <MemoryRouter initialEntries={['/']}>
+    <Routes>
+      <Route path="/" element={<>{children}</>} />
+    </Routes>
+  </MemoryRouter>
+);
+
 describe('useWorkbenchFilters', () => {
   it('defaults to page 1, empty search, and all status', () => {
-    const { result } = renderHook(() => useWorkbenchFilters());
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
 
     expect(result.current.currentPage).toBe(1);
     expect(result.current.searchQuery).toBe('');
@@ -15,7 +25,7 @@ describe('useWorkbenchFilters', () => {
   });
 
   it('resets page to 1 when search changes and trims normalized search', () => {
-    const { result } = renderHook(() => useWorkbenchFilters());
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
 
     act(() => {
       result.current.setCurrentPage(4);
@@ -34,7 +44,7 @@ describe('useWorkbenchFilters', () => {
   });
 
   it('updates status filter and resets page to 1', () => {
-    const { result } = renderHook(() => useWorkbenchFilters());
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper });
 
     act(() => {
       result.current.setCurrentPage(3);

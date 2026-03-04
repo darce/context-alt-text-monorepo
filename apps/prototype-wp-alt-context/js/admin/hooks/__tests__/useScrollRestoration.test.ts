@@ -1,5 +1,5 @@
-import { act, renderHook } from '@testing-library/react';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { renderHook } from '@testing-library/react';
+import { beforeEach, describe, expect, it, vi, afterEach } from 'vitest';
 import { useLocation } from 'react-router-dom';
 import { useScrollRestoration } from '../useScrollRestoration';
 
@@ -19,15 +19,16 @@ describe('useScrollRestoration', () => {
       writable: true,
     });
     
-    window.scrollTo = vi.fn((...args: any[]) => {
+    window.scrollTo = vi.fn((...args: unknown[]) => {
       const x = args[0];
       const y = args[1];
-      if (typeof x === 'object') {
-        window.scrollY = x.top || 0;
+      if (typeof x === 'object' && x !== null) {
+        window.scrollY = (x as ScrollToOptions).top ?? 0;
       } else {
-        window.scrollY = y === undefined ? 0 : y;
+        window.scrollY = typeof y === 'number' ? y : 0;
       }
-    }) as any;
+    }) as unknown as typeof window.scrollTo;
+
 
     vi.spyOn(window, 'requestAnimationFrame').mockImplementation((cb: FrameRequestCallback) => {
       cb(performance.now());

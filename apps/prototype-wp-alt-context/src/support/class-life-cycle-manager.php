@@ -28,6 +28,7 @@ class LifecycleManager {
 		'acx_clusters',
 		'acx_identity_members',
 		'acx_sync_state',
+		'acx_persons',
 	);
 
 	/**
@@ -45,7 +46,116 @@ class LifecycleManager {
 		}
 
 		$this->maybe_create_projection_tables();
+		$this->migrate_legacy_roster_data();
 		flush_rewrite_rules( false );
+	}
+
+	/**
+	 * Migrates data from legacy WP options to custom tables.
+	 *
+	 * @H-PCRUD-4: Ensure data persistence during upgrade.
+	 */
+	private function migrate_legacy_roster_data(): void {
+		$legacy_entries     = get_option( 'acx_roster_entries', array() );
+		$legacy_assignments = get_option( 'acx_roster_assignments', array() );
+
+		if ( empty( $legacy_entries ) && empty( $legacy_assignments ) ) {
+			return;
+		}
+
+		global $wpdb;
+		$table_persons  = $wpdb->prefix . 'acx_persons';
+		$table_clusters = $wpdb->prefix . 'acx_clusters';
+
+		// 1. Import persons
+		$id_map = array(); // legacy_id -> new_db_id
+		foreach ( (array) $legacy_entries as $entry ) {
+			if ( ! isset( $entry['id'], $entry['name'] ) ) {
+				continue;
+			}
+
+			$legacy_id = (int) $entry['id'];
+			$name      = sanitize_text_field( (string) $entry['name'] );
+			$tags      = isset( $entry['tags'] ) ? (array) $entry['tags'] : array();
+
+			// Check if already exists by name to avoid duplicates
+			$existing_id = $wpdb->get_var(
+				$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $name )
+			);
+
+			if ( $existing_id ) {
+				$id_map[ $legacy_id ] = (int) $existing_id;
+			} else {
+				$person_uuid = wp_generate_uuid4();
+				$now         = current_time( 'mysql' );
+				$inserted    = $wpdb->insert(
+					$table_persons,
+					array(
+						'person_uuid' => $person_uuid,
+						'name'        => $name,
+						'tags'        => wp_json_encode( $tags ),
+						'created_at'  => $now,
+						'updated_at'  => $now,
+					)
+				);
+				if ( $inserted ) {
+					$id_map[ $legacy_id ] = (int) $wpdb->insert_id;
+				}
+			}
+		}
+
+		// 2. Import assignments
+		foreach ( (array) $legacy_assignments as $cluster_id => $data ) {
+			$cluster_id = sanitize_text_field( (string) $cluster_id );
+			$legacy_eid = isset( $data['roster_entry_id'] ) ? (int) $data['roster_entry_id'] : null;
+			$new_name   = isset( $data['new_entry_name'] ) ? sanitize_text_field( (string) $data['new_entry_name'] ) : null;
+
+			$final_person_id = null;
+
+			if ( $legacy_eid && isset( $id_map[ $legacy_eid ] ) ) {
+				$final_person_id = $id_map[ $legacy_eid ];
+			} elseif ( $new_name ) {
+				// Handle entry names that weren't in entries yet
+				$existing_id = $wpdb->get_var(
+					$wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $new_name )
+				);
+				if ( $existing_id ) {
+					$final_person_id = (int) $existing_id;
+				} else {
+					$person_uuid = wp_generate_uuid4();
+					$now         = current_time( 'mysql' );
+					$inserted    = $wpdb->insert(
+						$table_persons,
+						array(
+							'person_uuid' => $person_uuid,
+							'name'        => $new_name,
+							'tags'        => wp_json_encode( array() ),
+							'created_at'  => $now,
+							'updated_at'  => $now,
+						)
+					);
+					if ( $inserted ) {
+						$final_person_id = (int) $wpdb->insert_id;
+					}
+				}
+			}
+
+			if ( $final_person_id ) {
+				$wpdb->update(
+					$table_clusters,
+					array(
+						'person_id' => $final_person_id,
+					),
+					array( 'cluster_uuid' => $cluster_id ),
+					array( '%d' ),
+					array( '%s' )
+				);
+			}
+		}
+
+		// 3. Retire legacy options
+		delete_option( 'acx_roster_entries' );
+		delete_option( 'acx_roster_assignments' );
 	}
 
 	/**
@@ -123,12 +233,28 @@ class LifecycleManager {
 		$clusters_table  = $wpdb->prefix . 'acx_clusters';
 		$members_table   = $wpdb->prefix . 'acx_identity_members';
 		$sync_table      = $wpdb->prefix . 'acx_sync_state';
+		$persons_table   = $wpdb->prefix . 'acx_persons';
+
+		$persons_sql = "CREATE TABLE {$persons_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			person_uuid char(36) NOT NULL,
+			name varchar(255) NOT NULL,
+			tags text DEFAULT '',
+			reference_thumb_path varchar(512) DEFAULT NULL,
+			cluster_count int(11) unsigned DEFAULT 0,
+			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			updated_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY idx_name (name),
+			UNIQUE KEY idx_person_uuid (person_uuid)
+		) {$charset_collate};";
 
 		$clusters_sql = "CREATE TABLE {$clusters_table} (
 			cluster_uuid varchar(64) NOT NULL,
 			tenant_id varchar(64) NOT NULL,
 			label text NULL,
 			curation_state varchar(20) NOT NULL,
+			person_id bigint(20) unsigned DEFAULT NULL,
 			representative_thumb_path text NULL,
 			identity_count int(11) unsigned NOT NULL DEFAULT 0,
 			snapshot_version bigint(20) unsigned NOT NULL,
@@ -162,6 +288,7 @@ class LifecycleManager {
 			PRIMARY KEY  (stream_name)
 		) {$charset_collate};";
 
+		dbDelta( $persons_sql );
 		dbDelta( $clusters_sql );
 		dbDelta( $members_sql );
 		dbDelta( $sync_sql );

@@ -54,3 +54,8 @@ class TestResizeObserver {
 if (!globalThis.ResizeObserver) {
   globalThis.ResizeObserver = TestResizeObserver as typeof ResizeObserver;
 }
+
+if (typeof window !== 'undefined') {
+  Object.defineProperty(window, 'scrollTo', { value: () => {}, writable: true });
+}
+

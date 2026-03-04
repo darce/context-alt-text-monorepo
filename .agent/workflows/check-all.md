@@ -2,7 +2,7 @@
 description: Run full CI check (lint + types + tests)
 ---
 
-**Purpose**: Run complete CI validation pipeline before committing.
+**Purpose**: Run complete non-mutating CI validation pipeline before committing.
 
 **When to use**:
 
@@ -18,4 +18,10 @@ Run complete CI validation before committing:
 
 ```bash
 make check-all
+```
+
+If PHP style fails and auto-fix is desired, run separately:
+
+```bash
+make fix-php-style
 ```

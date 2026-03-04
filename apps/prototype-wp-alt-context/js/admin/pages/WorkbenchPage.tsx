@@ -1,21 +1,13 @@
-import React, { useEffect, useMemo, useState } from 'react';
-import { __, _n, sprintf } from '@wordpress/i18n';
+import React from 'react';
+import { __ } from '@wordpress/i18n';
 
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { useJobStateMachine } from '../hooks/useJobStateMachine';
-import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
-import { useWorkbenchMedia } from '../hooks/useWorkbenchMedia';
-import { useMediaSelectionState } from '../hooks/useMediaSelectionState';
-import { useWorkbenchFilters } from '../hooks/useWorkbenchFilters';
-import { getConfig } from '../api/config';
-import { MediaSelection } from './workbench/MediaSelection';
 import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
-import { rosterClustersUrl } from './workbench/Panels';
 import { ScanTabContent } from './workbench/ScanTabContent';
 import { BatchTabContent } from './workbench/BatchTabContent';
 import { ConfirmTabContent } from './workbench/ConfirmTabContent';
-import { ErrorBoundary } from '../../components/ErrorBoundary';
 import { WorkbenchProvider, useWorkbenchContext, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
+
 
 interface WorkbenchSection {
   id: WorkbenchTab;

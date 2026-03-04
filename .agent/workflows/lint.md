@@ -2,7 +2,7 @@
 description: Run all linters across the monorepo
 ---
 
-**Purpose**: Run all static analysis tools (ruff, mypy, eslint, phpstan) across the codebase.
+**Purpose**: Run all static analysis tools (ruff, mypy, eslint, phpcs) across the codebase.
 
 **When to use**:
 
@@ -20,4 +20,10 @@ Run linters for all languages:
 
 ```bash
 make lint-all
+```
+
+2. Optional: auto-fix PHP style violations (mutating)
+
+```bash
+make fix-php-style
 ```

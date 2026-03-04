@@ -5,6 +5,7 @@ import { DashboardPage } from './pages/DashboardPage';
 import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
+import { ToastProvider } from './context/ToastContext';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -23,15 +24,18 @@ export const App = (): React.JSX.Element => {
 
   return (
     <QueryClientProvider client={queryClient}>
-      <HashRouter>
-        <Routes>
-          <Route path="/dashboard" element={<ErrorBoundary><DashboardPage /></ErrorBoundary>} />
-          <Route path="/workbench" element={<ErrorBoundary><WorkbenchPage /></ErrorBoundary>} />
-          <Route path="/roster" element={<ErrorBoundary><RosterPage /></ErrorBoundary>} />
-          <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
-        </Routes>
-      </HashRouter>
+      <ToastProvider>
+        <HashRouter>
+          <Routes>
+            <Route path="/dashboard" element={<ErrorBoundary><DashboardPage /></ErrorBoundary>} />
+            <Route path="/workbench" element={<ErrorBoundary><WorkbenchPage /></ErrorBoundary>} />
+            <Route path="/roster" element={<ErrorBoundary><RosterPage /></ErrorBoundary>} />
+            <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
+          </Routes>
+        </HashRouter>
+      </ToastProvider>
     </QueryClientProvider>
+
   );
 };
 

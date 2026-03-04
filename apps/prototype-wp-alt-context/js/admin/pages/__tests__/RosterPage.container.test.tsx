@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 import type { ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
-import { useRosterEntries } from '../../hooks/useRosterHooks';
+import { useCreatePerson, useRosterEntries } from '../../hooks/useRosterHooks';
 import { RosterPage } from '../RosterPage';
 import { useClusterActions } from '../roster/hooks/useClusterActions';
 import { useClusterDragDrop } from '../roster/hooks/useClusterDragDrop';
@@ -26,6 +26,7 @@ vi.mock('../../hooks/useRecognitionHooks', () => ({
 
 vi.mock('../../hooks/useRosterHooks', () => ({
   useRosterEntries: vi.fn(),
+  useCreatePerson: vi.fn(),
 }));
 
 vi.mock('../roster/hooks/useClusterMediaMap', () => ({
@@ -65,6 +66,7 @@ describe('RosterPage route container', () => {
   const mockedUseRecognitionClusters = vi.mocked(useRecognitionClusters);
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
+  const mockedUseCreatePerson = vi.mocked(useCreatePerson);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
   const mockedUseClusterActions = vi.mocked(useClusterActions);
@@ -114,6 +116,10 @@ describe('RosterPage route container', () => {
       isError: false,
       refetch: vi.fn(),
     } as unknown as ReturnType<typeof useRosterEntries>);
+    mockedUseCreatePerson.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useCreatePerson>);
 
     mockedUseClusterMediaMap.mockReturnValue({});
     mockedUseClusterDragDrop.mockReturnValue(dragDropState as unknown as ReturnType<typeof useClusterDragDrop>);

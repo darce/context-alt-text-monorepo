@@ -24,8 +24,96 @@
 }
 
 .acx-dashboard__panel {
-  background: var(--acx-color-panel);
-  border: 1px solid var(--acx-color-panel-border);
+  background: var(--acx-color-surface-alt);
+  border: 1px solid var(--acx-color-border);
   border-radius: 0.75rem;
   padding: var(--acx-space-24);
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
+
+  h2 {
+    margin: 0 0 var(--acx-space-16) 0;
+    font-size: 1.125rem;
+    font-weight: 600;
+  }
 }
+
+.acx-dashboard__panel--stats {
+  background: var(--acx-color-panel);
+  border-color: var(--acx-color-panel-border);
+}
+
+.acx-dashboard__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+  gap: var(--acx-space-24);
+  margin-top: var(--acx-space-32);
+}
+
+.acx-dashboard__stats-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--acx-space-16);
+  margin: var(--acx-space-16) 0;
+}
+
+.acx-dashboard__stat {
+  display: flex;
+  flex-direction: column;
+  gap: var(--acx-space-4);
+}
+
+.acx-dashboard__stat-value {
+  font-size: 1.5rem;
+  font-weight: 700;
+  color: var(--acx-color-text);
+  line-height: 1;
+}
+
+.acx-dashboard__stat-label {
+  font-size: 0.75rem;
+  color: var(--acx-color-text-muted);
+  font-weight: 500;
+  text-transform: uppercase;
+  letter-spacing: 0.025em;
+}
+
+.acx-dashboard__stat--highlight .acx-dashboard__stat-value {
+  color: var(--acx-color-accent);
+}
+
+.acx-dashboard__guidance {
+  margin-top: var(--acx-space-24);
+  padding: var(--acx-space-16);
+  background: var(--acx-color-surface-alt);
+  border: 1px solid var(--acx-color-border);
+  border-radius: 0.75rem;
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -1px rgba(0, 0, 0, 0.06);
+
+  p {
+    margin: 0;
+    font-weight: 500;
+    color: var(--acx-color-text);
+  }
+}
+
+.acx-dashboard__progress {
+  width: 100%;
+  height: 8px;
+  border-radius: 4px;
+  appearance: none;
+  background-color: var(--acx-color-border);
+  overflow: hidden;
+
+  &::-webkit-progress-bar {
+    background-color: var(--acx-color-border);
+  }
+
+  &::-webkit-progress-value {
+    background-color: var(--acx-color-accent);
+    transition: width 0.3s ease;
+  }
+}
+

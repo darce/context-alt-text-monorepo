@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all mcp mcp-start handoff-close-check handoff-integrity-check
+.PHONY: help check-all check-frontend lint-all test-all clean-all mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style
 
 # Default target
 help:
@@ -22,6 +22,7 @@ help:
 	@echo "  make check-all    - Run all checks (lint + types + tests)"
 	@echo "  make check-frontend - Run frontend checks (lint + types + arch + tests)"
 	@echo "  make lint-all     - Run linters for all apps"
+	@echo "  make fix-php-style - Auto-fix WordPress plugin PHPCS violations (manual)"
 	@echo "  make test-all     - Run tests for all apps"
 	@echo "  make clean-all    - Clean cache files in all apps"
 	@echo ""
@@ -63,7 +64,7 @@ lint-all:
 	@cd apps/prototype-wp-alt-context && make lint
 	@echo ""
 	@echo "=== Linting PHP (plugin) ==="
-	@cd apps/prototype-wp-alt-context && composer cs-check || true
+	@cd apps/prototype-wp-alt-context && composer cs-check
 	@echo ""
 	@echo "✅ Linting complete"
 
@@ -86,6 +87,11 @@ clean-all:
 	@cd apps/prototype-wp-alt-context && rm -rf node_modules/.cache 2>/dev/null || true
 	@echo ""
 	@echo "✅ All caches cleaned"
+
+# Auto-fix PHP style violations in the WordPress plugin (manual, mutating).
+fix-php-style:
+	@cd apps/prototype-wp-alt-context && make php-cs-fix
+	@echo "✅ PHP style auto-fixes applied"
 
 # =============================================================================
 # MCP Server (Manual Start)

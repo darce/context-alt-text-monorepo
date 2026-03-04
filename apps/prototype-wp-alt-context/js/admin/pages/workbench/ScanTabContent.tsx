@@ -5,8 +5,8 @@ import { useScrollRestoration } from '../../hooks/useScrollRestoration';
 import { ScanActionPanel } from './Panels';
 import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from './identity-clusters';
 import { MediaSelection } from './MediaSelection';
-import type { WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import { useWorkbenchContext } from './WorkbenchContext';
+
 
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
@@ -15,9 +15,13 @@ const ScanScrollRestoration = () => {
 
 const NoMediaPanel = () => (
   <div className="acx-apply-panel acx-apply-panel--empty">
-    <p>{__('No media items to analyze. Check your filters or upload more images.', 'alt-context')}</p>
+    <h3>{__('Your analysis queue is empty', 'alt-context')}</h3>
+    <p>
+      {__('Search for specific media items below or adjust your filters to find images that need analysis. Once you select items, they will appear here ready to be scanned.', 'alt-context')}
+    </p>
   </div>
 );
+
 
 export const ScanTabContent = (): React.JSX.Element => {
   const {
@@ -34,22 +38,10 @@ export const ScanTabContent = (): React.JSX.Element => {
     hasIdentities,
     clusterPanel,
     dispatchClusterPanel,
-    mediaQuery,
-    statusMessage,
-    searchQuery,
-    handleSearchChange,
-    statusFilter,
-    handleStatusChange,
-    selection,
-    toggleRow,
-    toggleAll,
-    currentPage,
-    perPage,
-    setPerPage,
-    setCurrentPage,
     scan,
     cancelScan,
     activeJobIds,
+
   } = useWorkbenchContext();
 
   const handleScanFaces = (): void => {
@@ -68,14 +60,8 @@ export const ScanTabContent = (): React.JSX.Element => {
     cancelScan(targets);
   };
 
-  const mediaData = mediaQuery.data;
-  const mediaItems = mediaQuery.itemsWithIdentities ?? mediaData?.items ?? [];
-  const totalPages = mediaData?.totalPages ?? 1;
-  const allPageRowsChecked =
-    mediaItems.length > 0 && mediaItems.every((item: WorkbenchMediaItem) => selection[item.id.toString()]);
-  const identityQuery = mediaQuery.identitiesQuery;
-
   return (
+
     <>
       <ScanActionPanel
         selectedCount={selectedMedia.length}

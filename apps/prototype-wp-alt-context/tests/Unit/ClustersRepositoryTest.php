@@ -146,4 +146,16 @@ class ClustersRepositoryTest extends TestCase
 
         $this->assertNull($row);
     }
+
+    public function testListForTenantUsesLeftJoinForLabelDerivation(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [];
+
+        $this->repository->list_for_tenant('tenant-join', 10, 0);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('LEFT JOIN `wp_acx_persons` p', $sql);
+        $this->assertStringContainsString('COALESCE(p.name, c.label)', $sql);
+    }
 }

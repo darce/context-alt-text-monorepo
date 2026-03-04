@@ -32,6 +32,7 @@
     "test": "vendor/bin/phpunit",
     "test:unit": "vendor/bin/phpunit --testsuite Unit",
     "phpstan": "vendor/bin/phpstan analyse --configuration=phpstan.neon.dist --memory-limit=1G",
+    "phpcbf": "vendor/bin/phpcbf --standard=phpcs.xml.dist",
     "cs-check": "vendor/bin/phpcs --standard=phpcs.xml.dist",
     "cs-fix": "vendor/bin/phpcbf --standard=phpcs.xml.dist"
   },

@@ -1,13 +1,15 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
+import { __, sprintf } from '@wordpress/i18n';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import type { ClusterIdentity, ClusterSummary } from '../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../hooks/useRecognitionHooks';
 import { useRosterEntries } from '../hooks/useRosterHooks';
+import { useClusterSelection } from '../hooks/useClusterSelection';
 import { useClusterMediaMap } from './roster/hooks/useClusterMediaMap';
 import { useClusterDragDrop } from './roster/hooks/useClusterDragDrop';
 import { useClusterActions } from './roster/hooks/useClusterActions';
 import { ClusterGrid } from './roster/ClusterGrid';
+import { BulkActionBar } from './roster/BulkActionBar';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { useTabParam } from '../hooks/useTabParam';
@@ -25,8 +27,18 @@ export const RosterPage = (): React.JSX.Element => {
   ]);
   const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
 
+  const selection = useClusterSelection();
+  const clearSelection = selection.clear;
+
   const clustersQuery = useRecognitionClusters({ limit: 20 });
   const clusters = React.useMemo(() => clustersQuery.data ?? [], [clustersQuery.data]);
+
+  // Clear selection when switching tabs to avoid stale state
+  React.useEffect(() => {
+    clearSelection();
+  }, [activeTab, clearSelection]);
+
+
   const selectedCluster = React.useMemo(
     () => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null,
     [clusters, selectedClusterId],
@@ -49,6 +61,8 @@ export const RosterPage = (): React.JSX.Element => {
   const actions = useClusterActions({
     onReassignSettled: dragDrop.resetDragState,
     onCommitSettled: dragDrop.resetDragState,
+    onBulkMergeSettled: selection.clear,
+    onBulkDismissSettled: selection.clear,
   });
 
 
@@ -92,6 +106,43 @@ export const RosterPage = (): React.JSX.Element => {
     setActiveTab(ROSTER_TABS.clusters.id);
   };
 
+  const handleBulkMerge = () => {
+    const ids = Array.from(selection.selectedIds);
+    if (ids.length < 2) {
+      return;
+    }
+    if (
+      window.confirm(
+        sprintf(
+          // translators: %d: number of clusters to merge
+          __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
+          ids.length,
+        ),
+      )
+    ) {
+      actions.bulkMergeMutation.mutate({ clusterIds: ids });
+    }
+  };
+
+  const handleBulkDismiss = () => {
+    const ids = Array.from(selection.selectedIds);
+    if (ids.length === 0) {
+      return;
+    }
+    if (
+      window.confirm(
+        sprintf(
+          // translators: %d: number of clusters to dismiss
+          __('Are you sure you want to dismiss %d clusters?', 'alt-context'),
+          ids.length,
+        ),
+      )
+    ) {
+      actions.bulkDismissMutation.mutate({ clusterIds: ids });
+    }
+  };
+
+
   return (
     <section className="acx-roster" aria-labelledby="acx-roster-title">
       <header className="acx-roster__hero">
@@ -122,7 +173,26 @@ export const RosterPage = (): React.JSX.Element => {
         </TabsContent>
 
         <TabsContent value={ROSTER_TABS.clusters.id} className="acx-roster__panel">
-          <h2>{ROSTER_TABS.clusters.label}</h2>
+          <div className="acx-roster-help-card">
+            <p>
+              {__(
+                'Clusters are groups of similar face identities detected across your media library. When you label a cluster, all associated images are automatically updated with the correct alt text.',
+                'alt-context',
+              )}
+            </p>
+          </div>
+          <div className="acx-roster__tab-header">
+
+            <h2>{ROSTER_TABS.clusters.label}</h2>
+            {selection.count > 0 && (
+              <BulkActionBar
+                count={selection.count}
+                onMerge={handleBulkMerge}
+                onDismiss={handleBulkDismiss}
+                onClear={selection.clear}
+              />
+            )}
+          </div>
           <ClusterGrid
             clusters={clusters}
             isLoading={clustersQuery.isLoading}
@@ -130,6 +200,7 @@ export const RosterPage = (): React.JSX.Element => {
             onRetry={() => void clustersQuery.refetch()}
             mediaMap={mediaMap}
             onSelectCluster={handleSelectCluster}
+            selection={selection}
             onIdentityDragStart={dragDrop.handleFaceDragStart}
             onFaceDragEnd={dragDrop.handleFaceDragEnd}
             onDropTargetChange={dragDrop.handleDropTargetChange}
@@ -139,6 +210,7 @@ export const RosterPage = (): React.JSX.Element => {
           />
         </TabsContent>
       </Tabs>
+
 
       <ClusterDrawerPanel
         cluster={selectedCluster}
@@ -156,8 +228,8 @@ export const RosterPage = (): React.JSX.Element => {
         onCommitCluster={handleCommitCluster}
         isCommitting={actions.commitMutation.isPending}
         rosterEntries={rosterEntries}
-        statusMessage={actions.statusMessage}
-        errorMessage={actions.errorMessage}
+
+
         onFaceDragStart={dragDrop.handleFaceDragStart}
         onFaceDragEnd={dragDrop.handleFaceDragEnd}
         onDropTargetChange={dragDrop.handleDropTargetChange}

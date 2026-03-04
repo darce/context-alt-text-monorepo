@@ -192,6 +192,7 @@ Read discipline:
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
 - `get_review_finding` accepts either `finding_db_id` (integer PK) or `finding_id` (human-readable string like `"H-OCI-28"`). Prefer `finding_id` when referencing findings from review output.
+- Do **not** use `scripts/mcp/unified_server.py` CLI subcommands when MCP tools are available; those CLI endpoints are fallback-only for environments that cannot attach to MCP.
 
 State integrity invariants:
 
@@ -202,7 +203,7 @@ Failure policy:
 
 - If MCP handoff tools are unavailable, stop normal implementation work.
 - Record/report the blocker, and include: `Handoff updated: no (tool unavailable)`.
-- **Antigravity Agents ONLY**: Use predefined terminal commands in `.agent/workflows/` (e.g., `make task`, `make dashboard`) to query/orchestrate task state if native MCP tools are unconfigured. Do not attempt raw SQLite writes.
+- **Antigravity Agents ONLY**: Use predefined terminal commands in `.agent/workflows/` (e.g., `make task`, `make dashboard`) to query/orchestrate task state if native MCP tools are unconfigured. These CLI-style fallbacks exist only for MCP-constrained environments. Do not attempt raw SQLite writes.
 - Use `templates/CURRENT_TASK.template.md` only as fallback when MCP handoff is unavailable.
 
 Completion gate:

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed -- ready to start after production-readiness Phase 1 completion.
+In progress -- Phase 1 and Phase 2 complete; Phase 3 and Phase 4 in progress.
 
 ## Objective
 
@@ -67,16 +67,11 @@ The v0.1.0 sovereign architecture and v0.2.0 reliability baseline established a 
 
 ### Gaps
 
-- Persons stored as flat WP option (`acx_roster_entries`), not a table. No CRUD REST endpoints beyond list.
-- `acx_roster_assignments` WP option stores mappings separately -- dual source of truth with cluster labels.
-- `RosterEntriesTable` has no action column (edit, delete).
-- No "Add Person" UI anywhere.
-- `DashboardPage` has no cluster/identity counts, no pending-review summary.
-- No inline person search during cluster labeling.
-- No multi-select or bulk actions in ClusterGrid.
-- No keyboard navigation in cluster grid or drawer.
-- No toast notifications for mutation outcomes.
-- "People" vs "Clusters" distinction unexplained in UI.
+- Dashboard still lacks media-with-faces metric and explicit unassigned-persons metric in stats payload.
+- Dashboard guidance needs a fourth state for unassigned persons, driven by explicit `unassigned_persons_count`.
+- Dashboard identity panel still needs robust error state and query freshness tuning.
+- Cluster review still lacks complete multi-select/bulk workflow parity and full keyboard UX hardening.
+- Additional roster-aware labeling and ergonomics polish remains for Phase 4 completion.
 - Backend has no `roster_entries` table; `identity_clusters.roster_id` exists but is non-functional.
 
 ## Target Architecture
@@ -123,9 +118,9 @@ CREATE TABLE {prefix}acx_persons (
 
 ## Phased Delivery
 
-### Phase 1: Person CRUD Backend (Plugin REST API) -- NOT STARTED
+### Phase 1: Person CRUD Backend (Plugin REST API) -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plan**: [phase-2-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md) Phase 1
 
 **Goal**: Persons have a proper storage layer and full CRUD REST endpoints.
@@ -147,9 +142,9 @@ Exit criteria:
 - Person create/import paths persist stable `person_uuid`; backend sync uses `person_uuid -> identity_clusters.roster_id`.
 - All endpoints have PHPUnit test coverage.
 
-### Phase 2: Person CRUD Frontend (UI) -- NOT STARTED
+### Phase 2: Person CRUD Frontend (UI) -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plan**: [phase-2-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md) Phase 2
 
 **Goal**: Admins can manage persons entirely from the Roster page UI.
@@ -168,17 +163,17 @@ Exit criteria:
 - Optimistic updates provide instant feedback; rollback on error.
 - Vitest coverage for all new mutations and UI interactions.
 
-### Phase 3: Dashboard Buildout -- NOT STARTED
+### Phase 3: Dashboard Buildout -- IN PROGRESS
 
-> **Status**: not-started
-> **Task plan**: [phase-2-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md) Phase 3
+> **Status**: in-progress
+> **Task plan**: [phase-3-dashboard-buildout-task-plan.md](../../tasks/5.0/phase-3-dashboard-buildout-task-plan.md)
 
 **Goal**: Dashboard is the admin's home base with live data and contextual guidance.
 
 Deliverables:
 
 - **Identity panel**: person count, assigned cluster count, pending-review cluster count. Data from local projection via new `useIdentityStats` hook.
-- **Guidance card**: contextual "next step" that adapts to state. Examples: "12 clusters pending review", "3 persons have no clusters", "All caught up!"
+- **Guidance card**: contextual "next step" that adapts to state. Examples: "12 clusters pending review", "3 persons have no assigned clusters", "All caught up!" Uses explicit `unassigned_persons_count` from dashboard stats endpoint.
 - **Coverage enhancement**: add "media with faces detected" count alongside existing total/missing/coverage.
 - **Activity enhancement**: recent jobs show duration and direct link to results in Confirm tab.
 
@@ -188,10 +183,10 @@ Exit criteria:
 - Guidance card changes text based on pending-review count and roster state.
 - Dashboard loads in < 500ms from local DB.
 
-### Phase 4: Recognition UX Polish -- NOT STARTED
+### Phase 4: Recognition UX Polish -- IN PROGRESS
 
-> **Status**: not-started
-> **Task plan**: [phase-2-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-2-recognition-ux-polish-task-plan.md) Phase 4
+> **Status**: in-progress
+> **Task plan**: [phase-4-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-4-recognition-ux-polish-task-plan.md)
 
 **Goal**: Cluster review is efficient for large batches via multi-select, bulk actions, keyboard nav, and roster-aware labeling.
 
@@ -253,38 +248,38 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Person CRUD Backend -- NOT STARTED
+## Phase 1: Person CRUD Backend -- COMPLETED
 
-- [ ] Create `wp_acx_persons` table schema in lifecycle manager.
-- [ ] Add `person_id` column to `wp_acx_clusters` table.
-- [ ] Retire `acx_roster_entries` and `acx_roster_assignments` WP options.
-- [ ] Add `POST /acx/v1/roster/persons` endpoint with name uniqueness validation.
-- [ ] Add `PUT /acx/v1/roster/persons/{id}` endpoint for name and tags update.
-- [ ] Add `DELETE /acx/v1/roster/persons/{id}` endpoint with cluster soft-dissociation.
-- [ ] Implement label derivation rule (person assignment sets cluster display label).
-- [ ] PHPUnit tests for all CRUD endpoints.
+- [x] Create `wp_acx_persons` table schema in lifecycle manager.
+- [x] Add `person_id` column to `wp_acx_clusters` table.
+- [x] Retire `acx_roster_entries` and `acx_roster_assignments` WP options.
+- [x] Add `POST /acx/v1/roster/persons` endpoint with name uniqueness validation.
+- [x] Add `PUT /acx/v1/roster/persons/{id}` endpoint for name and tags update.
+- [x] Add `DELETE /acx/v1/roster/persons/{id}` endpoint with cluster soft-dissociation.
+- [x] Implement label derivation rule (person assignment sets cluster display label).
+- [x] PHPUnit tests for all CRUD endpoints.
 
-## Phase 2: Person CRUD Frontend -- NOT STARTED
+## Phase 2: Person CRUD Frontend -- COMPLETED
 
-- [ ] Add `createPerson`, `updatePerson`, `deletePerson` to `rosterApi.ts`.
-- [ ] Add TanStack Query mutation hooks for create/update/delete.
-- [ ] Add action column to `RosterEntriesTable` (edit, delete buttons).
-- [ ] Add inline edit mode for person name and tags.
-- [ ] Add delete confirmation dialog.
-- [ ] Add "Add Person" button and create form above table.
-- [ ] Add "People" vs "Clusters" explanatory copy to Roster page.
-- [ ] Vitest coverage for mutations and UI interactions.
+- [x] Add `createPerson`, `updatePerson`, `deletePerson` to `rosterApi.ts`.
+- [x] Add TanStack Query mutation hooks for create/update/delete.
+- [x] Add action column to `RosterEntriesTable` (edit, delete buttons).
+- [x] Add inline edit mode for person name and tags.
+- [x] Add delete confirmation dialog.
+- [x] Add "Add Person" button and create form above table.
+- [x] Add "People" vs "Clusters" explanatory copy to Roster page.
+- [x] Vitest coverage for mutations and UI interactions.
 
-## Phase 3: Dashboard Buildout -- NOT STARTED
+## Phase 3: Dashboard Buildout -- IN PROGRESS
 
 - [ ] Create `useIdentityStats` hook reading from local projection.
 - [ ] Add identity panel to `DashboardPage` (person count, assigned, pending review).
 - [ ] Add contextual guidance card with dynamic "next step" copy.
 - [ ] Enhance coverage panel with "faces detected" count.
-- [ ] Enhance recent activity with duration and result links.
+- [x] Enhance recent activity with duration and result links.
 - [ ] Vitest coverage for dashboard panels and hooks.
 
-## Phase 4: Recognition UX Polish -- NOT STARTED
+## Phase 4: Recognition UX Polish -- IN PROGRESS
 
 - [ ] Create `useClusterSelection` hook for multi-select state.
 - [ ] Add checkbox/Shift-click selection to `ClusterGrid`.

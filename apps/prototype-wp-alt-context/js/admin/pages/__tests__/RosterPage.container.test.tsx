@@ -5,6 +5,7 @@ import { MemoryRouter } from 'react-router-dom';
 import type { ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useRosterEntries } from '../../hooks/useRosterHooks';
+import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { RosterPage } from '../RosterPage';
 import { useClusterActions } from '../roster/hooks/useClusterActions';
 import { useClusterDragDrop } from '../roster/hooks/useClusterDragDrop';
@@ -27,6 +28,9 @@ vi.mock('../../hooks/useRecognitionHooks', () => ({
 vi.mock('../../hooks/useRosterHooks', () => ({
   useRosterEntries: vi.fn(),
   useCreatePerson: vi.fn(),
+}));
+vi.mock('../../hooks/useClusterSelection', () => ({
+  useClusterSelection: vi.fn(),
 }));
 
 vi.mock('../roster/hooks/useClusterMediaMap', () => ({
@@ -67,6 +71,7 @@ describe('RosterPage route container', () => {
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
+  const mockedUseClusterSelection = vi.mocked(useClusterSelection);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
   const mockedUseClusterActions = vi.mocked(useClusterActions);
@@ -85,9 +90,19 @@ describe('RosterPage route container', () => {
     reassignMutation: { mutate: vi.fn() },
     rescanMutation: { mutate: vi.fn(), isPending: false },
     commitMutation: { mutate: vi.fn(), isPending: false },
+    bulkMergeMutation: { mutate: vi.fn(), isPending: false },
+    bulkDismissMutation: { mutate: vi.fn(), isPending: false },
     statusMessage: null,
     errorMessage: null,
     resetAll: vi.fn(),
+  };
+  const selectionState = {
+    selectedIds: new Set<string>(),
+    toggle: vi.fn(),
+    selectRange: vi.fn(),
+    clear: vi.fn(),
+    isSelected: vi.fn(() => false),
+    count: 0,
   };
 
   beforeEach(() => {
@@ -120,6 +135,7 @@ describe('RosterPage route container', () => {
       mutate: vi.fn(),
       isPending: false,
     } as unknown as ReturnType<typeof useCreatePerson>);
+    mockedUseClusterSelection.mockReturnValue(selectionState as unknown as ReturnType<typeof useClusterSelection>);
 
     mockedUseClusterMediaMap.mockReturnValue({});
     mockedUseClusterDragDrop.mockReturnValue(dragDropState as unknown as ReturnType<typeof useClusterDragDrop>);
@@ -155,5 +171,34 @@ describe('RosterPage route container', () => {
     expect(screen.queryByRole('combobox', { name: /Commit to roster entry/i })).not.toBeInTheDocument();
     expect(clusterActionState.resetAll).toHaveBeenCalledTimes(1);
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
+  });
+
+  it('applies bulk merge and dismiss actions to all selected clusters', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+    mockedUseClusterSelection.mockReturnValue({
+      ...selectionState,
+      selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
+      count: 3,
+    } as unknown as ReturnType<typeof useClusterSelection>);
+
+    render(
+      <MemoryRouter>
+        <RosterPage />
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+
+    expect(confirmSpy).toHaveBeenCalledTimes(2);
+    expect(clusterActionState.bulkMergeMutation.mutate).toHaveBeenCalledWith({
+      clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
+    });
+    expect(clusterActionState.bulkDismissMutation.mutate).toHaveBeenCalledWith({
+      clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
+    });
+
+    confirmSpy.mockRestore();
   });
 });

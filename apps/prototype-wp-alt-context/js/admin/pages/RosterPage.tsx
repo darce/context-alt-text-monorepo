@@ -152,7 +152,7 @@ export const RosterPage = (): React.JSX.Element => {
         </h1>
         <p className="acx-roster__subtitle">
           {__(
-            'Review roster entries and fine-tune identity clusters to keep recognition accurate across batches.',
+            'People are known identities you curate. Clusters are detected face groups you review and assign.',
             'alt-context',
           )}
         </p>

@@ -16,6 +16,8 @@ import {
 } from '../../../api/recognition';
 import { queryKeys } from '../../../api/queryKeys';
 import { FaceThumbnail } from '../../../../components/ui/FaceThumbnail';
+import { Combobox } from '../../../../components/ui/combobox';
+import { useRosterEntries } from '../../../hooks/useRosterHooks';
 
 interface ClusterLabelingPanelProps {
   clusterId: string;
@@ -95,6 +97,11 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     queryFn: () => fetchClusterMembers(clusterId),
     enabled: Boolean(clusterId),
   });
+  const { data: persons = [] } = useRosterEntries();
+  const personOptions = persons.map((person) => ({
+    value: String(person.id),
+    label: person.name,
+  }));
 
   const labelMutation = useMutation({
     mutationFn: (newLabel: string) =>
@@ -169,9 +176,8 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
     }
   };
 
-  const handleInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
-    setLabelInput(e.target.value);
-    // Clear error when user starts typing again
+  const setLabelValue = (value: string) => {
+    setLabelInput(value);
     if (error) {
       setError(null);
     }
@@ -218,15 +224,27 @@ export const ClusterLabelingPanel = ({ clusterId, onClose, onLabel }: ClusterLab
         >
           <label htmlFor="cluster-label-input">{__('Name', 'alt-context')}</label>
           <div className="acx-cluster-labeling-panel__input-group">
-            <input
+            <Combobox
               id="cluster-label-input"
-              type="text"
+              options={personOptions}
               value={labelInput}
-              onChange={handleInputChange}
+              onSelect={(personId) => {
+                const matched = personOptions.find((option) => option.value === personId);
+                if (!matched) {
+                  return;
+                }
+                setLabelValue(matched.label);
+              }}
+              onValueChange={(value) => {
+                setLabelValue(value);
+              }}
+              onCreate={(value) => {
+                setLabelValue(value);
+              }}
               placeholder={__('Enter name...', 'alt-context')}
-              className="regular-text"
+              searchPlaceholder={__('Search people...', 'alt-context')}
+              ariaLabel={__('Name', 'alt-context')}
               disabled={mergeMutation.isPending}
-              autoFocus
             />
             <button
               type="submit"

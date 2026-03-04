@@ -17,10 +17,37 @@ import { OrientationCard } from './dashboard/OrientationCard';
 
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
-  const { jobHistory, jobStatuses } = useRecognitionJobHistory();
+  const { jobHistory, jobStatuses, jobDetails } = useRecognitionJobHistory();
   const { data: identityStats, isLoading: isIdentityLoading } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
+  const formatDuration = (startedAt: string, finishedAt: string | null): string | null => {
+    if (!startedAt || !finishedAt) {
+      return null;
+    }
+    const started = new Date(startedAt).getTime();
+    const finished = new Date(finishedAt).getTime();
+    if (!Number.isFinite(started) || !Number.isFinite(finished) || finished <= started) {
+      return null;
+    }
+    const totalSeconds = Math.round((finished - started) / 1000);
+    const minutes = Math.floor(totalSeconds / 60);
+    const seconds = totalSeconds % 60;
+    if (minutes <= 0) {
+      return sprintf(
+        /* translators: %d: duration in seconds */
+        __('Duration: %ds', 'alt-context'),
+        seconds,
+      );
+    }
+    const paddedSeconds = String(seconds).padStart(2, '0');
+    return sprintf(
+      /* translators: 1: duration minutes, 2: duration seconds */
+      __('Duration: %dm %ss', 'alt-context'),
+      minutes,
+      paddedSeconds,
+    );
+  };
 
   return (
     <section className="acx-dashboard__shell" aria-labelledby="acx-dashboard-title">
@@ -97,20 +124,31 @@ export const DashboardPage = (): React.JSX.Element => {
                 </div>
 
               </div>
-              {identityStats.pending_clusters_count > 0 && (
-                <div className="acx-dashboard__guidance">
-                  <p>
-                    {sprintf(
-                      /* translators: %d: number of pending clusters */
-                      __('%d faces are waiting for names.', 'alt-context'),
-                      identityStats.pending_clusters_count
-                    )}
-                  </p>
-                  <a href="#/workbench?tab=confirm" className="acx-link-button">
-                    {__('Go to Workbench', 'alt-context')}
-                  </a>
-                </div>
-              )}
+              <div className="acx-dashboard__guidance">
+                {identityStats.pending_clusters_count > 0 ? (
+                  <>
+                    <p>
+                      {sprintf(
+                        /* translators: %d: number of pending clusters */
+                        __('%d faces are waiting for names.', 'alt-context'),
+                        identityStats.pending_clusters_count
+                      )}
+                    </p>
+                    <a href="#/workbench?tab=confirm" className="acx-link-button">
+                      {__('Go to Workbench', 'alt-context')}
+                    </a>
+                  </>
+                ) : identityStats.people_count === 0 ? (
+                  <>
+                    <p>{__('Start by scanning your media library for faces.', 'alt-context')}</p>
+                    <a href="#/workbench?tab=scan" className="acx-link-button">
+                      {__('Go to Scan tab', 'alt-context')}
+                    </a>
+                  </>
+                ) : (
+                  <p>{__('All caught up. New faces will appear here for review.', 'alt-context')}</p>
+                )}
+              </div>
             </>
           )}
         </section>
@@ -139,17 +177,23 @@ export const DashboardPage = (): React.JSX.Element => {
             <p>{__('No recent recognition jobs found.', 'alt-context')}</p>
           ) : (
             <ul className="acx-dashboard__activity-list">
-              {jobHistory.map((id) => (
-                <li key={id} className="acx-dashboard__activity-item">
-                  <span className="acx-dashboard__activity-id">{id}</span>
-                  <span className="acx-dashboard__activity-status">
-                    {jobStatuses[id] ?? __('Checking status…', 'alt-context')}
-                  </span>
-                  <a href={`#/workbench?tab=confirm&jobId=${id}`} className="acx-link-button">
-                    {__('View Details', 'alt-context')}
-                  </a>
-                </li>
-              ))}
+              {jobHistory.map((id) => {
+                const durationLabel = formatDuration(jobDetails[id]?.started_at ?? '', jobDetails[id]?.finished_at ?? null);
+                return (
+                  <li key={id} className="acx-dashboard__activity-item">
+                    <span className="acx-dashboard__activity-id">{id}</span>
+                    <span className="acx-dashboard__activity-status">
+                      {jobStatuses[id] ?? __('Checking status…', 'alt-context')}
+                    </span>
+                    {durationLabel && (
+                      <span className="acx-dashboard__activity-duration">{durationLabel}</span>
+                    )}
+                    <a href={`#/workbench?tab=confirm&jobId=${id}`} className="acx-link-button">
+                      {__('View Results', 'alt-context')}
+                    </a>
+                  </li>
+                );
+              })}
             </ul>
           )}
         </section>

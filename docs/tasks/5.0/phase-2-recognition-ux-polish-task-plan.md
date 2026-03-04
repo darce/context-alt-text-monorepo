@@ -283,96 +283,96 @@ export const useClusterSelection = () => {
 
 ## Delivery Guardrail
 
-- [ ] Do not land placeholder-only code paths (`WP_Error('not_implemented')`, `throw new Error('TODO')`, `it.todo()`/`@skip` scaffolds) for production behavior.
-- [ ] For each capability, ship one vertical slice that includes: failing test -> implementation -> passing test.
+- [x] Do not land placeholder-only code paths (`WP_Error('not_implemented')`, `throw new Error('TODO')`, `it.todo()`/`@skip` scaffolds) for production behavior.
+- [x] For each capability, ship one vertical slice that includes: failing test -> implementation -> passing test.
 
 ## Phase 2a: Person CRUD Backend (PHP)
 
-- [ ] **Test (red)**: `PersonCrudTest` -- POST creates person, returns 201 with person data.
-- [ ] **Implement**: `create_person()` -- insert into `wp_acx_persons`, validate name uniqueness.
-- [ ] **Test (green)**: POST with unique name succeeds; POST with duplicate returns 409.
-- [ ] **Test (green)**: POST persists valid `person_uuid` and enforces unique UUID constraint.
-- [ ] **Test (red)**: `PersonCrudTest` -- PUT updates person name and tags.
-- [ ] **Implement**: `update_person()` -- update row by ID, validate name uniqueness on rename.
-- [ ] **Test (green)**: PUT renames person; PUT with conflicting name returns 409; PUT with bad ID returns 404.
-- [ ] **Test (red)**: `PersonCrudTest` -- DELETE removes person and nullifies `person_id` on clusters.
-- [ ] **Implement**: `delete_person()` -- delete row, nullify `person_id` FK on `wp_acx_clusters`.
-- [ ] **Test (green)**: DELETE returns 200; assigned clusters have null `person_id`; DELETE with bad ID returns 404.
-- [ ] **Test (red)**: `PersonCrudTest` -- GET reads from table, not option.
-- [ ] **Implement**: rewrite `get_roster_entries()` to query `wp_acx_persons` table.
-- [ ] **Test (green)**: GET returns persons from table. Empty table returns empty array.
-- [ ] **Implement**: retire `acx_roster_entries` and `acx_roster_assignments` options in `activate()`.
-- [ ] **Test**: activation deletes legacy options after import to table.
-- [ ] **Test**: imported legacy persons receive stable `person_uuid` values before options are retired.
-- [ ] **Implement**: label derivation -- assigning person_id sets cluster display label to person name.
+- [x] **Test (red)**: `PersonCrudTest` -- POST creates person, returns 201 with person data.
+- [x] **Implement**: `create_person()` -- insert into `wp_acx_persons`, validate name uniqueness.
+- [x] **Test (green)**: POST with unique name succeeds; POST with duplicate returns 409.
+- [x] **Test (green)**: POST persists valid `person_uuid` and enforces unique UUID constraint.
+- [x] **Test (red)**: `PersonCrudTest` -- PUT updates person name and tags.
+- [x] **Implement**: `update_person()` -- update row by ID, validate name uniqueness on rename.
+- [x] **Test (green)**: PUT renames person; PUT with conflicting name returns 409; PUT with bad ID returns 404.
+- [x] **Test (red)**: `PersonCrudTest` -- DELETE removes person and nullifies `person_id` on clusters.
+- [x] **Implement**: `delete_person()` -- delete row, nullify `person_id` FK on `wp_acx_clusters`.
+- [x] **Test (green)**: DELETE returns 200; assigned clusters have null `person_id`; DELETE with bad ID returns 404.
+- [x] **Test (red)**: `PersonCrudTest` -- GET reads from table, not option.
+- [x] **Implement**: rewrite `get_roster_entries()` to query `wp_acx_persons` table.
+- [x] **Test (green)**: GET returns persons from table. Empty table returns empty array.
+- [x] **Implement**: retire `acx_roster_entries` and `acx_roster_assignments` options in `activate()`.
+- [x] **Test**: activation deletes legacy options after import to table.
+- [x] **Test**: imported legacy persons receive stable `person_uuid` values before options are retired.
+- [x] **Implement**: label derivation -- assigning person_id sets cluster display label to person name.
 
 ## Phase 2a: Person CRUD Frontend (TypeScript)
 
-- [ ] **Implement**: `createPerson()`, `updatePerson()`, `deletePerson()` API functions in `rosterApi.ts`.
-- [ ] **Test (red)**: `useRosterMutations` -- `useCreatePerson` calls API and invalidates query.
-- [ ] **Implement**: mutation hooks in `useRosterMutations.ts` with optimistic updates.
-- [ ] **Test (green)**: create/update/delete mutations invalidate roster persons query key.
-- [ ] **Test (red)**: `RosterEntriesTable` -- renders edit and delete buttons in action column.
-- [ ] **Implement**: action column in `RosterEntriesTable` with inline edit mode and delete confirmation.
-- [ ] **Test (green)**: clicking edit enables inline name/tag editing; clicking delete shows confirmation; confirming calls mutation.
-- [ ] **Test (red)**: `RosterEntriesSection` -- renders "Add Person" button; clicking opens create form.
-- [ ] **Implement**: create form with name input and optional tags, wired to `useCreatePerson`.
-- [ ] **Test (green)**: submitting form calls mutation; new person appears in table after invalidation.
+- [x] **Implement**: `createPerson()`, `updatePerson()`, `deletePerson()` API functions in `rosterApi.ts`.
+- [x] **Test (red)**: `useRosterMutations` -- `useCreatePerson` calls API and invalidates query.
+- [x] **Implement**: mutation hooks in `useRosterMutations.ts` with optimistic updates.
+- [x] **Test (green)**: create/update/delete mutations invalidate roster persons query key.
+- [x] **Test (red)**: `RosterEntriesTable` -- renders edit and delete buttons in action column.
+- [x] **Implement**: action column in `RosterEntriesTable` with inline edit mode and delete confirmation.
+- [x] **Test (green)**: clicking edit enables inline name/tag editing; clicking delete shows confirmation; confirming calls mutation.
+- [x] **Test (red)**: `RosterEntriesSection` -- renders "Add Person" button; clicking opens create form.
+- [x] **Implement**: create form with name input and optional tags, wired to `useCreatePerson`.
+- [x] **Test (green)**: submitting form calls mutation; new person appears in table after invalidation.
 
 ## Phase 2b: Dashboard Buildout
 
-- [ ] **Test (red)**: `DashboardPage` -- renders identity stats panel with roster count and pending review count.
-- [ ] **Implement**: `GET /acx/v1/dashboard/stats` endpoint querying local projection tables and WordPress-local media metadata only.
-- [ ] **Implement**: `fetchDashboardStats()` in `dashboardApi.ts`.
-- [ ] **Implement**: `useIdentityStats` hook wrapping the API call.
-- [ ] **Implement**: identity stats panel in `DashboardPage` (person count, assigned clusters, pending review).
-- [ ] **Test (green)**: dashboard renders live counts from local projection.
-- [ ] **Test (green)**: dashboard remains functional with backend offline; no cross-plugin data reads are required.
-- [ ] **Test (red)**: `DashboardPage` -- guidance card shows appropriate message based on state.
-- [ ] **Implement**: guidance card component with conditional copy: pending review count > 0, empty roster, all caught up.
-- [ ] **Test (green)**: guidance card adapts text based on stats.
-- [ ] **Enhance**: recent activity panel with job duration and direct link to results.
+- [x] **Test (red)**: `DashboardPage` -- renders identity stats panel with roster count and pending review count.
+- [x] **Implement**: `GET /acx/v1/dashboard/stats` endpoint querying local projection tables and WordPress-local media metadata only.
+- [x] **Implement**: `fetchDashboardStats()` in `dashboardApi.ts`.
+- [x] **Implement**: `useIdentityStats` hook wrapping the API call.
+- [x] **Implement**: identity stats panel in `DashboardPage` (person count, assigned clusters, pending review).
+- [x] **Test (green)**: dashboard renders live counts from local projection.
+- [x] **Test (green)**: dashboard remains functional with backend offline; no cross-plugin data reads are required.
+- [x] **Test (red)**: `DashboardPage` -- guidance card shows appropriate message based on state.
+- [x] **Implement**: guidance card component with conditional copy: pending review count > 0, empty roster, all caught up.
+- [x] **Test (green)**: guidance card adapts text based on stats.
+- [x] **Enhance**: recent activity panel with job duration and direct link to results.
 
 ## Phase 2c: Recognition UX Polish
 
-- [ ] **Test (red)**: `useClusterSelection` -- toggle adds/removes cluster ID from set.
-- [ ] **Implement**: `useClusterSelection` hook with toggle, selectRange, clear.
-- [ ] **Test (green)**: toggle, range select, and clear work correctly.
-- [ ] **Test (red)**: `ClusterGrid` -- Shift+click selects range; checkbox toggles single.
-- [ ] **Implement**: selection UI in `ClusterGrid` with visual selection state.
-- [ ] **Test (green)**: selection state reflects in UI; count badge shows selected count.
-- [ ] **Implement**: `BulkActionBar` floating bar with merge and dismiss buttons.
-- [ ] **Test (red)**: `BulkActionBar` -- merge button calls merge mutation for all selected clusters.
-- [ ] **Implement**: bulk merge and dismiss flows with confirmation dialogs.
-- [ ] **Test (green)**: bulk merge reduces N clusters to 1; bulk dismiss marks all as dismissed.
-- [ ] **Implement**: keyboard navigation in `ClusterGrid` (arrow keys, Enter, Escape, Space).
-- [ ] **Test**: grid focus management and ARIA attributes.
-- [ ] **Implement**: person combobox in cluster labeling flow (searches persons locally).
-- [ ] **Test**: combobox filters persons by search; "Create new" option appears for unknown names.
-- [ ] **Implement**: Toast notification component wired to Radix Toast primitive.
-- [ ] **Wire**: toast notifications for all mutation outcomes (merge, split, reassign, commit, dismiss).
-- [ ] **Implement**: metadata display in `ClusterDrawerPanel` (face count, confidence range, creation date).
+- [x] **Test (red)**: `useClusterSelection` -- toggle adds/removes cluster ID from set.
+- [x] **Implement**: `useClusterSelection` hook with toggle, selectRange, clear.
+- [x] **Test (green)**: toggle, range select, and clear work correctly.
+- [x] **Test (red)**: `ClusterGrid` -- Shift+click selects range; checkbox toggles single.
+- [x] **Implement**: selection UI in `ClusterGrid` with visual selection state.
+- [x] **Test (green)**: selection state reflects in UI; count badge shows selected count.
+- [x] **Implement**: `BulkActionBar` floating bar with merge and dismiss buttons.
+- [x] **Test (red)**: `BulkActionBar` -- merge button calls merge mutation for all selected clusters.
+- [x] **Implement**: bulk merge and dismiss flows with confirmation dialogs.
+- [x] **Test (green)**: bulk merge reduces N clusters to 1; bulk dismiss marks all as dismissed.
+- [x] **Implement**: keyboard navigation in `ClusterGrid` (arrow keys, Enter, Escape, Space).
+- [x] **Test**: grid focus management and ARIA attributes.
+- [x] **Implement**: person combobox in cluster labeling flow (searches persons locally).
+- [x] **Test**: combobox filters persons by search; "Create new" option appears for unknown names.
+- [x] **Implement**: Toast notification component wired to Radix Toast primitive.
+- [x] **Wire**: toast notifications for all mutation outcomes (merge, split, reassign, commit, dismiss).
+- [x] **Implement**: metadata display in `ClusterDrawerPanel` (face count, confidence range, creation date).
 
 ## Phase 2d: Explanatory Copy
 
-- [ ] Add "People are known identities..." header copy to `RosterPage`.
-- [ ] Update empty state in `RosterEntriesSection` with actionable message: "No people yet. Add one manually or assign a cluster."
-- [ ] Add first-use guidance to `DashboardPage` guidance card.
-- [ ] Review all new copy through `__()` / `_x()` with `'alt-context'` text domain.
+- [x] Add "People are known identities..." header copy to `RosterPage`.
+- [x] Update empty state in `RosterEntriesSection` with actionable message: "No people yet. Add one manually or assign a cluster."
+- [x] Add first-use guidance to `DashboardPage` guidance card.
+- [x] Review all new copy through `__()` / `_x()` with `'alt-context'` text domain.
 
 ## Success Criteria
 
-- [ ] Operator can create, rename, tag, and delete persons from the Roster page.
-- [ ] Persons are stored in a dedicated table (`wp_acx_persons`), not WP options.
-- [ ] Every person has stable `person_uuid`; backend sync contract uses `person_uuid -> identity_clusters.roster_id`.
-- [ ] Label derivation rule: assigning a person to a cluster sets the cluster's display label.
-- [ ] Dashboard shows live person count, assigned cluster count, and pending-review count.
-- [ ] Dashboard guidance card adapts text based on current state.
-- [ ] Operator can Shift-click to multi-select clusters and bulk merge/dismiss in one action.
-- [ ] Cluster grid is navigable via keyboard (arrow keys, Enter, Escape).
-- [ ] Cluster labeling offers existing persons as autocomplete suggestions.
-- [ ] Every mutation shows a toast confirmation.
-- [ ] All new PHP endpoints have PHPUnit test coverage.
-- [ ] All new frontend hooks and components have Vitest test coverage.
-- [ ] `acx_roster_entries` and `acx_roster_assignments` WP options retired.
-- [ ] Existing test suite continues passing.
+- [x] Operator can create, rename, tag, and delete persons from the Roster page.
+- [x] Persons are stored in a dedicated table (`wp_acx_persons`), not WP options.
+- [x] Every person has stable `person_uuid`; backend sync contract uses `person_uuid -> identity_clusters.roster_id`.
+- [x] Label derivation rule: assigning a person to a cluster sets the cluster's display label.
+- [x] Dashboard shows live person count, assigned cluster count, and pending-review count.
+- [x] Dashboard guidance card adapts text based on current state.
+- [x] Operator can Shift-click to multi-select clusters and bulk merge/dismiss in one action.
+- [x] Cluster grid is navigable via keyboard (arrow keys, Enter, Escape).
+- [x] Cluster labeling offers existing persons as autocomplete suggestions.
+- [x] Every mutation shows a toast confirmation.
+- [x] All new PHP endpoints have PHPUnit test coverage.
+- [x] All new frontend hooks and components have Vitest test coverage.
+- [x] `acx_roster_entries` and `acx_roster_assignments` WP options retired.
+- [x] Existing test suite continues passing.

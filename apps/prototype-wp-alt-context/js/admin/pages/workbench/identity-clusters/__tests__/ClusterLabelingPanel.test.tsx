@@ -10,6 +10,7 @@ import {
   mergeCluster,
   updateClusterLabel,
 } from '../../../../api/recognition';
+import { useRosterEntries } from '../../../../hooks/useRosterHooks';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -26,6 +27,9 @@ vi.mock('../../../../api/recognition', async () => {
     mergeCluster: vi.fn(),
   };
 });
+vi.mock('../../../../hooks/useRosterHooks', () => ({
+  useRosterEntries: vi.fn(),
+}));
 
 const renderPanel = (onLabel: (label: string) => void = vi.fn()) => {
   const queryClient = new QueryClient({
@@ -76,7 +80,20 @@ describe('ClusterLabelingPanel', () => {
       moved_identity_ids: [],
       target_identity_count: 10,
     });
+    vi.mocked(useRosterEntries).mockReturnValue({
+      data: [],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRosterEntries>);
   });
+
+  const selectOrCreateName = async (name: string) => {
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('combobox', { name: 'Name' }));
+    await user.type(screen.getByPlaceholderText('Search people...'), name);
+    await user.click(screen.getByRole('button', { name: `Create "${name}"` }));
+  };
 
   it('surfaces an inline Is this prompt and merges on Yes for duplicate labels', async () => {
     const onLabel = vi.fn();
@@ -88,16 +105,15 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel(onLabel);
 
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Name'), 'Maria Correonero');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await selectOrCreateName('Maria Correonero');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText('Is this Maria Correonero?')).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'Yes' })).toBeInTheDocument();
     expect(screen.getByRole('button', { name: 'No' })).toBeInTheDocument();
     expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'Maria Correonero', expect.any(AbortSignal));
 
-    await user.click(screen.getByRole('button', { name: 'Yes' }));
+    await userEvent.click(screen.getByRole('button', { name: 'Yes' }));
 
     await waitFor(() => {
       expect(mergeCluster).toHaveBeenCalledWith('source-cluster-id', 'target-cluster-id', 'Maria Correonero');
@@ -112,9 +128,8 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel(onLabel);
 
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Name'), 'A New Person');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await selectOrCreateName('A New Person');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     await waitFor(() => {
       expect(updateClusterLabel).toHaveBeenCalledWith('source-cluster-id', 'A New Person', expect.any(AbortSignal));
@@ -144,9 +159,8 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Name'), 'Coral Osborne');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await selectOrCreateName('Coral Osborne');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Save is taking too long. Please try again.');
@@ -157,9 +171,8 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    await user.type(await screen.findByLabelText('Name'), 'Coral Osborne');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await selectOrCreateName('Coral Osborne');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     const alert = await screen.findByRole('alert');
     expect(alert).toHaveTextContent('Network error. Please check your connection and try again.');
@@ -173,22 +186,22 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText('Name');
-    await user.type(input, 'Maria Correonero');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await selectOrCreateName('Maria Correonero');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(await screen.findByText('Is this Maria Correonero?')).toBeInTheDocument();
 
-    await user.click(screen.getByRole('button', { name: 'No' }));
+    await userEvent.click(screen.getByRole('button', { name: 'No' }));
 
     await waitFor(() => {
       expect(screen.queryByText('Is this Maria Correonero?')).not.toBeInTheDocument();
     });
 
-    expect(input).toBeEnabled();
-    await user.type(input, ' Jr');
-    expect(input).toHaveValue('Maria Correonero Jr');
+    await userEvent.click(screen.getByRole('combobox', { name: 'Name' }));
+    const searchInput = screen.getByPlaceholderText('Search people...');
+    expect(searchInput).toBeEnabled();
+    await userEvent.type(searchInput, 'Maria Correonero Jr');
+    expect(searchInput).toHaveValue('Maria Correonero Jr');
   });
 
   it('keeps input editable while save is pending', async () => {
@@ -202,13 +215,12 @@ describe('ClusterLabelingPanel', () => {
 
     renderPanel();
 
-    const user = userEvent.setup();
-    const input = await screen.findByLabelText('Name');
-    await user.type(input, 'Coral Osborne');
-    await user.click(screen.getByRole('button', { name: 'Save' }));
+    await selectOrCreateName('Coral Osborne');
+    await userEvent.click(screen.getByRole('button', { name: 'Save' }));
 
     expect(screen.getByRole('button', { name: 'Saving...' })).toBeDisabled();
-    expect(input).not.toBeDisabled();
+    await userEvent.click(screen.getByRole('combobox', { name: 'Name' }));
+    expect(screen.getByPlaceholderText('Search people...')).not.toBeDisabled();
 
     await act(async () => {
       resolveSave?.();

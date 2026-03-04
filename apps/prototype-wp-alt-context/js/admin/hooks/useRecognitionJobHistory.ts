@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { __ } from '@wordpress/i18n';
 
 import { fetchScanStatus } from '../api/recognition';
+import type { JobStatusResponse } from '../api/recognition/types/scan';
 
 const JOB_HISTORY_KEY = 'acx-recognition-jobs';
 const MAX_JOB_HISTORY = 5;
@@ -35,6 +36,7 @@ export const useRecognitionJobHistory = () => {
   const [jobId, setJobId] = useState<string | null>(null);
   const [jobHistory, setJobHistory] = useState<string[]>([]);
   const [jobStatuses, setJobStatuses] = useState<Record<string, string>>({});
+  const [jobDetails, setJobDetails] = useState<Record<string, JobStatusResponse>>({});
 
   useEffect(() => {
     const stored = readStoredHistory();
@@ -56,11 +58,11 @@ export const useRecognitionJobHistory = () => {
         jobHistory.map(async (id) => {
           try {
             const response = await fetchScanStatus(id);
-            return { id, status: response.status, notFound: false } as const;
+            return { id, status: response.status, detail: response, notFound: false } as const;
           } catch (error) {
             const message = error instanceof Error ? error.message : '';
             const notFound = message.includes('(404)');
-            return { id, status: __('Unknown', 'alt-context'), notFound } as const;
+            return { id, status: __('Unknown', 'alt-context'), detail: null, notFound } as const;
           }
         }),
       );
@@ -81,6 +83,13 @@ export const useRecognitionJobHistory = () => {
           });
           return next;
         });
+        setJobDetails((prev) => {
+          const next = { ...prev };
+          staleIds.forEach((id) => {
+            delete next[id];
+          });
+          return next;
+        });
         setJobId((current) => (current && staleIds.includes(current) ? (nextHistory[0] ?? null) : current));
         if (nextHistory.length === 0) {
           return;
@@ -94,6 +103,16 @@ export const useRecognitionJobHistory = () => {
             return;
           }
           next[entry.id] = entry.status;
+        });
+        return next;
+      });
+      setJobDetails((prev) => {
+        const next = { ...prev };
+        entries.forEach((entry) => {
+          if (staleIds.includes(entry.id) || entry.notFound || !entry.detail) {
+            return;
+          }
+          next[entry.id] = entry.detail;
         });
         return next;
       });
@@ -122,6 +141,7 @@ export const useRecognitionJobHistory = () => {
   const clearHistory = useCallback(() => {
     setJobHistory([]);
     setJobStatuses({});
+    setJobDetails({});
     setJobId(null);
     persistHistory([]);
   }, []);
@@ -130,6 +150,7 @@ export const useRecognitionJobHistory = () => {
     jobId,
     jobHistory,
     jobStatuses,
+    jobDetails,
     rememberJob,
     selectJob,
     clearHistory,

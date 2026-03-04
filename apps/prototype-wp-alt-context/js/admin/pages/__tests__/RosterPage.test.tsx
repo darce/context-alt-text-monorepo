@@ -149,6 +149,54 @@ describe('ClusterGrid', () => {
 
     expect(onDropFace).toHaveBeenCalledWith('cluster-2');
   });
+
+  it('supports keyboard focus navigation and ARIA selection state', async () => {
+    const onSelect = vi.fn();
+    const selection = {
+      ...selectionState,
+      isSelected: vi.fn((id: string) => id === 'cluster-1'),
+      count: 1,
+    };
+    const clusterA = makeCluster({ id: 'cluster-1', label: 'cluster-1' });
+    const clusterB = makeCluster({ id: 'cluster-2', label: 'cluster-2' });
+
+    render(
+      <ClusterGrid
+        clusters={[clusterA, clusterB]}
+        isLoading={false}
+        isError={false}
+        onRetry={vi.fn()}
+        mediaMap={{}}
+        onSelectCluster={onSelect}
+        selection={selection}
+        onIdentityDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        onDropFace={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+      />,
+    );
+
+    const firstCard = screen.getByRole('button', { name: /cluster-1/i });
+    const secondCard = screen.getByRole('button', { name: /cluster-2/i });
+
+    expect(firstCard).toHaveAttribute('aria-pressed', 'true');
+    expect(secondCard).toHaveAttribute('aria-pressed', 'false');
+
+    firstCard.focus();
+    await userEvent.keyboard('{ArrowRight}');
+    expect(secondCard).toHaveFocus();
+
+    await userEvent.keyboard('{Enter}');
+    expect(onSelect).toHaveBeenCalledWith(clusterB);
+
+    await userEvent.keyboard(' ');
+    expect(selection.toggle).toHaveBeenCalledWith('cluster-2');
+
+    await userEvent.keyboard('{Escape}');
+    expect(selection.clear).toHaveBeenCalled();
+  });
 });
 
 describe('ClusterDrawerPanel', () => {

@@ -1,9 +1,11 @@
 import React, { createContext, useContext, useState, useCallback, ReactNode } from 'react';
 import { X, CheckCircle, AlertCircle, Info } from 'lucide-react';
+import * as RadixToast from '@radix-ui/react-toast';
+import { __ } from '@wordpress/i18n';
 
 type ToastType = 'success' | 'error' | 'info';
 
-interface Toast {
+interface ToastMessage {
   id: string;
   message: string;
   type: ToastType;
@@ -19,7 +21,7 @@ interface ToastContextType {
 const ToastContext = createContext<ToastContextType | undefined>(undefined);
 
 export const ToastProvider = ({ children }: { children: ReactNode }) => {
-  const [toasts, setToasts] = useState<Toast[]>([]);
+  const [toasts, setToasts] = useState<ToastMessage[]>([]);
 
   const removeToast = useCallback((id: string) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
@@ -37,27 +39,38 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
 
   return (
     <ToastContext.Provider value={{ toast, success, error, info }}>
-      {children}
-      <div className="acx-toast-container">
+      <RadixToast.Provider duration={5000} swipeDirection="right">
+        {children}
+        <RadixToast.Viewport className="acx-toast-container" />
         {toasts.map((t) => (
-          <div key={t.id} className={`acx-toast acx-toast--${t.type}`} role="alert">
-            <span className="acx-toast__icon">
-              {t.type === 'success' && <CheckCircle size={18} />}
-              {t.type === 'error' && <AlertCircle size={18} />}
-              {t.type === 'info' && <Info size={18} />}
-            </span>
-            <span className="acx-toast__message">{t.message}</span>
-            <button
-              type="button"
-              className="acx-toast__close"
-              onClick={() => removeToast(t.id)}
-              aria-label="Close"
-            >
-              <X size={14} />
-            </button>
-          </div>
+          <RadixToast.Root key={t.id} className={`acx-toast acx-toast--${t.type}`} open onOpenChange={(open) => {
+            if (!open) {
+              removeToast(t.id);
+            }
+          }}>
+            <RadixToast.Title asChild>
+              <span className="acx-toast__icon">
+                {t.type === 'success' && <CheckCircle size={18} />}
+                {t.type === 'error' && <AlertCircle size={18} />}
+                {t.type === 'info' && <Info size={18} />}
+              </span>
+            </RadixToast.Title>
+            <RadixToast.Description asChild>
+              <span className="acx-toast__message">{t.message}</span>
+            </RadixToast.Description>
+            <RadixToast.Close asChild>
+              <button
+                type="button"
+                className="acx-toast__close"
+                aria-label={__('Close', 'alt-context')}
+                onClick={() => removeToast(t.id)}
+              >
+                <X size={14} />
+              </button>
+            </RadixToast.Close>
+          </RadixToast.Root>
         ))}
-      </div>
+      </RadixToast.Provider>
     </ToastContext.Provider>
   );
 };

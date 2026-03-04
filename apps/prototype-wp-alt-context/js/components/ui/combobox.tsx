@@ -2,6 +2,7 @@ import * as React from 'react';
 import { Check, ChevronsUpDown } from 'lucide-react';
 import { Command as CommandPrimitive } from 'cmdk';
 import * as PopoverPrimitive from '@radix-ui/react-popover';
+import { __, sprintf } from '@wordpress/i18n';
 
 // --- Command Components (cmdk wrapper) ---
 
@@ -85,14 +86,15 @@ export const Combobox = ({
   value,
   onSelect,
   onValueChange,
-  placeholder = 'Select option...',
-  emptyText = 'No option found.',
+  placeholder = __('Select option...', 'alt-context'),
+  emptyText = __('No option found.', 'alt-context'),
   emptyMessage,
   className,
   onCreate,
   searchPlaceholder,
   ariaLabel,
   disabled,
+  isLoading = false,
   renderOption,
   id,
 }: ComboboxProps): React.ReactElement => {
@@ -166,6 +168,7 @@ export const Combobox = ({
     },
     [onSelect, onValueChange, value],
   );
+  const triggerLabel = selectedOption?.label ?? (value && value.length > 0 ? value : placeholder);
 
   return (
     <PopoverPrimitive.Root open={open} onOpenChange={handleOpenChange}>
@@ -179,7 +182,7 @@ export const Combobox = ({
           className={`acx-combobox__trigger ${className ?? ''}`}
           data-placeholder={!value}
         >
-          {selectedOption?.label ?? value ?? placeholder}
+          {triggerLabel}
           <ChevronsUpDown className="acx-combobox__icon" />
         </button>
       </PopoverPrimitive.Trigger>
@@ -198,18 +201,22 @@ export const Combobox = ({
             onValueChange={handleInputChange}
           />
           <CommandList>
+            {isLoading && (
+              <div className="acx-combobox__empty">{__('Loading options...', 'alt-context')}</div>
+            )}
             <CommandEmpty>
               {emptyMessage ?? emptyText}
               {onCreate && inputValue && (
                 <div className="acx-combobox__create">
                   <button
+                    type="button"
                     className="acx-button acx-button--small"
                     onClick={() => {
                       onCreate(inputValue);
                       setOpen(false);
                     }}
                   >
-                    Create "{inputValue}"
+                    {sprintf(__('Create "%s"', 'alt-context'), inputValue)}
                   </button>
                 </div>
               )}

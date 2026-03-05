@@ -32,7 +32,7 @@ The dashboard is the admin's landing page, but it underserves its "home base" ro
   - OrientationCard (dismissible first-use onboarding).
   - Quick Actions panel with links to Scan, Review, Roster.
   - Recent Activity panel with job history, status, duration formatting (`formatDuration`), and "View Results" links (`#/workbench?tab=confirm&jobId=...`) -- all functional.
-- `dashboardApi.ts` exposes `fetchDashboardStats()` returning `DashboardStats { people_count, assigned_clusters_count, pending_clusters_count }`.
+- `dashboardApi.ts` exposes `fetchDashboardStats()` returning `DashboardStats { people_count, assigned_clusters_count, pending_clusters_count, media_with_faces_count, unassigned_persons_count }`.
 - `useIdentityStats.ts` wraps the API call via TanStack Query with `queryKeys.dashboard.stats()`.
 - `useRecognitionJobHistory.ts` provides `jobHistory`, `jobStatuses`, and `jobDetails` (including `started_at`/`finished_at` used for duration display).
 - `get_dashboard_stats()` in `class-api.php` (L539-570) queries `wp_acx_persons` and `wp_acx_clusters`.
@@ -161,15 +161,14 @@ export const useIdentityStats = () =>
 
 | File | Line | Change |
 | --- | --- | --- |
-| `src/api/class-api.php` | L539-570 | Add `media_with_faces_count` and `unassigned_persons_count` to `get_dashboard_stats()` response by querying `wp_acx_identity_members` and `wp_acx_persons`/`wp_acx_clusters` |
-| `js/admin/api/dashboardApi.ts` | L3-7 | Add `media_with_faces_count: number` and `unassigned_persons_count: number` to `DashboardStats` interface |
-| `js/admin/hooks/useIdentityStats.ts` | L7-10 | Add `staleTime: 30_000` and `refetchOnWindowFocus: true` to query options |
-| `js/admin/pages/DashboardPage.tsx` | L73-98 | Add "Media with faces" stat to the Library Coverage or Identity panel |
-| `js/admin/pages/DashboardPage.tsx` | L105-145 | Add "persons with no clusters" guidance state using `unassigned_persons_count`; optionally extract to `GuidanceCard` component |
-| `js/admin/pages/DashboardPage.tsx` | L100-104 | Add error state handling for identity stats (show retry button on failure) |
+| `src/api/class-api.php` | `Api::get_dashboard_stats()` | Add `media_with_faces_count` and `unassigned_persons_count` to `get_dashboard_stats()` response by querying `wp_acx_identity_members` and `wp_acx_persons`/`wp_acx_clusters` |
+| `js/admin/api/dashboardApi.ts` | `DashboardStats` interface | Add `media_with_faces_count: number` and `unassigned_persons_count: number` to `DashboardStats` interface |
+| `js/admin/hooks/useIdentityStats.ts` | `useIdentityStats` query options | Add `staleTime: 30_000` and `refetchOnWindowFocus: true` to query options |
+| `js/admin/pages/DashboardPage.tsx` | Identity stats panel render branch | Add "Media with faces" stat and "persons with no clusters" guidance state using `unassigned_persons_count`; keep guidance inline |
+| `js/admin/pages/DashboardPage.tsx` | Identity stats error branch | Add error state handling for identity stats (show retry button on failure) |
 | `js/admin/pages/dashboard/GuidanceCard.tsx` | new (optional) | Optional: extract guidance logic into standalone component if inline complexity warrants it |
-| `tests/Unit/DashboardApiTest.php` | L28-55 | Add test for `media_with_faces_count` in response |
-| `js/admin/pages/__tests__/DashboardPage.test.tsx` | L60-90 | Update mock data shape to include `media_with_faces_count` and `unassigned_persons_count`; add new test cases |
+| `tests/Unit/DashboardApiTest.php` | `DashboardApiTest::testGetDashboardStatsRespondsWithCorrectCounts` | Add test for `media_with_faces_count` and `unassigned_persons_count` in response |
+| `js/admin/pages/__tests__/DashboardPage.test.tsx` | `DashboardPage` test suite | Update mock data shape to include `media_with_faces_count` and `unassigned_persons_count`; add guidance/error/zero-value test cases |
 
 ## Related Files
 
@@ -189,48 +188,48 @@ export const useIdentityStats = () =>
 
 ## Phase 3a: Enhanced Coverage and Faces-Detected Metric
 
-- [ ] **Test (red)**: `DashboardApiTest` -- `get_dashboard_stats` includes `media_with_faces_count` and `unassigned_persons_count` in response.
-- [ ] **Implement**: add `COUNT(DISTINCT media_id)` query on `wp_acx_identity_members` and `NOT EXISTS` subquery for unassigned persons to `get_dashboard_stats()` in `class-api.php`.
-- [ ] **Test (green)**: endpoint returns correct `media_with_faces_count` and `unassigned_persons_count`.
-- [ ] **Implement**: add `media_with_faces_count: number` and `unassigned_persons_count: number` to `DashboardStats` interface in `dashboardApi.ts`.
-- [ ] **Test (red)**: `DashboardPage.test.tsx` -- renders "Media with faces" stat value and uses `unassigned_persons_count` for guidance.
-- [ ] **Implement**: add "Media with faces" stat to the Identity Recognition or Library Coverage panel in `DashboardPage.tsx`.
-- [ ] **Test (green)**: stat displays the count from API response.
+- [x] **Test (red)**: `DashboardApiTest` -- `get_dashboard_stats` includes `media_with_faces_count` and `unassigned_persons_count` in response.
+- [x] **Implement**: add `COUNT(DISTINCT media_id)` query on `wp_acx_identity_members` and `NOT EXISTS` subquery for unassigned persons to `get_dashboard_stats()` in `class-api.php`.
+- [x] **Test (green)**: endpoint returns correct `media_with_faces_count` and `unassigned_persons_count`.
+- [x] **Implement**: add `media_with_faces_count: number` and `unassigned_persons_count: number` to `DashboardStats` interface in `dashboardApi.ts`.
+- [x] **Test (red)**: `DashboardPage.test.tsx` -- renders "Media with faces" stat value and uses `unassigned_persons_count` for guidance.
+- [x] **Implement**: add "Media with faces" stat to the Identity Recognition or Library Coverage panel in `DashboardPage.tsx`.
+- [x] **Test (green)**: stat displays the count from API response.
 
 ## Phase 3b: Richer Guidance Card
 
-- [ ] **Test (red)**: `DashboardPage.test.tsx` -- guidance card shows "persons with no clusters" message when `unassigned_persons_count > 0`.
-- [ ] **Implement**: add fourth guidance state for "persons with no clusters" using explicit `unassigned_persons_count` from API (not a heuristic). Add inline to `DashboardPage.tsx`.
-- [ ] **Test (green)**: all four guidance states render correct copy and CTAs:
+- [x] **Test (red)**: `DashboardPage.test.tsx` -- guidance card shows "persons with no clusters" message when `unassigned_persons_count > 0`.
+- [x] **Implement**: add fourth guidance state for "persons with no clusters" using explicit `unassigned_persons_count` from API (not a heuristic). Add inline to `DashboardPage.tsx`.
+- [x] **Test (green)**: all four guidance states render correct copy and CTAs:
   - pending_clusters_count > 0: "N faces are waiting for names." + link to Workbench.
   - people_count === 0: "Start by scanning your media library." + link to Scan tab.
   - unassigned_persons_count > 0: "N persons have no assigned clusters." + link to Roster.
   - Default: "All caught up."
-- [ ] **Test (green)**: existing `DashboardPage.test.tsx` tests continue passing.
+- [x] **Test (green)**: existing `DashboardPage.test.tsx` tests continue passing.
 
 ### Optional Refactor: GuidanceCard Extraction
 
-- [ ] **Optional**: if guidance logic grows complex, extract into `GuidanceCard` component in `js/admin/pages/dashboard/GuidanceCard.tsx` and add dedicated tests. Not required if inline logic remains clear and testable at the page level.
+- [x] **Optional**: if guidance logic grows complex, extract into `GuidanceCard` component in `js/admin/pages/dashboard/GuidanceCard.tsx` and add dedicated tests. Not required if inline logic remains clear and testable at the page level.
 
 ## Phase 3c: Error States and Query Polish
 
-- [ ] **Implement**: add `staleTime: 30_000` and `refetchOnWindowFocus: true` to `useIdentityStats` query options.
-- [ ] **Test (red)**: `DashboardPage.test.tsx` -- renders error state with retry button when `useIdentityStats` returns error.
-- [ ] **Implement**: add error state for Identity Recognition panel (show "Unable to load" + retry button).
-- [ ] **Test (green)**: clicking retry button triggers refetch.
-- [ ] Review all new copy uses `__()` / `_x()` with `'alt-context'` text domain.
+- [x] **Implement**: add `staleTime: 30_000` and `refetchOnWindowFocus: true` to `useIdentityStats` query options.
+- [x] **Test (red)**: `DashboardPage.test.tsx` -- renders error state with retry button when `useIdentityStats` returns error.
+- [x] **Implement**: add error state for Identity Recognition panel (show "Unable to load" + retry button).
+- [x] **Test (green)**: clicking retry button triggers refetch.
+- [x] Review all new copy uses `__()` / `_x()` with `'alt-context'` text domain.
 
 ### Optional: Recent Activity Robustness
 
-- [ ] **Optional**: add graceful handling in Recent Activity panel for jobs that are expired or no longer available (e.g., show "Job unavailable" instead of broken link). Not blocking -- links and duration already work for available jobs.
+- [x] **Optional**: add graceful handling in Recent Activity panel for jobs that are expired or no longer available (show "Status unavailable. Refresh to retry." while preserving the "View Results" link). Not blocking -- links and duration already work for available jobs.
 
 ## Success Criteria
 
-- [ ] Dashboard renders live person count, assigned cluster count, pending-review count, and media-with-faces count.
-- [ ] All dashboard data comes from local projection tables. Zero backend dependency.
-- [ ] Guidance card adapts text for at least four states: pending review, empty roster, persons without clusters, all caught up.
-- [ ] Identity stats panel shows error state with retry button on API failure.
-- [ ] `useIdentityStats` uses stale-time to avoid unnecessary refetches.
-- [ ] Guidance card logic (inline or extracted) has test coverage for all four states.
-- [ ] PHP endpoint test covers `media_with_faces_count` and `unassigned_persons_count` fields.
-- [ ] All existing dashboard tests continue passing.
+- [x] Dashboard renders live person count, assigned cluster count, pending-review count, and media-with-faces count.
+- [x] All dashboard data comes from local projection tables. Zero backend dependency.
+- [x] Guidance card adapts text for at least four states: pending review, empty roster, persons without clusters, all caught up.
+- [x] Identity stats panel shows error state with retry button on API failure.
+- [x] `useIdentityStats` uses stale-time to avoid unnecessary refetches.
+- [x] Guidance card logic (inline or extracted) has test coverage for all four states.
+- [x] PHP endpoint test covers `media_with_faces_count` and `unassigned_persons_count` fields.
+- [x] All existing dashboard tests continue passing.

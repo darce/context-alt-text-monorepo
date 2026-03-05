@@ -13,12 +13,13 @@ import { useIdentityStats } from '../hooks/useIdentityStats';
 import { rosterClustersUrl } from './workbench/Panels';
 import { sprintf } from '@wordpress/i18n';
 import { OrientationCard } from './dashboard/OrientationCard';
+import { GuidanceCard } from './dashboard/GuidanceCard';
 
 
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobHistory, jobStatuses, jobDetails } = useRecognitionJobHistory();
-  const { data: identityStats, isLoading: isIdentityLoading } = useIdentityStats();
+  const { data: identityStats, isLoading: isIdentityLoading, isError: isIdentityError, refetch: refetchIdentity } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
   const formatDuration = (startedAt: string, finishedAt: string | null): string | null => {
@@ -95,8 +96,17 @@ export const DashboardPage = (): React.JSX.Element => {
 
         <section className="acx-dashboard__panel">
           <h2>{__('Identity Recognition', 'alt-context')}</h2>
-          {isIdentityLoading || !identityStats ? (
+          {isIdentityLoading ? (
             <p>{__('Loading identity stats…', 'alt-context')}</p>
+          ) : isIdentityError ? (
+            <div className="acx-error-state">
+              <p>{__('Unable to load identity stats.', 'alt-context')}</p>
+              <button type="button" className="acx-button acx-button--secondary" onClick={() => void refetchIdentity()}>
+                {__('Retry', 'alt-context')}
+              </button>
+            </div>
+          ) : !identityStats ? (
+            <p>{__('Unable to load identity stats.', 'alt-context')}</p>
           ) : (
             <>
               <div className="acx-dashboard__stats-grid">
@@ -122,32 +132,18 @@ export const DashboardPage = (): React.JSX.Element => {
                     {__('Pending Review', 'alt-context')}
                   </span>
                 </div>
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value">
+                    {identityStats.media_with_faces_count}
+                  </span>
+                  <span className="acx-dashboard__stat-label" title={__('Media items that have at least one detected face.', 'alt-context')}>
+                    {__('Media with faces', 'alt-context')}
+                  </span>
+                </div>
 
               </div>
               <div className="acx-dashboard__guidance">
-                {identityStats.pending_clusters_count > 0 ? (
-                  <>
-                    <p>
-                      {sprintf(
-                        /* translators: %d: number of pending clusters */
-                        __('%d faces are waiting for names.', 'alt-context'),
-                        identityStats.pending_clusters_count
-                      )}
-                    </p>
-                    <a href="#/workbench?tab=confirm" className="acx-link-button">
-                      {__('Go to Workbench', 'alt-context')}
-                    </a>
-                  </>
-                ) : identityStats.people_count === 0 ? (
-                  <>
-                    <p>{__('Start by scanning your media library for faces.', 'alt-context')}</p>
-                    <a href="#/workbench?tab=scan" className="acx-link-button">
-                      {__('Go to Scan tab', 'alt-context')}
-                    </a>
-                  </>
-                ) : (
-                  <p>{__('All caught up. New faces will appear here for review.', 'alt-context')}</p>
-                )}
+                <GuidanceCard stats={identityStats} />
               </div>
             </>
           )}
@@ -178,12 +174,16 @@ export const DashboardPage = (): React.JSX.Element => {
           ) : (
             <ul className="acx-dashboard__activity-list">
               {jobHistory.map((id) => {
-                const durationLabel = formatDuration(jobDetails[id]?.started_at ?? '', jobDetails[id]?.finished_at ?? null);
+                const jobDetail = jobDetails[id];
+                const statusLabel = jobDetail
+                  ? (jobStatuses[id] ?? __('Checking status…', 'alt-context'))
+                  : __('Status unavailable. Refresh to retry.', 'alt-context');
+                const durationLabel = formatDuration(jobDetail?.started_at ?? '', jobDetail?.finished_at ?? null);
                 return (
                   <li key={id} className="acx-dashboard__activity-item">
                     <span className="acx-dashboard__activity-id">{id}</span>
                     <span className="acx-dashboard__activity-status">
-                      {jobStatuses[id] ?? __('Checking status…', 'alt-context')}
+                      {statusLabel}
                     </span>
                     {durationLabel && (
                       <span className="acx-dashboard__activity-duration">{durationLabel}</span>

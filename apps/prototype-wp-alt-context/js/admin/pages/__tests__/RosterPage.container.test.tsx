@@ -4,7 +4,7 @@ import { MemoryRouter } from 'react-router-dom';
 
 import type { ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
-import { useCreatePerson, useRosterEntries } from '../../hooks/useRosterHooks';
+import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
 import { RosterPage } from '../RosterPage';
 import { useClusterActions } from '../roster/hooks/useClusterActions';
@@ -28,6 +28,8 @@ vi.mock('../../hooks/useRecognitionHooks', () => ({
 vi.mock('../../hooks/useRosterHooks', () => ({
   useRosterEntries: vi.fn(),
   useCreatePerson: vi.fn(),
+  useUpdatePerson: vi.fn(),
+  useDeletePerson: vi.fn(),
 }));
 vi.mock('../../hooks/useClusterSelection', () => ({
   useClusterSelection: vi.fn(),
@@ -71,6 +73,8 @@ describe('RosterPage route container', () => {
   const mockedUseRecognitionCluster = vi.mocked(useRecognitionCluster);
   const mockedUseRosterEntries = vi.mocked(useRosterEntries);
   const mockedUseCreatePerson = vi.mocked(useCreatePerson);
+  const mockedUseUpdatePerson = vi.mocked(useUpdatePerson);
+  const mockedUseDeletePerson = vi.mocked(useDeletePerson);
   const mockedUseClusterSelection = vi.mocked(useClusterSelection);
   const mockedUseClusterMediaMap = vi.mocked(useClusterMediaMap);
   const mockedUseClusterDragDrop = vi.mocked(useClusterDragDrop);
@@ -107,7 +111,6 @@ describe('RosterPage route container', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
-    window.history.pushState({}, '', '/wp-admin/admin.php?page=alt-context-roster');
 
     const cluster = makeCluster();
 
@@ -135,6 +138,14 @@ describe('RosterPage route container', () => {
       mutate: vi.fn(),
       isPending: false,
     } as unknown as ReturnType<typeof useCreatePerson>);
+    mockedUseUpdatePerson.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useUpdatePerson>);
+    mockedUseDeletePerson.mockReturnValue({
+      mutate: vi.fn(),
+      isPending: false,
+    } as unknown as ReturnType<typeof useDeletePerson>);
     mockedUseClusterSelection.mockReturnValue(selectionState as unknown as ReturnType<typeof useClusterSelection>);
 
     mockedUseClusterMediaMap.mockReturnValue({});
@@ -151,6 +162,34 @@ describe('RosterPage route container', () => {
 
     expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'false');
+  });
+
+  it('[PAG-M3] preserves entries tab bootstrap with personFilter=unassigned', () => {
+    mockedUseRosterEntries.mockReturnValue({
+      data: [
+        {
+          id: 7,
+          name: 'Unassigned Person',
+          tags: [],
+          cluster_count: 0,
+          updated_at: new Date().toISOString(),
+        },
+      ],
+      isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
+    } as unknown as ReturnType<typeof useRosterEntries>);
+
+    render(
+      <MemoryRouter initialEntries={['/?tab=entries&personFilter=unassigned']}>
+        <RosterPage />
+      </MemoryRouter>
+    );
+
+    expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
+    expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText('Showing unassigned people only.')).toBeInTheDocument();
+    expect(screen.getByText('Unassigned Person')).toBeInTheDocument();
   });
 
   it('[PAG-M3] opens and closes the cluster drawer from the grid', async () => {

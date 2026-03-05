@@ -119,38 +119,41 @@ const clearFilter = () => {
 
 ## Completed
 
-- [ ] None (new task; planning only).
+- [x] Backend contract extended with authoritative `unassigned_persons_count`.
+- [x] Dashboard guidance uses filtered roster CTA: `#/roster?tab=entries&personFilter=unassigned`.
+- [x] Roster entries support URL-driven `personFilter=unassigned` filtering with clear-filter action.
+- [x] Dashboard and roster tests cover unassigned guidance and filtered roster bootstrap/behavior.
 
 ## Phase 0: Scaffolding
 
-- [ ] Document contract change in this task plan: `DashboardStats.unassigned_persons_count`.
-- [ ] Add/update test stubs for dashboard guidance and roster filtered mode.
-- [ ] Confirm TypeScript typecheck and PHPUnit discovery include new tests.
+- [x] Document contract change in this task plan: `DashboardStats.unassigned_persons_count`.
+- [x] Add/update test stubs for dashboard guidance and roster filtered mode.
+- [x] Confirm TypeScript typecheck and PHPUnit discovery include new tests.
 
 ## Phase 1: Backend Contract and Metric
 
-- [ ] **Test (red)**: update `DashboardApiTest` with failing assertion for `unassigned_persons_count`.
-- [ ] Add `unassigned_persons_count` query in `get_dashboard_stats()`.
-- [ ] Return `unassigned_persons_count` in REST payload.
-- [ ] **Test (green)**: `DashboardApiTest` passes with expected count.
+- [x] **Test (red)**: update `DashboardApiTest` with failing assertion for `unassigned_persons_count`.
+- [x] Add `unassigned_persons_count` query in `get_dashboard_stats()`.
+- [x] Return `unassigned_persons_count` in REST payload.
+- [x] **Test (green)**: `DashboardApiTest` passes with expected count.
 
 ## Phase 2: Dashboard Guidance State
 
-- [ ] **Test (red)**: add `DashboardPage` test for unassigned-person guidance branch and CTA URL.
-- [ ] Extend `DashboardStats` TypeScript interface with `unassigned_persons_count`.
-- [ ] Add guidance branch for `unassigned_persons_count > 0`.
-- [ ] Set CTA href to `#/roster?tab=entries&personFilter=unassigned`.
-- [ ] Enforce guidance precedence: pending review > unassigned persons > first-use > all-caught-up.
-- [ ] **Test (green)**: guidance branch test passes and existing guidance tests remain green.
+- [x] **Test (red)**: add `DashboardPage` test for unassigned-person guidance branch and CTA URL.
+- [x] Extend `DashboardStats` TypeScript interface with `unassigned_persons_count`.
+- [x] Add guidance branch for `unassigned_persons_count > 0`.
+- [x] Set CTA href to `#/roster?tab=entries&personFilter=unassigned`.
+- [x] Enforce guidance precedence: pending review > unassigned persons > first-use > all-caught-up.
+- [x] **Test (green)**: guidance branch test passes and existing guidance tests remain green.
 
 ## Phase 3: Filtered Roster Entries UX
 
-- [ ] **Test (red)**: add `RosterEntries` test for filtered mode (`personFilter=unassigned`) and filtered empty state.
-- [ ] Read `personFilter` from URL in `RosterEntriesSection` via `useSearchParams`.
-- [ ] Filter entries to `cluster_count === 0` when `personFilter=unassigned`.
-- [ ] Add filtered empty-state copy for no matching entries.
-- [ ] Add clear-filter control that removes `personFilter` and preserves `tab=entries`.
-- [ ] **Test (green)**: filtered mode tests pass; route bootstrap test preserves `tab` and `personFilter`.
+- [x] **Test (red)**: add `RosterEntries` test for filtered mode (`personFilter=unassigned`) and filtered empty state.
+- [x] Read `personFilter` from URL in `RosterEntriesSection` via `useSearchParams`.
+- [x] Filter entries to `cluster_count === 0` when `personFilter=unassigned`.
+- [x] Add filtered empty-state copy for no matching entries.
+- [x] Add clear-filter control that removes `personFilter` and preserves `tab=entries`.
+- [x] **Test (green)**: filtered mode tests pass; route bootstrap test preserves `tab` and `personFilter`.
 
 ## Stretch Goals
 
@@ -159,7 +162,7 @@ const clearFilter = () => {
 
 ## Success Criteria
 
-- [ ] Dashboard guidance for unassigned persons is based on authoritative local count, not heuristic logic.
-- [ ] Clicking the guidance CTA opens Roster Entries already filtered to unassigned persons.
-- [ ] Filtered roster mode is URL-addressable, test-covered, and reversible via clear-filter.
-- [ ] Existing dashboard and roster flows remain unchanged when no `personFilter` query param is set.
+- [x] Dashboard guidance for unassigned persons is based on authoritative local count, not heuristic logic.
+- [x] Clicking the guidance CTA opens Roster Entries already filtered to unassigned persons.
+- [x] Filtered roster mode is URL-addressable, test-covered, and reversible via clear-filter.
+- [x] Existing dashboard and roster flows remain unchanged when no `personFilter` query param is set.

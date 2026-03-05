@@ -43,7 +43,7 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
         {children}
         <RadixToast.Viewport className="acx-toast-container" />
         {toasts.map((t) => (
-          <RadixToast.Root key={t.id} className={`acx-toast acx-toast--${t.type}`} open onOpenChange={(open) => {
+          <RadixToast.Root key={t.id} className={`acx-toast acx-toast--${t.type}`} open onOpenChange={(open: boolean) => {
             if (!open) {
               removeToast(t.id);
             }

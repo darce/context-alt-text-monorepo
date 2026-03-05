@@ -1,9 +1,11 @@
 import { render, screen } from '@testing-library/react';
 
 import { DashboardPage } from '../DashboardPage';
+import type { DashboardStats } from '../../api/dashboardApi';
 import { useIdentityStats } from '../../hooks/useIdentityStats';
 import { useMediaStats } from '../../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
+import { createMockQuery } from '../../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -29,16 +31,26 @@ vi.mock('../dashboard/OrientationCard', () => ({
   OrientationCard: () => <div>Orientation</div>,
 }));
 
+vi.mock('../dashboard/GuidanceCard', () => ({
+  GuidanceCard: ({ stats }: { stats: unknown }) => <div data-testid="guidance">{JSON.stringify(stats)}</div>,
+}));
+
 describe('DashboardPage', () => {
   const mockedUseMediaStats = vi.mocked(useMediaStats);
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
   const mockedUseIdentityStats = vi.mocked(useIdentityStats);
+  const readGuidanceStats = (): Record<string, number> => {
+    const raw = screen.getByTestId('guidance').textContent ?? '{}';
+    return JSON.parse(raw) as Record<string, number>;
+  };
 
   beforeEach(() => {
     vi.clearAllMocks();
     mockedUseMediaStats.mockReturnValue({
-      stats: { total: 100, missing: 20, coverage: 80 },
+      stats: { total: 100, missing: 20, complete: 80, coverage: 80 },
       isLoading: false,
+      isError: false,
+      refetch: vi.fn(),
     });
     mockedUseRecognitionJobHistory.mockReturnValue({
       jobHistory: [],
@@ -52,48 +64,90 @@ describe('DashboardPage', () => {
   });
 
   it('renders identity stats and pending-review guidance', () => {
-    mockedUseIdentityStats.mockReturnValue({
-      data: { people_count: 10, assigned_clusters_count: 7, pending_clusters_count: 3 },
-      isLoading: false,
-    } as ReturnType<typeof useIdentityStats>);
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 10,
+        assigned_clusters_count: 7,
+        pending_clusters_count: 3,
+        media_with_faces_count: 22,
+        unassigned_persons_count: 0,
+      },
+      refetch: vi.fn(),
+    }));
 
     render(<DashboardPage />);
 
     expect(screen.getByText('10')).toBeInTheDocument();
     expect(screen.getByText('7')).toBeInTheDocument();
     expect(screen.getByText('3')).toBeInTheDocument();
-    expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toBeInTheDocument();
+    expect(screen.getByText('22')).toBeInTheDocument();
+    expect(screen.getByText('Media with faces')).toBeInTheDocument();
+    expect(readGuidanceStats()).toMatchObject({
+      people_count: 10,
+      assigned_clusters_count: 7,
+      pending_clusters_count: 3,
+      media_with_faces_count: 22,
+      unassigned_persons_count: 0,
+    });
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
-    mockedUseIdentityStats.mockReturnValue({
-      data: { people_count: 0, assigned_clusters_count: 0, pending_clusters_count: 0 },
-      isLoading: false,
-    } as ReturnType<typeof useIdentityStats>);
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 0,
+        assigned_clusters_count: 0,
+        pending_clusters_count: 0,
+        media_with_faces_count: 0,
+        unassigned_persons_count: 0,
+      },
+      refetch: vi.fn(),
+    }));
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('Start by scanning your media library for faces.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Go to Scan tab' })).toBeInTheDocument();
+    expect(readGuidanceStats()).toMatchObject({
+      people_count: 0,
+      assigned_clusters_count: 0,
+      pending_clusters_count: 0,
+      media_with_faces_count: 0,
+      unassigned_persons_count: 0,
+    });
   });
 
   it('shows all-caught-up guidance when no pending review remains', () => {
-    mockedUseIdentityStats.mockReturnValue({
-      data: { people_count: 4, assigned_clusters_count: 4, pending_clusters_count: 0 },
-      isLoading: false,
-    } as ReturnType<typeof useIdentityStats>);
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 4,
+        assigned_clusters_count: 4,
+        pending_clusters_count: 0,
+        media_with_faces_count: 10,
+        unassigned_persons_count: 0,
+      },
+      refetch: vi.fn(),
+    }));
 
     render(<DashboardPage />);
 
-    expect(screen.getByText('All caught up. New faces will appear here for review.')).toBeInTheDocument();
+    expect(readGuidanceStats()).toMatchObject({
+      people_count: 4,
+      assigned_clusters_count: 4,
+      pending_clusters_count: 0,
+      media_with_faces_count: 10,
+      unassigned_persons_count: 0,
+    });
   });
 
   it('renders recent activity duration and results link when timing is available', () => {
-    mockedUseIdentityStats.mockReturnValue({
-      data: { people_count: 4, assigned_clusters_count: 4, pending_clusters_count: 0 },
-      isLoading: false,
-    } as ReturnType<typeof useIdentityStats>);
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 4,
+        assigned_clusters_count: 4,
+        pending_clusters_count: 0,
+        media_with_faces_count: 10,
+        unassigned_persons_count: 0,
+      },
+      refetch: vi.fn(),
+    }));
     mockedUseRecognitionJobHistory.mockReturnValue({
       jobHistory: ['job-1'],
       jobStatuses: { 'job-1': 'completed' },
@@ -119,5 +173,94 @@ describe('DashboardPage', () => {
     expect(screen.getByText('Duration: 2m 05s')).toBeInTheDocument();
     const link = screen.getByRole('link', { name: 'View Results' });
     expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-1');
+  });
+
+  it('shows status unavailable copy and keeps results link when job details are missing', () => {
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 4,
+        assigned_clusters_count: 4,
+        pending_clusters_count: 0,
+        media_with_faces_count: 10,
+        unassigned_persons_count: 0,
+      },
+      refetch: vi.fn(),
+    }));
+    mockedUseRecognitionJobHistory.mockReturnValue({
+      jobHistory: ['job-unavailable'],
+      jobStatuses: {},
+      jobDetails: {},
+      jobId: 'job-unavailable',
+      rememberJob: vi.fn(),
+      selectJob: vi.fn(),
+      clearHistory: vi.fn(),
+    });
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Status unavailable. Refresh to retry.')).toBeInTheDocument();
+    const link = screen.getByRole('link', { name: 'View Results' });
+    expect(link).toHaveAttribute('href', '#/workbench?tab=confirm&jobId=job-unavailable');
+  });
+
+  it('shows unassigned-person guidance when there are unassigned persons', () => {
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 8,
+        assigned_clusters_count: 5,
+        pending_clusters_count: 0,
+        media_with_faces_count: 21,
+        unassigned_persons_count: 3,
+      },
+      refetch: vi.fn(),
+    }));
+
+    render(<DashboardPage />);
+
+    expect(readGuidanceStats()).toMatchObject({
+      people_count: 8,
+      assigned_clusters_count: 5,
+      pending_clusters_count: 0,
+      media_with_faces_count: 21,
+      unassigned_persons_count: 3,
+    });
+  });
+
+  it('renders zero for media-with-faces when no faces are detected', () => {
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      data: {
+        people_count: 2,
+        assigned_clusters_count: 1,
+        pending_clusters_count: 0,
+        media_with_faces_count: 0,
+        unassigned_persons_count: 1,
+      },
+      refetch: vi.fn(),
+    }));
+
+    render(<DashboardPage />);
+
+    const mediaLabel = screen.getByText('Media with faces');
+    const mediaStat = mediaLabel.closest('.acx-dashboard__stat');
+    expect(mediaStat).not.toBeNull();
+    expect(mediaStat).toHaveTextContent('0');
+  });
+
+  it('shows identity error state with retry action', () => {
+    const refetch = vi.fn();
+    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
+      status: 'error',
+      isError: true,
+      error: new Error('Unable to load identity stats.'),
+      refetch,
+    }));
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Unable to load identity stats.')).toBeInTheDocument();
+    expect(screen.queryByText('Loading identity stats…')).not.toBeInTheDocument();
+    const retryButton = screen.getByRole('button', { name: 'Retry' });
+    retryButton.click();
+    expect(refetch).toHaveBeenCalledTimes(1);
   });
 });

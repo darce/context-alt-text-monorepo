@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { __ } from '@wordpress/i18n';
+import { useSearchParams } from 'react-router-dom';
 import type { RosterEntry } from '../../api/rosterApi';
 import { RosterEntriesTable } from './RosterEntriesTable';
 import { useCreatePerson } from '../../hooks/useRosterHooks';
@@ -19,7 +20,26 @@ export interface RosterEntriesSectionProps {
 export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): React.JSX.Element => {
   const [isAdding, setIsAdding] = useState(false);
   const [newName, setNewName] = useState('');
+  const [searchParams, setSearchParams] = useSearchParams();
   const createPerson = useCreatePerson();
+  const personFilter = searchParams.get('personFilter');
+  const isUnassignedFilter = personFilter === 'unassigned';
+  const entries = query.data ?? [];
+  const visibleEntries = isUnassignedFilter
+    ? entries.filter((entry) => entry.cluster_count === 0)
+    : entries;
+
+  const clearFilter = () => {
+    setSearchParams(
+      (previous) => {
+        const next = new URLSearchParams(previous);
+        next.delete('personFilter');
+        next.set('tab', 'entries');
+        return next;
+      },
+      { replace: true }
+    );
+  };
 
   const handleAdd = (e: React.FormEvent) => {
     e.preventDefault();
@@ -69,6 +89,15 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
         )}
       </header>
 
+      {isUnassignedFilter && (
+        <div className="acx-roster-section__filter" role="status">
+          <p>{__('Showing unassigned people only.', 'alt-context')}</p>
+          <button type="button" className="acx-link-button" onClick={clearFilter}>
+            {__('Clear filter', 'alt-context')}
+          </button>
+        </div>
+      )}
+
       {isAdding && (
         <form className="acx-roster-section__add-form" onSubmit={handleAdd}>
           <div className="acx-form-group">
@@ -104,7 +133,11 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
         </form>
       )}
 
-      <RosterEntriesTable entries={query.data ?? []} />
+      {isUnassignedFilter && visibleEntries.length === 0 ? (
+        <p>{__('No unassigned people found.', 'alt-context')}</p>
+      ) : (
+        <RosterEntriesTable entries={visibleEntries} />
+      )}
     </div>
   );
 };

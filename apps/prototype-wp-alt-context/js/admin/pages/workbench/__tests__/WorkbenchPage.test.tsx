@@ -235,6 +235,7 @@ describe('WorkbenchPage', () => {
       jobId: 'job-initial',
       jobHistory: ['job-initial'],
       jobStatuses: { 'job-initial': 'completed' },
+      jobDetails: {},
       rememberJob,
       selectJob,
       clearHistory,

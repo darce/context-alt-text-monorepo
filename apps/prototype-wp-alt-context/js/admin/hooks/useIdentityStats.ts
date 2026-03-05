@@ -7,4 +7,6 @@ export const useIdentityStats = () =>
   useQuery<DashboardStats>({
     queryKey: queryKeys.dashboard.stats(),
     queryFn: fetchDashboardStats,
+    staleTime: 30_000,
+    refetchOnWindowFocus: true,
   });

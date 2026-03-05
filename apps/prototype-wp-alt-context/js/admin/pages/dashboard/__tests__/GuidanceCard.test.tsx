@@ -1,0 +1,83 @@
+import { render, screen } from '@testing-library/react';
+
+import { GuidanceCard } from '../GuidanceCard';
+
+vi.mock('@wordpress/i18n', () => ({
+  __: (text: string) => text,
+  sprintf: (format: string, ...args: (string | number)[]) => {
+    let index = 0;
+    return format.replace(/%(s|d)/g, () => String(args[index++]));
+  },
+}));
+
+describe('GuidanceCard', () => {
+  it('renders pending-review guidance first when pending clusters exist', () => {
+    render(
+      <GuidanceCard
+        stats={{
+          people_count: 0,
+          assigned_clusters_count: 0,
+          pending_clusters_count: 5,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 2,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('5 faces are waiting for names.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?tab=confirm');
+  });
+
+  it('renders first-use guidance when there are no people', () => {
+    render(
+      <GuidanceCard
+        stats={{
+          people_count: 0,
+          assigned_clusters_count: 0,
+          pending_clusters_count: 0,
+          media_with_faces_count: 0,
+          unassigned_persons_count: 0,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('Start by scanning your media library for faces.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Scan tab' })).toHaveAttribute('href', '#/workbench?tab=scan');
+  });
+
+  it('renders unassigned-person guidance when unassigned persons exist', () => {
+    render(
+      <GuidanceCard
+        stats={{
+          people_count: 4,
+          assigned_clusters_count: 2,
+          pending_clusters_count: 0,
+          media_with_faces_count: 8,
+          unassigned_persons_count: 2,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('2 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review unassigned persons' })).toHaveAttribute(
+      'href',
+      '#/roster?tab=entries&personFilter=unassigned',
+    );
+  });
+
+  it('renders all-caught-up guidance by default', () => {
+    render(
+      <GuidanceCard
+        stats={{
+          people_count: 3,
+          assigned_clusters_count: 3,
+          pending_clusters_count: 0,
+          media_with_faces_count: 8,
+          unassigned_persons_count: 0,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('All caught up. New faces will appear here for review.')).toBeInTheDocument();
+  });
+});

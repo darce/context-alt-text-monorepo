@@ -541,6 +541,7 @@ class Api {
 
 			$table_persons  = $wpdb->prefix . 'acx_persons';
 			$table_clusters = $wpdb->prefix . 'acx_clusters';
+			$table_members  = $wpdb->prefix . 'acx_identity_members';
 
 			$people_count = (int) $wpdb->get_var(
 				$wpdb->prepare( 'SELECT COUNT(*) FROM %i', $table_persons )
@@ -558,11 +559,25 @@ class Api {
 				)
 			);
 
+			$media_with_faces = (int) $wpdb->get_var(
+				$wpdb->prepare( 'SELECT COUNT(DISTINCT media_id) FROM %i', $table_members )
+			);
+
+			$unassigned_persons = (int) $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT COUNT(*) FROM %i p WHERE NOT EXISTS (SELECT 1 FROM %i c WHERE c.person_id = p.id)',
+					$table_persons,
+					$table_clusters
+				)
+			);
+
 		return rest_ensure_response(
 			array(
-				'people_count'            => $people_count,
-				'assigned_clusters_count' => $assigned_clusters,
-				'pending_clusters_count'  => $pending_clusters,
+				'people_count'             => $people_count,
+				'assigned_clusters_count'  => $assigned_clusters,
+				'pending_clusters_count'   => $pending_clusters,
+				'media_with_faces_count'   => $media_with_faces,
+				'unassigned_persons_count' => $unassigned_persons,
 			)
 		);
 	}

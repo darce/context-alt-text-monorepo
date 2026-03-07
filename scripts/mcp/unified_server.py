@@ -953,6 +953,22 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
     }
 
 
+def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
+    """Count persisted rows per handoff table for a task."""
+    table_map = {
+        "blockers": "blockers",
+        "next_actions": "next_actions",
+        "decisions": "decisions",
+        "verified_tests": "verified_tests",
+        "review_findings": "review_findings",
+    }
+    counts: dict[str, int] = {}
+    for key, table in table_map.items():
+        row = conn.execute(f"SELECT COUNT(*) AS count FROM {table} WHERE task_ref = ?", (task_ref,)).fetchone()
+        counts[key] = int(row["count"]) if row else 0
+    return counts
+
+
 def _resolve_output_path(output_path: str | None, task_ref: str) -> Path:
     """Resolve export output path and create parent directories."""
     if output_path:
@@ -2652,6 +2668,7 @@ def import_handoff_state(
     input_path: str,
     mode: str = "merge",
     set_active: bool = False,
+    allow_destructive_clear: bool = False,
 ) -> str:
     """
     Import a previously exported handoff snapshot.
@@ -2675,7 +2692,21 @@ def import_handoff_state(
     if not task_ref:
         return _json_response({"ok": False, "error": "Missing task_ref in import payload."})
 
-    for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings"):
+    required_sections = ("blockers", "next_actions", "decisions", "verified_tests", "review_findings")
+    if mode == "replace_task":
+        missing_sections = [key for key in required_sections if key not in snapshot]
+        if missing_sections:
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": (
+                        "Invalid replace_task payload: missing required snapshot sections "
+                        f"{', '.join(missing_sections)}."
+                    ),
+                }
+            )
+
+    for key in required_sections:
         items = snapshot.get(key, [])
         if not isinstance(items, list):
             return _json_response({"ok": False, "error": f"Invalid import payload: snapshot.{key} must be an array."})
@@ -2687,6 +2718,34 @@ def import_handoff_state(
         return _json_response({"ok": False, "error": "Invalid import payload: snapshot.active must be an object."})
 
     with _get_db_connection() as conn:
+        if mode == "replace_task" and not allow_destructive_clear:
+            existing_counts = _count_task_rows(conn, task_ref)
+            incoming_counts = {
+                "blockers": len(snapshot.get("blockers", [])),
+                "next_actions": len(snapshot.get("next_actions", [])),
+                "decisions": len(snapshot.get("decisions", [])),
+                "verified_tests": len(snapshot.get("verified_tests", [])),
+                "review_findings": len(snapshot.get("review_findings", [])),
+            }
+            potentially_cleared = [
+                section
+                for section, existing_count in existing_counts.items()
+                if existing_count > 0 and incoming_counts.get(section, 0) == 0
+            ]
+            if potentially_cleared:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": (
+                            "replace_task would clear existing handoff rows in sections: "
+                            f"{', '.join(potentially_cleared)}. "
+                            "Re-run with allow_destructive_clear=true to confirm."
+                        ),
+                        "existing_counts": existing_counts,
+                        "incoming_counts": incoming_counts,
+                    }
+                )
+
         counts = _import_snapshot(
             conn,
             task_ref=task_ref,
@@ -2701,6 +2760,7 @@ def import_handoff_state(
             "task_ref": task_ref,
             "mode": mode,
             "set_active": set_active,
+            "allow_destructive_clear": allow_destructive_clear,
             "counts": counts,
         }
     )
@@ -2715,6 +2775,7 @@ def archive_task_state(
     archive_commit_sha: str | None = None,
     clear_active_if_matches: bool = True,
     prune_working_rows: bool = False,
+    allow_destructive_clear: bool = False,
 ) -> str:
     """
     Archive task snapshot and optionally prune working rows for completed tasks.
@@ -2722,6 +2783,22 @@ def archive_task_state(
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         snapshot = _collect_task_snapshot(conn, resolved_task_ref)
+
+        if prune_working_rows and not allow_destructive_clear:
+            working_counts = _count_task_rows(conn, resolved_task_ref)
+            non_zero_sections = [section for section, count in working_counts.items() if count > 0]
+            if non_zero_sections:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": (
+                            "prune_working_rows would clear handoff rows in sections: "
+                            f"{', '.join(non_zero_sections)}. "
+                            "Re-run with allow_destructive_clear=true to confirm."
+                        ),
+                        "existing_counts": working_counts,
+                    }
+                )
 
         conn.execute(
             """
@@ -2768,6 +2845,7 @@ def archive_task_state(
             "task_ref": resolved_task_ref,
             "active_cleared": active_cleared,
             "pruned_working_rows": pruned,
+            "allow_destructive_clear": allow_destructive_clear,
         }
     )
 
@@ -3067,6 +3145,35 @@ def _cli() -> None:
     p_task = subparsers.add_parser("task", help="Generate CURRENT_TASK.md")
     p_task.add_argument("task_ref", nargs="?", help="Optional task reference")
 
+    p_export = subparsers.add_parser("export", help="Export handoff snapshot to JSON")
+    p_export.add_argument("--task_ref")
+    p_export.add_argument("--output_path")
+    p_export.add_argument("--no-markdown", action="store_true", help="Skip CURRENT_TASK markdown in export payload")
+
+    p_import = subparsers.add_parser("import", help="Import handoff snapshot from JSON")
+    p_import.add_argument("--input_path", required=True)
+    p_import.add_argument("--mode", default="merge", choices=["merge", "replace_task"])
+    p_import.add_argument("--set-active", action="store_true")
+    p_import.add_argument(
+        "--allow-destructive-clear",
+        action="store_true",
+        help="Acknowledge destructive clears for replace_task imports.",
+    )
+
+    p_archive = subparsers.add_parser("archive", help="Archive handoff task snapshot")
+    p_archive.add_argument("--task_ref")
+    p_archive.add_argument("--notes")
+    p_archive.add_argument("--archive_by")
+    p_archive.add_argument("--archive_branch")
+    p_archive.add_argument("--archive_commit_sha")
+    p_archive.add_argument("--no-clear-active", action="store_true")
+    p_archive.add_argument("--prune-working-rows", action="store_true")
+    p_archive.add_argument(
+        "--allow-destructive-clear",
+        action="store_true",
+        help="Acknowledge destructive clears when pruning working rows.",
+    )
+
     # Write commands
     p_set = subparsers.add_parser("set", help="Set active handoff state")
     p_set.add_argument("--task_ref", required=True)
@@ -3175,6 +3282,36 @@ def _cli() -> None:
         process_result(get_handoff_state(task_ref=args.task_ref, verbose=True))
     elif args.cli_command == "task":
         process_result(generate_current_task_md(task_ref=args.task_ref, write_file=True))
+    elif args.cli_command == "export":
+        process_result(
+            export_handoff_state(
+                task_ref=args.task_ref,
+                output_path=args.output_path,
+                include_markdown=not args.no_markdown,
+            )
+        )
+    elif args.cli_command == "import":
+        process_result(
+            import_handoff_state(
+                input_path=args.input_path,
+                mode=args.mode,
+                set_active=args.set_active,
+                allow_destructive_clear=args.allow_destructive_clear,
+            )
+        )
+    elif args.cli_command == "archive":
+        process_result(
+            archive_task_state(
+                task_ref=args.task_ref,
+                notes=args.notes,
+                archive_by=args.archive_by,
+                archive_branch=args.archive_branch,
+                archive_commit_sha=args.archive_commit_sha,
+                clear_active_if_matches=not args.no_clear_active,
+                prune_working_rows=args.prune_working_rows,
+                allow_destructive_clear=args.allow_destructive_clear,
+            )
+        )
     elif args.cli_command == "set":
         process_result(
             set_handoff_state(

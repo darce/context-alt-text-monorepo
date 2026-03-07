@@ -7,6 +7,9 @@ interface BulkActionBarProps {
   onMerge: () => void;
   onDismiss: () => void;
   onClear: () => void;
+  isMerging?: boolean;
+  isDismissing?: boolean;
+  mergeProgress?: { current: number; total: number } | null;
 }
 
 export const BulkActionBar = ({
@@ -14,6 +17,9 @@ export const BulkActionBar = ({
   onMerge,
   onDismiss,
   onClear,
+  isMerging = false,
+  isDismissing = false,
+  mergeProgress = null,
 }: BulkActionBarProps): React.JSX.Element => (
   <div className="acx-bulk-action-bar">
     <div className="acx-bulk-action-bar__info">
@@ -38,18 +44,27 @@ export const BulkActionBar = ({
         type="button"
         className="acx-button acx-button--secondary"
         onClick={onMerge}
-        disabled={count < 2}
+        disabled={count < 2 || isMerging || isDismissing}
       >
-        <Gavel size={16} />
-        {__('Merge', 'alt-context')}
+        {isMerging ? <span className="acx-spinner" aria-hidden="true" /> : <Gavel size={16} />}
+        {isMerging && mergeProgress
+          ? sprintf(
+              __('Merging %1$d of %2$d…', 'alt-context'),
+              mergeProgress.current,
+              mergeProgress.total,
+            )
+          : isMerging
+            ? __('Merging…', 'alt-context')
+            : __('Merge', 'alt-context')}
       </button>
       <button
         type="button"
         className="acx-button acx-button--danger"
         onClick={onDismiss}
+        disabled={isMerging || isDismissing}
       >
-        <Trash size={16} />
-        {__('Dismiss', 'alt-context')}
+        {isDismissing ? <span className="acx-spinner" aria-hidden="true" /> : <Trash size={16} />}
+        {isDismissing ? __('Dismissing…', 'alt-context') : __('Dismiss', 'alt-context')}
       </button>
     </div>
   </div>

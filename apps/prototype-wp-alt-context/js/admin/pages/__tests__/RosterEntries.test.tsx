@@ -1,8 +1,10 @@
 import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import { MemoryRouter } from 'react-router-dom';
+import { MemoryRouter, useLocation } from 'react-router-dom';
 
+import type { RosterEntry } from '../../api/rosterApi';
 import { useCreatePerson, useDeletePerson, useUpdatePerson } from '../../hooks/useRosterHooks';
+import { createMockMutation } from '../../test-utils/mockHooks';
 import { RosterEntriesSection } from '../roster/RosterEntriesSection';
 import type { RosterEntriesQuery } from '../roster/RosterEntriesSection';
 import { RosterEntriesTable } from '../roster/RosterEntriesTable';
@@ -36,23 +38,41 @@ const entries = [
   },
 ];
 
-const createMutation: {
-  mutate: (variables: { name: string; tags?: string[] }, options?: { onSuccess?: () => void }) => void;
-  isPending: boolean;
-} = { mutate: vi.fn(), isPending: false };
-const updateMutation: {
-  mutate: (variables: { id: number; name?: string; tags?: string[] }, options?: { onSuccess?: () => void }) => void;
-  isPending: boolean;
-} = { mutate: vi.fn(), isPending: false };
-const deleteMutation: {
-  mutate: (id: number) => void;
-  isPending: boolean;
-} = { mutate: vi.fn(), isPending: false };
+interface CreateRosterMutationContext {
+  previousEntries: RosterEntry[] | undefined;
+  optimisticId: number;
+}
+
+interface RosterMutationContext {
+  previousEntries: RosterEntry[] | undefined;
+  optimisticId?: number;
+}
+
+const createMutation = createMockMutation<RosterEntry, Error, { name: string; tags?: string[] }, CreateRosterMutationContext>(
+  {
+    mutate: vi.fn(),
+    isPending: false,
+  },
+);
+const updateMutation = createMockMutation<RosterEntry, Error, { id: number; name?: string; tags?: string[] }, RosterMutationContext>({
+  mutate: vi.fn(),
+  isPending: false,
+});
+const deleteMutation = createMockMutation<void, Error, number, RosterMutationContext>({
+  mutate: vi.fn(),
+  isPending: false,
+});
+
+const LocationProbe = () => {
+  const location = useLocation();
+  return <output data-testid="location-search">{location.search}</output>;
+};
 
 beforeEach(() => {
-  vi.mocked(useCreatePerson).mockReturnValue(createMutation as unknown as ReturnType<typeof useCreatePerson>);
-  vi.mocked(useUpdatePerson).mockReturnValue(updateMutation as unknown as ReturnType<typeof useUpdatePerson>);
-  vi.mocked(useDeletePerson).mockReturnValue(deleteMutation as unknown as ReturnType<typeof useDeletePerson>);
+  vi.clearAllMocks();
+  vi.mocked(useCreatePerson).mockReturnValue(createMutation);
+  vi.mocked(useUpdatePerson).mockReturnValue(updateMutation);
+  vi.mocked(useDeletePerson).mockReturnValue(deleteMutation);
 });
 
 describe('RosterEntriesTable', () => {
@@ -63,6 +83,18 @@ describe('RosterEntriesTable', () => {
     expect(screen.getByText(/tag-a/)).toBeInTheDocument();
     expect(screen.getByText('2')).toBeInTheDocument();
   });
+
+  it('confirms before deleting a person', async () => {
+    render(<RosterEntriesTable entries={entries} />);
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Delete person' })[0]);
+
+    expect(screen.getByText('Are you sure you want to delete this person? Assigned clusters will be dissociated.')).toBeInTheDocument();
+
+    await userEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
+
+    expect(deleteMutation.mutate).toHaveBeenCalledWith(1, expect.any(Object));
+  });
 });
 
 describe('RosterEntriesSection', () => {
@@ -70,6 +102,7 @@ describe('RosterEntriesSection', () => {
     render(
       <MemoryRouter initialEntries={[route]}>
         <RosterEntriesSection query={query} />
+        <LocationProbe />
       </MemoryRouter>
     );
 
@@ -151,5 +184,6 @@ describe('RosterEntriesSection', () => {
 
     expect(screen.queryByText('No unassigned people found.')).not.toBeInTheDocument();
     expect(screen.getByText('Chris')).toBeInTheDocument();
+    expect(screen.getByTestId('location-search')).toHaveTextContent('?tab=entries');
   });
 });

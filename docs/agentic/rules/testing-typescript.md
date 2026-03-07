@@ -4,12 +4,29 @@
 
 ---
 
-## Framework Stack
+## High-Risk Regression Traps (Recent Branch Reviews)
 
-- **Test runner**: Vitest
-- **Component testing**: React Testing Library
-- **API mocking**: MSW (Mock Service Worker)
-- **Query client**: TanStack Query (with `retry: false` in tests)
+### Provider Harness Parity Is Mandatory
+
+If a hook/component uses React Router or React Query, tests must render with matching providers.
+
+- `useSearchParams` / `useLocation` / `useNavigate` -> wrap with `MemoryRouter` (or equivalent router wrapper)
+- `useQuery` / `useMutation` / `useQueryClient` -> wrap with `QueryClientProvider`
+
+Do not rely on incidental provider context from unrelated helpers.
+
+### Ban `unknown as ReturnType<...>` Test Mocks
+
+Do not coerce partial hook responses with `unknown`/`any` casts.
+Use typed builders/factories (for example `createMockQuery<T>()`) so missing fields fail at compile time.
+
+```tsx
+// BAD
+mockedHook.mockReturnValue({ data: value } as unknown as ReturnType<typeof useSomething>);
+
+// GOOD
+mockedHook.mockReturnValue(createMockQuery<MyType>({ data: value }));
+```
 
 ---
 
@@ -135,55 +152,4 @@ Use RFC 2606 domains for test URLs:
 http.get('http://example.test/api/clusters', () => {
   return HttpResponse.json({ clusters: [] });
 });
-```
-
----
-
-## Accessibility Testing
-
-- Run axe-core on every component
-- Assert zero critical violations
-- Test keyboard navigation explicitly
-
-```tsx
-import { axe, toHaveNoViolations } from 'jest-axe';
-expect.extend(toHaveNoViolations);
-
-it('passes axe accessibility checks', async () => {
-  const { container } = render(<MyComponent />);
-  const results = await axe(container);
-  expect(results).toHaveNoViolations();
-});
-```
-
----
-
-## TypeScript Fake Pattern
-
-```typescript
-// Fake for unit tests (in tests/fakes.ts)
-export const createFakeRecognitionApi = (
-  initialClusters: Cluster[] = [],
-): RecognitionApi => {
-  const clusters = new Map(initialClusters.map((c) => [c.id, c]));
-  return {
-    getClusters: async () => Array.from(clusters.values()),
-    updateLabel: async (id, label) => {
-      const cluster = clusters.get(id);
-      if (cluster) clusters.set(id, { ...cluster, label });
-    },
-  };
-};
-```
-
----
-
-## Commands
-
-```bash
-cd apps/prototype-wp-alt-context
-npm run test          # Run all tests
-npm run test -- --run # Run without watch mode
-npm run typecheck     # TypeScript type checking
-npm run lint          # ESLint
 ```

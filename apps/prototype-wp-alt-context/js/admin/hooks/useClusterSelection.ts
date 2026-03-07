@@ -30,14 +30,25 @@ export const useClusterSelection = () => {
     setSelectedIds((prev) => (prev.size === 0 ? prev : new Set()));
   }, []);
 
+  const selectAll = useCallback((allIds: string[]) => {
+    setSelectedIds(new Set(allIds));
+  }, []);
+
   const isSelected = useCallback((id: string) => selectedIds.has(id), [selectedIds]);
+
+  const isAllSelected = useCallback(
+    (allIds: string[]) => allIds.length > 0 && allIds.every((id) => selectedIds.has(id)),
+    [selectedIds],
+  );
 
   return {
     selectedIds,
     toggle,
     selectRange,
     clear,
+    selectAll,
     isSelected,
+    isAllSelected,
     count: selectedIds.size,
   };
 };

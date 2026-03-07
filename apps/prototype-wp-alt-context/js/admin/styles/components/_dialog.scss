@@ -3,7 +3,7 @@
 .acx-dialog__overlay {
   position: fixed;
   inset: 0;
-  background: rgba(15, 23, 42, 0.45);
+  background: var(--acx-color-overlay);
   z-index: 9998;
 }
 
@@ -15,12 +15,12 @@
   width: min(560px, 92vw);
   max-height: 85vh;
   overflow: auto;
-  background: #fff;
+  background: var(--acx-color-surface-alt);
   border-radius: 12px;
   padding: 20px;
   box-shadow:
-    0 20px 25px -5px rgba(15, 23, 42, 0.2),
-    0 10px 10px -5px rgba(15, 23, 42, 0.1);
+    var(--acx-shadow-dialog-primary),
+    var(--acx-shadow-dialog-secondary);
   z-index: 9999;
 }
 
@@ -32,11 +32,17 @@
   margin: 0 0 6px 0;
   font-size: 16px;
   font-weight: 600;
-  color: #0f172a;
+  color: var(--acx-color-text);
 }
 
 .acx-dialog__description {
   margin: 0 0 16px 0;
   font-size: 13px;
-  color: #64748b;
+  color: var(--acx-color-text-muted);
+}
+
+.acx-dialog__actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
 }

@@ -32,6 +32,11 @@
     border-color: var(--acx-color-accent);
   }
 
+  &.is-indeterminate {
+    background-color: var(--acx-color-accent);
+    border-color: var(--acx-color-accent);
+  }
+
   &__box {
     display: block;
     width: 12px;
@@ -49,6 +54,17 @@
         border: solid var(--acx-color-accent-contrast);
         border-width: 0 2px 2px 0;
         transform: rotate(45deg);
+      }
+    }
+
+    .is-indeterminate & {
+      &::after {
+        content: '';
+        position: absolute;
+        left: 1px;
+        top: 5px;
+        width: 10px;
+        border-top: 2px solid var(--acx-color-accent-contrast);
       }
     }
   }

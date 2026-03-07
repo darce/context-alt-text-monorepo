@@ -9,9 +9,16 @@ import {
   type RosterEntry,
 } from '../api/rosterApi';
 
+const rosterEntriesKey = queryKeys.roster.entries();
+
+interface RosterMutationContext {
+  previousEntries: RosterEntry[] | undefined;
+  optimisticId?: number;
+}
+
 export const useRosterEntries = () =>
   useQuery<RosterEntry[]>({
-    queryKey: queryKeys.roster.entries(),
+    queryKey: rosterEntriesKey,
     queryFn: () => listRosterEntries(),
     refetchInterval: 60_000,
   });
@@ -20,7 +27,31 @@ export const useCreatePerson = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: ({ name, tags }: { name: string; tags?: string[] }) => createPerson(name, tags),
-    onSuccess: () => {
+    onMutate: async ({ name, tags }) => {
+      await queryClient.cancelQueries({ queryKey: rosterEntriesKey });
+      const previousEntries = queryClient.getQueryData<RosterEntry[]>(rosterEntriesKey);
+      const optimisticEntry: RosterEntry = {
+        id: -Date.now(),
+        name,
+        tags: tags ?? [],
+        cluster_count: 0,
+        updated_at: new Date().toISOString(),
+      };
+      queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) => [...(current ?? []), optimisticEntry]);
+      return { previousEntries, optimisticId: optimisticEntry.id };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(rosterEntriesKey, context.previousEntries);
+      }
+    },
+    onSuccess: (createdEntry, _variables, context) => {
+      queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) => {
+        const withoutOptimistic = (current ?? []).filter((entry) => entry.id !== context?.optimisticId);
+        return [...withoutOptimistic, createdEntry];
+      });
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.roster.all });
     },
   });
@@ -31,7 +62,33 @@ export const useUpdatePerson = () => {
   return useMutation({
     mutationFn: ({ id, name, tags }: { id: number; name?: string; tags?: string[] }) =>
       updatePerson(id, name, tags),
-    onSuccess: () => {
+    onMutate: async ({ id, name, tags }): Promise<RosterMutationContext> => {
+      await queryClient.cancelQueries({ queryKey: rosterEntriesKey });
+      const previousEntries = queryClient.getQueryData<RosterEntry[]>(rosterEntriesKey);
+      queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) =>
+        (current ?? []).map((entry) =>
+          entry.id === id
+            ? {
+                ...entry,
+                name: name ?? entry.name,
+                tags: tags ?? entry.tags,
+              }
+            : entry,
+        ),
+      );
+      return { previousEntries };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(rosterEntriesKey, context.previousEntries);
+      }
+    },
+    onSuccess: (updatedEntry) => {
+      queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) =>
+        (current ?? []).map((entry) => (entry.id === updatedEntry.id ? updatedEntry : entry)),
+      );
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.roster.all });
     },
   });
@@ -41,7 +98,20 @@ export const useDeletePerson = () => {
   const queryClient = useQueryClient();
   return useMutation({
     mutationFn: (id: number) => deletePerson(id),
-    onSuccess: () => {
+    onMutate: async (id): Promise<RosterMutationContext> => {
+      await queryClient.cancelQueries({ queryKey: rosterEntriesKey });
+      const previousEntries = queryClient.getQueryData<RosterEntry[]>(rosterEntriesKey);
+      queryClient.setQueryData<RosterEntry[]>(rosterEntriesKey, (current) =>
+        (current ?? []).filter((entry) => entry.id !== id),
+      );
+      return { previousEntries };
+    },
+    onError: (_error, _variables, context) => {
+      if (context?.previousEntries) {
+        queryClient.setQueryData(rosterEntriesKey, context.previousEntries);
+      }
+    },
+    onSettled: () => {
       void queryClient.invalidateQueries({ queryKey: queryKeys.roster.all });
       void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
     },

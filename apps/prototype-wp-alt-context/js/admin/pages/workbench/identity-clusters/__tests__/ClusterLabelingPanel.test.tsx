@@ -11,6 +11,7 @@ import {
   updateClusterLabel,
 } from '../../../../api/recognition';
 import { useRosterEntries } from '../../../../hooks/useRosterHooks';
+import { createMockQuery } from '../../../../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
@@ -80,12 +81,12 @@ describe('ClusterLabelingPanel', () => {
       moved_identity_ids: [],
       target_identity_count: 10,
     });
-    vi.mocked(useRosterEntries).mockReturnValue({
+    vi.mocked(useRosterEntries).mockReturnValue(createMockQuery({
       data: [],
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRosterEntries>);
+    }));
   });
 
   const selectOrCreateName = async (name: string) => {

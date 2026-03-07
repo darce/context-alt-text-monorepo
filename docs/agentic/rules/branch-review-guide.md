@@ -61,9 +61,13 @@ These items apply regardless of language. Stack-specific items are in the langua
 ### Correctness
 
 - [ ] **Migration ↔ Model parity** — constraints match between migration and ORM model.
+- [ ] **Schema-column parity** — SQL `WHERE`/`JOIN` keys match actual schema columns (no stale key names).
 - [ ] **No unreachable code** — dead branches inside conditionals.
 - [ ] **No duplicate field declarations** — Pydantic models, dataclasses.
 - [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
+- [ ] **Runtime dependency integrity** — no local type-only shims masking missing runtime packages; verify new imports with real build/test execution.
+- [ ] **Atomic mutation path preserved** — avoid splitting an existing atomic backend write flow into multiple client mutations without explicit architecture sign-off.
+- [ ] **Primary control reachability** — primary actions (for example select-all) are reachable from initial zero-state UI.
 - [ ] **Stale/offline path remains user-recoverable** — automation flags/defaults cannot remove an explicit manual recovery action.
 - [ ] **Interactive timeout parity** — related remote calls use a shared timeout helper and consistent timeout budgets.
 - [ ] **Import/restore payload validation** — malformed snapshot shapes fail fast with explicit errors (never silent success).
@@ -86,6 +90,10 @@ These items apply regardless of language. Stack-specific items are in the langua
 ### Documentation & Cleanup
 
 - [ ] **No stale comments** — "TODO", "assuming this", "will verify" resolved or removed.
+- [ ] **Planning-doc consistency** — "What works", "What's missing", checklist state, and success criteria do not contradict.
+- [ ] **ADR terminology alignment** — accepted domain terms are used consistently (no regressions to retired naming).
+- [ ] **Command invocability** — documented commands run as written (no broken copy-paste syntax).
+- [ ] **No debug/large artifact commits** — logs and generated output files are ignored and excluded from Git.
 - [ ] **No duplicate imports** — each symbol imported once per file.
 - [ ] **Docstrings complete** — no empty `Raises:` or `Returns:` sections.
 - [ ] **Function-level imports justified** — standard deps at module scope unless genuine cold-start reason.

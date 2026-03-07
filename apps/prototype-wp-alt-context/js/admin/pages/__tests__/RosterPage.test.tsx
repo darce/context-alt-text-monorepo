@@ -18,22 +18,29 @@ vi.mock('../../../components/ui/combobox', () => ({
     options,
     value,
     onSelect,
+    onCreate,
     ariaLabel,
     id,
   }: {
     options: { value: string; label: string }[];
     value?: string;
     onSelect?: (nextValue: string) => void;
+    onCreate?: (value: string) => void;
     ariaLabel?: string;
     id?: string;
   }) => (
-    <select id={id} aria-label={ariaLabel} value={value ?? ''} onChange={(event) => onSelect?.(event.target.value)}>
-      {options.map((option) => (
-        <option key={option.value} value={option.value}>
-          {option.label}
-        </option>
-      ))}
-    </select>
+    <div>
+      <select id={id} aria-label={ariaLabel} value={value ?? ''} onChange={(event) => onSelect?.(event.target.value)}>
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
+          </option>
+        ))}
+      </select>
+      <button type="button" onClick={() => onCreate?.('Taylor')}>
+        Create "Taylor"
+      </button>
+    </div>
   ),
 }));
 
@@ -54,7 +61,9 @@ const selectionState = {
   selectedIds: new Set<string>(),
   toggle: vi.fn(),
   selectRange: vi.fn(),
+  selectAll: vi.fn(),
   clear: vi.fn(),
+  isAllSelected: vi.fn(() => false),
   isSelected: vi.fn(() => false),
   count: 0,
 };
@@ -180,6 +189,7 @@ describe('ClusterGrid', () => {
 
     const firstCard = screen.getByRole('button', { name: /cluster-1/i });
     const secondCard = screen.getByRole('button', { name: /cluster-2/i });
+    expect(screen.getByRole('group', { name: /cluster cards/i })).toBeInTheDocument();
 
     expect(firstCard).toHaveAttribute('aria-pressed', 'true');
     expect(secondCard).toHaveAttribute('aria-pressed', 'false');
@@ -270,5 +280,126 @@ describe('ClusterDrawerPanel', () => {
 
     await userEvent.click(commitButton);
     expect(onCommitCluster).toHaveBeenCalledWith(cluster, { rosterEntryId: 42 });
+  });
+
+  it('supports inline create from combobox and commits with newEntryName', async () => {
+    const onCommitCluster = vi.fn();
+    const cluster = makeCluster();
+
+    render(
+      <ClusterDrawerPanel
+        cluster={cluster}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={onCommitCluster}
+        isCommitting={false}
+        rosterEntries={[
+          {
+            id: 42,
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            updated_at: '2026-01-01T00:00:00Z',
+          },
+        ]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create "Taylor"' }));
+    await userEvent.click(screen.getByRole('button', { name: /^Confirm Assignment$/i }));
+
+    expect(onCommitCluster).toHaveBeenCalledWith(cluster, { newEntryName: 'Taylor' });
+  });
+
+  it('clears create state when selecting an existing person after create', async () => {
+    const onCommitCluster = vi.fn();
+    const cluster = makeCluster();
+
+    render(
+      <ClusterDrawerPanel
+        cluster={cluster}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={onCommitCluster}
+        isCommitting={false}
+        rosterEntries={[
+          {
+            id: 42,
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            updated_at: '2026-01-01T00:00:00Z',
+          },
+        ]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    await userEvent.click(screen.getByRole('button', { name: 'Create "Taylor"' }));
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
+    await userEvent.click(screen.getByRole('button', { name: /^Confirm Assignment$/i }));
+
+    expect(onCommitCluster).toHaveBeenCalledWith(cluster, { rosterEntryId: 42 });
+  });
+
+  it('traps focus inside drawer and autofocuses close control', async () => {
+    render(
+      <ClusterDrawerPanel
+        cluster={makeCluster()}
+        identities={[]}
+        mediaMap={{}}
+        onClose={vi.fn()}
+        onRescanCluster={vi.fn()}
+        isRescanning={false}
+        onCommitCluster={vi.fn()}
+        isCommitting={false}
+        rosterEntries={[
+          {
+            id: 42,
+            name: 'Alex Carter',
+            tags: ['event'],
+            cluster_count: 3,
+            updated_at: '2026-01-01T00:00:00Z',
+          },
+        ]}
+        isDetailLoading={false}
+        onFaceDragStart={vi.fn()}
+        onFaceDragEnd={vi.fn()}
+        onDropTargetChange={vi.fn()}
+        dropTarget={null}
+        isDragging={false}
+        onDiscardDrop={vi.fn()}
+      />,
+    );
+
+    const closeButton = screen.getByRole('button', { name: 'Close' });
+    expect(closeButton).toHaveFocus();
+
+    await userEvent.selectOptions(screen.getByRole('combobox', { name: /Commit to roster entry/i }), '42');
+    const commitButton = screen.getByRole('button', { name: /^Confirm Assignment$/i });
+    commitButton.focus();
+    expect(commitButton).toHaveFocus();
+
+    await userEvent.keyboard('{Tab}');
+    expect(closeButton).toHaveFocus();
   });
 });

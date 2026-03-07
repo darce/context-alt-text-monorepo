@@ -79,6 +79,7 @@ interface ComboboxProps {
   isLoading?: boolean;
   renderOption?: (option: ComboboxOption) => React.ReactNode;
   id?: string;
+  portalContainer?: HTMLElement | null;
 }
 
 export const Combobox = ({
@@ -97,6 +98,7 @@ export const Combobox = ({
   isLoading = false,
   renderOption,
   id,
+  portalContainer,
 }: ComboboxProps): React.ReactElement => {
   const [open, setOpen] = React.useState(false);
   const [inputValue, setInputValue] = React.useState(value ?? '');
@@ -186,61 +188,63 @@ export const Combobox = ({
           <ChevronsUpDown className="acx-combobox__icon" />
         </button>
       </PopoverPrimitive.Trigger>
-      <PopoverPrimitive.Content className="acx-combobox__content" align="start">
-        <Command
-          filter={(value, search) => {
-            if (value.toLowerCase().includes(search.toLowerCase())) {
-              return 1;
-            }
-            return 0;
-          }}
-        >
-          <CommandInput
-            placeholder={searchPlaceholder ?? placeholder}
-            value={inputValue}
-            onValueChange={handleInputChange}
-          />
-          <CommandList>
-            {isLoading && (
-              <div className="acx-combobox__empty">{__('Loading options...', 'alt-context')}</div>
-            )}
-            <CommandEmpty>
-              {emptyMessage ?? emptyText}
-              {onCreate && inputValue && (
-                <div className="acx-combobox__create">
-                  <button
-                    type="button"
-                    className="acx-button acx-button--small"
-                    onClick={() => {
-                      onCreate(inputValue);
-                      setOpen(false);
-                    }}
-                  >
-                    {sprintf(__('Create "%s"', 'alt-context'), inputValue)}
-                  </button>
-                </div>
+      <PopoverPrimitive.Portal container={portalContainer ?? undefined}>
+        <PopoverPrimitive.Content className="acx-combobox__content" align="start">
+          <Command
+            filter={(value, search) => {
+              if (value.toLowerCase().includes(search.toLowerCase())) {
+                return 1;
+              }
+              return 0;
+            }}
+          >
+            <CommandInput
+              placeholder={searchPlaceholder ?? placeholder}
+              value={inputValue}
+              onValueChange={handleInputChange}
+            />
+            <CommandList>
+              {isLoading && (
+                <div className="acx-combobox__empty">{__('Loading options...', 'alt-context')}</div>
               )}
-            </CommandEmpty>
-            {groupedOptions.map(([group, groupOptions]) => (
-              <CommandGroup key={group} heading={group}>
-                {groupOptions.map((option) => (
-                  <CommandItem
-                    key={option.value}
-                    value={option.label} // Use label for filtering
-                    onSelect={() => handleSelectOption(option)}
-                    data-selected={value === option.value}
-                  >
-                    <Check
-                      className={`acx-combobox__check ${value === option.value ? 'acx-combobox__check--active' : ''}`}
-                    />
-                    {renderOption ? renderOption(option) : option.label}
-                  </CommandItem>
-                ))}
-              </CommandGroup>
-            ))}
-          </CommandList>
-        </Command>
-      </PopoverPrimitive.Content>
+              <CommandEmpty>
+                {emptyMessage ?? emptyText}
+                {onCreate && inputValue && (
+                  <div className="acx-combobox__create">
+                    <button
+                      type="button"
+                      className="acx-button acx-button--small"
+                      onClick={() => {
+                        onCreate(inputValue);
+                        setOpen(false);
+                      }}
+                    >
+                      {sprintf(__('Create "%s"', 'alt-context'), inputValue)}
+                    </button>
+                  </div>
+                )}
+              </CommandEmpty>
+              {groupedOptions.map(([group, groupOptions]) => (
+                <CommandGroup key={group} heading={group}>
+                  {groupOptions.map((option) => (
+                    <CommandItem
+                      key={option.value}
+                      value={option.label} // Use label for filtering
+                      onSelect={() => handleSelectOption(option)}
+                      data-selected={value === option.value}
+                    >
+                      <Check
+                        className={`acx-combobox__check ${value === option.value ? 'acx-combobox__check--active' : ''}`}
+                      />
+                      {renderOption ? renderOption(option) : option.label}
+                    </CommandItem>
+                  ))}
+                </CommandGroup>
+              ))}
+            </CommandList>
+          </Command>
+        </PopoverPrimitive.Content>
+      </PopoverPrimitive.Portal>
     </PopoverPrimitive.Root>
   );
 };

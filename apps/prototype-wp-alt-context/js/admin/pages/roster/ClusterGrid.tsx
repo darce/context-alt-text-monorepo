@@ -179,7 +179,7 @@ export const ClusterGrid = ({
 
 
   return (
-    <div className="acx-cluster-grid" ref={gridRef}>
+    <div className="acx-cluster-grid" ref={gridRef} role="group" aria-label={__('Cluster cards', 'alt-context')}>
       {clusters.map((cluster, index) => {
         const isSelected = selection.isSelected(cluster.id);
         const isDropTarget = dropTarget === cluster.id;
@@ -244,4 +244,3 @@ export const ClusterGrid = ({
     </div>
   );
 };
-

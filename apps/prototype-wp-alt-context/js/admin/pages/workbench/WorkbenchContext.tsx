@@ -44,29 +44,6 @@ const clusterPanelReducer = (state: ClusterPanelState, action: ClusterPanelActio
   }
 };
 
-const MEDIA_PAGE_SIZE_OPTIONS = [10, 50, 100] as const;
-const DEFAULT_MEDIA_PAGE_SIZE = MEDIA_PAGE_SIZE_OPTIONS[0];
-const MEDIA_PAGE_SIZE_STORAGE_KEY = 'acx-media-page-size';
-
-const getStoredMediaPageSize = (): number => {
-  if (typeof window === 'undefined') {
-    return DEFAULT_MEDIA_PAGE_SIZE;
-  }
-
-  try {
-    const stored = window.localStorage.getItem(MEDIA_PAGE_SIZE_STORAGE_KEY);
-    if (!stored) {
-      return DEFAULT_MEDIA_PAGE_SIZE;
-    }
-    const parsed = Number.parseInt(stored, 10);
-    return MEDIA_PAGE_SIZE_OPTIONS.includes(parsed as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])
-      ? parsed
-      : DEFAULT_MEDIA_PAGE_SIZE;
-  } catch {
-    return DEFAULT_MEDIA_PAGE_SIZE;
-  }
-};
-
 interface WorkbenchContextValue {
   // Navigation
   activeSection: WorkbenchTab;
@@ -137,7 +114,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   ]);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
-  const [perPage, setPerPageState] = useState<number>(() => getStoredMediaPageSize());
   const [knownTotalPages, setKnownTotalPages] = useState<number | null>(null);
   const { recognitionUrlFallback } = getConfig();
   const [clusterPanel, dispatchClusterPanel] = useReducer(clusterPanelReducer, {
@@ -150,6 +126,8 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const {
     searchQuery,
     currentPage,
+    perPage,
+    setPerPage,
     setCurrentPage,
     handleSearchChange,
     normalizedSearch,
@@ -252,29 +230,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
 
     return sprintf(_n('Showing %d media item.', 'Showing %d media items.', totalCount, 'alt-context'), totalCount);
   }, [mediaQuery.isError, mediaQuery.isFetching, normalizedSearch, totalCount]);
-
-  const setPerPage = React.useCallback(
-    (nextPerPage: number) => {
-      if (!MEDIA_PAGE_SIZE_OPTIONS.includes(nextPerPage as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])) {
-        return;
-      }
-      setPerPageState(nextPerPage);
-      setCurrentPage(1);
-    },
-    [setCurrentPage],
-  );
-
-
-  useEffect(() => {
-    if (typeof window === 'undefined') {
-      return;
-    }
-    try {
-      window.localStorage.setItem(MEDIA_PAGE_SIZE_STORAGE_KEY, String(perPage));
-    } catch {
-      // Ignore storage failures
-    }
-  }, [perPage]);
 
   const value = useMemo(
     () => ({

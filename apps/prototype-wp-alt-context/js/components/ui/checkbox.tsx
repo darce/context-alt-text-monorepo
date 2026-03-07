@@ -1,7 +1,7 @@
 import * as React from 'react';
 
 interface CheckboxProps {
-  checked: boolean;
+  checked: boolean | 'indeterminate';
   onCheckedChange: (checked: boolean) => void;
   ariaLabel?: string;
   disabled?: boolean;
@@ -14,11 +14,11 @@ export const Checkbox = React.forwardRef<HTMLButtonElement, CheckboxProps>(
       ref={ref}
       type="button"
       role="checkbox"
-      aria-checked={checked}
+      aria-checked={checked === 'indeterminate' ? 'mixed' : checked}
       aria-label={ariaLabel}
       disabled={disabled}
-      className={`acx-checkbox ${className ?? ''}${checked ? ' is-checked' : ''}`}
-      onClick={() => onCheckedChange(!checked)}
+      className={`acx-checkbox ${className ?? ''}${checked === true ? ' is-checked' : ''}${checked === 'indeterminate' ? ' is-indeterminate' : ''}`}
+      onClick={() => onCheckedChange(checked !== true)}
     >
       <span aria-hidden="true" className="acx-checkbox__box" />
     </button>

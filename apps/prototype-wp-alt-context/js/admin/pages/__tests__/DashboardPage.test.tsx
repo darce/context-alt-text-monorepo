@@ -31,18 +31,10 @@ vi.mock('../dashboard/OrientationCard', () => ({
   OrientationCard: () => <div>Orientation</div>,
 }));
 
-vi.mock('../dashboard/GuidanceCard', () => ({
-  GuidanceCard: ({ stats }: { stats: unknown }) => <div data-testid="guidance">{JSON.stringify(stats)}</div>,
-}));
-
 describe('DashboardPage', () => {
   const mockedUseMediaStats = vi.mocked(useMediaStats);
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
   const mockedUseIdentityStats = vi.mocked(useIdentityStats);
-  const readGuidanceStats = (): Record<string, number> => {
-    const raw = screen.getByTestId('guidance').textContent ?? '{}';
-    return JSON.parse(raw) as Record<string, number>;
-  };
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -82,13 +74,8 @@ describe('DashboardPage', () => {
     expect(screen.getByText('3')).toBeInTheDocument();
     expect(screen.getByText('22')).toBeInTheDocument();
     expect(screen.getByText('Media with faces')).toBeInTheDocument();
-    expect(readGuidanceStats()).toMatchObject({
-      people_count: 10,
-      assigned_clusters_count: 7,
-      pending_clusters_count: 3,
-      media_with_faces_count: 22,
-      unassigned_persons_count: 0,
-    });
+    expect(screen.getByText('3 faces are waiting for names.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Workbench' })).toHaveAttribute('href', '#/workbench?tab=confirm');
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
@@ -105,13 +92,8 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(readGuidanceStats()).toMatchObject({
-      people_count: 0,
-      assigned_clusters_count: 0,
-      pending_clusters_count: 0,
-      media_with_faces_count: 0,
-      unassigned_persons_count: 0,
-    });
+    expect(screen.getByText('Start by scanning your media library for faces.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Go to Scan tab' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
   it('shows all-caught-up guidance when no pending review remains', () => {
@@ -128,13 +110,7 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(readGuidanceStats()).toMatchObject({
-      people_count: 4,
-      assigned_clusters_count: 4,
-      pending_clusters_count: 0,
-      media_with_faces_count: 10,
-      unassigned_persons_count: 0,
-    });
+    expect(screen.getByText('All caught up. New faces will appear here for review.')).toBeInTheDocument();
   });
 
   it('renders recent activity duration and results link when timing is available', () => {
@@ -217,13 +193,11 @@ describe('DashboardPage', () => {
 
     render(<DashboardPage />);
 
-    expect(readGuidanceStats()).toMatchObject({
-      people_count: 8,
-      assigned_clusters_count: 5,
-      pending_clusters_count: 0,
-      media_with_faces_count: 21,
-      unassigned_persons_count: 3,
-    });
+    expect(screen.getByText('3 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review unassigned persons' })).toHaveAttribute(
+      'href',
+      '#/roster?tab=entries&personFilter=unassigned',
+    );
   });
 
   it('renders zero for media-with-faces when no faces are detected', () => {

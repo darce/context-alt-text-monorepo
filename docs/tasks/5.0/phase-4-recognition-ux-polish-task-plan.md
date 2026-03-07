@@ -308,51 +308,51 @@ Add `role="group"` and `aria-label` to the grid container. Keep `role="button"` 
 
 ## Phase 4a: Accessible Confirmation Dialogs
 
-- [ ] **Implement**: create `ConfirmDialog` component in `js/admin/pages/roster/ConfirmDialog.tsx` using existing `dialog.tsx` wrapper (`DialogRoot`, `DialogOverlay`, `DialogContent`, etc.) with `onOpenChange` wiring, title, description, confirm/cancel buttons, and `isPending` state. Follow `ClusterConfirmDialog` pattern from workbench.
-- [ ] **Test (red)**: `ConfirmDialog` -- renders title, description, and buttons when open; confirm button calls `onConfirm`; cancel button calls `onCancel`; confirm button shows "Processing..." when `isPending`; ESC dismiss calls `onOpenChange(false)`.
-- [ ] **Test (green)**: dialog renders and callbacks fire correctly, including ESC/overlay dismiss.
-- [ ] **Implement**: replace `window.confirm` in `RosterPage.handleBulkMerge` with `ConfirmDialog` state. Adapt `useClusterConfirmDialog` pattern (promise-based `requestConfirm`, `handleOpenChange`, unmount cleanup).
-- [ ] **Implement**: replace `window.confirm` in `RosterPage.handleBulkDismiss` with `ConfirmDialog` state.
-- [ ] **Test (red)**: `RosterPage` -- clicking merge opens dialog; confirming triggers `bulkMergeMutation`; canceling closes dialog; ESC closes dialog.
-- [ ] **Test (green)**: merge and dismiss flows work through dialog.
+- [x] **Implement**: create `ConfirmDialog` component in `js/admin/pages/roster/ConfirmDialog.tsx` using existing `dialog.tsx` wrapper (`DialogRoot`, `DialogOverlay`, `DialogContent`, etc.) with `onOpenChange` wiring, title, description, confirm/cancel buttons, and `isPending` state. Follow `ClusterConfirmDialog` pattern from workbench.
+- [x] **Test (red)**: `ConfirmDialog` -- renders title, description, and buttons when open; confirm button calls `onConfirm`; cancel button calls `onCancel`; confirm button shows "Processing..." when `isPending`; ESC dismiss calls `onOpenChange(false)`.
+- [x] **Test (green)**: dialog renders and callbacks fire correctly, including ESC/overlay dismiss.
+- [x] **Implement**: replace `window.confirm` in `RosterPage.handleBulkMerge` with `ConfirmDialog` state. Adapt `useClusterConfirmDialog` pattern (promise-based `requestConfirm`, `handleOpenChange`, unmount cleanup).
+- [x] **Implement**: replace `window.confirm` in `RosterPage.handleBulkDismiss` with `ConfirmDialog` state.
+- [x] **Test (red)**: `RosterPage` -- clicking merge opens dialog; confirming triggers `bulkMergeMutation`; canceling closes dialog; ESC closes dialog.
+- [x] **Test (green)**: merge and dismiss flows work through dialog.
 
 ## Phase 4b: Select All and Bulk Bar Polish
 
-- [ ] **Test (red)**: `useClusterSelection` -- `selectAll` sets all IDs; `isAllSelected` returns true when all selected.
-- [ ] **Implement**: add `selectAll(allIds)` and `isAllSelected(allIds)` methods to `useClusterSelection`.
-- [ ] **Test (green)**: `selectAll` and `isAllSelected` work correctly.
-- [ ] **Implement**: add "Select all" `Checkbox` in cluster section header in `RosterPage` (always visible, outside `selection.count > 0` conditional), wired to `selection.selectAll(clusterIds)` / `selection.clear()`. Support indeterminate state.
-- [ ] **Implement**: add `isMerging`/`isDismissing` props to `BulkActionBar`; disable buttons and show spinner when pending.
-- [ ] **Test (red)**: `BulkActionBar` -- merge button disabled and shows spinner when `isMerging` is true.
-- [ ] **Test (green)**: loading states render correctly.
-- [ ] **Implement**: pass `bulkMergeMutation.isPending` and `bulkDismissMutation.isPending` from `RosterPage` to `BulkActionBar`.
+- [x] **Test (red)**: `useClusterSelection` -- `selectAll` sets all IDs; `isAllSelected` returns true when all selected.
+- [x] **Implement**: add `selectAll(allIds)` and `isAllSelected(allIds)` methods to `useClusterSelection`.
+- [x] **Test (green)**: `selectAll` and `isAllSelected` work correctly.
+- [x] **Implement**: add "Select all" `Checkbox` in cluster section header in `RosterPage` (always visible, outside `selection.count > 0` conditional), wired to `selection.selectAll(clusterIds)` / `selection.clear()`. Support indeterminate state.
+- [x] **Implement**: add `isMerging`/`isDismissing` props to `BulkActionBar`; disable buttons and show spinner when pending.
+- [x] **Test (red)**: `BulkActionBar` -- merge button disabled and shows spinner when `isMerging` is true.
+- [x] **Test (green)**: loading states render correctly.
+- [x] **Implement**: pass `bulkMergeMutation.isPending` and `bulkDismissMutation.isPending` from `RosterPage` to `BulkActionBar`.
 
 ## Phase 4c: Inline Person Creation in Combobox
 
-- [ ] **Test (red)**: `ClusterDrawerPanel` -- typing an unknown name in combobox shows "Create [name]" button; clicking it sets sentinel state (`selectedEntryId='create'`, `newEntryName`); committing sends `newEntryName` via atomic commit endpoint.
-- [ ] **Test (red)**: `ClusterDrawerPanel` -- selecting an existing person after `onCreate` clears `newEntryName` and sets `selectedEntryId` to the person ID.
-- [ ] **Implement**: wire Combobox `onCreate` in `ClusterDrawerPanel` to set sentinel (`selectedEntryId='create'` + `newEntryName`). Wire `onSelect` to clear `newEntryName`.
-- [ ] **Implement**: remove separate "Create new" sentinel option (`{ value: 'create' }`) and `<input>` field from `ClusterDrawerPanel`.
-- [ ] **Test (green)**: inline person creation from combobox preserves atomic commit path; select-after-create and create-after-select transitions work correctly.
+- [x] **Test (red)**: `ClusterDrawerPanel` -- typing an unknown name in combobox shows "Create [name]" button; clicking it sets sentinel state (`selectedEntryId='create'`, `newEntryName`); committing sends `newEntryName` via atomic commit endpoint.
+- [x] **Test (red)**: `ClusterDrawerPanel` -- selecting an existing person after `onCreate` clears `newEntryName` and sets `selectedEntryId` to the person ID.
+- [x] **Implement**: wire Combobox `onCreate` in `ClusterDrawerPanel` to set sentinel (`selectedEntryId='create'` + `newEntryName`). Wire `onSelect` to clear `newEntryName`.
+- [x] **Implement**: remove separate "Create new" sentinel option (`{ value: 'create' }`) and `<input>` field from `ClusterDrawerPanel`.
+- [x] **Test (green)**: inline person creation from combobox preserves atomic commit path; select-after-create and create-after-select transitions work correctly.
 
 ## Phase 4d: Accessibility Hardening
 
-- [ ] **Implement**: add `role="group"` and `aria-label` to `ClusterGrid` container div. Keep `role="button"` + `aria-pressed` on cards.
-- [ ] **Implement**: add focus trap to `ClusterDrawerPanel` when open (Radix Dialog modal mode or manual implementation). Auto-focus close button on open.
-- [ ] **Test (red)**: `ClusterGrid` -- grid container has `role="group"` and `aria-label`; cards retain `role="button"`.
-- [ ] **Test (green)**: ARIA attributes present on rendered elements.
-- [ ] **Test (red)**: `ClusterDrawerPanel` -- focus moves to drawer on open; Tab does not leave drawer.
-- [ ] **Test (green)**: focus trap works as expected.
-- [ ] Review all new copy uses `__()` / `_x()` with `'alt-context'` text domain.
+- [x] **Implement**: add `role="group"` and `aria-label` to `ClusterGrid` container div. Keep `role="button"` + `aria-pressed` on cards.
+- [x] **Implement**: add focus trap to `ClusterDrawerPanel` when open (Radix Dialog modal mode or manual implementation). Auto-focus close button on open.
+- [x] **Test (red)**: `ClusterGrid` -- grid container has `role="group"` and `aria-label`; cards retain `role="button"`.
+- [x] **Test (green)**: ARIA attributes present on rendered elements.
+- [x] **Test (red)**: `ClusterDrawerPanel` -- focus moves to drawer on open; Tab does not leave drawer.
+- [x] **Test (green)**: focus trap works as expected.
+- [x] Review all new copy uses `__()` / `_x()` with `'alt-context'` text domain.
 
 ## Success Criteria
 
-- [ ] Bulk merge/dismiss uses accessible Radix Dialog (with `onOpenChange`) instead of `window.confirm`.
-- [ ] Confirmation dialog shows loading state during mutation.
-- [ ] "Select all" checkbox in always-visible cluster header selects/deselects all visible clusters. Supports indeterminate state.
-- [ ] Bulk action bar buttons are disabled with spinner during pending mutations.
-- [ ] Inline person creation from combobox: typing unknown name -> "Create [name]" button -> sets sentinel -> atomic commit creates person + assigns. No separate `useCreatePerson` call.
-- [ ] Cluster grid container has `role="group"` with `aria-label`. Cards retain `role="button"` + `aria-pressed`.
-- [ ] Cluster drawer traps focus when open.
-- [ ] All new components and behaviors have Vitest test coverage.
-- [ ] Existing test suite continues passing.
+- [x] Bulk merge/dismiss uses accessible Radix Dialog (with `onOpenChange`) instead of `window.confirm`.
+- [x] Confirmation dialog shows loading state during mutation.
+- [x] "Select all" checkbox in always-visible cluster header selects/deselects all visible clusters. Supports indeterminate state.
+- [x] Bulk action bar buttons are disabled with spinner during pending mutations.
+- [x] Inline person creation from combobox: typing unknown name -> "Create [name]" button -> sets sentinel -> atomic commit creates person + assigns. No separate `useCreatePerson` call.
+- [x] Cluster grid container has `role="group"` with `aria-label`. Cards retain `role="button"` + `aria-pressed`.
+- [x] Cluster drawer traps focus when open.
+- [x] All new components and behaviors have Vitest test coverage.
+- [x] Existing test suite continues passing.

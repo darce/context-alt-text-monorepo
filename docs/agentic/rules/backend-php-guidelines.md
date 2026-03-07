@@ -4,15 +4,6 @@
 
 ---
 
-## Standards
-
-- PSR-12 + WordPress Coding Standards
-- PHP 8.1+ features (typed properties, readonly, named arguments)
-- PHPStan level 8 for static analysis
-- Docblocks on all public methods
-
----
-
 ## Security (MANDATORY)
 
 Every state-changing endpoint MUST follow this pattern:
@@ -46,14 +37,6 @@ Additional security rules:
 
 ---
 
-## REST API
-
-- Routes registered under `acx/v1/` namespace
-- Return `WP_REST_Response` with appropriate status codes
-- Include helpful error messages with `WP_Error` codes
-
----
-
 ## WordPress Plugin Rules
 
 > Distilled from the 4.13.0 web-deployment cleanup audit.
@@ -66,16 +49,21 @@ Additional security rules:
 
 ---
 
-## API Security
-
-- Tenant isolation: always scope queries by `tenant_id`
-- Input validation: reject malformed requests early
-- Rate limiting: protect against abuse
-- Audit logging: log security-relevant actions
-
----
-
 ## Repository & Query Patterns
+
+### Schema-Key Parity Before Query Edits
+
+Before changing SQL for plugin tables, confirm key column names from lifecycle schema (`class-life-cycle-manager.php`) and repository contracts.
+
+- Do not assume generic keys like `id` / `cluster_id`; use actual schema keys (for example `cluster_uuid`).
+- Treat column-name mismatch as a HIGH-severity correctness defect.
+- Add/extend tests that fail if `UPDATE`/`WHERE` targets a non-existent key.
+
+### Prefer Derived Counts Over Stale Denormalized Fields
+
+For roster/person reporting, derive counts from authoritative relationships when practical (for example `COUNT(*)` via `wp_acx_clusters.person_id`) instead of trusting never-updated counter columns.
+
+- If a denormalized counter exists, either keep it transactionally updated in every write path or do not use it for read responses.
 
 ### Avoid N+1 Queries in Loops
 
@@ -148,40 +136,3 @@ Match confidence is ONLY displayed when a roster match exists. Priority order:
 5. `topCandidate.confidence` (best candidate confidence)
 
 Never show detection confidence as if it were match confidence.
-
----
-
-## Internationalization
-
-- All user-facing strings through `__()`, `_x()`, `_n()`
-- Text domain: `alt-context`
-- Use `sprintf()` for interpolation with translator comments
-
----
-
-## Commands
-
-```bash
-cd apps/prototype-wp-alt-context
-composer test        # PHPUnit
-composer phpstan     # Static analysis (level 8)
-composer phpcs       # Code style (PSR-12 + WPCS)
-composer cs-check    # Code style check (alias)
-```
-
-### Troubleshooting: phpstan missing
-
-If `composer phpstan` fails with `vendor/bin/phpstan: No such file or directory`, the lock file is missing `phpstan/phpstan`.
-
-Fix:
-
-```bash
-cd apps/prototype-wp-alt-context
-composer require --dev phpstan/phpstan:^1.12
-```
-
-Then re-run:
-
-```bash
-composer phpstan
-```

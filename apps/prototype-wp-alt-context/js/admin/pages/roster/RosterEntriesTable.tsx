@@ -3,6 +3,7 @@ import { __ } from '@wordpress/i18n';
 import type { RosterEntry } from '../../api/rosterApi';
 import { useUpdatePerson, useDeletePerson } from '../../hooks/useRosterHooks';
 import { Pencil, Trash2, Check, X } from 'lucide-react';
+import { ConfirmDialog } from './ConfirmDialog';
 
 export interface RosterEntriesTableProps {
   entries: RosterEntry[];
@@ -14,6 +15,7 @@ interface EditableRowProps {
 
 const EditableRow = ({ entry }: EditableRowProps) => {
   const [isEditing, setIsEditing] = useState(false);
+  const [isDeleteConfirmOpen, setIsDeleteConfirmOpen] = useState(false);
   const [name, setName] = useState(entry.name);
   const [tags, setTags] = useState(entry.tags.join(', '));
 
@@ -43,9 +45,9 @@ const EditableRow = ({ entry }: EditableRowProps) => {
   };
 
   const handleDelete = () => {
-    if (window.confirm(__('Are you sure you want to delete this person? Assigned clusters will be dissociated.', 'alt-context'))) {
-      deletePerson.mutate(entry.id);
-    }
+    deletePerson.mutate(entry.id, {
+      onSuccess: () => setIsDeleteConfirmOpen(false),
+    });
   };
 
   if (isEditing) {
@@ -97,32 +99,44 @@ const EditableRow = ({ entry }: EditableRowProps) => {
   }
 
   return (
-    <tr>
-      <td>
-        <strong>{entry.name}</strong>
-      </td>
-      <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
-      <td>{entry.cluster_count}</td>
-      <td className="acx-roster-entries__actions">
-        <button
-          type="button"
-          className="acx-icon-button"
-          onClick={() => setIsEditing(true)}
-          title={__('Edit person', 'alt-context')}
-        >
-          <Pencil size={16} />
-        </button>
-        <button
-          type="button"
-          className="acx-icon-button acx-icon-button--danger"
-          onClick={handleDelete}
-          title={__('Delete person', 'alt-context')}
-          disabled={deletePerson.isPending}
-        >
-          <Trash2 size={16} />
-        </button>
-      </td>
-    </tr>
+    <>
+      <tr>
+        <td>
+          <strong>{entry.name}</strong>
+        </td>
+        <td>{entry.tags.length === 0 ? __('No tags', 'alt-context') : entry.tags.join(', ')}</td>
+        <td>{entry.cluster_count}</td>
+        <td className="acx-roster-entries__actions">
+          <button
+            type="button"
+            className="acx-icon-button"
+            onClick={() => setIsEditing(true)}
+            title={__('Edit person', 'alt-context')}
+          >
+            <Pencil size={16} />
+          </button>
+          <button
+            type="button"
+            className="acx-icon-button acx-icon-button--danger"
+            onClick={() => setIsDeleteConfirmOpen(true)}
+            title={__('Delete person', 'alt-context')}
+            disabled={deletePerson.isPending}
+          >
+            <Trash2 size={16} />
+          </button>
+        </td>
+      </tr>
+      <ConfirmDialog
+        open={isDeleteConfirmOpen}
+        onOpenChange={setIsDeleteConfirmOpen}
+        onConfirm={handleDelete}
+        onCancel={() => setIsDeleteConfirmOpen(false)}
+        title={__('Delete person', 'alt-context')}
+        description={__('Are you sure you want to delete this person? Assigned clusters will be dissociated.', 'alt-context')}
+        confirmLabel={__('Delete', 'alt-context')}
+        isPending={deletePerson.isPending}
+      />
+    </>
   );
 };
 

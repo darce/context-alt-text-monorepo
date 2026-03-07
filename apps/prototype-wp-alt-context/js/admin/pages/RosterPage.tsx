@@ -13,6 +13,8 @@ import { BulkActionBar } from './roster/BulkActionBar';
 import { ClusterDrawerPanel } from './roster/ClusterDrawerPanel';
 import { RosterEntriesSection } from './roster/RosterEntriesSection';
 import { useTabParam } from '../hooks/useTabParam';
+import { Checkbox } from '../../components/ui/checkbox';
+import { ConfirmDialog } from './roster/ConfirmDialog';
 const ROSTER_TABS = {
   entries: { id: 'entries' as const, label: __('Entries', 'alt-context') },
   clusters: { id: 'clusters' as const, label: __('Clusters', 'alt-context') },
@@ -26,12 +28,14 @@ export const RosterPage = (): React.JSX.Element => {
     ROSTER_TABS.clusters.id,
   ]);
   const [selectedClusterId, setSelectedClusterId] = React.useState<string | null>(null);
+  const [confirmAction, setConfirmAction] = React.useState<'merge' | 'dismiss' | null>(null);
 
   const selection = useClusterSelection();
   const clearSelection = selection.clear;
 
   const clustersQuery = useRecognitionClusters({ limit: 20 });
   const clusters = React.useMemo(() => clustersQuery.data ?? [], [clustersQuery.data]);
+  const clusterIds = React.useMemo(() => clusters.map((cluster) => cluster.id), [clusters]);
 
   // Clear selection when switching tabs to avoid stale state
   React.useEffect(() => {
@@ -111,17 +115,7 @@ export const RosterPage = (): React.JSX.Element => {
     if (ids.length < 2) {
       return;
     }
-    if (
-      window.confirm(
-        sprintf(
-          // translators: %d: number of clusters to merge
-          __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
-          ids.length,
-        ),
-      )
-    ) {
-      actions.bulkMergeMutation.mutate({ clusterIds: ids });
-    }
+    setConfirmAction('merge');
   };
 
   const handleBulkDismiss = () => {
@@ -129,18 +123,68 @@ export const RosterPage = (): React.JSX.Element => {
     if (ids.length === 0) {
       return;
     }
-    if (
-      window.confirm(
-        sprintf(
-          // translators: %d: number of clusters to dismiss
-          __('Are you sure you want to dismiss %d clusters?', 'alt-context'),
-          ids.length,
-        ),
-      )
-    ) {
-      actions.bulkDismissMutation.mutate({ clusterIds: ids });
-    }
+    setConfirmAction('dismiss');
   };
+
+  const handleConfirm = React.useCallback(() => {
+    const ids = Array.from(selection.selectedIds);
+    void (async () => {
+      let shouldClose = false;
+      try {
+        if (confirmAction === 'merge') {
+          await actions.bulkMergeMutation.mutateAsync({ clusterIds: ids });
+          shouldClose = true;
+        } else if (confirmAction === 'dismiss') {
+          await actions.bulkDismissMutation.mutateAsync({ clusterIds: ids });
+          shouldClose = true;
+        }
+      } catch {
+        // Mutation-level error handlers already surface feedback.
+      } finally {
+        if (shouldClose) {
+          setConfirmAction(null);
+        }
+      }
+    })();
+  }, [actions.bulkDismissMutation, actions.bulkMergeMutation, confirmAction, selection.selectedIds]);
+
+  const handleConfirmOpenChange = React.useCallback(
+    (open: boolean) => {
+      if (!open) {
+        setConfirmAction(null);
+      }
+    },
+    [setConfirmAction],
+  );
+
+  const selectAllState = selection.isAllSelected(clusterIds)
+    ? true
+    : selection.count > 0
+      ? 'indeterminate'
+      : false;
+
+  const confirmDialogCopy =
+    confirmAction === 'merge'
+      ? {
+          title: __('Confirm merge', 'alt-context'),
+          description: sprintf(
+            // translators: %d: number of clusters to merge
+            __('Are you sure you want to merge %d clusters? This action cannot be undone.', 'alt-context'),
+            selection.count,
+          ),
+          confirmLabel: __('Merge', 'alt-context'),
+        }
+      : confirmAction === 'dismiss'
+        ? {
+            title: __('Confirm dismiss', 'alt-context'),
+            description: sprintf(
+              // translators: %d: number of clusters to dismiss
+              __('Are you sure you want to dismiss %d clusters?', 'alt-context'),
+              selection.count,
+            ),
+            confirmLabel: __('Dismiss', 'alt-context'),
+          }
+        : null;
 
 
   return (
@@ -182,14 +226,29 @@ export const RosterPage = (): React.JSX.Element => {
             </p>
           </div>
           <div className="acx-roster__tab-header">
-
-            <h2>{ROSTER_TABS.clusters.label}</h2>
+            <div className="acx-roster__tab-header-main">
+              <Checkbox
+                checked={selectAllState}
+                onCheckedChange={() => {
+                  if (selection.isAllSelected(clusterIds)) {
+                    selection.clear();
+                    return;
+                  }
+                  selection.selectAll(clusterIds);
+                }}
+                ariaLabel={__('Select all clusters', 'alt-context')}
+              />
+              <h2>{ROSTER_TABS.clusters.label}</h2>
+            </div>
             {selection.count > 0 && (
               <BulkActionBar
                 count={selection.count}
                 onMerge={handleBulkMerge}
                 onDismiss={handleBulkDismiss}
                 onClear={selection.clear}
+                isMerging={actions.bulkMergeMutation.isPending}
+                isDismissing={actions.bulkDismissMutation.isPending}
+                mergeProgress={actions.bulkMergeProgress}
               />
             )}
           </div>
@@ -237,6 +296,18 @@ export const RosterPage = (): React.JSX.Element => {
         isDragging={dragDrop.isDragging}
         onDiscardDrop={() => handleDropFace(null)}
       />
+      {confirmDialogCopy && (
+        <ConfirmDialog
+          open={confirmAction !== null}
+          onOpenChange={handleConfirmOpenChange}
+          onConfirm={handleConfirm}
+          onCancel={() => setConfirmAction(null)}
+          title={confirmDialogCopy.title}
+          description={confirmDialogCopy.description}
+          confirmLabel={confirmDialogCopy.confirmLabel}
+          isPending={actions.bulkMergeMutation.isPending || actions.bulkDismissMutation.isPending}
+        />
+      )}
     </section>
   );
 };

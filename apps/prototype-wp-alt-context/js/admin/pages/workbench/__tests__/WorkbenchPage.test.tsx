@@ -3,7 +3,7 @@ import { QueryClient, QueryClientProvider } from '@tanstack/react-query';
 import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
@@ -140,6 +140,7 @@ describe('WorkbenchPage', () => {
   const mockUseJobPersistence = vi.mocked(useJobPersistence);
   const mockUseJobProgressStream = vi.mocked(useJobProgressStream);
   let setCurrentPage: Dispatch<SetStateAction<number>>;
+  let setPerPage: Mock<(nextPerPage: number) => void>;
 
   const setupScanMutation = (outcome: ScanOutcome) => {
     mockUseScanIdentities.mockImplementation((options) => {
@@ -192,6 +193,7 @@ describe('WorkbenchPage', () => {
     selectJob.mockClear();
     clearHistory.mockClear();
     setCurrentPage = vi.fn() as Dispatch<SetStateAction<number>>;
+    setPerPage = vi.fn<(nextPerPage: number) => void>();
 
     const mediaQuery = createMockQuery<WorkbenchMediaResponse>({
       data: { items: [baseMediaItem], total: 1, totalPages: 1 },
@@ -245,8 +247,10 @@ describe('WorkbenchPage', () => {
       searchQuery: '',
       normalizedSearch: '',
       currentPage: 1,
+      perPage: 10,
       statusFilter: 'all',
       setCurrentPage,
+      setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
     });
@@ -387,8 +391,19 @@ describe('WorkbenchPage', () => {
     expect(screen.getByText(/Queueing 0\/2 items/)).toBeInTheDocument();
   });
 
-  it('hydrates media page size from localStorage', () => {
-    window.localStorage.setItem('acx-media-page-size', '50');
+  it('hydrates media page size from the workbench URL filters', () => {
+    mockUseWorkbenchFilters.mockReturnValue({
+      searchQuery: '',
+      normalizedSearch: '',
+      currentPage: 1,
+      perPage: 50,
+      statusFilter: 'all',
+      setCurrentPage,
+      setPerPage,
+      handleSearchChange: vi.fn(),
+      handleStatusChange: vi.fn(),
+    });
+
     renderWorkbench();
 
     const select = screen.getByLabelText('Images per page');
@@ -407,8 +422,10 @@ describe('WorkbenchPage', () => {
       searchQuery: '',
       normalizedSearch: '',
       currentPage: 2,
+      perPage: 10,
       statusFilter: 'all',
       setCurrentPage,
+      setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
     });
@@ -434,14 +451,16 @@ describe('WorkbenchPage', () => {
     });
   });
 
-  it('persists media page size selection and resets to page 1', async () => {
+  it('updates media page size through URL-backed filters', async () => {
     setupScanMutation('success');
     mockUseWorkbenchFilters.mockReturnValue({
       searchQuery: '',
       normalizedSearch: '',
       currentPage: 2,
+      perPage: 10,
       statusFilter: 'all',
       setCurrentPage,
+      setPerPage,
       handleSearchChange: vi.fn(),
       handleStatusChange: vi.fn(),
     });
@@ -457,15 +476,8 @@ describe('WorkbenchPage', () => {
     // Use keyboard to select "100" (arrow down twice from "10" -> "50" -> "100", then Enter)
     await user.keyboard('{ArrowDown}{ArrowDown}{Enter}');
 
-    // The useEffect that persists to localStorage runs after re-render
     await waitFor(() => {
-      expect(window.localStorage.getItem('acx-media-page-size')).toBe('100');
+      expect(setPerPage).toHaveBeenCalledWith(100);
     });
-    expect(setCurrentPage).toHaveBeenCalledWith(1);
-    expect(mockUseWorkbenchMedia).toHaveBeenCalledWith(
-      expect.objectContaining({
-        perPage: 100,
-      }),
-    );
   });
 });

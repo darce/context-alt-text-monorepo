@@ -2,10 +2,11 @@ import { render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
 import { MemoryRouter } from 'react-router-dom';
 
-import type { ClusterSummary } from '../../api/recognition';
+import type { AnalyzeResponse, ClusterSummary } from '../../api/recognition';
 import { useRecognitionCluster, useRecognitionClusters } from '../../hooks/useRecognitionHooks';
 import { useCreatePerson, useDeletePerson, useRosterEntries, useUpdatePerson } from '../../hooks/useRosterHooks';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
+import { createMockMutation, createMockQuery } from '../../test-utils/mockHooks';
 import { RosterPage } from '../RosterPage';
 import { useClusterActions } from '../roster/hooks/useClusterActions';
 import { useClusterDragDrop } from '../roster/hooks/useClusterDragDrop';
@@ -91,12 +92,32 @@ describe('RosterPage route container', () => {
   };
 
   const clusterActionState = {
-    reassignMutation: { mutate: vi.fn() },
-    rescanMutation: { mutate: vi.fn(), isPending: false },
-    commitMutation: { mutate: vi.fn(), isPending: false },
-    bulkMergeMutation: { mutate: vi.fn(), isPending: false },
-    bulkDismissMutation: { mutate: vi.fn(), isPending: false },
-    statusMessage: null,
+    reassignMutation: createMockMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
+      mutate: vi.fn(),
+    }),
+    rescanMutation: createMockMutation<
+      AnalyzeResponse[],
+      Error,
+      { cluster: { id: string; sample_identities: { media_id: number }[] }; mediaIds: number[] }
+    >({
+      mutate: vi.fn(),
+      isPending: false,
+    }),
+    commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>({
+      mutate: vi.fn(),
+      isPending: false,
+    }),
+    bulkMergeMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+      isPending: false,
+    }),
+    bulkDismissMutation: createMockMutation<void, Error, { clusterIds: string[] }>({
+      mutate: vi.fn(),
+      mutateAsync: vi.fn().mockResolvedValue(undefined),
+      isPending: false,
+    }),
+    bulkMergeProgress: null,
     errorMessage: null,
     resetAll: vi.fn(),
   };
@@ -104,7 +125,9 @@ describe('RosterPage route container', () => {
     selectedIds: new Set<string>(),
     toggle: vi.fn(),
     selectRange: vi.fn(),
+    selectAll: vi.fn(),
     clear: vi.fn(),
+    isAllSelected: vi.fn(() => false),
     isSelected: vi.fn(() => false),
     count: 0,
   };
@@ -114,43 +137,42 @@ describe('RosterPage route container', () => {
 
     const cluster = makeCluster();
 
-    mockedUseRecognitionClusters.mockReturnValue({
+    mockedUseRecognitionClusters.mockReturnValue(createMockQuery({
       data: [cluster],
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRecognitionClusters>);
+    }));
 
-    mockedUseRecognitionCluster.mockReturnValue({
+    mockedUseRecognitionCluster.mockReturnValue(createMockQuery<ClusterSummary, Error>({
       data: cluster,
       isLoading: false,
       isError: false,
-      error: null,
-    } as unknown as ReturnType<typeof useRecognitionCluster>);
+    }));
 
-    mockedUseRosterEntries.mockReturnValue({
+    mockedUseRosterEntries.mockReturnValue(createMockQuery({
       data: [],
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRosterEntries>);
-    mockedUseCreatePerson.mockReturnValue({
+    }));
+    mockedUseCreatePerson.mockReturnValue(createMockMutation({
       mutate: vi.fn(),
       isPending: false,
-    } as unknown as ReturnType<typeof useCreatePerson>);
-    mockedUseUpdatePerson.mockReturnValue({
+    }));
+    mockedUseUpdatePerson.mockReturnValue(createMockMutation({
       mutate: vi.fn(),
       isPending: false,
-    } as unknown as ReturnType<typeof useUpdatePerson>);
-    mockedUseDeletePerson.mockReturnValue({
+    }));
+    mockedUseDeletePerson.mockReturnValue(createMockMutation({
       mutate: vi.fn(),
       isPending: false,
-    } as unknown as ReturnType<typeof useDeletePerson>);
-    mockedUseClusterSelection.mockReturnValue(selectionState as unknown as ReturnType<typeof useClusterSelection>);
+    }));
+    mockedUseClusterSelection.mockReturnValue(selectionState);
 
     mockedUseClusterMediaMap.mockReturnValue({});
-    mockedUseClusterDragDrop.mockReturnValue(dragDropState as unknown as ReturnType<typeof useClusterDragDrop>);
-    mockedUseClusterActions.mockReturnValue(clusterActionState as unknown as ReturnType<typeof useClusterActions>);
+    mockedUseClusterDragDrop.mockReturnValue(dragDropState);
+    mockedUseClusterActions.mockReturnValue(clusterActionState);
   });
 
   it('[PAG-M3] bootstraps active tab from the query string', () => {
@@ -165,7 +187,7 @@ describe('RosterPage route container', () => {
   });
 
   it('[PAG-M3] preserves entries tab bootstrap with personFilter=unassigned', () => {
-    mockedUseRosterEntries.mockReturnValue({
+    mockedUseRosterEntries.mockReturnValue(createMockQuery({
       data: [
         {
           id: 7,
@@ -178,7 +200,7 @@ describe('RosterPage route container', () => {
       isLoading: false,
       isError: false,
       refetch: vi.fn(),
-    } as unknown as ReturnType<typeof useRosterEntries>);
+    }));
 
     render(
       <MemoryRouter initialEntries={['/?tab=entries&personFilter=unassigned']}>
@@ -212,13 +234,12 @@ describe('RosterPage route container', () => {
     expect(dragDropState.resetDragState).toHaveBeenCalledTimes(1);
   });
 
-  it('applies bulk merge and dismiss actions to all selected clusters', async () => {
-    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(true);
+  it('applies bulk merge action through confirm dialog', async () => {
     mockedUseClusterSelection.mockReturnValue({
       ...selectionState,
       selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
       count: 3,
-    } as unknown as ReturnType<typeof useClusterSelection>);
+    });
 
     render(
       <MemoryRouter>
@@ -228,16 +249,44 @@ describe('RosterPage route container', () => {
 
     await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
     await userEvent.click(screen.getByRole('button', { name: 'Merge' }));
+    await userEvent.click(screen.getAllByRole('button', { name: /^Merge$/i }).at(-1)!);
+    expect(clusterActionState.bulkMergeMutation.mutateAsync).toHaveBeenCalledWith({
+      clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
+    });
+  });
+
+  it('applies bulk dismiss action through confirm dialog', async () => {
+    mockedUseClusterSelection.mockReturnValue({
+      ...selectionState,
+      selectedIds: new Set(['cluster-1', 'cluster-2', 'cluster-3']),
+      count: 3,
+    });
+
+    render(
+      <MemoryRouter>
+        <RosterPage />
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
     await userEvent.click(screen.getByRole('button', { name: 'Dismiss' }));
+    await userEvent.click(screen.getAllByRole('button', { name: /^Dismiss$/i }).at(-1)!);
 
-    expect(confirmSpy).toHaveBeenCalledTimes(2);
-    expect(clusterActionState.bulkMergeMutation.mutate).toHaveBeenCalledWith({
+    expect(clusterActionState.bulkDismissMutation.mutateAsync).toHaveBeenCalledWith({
       clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
     });
-    expect(clusterActionState.bulkDismissMutation.mutate).toHaveBeenCalledWith({
-      clusterIds: ['cluster-1', 'cluster-2', 'cluster-3'],
-    });
+  });
 
-    confirmSpy.mockRestore();
+  it('allows selecting all visible clusters from the clusters header', async () => {
+    render(
+      <MemoryRouter>
+        <RosterPage />
+      </MemoryRouter>
+    );
+
+    await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
+    await userEvent.click(screen.getByRole('checkbox', { name: 'Select all clusters' }));
+
+    expect(selectionState.selectAll).toHaveBeenCalledWith(['cluster-1']);
   });
 });

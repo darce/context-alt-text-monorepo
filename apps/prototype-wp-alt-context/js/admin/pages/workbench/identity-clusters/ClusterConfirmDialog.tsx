@@ -1,15 +1,7 @@
 import React from 'react';
-import { __ } from '@wordpress/i18n';
 
 import type { ConfirmDialogCopy } from './useClusterConfirmDialog';
-import {
-  DialogContent,
-  DialogDescription,
-  DialogOverlay,
-  DialogPortal,
-  DialogRoot,
-  DialogTitle,
-} from '../../../../components/ui/dialog';
+import { ConfirmDialog } from '../../roster/ConfirmDialog';
 
 interface ClusterConfirmDialogProps {
   dialog: { open: boolean } | null;
@@ -31,24 +23,14 @@ export const ClusterConfirmDialog = ({
   }
 
   return (
-    <DialogRoot open={dialog.open} onOpenChange={onOpenChange}>
-      <DialogPortal>
-        <DialogOverlay />
-        <DialogContent>
-          <div className="acx-queue-modal">
-            <DialogTitle>{copy.title}</DialogTitle>
-            <DialogDescription>{copy.description}</DialogDescription>
-            <div className="acx-queue-modal__actions">
-              <button type="button" className="button" onClick={onCancel}>
-                {__('Cancel', 'alt-context')}
-              </button>
-              <button type="button" className="button button-primary" onClick={onConfirm}>
-                {copy.confirmLabel}
-              </button>
-            </div>
-          </div>
-        </DialogContent>
-      </DialogPortal>
-    </DialogRoot>
+    <ConfirmDialog
+      open={dialog.open}
+      onOpenChange={onOpenChange}
+      onConfirm={onConfirm}
+      onCancel={onCancel}
+      title={copy.title}
+      description={copy.description}
+      confirmLabel={copy.confirmLabel}
+    />
   );
 };

@@ -8,6 +8,7 @@ import { mediaEditUrl } from '../../utils/adminUrls';
 import { IdentityThumbnail } from './IdentityThumbnail';
 import { Combobox } from '../../../components/ui/combobox';
 import { Check, X } from 'lucide-react';
+import { useFocusTrap } from './hooks/useFocusTrap';
 
 interface Props {
   cluster: ClusterSummary | null;
@@ -52,6 +53,8 @@ export const ClusterDrawerPanel = ({
 }: Props): React.JSX.Element | null => {
   const [selectedEntryId, setSelectedEntryId] = React.useState('');
   const [newEntryName, setNewEntryName] = React.useState('');
+  const closeButtonRef = React.useRef<HTMLButtonElement>(null);
+  const drawerRef = React.useRef<HTMLElement>(null);
 
   const createFaceDragStart = React.useCallback(
     (faceId: string) => (event: React.DragEvent<HTMLElement>) => {
@@ -93,6 +96,30 @@ export const ClusterDrawerPanel = ({
     setNewEntryName('');
   }, [cluster?.id]);
 
+  const handleCreate = (name: string) => {
+    const trimmed = name.trim();
+    if (!trimmed) {
+      return;
+    }
+
+    setSelectedEntryId('create');
+    setNewEntryName(trimmed);
+  };
+
+  const handleSelectEntry = (nextValue: string) => {
+    setSelectedEntryId(nextValue);
+    if (nextValue !== 'create') {
+      setNewEntryName('');
+    }
+  };
+
+  const handleDrawerKeyDown = useFocusTrap({
+    rootRef: drawerRef,
+    initialFocusRef: closeButtonRef,
+    onEscape: onClose,
+    activeKey: cluster?.id ?? null,
+  });
+
   if (!cluster) {
     return null;
   }
@@ -117,7 +144,7 @@ export const ClusterDrawerPanel = ({
   return (
     <>
       <div className="acx-cluster-drawer__backdrop" onClick={onClose} />
-      <aside className="acx-cluster-drawer" aria-live="polite">
+      <aside className="acx-cluster-drawer" aria-live="polite" ref={drawerRef} onKeyDown={handleDrawerKeyDown}>
         <header className="acx-cluster-drawer__header">
           <div className="acx-cluster-drawer__title-group">
             <span className="acx-cluster-drawer__eyebrow">{__('Cluster Identity', 'alt-context')}</span>
@@ -146,7 +173,13 @@ export const ClusterDrawerPanel = ({
               )}
             </ul>
           </div>
-          <button type="button" className="acx-icon-button" onClick={onClose} title={__('Close', 'alt-context')}>
+          <button
+            type="button"
+            className="acx-icon-button"
+            onClick={onClose}
+            title={__('Close', 'alt-context')}
+            ref={closeButtonRef}
+          >
             <X size={20} />
           </button>
         </header>
@@ -215,33 +248,20 @@ export const ClusterDrawerPanel = ({
           <div className="acx-cluster-drawer__assignment-controls">
             <Combobox
               options={[
-                { value: '', label: __('Select an existing person…', 'alt-context') },
                 ...rosterEntries.map((entry) => ({
                   value: entry.id.toString(),
                   label: entry.name,
                 })),
-                { value: 'create', label: __('+ Create new person', 'alt-context') },
               ]}
               value={selectedEntryId}
-              onSelect={(nextValue: string) => setSelectedEntryId(nextValue)}
+              onSelect={handleSelectEntry}
+              onCreate={handleCreate}
               ariaLabel={__('Commit to roster entry', 'alt-context')}
               placeholder={__('Assign to…', 'alt-context')}
               className="acx-cluster-drawer__select"
               id="acx-roster-entry-select"
+              portalContainer={drawerRef.current}
             />
-
-            {selectedEntryId === 'create' && (
-              <div className="acx-cluster-drawer__new-entry">
-                <input
-                  type="text"
-                  className="acx-cluster-drawer__input"
-                  value={newEntryName}
-                  onChange={(event) => setNewEntryName(event.target.value)}
-                  placeholder={__('Enter person name…', 'alt-context')}
-                  autoFocus
-                />
-              </div>
-            )}
 
             <button
               type="button"

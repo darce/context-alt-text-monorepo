@@ -45,6 +45,23 @@ describe('GuidanceCard', () => {
     expect(screen.getByRole('link', { name: 'Go to Scan tab' })).toHaveAttribute('href', '#/workbench?tab=scan');
   });
 
+  it('prioritizes unassigned-person guidance ahead of first-use fallback', () => {
+    render(
+      <GuidanceCard
+        stats={{
+          people_count: 0,
+          assigned_clusters_count: 0,
+          pending_clusters_count: 0,
+          media_with_faces_count: 8,
+          unassigned_persons_count: 2,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('2 persons have no assigned clusters.')).toBeInTheDocument();
+    expect(screen.queryByText('Start by scanning your media library for faces.')).not.toBeInTheDocument();
+  });
+
   it('renders unassigned-person guidance when unassigned persons exist', () => {
     render(
       <GuidanceCard

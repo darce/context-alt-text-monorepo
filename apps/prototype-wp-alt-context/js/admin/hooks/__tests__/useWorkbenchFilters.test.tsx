@@ -22,6 +22,7 @@ describe('useWorkbenchFilters', () => {
     expect(result.current.searchQuery).toBe('');
     expect(result.current.statusFilter).toBe('all');
     expect(result.current.normalizedSearch).toBe('');
+    expect(result.current.perPage).toBe(10);
   });
 
   it('resets page to 1 when search changes and trims normalized search', () => {
@@ -53,5 +54,27 @@ describe('useWorkbenchFilters', () => {
 
     expect(result.current.statusFilter).toBe('missing');
     expect(result.current.currentPage).toBe(1);
+  });
+
+  it('hydrates perPage from the URL and resets page when perPage changes', () => {
+    const urlWrapper = ({ children }: { children: ReactNode }) => (
+      <MemoryRouter initialEntries={['/?p=4&perPage=50']}>
+        <Routes>
+          <Route path="/" element={<>{children}</>} />
+        </Routes>
+      </MemoryRouter>
+    );
+
+    const { result } = renderHook(() => useWorkbenchFilters(), { wrapper: urlWrapper });
+
+    expect(result.current.currentPage).toBe(4);
+    expect(result.current.perPage).toBe(50);
+
+    act(() => {
+      result.current.setPerPage(100);
+    });
+
+    expect(result.current.currentPage).toBe(1);
+    expect(result.current.perPage).toBe(100);
   });
 });

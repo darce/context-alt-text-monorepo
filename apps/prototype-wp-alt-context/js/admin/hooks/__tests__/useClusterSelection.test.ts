@@ -49,4 +49,24 @@ describe('useClusterSelection', () => {
     expect(result.current.count).toBe(0);
     expect(result.current.selectedIds.size).toBe(0);
   });
+
+  it('supports selecting all ids and checking all-selected state', () => {
+    const { result } = renderHook(() => useClusterSelection());
+    const allIds = ['cluster-1', 'cluster-2', 'cluster-3'];
+
+    expect(result.current.isAllSelected(allIds)).toBe(false);
+
+    act(() => {
+      result.current.selectAll(allIds);
+    });
+
+    expect(result.current.count).toBe(3);
+    expect(result.current.isAllSelected(allIds)).toBe(true);
+
+    act(() => {
+      result.current.toggle('cluster-2');
+    });
+
+    expect(result.current.isAllSelected(allIds)).toBe(false);
+  });
 });

@@ -1,7 +1,7 @@
 # Roadmap v4 -- Face Recognition UX and Plugin Ergonomics
 
-> **Status:** Active -- planning phase.
-> **Predecessor:** [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) (core vision), [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md) (completed), [v0.2.0 Production Readiness Epic](../epics/v0.2.0/production-readiness-epic.md) (in progress)
+> **Status:** Active -- Epics A-B complete, Epics C-D in progress.
+> **Predecessor:** [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) (core vision, closed), [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md) (completed), [v0.2.0 Production Readiness Epic](../epics/v0.2.0/production-readiness-epic.md) (in progress)
 
 ---
 
@@ -221,6 +221,17 @@ Sync scope additions:
   Mitigation: reuse existing single-item mutation hooks; batch is frontend orchestration only.
 - **Scope creep into sync architecture**: temptation to fix sync issues when touching roster or dashboard.
   Mitigation: sync evolution is explicitly Epic D, sequenced after A-C.
+
+## Long-Term Backlog (Carried Forward from v3)
+
+These items from [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) are not in scope for v4 epics but remain relevant for future iterations:
+
+- Alt text generation via provider-agnostic LLM (draft review/approval workflow) -- originally v3 Epic D
+- Observability: structured logging, metrics, audit logs -- originally v3 Epic F
+- Advanced roster analytics (duplicate detection, tagging suggestions)
+- Multi-tenant backend support with per-site API keys
+- Offline processing queue using managed job runner
+- Accessibility insights dashboard with trendlines and digests
 
 ## Success Metrics
 

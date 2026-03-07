@@ -1,8 +1,8 @@
 # Context Alt Text Roadmap v3.0 -- Core Vision
 
-> **Status:** Superseded by active epics. Retained as the architectural vision document.
-> Active work: [v0.1.0 Sovereign Cluster Roadmap](v0.1.0/wp-sovereign-cluster-roadmap.md)
-> Next: v4 roadmap (placeholder at [roadmap-v4.md](roadmap-v4.md))
+> **Status:** Closed -- superseded by [roadmap-v4.md](roadmap-v4.md). Retained as the architectural vision document.
+> **Completed epics:** [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md), [v0.2.0 Production Readiness Epic](../epics/v0.2.0/production-readiness-epic.md)
+> **Successor:** [Roadmap v4 -- Face Recognition UX and Plugin Ergonomics](roadmap-v4.md)
 
 ---
 
@@ -113,7 +113,8 @@ PostgreSQL as canonical storage layer. pgvector for embedding search. Alembic mi
 
 ## References
 
-- Active epic: [v0.1.0 Sovereign Cluster Roadmap](v0.1.0/wp-sovereign-cluster-roadmap.md)
+- Successor roadmap: [Roadmap v4](roadmap-v4.md)
+- Active epic: [Recognition UX and Ergonomics](../epics/v0.2.0/recognition-ux-and-ergonomics-epic.md)
 - API contracts: [docs/agentic/contracts/](../agentic/contracts/)
 - Architecture diagrams: [docs/agentic/diagrams/](../agentic/diagrams/)
 - Engineering rules: [docs/agentic/instructions.md](../agentic/instructions.md)

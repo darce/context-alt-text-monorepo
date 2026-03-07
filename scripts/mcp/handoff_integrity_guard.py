@@ -229,6 +229,120 @@ def main() -> int:
         if ready.get("ready_to_close") is not True:
             raise RuntimeError(f"Expected close-check to pass, got: {ready}")
 
+        destructive_task_ref = f"ci-destructive-{uuid.uuid4().hex[:8]}"
+        active_state = _run_cli(["state"], env)
+        active_revision = int((active_state.get("active") or {}).get("revision", -1))
+        if active_revision < 0:
+            raise RuntimeError(f"Could not read revision before destructive guard checks: {active_state}")
+
+        _run_cli(
+            [
+                "set",
+                "--task_ref",
+                destructive_task_ref,
+                "--objective",
+                "CI destructive clear safeguards",
+                "--status",
+                "in_progress",
+                "--expected_revision",
+                str(active_revision),
+            ],
+            env,
+        )
+        _run_cli(
+            [
+                "review-record",
+                "--finding_id",
+                "CI-H-CLEAR-1",
+                "--file_path",
+                "scripts/mcp/unified_server.py",
+                "--description",
+                "CI destructive clear safeguard finding",
+                "--severity",
+                "low",
+                "--session",
+                "ci-handoff-guard",
+            ],
+            env,
+        )
+
+        destructive_payload_path = temp_root / "destructive-clear-payload.json"
+        destructive_payload_path.write_text(
+            json.dumps(
+                {
+                    "export_version": 1,
+                    "task_ref": destructive_task_ref,
+                    "snapshot": {
+                        "task_ref": destructive_task_ref,
+                        "active": {
+                            "task_ref": destructive_task_ref,
+                            "objective": "CI destructive clear safeguards",
+                            "status": "in_progress",
+                        },
+                        "blockers": [],
+                        "next_actions": [],
+                        "decisions": [],
+                        "verified_tests": [],
+                        "review_findings": [],
+                    },
+                },
+                indent=2,
+            )
+        )
+
+        blocked_replace = _run_cli(
+            [
+                "import",
+                "--input_path",
+                str(destructive_payload_path),
+                "--mode",
+                "replace_task",
+            ],
+            env,
+            expect_success=False,
+        )
+        if blocked_replace.get("ok", True) is not False:
+            raise RuntimeError(f"Expected replace_task import without ack to fail, got: {blocked_replace}")
+        if "allow_destructive_clear" not in (blocked_replace.get("error") or ""):
+            raise RuntimeError(f"Expected replace_task failure to mention allow_destructive_clear, got: {blocked_replace}")
+
+        blocked_prune = _run_cli(
+            ["archive", "--task_ref", destructive_task_ref, "--prune-working-rows"],
+            env,
+            expect_success=False,
+        )
+        if blocked_prune.get("ok", True) is not False:
+            raise RuntimeError(f"Expected prune archive without ack to fail, got: {blocked_prune}")
+        if "allow_destructive_clear" not in (blocked_prune.get("error") or ""):
+            raise RuntimeError(f"Expected prune failure to mention allow_destructive_clear, got: {blocked_prune}")
+
+        finding_still_present = _run_cli(["review-summary", "--task_ref", destructive_task_ref], env)
+        open_count_before_ack = int((finding_still_present.get("counts", {}).get("status", {}).get("open", 0)))
+        if open_count_before_ack != 1:
+            raise RuntimeError(
+                "Expected finding to remain after blocked destructive operations, "
+                f"got: {finding_still_present}"
+            )
+
+        _run_cli(
+            [
+                "import",
+                "--input_path",
+                str(destructive_payload_path),
+                "--mode",
+                "replace_task",
+                "--allow-destructive-clear",
+            ],
+            env,
+        )
+        finding_cleared_after_ack = _run_cli(["review-summary", "--task_ref", destructive_task_ref], env)
+        open_count_after_ack = int((finding_cleared_after_ack.get("counts", {}).get("status", {}).get("open", 0)))
+        if open_count_after_ack != 0:
+            raise RuntimeError(
+                "Expected acknowledged destructive replace to clear finding rows, "
+                f"got: {finding_cleared_after_ack}"
+            )
+
     print("handoff-integrity-guard: pass")
     return 0
 

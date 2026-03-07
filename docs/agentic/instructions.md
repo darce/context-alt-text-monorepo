@@ -1,8 +1,30 @@
 # Development Instructions
 
-> **Cold-start document for coding agents.** Read this first. It contains universal rules that apply to ALL tasks, then routes you to domain-specific guidelines.
+> **Cold-start document for coding agents.** Universal rules that cannot be deduced from code, configs, or linters. Domain-specific guidelines load via the routing table below.
 
-**Epic**: `docs/epics/v0.1.0/wp-sovereign-cluster-epic.md` · **Roadmap vision**: `docs/roadmaps/roadmap-v3.hybrid.md`
+> **On first load / cold start**: also read [BOOTSTRAP.md](BOOTSTRAP.md) for testing commands, MCP server setup, and handoff state defaults.
+
+**Epic**: `docs/epics/v0.2.0/recognition-ux-and-ergonomics-epic.md` · **Roadmap**: `docs/roadmaps/roadmap-v4.md`
+
+---
+
+## Document Maintenance (ACE Self-Correction)
+
+This document follows Autonomous Coding Engine principles for minimal, self-correcting agent instructions.
+
+**Inclusion criteria** -- a rule belongs here only if:
+
+1. It cannot be deduced from code, configs, linters, or static analysis
+2. Violating it has caused a real failure in this project (not hypothetical)
+3. It applies universally across all domains (domain-specific rules go in sub-documents)
+
+**Self-correction protocol:**
+
+- If a rule restates a linter check or config setting (`tsconfig`, `phpcs`, `pyproject.toml`, `eslint`), delete it -- the tool is the source of truth
+- Never duplicate content between this file and linked sub-documents; use links
+- Every paragraph must prevent a specific class of agent failure that has actually occurred; delete "good practice" paragraphs
+- When encountering stale content (broken links, outdated naming), fix in-place
+- Do not add rules that an agent can verify by running `make check`, `npm run lint`, or `composer phpstan`
 
 ---
 
@@ -56,30 +78,6 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 
 ---
 
-## Monorepo Layout
-
-```text
-context-alt-text-monorepo/
-    apps/
-        prototype-wp-alt-context/     # WordPress plugin (frontend + PHP)
-        prototype-description-service/ # FastAPI recognition service (backend)
-    packages/
-        shared-contracts/             # Shared API contracts and schemas
-        wp-testing-helpers/           # Test utilities
-    docs/
-        agentic/                      # Agent-optimized documentation
-            contracts/                # API schemas and fixtures
-            diagrams/                 # Architecture diagrams (Mermaid)
-            maps/                     # Context maps per domain
-            rules/                    # Domain-specific guidelines
-            templates/                # Reusable templates
-        roadmaps/                     # Project roadmaps
-        tasks/                        # Task breakdowns by version
-    scripts/                          # Utility scripts
-```
-
----
-
 ## Critical Rules
 
 These rules are **universal** and apply to every task regardless of domain.
@@ -105,40 +103,36 @@ These rules are **universal** and apply to every task regardless of domain.
 
 If a task seems to require external changes, STOP and propose an alternative within plugin boundaries.
 
-### Architecture Tooling Guardrail
-
-Do not relax or edit compliance/lint scripts (e.g., `scripts/check-architecture-compliance.js`) to silence violations. Fix the offending code or update the documented rules instead.
-
 ### Greenfield Policy
 
 > [!IMPORTANT]
 > This is a **greenfield project** with NO production users and NO existing data that must be preserved.
 
 - **No Data Migrations**: Storage surfaces (database tables, options, caches) are disposable.
-- **Baseline Only**: All schema changes must be applied directly to the baseline migration file (`apps/prototype-description-service/db/migrations/versions/001_identity_schema.py`).
-- **Clean Rewrites**: Prefer clean rewrites of logic and schema over backward-compatibility shims.
-- **No Feature Flags**: Full latitude to delete experimental features. Prefer removal over long-lived feature flags.
+- **Baseline Only**: Schema changes directly in the baseline migration file (`apps/prototype-description-service/db/migrations/versions/001_identity_schema.py`).
+- **Clean Rewrites > backward-compatibility shims. Delete-over-flag.**
 
-### Remove Over Flag
+### Short Rules
 
-Delete-over-flag is the default. Re-introduce features behind tests only when truly needed.
+- Do not relax compliance/lint scripts to silence violations. Fix the offending code.
+- Every `composer`/`npm` gate script must succeed on invocation, not just be defined.
+- **npm** for Node.js (not pnpm). **Composer** for PHP.
 
-### Quality Gates Must Be Invocable
+### Cross-Branch Regression Guards
 
-Every `composer`/`npm` verification gate script must be tested for invocability -- not just defined. A script that fails on invocation (wrong arguments, missing targets) rather than on real violations is invisible rot.
+Hard guardrails from real failures in this project:
 
-### No Debug Artifacts in Version Control
+1. **No type-shim masking.** New import? Update `package.json`/`composer.json` and verify with a real build.
+2. **Preserve atomic write paths.** Do not split a backend atomic operation into multiple frontend mutations.
+3. **Primary controls reachable from zero state.** Never gate primary actions behind non-zero selection.
+4. **Role semantics match behavior.** Controlled dialogs must wire `onOpenChange`.
+5. **Schema/contract parity.** Validate SQL column names against real schema before merge.
+6. **Documented commands must run as written.** Broken copy-paste syntax is a bug.
 
-Do not track debug output files (`test_output.txt`, log dumps, etc.) in Git. Add them to `.gitignore`.
+### Task Document Rules
 
-### Consolidated Checklists in Task Documents
-
-All task/planning documents MUST consolidate checklists at the **bottom** of the document.
-
-- Prevents checklist sprawl across sections
-- Single source of truth for progress tracking
-- **Do NOT include time estimates** on phases
-- **Enforcement:** Do not scatter `- [ ]` items throughout narrative sections
+- Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
+- Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
 
 ### Naming Convention: acx\_\* / ACX\_\* Prefix
 
@@ -245,35 +239,23 @@ Brief summaries of mandatory principles. Full details with code examples are in 
 
 Before writing any implementation or tests, scaffold all interfaces and contracts. Full details: [rules/development-workflow.md](rules/development-workflow.md#scaffolding-first-mandatory)
 
-### 3. Small Vertical Slices
-
-Implement only the minimum needed to make the current test pass. Avoid speculative features.
-
-### 4. Explicit Interfaces
-
-Introduce abstractions (providers, services, interfaces) before integrating remote or hard-to-mock concerns.
-
-### 5. Deterministic Tests
-
-No network calls, randomness, or time-based logic without controlled seams/mocks. Tests must produce identical results on every run.
-
-### 6. User Consent for Remote Operations
+### 3. User Consent for Remote Operations
 
 Never call remote recognition services or sync operations without explicit user action. Provide immediate feedback on success/failure.
 
-### 7. No Fabricated Data
+### 4. No Fabricated Data
 
 Never fabricate benchmark numbers, latency claims, or metrics. If data is unavailable, return an explicit empty state or error.
 
-### 8. No False Claims of Bug Fixes
+### 5. No False Claims of Bug Fixes
 
 Never claim a bug is fixed without verifying in production/staging logs. A unit test passing does NOT prove a bug is fixed in production.
 
-### 9. Curation-First Precedence
+### 6. Curation-First Precedence
 
 User curation decisions are ground truth. Never use time-based heuristics to override them. The correct gate is always a **data delta**: did the underlying evidence change since the user's decision? If yes, surface as a new proposal. If no, respect the decision indefinitely.
 
-### 10. User-Recoverable Remote Flows
+### 7. User-Recoverable Remote Flows
 
 Remote-dependent UI states must remain recoverable when automation fails or stalls.
 
@@ -283,103 +265,13 @@ Remote-dependent UI states must remain recoverable when automation fails or stal
 
 ---
 
-## Code Style
+## Documentation Conventions
 
-### Package Management
-
-- **npm** for Node.js (not pnpm)
-- **Composer** for PHP
-
-### Formatting
-
-- 4-space indentation (PHP, TypeScript, SCSS)
-- 2-space indentation (JSON, YAML, Markdown)
-- Prettier for auto-formatting (frontend)
-- PHP_CodeSniffer for PHP
-- `ruff format` for Python
-
-### TypeScript
-
-- `strict: true` in tsconfig
-- Arrow functions for components and utilities
-- No `any` types without documented justification
-
-### Python
-
-- Type hints on all functions
-- Google-style docstrings
-- 120 character line length
-- Double quotes for strings
-
----
-
-## Documentation Standards
-
-### File Organization
-
-- Architecture docs in `docs/agentic/`
-- Task breakdowns in `docs/tasks/{version}/`
-- Roadmaps in `docs/roadmaps/`
-- Use descriptive filenames (avoid generic `implementation-plan.md`)
-
-### Templates
-
-| Template                                                                 | When to Use                                                                                |
-| ------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
-| [templates/TASK_PLAN.template.md](templates/TASK_PLAN.template.md)       | New implementation plan under `docs/tasks/`                                                |
-| [templates/EPIC.template.md](templates/EPIC.template.md)                 | Bounded multi-phase capability epic under `docs/epics/`                                    |
-| [templates/ROADMAP.template.md](templates/ROADMAP.template.md)           | Multi-phase architectural roadmap under `docs/roadmaps/`                                   |
-| [templates/CURRENT_TASK.template.md](templates/CURRENT_TASK.template.md) | Fallback template for manual multi-session tracking when MCP handoff tools are unavailable |
-
-### Implementation Plan Requirements
-
-All implementation plans in `docs/tasks/` MUST use [TASK_PLAN.template.md](templates/TASK_PLAN.template.md) and include:
-
-1. **Problem Statement** -- What user-visible behavior needs to change
-2. **Current State Analysis** -- What works, what's broken, what's missing
-3. **Patterns to Follow** -- Code snippets showing the pattern to implement
-4. **Functions to Change** -- Table with file paths, line numbers, and specific changes
-5. **Related Files** -- Complete list of files that will be touched
-6. **Consolidated Task Checklist** -- Phased checkboxes at the bottom
-
-Epics under `docs/epics/` MUST use [EPIC.template.md](templates/EPIC.template.md). Epics are bounded capabilities with phased delivery, status tracking, and links to concrete task plans.
-
-Roadmaps under `docs/roadmaps/` MUST use [ROADMAP.template.md](templates/ROADMAP.template.md). Roadmaps describe **what** and **why**; individual phases spawn task plans for **how**.
-
-### Mermaid Diagrams
+> Templates and file organization are discoverable from `docs/agentic/templates/`. Formatting rules are in linter configs (`tsconfig`, `phpcs.xml`, `pyproject.toml`, `prettier`).
 
 - **`.mmd` files: raw Mermaid syntax only -- NO code fences**
 - `.md` files: use fenced code blocks
 - Maximum 12 classes per diagram
 - Use language-agnostic types: `string`, `int`, `bool`, `array<T>`
-
-### ASCII Only
-
-Use ASCII characters only in documentation. No emoji. Rationale: encoding issues across terminals and CI systems.
-
-### Internationalization
-
-All user-facing strings through `__()`, `_x()`, `_n()` with text domain `alt-context`.
-
----
-
-## Quick Reference
-
-### Key Files
-
-| Purpose          | Location                                               |
-| ---------------- | ------------------------------------------------------ |
-| Roadmap (active) | `docs/roadmaps/v0.1.0/wp-sovereign-cluster-roadmap.md` |
-| Roadmap (vision) | `docs/roadmaps/roadmap-v3.hybrid.md`                   |
-| API Contracts    | `docs/agentic/contracts/`                              |
-| Component Guide  | `docs/agentic/rules/RADIX_UI_COMPONENT_GUIDE.md`       |
-| Backend UML      | `docs/agentic/diagrams/backend-uml/`                   |
-| Frontend UML     | `docs/agentic/diagrams/frontend-uml/`                  |
-| Active Tasks     | `docs/tasks/`                                          |
-
-### Getting Help
-
-1. Check the roadmap for context on current work
-2. Review existing patterns in the codebase
-3. Consult architecture docs for design decisions
-4. Ask for clarification before making assumptions
+- **ASCII only** in documentation. No emoji.
+- **Internationalization**: all user-facing strings through `__()`, `_x()`, `_n()` with text domain `alt-context`.

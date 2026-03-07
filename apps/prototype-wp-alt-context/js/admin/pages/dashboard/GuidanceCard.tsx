@@ -25,17 +25,6 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
     );
   }
 
-  if (stats.people_count === 0) {
-    return (
-      <>
-        <p>{__('Start by scanning your media library for faces.', 'alt-context')}</p>
-        <a href="#/workbench?tab=scan" className="acx-link-button">
-          {__('Go to Scan tab', 'alt-context')}
-        </a>
-      </>
-    );
-  }
-
   if (stats.unassigned_persons_count > 0) {
     return (
       <>
@@ -48,6 +37,17 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
         </p>
         <a href="#/roster?tab=entries&personFilter=unassigned" className="acx-link-button">
           {__('Review unassigned persons', 'alt-context')}
+        </a>
+      </>
+    );
+  }
+
+  if (stats.people_count === 0) {
+    return (
+      <>
+        <p>{__('Start by scanning your media library for faces.', 'alt-context')}</p>
+        <a href="#/workbench?tab=scan" className="acx-link-button">
+          {__('Go to Scan tab', 'alt-context')}
         </a>
       </>
     );

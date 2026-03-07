@@ -1,3 +1,4 @@
+import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
 import { queryKeys } from '../../../api/queryKeys';
@@ -23,6 +24,7 @@ export const useClusterActions = ({
 }: ClusterActionOptions = {}) => {
   const queryClient = useQueryClient();
   const { success, error: showToastError } = useToast();
+  const [bulkMergeProgress, setBulkMergeProgress] = React.useState<{ current: number; total: number } | null>(null);
 
   const reassignMutation = useMutation<void, Error, { faceId: string; targetClusterId: string | null }>({
     mutationFn: (variables) =>
@@ -76,11 +78,15 @@ export const useClusterActions = ({
   const bulkMergeMutation = useMutation<void, Error, { clusterIds: string[] }>({
     mutationFn: async ({ clusterIds }) => {
       if (clusterIds.length < 2) {
+        setBulkMergeProgress(null);
         return;
       }
       const targetId = clusterIds[0];
       const sourceIds = clusterIds.slice(1);
-      for (const sourceId of sourceIds) {
+      const total = sourceIds.length;
+      setBulkMergeProgress({ current: 1, total });
+      for (const [index, sourceId] of sourceIds.entries()) {
+        setBulkMergeProgress({ current: index + 1, total });
         await mergeCluster(sourceId, targetId);
       }
     },
@@ -89,7 +95,10 @@ export const useClusterActions = ({
       success(__('Clusters merged successfully.', 'alt-context'));
     },
     onError: (err) => showToastError(err.message),
-    onSettled: onBulkMergeSettled,
+    onSettled: () => {
+      setBulkMergeProgress(null);
+      onBulkMergeSettled?.();
+    },
   });
 
   const bulkDismissMutation = useMutation<void, Error, { clusterIds: string[] }>({
@@ -118,6 +127,7 @@ export const useClusterActions = ({
     commitMutation,
     bulkMergeMutation,
     bulkDismissMutation,
+    bulkMergeProgress,
     errorMessage:
       reassignMutation.error?.message ??
       rescanMutation.error?.message ??
@@ -128,5 +138,4 @@ export const useClusterActions = ({
     resetAll,
   };
 };
-
 

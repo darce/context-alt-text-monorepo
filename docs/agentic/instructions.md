@@ -186,7 +186,7 @@ Read discipline:
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
 - `get_review_finding` accepts either `finding_db_id` (integer PK) or `finding_id` (human-readable string like `"H-OCI-28"`). Prefer `finding_id` when referencing findings from review output.
-- Do **not** use `scripts/mcp/unified_server.py` CLI subcommands when MCP tools are available; those CLI endpoints are fallback-only for environments that cannot attach to MCP.
+- Do **not** use legacy `scripts/mcp/unified_server.py` CLI subcommands. The supported fallback path is the packaged `agent-handoff-mcp` CLI described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
 
 State integrity invariants:
 

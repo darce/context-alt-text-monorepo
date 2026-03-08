@@ -1,37 +1,43 @@
-"""Unit tests for MCP handoff state tools in scripts/mcp/unified_server.py."""
+"""Unit tests for portable agent handoff MCP state tools."""
 
 import json
 import sqlite3
-import sys
 from pathlib import Path
 
 import pytest
 
-# Ensure monorepo root is importable when tests run from app-local cwd.
-REPO_ROOT = Path(__file__).resolve().parents[5]
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
-
-from scripts.mcp import unified_server as mcp_server  # type: ignore[import-untyped] # noqa: E402
+from agent_handoff_mcp import api as mcp_server
+from agent_handoff_mcp import core as handoff_core
+from agent_handoff_mcp.config import RuntimeConfig
 
 
 @pytest.fixture()
 def isolated_handoff(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """Redirect handoff sqlite + generated markdown paths into tmp dir."""
     state_dir = tmp_path / ".task-state"
-    db_path = state_dir / "handoff.db"
     current_task_path = tmp_path / "CURRENT_TASK.md"
-
-    monkeypatch.setattr(mcp_server, "TASK_STATE_DIR", state_dir)
-    monkeypatch.setattr(mcp_server, "TASK_EXPORTS_DIR", state_dir / "exports")
-    monkeypatch.setattr(mcp_server, "HANDOFF_DB_PATH", db_path)
-    monkeypatch.setattr(mcp_server, "CURRENT_TASK_PATH", current_task_path)
+    runtime = RuntimeConfig.for_workspace(
+        tmp_path,
+        state_dir=state_dir,
+        current_task_path=current_task_path,
+    )
+    mcp_server.configure_runtime(runtime)
 
     return {
         "state_dir": state_dir,
-        "db_path": db_path,
+        "db_path": runtime.db_path,
         "current_task_path": current_task_path,
     }
+
+
+def test_runtime_config_defaults_to_workspace_task_state() -> None:
+    runtime = RuntimeConfig.for_workspace("/tmp/example-workspace")
+    workspace_root = Path("/tmp/example-workspace").resolve()
+
+    assert runtime.state_dir == workspace_root / ".task-state"
+    assert runtime.db_path == workspace_root / ".task-state" / "handoff.db"
+    assert runtime.current_task_path == workspace_root / "CURRENT_TASK.md"
+    assert runtime.exports_dir == workspace_root / ".task-state" / "exports"
 
 
 def _parse(payload: str) -> dict:
@@ -52,7 +58,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
     }
 
     # First bootstrap
-    with mcp_server._get_db_connection() as conn:
+    with handoff_core._get_db_connection() as conn:
         first_tables = {
             row[0]
             for row in conn.execute(
@@ -62,7 +68,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         }
 
     # Second bootstrap should produce identical schema (no error/no drift)
-    with mcp_server._get_db_connection() as conn:
+    with handoff_core._get_db_connection() as conn:
         second_tables = {
             row[0]
             for row in conn.execute(
@@ -132,7 +138,7 @@ def test_blocker_constraints_enforced(isolated_handoff: dict) -> None:
         )
     )
 
-    with pytest.raises(sqlite3.IntegrityError), mcp_server._get_db_connection() as conn:
+    with pytest.raises(sqlite3.IntegrityError), handoff_core._get_db_connection() as conn:
         conn.execute(
             """
                 INSERT INTO blockers (task_ref, description, status, resolved_at)
@@ -263,7 +269,7 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
     assert exported["ok"] is True
     assert export_path.exists()
 
-    with mcp_server._get_db_connection() as conn:
+    with handoff_core._get_db_connection() as conn:
         conn.execute("DELETE FROM decisions WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM next_actions WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM blockers WHERE task_ref = '4.12.0'")
@@ -656,7 +662,7 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
     assert archived["active_cleared"] is True
     assert archived["pruned_working_rows"] is True
 
-    with mcp_server._get_db_connection() as conn:
+    with handoff_core._get_db_connection() as conn:
         archive_row = conn.execute("SELECT * FROM task_archives WHERE task_ref = '4.99.0'").fetchone()
         assert archive_row is not None
         assert conn.execute("SELECT COUNT(*) FROM decisions WHERE task_ref = '4.99.0'").fetchone()[0] == 0

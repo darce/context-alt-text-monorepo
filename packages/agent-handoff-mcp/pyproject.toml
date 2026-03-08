@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=69"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-handoff-mcp"
+version = "0.1.0"
+description = "Portable MCP server for agent handoff state and review tracking."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "fastmcp",
+]
+
+[project.scripts]
+agent-handoff-mcp = "agent_handoff_mcp.cli:main"
+
+[tool.setuptools]
+package-dir = {"" = "src"}
+
+[tool.setuptools.packages.find]
+where = ["src"]

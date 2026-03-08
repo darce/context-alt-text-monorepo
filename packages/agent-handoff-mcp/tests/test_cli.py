@@ -1,0 +1,77 @@
+from __future__ import annotations
+
+import json
+import sys
+from pathlib import Path
+
+from agent_handoff_mcp import api
+from agent_handoff_mcp import cli
+
+
+def _run_cli(argv: list[str], capsys) -> dict:
+    original_argv = sys.argv
+    sys.argv = argv
+    try:
+        cli.main()
+    finally:
+        sys.argv = original_argv
+    return json.loads(capsys.readouterr().out)
+
+
+def test_doctor_cli_reports_workspace_paths(tmp_path: Path, capsys) -> None:
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "doctor",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["workspace_root"] == str(tmp_path.resolve())
+
+
+def test_state_review_list_and_close_check_cli_smoke(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="task-1", objective="cli smoke"))
+    json.loads(
+        api.record_review_finding(
+            session="cli",
+            finding_id="M-1",
+            severity="medium",
+            file_path="README.md",
+            description="cli review list smoke",
+        )
+    )
+
+    state_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "state",
+        ],
+        capsys,
+    )
+    assert state_payload["ok"] is True
+    assert state_payload["task_ref"] == "task-1"
+
+    findings_payload = _run_cli([
+        "agent-handoff-mcp",
+        "--workspace-root",
+        str(tmp_path),
+        "review-list",
+    ], capsys)
+    assert findings_payload["ok"] is True
+    assert findings_payload["total_matching"] == 1
+
+    close_payload = _run_cli([
+        "agent-handoff-mcp",
+        "--workspace-root",
+        str(tmp_path),
+        "handoff-close-check",
+    ], capsys)
+    assert close_payload["ok"] is True
+    assert close_payload["ready_to_close"] is False

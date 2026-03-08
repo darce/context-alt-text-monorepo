@@ -41,40 +41,55 @@ make fix-php-style                   # Runs plugin PHPCBF fixer
 
 ## MCP Server (Agent Tooling)
 
-The MCP server provides **monorepo-specific** code intelligence that Copilot and Pylance cannot do natively. VS Code manages the server lifecycle automatically — no manual start/stop needed.
+The workspace-local MCP adapter now points directly at the installed `agent-handoff-mcp` binary. VS Code manages the server lifecycle automatically.
 
 ### How It Works
 
 ```
-.vscode/mcp.json  →  scripts/mcp/mcp-server.sh run  →  unified_server.py (stdio)
+.vscode/mcp.json  →  agent-handoff-mcp --workspace-root <repo> serve-stdio
 ```
 
-VS Code spawns the MCP server process on demand and communicates via stdin/stdout. The server exits when VS Code closes the connection.
+The packaged server is handoff-only: task state, review findings, exports/imports, dashboard, and close checks. The old repo-intel helpers remain a separate decomposition task and are not part of this package.
 
 ### Prerequisites
 
 - VS Code 1.99+ with Copilot (or other MCP-capable client)
 - `.vscode/mcp.json` already committed to the repo
-- Python 3.11+ virtualenv with `fastmcp>=3,<4` installed (the `description-service` pyenv env)
-- Ripgrep installed (`brew install ripgrep` on macOS)
+- Python 3.11+ environment
+- Preferred: installed `agent-handoff-mcp` binary
+- Fallback for local development: package source at `packages/agent-handoff-mcp/src` available to the launcher
+
+### Install Options
+
+Local beta from a checked-out repo:
+
+```bash
+uv tool install /path/to/context-alt-text-monorepo/packages/agent-handoff-mcp
+```
+
+Pinned git-tag install from the monorepo:
+
+```bash
+uv tool install "git+ssh://git@github.com/<org>/context-alt-text-monorepo.git@agent-handoff-mcp-v0.1.0#subdirectory=packages/agent-handoff-mcp"
+```
+
+This uses the package [`pyproject.toml`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/pyproject.toml) as the canonical packaging contract. That is the right practice here because the install target is a real Python package living inside a monorepo subdirectory.
 
 ### Validation
 
-Command Palette → `MCP: List Servers` → "context-alt-text" should show this server and its custom tools.
+Command Palette → `MCP: List Servers` → "context-alt-text" should show the registered adapter.
 
 ### Available Tools
 
-These tools handle cross-boundary and domain-specific queries. For generic operations, use editor-native tools (for example, `search_code`, `find_definition`, `read_file`, `list_dir`, diagnostics) or Pylance MCP tools.
-
-Tools are prefixed with `mcp_context-alt-t_` when invoked by agents.
+This adapter exposes the handoff tool family only. Use editor-native tools for file search/read/navigation until the separate repo-intel MCP work lands.
 
 ### Troubleshooting
 
 If tools don't appear in VS Code:
 
 1. Check `MCP: List Servers` — server should be listed
-2. Ensure pyenv virtualenv has `fastmcp`: `pyenv exec pip show fastmcp`
-3. Test manually: `./scripts/mcp/mcp-server.sh run` (should block on stdin)
+2. Ensure the selected Python environment has `fastmcp`
+3. Test manually: `agent-handoff-mcp --workspace-root "$(pwd)" serve-stdio` (should block on stdin)
 4. Check VS Code Output panel → "MCP" for error messages
 
 Handoff guard commands:

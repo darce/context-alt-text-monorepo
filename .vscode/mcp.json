@@ -7,8 +7,7 @@
       ],
       "env": {
         "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/opt/homebrew/bin:/usr/local/bin:${env:PATH}",
-        "PYENV_ROOT": "${env:PYENV_ROOT}",
-        "PYENV_VERSION": "${env:PYENV_VERSION}"
+        "PYENV_ROOT": "${env:PYENV_ROOT}"
       }
     }
   }

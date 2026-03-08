@@ -1,0 +1,214 @@
+from __future__ import annotations
+
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
+from uuid import uuid4
+
+import pytest
+from sqlalchemy import func, select
+from sqlalchemy.ext.asyncio import AsyncSession
+
+from db.models.identity import CurationReplayRecord, IdentityCluster
+from db.models.tenant import Tenant
+from roster.application.curation_sync_service import CurationSyncService
+
+
+def _operation(
+    operation_type: str,
+    *,
+    entity_key: str,
+    idempotency_key: str,
+    expected_base_version: int,
+    payload: dict[str, object],
+) -> SimpleNamespace:
+    return SimpleNamespace(
+        operation_type=operation_type,
+        entity_type="cluster",
+        entity_key=entity_key,
+        idempotency_key=idempotency_key,
+        expected_base_version=expected_base_version,
+        local_revision=1,
+        payload=payload,
+    )
+
+
+async def _create_tenant(session: AsyncSession) -> Tenant:
+    tenant = Tenant(id=uuid4(), site_url="http://example.test")
+    session.add(tenant)
+    await session.commit()
+    return tenant
+
+
+@pytest.mark.asyncio
+async def test_person_operations_acknowledge_as_noop(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    service = CurationSyncService(session=db_session)
+
+    result = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=SimpleNamespace(
+            operation_type="person_updated",
+            entity_type="person",
+            entity_key=str(uuid4()),
+            idempotency_key="person-noop-idem",
+            expected_base_version=0,
+            local_revision=5,
+            payload={"person_uuid": str(uuid4()), "name": "Updated Name"},
+        ),
+    )
+
+    assert result.status == "acknowledged"
+    assert result.backend_version == 0
+
+
+@pytest.mark.asyncio
+async def test_cluster_bind_acknowledges_and_is_idempotent(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=0)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    person_uuid = str(uuid4())
+    operation = _operation(
+        "cluster_person_bound",
+        entity_key=str(cluster.id),
+        idempotency_key="bind-idem-key",
+        expected_base_version=base_version,
+        payload={"cluster_uuid": str(cluster.id), "person_uuid": person_uuid},
+    )
+
+    service = CurationSyncService(session=db_session)
+    first_result = await service.apply(tenant_id=str(tenant.id), operation=operation)
+    await db_session.commit()
+
+    # Replay through a new service instance to verify DB-backed idempotency.
+    second_result = await CurationSyncService(session=db_session).apply(tenant_id=str(tenant.id), operation=operation)
+
+    await db_session.refresh(cluster)
+
+    assert first_result.status == "acknowledged"
+    assert second_result == first_result
+    assert str(cluster.roster_id) == person_uuid
+
+    replay_count = await db_session.scalar(
+        select(func.count()).select_from(CurationReplayRecord).where(CurationReplayRecord.tenant_id == tenant.id)
+    )
+    assert replay_count == 1
+
+
+@pytest.mark.asyncio
+async def test_cluster_bind_conflicts_when_expected_base_is_stale(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Assigned", identity_count=1)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    stale_base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    cluster.updated_at = datetime.now(tz=UTC) + timedelta(microseconds=30)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    service = CurationSyncService(session=db_session)
+    result = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_person_bound",
+            entity_key=str(cluster.id),
+            idempotency_key="stale-idem-key",
+            expected_base_version=stale_base_version,
+            payload={"cluster_uuid": str(cluster.id), "person_uuid": str(uuid4())},
+        ),
+    )
+
+    assert result.status == "conflict"
+    assert result.conflict_code == "version_conflict"
+    assert result.backend_version >= stale_base_version
+    assert result.machine_payload == {
+        "cluster_uuid": str(cluster.id),
+        "current_roster_id": None,
+        "dismissed": False,
+    }
+
+
+@pytest.mark.asyncio
+async def test_person_deleted_acknowledges_without_mutating_cluster_bindings(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    person_uuid = uuid4()
+    keep_uuid = uuid4()
+    bound_cluster = IdentityCluster(
+        id=uuid4(), tenant_id=tenant.id, roster_id=person_uuid, label="Bound", identity_count=1
+    )
+    keep_cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, roster_id=keep_uuid, label="Keep", identity_count=1)
+    db_session.add_all([bound_cluster, keep_cluster])
+    await db_session.commit()
+
+    service = CurationSyncService(session=db_session)
+    result = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=SimpleNamespace(
+            operation_type="person_deleted",
+            entity_type="person",
+            entity_key=str(person_uuid),
+            idempotency_key="person-delete-idem",
+            expected_base_version=0,
+            local_revision=1,
+            payload={"person_uuid": str(person_uuid)},
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(bound_cluster)
+    await db_session.refresh(keep_cluster)
+
+    assert result.status == "acknowledged"
+    assert bound_cluster.roster_id == person_uuid
+    assert keep_cluster.roster_id == keep_uuid
+
+
+@pytest.mark.asyncio
+async def test_cluster_dismiss_and_undismiss_replay_mutate_backend_state(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    roster_id = uuid4()
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Review", identity_count=1, roster_id=roster_id)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    service = CurationSyncService(session=db_session)
+
+    dismissed = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_dismissed",
+            entity_key=str(cluster.id),
+            idempotency_key="dismiss-idem",
+            expected_base_version=base_version,
+            payload={"cluster_uuid": str(cluster.id)},
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    assert dismissed.status == "acknowledged"
+    assert cluster.dismissed_at is not None
+    assert cluster.roster_id == roster_id
+
+    undismissed = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_undismissed",
+            entity_key=str(cluster.id),
+            idempotency_key="undismiss-idem",
+            expected_base_version=dismissed.backend_version,
+            payload={"cluster_uuid": str(cluster.id)},
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    assert undismissed.status == "acknowledged"
+    assert cluster.dismissed_at is None
+    assert cluster.roster_id == roster_id

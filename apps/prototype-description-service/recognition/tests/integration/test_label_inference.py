@@ -5,7 +5,6 @@ from __future__ import annotations
 import uuid
 
 import pytest
-from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.models import IdentityCluster, IdentityClusterRepresentative, IdentityMember, MediaIdentity, Tenant
@@ -360,16 +359,7 @@ async def test_infer_suggested_label_from_roster_match(
     db_session: AsyncSession,
     tenant: Tenant,
 ) -> None:
-    # Create temporary roster_entries table for test context
-    # SQLite syntax is compatible with raw text execution in SQLAlchemy
-    await db_session.execute(text("CREATE TABLE IF NOT EXISTS roster_entries (id UUID PRIMARY KEY, name TEXT)"))
-
     roster_id = uuid.uuid4()
-    await db_session.execute(
-        text("INSERT INTO roster_entries (id, name) VALUES (:id, :name)"), {"id": str(roster_id), "name": "Roster Dave"}
-    )
-
-    # Setup target cluster pointing to this roster ID
     tenant_id = tenant.id
     target_cluster_id = uuid.uuid4()
 
@@ -395,9 +385,18 @@ async def test_infer_suggested_label_from_roster_match(
         label=None,
         identity_count=1,
         representative_identity_id=rep_id,
-        roster_id=roster_id,  # Link to the roster entry
+        roster_id=roster_id,
     )
-    db_session.add(target_cluster)
+    labeled_cluster = IdentityCluster(
+        id=uuid.uuid4(),
+        tenant_id=tenant_id,
+        label="Roster Dave",
+        identity_count=2,
+        representative_identity_id=rep_id,
+        roster_id=roster_id,
+        user_confirmed=True,
+    )
+    db_session.add_all([target_cluster, labeled_cluster])
     await db_session.commit()
 
     # Execute

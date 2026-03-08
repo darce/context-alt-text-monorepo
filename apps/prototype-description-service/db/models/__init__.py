@@ -16,6 +16,7 @@ from db.models.constraints import (
 )
 from db.models.identity import (
     ClusterCentroid,
+    CurationReplayRecord,
     IdentityCluster,
     IdentityClusterRepresentative,
     IdentityMember,
@@ -42,6 +43,7 @@ __all__ = [
     # Identity
     "MediaIdentity",
     "IdentityCluster",
+    "CurationReplayRecord",
     "ClusterCentroid",
     "IdentityClusterRepresentative",
     "IdentityMember",

@@ -7,6 +7,7 @@ namespace AltContext\Sovereign\Repositories;
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
 
 use function gmdate;
+use function is_array;
 use function is_object;
 use function is_string;
 use function max;
@@ -18,16 +19,24 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 	use PreparesSqlQueries;
 
 	private string $table_name;
+	private string $outbox_table_name;
+	private string $conflicts_table_name;
 
 	public function __construct( ?string $table_name = null ) {
 		global $wpdb;
 
 		$default_table = 'wp_acx_sync_state';
+		$default_outbox_table = 'wp_acx_sync_outbox';
+		$default_conflicts_table = 'wp_acx_sync_conflicts';
 		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
 			$default_table = $wpdb->prefix . 'acx_sync_state';
+			$default_outbox_table = $wpdb->prefix . 'acx_sync_outbox';
+			$default_conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
 		}
 
 		$this->table_name = $table_name ?? $default_table;
+		$this->outbox_table_name = $default_outbox_table;
+		$this->conflicts_table_name = $default_conflicts_table;
 	}
 
 	public function upsert_snapshot_version( string $tenant_id, int $snapshot_version ): void {
@@ -161,7 +170,286 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 	}
 
+	public function refresh_curation_metrics( string $tenant_id ): void {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'get_var' ) || ! method_exists( $wpdb, 'get_row' ) || ! method_exists( $wpdb, 'update' ) || ! method_exists( $wpdb, 'insert' ) ) {
+			return;
+		}
+
+		$stream_name = $this->stream_name_for_tenant( $normalized_tenant_id );
+		$existing = $this->get_sync_state_row( $stream_name );
+		$pending = $this->count_outbox_rows( $normalized_tenant_id, 'pending' );
+		$conflicts = $this->count_conflict_rows( $normalized_tenant_id, 'open' );
+		$last_acknowledged_at = $this->max_outbox_acknowledged_at( $normalized_tenant_id );
+		$last_conflict_at = $this->max_conflict_created_at( $normalized_tenant_id );
+
+		$data = array(
+			'pending_curation_operations' => $pending,
+			'conflict_count' => $conflicts,
+			'last_curation_acknowledged_at' => $last_acknowledged_at ?? ( $existing['last_curation_acknowledged_at'] ?? null ),
+			'last_curation_conflict_at' => $last_conflict_at ?? ( $existing['last_curation_conflict_at'] ?? null ),
+		);
+
+		if ( is_array( $existing ) ) {
+			$wpdb->update(
+				$this->table_name,
+				$data,
+				array( 'stream_name' => $stream_name ),
+				array( '%d', '%d', '%s', '%s' ),
+				array( '%s' )
+			);
+			return;
+		}
+
+		$wpdb->insert(
+			$this->table_name,
+			array(
+				'stream_name' => $stream_name,
+				'last_snapshot_version' => 0,
+				'pending_curation_operations' => $pending,
+				'conflict_count' => $conflicts,
+				'last_curation_acknowledged_at' => $data['last_curation_acknowledged_at'],
+				'last_curation_conflict_at' => $data['last_curation_conflict_at'],
+				'updated_at' => '1970-01-01 00:00:00',
+			),
+			array( '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+		);
+	}
+
+	public function get_pending_curation_operations( string $tenant_id ): int {
+		return max( 0, $this->get_numeric_state_value( $tenant_id, 'pending_curation_operations' ) );
+	}
+
+	public function get_conflict_count( string $tenant_id ): int {
+		return max( 0, $this->get_numeric_state_value( $tenant_id, 'conflict_count' ) );
+	}
+
+	public function get_last_curation_acknowledged_at( string $tenant_id ): ?string {
+		return $this->get_string_state_value( $tenant_id, 'last_curation_acknowledged_at' );
+	}
+
+	public function get_last_curation_conflict_at( string $tenant_id ): ?string {
+		return $this->get_string_state_value( $tenant_id, 'last_curation_conflict_at' );
+	}
+
 	private function stream_name_for_tenant( string $tenant_id ): string {
 		return sprintf( 'tenant:%s:clusters', trim( $tenant_id ) );
+	}
+
+	private function get_numeric_state_value( string $tenant_id, string $column ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT %i FROM %i WHERE stream_name = %s LIMIT 1',
+			array(
+				$column,
+				$this->table_name,
+				$this->stream_name_for_tenant( $normalized_tenant_id ),
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+
+		return max( 0, (int) $value );
+	}
+
+	private function get_string_state_value( string $tenant_id, string $column ): ?string {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return null;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT %i FROM %i WHERE stream_name = %s LIMIT 1',
+			array(
+				$column,
+				$this->table_name,
+				$this->stream_name_for_tenant( $normalized_tenant_id ),
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function get_sync_state_row( string $stream_name ): ?array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT last_curation_acknowledged_at, last_curation_conflict_at
+			FROM %i
+			WHERE stream_name = %s
+			LIMIT 1',
+			array(
+				$this->table_name,
+				$stream_name,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$row = $wpdb->get_row( $sql, ARRAY_A );
+		return is_array( $row ) ? $row : null;
+	}
+
+	private function count_outbox_rows( string $tenant_id, string $status ): int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status = %s',
+			array(
+				$this->outbox_table_name,
+				$tenant_id,
+				$status,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+
+		return max( 0, (int) $value );
+	}
+
+	private function count_conflict_rows( string $tenant_id, string $resolution_status ): int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+			array(
+				$this->conflicts_table_name,
+				$tenant_id,
+				$resolution_status,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+
+		return max( 0, (int) $value );
+	}
+
+	private function max_outbox_acknowledged_at( string $tenant_id ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT MAX(acknowledged_at) FROM %i WHERE tenant_id = %s AND status = %s',
+			array(
+				$this->outbox_table_name,
+				$tenant_id,
+				'acknowledged',
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
+	}
+
+	private function max_conflict_created_at( string $tenant_id ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT MAX(created_at) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+			array(
+				$this->conflicts_table_name,
+				$tenant_id,
+				'open',
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
 	}
 }

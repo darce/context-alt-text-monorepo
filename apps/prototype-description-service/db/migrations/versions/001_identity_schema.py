@@ -29,6 +29,7 @@ TENANT_TABLES = [
     "identity_constraints",
     "recognition_runs",
     "recognition_events",
+    "curation_replay_records",
 ]
 
 
@@ -99,6 +100,30 @@ def upgrade() -> None:
             name="valid_identity_type",
         ),
         sa.UniqueConstraint("tenant_id", "media_id", "identity_type", "bbox_x", "bbox_y", name="unique_media_identity"),
+    )
+    op.create_table(
+        "curation_replay_records",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("idempotency_key", sa.String(length=64), nullable=False),
+        sa.Column("result_status", sa.String(length=20), nullable=False),
+        sa.Column("backend_version", sa.Integer(), nullable=False, server_default=sa.text("0")),
+        sa.Column("conflict_code", sa.String(length=64), nullable=True),
+        sa.Column("machine_payload_json", sa.Text(), nullable=True),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column(
+            "updated_at",
+            sa.TIMESTAMP(timezone=True),
+            server_default=sa.func.now(),
+            onupdate=sa.func.now(),
+            nullable=False,
+        ),
+        sa.UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),
     )
 
     op.create_table(
@@ -666,6 +691,7 @@ def upgrade() -> None:
         ["roster_id"],
         postgresql_where=sa.text("roster_id IS NOT NULL"),
     )
+    op.create_index("idx_curation_replay_tenant", "curation_replay_records", ["tenant_id"])
     op.create_index("idx_identity_members_cluster", "identity_members", ["cluster_id"])
     op.create_index("idx_identity_members_identity", "identity_members", ["identity_id"])
     op.create_index("idx_identity_scan_jobs_tenant", "identity_scan_jobs", ["tenant_id"])
@@ -1031,6 +1057,7 @@ def downgrade() -> None:
     op.drop_index("idx_identity_members_identity", table_name="identity_members")
     op.drop_index("idx_identity_members_cluster", table_name="identity_members")
     op.drop_index("idx_identity_clusters_roster", table_name="identity_clusters")
+    op.drop_index("idx_curation_replay_tenant", table_name="curation_replay_records")
     op.drop_index("idx_identity_clusters_tenant_type", table_name="identity_clusters")
     op.drop_index("idx_identity_clusters_tenant", table_name="identity_clusters")
     op.drop_index("idx_media_identities_embedding", table_name="media_identities")
@@ -1081,5 +1108,6 @@ def downgrade() -> None:
     op.drop_table("identity_cluster_representatives")
     op.drop_table("identity_clustering_jobs")
     op.drop_table("identity_members")
+    op.drop_table("curation_replay_records")
     op.drop_table("identity_clusters")
     op.drop_table("media_identities")

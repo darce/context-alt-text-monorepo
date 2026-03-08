@@ -46,6 +46,7 @@ class ClustersRepositoryMutationTest extends TestCase
         $query = $wpdb->queries[0];
         $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET curation_state = 'dismissed'", $query);
         $this->assertStringContainsString('is_user_confirmed = 1', $query);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-456'", $query);
         $this->assertSame(1, $result);
     }
@@ -61,6 +62,7 @@ class ClustersRepositoryMutationTest extends TestCase
         $query = $wpdb->queries[0];
         $this->assertStringContainsString("UPDATE `wp_acx_clusters` SET curation_state = 'uncurated'", $query);
         $this->assertStringContainsString('is_user_confirmed = 0', $query);
+        $this->assertStringContainsString('local_revision = local_revision + 1', $query);
         $this->assertStringContainsString("WHERE cluster_uuid = 'cluster-789'", $query);
         $this->assertSame(1, $result);
     }

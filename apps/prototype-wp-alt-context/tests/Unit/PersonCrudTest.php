@@ -55,6 +55,13 @@ class PersonCrudTest extends TestCase
         global $wpdb;
         $insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_persons');
         $this->assertStringContainsString("'John Doe'", $insertQuery);
+        $this->assertStringContainsString('local_revision', $insertQuery);
+        $this->assertStringContainsString(', 1,', $insertQuery);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'person_created'", $outboxInsert);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
     }
 
     public function testCreatePersonFailsOnDuplicateName(): void
@@ -115,6 +122,11 @@ class PersonCrudTest extends TestCase
 
         $updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_persons');
         $this->assertStringContainsString("name = 'New Name'", $updateQuery);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'person_updated'", $outboxInsert);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
     }
 
     public function testDeletePersonSoftDissociatesClusters(): void
@@ -126,6 +138,7 @@ class PersonCrudTest extends TestCase
         $wpdb->mockRow = [
             'id' => 1,
             'name' => 'To Delete',
+            'person_uuid' => '7fa30d6d-5d89-4d09-b4fb-b5fe11111111',
         ];
 
         $request = new WP_REST_Request('DELETE', '/acx/v1/roster/persons/1');
@@ -140,11 +153,98 @@ class PersonCrudTest extends TestCase
         // Verify soft dissociation on clusters
         $dissociateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
         $this->assertStringContainsString('person_id = NULL', $dissociateQuery);
+        $this->assertStringContainsString("curation_state = 'confirmed'", $dissociateQuery);
+        $this->assertStringContainsString('is_user_confirmed = 1', $dissociateQuery);
         $this->assertStringContainsString('person_id = 1', $dissociateQuery);
 
         // Verify person deletion
         $deleteQuery = $this->findQueryContaining($wpdb->queries, 'DELETE FROM wp_acx_persons');
         $this->assertStringContainsString('id = 1', $deleteQuery);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'person_deleted'", $outboxInsert);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testCommitRosterClusterMarksClusterAsCuratedAndQueuesOutboxEvent(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $wpdb->queryResults['SELECT person_uuid FROM `wp_acx_persons` WHERE id = 7'] =
+            '8cb36e76-7c2c-4aa8-bf2f-0d4dfab01234';
+        $wpdb->queryResults['SELECT snapshot_version FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-123\' LIMIT 1'] = 27;
+        $wpdb->queryResults['SELECT local_revision FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-123\''] = 3;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/roster/clusters/cluster-123/commit');
+        $request->set_param('cluster_id', 'cluster-123');
+        $request->set_param('roster_entry_id', 7);
+
+        $response = $this->api->commit_roster_cluster($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('cluster-123', $data['cluster_id']);
+        $this->assertSame(7, $data['person_id']);
+
+        $clusterUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_clusters');
+        $this->assertStringContainsString('person_id = 7', $clusterUpdate);
+        $this->assertStringContainsString("curation_state = 'confirmed'", $clusterUpdate);
+        $this->assertStringContainsString('is_user_confirmed = 1', $clusterUpdate);
+
+        $revisionUpdate = $this->findQueryContaining($wpdb->queries, 'local_revision = local_revision + 1');
+        $this->assertStringContainsString('cluster-123', $revisionUpdate);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'cluster_person_bound'", $outboxInsert);
+        $this->assertStringContainsString('cluster-123', $outboxInsert);
+        $this->assertStringContainsString(', 27, 3,', $outboxInsert);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+    }
+
+    public function testCommitRosterClusterCreatesPersonInsideTransactionAndQueuesCreateThenBind(): void
+    {
+        $this->api->register_routes();
+        global $wpdb;
+
+        $wpdb->insert_id = 12;
+        $wpdb->queryResults['SELECT snapshot_version FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-inline\' LIMIT 1'] = 44;
+        $wpdb->queryResults['SELECT local_revision FROM `wp_acx_clusters` WHERE cluster_uuid = \'cluster-inline\''] = 4;
+
+        $request = new WP_REST_Request('POST', '/acx/v1/roster/clusters/cluster-inline/commit');
+        $request->set_param('cluster_id', 'cluster-inline');
+        $request->set_param('new_entry_name', 'Inline Person');
+
+        $response = $this->api->commit_roster_cluster($request);
+
+        $this->assertNotInstanceOf(\WP_Error::class, $response);
+        $data = $response->get_data();
+        $this->assertSame('cluster-inline', $data['cluster_id']);
+        $this->assertSame(12, $data['person_id']);
+
+        $transactionIndex = array_search('START TRANSACTION', $wpdb->queries, true);
+        $personInsertIndex = $this->findQueryIndexContaining($wpdb->queries, 'INSERT INTO wp_acx_persons');
+        $this->assertIsInt($transactionIndex);
+        $this->assertGreaterThan($transactionIndex, $personInsertIndex);
+
+        $personInsert = $wpdb->queries[$personInsertIndex];
+        $this->assertStringContainsString("'Inline Person'", $personInsert);
+        $this->assertStringContainsString('local_revision', $personInsert);
+        $this->assertStringContainsString(', 1,', $personInsert);
+
+        $outboxInserts = array_values(
+            array_filter(
+                $wpdb->queries,
+                static fn(string $query): bool => str_contains($query, 'INSERT INTO wp_acx_sync_outbox')
+            )
+        );
+        $this->assertCount(2, $outboxInserts);
+        $this->assertStringContainsString("'person_created'", $outboxInserts[0]);
+        $this->assertStringContainsString("'cluster_person_bound'", $outboxInserts[1]);
+        $this->assertStringContainsString(', 44, 4,', $outboxInserts[1]);
+        $this->assertContains('COMMIT', $wpdb->queries);
     }
 
     public function testGetRosterEntriesFetchesFromDb(): void
@@ -188,5 +288,20 @@ class PersonCrudTest extends TestCase
 
         $this->fail(sprintf('Unable to find query containing "%s".', $needle));
         return '';
+    }
+
+    /**
+     * @param array<int,string> $queries
+     */
+    private function findQueryIndexContaining(array $queries, string $needle): int
+    {
+        foreach ($queries as $index => $query) {
+            if (str_contains($query, $needle)) {
+                return $index;
+            }
+        }
+
+        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
+        return -1;
     }
 }

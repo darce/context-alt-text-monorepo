@@ -8,6 +8,7 @@ use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\OutboxWriter;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -22,11 +23,16 @@ use function do_action;
 use function get_current_user_id;
 use function in_array;
 use function is_array;
+use function is_object;
 use function is_wp_error;
+use function max;
+use function method_exists;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
 use function time;
+use function trim;
+use function wp_generate_uuid4;
 use function wp_next_scheduled;
 use function wp_schedule_single_event;
 
@@ -202,69 +208,97 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	}
 
 	public function dismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		if ( '' === $cluster_id ) {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$local_cluster_exists = is_array( $this->clusters_repository->find_by_uuid( $cluster_id ) );
+		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( ! is_array( $cluster ) ) {
+			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
 		$affected_rows = $this->clusters_repository->dismiss( $cluster_id );
-		if ( $affected_rows > 0 ) {
-			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		if ( false === $affected_rows ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not dismiss cluster locally.', array( 'status' => 500 ) );
 		}
 
-		$response = $this->proxy_request(
-			'POST',
-			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
-			array(),
-			array( 'tenant_id' => $this->get_tenant_id() )
+		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'cluster_dismissed', $cluster_id, $cluster ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue dismiss replay operation.', array( 'status' => 500 ) );
+		}
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'dismissed' => true,
+				'synced' => false,
+				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+			),
+			200
 		);
-
-		if ( $this->should_treat_not_found_as_idempotent_success( $response, $affected_rows, $local_cluster_exists ) ) {
-			return new WP_REST_Response(
-				array(
-					'dismissed' => true,
-					'synced' => false,
-					'reason' => 'already_dismissed_remote',
-				),
-				200
-			);
-		}
-
-		return $response;
 	}
 
 	public function undismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		if ( '' === $cluster_id ) {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$local_cluster_exists = is_array( $this->clusters_repository->find_by_uuid( $cluster_id ) );
+		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( ! is_array( $cluster ) ) {
+			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
 		$affected_rows = $this->clusters_repository->undismiss( $cluster_id );
-		if ( $affected_rows > 0 ) {
-			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		if ( false === $affected_rows ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not undismiss cluster locally.', array( 'status' => 500 ) );
 		}
 
-		$response = $this->proxy_request(
-			'DELETE',
-			sprintf( '/recognition/clusters/%s/dismiss', $cluster_id ),
-			array(),
-			array( 'tenant_id' => $this->get_tenant_id() )
+		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'cluster_undismissed', $cluster_id, $cluster ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue undismiss replay operation.', array( 'status' => 500 ) );
+		}
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'dismissed' => false,
+				'synced' => false,
+				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+			),
+			200
 		);
-
-		if ( $this->should_treat_not_found_as_idempotent_success( $response, $affected_rows, $local_cluster_exists ) ) {
-			return new WP_REST_Response(
-				array(
-					'dismissed' => false,
-					'synced' => false,
-					'reason' => 'already_undismissed_remote',
-				),
-				200
-			);
-		}
-
-		return $response;
 	}
 
 	public function merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -498,20 +532,30 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		}
 	}
 
-	private function should_treat_not_found_as_idempotent_success(
-		WP_REST_Response|WP_Error $response,
-		int $affected_rows,
-		bool $local_cluster_exists
-	): bool {
-		if ( ! $local_cluster_exists && $affected_rows <= 0 ) {
+	/**
+	 * @param array<string,mixed> $cluster
+	 */
+	private function enqueue_curation_operation( string $operation_type, string $cluster_id, array $cluster ): bool {
+		$tenant_id = trim( $this->get_tenant_id() );
+		if ( '' === $tenant_id ) {
 			return false;
 		}
 
-		if ( is_wp_error( $response ) ) {
-			return false;
-		}
+		$writer = new OutboxWriter();
+		$result = $writer->enqueue(
+			$tenant_id,
+			$operation_type,
+			'cluster',
+			$cluster_id,
+			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
+			max( 1, (int) ( $cluster['local_revision'] ?? 0 ) + 1 ),
+			array(
+				'cluster_uuid' => $cluster_id,
+			),
+			wp_generate_uuid4()
+		);
 
-		return 404 === $response->get_status();
+		return false !== $result;
 	}
 
 	/**

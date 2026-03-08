@@ -2,7 +2,7 @@
 
 ## Status
 
-In progress -- Phase 1 and Phase 2 complete; Phase 3 and Phase 4 in progress.
+Phases 1-4 complete. Phase 5 (Sovereign Sync -- Person Push) is next.
 
 ## Objective
 
@@ -67,12 +67,10 @@ The v0.1.0 sovereign architecture and v0.2.0 reliability baseline established a 
 
 ### Gaps
 
-- Dashboard still lacks media-with-faces metric and explicit unassigned-persons metric in stats payload.
-- Dashboard guidance needs a fourth state for unassigned persons, driven by explicit `unassigned_persons_count`.
-- Dashboard identity panel still needs robust error state and query freshness tuning.
-- Cluster review still lacks complete multi-select/bulk workflow parity and full keyboard UX hardening.
-- Additional roster-aware labeling and ergonomics polish remains for Phase 4 completion.
 - Backend has no `roster_entries` table; `identity_clusters.roster_id` exists but is non-functional.
+- `commit_roster_cluster` does not set `is_user_confirmed = 1`, so snapshot sync can overwrite person assignments.
+- No outbox or push mechanism exists; local curation changes are not propagated to the backend.
+- Person UUIDs are generated locally but never synced to backend `roster_id`.
 
 ## Target Architecture
 
@@ -163,9 +161,9 @@ Exit criteria:
 - Optimistic updates provide instant feedback; rollback on error.
 - Vitest coverage for all new mutations and UI interactions.
 
-### Phase 3: Dashboard Buildout -- IN PROGRESS
+### Phase 3: Dashboard Buildout -- COMPLETED
 
-> **Status**: in-progress
+> **Status**: completed
 > **Task plan**: [phase-3-dashboard-buildout-task-plan.md](../../tasks/5.0/phase-3-dashboard-buildout-task-plan.md)
 
 **Goal**: Dashboard is the admin's home base with live data and contextual guidance.
@@ -183,9 +181,9 @@ Exit criteria:
 - Guidance card changes text based on pending-review count and roster state.
 - Dashboard loads in < 500ms from local DB.
 
-### Phase 4: Recognition UX Polish -- IN PROGRESS
+### Phase 4: Recognition UX Polish -- COMPLETED
 
-> **Status**: in-progress
+> **Status**: completed
 > **Task plan**: [phase-4-recognition-ux-polish-task-plan.md](../../tasks/5.0/phase-4-recognition-ux-polish-task-plan.md)
 
 **Goal**: Cluster review is efficient for large batches via multi-select, bulk actions, keyboard nav, and roster-aware labeling.
@@ -270,31 +268,44 @@ Exit criteria:
 - [x] Add "People" vs "Clusters" explanatory copy to Roster page.
 - [x] Vitest coverage for mutations and UI interactions.
 
-## Phase 3: Dashboard Buildout -- IN PROGRESS
+## Phase 3: Dashboard Buildout -- COMPLETED
 
-- [ ] Create `useIdentityStats` hook reading from local projection.
-- [ ] Add identity panel to `DashboardPage` (person count, assigned, pending review).
-- [ ] Add contextual guidance card with dynamic "next step" copy.
-- [ ] Enhance coverage panel with "faces detected" count.
+- [x] Create `useIdentityStats` hook reading from local projection.
+- [x] Add identity panel to `DashboardPage` (person count, assigned, pending review).
+- [x] Add contextual guidance card with dynamic "next step" copy.
+- [x] Enhance coverage panel with "faces detected" count.
 - [x] Enhance recent activity with duration and result links.
-- [ ] Vitest coverage for dashboard panels and hooks.
+- [x] Vitest coverage for dashboard panels and hooks.
 
-## Phase 4: Recognition UX Polish -- IN PROGRESS
+## Phase 4: Recognition UX Polish -- COMPLETED
 
-- [ ] Create `useClusterSelection` hook for multi-select state.
-- [ ] Add checkbox/Shift-click selection to `ClusterGrid`.
-- [ ] Implement bulk merge action with confirmation dialog.
-- [ ] Implement bulk dismiss action with confirmation dialog.
-- [ ] Add keyboard navigation (arrow keys, Enter, Escape) to cluster grid.
-- [ ] Add keyboard navigation to ClusterDrawerPanel.
-- [ ] Add person combobox search to cluster labeling flow (searches persons locally).
-- [ ] Add toast notification component (or wire existing).
-- [ ] Add toast notifications for all mutation outcomes.
-- [ ] Add metadata display to ClusterDrawerPanel (face count, confidence, age).
-- [ ] Vitest and interaction test coverage for all new behaviors.
+- [x] Create `useClusterSelection` hook for multi-select state.
+- [x] Add checkbox/Shift-click selection to `ClusterGrid`.
+- [x] Implement bulk merge action with confirmation dialog.
+- [x] Implement bulk dismiss action with confirmation dialog.
+- [x] Add keyboard navigation (arrow keys, Enter, Escape) to cluster grid.
+- [x] Add keyboard navigation to ClusterDrawerPanel.
+- [x] Add person combobox search to cluster labeling flow (searches persons locally).
+- [x] Add toast notification component (or wire existing).
+- [x] Add toast notifications for all mutation outcomes.
+- [x] Add metadata display to ClusterDrawerPanel (face count, confidence, age).
+- [x] Vitest and interaction test coverage for all new behaviors.
+
+## Phase 5: Sovereign Sync -- Person Push and Curation Protection -- NOT STARTED
+
+> **Task plan**: [phase-5-sovereign-sync-person-push-task-plan.md](../../tasks/5.0/phase-5-sovereign-sync-person-push-task-plan.md)
+
+- [ ] Set `is_user_confirmed = 1` on cluster when person is assigned (curation protection).
+- [ ] Revert `is_user_confirmed = 0` on cluster when person is deleted (soft dissociation).
+- [ ] Add `wp_acx_outbox` table for async push events.
+- [ ] Wire outbox writes into person CRUD and cluster commit endpoints.
+- [ ] Implement outbox drain via WP cron.
+- [ ] Add backend `POST /roster/persons/sync` endpoint.
+- [ ] Bind `identity_clusters.roster_id` to `person_uuid` on backend.
+- [ ] Remove broken `roster_entries` reference from `cluster_repository.get_roster_entry_name()`.
 
 ## Deferred (Post-Epic)
 
-- [ ] Outbox + Action Scheduler sync (see sovereign-sync-and-workbench-ux-epic.md Track A). Includes person UUID sync to backend `roster_id`.
+- [ ] Action Scheduler integration (upgrade from WP cron drain).
 - [ ] Delta ingest and drift reconciliation.
-- [ ] Remove/replace backend `cluster_repository.get_roster_entry_name()` lookup that still queries nonexistent `roster_entries`.
+- [ ] Bidirectional conflict resolution for person name edits.

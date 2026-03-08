@@ -51,6 +51,7 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         await conn.execute(text("PRAGMA foreign_keys=ON"))
         tables: list[Table] = [
             Table("identity_clusters", Base.metadata),
+            Table("curation_replay_records", Base.metadata),
             Table("identity_cluster_representatives", Base.metadata),
             Table("identity_members", Base.metadata),
             Table("cluster_merge_suggestions", Base.metadata),

@@ -26,65 +26,9 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository);
     }
 
-    public function testLocalWriteSurvivesProxyFailureScaffold(): void
+    public function testDismissQueuesReplayOperationInsideTransaction(): void
     {
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-
-        $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-abc', [
-            'cluster_id' => 'cluster-abc',
-            'label' => 'Grace Hopper',
-        ]);
-
-        $response = $this->controller->update_cluster_label($request);
-
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame('cluster-abc', $this->repository->updatedClusterId);
-        $this->assertSame('Grace Hopper', $this->repository->updatedLabel);
-        $this->assertSame(1, $this->syncStateRepository->touchCount);
-    }
-
-    public function testLocalDismissWriteSurvivesProxyFailure(): void
-    {
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-
-        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/dismiss', [
-            'cluster_id' => 'cluster-xyz',
-        ]);
-
-        $response = $this->controller->dismiss_cluster($request);
-
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame('cluster-xyz', $this->repository->dismissedClusterId);
-        $this->assertSame(1, $this->syncStateRepository->touchCount);
-    }
-
-    public function testLocalUndismissWriteSurvivesProxyFailure(): void
-    {
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-
-        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/undismiss', [
-            'cluster_id' => 'cluster-xyz',
-        ]);
-
-        $response = $this->controller->undismiss_cluster($request);
-
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame('cluster-xyz', $this->repository->undismissedClusterId);
-        $this->assertSame(1, $this->syncStateRepository->touchCount);
-    }
-
-    public function testDismissTreatsRemote404AsIdempotentSuccessWhenLocalWriteApplied(): void
-    {
-        $this->queueHttpResponse([
-            'response' => ['code' => 404, 'message' => 'Not Found'],
-            'body' => json_encode(['detail' => 'Cluster not found or already dismissed']),
-        ]);
+        global $wpdb;
 
         $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/dismiss', [
             'cluster_id' => 'cluster-xyz',
@@ -95,17 +39,24 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
         $this->assertSame('cluster-xyz', $this->repository->dismissedClusterId);
-        $this->assertSame(1, $this->syncStateRepository->touchCount);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'cluster_dismissed'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-xyz'", $outboxInsert);
+        $this->assertStringContainsString('cluster_uuid', $outboxInsert);
+        $this->assertStringContainsString('expected_base_version', $outboxInsert);
+        $this->assertStringContainsString('local_revision', $outboxInsert);
+
+        $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testUndismissTreatsRemote404AsIdempotentSuccessWhenLocalWriteApplied(): void
+    public function testUndismissQueuesReplayOperationInsideTransaction(): void
     {
-        $this->queueHttpResponse([
-            'response' => ['code' => 404, 'message' => 'Not Found'],
-            'body' => json_encode(['detail' => 'Cluster not found or already dismissed']),
-        ]);
+        global $wpdb;
 
-        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/undismiss', [
+        $request = new \WP_REST_Request('DELETE', '/recognition/clusters/cluster-xyz/dismiss', [
             'cluster_id' => 'cluster-xyz',
         ]);
 
@@ -114,21 +65,36 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
         $this->assertSame('cluster-xyz', $this->repository->undismissedClusterId);
-        $this->assertSame(1, $this->syncStateRepository->touchCount);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'cluster_undismissed'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-xyz'", $outboxInsert);
+
+        $this->assertSame([], $this->getHttpCalls());
     }
 
-    public function testDismissTreatsRemote404AsIdempotentSuccessWhenClusterAlreadyLocallyDismissed(): void
+    public function testDismissRollbackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/dismiss', [
+            'cluster_id' => 'cluster-xyz',
+        ]);
+
+        $response = $this->controller->dismiss_cluster($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testDismissReturnsAcknowledgedWhenLocalStateAlreadyMatches(): void
     {
         $this->repository->nextDismissRows = 0;
-        $this->repository->localClusterRows['cluster-xyz'] = [
-            'cluster_uuid' => 'cluster-xyz',
-            'curation_state' => 'dismissed',
-        ];
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 404, 'message' => 'Not Found'],
-            'body' => json_encode(['detail' => 'Cluster not found or already dismissed']),
-        ]);
+        $this->repository->localClusterRows['cluster-xyz']['curation_state'] = 'dismissed';
 
         $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/dismiss', [
             'cluster_id' => 'cluster-xyz',
@@ -138,81 +104,56 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
-        $this->assertSame('cluster-xyz', $this->repository->dismissedClusterId);
-        $this->assertSame(0, $this->syncStateRepository->touchCount);
+        $this->assertSame('acknowledged', $response->get_data()['status']);
     }
 
-    public function testZeroRowLabelMutationDoesNotTouchSyncStateMarker(): void
-    {
-        $this->repository->nextUpdateRows = 0;
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-
-        $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-abc', [
-            'cluster_id' => 'cluster-abc',
-            'label' => 'Grace Hopper',
-        ]);
-
-        $response = $this->controller->update_cluster_label($request);
-
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame(0, $this->syncStateRepository->touchCount);
-    }
-
-    public function testZeroRowDismissMutationDoesNotTouchSyncStateMarker(): void
-    {
-        $this->repository->nextDismissRows = 0;
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-
-        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/dismiss', [
-            'cluster_id' => 'cluster-xyz',
-        ]);
-
-        $response = $this->controller->dismiss_cluster($request);
-
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame(0, $this->syncStateRepository->touchCount);
-    }
-
-    public function testZeroRowUndismissMutationDoesNotTouchSyncStateMarker(): void
+    public function testUndismissReturnsAcknowledgedWhenLocalStateAlreadyMatches(): void
     {
         $this->repository->nextUndismissRows = 0;
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
-        $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));
+        $this->repository->localClusterRows['cluster-xyz']['curation_state'] = 'uncurated';
 
-        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-xyz/undismiss', [
+        $request = new \WP_REST_Request('DELETE', '/recognition/clusters/cluster-xyz/dismiss', [
             'cluster_id' => 'cluster-xyz',
         ]);
 
         $response = $this->controller->undismiss_cluster($request);
 
-        $this->assertTrue(is_wp_error($response));
-        $this->assertSame(0, $this->syncStateRepository->touchCount);
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('acknowledged', $response->get_data()['status']);
+    }
+
+    /**
+     * @param array<int,string> $queries
+     */
+    private function findQueryContaining(array $queries, string $needle): string
+    {
+        foreach ($queries as $query) {
+            if (str_contains($query, $needle)) {
+                return $query;
+            }
+        }
+
+        $this->fail(sprintf('Unable to find query containing "%s".', $needle));
+        return '';
     }
 }
 
 class ClusterMutationsRepositorySpy extends NullClustersRepository
 {
-    public string $updatedClusterId = '';
-    public string $updatedLabel = '';
     public string $dismissedClusterId = '';
     public string $undismissedClusterId = '';
-    public int $nextUpdateRows = 1;
     public int $nextDismissRows = 1;
     public int $nextUndismissRows = 1;
     /** @var array<string,array<string,mixed>> */
-    public array $localClusterRows = [];
-
-    public function update_label(string $cluster_uuid, string $label): int
-    {
-        $this->updatedClusterId = $cluster_uuid;
-        $this->updatedLabel = $label;
-        return $this->nextUpdateRows;
-    }
+    public array $localClusterRows = [
+        'cluster-xyz' => [
+            'cluster_uuid' => 'cluster-xyz',
+            'snapshot_version' => 17,
+            'local_revision' => 4,
+            'curation_state' => 'uncurated',
+        ],
+    ];
 
     public function dismiss(string $cluster_uuid): int
     {
@@ -234,10 +175,8 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
 
 class ClusterMutationsSyncStateSpy extends NullSyncStateRepository
 {
-    public int $touchCount = 0;
-
-    public function touch_local_curation_marker(string $tenant_id): void
+    public function get_snapshot_version(string $tenant_id): int
     {
-        $this->touchCount++;
+        return 99;
     }
 }

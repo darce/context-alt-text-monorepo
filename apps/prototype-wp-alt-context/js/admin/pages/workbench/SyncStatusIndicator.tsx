@@ -15,6 +15,14 @@ const formatTimestamp = (value: string | null | undefined): string | null => {
   return parsed.toLocaleString();
 };
 
+const normalizeCount = (value: number | null | undefined): number => {
+  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
+};
+
 export const SyncStatusIndicator = (): React.JSX.Element | null => {
   const { data, isError, isLoading } = useSyncStatus();
   const syncTrigger = useSyncTrigger(data?.is_stale ?? false);
@@ -31,12 +39,42 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     );
   }
 
+  const pendingCuration = normalizeCount(data.pending_curation_operations);
+  const conflictCount = normalizeCount(data.conflict_count);
+  const acknowledgedAt = formatTimestamp(data.last_curation_acknowledged_at);
+  const conflictAt = formatTimestamp(data.last_curation_conflict_at);
+
+  const curationDetails =
+    pendingCuration > 0 || conflictCount > 0 || acknowledgedAt || conflictAt ? (
+      <div className="acx-sync-status__meta" aria-label={__('Curation sync details', 'alt-context')}>
+        {pendingCuration > 0 ? (
+          <span className="acx-sync-status__badge">{sprintf(__('Pending curation: %d', 'alt-context'), pendingCuration)}</span>
+        ) : null}
+        {conflictCount > 0 ? (
+          <span className="acx-sync-status__badge acx-sync-status__badge--warning">
+            {sprintf(__('Conflicts: %d', 'alt-context'), conflictCount)}
+          </span>
+        ) : null}
+        {acknowledgedAt ? (
+          <span className="acx-sync-status__label">
+            {sprintf(__('Last curation acknowledgement: %s', 'alt-context'), acknowledgedAt)}
+          </span>
+        ) : null}
+        {conflictAt ? (
+          <span className="acx-sync-status__label">
+            {sprintf(__('Last curation conflict: %s', 'alt-context'), conflictAt)}
+          </span>
+        ) : null}
+      </div>
+    ) : null;
+
   // Show syncing state while trigger is in progress and stale.
   if (data.is_stale && syncTrigger.isPending) {
     return (
       <div className="acx-sync-status acx-sync-status--syncing">
         <span className="acx-sync-status__label">{__('Syncing…', 'alt-context')}</span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+        {curationDetails}
       </div>
     );
   }
@@ -46,6 +84,7 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     return (
       <div className="acx-sync-status acx-sync-status--info">
         <span className="acx-sync-status__label">{__('Service connected — no clusters yet', 'alt-context')}</span>
+        {curationDetails}
       </div>
     );
   }
@@ -59,6 +98,7 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
           {syncedAt ? sprintf(__('Sync completed: %s', 'alt-context'), syncedAt) : __('Sync completed', 'alt-context')}
         </span>
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
+        {curationDetails}
       </div>
     );
   }
@@ -76,6 +116,7 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
         >
           {__('Retry', 'alt-context')}
         </button>
+        {curationDetails}
       </div>
     );
   }
@@ -103,6 +144,7 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
       ) : (
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
       )}
+      {curationDetails}
     </div>
   );
 };

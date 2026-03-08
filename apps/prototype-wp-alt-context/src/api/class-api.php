@@ -5,6 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Api;
 
 use AltContext\Api\RecognitionController;
+use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\OutboxWriter;
 use WP_Error;
 use WP_Query;
 use WP_REST_Request;
@@ -18,12 +20,17 @@ use function get_option;
 use function get_post_meta;
 use function get_post_mime_type;
 use function get_post_modified_time;
+use function get_site_url;
 use function get_the_title;
 use function is_array;
+use function is_object;
 use function is_wp_error;
+use function md5;
+use function method_exists;
 use function register_rest_route;
 use function rest_ensure_response;
 use function sanitize_text_field;
+use function sprintf;
 use function update_option;
 use function wp_get_attachment_image_sizes;
 use function wp_get_attachment_image_src;
@@ -31,17 +38,21 @@ use function wp_get_attachment_image_srcset;
 use function wp_get_attachment_image_url;
 use function wp_get_attachment_metadata;
 use function wp_get_object_terms;
+use function wp_generate_uuid4;
 
 class Api {
 	private RecognitionController $recognitionController;
 	private ?XmpEmbedController $xmpEmbedController;
+	private OutboxDrain $outboxDrain;
 
-	public function __construct( ?XmpEmbedController $xmp_embed_controller = null ) {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null ) {
 		$this->recognitionController = new RecognitionController();
 		$this->xmpEmbedController = $xmp_embed_controller;
+		$this->outboxDrain = $outbox_drain ?? new OutboxDrain();
 	}
 
 	public function init(): void {
+		$this->outboxDrain->register();
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
 
@@ -325,61 +336,144 @@ class Api {
 
 		$person_id = $request->get_param( 'roster_entry_id' );
 		$new_name  = $request->get_param( 'new_entry_name' );
+		$person_uuid = null;
+		$table_persons  = $wpdb->prefix . 'acx_persons';
+		$table_clusters = $wpdb->prefix . 'acx_clusters';
 
-		// If new name provided, create person first
+		if ( ! $this->begin_database_transaction() ) {
+			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		// If new name provided, create person within the same transaction as the bind.
 		if ( ! $person_id && $new_name ) {
 			$new_name = sanitize_text_field( (string) $new_name );
 			if ( ! empty( trim( $new_name ) ) ) {
-				$table_persons = $wpdb->prefix . 'acx_persons';
-				$existing_id   = $wpdb->get_var( $wpdb->prepare( 'SELECT id FROM %i WHERE name = %s', $table_persons, $new_name ) );
+				$existing = $wpdb->get_row( $wpdb->prepare( 'SELECT id, person_uuid FROM %i WHERE name = %s', $table_persons, $new_name ) );
 
-				if ( $existing_id ) {
-					$person_id = (int) $existing_id;
+				if ( $existing ) {
+					$person_id   = (int) $existing->id;
+					$person_uuid = (string) ( $existing->person_uuid ?? '' );
 				} else {
-					$person_uuid = wp_generate_uuid4();
-					$now         = current_time( 'mysql' );
-					$inserted    = $wpdb->insert(
+					$person_uuid       = wp_generate_uuid4();
+					$person_created_at = current_time( 'mysql' );
+					$inserted          = $wpdb->insert(
 						$table_persons,
+						array(
+							'person_uuid'    => $person_uuid,
+							'name'           => $new_name,
+							'tags'           => wp_json_encode( array() ),
+							'local_revision' => 1,
+							'created_at'     => $person_created_at,
+							'updated_at'     => $person_created_at,
+						),
+						array( '%s', '%s', '%s', '%d', '%s', '%s' )
+					);
+					if ( false === $inserted ) {
+						$this->rollback_database_transaction();
+						return new WP_Error( 'acx_db_error', __( 'Could not create person for cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
+					}
+
+					$person_id = (int) $wpdb->insert_id;
+					$queued_person = $this->enqueue_curation_operation(
+						'person_created',
+						'person',
+						(string) $person_uuid,
+						1,
 						array(
 							'person_uuid' => $person_uuid,
 							'name'        => $new_name,
-							'tags'        => wp_json_encode( array() ),
-							'created_at'  => $now,
-							'updated_at'  => $now,
+							'tags'        => array(),
 						)
 					);
-					if ( $inserted ) {
-						$person_id = $wpdb->insert_id;
+					if ( ! $queued_person ) {
+						$this->rollback_database_transaction();
+						return new WP_Error( 'acx_db_error', __( 'Could not queue person creation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
 					}
 				}
 			}
 		}
 
 		$person_id = $person_id ? absint( $person_id ) : null;
-
-		// Update cluster projection
-		$table_clusters = $wpdb->prefix . 'acx_clusters';
-
-		$update_data = array( 'person_id' => $person_id );
-		$update_fmt  = array( '%d' );
-
-		if ( null === $person_id ) {
-			$update_fmt = array( null );
+		if ( null !== $person_id && ( ! is_string( $person_uuid ) || '' === trim( $person_uuid ) ) ) {
+			$resolved_uuid = $wpdb->get_var(
+				$wpdb->prepare( 'SELECT person_uuid FROM %i WHERE id = %d', $table_persons, $person_id )
+			);
+			if ( is_string( $resolved_uuid ) ) {
+				$person_uuid = $resolved_uuid;
+			}
 		}
 
-		$wpdb->update(
+		if ( null !== $person_id && ( ! is_string( $person_uuid ) || '' === trim( $person_uuid ) ) ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not resolve person UUID for cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$now = current_time( 'mysql' );
+
+		$update_data = array(
+			'person_id'         => $person_id,
+			'curation_state'    => 'confirmed',
+			'is_user_confirmed' => 1,
+			'updated_at'        => $now,
+		);
+		$update_fmt  = array( '%d', '%s', '%d', '%s' );
+
+		if ( null === $person_id ) {
+			$update_fmt[0] = null;
+		}
+
+		$cluster_updated = $wpdb->update(
 			$table_clusters,
 			$update_data,
 			array( 'cluster_uuid' => $cluster_id ),
 			$update_fmt,
 			array( '%s' )
 		);
+		if ( false === $cluster_updated ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not update cluster assignment.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$revision_updated = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s',
+				$table_clusters,
+				$cluster_id
+			)
+		);
+		if ( false === $revision_updated ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not update cluster revision.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$local_revision = (int) $wpdb->get_var(
+			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE cluster_uuid = %s', $table_clusters, $cluster_id )
+		);
+		$queued = $this->enqueue_curation_operation(
+			( null === $person_id ? 'cluster_person_unbound' : 'cluster_person_bound' ),
+			'cluster',
+			$cluster_id,
+			max( 1, $local_revision ),
+			array(
+				'cluster_uuid' => $cluster_id,
+				'person_uuid'  => ( null === $person_id ) ? null : ( is_string( $person_uuid ) ? $person_uuid : null ),
+			)
+		);
+		if ( ! $queued ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not queue curation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( ! $this->commit_database_transaction() ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not commit local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
 
 		return rest_ensure_response(
 			array(
 				'cluster_id' => $cluster_id,
 				'person_id'  => $person_id,
-				'updated_at' => current_time( 'mysql' ),
+				'updated_at' => $now,
 			)
 		);
 	}
@@ -408,23 +502,50 @@ class Api {
 		$person_uuid = wp_generate_uuid4();
 		$now         = current_time( 'mysql' );
 
+		if ( ! $this->begin_database_transaction() ) {
+			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
 		$result = $wpdb->insert(
 			$table_name,
 			array(
 				'person_uuid' => $person_uuid,
 				'name'        => $name,
 				'tags'        => wp_json_encode( $tags ),
+				'local_revision' => 1,
 				'created_at'  => $now,
 				'updated_at'  => $now,
 			),
-			array( '%s', '%s', '%s', '%s', '%s' )
+			array( '%s', '%s', '%s', '%d', '%s', '%s' )
 		);
 
 		if ( false === $result ) {
+			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not create person in database.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
 		$person_id = $wpdb->insert_id;
+		$queued = $this->enqueue_curation_operation(
+			'person_created',
+			'person',
+			(string) $person_uuid,
+			1,
+			array(
+				'person_uuid' => $person_uuid,
+				'name'        => $name,
+				'tags'        => $tags,
+			)
+		);
+
+		if ( ! $queued ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not queue person creation replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( ! $this->commit_database_transaction() ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not commit local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
 
 		return new WP_REST_Response(
 			array(
@@ -491,15 +612,58 @@ class Api {
 		$update_data['updated_at'] = $now;
 		$update_fmt[]            = '%s';
 
+		if ( ! $this->begin_database_transaction() ) {
+			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
 		$result = $wpdb->update( $table_name, $update_data, array( 'id' => $id ), $update_fmt, array( '%d' ) );
 
 		if ( false === $result ) {
+			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not update person in database.', 'alt-context' ), array( 'status' => 500 ) );
 		}
+
+		$person_revision_updated = $wpdb->query(
+			$wpdb->prepare(
+				'UPDATE %i SET local_revision = local_revision + 1 WHERE id = %d',
+				$table_name,
+				$id
+			)
+		);
+		if ( false === $person_revision_updated ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not update person revision.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		$local_revision = (int) $wpdb->get_var(
+			$wpdb->prepare( 'SELECT local_revision FROM %i WHERE id = %d', $table_name, $id )
+		);
 
 			$updated_person = $wpdb->get_row( $wpdb->prepare( 'SELECT * FROM %i WHERE id = %d', $table_name, $id ) );
 		if ( isset( $updated_person->tags ) && is_string( $updated_person->tags ) ) {
 			$updated_person->tags = json_decode( $updated_person->tags, true );
+		}
+
+			$queued = $this->enqueue_curation_operation(
+				'person_updated',
+				'person',
+				(string) ( $person->person_uuid ?? $id ),
+				max( 1, $local_revision ),
+				array(
+					'person_uuid' => (string) ( $person->person_uuid ?? '' ),
+					'name'        => (string) ( $updated_person->name ?? $person->name ),
+					'tags'        => $updated_person->tags ?? array(),
+				)
+			);
+
+		if ( ! $queued ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not queue person update replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( ! $this->commit_database_transaction() ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not commit local transaction.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
 		return rest_ensure_response( $updated_person );
@@ -518,22 +682,197 @@ class Api {
 			return new WP_Error( 'acx_person_not_found', __( 'Person not found.', 'alt-context' ), array( 'status' => 404 ) );
 		}
 
-		// Soft dissociation: nullify person_id on assigned clusters
-		$wpdb->update(
+		$affected_clusters = $wpdb->get_results(
+			$wpdb->prepare( 'SELECT cluster_uuid FROM %i WHERE person_id = %d', $table_clusters, $id ),
+			ARRAY_A
+		);
+		if ( ! $this->begin_database_transaction() ) {
+			return new WP_Error( 'acx_db_error', __( 'Could not start local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		// Curated dissociation: preserve curation confirmation while clearing assignment.
+		$now = current_time( 'mysql' );
+		$dissociation_result = $wpdb->update(
 			$table_clusters,
-			array( 'person_id' => null ),
+			array(
+				'person_id'         => null,
+				'curation_state'    => 'confirmed',
+				'is_user_confirmed' => 1,
+				'updated_at'        => $now,
+			),
 			array( 'person_id' => $id ),
-			array( null ),
+			array( null, '%s', '%d', '%s' ),
 			array( '%d' )
 		);
+		if ( false === $dissociation_result ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not dissociate person from clusters.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( is_array( $affected_clusters ) ) {
+			foreach ( $affected_clusters as $cluster_row ) {
+				$cluster_uuid = sanitize_text_field( (string) ( $cluster_row['cluster_uuid'] ?? '' ) );
+				if ( '' === $cluster_uuid ) {
+					continue;
+				}
+
+				$revision_updated = $wpdb->query(
+					$wpdb->prepare(
+						'UPDATE %i SET local_revision = local_revision + 1 WHERE cluster_uuid = %s',
+						$table_clusters,
+						$cluster_uuid
+					)
+				);
+				if ( false === $revision_updated ) {
+					$this->rollback_database_transaction();
+					return new WP_Error( 'acx_db_error', __( 'Could not update cluster revision.', 'alt-context' ), array( 'status' => 500 ) );
+				}
+
+				$cluster_revision = (int) $wpdb->get_var(
+					$wpdb->prepare( 'SELECT local_revision FROM %i WHERE cluster_uuid = %s', $table_clusters, $cluster_uuid )
+				);
+
+				$queued = $this->enqueue_curation_operation(
+					'cluster_person_unbound',
+					'cluster',
+					$cluster_uuid,
+					max( 1, $cluster_revision ),
+					array(
+						'cluster_uuid' => $cluster_uuid,
+						'person_uuid'  => null,
+					)
+				);
+				if ( ! $queued ) {
+					$this->rollback_database_transaction();
+					return new WP_Error( 'acx_db_error', __( 'Could not queue cluster unbind replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+				}
+			}
+		}
 
 		$result = $wpdb->delete( $table_persons, array( 'id' => $id ), array( '%d' ) );
 
 		if ( false === $result ) {
+			$this->rollback_database_transaction();
 			return new WP_Error( 'acx_db_error', __( 'Could not delete person from database.', 'alt-context' ), array( 'status' => 500 ) );
 		}
 
+		$person_local_revision = max( 1, (int) ( $person->local_revision ?? 0 ) + 1 );
+
+		$queued = $this->enqueue_curation_operation(
+			'person_deleted',
+			'person',
+			(string) ( $person->person_uuid ?? $id ),
+			$person_local_revision,
+			array(
+				'person_uuid' => (string) ( $person->person_uuid ?? '' ),
+				'person_id'   => $id,
+			)
+		);
+		if ( ! $queued ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not queue person deletion replay operation.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
+		if ( ! $this->commit_database_transaction() ) {
+			$this->rollback_database_transaction();
+			return new WP_Error( 'acx_db_error', __( 'Could not commit local transaction.', 'alt-context' ), array( 'status' => 500 ) );
+		}
+
 		return rest_ensure_response( array( 'deleted' => true, 'id' => $id ) );
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	private function enqueue_curation_operation(
+		string $operation_type,
+		string $entity_type,
+		string $entity_key,
+		int $local_revision,
+		array $payload
+	): bool {
+		$tenant_id = $this->get_local_tenant_id();
+		if ( '' === $tenant_id ) {
+			return false;
+		}
+
+		$writer = new OutboxWriter();
+		$result = $writer->enqueue(
+			$tenant_id,
+			$operation_type,
+			$entity_type,
+			$entity_key,
+			$this->get_expected_base_version( $tenant_id, $entity_type, $entity_key ),
+			max( 0, $local_revision ),
+			$payload,
+			wp_generate_uuid4()
+		);
+
+		return false !== $result;
+	}
+
+	private function begin_database_transaction(): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return false;
+		}
+
+		return false !== $wpdb->query( 'START TRANSACTION' );
+	}
+
+	private function commit_database_transaction(): bool {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return false;
+		}
+
+		return false !== $wpdb->query( 'COMMIT' );
+	}
+
+	private function rollback_database_transaction(): void {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$wpdb->query( 'ROLLBACK' );
+	}
+
+	private function get_local_tenant_id(): string {
+		return md5( (string) get_site_url() );
+	}
+
+	private function get_expected_base_version( string $tenant_id, string $entity_type, string $entity_key ): int {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) ) {
+			return 0;
+		}
+
+		if ( 'cluster' === $entity_type ) {
+			$table_clusters = $wpdb->prefix . 'acx_clusters';
+			$row_version = $wpdb->get_var(
+				$wpdb->prepare(
+					'SELECT snapshot_version FROM %i WHERE cluster_uuid = %s LIMIT 1',
+					$table_clusters,
+					$entity_key
+				)
+			);
+			if ( null !== $row_version ) {
+				return max( 0, (int) $row_version );
+			}
+		}
+
+		$table_sync = $wpdb->prefix . 'acx_sync_state';
+		$stream_name = sprintf( 'tenant:%s:clusters', trim( $tenant_id ) );
+		$version = $wpdb->get_var(
+			$wpdb->prepare( 'SELECT last_snapshot_version FROM %i WHERE stream_name = %s LIMIT 1', $table_sync, $stream_name )
+		);
+
+		return max( 0, (int) $version );
 	}
 
 	public function get_dashboard_stats( WP_REST_Request $request ): WP_REST_Response|WP_Error {

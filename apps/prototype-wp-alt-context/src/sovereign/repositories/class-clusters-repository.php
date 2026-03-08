@@ -103,6 +103,8 @@ class ClustersRepository implements ClustersRepositoryInterface {
 					label = IF(is_user_confirmed = 1, label, VALUES(label)),
 					curation_state = IF(is_user_confirmed = 1, curation_state, VALUES(curation_state)),
 					is_user_confirmed = IF(is_user_confirmed = 1, is_user_confirmed, VALUES(is_user_confirmed)),
+					person_id = IF(is_user_confirmed = 1, person_id, person_id),
+					local_revision = IF(is_user_confirmed = 1, local_revision, local_revision),
 					representative_thumb_path = VALUES(representative_thumb_path),
 					identity_count = VALUES(identity_count),
 					snapshot_version = GREATEST(snapshot_version, VALUES(snapshot_version)),
@@ -367,7 +369,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-			'UPDATE %i SET curation_state = %s, is_user_confirmed = 1, updated_at = %s WHERE cluster_uuid = %s',
+			'UPDATE %i SET curation_state = %s, is_user_confirmed = 1, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
 			array(
 				$this->table_name,
 				'dismissed',
@@ -401,7 +403,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-				'UPDATE %i SET curation_state = %s, is_user_confirmed = 0, updated_at = %s WHERE cluster_uuid = %s',
+				'UPDATE %i SET curation_state = %s, is_user_confirmed = 0, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
 				array(
 					$this->table_name,
 					'uncurated',

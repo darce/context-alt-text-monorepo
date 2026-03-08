@@ -649,6 +649,7 @@ def test_archive_and_dashboard_summary(isolated_handoff: dict) -> None:
             archive_by="agent-z",
             clear_active_if_matches=True,
             prune_working_rows=True,
+            allow_destructive_clear=True,
         )
     )
     assert archived["ok"] is True

@@ -1,12 +1,14 @@
 {
   "servers": {
     "context-alt-text": {
-      "command": "${workspaceFolder}/scripts/mcp/mcp-server.sh",
+      "command": "agent-handoff-mcp",
       "args": [
-        "run"
+        "--workspace-root",
+        "${workspaceFolder}",
+        "serve-stdio"
       ],
       "env": {
-        "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/opt/homebrew/bin:/usr/local/bin:${env:PATH}",
+        "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
         "PYENV_ROOT": "${env:PYENV_ROOT}"
       }
     }

@@ -11,6 +11,7 @@ The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/Users/da
 - Workspace state belongs to the workspace, not inside the installed server package directory.
 - SQLite remains the canonical handoff store; markdown remains a generated view.
 - This task is greenfield for packaging and naming; no backward-compatibility layer or data migration is required.
+- Config precedence is explicit: CLI args override env vars, and env vars override package defaults only where defaults are intentionally supported.
 - Future MCP servers should start as narrow stubs with stable tool contracts, not another "unified" monolith.
 
 ## Terminology
@@ -35,6 +36,8 @@ The current MCP setup is centered on [`scripts/mcp/unified_server.py`](/Users/da
 ## Proposed Solution
 
 Extract the handoff functionality into a dedicated, installable MCP package at `packages/agent-handoff-mcp/` with a stable generic name, explicit transport entrypoints, explicit CLI subcommands, and workspace-scoped state configuration. Reuse the existing SQLite schema and handoff tool logic as the starting implementation model, but do not preserve old environment variable names, old server registration names, or previous handoff database contents.
+
+The packaging rename surface must be treated explicitly rather than implicitly. The packaged binary name (`agent-handoff-mcp`), the MCP server display name (`Agent Handoff MCP`), and each client registration name may differ, but changing any client registration name can cascade into tool-prefix updates in `.vscode/mcp.json`, `CLAUDE.md`, `GEMINI.md`, and other harness-specific instructions. Adapter generation and documentation must list those dependencies before any registration rename lands.
 
 At the same time, inventory the non-handoff helpers in `unified_server.py` and split them into future-oriented modules with stubbed MCP server entrypoints for:
 
@@ -74,16 +77,16 @@ The current `unified_server.py` exposes 29 tools. The task should classify them 
 | `import_handoff_state` | handoff | move to handoff package |
 | `archive_task_state` | handoff | move to handoff package |
 | `get_handoff_dashboard` | handoff | move to handoff package |
-| `get_context_map` | docs | classify in Phase 3 |
-| `get_api_contract` | docs | classify in Phase 3 |
-| `get_instructions` | docs | classify in Phase 3 |
-| `trace_api_endpoint` | cross-boundary repo intel | classify in Phase 3 |
-| `find_react_component` | react | classify in Phase 3 |
-| `find_react_hook` | react | classify in Phase 3 |
-| `list_frontend_tests` | react | classify in Phase 3 |
-| `find_wp_action` | wordpress/php | classify in Phase 3 |
-| `find_wp_rest_route` | wordpress/php | classify in Phase 3 |
-| `find_php_class` | wordpress/php | classify in Phase 3 |
+| `get_context_map` | docs | drop |
+| `get_api_contract` | docs | drop |
+| `get_instructions` | docs | drop |
+| `trace_api_endpoint` | cross-boundary repo intel | future `repo-intel` candidate |
+| `find_react_component` | react | drop |
+| `find_react_hook` | react | drop |
+| `list_frontend_tests` | react | drop |
+| `find_wp_action` | wordpress/php | drop |
+| `find_wp_rest_route` | wordpress/php | drop |
+| `find_php_class` | wordpress/php | drop |
 
 ## Patterns to Follow
 
@@ -206,64 +209,81 @@ def main() -> None:
 - [x] A working handoff schema, SQLite migrations, and handoff tool logic already exist inside the unified server.
 - [x] Workspace-local state convention already exists via `.task-state/handoff.db`.
 - [x] VS Code-specific MCP launch wiring already exists and can serve as one client adapter.
+- [x] `packages/agent-handoff-mcp/` now exists with a package-local handoff core, runtime config, CLI entrypoint, and MCP bootstrap.
+- [x] The handoff state tests were retargeted to the extracted package and now use `RuntimeConfig` injection instead of module-global path monkeypatching.
+- [x] Package-local smoke tests now cover runtime-config defaults and the `doctor` CLI command.
 
 ## Phase 0: Scaffolding
 
-- [ ] Choose `packages/agent-handoff-mcp/` as the canonical package location.
-- [ ] Create a dedicated package/module layout for the handoff MCP server separate from `unified_server.py`.
-- [ ] Add runtime config objects for workspace root, state dir, DB path, and generated markdown path.
-- [ ] Add packaged entrypoints for `serve-stdio`, `doctor`, and the handoff CLI fallback commands.
-- [ ] Update API/tool contract docs in `docs/agentic/contracts/` if any handoff tool names or request shapes change.
-- [ ] Verify scaffolds compile and import cleanly in tests without going through VS Code-specific launch paths.
+- [x] Choose `packages/agent-handoff-mcp/` as the canonical package location.
+- [x] Create a dedicated package/module layout for the handoff MCP server separate from `unified_server.py`.
+- [x] Add runtime config objects for workspace root, state dir, DB path, and generated markdown path.
+- [x] Add packaged entrypoints for `serve-stdio`, `doctor`, and the handoff CLI fallback commands.
+- [x] Update API/tool contract docs in `docs/agentic/contracts/` if any handoff tool names or request shapes change.
+- [x] Verify scaffolds compile and import cleanly in tests without going through VS Code-specific launch paths.
 
 ## Phase 1: Portable Handoff Packaging
 
-- [ ] Extract only handoff-related schema/bootstrap/logic from `unified_server.py` into the dedicated handoff package.
-- [ ] Reuse the existing handoff SQL schema and tool behavior as the baseline implementation, but do not migrate old persisted handoff state.
-- [ ] Replace shell- and pyenv-specific bootstrap assumptions with package/runtime configuration that works across harnesses.
-- [ ] Use fresh generic naming for package, server, and env vars with no compatibility aliases required.
-- [ ] Support workspace-root and state-dir overrides so the same server can run per repo or per worktree.
-- [ ] Keep the handoff DB in workspace state (`.task-state/` by default), not inside the installed server package directory.
-- [ ] Rewrite handoff tests to inject runtime config rather than monkeypatching module-level globals.
+- [x] Extract only handoff-related schema/bootstrap/logic from `unified_server.py` into the dedicated handoff package.
+- [x] Reuse the existing handoff SQL schema and tool behavior as the baseline implementation, but do not migrate old persisted handoff state.
+- [x] Replace shell- and pyenv-specific bootstrap assumptions with package/runtime configuration that works across harnesses.
+- [x] Use fresh generic naming for package, server, and env vars with no compatibility aliases required.
+- [x] Support workspace-root and state-dir overrides so the same server can run per repo or per worktree.
+- [x] Keep the handoff DB in workspace state (`.task-state/` by default), not inside the installed server package directory.
+- [x] Rewrite handoff tests to inject runtime config rather than monkeypatching module-level globals.
 
 ## Phase 2: Client Portability
 
-- [ ] Define one canonical packaged server name and display name for the handoff server.
-- [ ] Generate or document thin client adapters for VS Code, Codex, Claude, Gemini, and other MCP-capable harnesses.
-- [ ] Add a `doctor` command that validates runtime dependencies, writable state path, stdio startup, and CLI fallback startup.
-- [ ] Document the rename/update surface for client registration names and instruction-file tool prefixes.
-- [ ] Add a stdio smoke test to prove the server can be discovered outside VS Code-specific config.
+- [x] Define one canonical packaged server name and display name for the handoff server.
+- [x] Generate or document thin client adapters for VS Code, Codex, Claude, Gemini, and other MCP-capable harnesses.
+- [x] Add a `doctor` command that validates runtime dependencies, writable state path, stdio startup, and CLI fallback startup.
+- [x] Document the rename/update surface for client registration names and instruction-file tool prefixes.
+- [x] Add a stdio smoke test to prove the server can be discovered outside VS Code-specific config.
 
 ## Phase 3: Decompose Non-Handoff Tool Families
 
-- [ ] Inventory every non-handoff tool currently exposed by `unified_server.py`.
-- [ ] Classify each non-handoff tool as `future_server`, `drop`, or `keep_only_if_curated_value`.
-- [ ] Decide whether the non-handoff follow-up shape is one `repo-intel` companion server or multiple narrower servers.
-- [ ] Create WordPress-helper MCP stubs only for tools that still provide value beyond native grep/read/definition tools.
-- [ ] Create React-helper MCP stubs only for tools that still provide value beyond native grep/read/definition tools.
-- [ ] Create docs/contracts/maps MCP stubs only if they provide curated canonical lookup that generic agent tooling does not already cover.
-- [ ] Remove or quarantine non-handoff tool registration from the portable handoff server.
+- [x] Inventory every non-handoff tool currently exposed by `unified_server.py`.
+- [x] Classify each non-handoff tool as `future_server`, `drop`, or `keep_only_if_curated_value`.
+- [x] Decide whether the non-handoff follow-up shape is one `repo-intel` companion server or multiple narrower servers.
+- [x] Create WordPress-helper MCP stubs only for tools that still provide value beyond native grep/read/definition tools.
+- [x] Create React-helper MCP stubs only for tools that still provide value beyond native grep/read/definition tools.
+- [x] Create docs/contracts/maps MCP stubs only if they provide curated canonical lookup that generic agent tooling does not already cover.
+- [x] Remove or quarantine non-handoff tool registration from the portable handoff server.
+
+Phase 3 resolution:
+
+- The explicit non-handoff classification now lives in [`repo-intel-mcp-candidates.md`](/Users/daniel/Development/context-alt-text-monorepo/docs/agentic/contracts/repo-intel-mcp-candidates.md).
+- `trace_api_endpoint` is the only retained future candidate, and it should graduate only as part of a narrow `repo-intel` companion server.
+- All current docs, React, and WordPress helpers are dropped rather than re-packaged because they do not add curated value beyond native search/read/navigation tools.
+- No stub MCP servers are created in this phase because there is no validated contract beyond the single cross-boundary tracing workflow.
+- The portable handoff package is already quarantined from non-handoff tools because [`build_handoff_mcp()`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py) only registers the handoff tool surface.
 
 ## Phase 4: Tests and Migration Safety
 
-- [ ] Add unit coverage for runtime path resolution and default DB placement.
-- [ ] Add regression tests proving the extracted handoff server preserves the intended handoff SQL schema behavior and task semantics from a fresh database.
-- [ ] Add transport-level smoke tests for `serve-stdio`.
-- [ ] Add CLI smoke tests for fallback commands such as `state`, `review-list`, and `handoff-close-check`.
-- [ ] Add compatibility coverage for the VS Code adapter and one non-VS-Code adapter path.
-- [ ] Verify existing handoff state tests pass after extraction.
+- [x] Add unit coverage for runtime path resolution and default DB placement.
+- [x] Add regression tests proving the extracted handoff server preserves the intended handoff SQL schema behavior and task semantics from a fresh database.
+- [x] Add transport-level smoke tests for `serve-stdio`.
+- [x] Add CLI smoke tests for fallback commands such as `state`, `review-list`, and `handoff-close-check`.
+- [x] Add compatibility coverage for the VS Code adapter and one non-VS-Code adapter path.
+- [x] Verify existing handoff state tests pass after extraction.
 
 ## Stretch Goals
 
-- [ ] Publish the handoff server as a versioned internal package or binary so clients do not need repo-local shell wrappers.
-- [ ] Add `serve-http` once there is a real consumer for remote/shared transport.
+- [x] Publish the handoff server as a versioned internal package or binary so clients do not need repo-local shell wrappers.
+- [x] Add `serve-http` once there is a real consumer for remote/shared transport.
 - [ ] Split future MCP servers into separate packages (`wordpress`, `react`, `docs`, or one `repo-intel` companion) once their contracts are validated.
 - [ ] Add a manifest generator that emits client-specific registration snippets from one source of truth.
 
+Stretch goal resolution for packaging:
+
+- The handoff server now ships with a console-script binary name, `agent-handoff-mcp`, via [`pyproject.toml`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/pyproject.toml).
+- The recommended beta distribution model is a pinned git-tag install from the monorepo package subdirectory instead of a separate package registry.
+- [`mcp-server.sh`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/mcp-server.sh) now prefers the installed binary and falls back to the repo-local package source only for development worktrees.
+
 ## Success Criteria
 
-- [ ] A single-purpose handoff MCP server can be launched without relying on `.vscode/mcp.json` or `mcp-server.sh`, and exposes both MCP and CLI fallback entrypoints.
-- [ ] Handoff state remains workspace-scoped, with `handoff.db` stored under `.task-state/` by default rather than inside the server package directory.
-- [ ] VS Code, Codex, Claude, and Gemini can each register the same handoff server through client-specific adapters without changing server code.
-- [ ] Non-handoff functionality is no longer bundled into the handoff server and instead has an explicit inventory and documented next-step classification.
-- [ ] The new handoff package starts cleanly from an empty database without requiring legacy handoff-state migration.
+- [x] A single-purpose handoff MCP server can be launched without relying on `.vscode/mcp.json` or `mcp-server.sh`, and exposes both MCP and CLI fallback entrypoints.
+- [x] Handoff state remains workspace-scoped, with `handoff.db` stored under `.task-state/` by default rather than inside the server package directory.
+- [x] VS Code, Codex, Claude, and Gemini can each register the same handoff server through client-specific adapters without changing server code.
+- [x] Non-handoff functionality is no longer bundled into the handoff server and instead has an explicit inventory and documented next-step classification.
+- [x] The new handoff package starts cleanly from an empty database without requiring legacy handoff-state migration.

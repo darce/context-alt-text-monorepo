@@ -1,35 +1,20 @@
 #!/bin/bash
 #
-# MCP Server Entry Point
+# Agent Handoff MCP Entry Point
 #
 # VS Code spawns this script via .vscode/mcp.json and communicates over stdio.
 # No manual start/stop needed — VS Code manages the lifecycle automatically.
 #
 # Usage:
-#   ./scripts/mcp/mcp-server.sh run      # Run server (stdio transport)
-#
-# Provides monorepo-specific code intelligence tools for AI agents:
-#   - trace_api_endpoint (cross-boundary PHP→Python→TS)
-#   - find_react_component, find_react_hook, list_frontend_tests
-#   - find_wp_action, find_wp_rest_route, find_php_class
-#   - get_context_map, get_api_contract, get_instructions
+#   ./scripts/mcp/mcp-server.sh run         # Run server (stdio transport)
+#   ./scripts/mcp/mcp-server.sh doctor      # Validate runtime and state paths
 #
 
-set -e
+set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 MONOREPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
-
-# Source .env if it exists at monorepo root to pick up GEMINI_API_KEY
-if [ -f "$MONOREPO_ROOT/.env" ]; then
-    set -a
-    source "$MONOREPO_ROOT/.env"
-    set +a
-fi
-SERVER_SCRIPT="$SCRIPT_DIR/unified_server.py"
-
-# Ensure common tools (ripgrep, etc.) are in PATH for VS Code spawned processes
-export PATH="/opt/homebrew/bin:/usr/local/bin:$PATH"
+PACKAGE_SRC="$MONOREPO_ROOT/packages/agent-handoff-mcp/src"
 
 # Prefer the backend's pyenv version when available (no hardcoded paths).
 if [ -z "${PYENV_VERSION:-}" ]; then
@@ -70,17 +55,29 @@ if [ ${#PYTHON_CMD[@]} -eq 0 ]; then
     fi
 fi
 
+SERVER_CMD=()
+if command -v agent-handoff-mcp >/dev/null 2>&1; then
+    SERVER_CMD=(agent-handoff-mcp)
+else
+    export PYTHONPATH="$PACKAGE_SRC${PYTHONPATH:+:$PYTHONPATH}"
+    SERVER_CMD=("${PYTHON_CMD[@]}" -m agent_handoff_mcp)
+fi
+
 case "${1:-run}" in
     run)
         cd "$MONOREPO_ROOT"
-        exec "${PYTHON_CMD[@]}" "$SERVER_SCRIPT" mcp
+        exec "${SERVER_CMD[@]}" --workspace-root "$MONOREPO_ROOT" serve-stdio
+        ;;
+    doctor)
+        cd "$MONOREPO_ROOT"
+        exec "${SERVER_CMD[@]}" --workspace-root "$MONOREPO_ROOT" doctor
         ;;
     *)
-        echo "MCP Server Entry Point"
+        echo "Agent Handoff MCP Entry Point"
         echo ""
-        echo "Usage: $0 run"
+        echo "Usage: $0 run|doctor"
         echo ""
-        echo "VS Code calls this automatically via .vscode/mcp.json."
-        echo "No manual start/stop needed."
+        echo "Prefers installed 'agent-handoff-mcp'; falls back to the repo-local package."
+        echo "VS Code calls 'run' automatically via .vscode/mcp.json."
         ;;
 esac

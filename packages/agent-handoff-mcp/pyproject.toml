@@ -17,6 +17,7 @@ agent-handoff-mcp = "agent_handoff_mcp.cli:main"
 
 [tool.setuptools]
 package-dir = {"" = "src"}
+py-modules = ["agent_handoff_mcp_launcher"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

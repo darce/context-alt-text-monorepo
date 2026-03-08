@@ -11,6 +11,7 @@ from recognition.config.cache import configure_dev_cache
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.exception_handlers import register_exception_handlers
 from roster.application.health import check_health as roster_health
+from roster.interface_adapters.http.curation_router import router as roster_curation_router
 from roster.interface_adapters.http.health_router import router as roster_router
 from scene.application.health import check_health as scene_health
 from scene.interface_adapters.http.health_router import router as scene_router
@@ -74,6 +75,7 @@ def create_app() -> FastAPI:
 
     app.include_router(recognition_router, prefix="/recognition")
     app.include_router(roster_router, prefix="/roster")
+    app.include_router(roster_curation_router, prefix="/roster")
     app.include_router(scene_router, prefix="/scene")
     register_exception_handlers(app)
 

@@ -23,4 +23,22 @@ class NullSyncStateRepository implements SyncStateRepositoryInterface {
 	}
 
 	public function touch_local_curation_marker( string $tenant_id ): void {}
+
+	public function refresh_curation_metrics( string $tenant_id ): void {}
+
+	public function get_pending_curation_operations( string $tenant_id ): int {
+		return 0;
+	}
+
+	public function get_conflict_count( string $tenant_id ): int {
+		return 0;
+	}
+
+	public function get_last_curation_acknowledged_at( string $tenant_id ): ?string {
+		return null;
+	}
+
+	public function get_last_curation_conflict_at( string $tenant_id ): ?string {
+		return null;
+	}
 }

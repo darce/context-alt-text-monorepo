@@ -162,6 +162,31 @@ class IdentityCluster(Base):
     suggested_label_confidence: float | None = None
 
 
+class CurationReplayRecord(Base):
+    __tablename__ = "curation_replay_records"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    idempotency_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    result_status: Mapped[str] = mapped_column(String(20), nullable=False)
+    backend_version: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
+    conflict_code: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    machine_payload_json: Mapped[str | None] = mapped_column(Text, nullable=True)
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False
+    )
+
+    tenant: Mapped[Tenant] = relationship(backref="curation_replay_records")
+
+    __table_args__ = (
+        UniqueConstraint("tenant_id", "idempotency_key", name="uq_curation_replay_tenant_idempotency"),
+        Index("idx_curation_replay_tenant", "tenant_id"),
+    )
+
+
 class ClusterCentroid(Base):
     __tablename__ = "mv_identity_cluster_centroids"
     __table_args__ = {"info": {"is_materialized_view": True}}
@@ -248,6 +273,7 @@ class IdentityMember(Base):
 __all__ = [
     "MediaIdentity",
     "IdentityCluster",
+    "CurationReplayRecord",
     "ClusterCentroid",
     "IdentityClusterRepresentative",
     "IdentityMember",

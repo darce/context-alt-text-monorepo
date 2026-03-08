@@ -743,23 +743,24 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         return [(row[0], float(row[1])) for row in result.all()]
 
     async def get_roster_entry_name(self, roster_id: str) -> str | None:
-        """Resolve a roster entry UUID to display name."""
+        """Resolve a roster UUID from existing cluster labels only."""
         roster_uuid = _coerce_uuid(roster_id)
         if roster_uuid is None:
             return None
 
-        try:
-            result = await self._session.execute(
-                text("SELECT name FROM roster_entries WHERE id = :rid LIMIT 1"),
-                {"rid": str(roster_uuid)},
-            )
-        except Exception as exc:
-            logger.debug("Roster lookup failed for roster_id=%s err=%s", roster_id, exc)
-            return None
-
+        result = await self._session.execute(
+            select(ClusterModel.label)
+            .where(ClusterModel.roster_id == roster_uuid)
+            .where(ClusterModel.label.isnot(None))
+            .where(ClusterModel.label != "")
+            .where(~ClusterModel.label.startswith("cluster-"))
+            .order_by(ClusterModel.user_confirmed.desc(), ClusterModel.updated_at.desc())
+            .limit(1)
+        )
         roster_name = result.scalar_one_or_none()
         if roster_name is None:
             return None
+
         normalized = str(roster_name).strip()
         return normalized or None
 
@@ -1011,9 +1012,10 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         clusters_result = await self._session.execute(clusters_stmt)
         cluster_models = list(clusters_result.scalars().all())
 
-        # Compute snapshot_version from max updated_at
+        # Compute snapshot_version from max updated_at with microsecond precision so
+        # curation replay can detect multiple mutations within the same second.
         max_updated_at = max((c.updated_at for c in cluster_models), default=datetime(1970, 1, 1, tzinfo=UTC))
-        snapshot_version = int(max_updated_at.timestamp())
+        snapshot_version = int(max_updated_at.timestamp() * 1_000_000)
 
         # Fetch all members with identity data
         members_stmt = (

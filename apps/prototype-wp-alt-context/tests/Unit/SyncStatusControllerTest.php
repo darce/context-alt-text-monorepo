@@ -5,8 +5,8 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\SyncStatusController;
-use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -17,13 +17,11 @@ class SyncStatusControllerTest extends TestCase
 {
     public function testGetSyncStatusReturnsSnapshotMetadata(): void
     {
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+        $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 					return 12; }
             public function get_last_updated(string $tenant_id): ?string {
 					return '2026-02-14 00:00:00'; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -34,6 +32,44 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertSame(12, $data['last_snapshot_version']);
         $this->assertSame('2026-02-14 00:00:00', $data['last_synced_at']);
+        $this->assertSame(0, $data['pending_curation_operations']);
+        $this->assertSame(0, $data['conflict_count']);
+        $this->assertNull($data['last_curation_acknowledged_at']);
+        $this->assertNull($data['last_curation_conflict_at']);
+    }
+
+    public function testGetSyncStatusIncludesCurationCountersWhenAvailable(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 9;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-02-14 00:00:00';
+            }
+            public function get_pending_curation_operations(string $tenant_id): int {
+                return 4;
+            }
+            public function get_conflict_count(string $tenant_id): int {
+                return 2;
+            }
+            public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
+                return '2026-03-07 02:00:00';
+            }
+            public function get_last_curation_conflict_at(string $tenant_id): ?string {
+                return '2026-03-07 02:30:00';
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame(4, $data['pending_curation_operations']);
+        $this->assertSame(2, $data['conflict_count']);
+        $this->assertSame('2026-03-07 02:00:00', $data['last_curation_acknowledged_at']);
+        $this->assertSame('2026-03-07 02:30:00', $data['last_curation_conflict_at']);
     }
 
     public function testGetSyncStatusReturnsStaleTrueWhenOld(): void
@@ -41,16 +77,14 @@ class SyncStatusControllerTest extends TestCase
         // Mock a timestamp older than 1 hour (default threshold)
         $oldTimestamp = gmdate('Y-m-d H:i:s', time() - 7200); // 2 hours ago
 
-        $syncRepo = new class($oldTimestamp) implements SyncStateRepositoryInterface {
+        $syncRepo = new class($oldTimestamp) extends NullSyncStateRepository {
             private string $timestamp;
             public function __construct(string $timestamp) {
 					$this->timestamp = $timestamp; }
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
 					return 5; }
             public function get_last_updated(string $tenant_id): ?string {
 					return $this->timestamp; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -66,16 +100,14 @@ class SyncStatusControllerTest extends TestCase
         // Mock a recent timestamp within the 1-hour threshold
         $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 300); // 5 minutes ago
 
-        $syncRepo = new class($recentTimestamp) implements SyncStateRepositoryInterface {
+        $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
             private string $timestamp;
             public function __construct(string $timestamp) {
 					$this->timestamp = $timestamp; }
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
 					return 5; }
             public function get_last_updated(string $tenant_id): ?string {
 					return $this->timestamp; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -88,13 +120,11 @@ class SyncStatusControllerTest extends TestCase
 
     public function testGetSyncStatusReturnsStaleTrueWhenNullTimestamp(): void
     {
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+        $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 					return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 					return null; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -107,14 +137,12 @@ class SyncStatusControllerTest extends TestCase
 
     public function testTriggerSyncBuildsLazySyncJobWhenNoSyncPullJobInjected(): void
     {
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+          $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 				return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 				return null; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-        };
+		  };
 
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
@@ -139,17 +167,15 @@ class SyncStatusControllerTest extends TestCase
     {
         $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 10);
 
-        $syncRepo = new class($recentTimestamp) implements SyncStateRepositoryInterface {
+          $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
             private string $timestamp;
             public function __construct(string $timestamp) {
 				$this->timestamp = $timestamp; }
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
             public function get_snapshot_version(string $tenant_id): int {
 				return 3; }
             public function get_last_updated(string $tenant_id): ?string {
 				return $this->timestamp; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-        };
+		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
             public function perform(string $tenant_id): bool {
@@ -172,14 +198,12 @@ class SyncStatusControllerTest extends TestCase
 
     public function testTriggerSyncReturnsSyncedFalseOnFailure(): void
     {
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+          $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 				return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 				return null; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-        };
+		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
             public function perform(string $tenant_id): bool {
@@ -200,14 +224,12 @@ class SyncStatusControllerTest extends TestCase
 
     public function testTriggerSyncHandlesExceptionGracefully(): void
     {
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+          $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 				return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 				return null; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-        };
+		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
             public function perform(string $tenant_id): bool {
@@ -228,14 +250,12 @@ class SyncStatusControllerTest extends TestCase
 
     public function testTriggerSyncReturnsNoRemoteDataReasonOnEmptyTenant(): void
     {
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+          $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 				return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 				return null; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-        };
+		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
             public function perform(string $tenant_id): bool {

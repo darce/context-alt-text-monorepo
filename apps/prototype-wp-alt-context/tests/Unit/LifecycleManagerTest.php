@@ -72,12 +72,14 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(4, $queries);
+        $this->assertCount(6, $queries);
 
         $personsSql = $queries[0];
         $clustersSql = $queries[1];
         $membersSql = $queries[2];
         $syncSql = $queries[3];
+        $outboxSql = $queries[4];
+        $conflictsSql = $queries[5];
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_persons', $personsSql);
         $this->assertStringContainsString('person_uuid', $personsSql);
@@ -89,6 +91,7 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('created_at', $clustersSql);
         $this->assertStringContainsString('updated_at', $clustersSql);
         $this->assertStringContainsString('last_synced_at', $clustersSql);
+        $this->assertStringContainsString('local_revision', $clustersSql);
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_identity_members', $membersSql);
         $this->assertStringContainsString('bbox_json', $membersSql);
@@ -96,6 +99,16 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_sync_state', $syncSql);
         $this->assertStringContainsString('last_snapshot_version', $syncSql);
+        $this->assertStringContainsString('pending_curation_operations', $syncSql);
+        $this->assertStringContainsString('conflict_count', $syncSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_sync_outbox', $outboxSql);
+        $this->assertStringContainsString('idempotency_key', $outboxSql);
+        $this->assertStringContainsString('acknowledged_version', $outboxSql);
+
+        $this->assertStringContainsString('CREATE TABLE wp_acx_sync_conflicts', $conflictsSql);
+        $this->assertStringContainsString('conflict_code', $conflictsSql);
+        $this->assertStringContainsString('resolution_status', $conflictsSql);
     }
 
     public function testActivateProjectionDbDeltaIsIdempotentAcrossReactivation(): void
@@ -104,7 +117,7 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertCount(8, $queries);
+        $this->assertCount(12, $queries);
         $this->assertStringNotContainsString('DROP TABLE', implode("\n", $queries));
     }
 
@@ -143,22 +156,48 @@ class LifecycleManagerTest extends TestCase
     public function testDeactivateClearsSnapshotSyncSchedule(): void
     {
         wp_schedule_single_event(time() + 300, 'acx_sync_pull_snapshot');
+		wp_schedule_single_event(time() + 300, 'acx_sync_drain_curation_outbox');
         $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
 
         $this->manager->deactivate();
 
         $this->assertFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
     }
+
+	public function testDeactivateAlsoClearsActionSchedulerDrainHooks(): void
+        {
+			as_enqueue_async_action('acx_sync_drain_curation_outbox', [], 'acx-sync');
+			$this->assertNotFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
+
+			$this->manager->deactivate();
+
+			$this->assertFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
+	}
 
     public function testUninstallClearsSnapshotSyncSchedule(): void
     {
         wp_schedule_single_event(time() + 300, 'acx_sync_pull_snapshot');
+		wp_schedule_single_event(time() + 300, 'acx_sync_drain_curation_outbox');
         $this->assertNotFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+		$this->assertNotFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
 
         $this->manager->uninstall();
 
         $this->assertFalse(wp_next_scheduled('acx_sync_pull_snapshot'));
+		$this->assertFalse(wp_next_scheduled('acx_sync_drain_curation_outbox'));
     }
+
+	public function testUninstallAlsoClearsActionSchedulerDrainHooks(): void
+        {
+			as_enqueue_async_action('acx_sync_drain_curation_outbox', [], 'acx-sync');
+			$this->assertNotFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
+
+			$this->manager->uninstall();
+
+			$this->assertFalse(as_next_scheduled_action('acx_sync_drain_curation_outbox', [], 'acx-sync'));
+	}
 
     /**
      * Test uninstall drops plugin-owned custom tables.
@@ -173,6 +212,8 @@ class LifecycleManagerTest extends TestCase
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_identity_members`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_state`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_persons`', $wpdb->queries);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_outbox`', $wpdb->queries);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_conflicts`', $wpdb->queries);
     }
 
     /**

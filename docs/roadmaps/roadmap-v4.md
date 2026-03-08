@@ -1,6 +1,6 @@
 # Roadmap v4 -- Face Recognition UX and Plugin Ergonomics
 
-> **Status:** Active -- Epics A-B complete, Epics C-D in progress.
+> **Status:** Active -- Epics A-C complete, Epic D in progress.
 > **Predecessor:** [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) (core vision, closed), [v0.1.0 Sovereign Cluster Epic](../epics/v0.1.0/wp-sovereign-cluster-epic.md) (completed), [v0.2.0 Production Readiness Epic](../epics/v0.2.0/production-readiness-epic.md) (in progress)
 
 ---
@@ -248,37 +248,37 @@ These items from [roadmap-v3.hybrid.md](roadmap-v3.hybrid.md) are not in scope f
 
 ## Epic A: Person CRUD Tool
 
-- [ ] Create `wp_acx_persons` table via `dbDelta`. Retire `acx_roster_entries` and `acx_roster_assignments` WP options.
-- [ ] Add required unique `person_uuid` to `wp_acx_persons` and generate it on create/import paths.
-- [ ] Add `person_id` column to `wp_acx_clusters`.
-- [ ] Add REST endpoints: create, update, delete persons.
-- [ ] Implement label derivation rule (person assignment sets cluster display label).
-- [ ] Add action column to `RosterEntriesTable` (edit, delete).
-- [ ] Add "Add Person" button and create form/modal.
-- [ ] Add "People" vs "Clusters" explanatory copy.
+- [x] Create `wp_acx_persons` table via `dbDelta`. Retire `acx_roster_entries` and `acx_roster_assignments` WP options.
+- [x] Add required unique `person_uuid` to `wp_acx_persons` and generate it on create/import paths.
+- [x] Add `person_id` column to `wp_acx_clusters`.
+- [x] Add REST endpoints: create, update, delete persons.
+- [x] Implement label derivation rule (person assignment sets cluster display label).
+- [x] Add action column to `RosterEntriesTable` (edit, delete).
+- [x] Add "Add Person" button and create form/modal.
+- [x] Add "People" vs "Clusters" explanatory copy.
 
 ## Epic B: Dashboard Buildout
 
-- [ ] Add identity panel (person count, assigned clusters, pending review).
-- [ ] Add contextual "next step" guidance card.
-- [ ] Enhance coverage panel with "faces detected" count.
-- [ ] Enhance recent activity with status, duration, and result links.
+- [x] Add identity panel (person count, assigned clusters, pending review).
+- [x] Add contextual "next step" guidance card.
+- [x] Enhance coverage panel with "faces detected" count.
+- [x] Enhance recent activity with status, duration, and result links.
 
 ## Epic C: Recognition UX Polish
 
-- [ ] Add multi-select to ClusterGrid.
-- [ ] Implement bulk merge action.
-- [ ] Implement bulk dismiss action.
-- [ ] Add keyboard navigation to cluster grid and drawer.
-- [ ] Add inline person search in cluster labeling combobox.
-- [ ] Add metadata display to ClusterDrawerPanel (face count, confidence, age).
-- [ ] Add toast notifications for all mutation outcomes.
+- [x] Add multi-select to ClusterGrid.
+- [x] Implement bulk merge action.
+- [x] Implement bulk dismiss action.
+- [x] Add keyboard navigation to cluster grid and drawer.
+- [x] Add inline person search in cluster labeling combobox.
+- [x] Add metadata display to ClusterDrawerPanel (face count, confidence, age).
+- [x] Add toast notifications for all mutation outcomes.
 
 ## Epic D: Sovereign Sync Evolution -- DEFERRED
 
-- [ ] Outbox schema and lifecycle.
+- [x] Outbox schema and lifecycle.
 - [ ] Person UUID sync to backend `identity_clusters.roster_id`.
-- [ ] Remove/replace backend `roster_entries` lookup path used by `get_roster_entry_name()`.
+- [x] Remove/replace backend `roster_entries` lookup path used by `get_roster_entry_name()`.
 - [ ] Action Scheduler migration.
 - [ ] Delta ingest with snapshot fallback.
 - [ ] Drift reconciliation with curation-safe conflict policy.

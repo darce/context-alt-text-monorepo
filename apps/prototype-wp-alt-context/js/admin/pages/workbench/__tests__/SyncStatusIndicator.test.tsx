@@ -23,7 +23,13 @@ const mockTrigger = {
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
-  sprintf: (text: string, value: string) => text.replace('%s', value),
+  sprintf: (text: string, ...values: (string | number)[]): string => {
+    let result = text;
+    for (const value of values) {
+      result = result.replace(/%[sd]/, String(value));
+    }
+    return result;
+  },
 }));
 
 vi.mock('../../../hooks/useSyncStatus', () => ({
@@ -195,5 +201,24 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText(/Service connected/)).toBeInTheDocument();
     expect(screen.getByText(/no clusters yet/)).toBeInTheDocument();
     expect(screen.queryByText('Waiting for service…')).not.toBeInTheDocument();
+  });
+
+  it('renders curation replay counters and timestamps when available', () => {
+    mockReturn.data = {
+      last_snapshot_version: 8,
+      last_synced_at: '2026-03-07 02:00:00',
+      is_stale: false,
+      pending_curation_operations: 3,
+      conflict_count: 1,
+      last_curation_acknowledged_at: '2026-03-07T02:05:00Z',
+      last_curation_conflict_at: '2026-03-07T02:15:00Z',
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByText('Pending curation: 3')).toBeInTheDocument();
+    expect(screen.getByText('Conflicts: 1')).toBeInTheDocument();
+    expect(screen.getByText(/Last curation acknowledgement:/)).toBeInTheDocument();
+    expect(screen.getByText(/Last curation conflict:/)).toBeInTheDocument();
   });
 });

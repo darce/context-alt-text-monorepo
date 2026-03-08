@@ -19,6 +19,8 @@ class LifecycleManager {
 	private const OPTION_VERSION      = 'acx_version';
 	private const OPTION_INSTALLED_AT = 'acx_installed';
 	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
+	private const CURATION_OUTBOX_DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
+	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	/**
 	 * Plugin-owned custom table suffixes (without WordPress prefix).
 	 *
@@ -29,6 +31,8 @@ class LifecycleManager {
 		'acx_identity_members',
 		'acx_sync_state',
 		'acx_persons',
+		'acx_sync_outbox',
+		'acx_sync_conflicts',
 	);
 
 	/**
@@ -165,6 +169,7 @@ class LifecycleManager {
 	 */
 	public function deactivate(): void {
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
+		$this->clear_curation_outbox_drain_schedule();
 		flush_rewrite_rules( false );
 	}
 
@@ -173,15 +178,25 @@ class LifecycleManager {
 	 *
 	 * Cleans up plugin-owned persistence:
 	 * - options: acx_version, acx_installed
-	 * - scheduled hooks: acx_sync_pull_snapshot
-	 * - custom tables: wp_acx_clusters, wp_acx_identity_members, wp_acx_sync_state
+	 * - scheduled hooks: acx_sync_pull_snapshot, acx_sync_drain_curation_outbox
+	 * - custom tables: wp_acx_clusters, wp_acx_identity_members, wp_acx_sync_state,
+	 *   wp_acx_persons, wp_acx_sync_outbox, wp_acx_sync_conflicts
 	 */
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
+		$this->clear_curation_outbox_drain_schedule();
 		$this->drop_tables();
 		flush_rewrite_rules( false );
+	}
+
+	private function clear_curation_outbox_drain_schedule(): void {
+		wp_clear_scheduled_hook( self::CURATION_OUTBOX_DRAIN_HOOK );
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::CURATION_OUTBOX_DRAIN_HOOK, array(), self::ACTION_SCHEDULER_GROUP );
+		}
 	}
 
 	/**
@@ -234,12 +249,15 @@ class LifecycleManager {
 		$members_table   = $wpdb->prefix . 'acx_identity_members';
 		$sync_table      = $wpdb->prefix . 'acx_sync_state';
 		$persons_table   = $wpdb->prefix . 'acx_persons';
+		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
+		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
 
 		$persons_sql = "CREATE TABLE {$persons_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			person_uuid char(36) NOT NULL,
 			name varchar(255) NOT NULL,
 			tags text DEFAULT '',
+			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
 			reference_thumb_path varchar(512) DEFAULT NULL,
 			cluster_count int(11) unsigned DEFAULT 0,
 			created_at datetime DEFAULT CURRENT_TIMESTAMP NOT NULL,
@@ -259,12 +277,14 @@ class LifecycleManager {
 			identity_count int(11) unsigned NOT NULL DEFAULT 0,
 			snapshot_version bigint(20) unsigned NOT NULL,
 			is_user_confirmed tinyint(1) NOT NULL DEFAULT 0,
+			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			last_synced_at datetime NOT NULL,
 			PRIMARY KEY  (cluster_uuid),
 			KEY tenant_snapshot (tenant_id, snapshot_version),
-			KEY tenant_confirmed (tenant_id, is_user_confirmed)
+			KEY tenant_confirmed (tenant_id, is_user_confirmed),
+			KEY tenant_revision (tenant_id, local_revision)
 		) {$charset_collate};";
 
 		$members_sql = "CREATE TABLE {$members_table} (
@@ -284,13 +304,62 @@ class LifecycleManager {
 		$sync_sql = "CREATE TABLE {$sync_table} (
 			stream_name varchar(100) NOT NULL,
 			last_snapshot_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			pending_curation_operations int(11) unsigned NOT NULL DEFAULT 0,
+			conflict_count int(11) unsigned NOT NULL DEFAULT 0,
+			last_curation_acknowledged_at datetime DEFAULT NULL,
+			last_curation_conflict_at datetime DEFAULT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (stream_name)
+		) {$charset_collate};";
+
+		$outbox_sql = "CREATE TABLE {$outbox_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			tenant_id varchar(64) NOT NULL,
+			operation_type varchar(64) NOT NULL,
+			entity_type varchar(64) NOT NULL,
+			entity_key varchar(128) NOT NULL,
+			idempotency_key char(36) NOT NULL,
+			expected_base_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
+			payload longtext NOT NULL,
+			status varchar(20) NOT NULL DEFAULT 'pending',
+			attempts int(11) unsigned NOT NULL DEFAULT 0,
+			last_error_code varchar(64) DEFAULT NULL,
+			last_error_message text DEFAULT NULL,
+			acknowledged_version bigint(20) unsigned DEFAULT NULL,
+			created_at datetime NOT NULL,
+			last_attempted_at datetime DEFAULT NULL,
+			acknowledged_at datetime DEFAULT NULL,
+			PRIMARY KEY  (id),
+			UNIQUE KEY uq_idempotency (idempotency_key),
+			KEY idx_status_created (status, created_at),
+			KEY idx_entity (entity_type, entity_key)
+		) {$charset_collate};";
+
+		$conflicts_sql = "CREATE TABLE {$conflicts_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			tenant_id varchar(64) NOT NULL,
+			entity_type varchar(64) NOT NULL,
+			entity_key varchar(128) NOT NULL,
+			outbox_id bigint(20) unsigned NOT NULL,
+			expected_base_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			backend_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			local_revision bigint(20) unsigned NOT NULL DEFAULT 0,
+			conflict_code varchar(64) NOT NULL,
+			machine_payload longtext NOT NULL,
+			local_payload longtext NOT NULL,
+			resolution_status varchar(20) NOT NULL DEFAULT 'open',
+			created_at datetime NOT NULL,
+			resolved_at datetime DEFAULT NULL,
+			PRIMARY KEY  (id),
+			KEY idx_entity_resolution (entity_type, entity_key, resolution_status)
 		) {$charset_collate};";
 
 		dbDelta( $persons_sql );
 		dbDelta( $clusters_sql );
 		dbDelta( $members_sql );
 		dbDelta( $sync_sql );
+		dbDelta( $outbox_sql );
+		dbDelta( $conflicts_sql );
 	}
 }

@@ -29,6 +29,9 @@ use WP_REST_Request;
 use WP_REST_Response;
 
 use function do_action;
+use function is_string;
+use function max;
+use function trim;
 
 class SyncStatusController extends AbstractRecognitionProxyController {
 	private SyncStateRepositoryInterface $sync_state_repository;
@@ -72,12 +75,17 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		$tenant_id = $this->get_tenant_id();
 		$version   = $this->sync_state_repository->get_snapshot_version( $tenant_id );
 		$updated   = $this->sync_state_repository->get_last_updated( $tenant_id );
+		$curation_state = $this->get_curation_sync_state( $tenant_id );
 
 		return new WP_REST_Response(
 			array(
 				'last_snapshot_version' => $version,
 				'last_synced_at' => $updated,
 				'is_stale' => $this->is_projection_stale( $updated ),
+				'pending_curation_operations' => $curation_state['pending_curation_operations'],
+				'conflict_count' => $curation_state['conflict_count'],
+				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
+				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
 			),
 			200
 		);
@@ -106,6 +114,7 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 
 		$version = $this->sync_state_repository->get_snapshot_version( $tenant_id );
 		$updated = $this->sync_state_repository->get_last_updated( $tenant_id );
+		$curation_state = $this->get_curation_sync_state( $tenant_id );
 
 		return new WP_REST_Response(
 			array(
@@ -114,6 +123,10 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'last_snapshot_version' => $version,
 				'last_synced_at'        => $updated,
 				'is_stale'              => $this->is_projection_stale( $updated ),
+				'pending_curation_operations' => $curation_state['pending_curation_operations'],
+				'conflict_count' => $curation_state['conflict_count'],
+				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
+				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
 			),
 			200
 		);
@@ -127,6 +140,33 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			return 'no_remote_data';
 		}
 		return 'ok';
+	}
+
+	/**
+	 * @return array{pending_curation_operations:int,conflict_count:int,last_curation_acknowledged_at:?string,last_curation_conflict_at:?string}
+	 */
+	private function get_curation_sync_state( string $tenant_id ): array {
+		$pending_operations = max( 0, (int) $this->sync_state_repository->get_pending_curation_operations( $tenant_id ) );
+		$conflict_count = max( 0, (int) $this->sync_state_repository->get_conflict_count( $tenant_id ) );
+
+		$last_acknowledged_at = null;
+		$value = $this->sync_state_repository->get_last_curation_acknowledged_at( $tenant_id );
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			$last_acknowledged_at = $value;
+		}
+
+		$last_conflict_at = null;
+		$value = $this->sync_state_repository->get_last_curation_conflict_at( $tenant_id );
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			$last_conflict_at = $value;
+		}
+
+		return array(
+			'pending_curation_operations' => $pending_operations,
+			'conflict_count' => $conflict_count,
+			'last_curation_acknowledged_at' => $last_acknowledged_at,
+			'last_curation_conflict_at' => $last_conflict_at,
+		);
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {

@@ -128,8 +128,6 @@ export const dismissCluster = async (clusterId: string, signal?: AbortSignal): P
   });
 };
 
-// TODO(sovereign-phase-3): retain undismiss until local-first curation reversal
-// is fully implemented in the sovereign roadmap.
 export const undismissCluster = async (clusterId: string, signal?: AbortSignal): Promise<void> => {
   const base = getEndpoint('recognitionClusters');
   const url = `${stripTrailingSlash(base)}/${clusterId}/dismiss`;

@@ -998,6 +998,48 @@ if (!function_exists('wp_clear_scheduled_hook')) {
     }
 }
 
+if (!function_exists('as_next_scheduled_action')) {
+    function as_next_scheduled_action($hook, $args = [], $group = '')
+    {
+        $key = $hook . '::' . $group . '::' . md5(serialize($args));
+        return $GLOBALS['__ac_action_scheduler'][$key]['timestamp'] ?? false;
+    }
+}
+
+if (!function_exists('as_enqueue_async_action')) {
+    function as_enqueue_async_action($hook, $args = [], $group = ''): int
+    {
+        $forcedResult = $GLOBALS['__ac_action_scheduler_enqueue_result'] ?? null;
+        if (is_int($forcedResult)) {
+            if ($forcedResult <= 0) {
+                return $forcedResult;
+            }
+        }
+
+        $key = $hook . '::' . $group . '::' . md5(serialize($args));
+        $GLOBALS['__ac_action_scheduler'][$key] = [
+            'timestamp' => time(),
+            'hook' => $hook,
+            'args' => $args,
+            'group' => $group,
+        ];
+
+        if (is_int($forcedResult) && $forcedResult > 0) {
+            return $forcedResult;
+        }
+
+        return count($GLOBALS['__ac_action_scheduler']);
+    }
+}
+
+if (!function_exists('as_unschedule_all_actions')) {
+    function as_unschedule_all_actions($hook, $args = [], $group = ''): void
+    {
+        $key = $hook . '::' . $group . '::' . md5(serialize($args));
+        unset($GLOBALS['__ac_action_scheduler'][$key]);
+    }
+}
+
 if (!function_exists('update_option')) {
     function update_option($key, $value)
     {

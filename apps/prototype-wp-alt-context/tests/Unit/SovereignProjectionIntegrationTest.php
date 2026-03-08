@@ -176,6 +176,19 @@ class SovereignProjectionIntegrationTest extends TestCase
             'Curation state must also be preserved for user-confirmed clusters'
         );
 
+        // Deliberate curated dissociation (person_id = NULL + user_confirmed) must survive replay.
+        $this->assertStringContainsString(
+            'person_id = IF(is_user_confirmed = 1, person_id, person_id)',
+            $clusterInsert,
+            'Curated dissociation must not be overwritten by replay rows'
+        );
+
+        $this->assertStringContainsString(
+            'local_revision = IF(is_user_confirmed = 1, local_revision, local_revision)',
+            $clusterInsert,
+            'Local revision lineage must be preserved for user-confirmed rows'
+        );
+
         // snapshot_version uses GREATEST to avoid rollback.
         $this->assertStringContainsString(
             'GREATEST(snapshot_version, VALUES(snapshot_version))',

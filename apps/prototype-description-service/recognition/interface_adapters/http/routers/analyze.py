@@ -24,7 +24,7 @@ from recognition.application.tasks.scan import (
     extract_media_id,
     scan_worker_available,
 )
-from recognition.domain.job import JobType
+from recognition.domain.job import JobStatus, JobType
 from recognition.interface_adapters.http.dependencies import (
     get_job_repo,
     get_job_service_dependency,
@@ -44,6 +44,35 @@ from recognition.shared.db.dialect import is_postgres
 logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth)])
+
+
+async def _resolve_pipeline_job(
+    *,
+    requested_job_id: str,
+    domain_job,
+    repo,
+):
+    """Treat auto-chained clustering work as part of the original analyze pipeline."""
+    if domain_job is None or domain_job.type is not JobType.ANALYZE or domain_job.status is not JobStatus.COMPLETED:
+        return domain_job
+    if not hasattr(repo, "get_followup_clustering_job"):
+        return domain_job
+    followup_job = await repo.get_followup_clustering_job(requested_job_id)
+    return followup_job or domain_job
+
+
+async def _job_to_pipeline_response(
+    *,
+    requested_job_id: str,
+    domain_job,
+    repo,
+    scan_repo,
+):
+    resolved_job = await _resolve_pipeline_job(requested_job_id=requested_job_id, domain_job=domain_job, repo=repo)
+    response = await _job_to_response(resolved_job, scan_repo=scan_repo)
+    if resolved_job is not domain_job:
+        response.id = requested_job_id
+    return response
 
 
 @router.post("/analyze", response_model=JobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -180,7 +209,12 @@ async def get_job_status(
             from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
             scan_repo = SqlAlchemyScanQueueRepository(session)
-        return await _job_to_response(job, scan_repo=scan_repo)
+        return await _job_to_pipeline_response(
+            requested_job_id=job_id,
+            domain_job=job,
+            repo=job_service,
+            scan_repo=scan_repo,
+        )
 
     # Look up from database if we have a session
 
@@ -202,7 +236,12 @@ async def get_job_status(
             from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 
             scan_repo = SqlAlchemyScanQueueRepository(session)
-            return await _job_to_response(domain_job, scan_repo=scan_repo)
+            return await _job_to_pipeline_response(
+                requested_job_id=job_id,
+                domain_job=domain_job,
+                repo=repo,
+                scan_repo=scan_repo,
+            )
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
 
@@ -241,11 +280,17 @@ async def stream_job_progress(
                     yield {"event": "error", "data": "Job not found"}
                     break
 
-                progress = await _job_to_response(job, scan_repo=scan_repo)
+                progress = await _job_to_pipeline_response(
+                    requested_job_id=job_id,
+                    domain_job=job,
+                    repo=job_repo,
+                    scan_repo=scan_repo,
+                )
                 progress_payload = progress.progress.model_dump(exclude_none=True) if progress.progress else {}
-                job_status = job.status.value
+                job_status = progress.status
                 current_completed = progress_payload.get("completed", job.progress_completed)
-                progress_payload.get("total", job.progress_total)
+                progress_payload.get("total", progress.progress.total if progress.progress else job.progress_total)
+                event_type = "scan_progress" if progress.type == JobType.ANALYZE.value else "clustering_progress"
 
                 now = time.time()
                 # Yield if:
@@ -265,8 +310,8 @@ async def stream_job_progress(
                         "event": "progress",
                         "data": json.dumps(
                             {
-                                "type": "scan_progress" if job.type is JobType.ANALYZE else "clustering_progress",
-                                "job_id": job.id,
+                                "type": event_type,
+                                "job_id": progress.id,
                                 "status": job_status,
                                 **progress_payload,
                             }
@@ -282,8 +327,8 @@ async def stream_job_progress(
                         "event": "done",
                         "data": json.dumps(
                             {
-                                "type": "scan_progress" if job.type is JobType.ANALYZE else "clustering_progress",
-                                "job_id": job.id,
+                                "type": event_type,
+                                "job_id": progress.id,
                                 "status": job_status,
                                 **progress_payload,
                             }

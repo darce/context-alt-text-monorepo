@@ -99,6 +99,33 @@ class SqlAlchemyJobRepository(JobRepository):
 
         return None
 
+    async def get_followup_clustering_job(self, scan_job_id: str) -> Job | None:
+        """Return the newest clustering job linked to a scan job, if one exists."""
+        stmt = (
+            select(IdentityClusteringJob)
+            .where(IdentityClusteringJob.job_type == JobType.CLUSTERING.value)
+            .order_by(IdentityClusteringJob.created_at.desc())
+        )
+        result = await self._session.execute(stmt)
+        for clustering in result.scalars().all():
+            payload = clustering.payload or {}
+            if payload.get("scan_job_id") != scan_job_id:
+                continue
+            return Job(
+                id=str(clustering.id),
+                type=JobType.CLUSTERING,
+                tenant_id="",
+                status=JobStatus(clustering.status),
+                progress_completed=clustering.processed_identities or 0,
+                progress_total=clustering.total_identities or 0,
+                error_message=clustering.error_message,
+                message=clustering.message,
+                payload=payload,
+                started_at=clustering.started_at or datetime.now(tz=UTC),
+                finished_at=clustering.completed_at,
+            )
+        return None
+
     async def update(self, job: Job) -> Job:
         """Update an existing job."""
         job_uuid = _coerce_uuid(job.id, on_failure="none")

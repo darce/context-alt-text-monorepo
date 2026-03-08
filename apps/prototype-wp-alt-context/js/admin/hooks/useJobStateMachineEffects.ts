@@ -35,6 +35,9 @@ export const useJobStateMachineEffects = ({
   latestClusterJob,
   currentPhase,
 }: JobStateMachineEffectsOptions) => {
+  const backendHandledClustering =
+    scanStatus?.type === 'clustering' || scanStatus?.progress?.phase === 'clustering';
+
   useEffect(() => {
     if (scanStatus?.status === 'completed') {
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
@@ -51,10 +54,14 @@ export const useJobStateMachineEffects = ({
     if (completed && latestScanJob) {
       setIsWaitingForScanCompletion(false);
       activeJobs.filter((job) => job.type === 'scan').forEach((job) => removeJob(job.id));
-      cluster();
       void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
+      void queryClient.invalidateQueries({ queryKey: queryKeys.clusters.all });
+      if (!backendHandledClustering) {
+        cluster();
+      }
     }
   }, [
+    backendHandledClustering,
     sseStatus,
     activeJobIds,
     activeJobs,

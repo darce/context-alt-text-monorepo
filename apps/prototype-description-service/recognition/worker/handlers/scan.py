@@ -128,7 +128,7 @@ class ScanItemHandler:
                             total_identities=0,
                             processed_identities=0,
                             message="Auto-triggered after scan completion",
-                            payload={},
+                            payload={"scan_job_id": str(job_id)},
                         )
                         session.add(clustering_job)
             await session.commit()

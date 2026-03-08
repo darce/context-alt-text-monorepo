@@ -98,6 +98,9 @@ class FakeSessionResult:
     def scalar(self):  # noqa: ANN001
         return self._scalar_value
 
+    def scalars(self):  # noqa: ANN001
+        return self
+
     def all(self):  # noqa: ANN001
         return self._all_rows
 

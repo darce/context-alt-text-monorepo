@@ -4,8 +4,11 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\RecognitionController;
 use AltContext\Tests\TestCase;
+use AltContext\Tests\Stubs\NullClustersRepository;
+use AltContext\Tests\Stubs\NullSyncStateRepository;
 use WP_REST_Request;
 
 /**
@@ -178,51 +181,63 @@ class RecognitionControllerTest extends TestCase
     public function testDismissClusterProxiesToBackend(): void
     {
         $clusterId = 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae';
-        $this->queueHttpResponse([
-            'response' => ['code' => 204, 'message' => 'No Content'],
-            'body' => '',
-        ]);
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController($repository, new RecognitionControllerSyncStateRepositorySpy())
+        );
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $clusterId . '/dismiss');
         $request->set_param('cluster_id', $clusterId);
 
-        $response = $this->controller->dismiss_cluster($request);
+        $response = $controller->dismiss_cluster($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertSame(204, $response->get_status());
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [
+                'dismissed' => true,
+                'synced' => false,
+                'status' => 'pending',
+            ],
+            $response->get_data()
+        );
+        $this->assertSame($clusterId, $repository->dismissedClusterId);
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
-        $this->assertSame('POST', $calls[0]['method']);
-        $this->assertStringContainsString('/recognition/clusters/' . $clusterId . '/dismiss', $calls[0]['url']);
-        $this->assertStringContainsString('tenant_id=', $calls[0]['url']);
-
-        $this->assertTrue($calls[0]['body'] === null || $calls[0]['body'] === '');
+        $this->assertSame([], $calls);
     }
 
     public function testUndismissClusterProxiesToBackend(): void
     {
         $clusterId = 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae';
-        $this->queueHttpResponse([
-            'response' => ['code' => 204, 'message' => 'No Content'],
-            'body' => '',
-        ]);
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController($repository, new RecognitionControllerSyncStateRepositorySpy())
+        );
 
         $request = new WP_REST_Request('DELETE', '/acx/v1/recognition/clusters/' . $clusterId . '/dismiss');
         $request->set_param('cluster_id', $clusterId);
 
-        $response = $this->controller->undismiss_cluster($request);
+        $response = $controller->undismiss_cluster($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
-        $this->assertSame(204, $response->get_status());
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(
+            [
+                'dismissed' => false,
+                'synced' => false,
+                'status' => 'pending',
+            ],
+            $response->get_data()
+        );
+        $this->assertSame($clusterId, $repository->undismissedClusterId);
 
         $calls = $this->getHttpCalls();
-        $this->assertCount(1, $calls);
-        $this->assertSame('DELETE', $calls[0]['method']);
-        $this->assertStringContainsString('/recognition/clusters/' . $clusterId . '/dismiss', $calls[0]['url']);
-        $this->assertStringContainsString('tenant_id=', $calls[0]['url']);
-
-        $this->assertTrue($calls[0]['body'] === null || $calls[0]['body'] === '');
+        $this->assertSame([], $calls);
     }
 
     public function testRegisterRoutesIncludesMediaIdentitiesIncludeDebugArg(): void
@@ -516,5 +531,46 @@ class RecognitionControllerTest extends TestCase
         }
 
         return null;
+    }
+}
+
+class RecognitionControllerClusterMutationsRepositorySpy extends NullClustersRepository
+{
+    public string $dismissedClusterId = '';
+    public string $undismissedClusterId = '';
+
+    /** @var array<string,array<string,mixed>> */
+    private array $localClusterRows = [
+        'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae' => [
+            'cluster_uuid' => 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae',
+            'snapshot_version' => 17,
+            'local_revision' => 4,
+            'curation_state' => 'uncurated',
+        ],
+    ];
+
+    public function find_by_uuid(string $cluster_uuid): ?array
+    {
+        return $this->localClusterRows[$cluster_uuid] ?? null;
+    }
+
+    public function dismiss(string $cluster_uuid): int
+    {
+        $this->dismissedClusterId = $cluster_uuid;
+        return 1;
+    }
+
+    public function undismiss(string $cluster_uuid): int
+    {
+        $this->undismissedClusterId = $cluster_uuid;
+        return 1;
+    }
+}
+
+class RecognitionControllerSyncStateRepositorySpy extends NullSyncStateRepository
+{
+    public function get_snapshot_version(string $tenant_id): int
+    {
+        return 99;
     }
 }

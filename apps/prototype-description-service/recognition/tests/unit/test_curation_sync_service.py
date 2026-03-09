@@ -210,5 +210,5 @@ async def test_cluster_dismiss_and_undismiss_replay_mutate_backend_state(db_sess
     await db_session.refresh(cluster)
 
     assert undismissed.status == "acknowledged"
-    assert cluster.dismissed_at is None
     assert cluster.roster_id == roster_id
+    assert cluster.dismissed_at is None

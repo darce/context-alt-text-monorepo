@@ -229,10 +229,6 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		}
 
 		$affected_rows = $this->clusters_repository->dismiss( $cluster_id );
-		if ( false === $affected_rows ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not dismiss cluster locally.', array( 'status' => 500 ) );
-		}
 
 		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'cluster_dismissed', $cluster_id, $cluster ) ) {
 			$wpdb->query( 'ROLLBACK' );
@@ -276,10 +272,6 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		}
 
 		$affected_rows = $this->clusters_repository->undismiss( $cluster_id );
-		if ( false === $affected_rows ) {
-			$wpdb->query( 'ROLLBACK' );
-			return new WP_Error( 'acx_db_error', 'Could not undismiss cluster locally.', array( 'status' => 500 ) );
-		}
 
 		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'cluster_undismissed', $cluster_id, $cluster ) ) {
 			$wpdb->query( 'ROLLBACK' );

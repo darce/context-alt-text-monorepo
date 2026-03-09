@@ -66,7 +66,7 @@ class OutboxDrainTest extends TestCase
 					'conflict_code' => 'version_conflict',
 					'backend_version' => 12,
 					'machine_payload' => ['cluster_uuid' => 'cluster-1', 'person_uuid' => 'remote-person'],
-				]];
+				],];
 			}
 		};
 
@@ -92,7 +92,7 @@ class OutboxDrainTest extends TestCase
 					'error_code' => 'timeout',
 					'error_message' => 'gateway timeout',
 					'retryable' => true,
-				]];
+				],];
 			}
 		};
 
@@ -119,7 +119,7 @@ class OutboxDrainTest extends TestCase
 					'error_code' => 'timeout',
 					'error_message' => 'gateway timeout',
 					'retryable' => true,
-				]];
+				],];
 			}
 		};
 

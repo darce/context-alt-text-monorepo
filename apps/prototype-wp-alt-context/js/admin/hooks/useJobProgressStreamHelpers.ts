@@ -6,7 +6,7 @@ interface ProgressEventData<TStatus extends string> {
   completed: number;
   total: number;
   status: TStatus;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
+  phase?: 'queued' | 'detecting' | 'clustering' | 'awaiting_projection' | 'complete';
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;
@@ -16,7 +16,7 @@ interface DoneEventData<TStatus extends string> {
   status: TStatus;
   completed?: number;
   total?: number;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
+  phase?: 'queued' | 'detecting' | 'clustering' | 'awaiting_projection' | 'complete';
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;

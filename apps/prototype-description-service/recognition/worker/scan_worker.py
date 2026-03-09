@@ -9,7 +9,7 @@ from __future__ import annotations
 import asyncio
 import logging
 from dataclasses import dataclass
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 from sqlalchemy import select
@@ -25,6 +25,7 @@ from recognition.application.embedding.generator import (
 )
 from recognition.application.scan.queue_repository import ScanQueueItem
 from recognition.config import get_settings as get_recognition_settings
+from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 from recognition.infrastructure.repositories.scan_queue_repository import SqlAlchemyScanQueueRepository
 from recognition.worker.handlers.clustering import ClusteringJobHandler, CurationJobHandler, SplitJobHandler
 from recognition.worker.handlers.scan import ScanItemHandler
@@ -66,20 +67,11 @@ class ScanWorker:
         self._http_client: httpx.AsyncClient | None = None
         self._detector: FaceDetectorProtocol = StubFaceDetector()
         self._generator: EmbeddingGeneratorProtocol = StubEmbeddingGenerator()
+        self._embedding_runtime_ready = False
+        self._embedding_retry_after: datetime | None = None
 
         settings = get_recognition_settings()
-        if settings.runtime_mode != "test":
-            try:
-                from recognition.infrastructure.embeddings import InsightFaceAdapter
-
-                adapter = InsightFaceAdapter()
-                self._http_client = httpx.AsyncClient(timeout=30.0)
-                self._detector = InsightFaceFaceDetector(adapter, client=self._http_client)
-                self._generator = InsightFaceEmbeddingGenerator(adapter)
-            except Exception:
-                logger.exception("Failed to initialize InsightFace adapter, falling back to stubs.")
-                self._detector = StubFaceDetector()
-                self._generator = StubEmbeddingGenerator()
+        self._runtime_mode = settings.runtime_mode
 
         self._last_mv_refresh_time: datetime = datetime.min.replace(tzinfo=UTC)
         self._scan_handler = ScanItemHandler(
@@ -97,6 +89,7 @@ class ScanWorker:
 
     async def __aenter__(self) -> ScanWorker:
         """Prepare worker resources."""
+        await self._ensure_embedding_runtime()
         return self
 
     async def __aexit__(self, exc_type, exc, tb) -> None:
@@ -150,7 +143,37 @@ class ScanWorker:
         *,
         claimed: list[ScanQueueItem],
     ) -> None:
+        await self._ensure_embedding_runtime()
         await self._scan_handler.process_items(claimed=claimed)
+
+    async def _ensure_embedding_runtime(self) -> None:
+        """Initialize scan inference dependencies once per worker process."""
+        if self._embedding_runtime_ready or self._runtime_mode == "test":
+            return
+        now = datetime.now(tz=UTC)
+        if self._embedding_retry_after is not None and now < self._embedding_retry_after:
+            return
+        try:
+            adapter = await get_shared_insightface_adapter()
+            if self._http_client is None:
+                self._http_client = httpx.AsyncClient(timeout=30.0)
+            self._detector = InsightFaceFaceDetector(adapter, client=self._http_client)
+            self._generator = InsightFaceEmbeddingGenerator(adapter)
+            self._embedding_retry_after = None
+            self._embedding_runtime_ready = True
+        except Exception:
+            logger.exception("Failed to initialize InsightFace adapter, falling back to stubs.")
+            self._detector = StubFaceDetector()
+            self._generator = StubEmbeddingGenerator()
+            self._embedding_retry_after = now + timedelta(seconds=30)
+
+        self._scan_handler = ScanItemHandler(
+            session_factory=self._session_factory,
+            detector=self._detector,
+            generator=self._generator,
+            max_attempts=self._config.max_attempts,
+            max_concurrency=self._config.max_concurrency,
+        )
 
     async def _process_pending_clustering_jobs(self, *, session: AsyncSession, now: datetime) -> bool:
         stmt = (

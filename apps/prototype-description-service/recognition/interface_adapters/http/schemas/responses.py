@@ -229,7 +229,7 @@ class JobProgressResponse(BaseModel):
 
     completed: int
     total: int
-    phase: Literal["queued", "detecting", "clustering", "complete"] | None = None
+    phase: Literal["queued", "detecting", "clustering", "awaiting_projection", "complete"] | None = None
     images_processed: int | None = None
     faces_found: int | None = None
     clusters_created: int | None = None
@@ -245,6 +245,9 @@ class JobStatusResponse(BaseModel):
     started_at: datetime
     finished_at: datetime | None
     message: str | None = None
+    snapshot_version: int | None = None
+    source_job_id: str | None = None
+    projection_acknowledged_at: datetime | None = None
 
     @field_validator("id")
     @classmethod
@@ -389,6 +392,7 @@ class ClusterSnapshotResponse(BaseModel):
 
     tenant_id: str
     snapshot_version: int
+    source_job_id: str | None = None
     generated_at: datetime
     clusters: list[ClusterSnapshotClusterResponse]
     members: list[ClusterSnapshotMemberResponse]

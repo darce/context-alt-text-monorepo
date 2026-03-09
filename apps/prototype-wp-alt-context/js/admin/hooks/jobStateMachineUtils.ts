@@ -4,14 +4,22 @@ import type { JobProgress, JobStatusResponse } from '../api/recognition/types/sc
 import type { PersistedJob } from './useJobPersistence';
 import type { JobStatus } from './useJobProgressStream';
 
-export type JobPhase = 'idle' | 'scanning' | 'clustering';
+export type PipelinePhase = 'idle' | 'scanning' | 'clustering' | 'projecting';
+export type JobPhase = PipelinePhase;
 
 export const getLatestJobByType = (jobs: PersistedJob[], type: PersistedJob['type']): PersistedJob | null => {
   const typedJobs = jobs.filter((job) => job.type === type);
   return typedJobs[typedJobs.length - 1] ?? null;
 };
 
-export const deriveJobPhase = (latestScanJob: PersistedJob | null, latestClusterJob: PersistedJob | null): JobPhase => {
+export const derivePipelinePhase = (
+  latestScanJob: PersistedJob | null,
+  latestClusterJob: PersistedJob | null,
+  scanStatus: JobStatusResponse | undefined,
+): PipelinePhase => {
+  if (scanStatus?.progress?.phase === 'awaiting_projection' && (latestClusterJob || latestScanJob)) {
+    return 'projecting';
+  }
   if (latestClusterJob) {
     return 'clustering';
   }
@@ -21,12 +29,14 @@ export const deriveJobPhase = (latestScanJob: PersistedJob | null, latestCluster
   return 'idle';
 };
 
+export const deriveJobPhase = derivePipelinePhase;
+
 export const deriveLatestJobId = (
-  currentPhase: JobPhase,
+  currentPhase: PipelinePhase,
   latestScanJob: PersistedJob | null,
   latestClusterJob: PersistedJob | null,
 ): string | null => {
-  if (currentPhase === 'clustering') {
+  if (currentPhase === 'clustering' || currentPhase === 'projecting') {
     return latestClusterJob?.id ?? null;
   }
   if (currentPhase === 'scanning') {
@@ -59,6 +69,10 @@ export const buildStatusText = ({
       return sprintf(__('Clustering %d/%d identities…', 'alt-context'), sseProgress.completed, sseProgress.total);
     }
     return __('Clustering faces…', 'alt-context');
+  }
+
+  if (sseProgress?.phase === 'awaiting_projection' || scanStatus?.progress?.phase === 'awaiting_projection') {
+    return __('Syncing projected results…', 'alt-context');
   }
 
   if (activeJobIds.length > 0) {
@@ -101,6 +115,7 @@ export const buildStatusText = ({
 };
 
 interface ScanProgressParams {
+  currentPhase: PipelinePhase;
   activeJobIds: string[];
   activeJobs: PersistedJob[];
   sseProgress: JobProgress | null;
@@ -109,12 +124,17 @@ interface ScanProgressParams {
 }
 
 export const buildScanProgress = ({
+  currentPhase,
   activeJobIds,
   activeJobs,
   sseProgress,
   latestScanJob,
   fallbackProgress,
 }: ScanProgressParams): JobProgress | null => {
+  if (currentPhase === 'clustering' || currentPhase === 'projecting') {
+    return fallbackProgress ?? null;
+  }
+
   if (activeJobIds.length === 0) {
     return fallbackProgress ?? null;
   }
@@ -138,6 +158,16 @@ export const buildScanProgress = ({
   }
 
   return sseProgress;
+};
+
+export const buildClusterProgress = (
+  currentPhase: PipelinePhase,
+  sseProgress: JobProgress | null,
+): JobProgress | null => {
+  if (currentPhase === 'clustering' || currentPhase === 'projecting') {
+    return sseProgress;
+  }
+  return null;
 };
 
 interface ScanRunningParams {

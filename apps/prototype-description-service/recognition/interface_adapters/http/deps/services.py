@@ -6,14 +6,12 @@ This module provides FastAPI dependencies for constructing application services.
 
 from __future__ import annotations
 
-import asyncio
 import logging
 import uuid
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
-from typing import TYPE_CHECKING
 
 from fastapi import Depends
 from sqlalchemy import text
@@ -32,6 +30,7 @@ from recognition.application.suggestions.merge_suggestions import MergeSuggestio
 from recognition.application.suggestions.refresh_service import SuggestionRefreshService
 from recognition.application.suggestions.service import SuggestionService
 from recognition.config import get_settings as get_recognition_settings
+from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 from recognition.infrastructure.repositories import (
     SqlAlchemyClusterRepository,
     SqlAlchemyConstraintRepository,
@@ -59,33 +58,11 @@ from recognition.observability.visualization import ClusterVisualizer
 
 logger = logging.getLogger(__name__)
 
-if TYPE_CHECKING:
-    from recognition.infrastructure.embeddings import InsightFaceAdapter
-
 
 @lru_cache
 def get_settings() -> ClusteringSettings:
     """Provide clustering settings from the recognition config."""
     return get_recognition_settings().clustering
-
-
-_SHARED_ADAPTER: InsightFaceAdapter | None = None
-_ADAPTER_LOCK = asyncio.Lock()
-
-
-async def get_shared_insightface_adapter() -> InsightFaceAdapter:
-    """Return a singleton InsightFaceAdapter to avoid reloading models."""
-    global _SHARED_ADAPTER
-    if _SHARED_ADAPTER is None:
-        async with _ADAPTER_LOCK:
-            if _SHARED_ADAPTER is None:
-                from recognition.infrastructure.embeddings import InsightFaceAdapter
-
-                # Initialize the adapter (cheap)
-                _SHARED_ADAPTER = InsightFaceAdapter()
-                # Ensure model is loaded (expensive, done once)
-                await _SHARED_ADAPTER.ensure_loaded()
-    return _SHARED_ADAPTER
 
 
 async def get_suggestion_service(
@@ -275,7 +252,7 @@ def get_cluster_service_builder(
 
 def get_scan_service_builder(
     session: AsyncSession | None = Depends(get_optional_session),
-) -> Callable[[str], ScanService]:
+) -> Callable[[str], Awaitable[ScanService]]:
     """Return a builder for ScanService with DB session and embedder.
 
     Uses real InsightFace adapters in production mode, stubs in test mode.
@@ -294,7 +271,7 @@ def get_scan_service_builder(
     settings = get_recognition_settings()
     runtime_mode = settings.runtime_mode
 
-    def _builder(tenant_id: str) -> ScanService:
+    async def _builder(tenant_id: str) -> ScanService:
         if session is None:
             raise RuntimeError("Database session is required for ScanService")
 
@@ -303,27 +280,9 @@ def get_scan_service_builder(
             detector = StubFaceDetector()
             generator = StubEmbeddingGenerator()
         else:
-            # Production mode: use real InsightFace (lazy-loaded shared instance)
+            # Production mode: use real InsightFace (shared singleton)
             try:
-                from recognition.infrastructure.embeddings import InsightFaceAdapter
-
-                # Use the global adapter if initialized, otherwise create one (fallback)
-                # Ideally, we should await get_shared_insightface_adapter(), but this builder is synchronous.
-                # However, since we are in a factory, we might need to rely on the shared instance being ready
-                # OR just return a new one if we can't await here.
-                # BUT: The builder returns a ScanService. ScanService doesn't await in init.
-                # The caller of `_builder` assumes it's sync.
-
-                # OPTIMIZATION: Check if we have a shared instance available
-                global _SHARED_ADAPTER
-                adapter = _SHARED_ADAPTER
-                if adapter is None:
-                    # Fallback to new instance if not yet initialized globally
-                    # This happens if get_shared_insightface_adapter hasn't been called yet.
-                    # We can't await here.
-                    logger.warning("Shared InsightFaceAdapter not initialized, creating new instance (slow)")
-                    adapter = InsightFaceAdapter()
-
+                adapter = await get_shared_insightface_adapter()
                 detector = InsightFaceFaceDetector(adapter)
                 generator = InsightFaceEmbeddingGenerator(adapter)
             except ImportError:
@@ -450,6 +409,20 @@ async def get_persisted_job_service(
     )
 
 
+async def get_persisted_cluster_job_service(
+    session: AsyncSession | None = Depends(get_optional_session),
+    tenant_id: str | None = Depends(get_tenant_id_optional),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+) -> JobService:
+    """Job service for clustering/curation routes that do not need scan-service wiring."""
+    return await get_job_service(
+        session=session,
+        tenant_id=tenant_id,
+        cluster_service_builder=cluster_service_builder,
+        scan_service_builder=None,
+    )
+
+
 __all__ = [
     "get_settings",
     "get_shared_insightface_adapter",
@@ -469,4 +442,5 @@ __all__ = [
     "get_job_service",
     "get_job_service_dependency",
     "get_persisted_job_service",
+    "get_persisted_cluster_job_service",
 ]

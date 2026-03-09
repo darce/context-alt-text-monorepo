@@ -147,4 +147,27 @@ class SnapshotClientTest extends TestCase
         $this->assertSame([], $result['members']);
         $this->assertTrue($result['empty']);
     }
+
+    public function testAcknowledgeProjectionPostsJobScopedPayload(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'status' => 'acknowledged',
+                'snapshot_version' => 44,
+            ]),
+        ]);
+
+        $response = $this->client->acknowledge_projection('job-44', 44);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame(['status' => 'acknowledged', 'snapshot_version' => 44], $response->get_data());
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/jobs/job-44/acknowledge-projection', $calls[0]['url']);
+        $this->assertSame('POST', $calls[0]['args']['method']);
+        $this->assertSame('{"snapshot_version":44}', $calls[0]['args']['body']);
+    }
 }

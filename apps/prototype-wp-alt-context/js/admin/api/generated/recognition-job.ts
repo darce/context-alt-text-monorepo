@@ -3,7 +3,7 @@
 export interface JobProgress {
   completed: number;
   total: number;
-  phase?: 'queued' | 'detecting' | 'clustering' | 'complete';
+  phase?: 'queued' | 'detecting' | 'clustering' | 'awaiting_projection' | 'complete';
   images_processed?: number;
   faces_found?: number;
   clusters_created?: number;
@@ -17,4 +17,7 @@ export interface RecognitionJob {
   started_at: string;
   finished_at: string | null;
   message?: string | null;
+  snapshot_version?: number | null;
+  source_job_id?: string | null;
+  projection_acknowledged_at?: string | null;
 }

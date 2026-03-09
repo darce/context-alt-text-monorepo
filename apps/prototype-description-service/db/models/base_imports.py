@@ -8,6 +8,7 @@ from datetime import datetime
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
     JSON,
+    BigInteger,
     Boolean,
     CheckConstraint,
     Float,
@@ -32,6 +33,7 @@ __all__ = [
     "uuid",
     "datetime",
     "Vector",
+    "BigInteger",
     "JSON",
     "Boolean",
     "CheckConstraint",

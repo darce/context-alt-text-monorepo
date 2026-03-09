@@ -46,8 +46,18 @@ export const WorkbenchPage = (): React.JSX.Element => (
 );
 
 const WorkbenchPageContent = (): React.JSX.Element => {
-  const { activeSection, setActiveSection, recognitionUrlFallback, isOnline, isPrimary, latestJobId } =
-    useWorkbenchContext();
+  const {
+    activeSection,
+    setActiveSection,
+    recognitionUrlFallback,
+    isOnline,
+    isPrimary,
+    latestJobId,
+    currentPhase,
+    projectionSyncState,
+    projectionError,
+    retryProjectionSync,
+  } = useWorkbenchContext();
 
   const scanSection = WORKBENCH_SECTIONS[0];
   const batchSection = WORKBENCH_SECTIONS[1];
@@ -74,7 +84,12 @@ const WorkbenchPageContent = (): React.JSX.Element => {
         </TabsList>
 
         <div className="acx-workbench__panels">
-          <SyncStatusIndicator />
+          <SyncStatusIndicator
+            pipelinePhase={currentPhase}
+            projectionState={projectionSyncState}
+            projectionError={projectionError}
+            onRetryProjection={retryProjectionSync}
+          />
           {recognitionUrlFallback && (
             <div className="acx-notice acx-notice--warning">
               {__(

@@ -26,6 +26,9 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+_SHARED_ADAPTER: InsightFaceAdapter | None = None
+_SHARED_ADAPTER_LOCK = asyncio.Lock()
+
 
 @dataclass
 class DetectedFace:
@@ -202,4 +205,27 @@ class InsightFaceAdapter:
         }
 
 
-__all__ = ["InsightFaceAdapter", "DetectedFace"]
+async def get_shared_insightface_adapter() -> InsightFaceAdapter:
+    """Return the process-wide InsightFace adapter singleton."""
+    global _SHARED_ADAPTER
+    if _SHARED_ADAPTER is None:
+        async with _SHARED_ADAPTER_LOCK:
+            if _SHARED_ADAPTER is None:
+                adapter = InsightFaceAdapter()
+                await adapter.ensure_loaded()
+                _SHARED_ADAPTER = adapter
+    return _SHARED_ADAPTER
+
+
+def reset_shared_insightface_adapter_for_tests() -> None:
+    """Clear the shared adapter singleton for isolated tests."""
+    global _SHARED_ADAPTER
+    _SHARED_ADAPTER = None
+
+
+__all__ = [
+    "DetectedFace",
+    "InsightFaceAdapter",
+    "get_shared_insightface_adapter",
+    "reset_shared_insightface_adapter_for_tests",
+]

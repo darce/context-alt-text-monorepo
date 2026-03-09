@@ -84,12 +84,16 @@ class ClusteringJobHandler(JobHandler[IdentityClusteringJob]):
             progress_callback=progress_callback,
             commit=False,
         )
+        await session.flush()
+        _, _, snapshot_version = await cluster_service.cluster_repository.get_snapshot(str(job.tenant_id))
 
         await ensure_job_context(session=session, job=job)
         job.processed_identities = result.completed
         job.total_identities = result.total
         job.progress = 1.0
         job.status = "completed"
+        job.snapshot_version = snapshot_version
+        job.source_job_id = job.id
         job.completed_at = datetime.now(tz=UTC)
         await session.flush()
 

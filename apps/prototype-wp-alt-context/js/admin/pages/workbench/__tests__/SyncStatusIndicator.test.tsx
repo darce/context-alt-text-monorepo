@@ -221,4 +221,32 @@ describe('SyncStatusIndicator', () => {
     expect(screen.getByText(/Last curation acknowledgement:/)).toBeInTheDocument();
     expect(screen.getByText(/Last curation conflict:/)).toBeInTheDocument();
   });
+
+  it('renders projecting sync progress ahead of the generic stale indicator', () => {
+    mockReturn.data = { last_snapshot_version: 4, last_synced_at: '2026-03-08 10:00:00', is_stale: true };
+
+    render(<SyncStatusIndicator pipelinePhase="projecting" projectionState="syncing" />);
+
+    expect(screen.getByText('Syncing results…')).toBeInTheDocument();
+    expect(screen.getByText('In Progress')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: 'Sync now' })).not.toBeInTheDocument();
+  });
+
+  it('renders projection retry state with the provided error message', () => {
+    const retryProjection = vi.fn();
+    mockReturn.data = { last_snapshot_version: 4, last_synced_at: '2026-03-08 10:00:00', is_stale: true };
+
+    render(
+      <SyncStatusIndicator
+        pipelinePhase="projecting"
+        projectionState="error"
+        projectionError="Waiting for service…"
+        onRetryProjection={retryProjection}
+      />,
+    );
+
+    expect(screen.getByText('Waiting for service…')).toBeInTheDocument();
+    fireEvent.click(screen.getByRole('button', { name: 'Retry sync' }));
+    expect(retryProjection).toHaveBeenCalledTimes(1);
+  });
 });

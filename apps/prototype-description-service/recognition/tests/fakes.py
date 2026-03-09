@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from typing import cast
 
 from recognition.domain.cluster import IdentityCluster
-from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.domain.repositories import IdentityMember
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
 from recognition.shared.ids import generate_id
@@ -158,6 +158,7 @@ class FakeJobRepository:
 
     def __init__(self) -> None:
         self.jobs: dict[str, Job] = {}
+        self.projections: dict[tuple[str, str], ProjectionStatus] = {}
 
     async def save(self, job: Job) -> Job:
         self.jobs[job.id] = job
@@ -169,6 +170,52 @@ class FakeJobRepository:
     async def update(self, job: Job) -> Job:
         self.jobs[job.id] = job
         return job
+
+    async def get_followup_clustering_job(self, scan_job_id: str) -> Job | None:
+        for job in reversed(list(self.jobs.values())):
+            if job.type is not JobType.CLUSTERING:
+                continue
+            payload = job.payload or {}
+            if payload.get("scan_job_id") == scan_job_id:
+                return job
+        return None
+
+    async def get_active_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        for job in reversed(list(self.jobs.values())):
+            if job.type is not JobType.CLUSTERING:
+                continue
+            if job.tenant_id != tenant_id or job.status not in {JobStatus.PENDING, JobStatus.RUNNING}:
+                continue
+            return job
+        return None
+
+    async def get_latest_completed_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        for job in reversed(list(self.jobs.values())):
+            if job.type is not JobType.CLUSTERING:
+                continue
+            if job.tenant_id != tenant_id or job.status is not JobStatus.COMPLETED:
+                continue
+            return job
+        return None
+
+    async def get_projection_status(self, job_id: str, tenant_id: str) -> ProjectionStatus | None:
+        return self.projections.get((job_id, tenant_id))
+
+    async def record_projection_acknowledgement(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        snapshot_version: int,
+        acknowledged_at: datetime,
+    ) -> ProjectionStatus | None:
+        projection = ProjectionStatus(
+            snapshot_version=snapshot_version,
+            source_job_id=job_id,
+            acknowledged_at=acknowledged_at,
+        )
+        self.projections[(job_id, tenant_id)] = projection
+        return projection
 
 
 class FakeJobService:
@@ -205,6 +252,33 @@ class FakeJobService:
 
     async def get_job_status(self, job_id: str) -> Job | None:
         return await self.repository.get(job_id)
+
+    async def get_followup_clustering_job(self, scan_job_id: str) -> Job | None:
+        return await self.repository.get_followup_clustering_job(scan_job_id)
+
+    async def get_active_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        return await self.repository.get_active_clustering_job_for_tenant(tenant_id)
+
+    async def get_projection_status(self, job_id: str, tenant_id: str) -> ProjectionStatus | None:
+        return await self.repository.get_projection_status(job_id, tenant_id)
+
+    async def record_projection_acknowledgement(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        snapshot_version: int,
+        acknowledged_at: datetime,
+    ) -> ProjectionStatus | None:
+        return await self.repository.record_projection_acknowledgement(
+            job_id=job_id,
+            tenant_id=tenant_id,
+            snapshot_version=snapshot_version,
+            acknowledged_at=acknowledged_at,
+        )
+
+    async def get_latest_completed_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        return await self.repository.get_latest_completed_clustering_job_for_tenant(tenant_id)
 
     async def cancel_job(self, job_id: str) -> Job:
         job = await self.repository.get(job_id)

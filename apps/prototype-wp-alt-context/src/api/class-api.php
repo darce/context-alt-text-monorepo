@@ -4,6 +4,9 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
+require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
+
 use AltContext\Api\RecognitionController;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxWriter;

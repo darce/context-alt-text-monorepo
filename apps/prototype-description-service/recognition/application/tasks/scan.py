@@ -95,12 +95,9 @@ async def process_scan_job_inline(
             if adapter_provider is not None:
                 adapter: InsightFaceAdapter = await adapter_provider()
             else:
-                from recognition.infrastructure.embeddings import InsightFaceAdapter
+                from recognition.infrastructure.embeddings import get_shared_insightface_adapter
 
-                adapter = InsightFaceAdapter()
-                ensure_loaded = getattr(adapter, "ensure_loaded", None)
-                if callable(ensure_loaded):
-                    await ensure_loaded()
+                adapter = await get_shared_insightface_adapter()
 
             detector = InsightFaceFaceDetector(adapter)
             generator = InsightFaceEmbeddingGenerator(adapter)

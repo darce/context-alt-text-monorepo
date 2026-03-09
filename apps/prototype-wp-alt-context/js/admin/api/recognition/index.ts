@@ -44,7 +44,7 @@ export type {
 } from './types';
 
 // Scan operations
-export { scanFaces, scanFacesBatched, fetchScanStatus, cancelScanJob, clusterFaces } from './scanApi';
+export { scanFaces, scanFacesBatched, fetchScanStatus, cancelScanJob, clusterFaces, acknowledgeProjection } from './scanApi';
 
 // Cluster operations
 export {

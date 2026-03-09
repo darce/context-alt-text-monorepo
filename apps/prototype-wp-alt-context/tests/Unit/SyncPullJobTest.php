@@ -9,6 +9,7 @@ use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SnapshotProjectorInterface;
 use AltContext\Tests\TestCase;
 use WP_Error;
+use WP_REST_Response;
 
 /**
  * @covers \AltContext\Sovereign\Sync\SyncPullJob
@@ -19,6 +20,7 @@ class SyncPullJobTest extends TestCase
     {
         $client = new SyncPullJobSnapshotClient([
             'snapshot_version' => 12,
+            'source_job_id' => 'job-12',
             'clusters' => [['cluster_uuid' => 'cluster-1']],
             'members' => [],
         ]);
@@ -31,6 +33,8 @@ class SyncPullJobTest extends TestCase
         $this->assertTrue($result);
         $this->assertSame('tenant-1', $projector->tenantId);
         $this->assertSame(12, $projector->snapshotVersion);
+        $this->assertSame('job-12', $client->acknowledgedJobId);
+        $this->assertSame(12, $client->acknowledgedSnapshotVersion);
     }
 
     public function testSyncPullReturnsFalseOnSnapshotError(): void
@@ -162,21 +166,67 @@ class SyncPullJobTest extends TestCase
         $this->assertSame('tenant-empty', $projector->tenantId);
         $this->assertSame(0, $projector->snapshotVersion);
     }
+
+    public function testSyncPullDoesNotFailWhenProjectionAcknowledgementFails(): void
+    {
+        $received = null;
+        add_action('acx_sync_pull_failed', static function (array $payload) use (&$received): void {
+            $received = $payload;
+        }, 10, 1);
+
+        $client = new SyncPullJobSnapshotClient(
+            [
+                'snapshot_version' => 22,
+                'source_job_id' => 'job-22',
+                'clusters' => [['cluster_uuid' => 'cluster-22']],
+                'members' => [],
+            ],
+            new WP_Error('ack_failed', 'failed')
+        );
+        $projector = new SyncPullJobProjectorSpy();
+
+        $job = new SyncPullJob($client, $projector);
+
+        $result = $job->perform('tenant-ack');
+
+        $this->assertTrue($result);
+        $this->assertSame('tenant-ack', $projector->tenantId);
+        $this->assertSame('job-22', $client->acknowledgedJobId);
+        $this->assertSame(22, $client->acknowledgedSnapshotVersion);
+        $this->assertIsArray($received);
+        $this->assertSame('tenant-ack', $received['tenant_id']);
+        $this->assertSame('projection_acknowledgement_failed', $received['context']);
+    }
 }
 
 class SyncPullJobSnapshotClient extends SnapshotClient
 {
     /** @var array<string,mixed>|WP_Error */
     private array|WP_Error $payload;
+    private WP_Error|WP_REST_Response|null $acknowledgeResponse;
+    public string $acknowledgedJobId = '';
+    public int $acknowledgedSnapshotVersion = 0;
 
-    public function __construct(array|WP_Error $payload)
+    public function __construct(array|WP_Error $payload, WP_Error|WP_REST_Response|null $acknowledgeResponse = null)
     {
         $this->payload = $payload;
+        $this->acknowledgeResponse = $acknowledgeResponse;
     }
 
     public function fetch_snapshot(string $tenant_id): array|WP_Error
     {
         return $this->payload;
+    }
+
+    public function acknowledge_projection(string $job_id, int $snapshot_version): WP_REST_Response|WP_Error
+    {
+        $this->acknowledgedJobId = $job_id;
+        $this->acknowledgedSnapshotVersion = $snapshot_version;
+        if ($this->acknowledgeResponse instanceof WP_Error || $this->acknowledgeResponse instanceof WP_REST_Response) {
+            return $this->acknowledgeResponse;
+        }
+
+        return new WP_REST_Response(['status' => 'acknowledged', 'snapshot_version' => $snapshot_version], 200);
     }
 }
 

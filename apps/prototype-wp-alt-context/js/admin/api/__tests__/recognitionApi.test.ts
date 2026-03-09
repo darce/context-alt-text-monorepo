@@ -12,6 +12,8 @@ import {
   listRecognitionClusters,
   mergeCluster,
   revertMergeCluster,
+  acknowledgeProjection,
+  cancelScanJob,
   scanFaces,
   triggerSync,
   undismissCluster,
@@ -321,6 +323,26 @@ describe('recognitionApi', () => {
         method: 'POST',
         restNonce: 'nonce-123',
       }),
+    );
+  });
+
+  it('uses a stable sub-path slash for job mutations when the base endpoint has a trailing slash', async () => {
+    const { getEndpoint } = await import('../config');
+    vi.mocked(getEndpoint).mockImplementation((...keys: string[]) => `https://example.com/${keys[0] ?? 'default'}/`);
+    fetchApiMock.mockResolvedValue({ status: 'acknowledged', snapshot_version: 3 });
+
+    await acknowledgeProjection('job-3', 3);
+    await cancelScanJob('job-4');
+
+    expect(fetchApiMock).toHaveBeenNthCalledWith(
+      1,
+      'https://example.com/recognitionJobs/job-3/acknowledge-projection',
+      expect.objectContaining({ method: 'POST' }),
+    );
+    expect(fetchApiMock).toHaveBeenNthCalledWith(
+      2,
+      'https://example.com/recognitionJobs/job-4/cancel',
+      expect.objectContaining({ method: 'POST' }),
     );
   });
 });

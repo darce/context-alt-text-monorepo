@@ -3,6 +3,8 @@ import { __, sprintf } from '@wordpress/i18n';
 
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
+import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
+import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 
 const formatTimestamp = (value: string | null | undefined): string | null => {
   if (!value) {
@@ -23,7 +25,19 @@ const normalizeCount = (value: number | null | undefined): number => {
   return Math.floor(value);
 };
 
-export const SyncStatusIndicator = (): React.JSX.Element | null => {
+interface SyncStatusIndicatorProps {
+  pipelinePhase?: PipelinePhase;
+  projectionState?: ProjectionSyncState;
+  projectionError?: string | null;
+  onRetryProjection?: () => void;
+}
+
+export const SyncStatusIndicator = ({
+  pipelinePhase,
+  projectionState = 'idle',
+  projectionError = null,
+  onRetryProjection,
+}: SyncStatusIndicatorProps): React.JSX.Element | null => {
   const { data, isError, isLoading } = useSyncStatus();
   const syncTrigger = useSyncTrigger(data?.is_stale ?? false);
 
@@ -69,6 +83,37 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
         ) : null}
       </div>
     ) : null;
+
+  if (pipelinePhase === 'projecting') {
+    if (projectionState === 'error') {
+      return (
+        <div className="acx-sync-status acx-sync-status--syncing">
+          <span className="acx-sync-status__label">{projectionError ?? __('Waiting for service…', 'alt-context')}</span>
+          <button
+            type="button"
+            className="button button-link"
+            onClick={() => onRetryProjection?.()}
+            disabled={!onRetryProjection}
+          >
+            {__('Retry sync', 'alt-context')}
+          </button>
+          {curationDetails}
+        </div>
+      );
+    }
+
+    return (
+      <div className="acx-sync-status acx-sync-status--syncing">
+        <span className="acx-sync-status__label">
+          {projectionState === 'acknowledging'
+            ? __('Acknowledging projected results…', 'alt-context')
+            : __('Syncing results…', 'alt-context')}
+        </span>
+        <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+        {curationDetails}
+      </div>
+    );
+  }
 
   // Show syncing state while trigger is in progress and stale.
   if (data.is_stale && syncTrigger.isPending) {

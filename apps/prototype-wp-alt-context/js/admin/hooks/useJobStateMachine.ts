@@ -3,22 +3,24 @@ import { useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
 import type { ClusterResponse } from '../api/recognition';
+import { useSyncTrigger } from './useSyncTrigger';
 import {
+  buildClusterProgress,
   buildScanProgress,
   buildStatusText,
-  deriveJobPhase,
+  derivePipelinePhase,
   deriveLatestJobId,
   getLatestJobByType,
   isScanRunning as getIsScanRunning,
-  type JobPhase,
+  type PipelinePhase,
 } from './jobStateMachineUtils';
-import { useJobStateMachineEffects } from './useJobStateMachineEffects';
+import { useJobStateMachineEffects, type ProjectionSyncState } from './useJobStateMachineEffects';
 import { useJobStateMachineMutations } from './useJobStateMachineMutations';
 import { useJobPersistence } from './useJobPersistence';
 import { useJobProgressStream } from './useJobProgressStream';
-import { useCombinedScanStatus } from './useRecognitionHooks';
+import { useAcknowledgeProjection, useCombinedScanStatus } from './useRecognitionHooks';
 
-export type { JobPhase } from './jobStateMachineUtils';
+export type { JobPhase, PipelinePhase } from './jobStateMachineUtils';
 
 export interface JobStateMachineOptions {
   onScanStart?: () => void;
@@ -45,6 +47,9 @@ export const useJobStateMachine = ({
 
   const [isWaitingForScanCompletion, setIsWaitingForScanCompletion] = useState(false);
   const [isCancellingScan, setIsCancellingScan] = useState(false);
+  const [projectionSyncState, setProjectionSyncState] = useState<ProjectionSyncState>('idle');
+  const [projectionError, setProjectionError] = useState<string | null>(null);
+  const [projectionSyncNonce, setProjectionSyncNonce] = useState(0);
 
   const invalidateIdentities = useCallback(() => {
     void queryClient.invalidateQueries({ queryKey: queryKeys.media.identities() });
@@ -69,10 +74,13 @@ export const useJobStateMachine = ({
   const latestScanJob = useMemo(() => getLatestJobByType(activeJobs, 'scan'), [activeJobs]);
   const latestClusterJob = useMemo(() => getLatestJobByType(activeJobs, 'clustering'), [activeJobs]);
 
+  // Poll for history / external updates
+  const { scanStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds);
+
   // Derive phase
-  const currentPhase = useMemo<JobPhase>(
-    () => deriveJobPhase(latestScanJob, latestClusterJob),
-    [latestScanJob, latestClusterJob],
+  const currentPhase = useMemo<PipelinePhase>(
+    () => derivePipelinePhase(latestScanJob, latestClusterJob, scanStatusQuery.data),
+    [latestScanJob, latestClusterJob, scanStatusQuery.data],
   );
 
   // SSE Stream
@@ -88,9 +96,8 @@ export const useJobStateMachine = ({
     etaSeconds,
     isPrimary,
   } = useJobProgressStream(latestJobId);
-
-  // Poll for history / external updates
-  const { scanStatusQuery } = useCombinedScanStatus(jobId ?? null, activeJobIds);
+  const syncTrigger = useSyncTrigger(false);
+  const acknowledgeProjectionMutation = useAcknowledgeProjection();
 
   useJobStateMachineEffects({
     scanStatus: scanStatusQuery.data,
@@ -105,6 +112,11 @@ export const useJobStateMachine = ({
     cluster: () => clusterMutation.mutate(),
     latestClusterJob,
     currentPhase,
+    syncTrigger,
+    acknowledgeProjection: acknowledgeProjectionMutation,
+    projectionSyncNonce,
+    setProjectionSyncState,
+    setProjectionError,
   });
 
   // Status Text
@@ -134,14 +146,17 @@ export const useJobStateMachine = ({
   const scanProgress = useMemo(
     () =>
       buildScanProgress({
+        currentPhase,
         activeJobIds,
         activeJobs,
         sseProgress,
         latestScanJob,
         fallbackProgress: scanStatusQuery.data?.progress,
       }),
-    [activeJobIds, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress],
+    [currentPhase, activeJobIds, activeJobs, sseProgress, latestScanJob, scanStatusQuery.data?.progress],
   );
+
+  const clusterProgress = useMemo(() => buildClusterProgress(currentPhase, sseProgress), [currentPhase, sseProgress]);
 
   const isScanRunning = useMemo(
     () =>
@@ -162,8 +177,11 @@ export const useJobStateMachine = ({
     activeJobIds,
     isScanRunning,
     isCancellingScan,
+    projectionSyncState,
+    projectionError,
     statusText,
     scanProgress,
+    clusterProgress,
     sseStatus,
     sseProgress,
     isOnline,
@@ -174,5 +192,10 @@ export const useJobStateMachine = ({
     scan: scanMutation.mutate,
     cancelScan: cancelMutation.mutate,
     cluster: clusterMutation.mutate,
+    retryProjectionSync: () => {
+      setProjectionError(null);
+      setProjectionSyncState('idle');
+      setProjectionSyncNonce((value) => value + 1);
+    },
   };
 };

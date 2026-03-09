@@ -361,6 +361,9 @@ def upgrade() -> None:
         sa.Column("total_identities", sa.Integer(), nullable=True),
         sa.Column("processed_identities", sa.Integer(), nullable=True, server_default=sa.text("0")),
         sa.Column("message", sa.Text()),
+        sa.Column("snapshot_version", sa.BigInteger(), nullable=True),
+        sa.Column("source_job_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("projection_acknowledged_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column(
             "payload",
             sa.dialects.postgresql.JSONB(),

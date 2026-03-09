@@ -4,6 +4,7 @@ import { GuidanceCard } from '../GuidanceCard';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
+  _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (format: string, ...args: (string | number)[]) => {
     let index = 0;
     return format.replace(/%(s|d)/g, () => String(args[index++]));
@@ -81,6 +82,26 @@ describe('GuidanceCard', () => {
       '#/roster?tab=entries&personFilter=unassigned',
     );
     expect(screen.getByText('2', { selector: '.acx-dashboard__guidance-count' })).toBeInTheDocument();
+  });
+
+  it('uses singular copy for one unassigned person', () => {
+    render(
+      <GuidanceCard
+        stats={{
+          people_count: 1,
+          assigned_clusters_count: 0,
+          pending_clusters_count: 0,
+          media_with_faces_count: 1,
+          unassigned_persons_count: 1,
+        }}
+      />,
+    );
+
+    expect(screen.getByText('1 person has no assigned clusters.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: 'Review 1 unassigned person' })).toHaveAttribute(
+      'href',
+      '#/roster?tab=entries&personFilter=unassigned',
+    );
   });
 
   it('renders all-caught-up guidance by default', () => {

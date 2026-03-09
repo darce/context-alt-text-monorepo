@@ -1,5 +1,5 @@
 import React from 'react';
-import { __, sprintf } from '@wordpress/i18n';
+import { __, _n, sprintf } from '@wordpress/i18n';
 
 import type { DashboardStats } from '../../api/dashboardApi';
 
@@ -28,7 +28,12 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
   if (stats.unassigned_persons_count > 0) {
     const reviewLabel = sprintf(
       /* translators: %d: number of unassigned persons */
-      __('Review %d unassigned persons', 'alt-context'),
+      _n(
+        'Review %d unassigned person',
+        'Review %d unassigned persons',
+        stats.unassigned_persons_count,
+        'alt-context'
+      ),
       stats.unassigned_persons_count
     );
 
@@ -37,7 +42,12 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
         <p>
           {sprintf(
             /* translators: %d: number of unassigned persons */
-            __('%d persons have no assigned clusters.', 'alt-context'),
+            _n(
+              '%d person has no assigned clusters.',
+              '%d persons have no assigned clusters.',
+              stats.unassigned_persons_count,
+              'alt-context'
+            ),
             stats.unassigned_persons_count
           )}
         </p>

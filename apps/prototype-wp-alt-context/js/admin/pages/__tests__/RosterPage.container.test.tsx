@@ -210,6 +210,7 @@ describe('RosterPage route container', () => {
 
     expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
     expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'false');
+    expect(screen.getByText('Filtered: Unassigned')).toBeInTheDocument();
     expect(screen.getByText('Showing unassigned people only.')).toBeInTheDocument();
     expect(screen.getByText('Unassigned Person')).toBeInTheDocument();
   });

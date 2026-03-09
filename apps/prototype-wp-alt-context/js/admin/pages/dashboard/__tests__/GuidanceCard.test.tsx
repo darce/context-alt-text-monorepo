@@ -76,10 +76,11 @@ describe('GuidanceCard', () => {
     );
 
     expect(screen.getByText('2 persons have no assigned clusters.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Review unassigned persons' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Review 2 unassigned persons' })).toHaveAttribute(
       'href',
       '#/roster?tab=entries&personFilter=unassigned',
     );
+    expect(screen.getByText('2', { selector: '.acx-dashboard__guidance-count' })).toBeInTheDocument();
   });
 
   it('renders all-caught-up guidance by default', () => {

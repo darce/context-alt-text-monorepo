@@ -157,8 +157,8 @@ const clearFilter = () => {
 
 ## Stretch Goals
 
-- [ ] Add a visible "Filtered: Unassigned" badge in roster entries header.
-- [ ] Add a count chip in dashboard CTA ("Review N unassigned persons").
+- [x] Add a visible "Filtered: Unassigned" badge in roster entries header.
+- [x] Add a count chip in dashboard CTA ("Review N unassigned persons").
 
 ## Success Criteria
 

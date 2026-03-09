@@ -194,10 +194,11 @@ describe('DashboardPage', () => {
     render(<DashboardPage />);
 
     expect(screen.getByText('3 persons have no assigned clusters.')).toBeInTheDocument();
-    expect(screen.getByRole('link', { name: 'Review unassigned persons' })).toHaveAttribute(
+    expect(screen.getByRole('link', { name: 'Review 3 unassigned persons' })).toHaveAttribute(
       'href',
       '#/roster?tab=entries&personFilter=unassigned',
     );
+    expect(screen.getByText('3', { selector: '.acx-dashboard__guidance-count' })).toBeInTheDocument();
   });
 
   it('renders zero for media-with-faces when no faces are detected', () => {

@@ -170,7 +170,7 @@ The MVP does not require a perfect event-sourced model, but it does require expl
 ### Phase 1: Unified Pipeline Lifecycle -- NOT STARTED
 
 > **Status**: not-started
-> **Task plans**: not yet scoped
+> **Task plan**: [phase-1-unified-pipeline-lifecycle-task-plan.md](../../tasks/6.0/phase-1-unified-pipeline-lifecycle-task-plan.md)
 
 **Goal**: Present analyze, clustering, and local projection as one durable operator-visible pipeline.
 

@@ -58,6 +58,15 @@ export const MediaSelection = (): React.JSX.Element => {
           onRetry={onRetry}
         />
 
+        <MediaSelectionPagination
+          currentPage={currentPage}
+          totalPages={totalPages}
+          perPage={perPage}
+          onPerPageChange={onPerPageChange}
+          onPageChange={onPageChange}
+          labelId="acx-media-page-size-label-top"
+        />
+
         <table className="acx-media-selection__table">
           <thead>
             <tr>
@@ -83,6 +92,7 @@ export const MediaSelection = (): React.JSX.Element => {
           perPage={perPage}
           onPerPageChange={onPerPageChange}
           onPageChange={onPageChange}
+          labelId="acx-media-page-size-label-bottom"
         />
       </div>
       {identityStatusMessage && (
@@ -177,6 +187,7 @@ interface MediaSelectionPaginationProps {
   perPage: number;
   onPerPageChange: (perPage: number) => void;
   onPageChange: (page: number) => void;
+  labelId: string;
 }
 
 const MEDIA_PAGE_SIZES = [10, 50, 100] as const;
@@ -187,6 +198,7 @@ const MediaSelectionPagination = ({
   perPage,
   onPerPageChange,
   onPageChange,
+  labelId,
 }: MediaSelectionPaginationProps) => {
   const boundedTotalPages = Math.max(1, totalPages);
   const boundedCurrentPage = Math.min(Math.max(1, currentPage), boundedTotalPages);
@@ -223,12 +235,9 @@ const MediaSelectionPagination = ({
         {__('Next', 'alt-context')}
       </button>
       <div className="acx-media-selection__page-size">
-        <span id="acx-media-page-size-label">{__('Images per page', 'alt-context')}</span>
+        <span id={labelId}>{__('Images per page', 'alt-context')}</span>
         <Select.Root value={String(perPage)} onValueChange={handlePerPageChange}>
-          <Select.Trigger
-            className="acx-media-selection__page-size-trigger"
-            aria-labelledby="acx-media-page-size-label"
-          >
+          <Select.Trigger className="acx-media-selection__page-size-trigger" aria-labelledby={labelId}>
             <Select.Value />
             <Select.Icon className="acx-media-selection__page-size-icon">
               <ChevronDown aria-hidden="true" size={16} />

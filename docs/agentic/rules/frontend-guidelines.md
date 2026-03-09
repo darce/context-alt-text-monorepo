@@ -141,27 +141,29 @@ const { data, isLoading, error, refetch } = useQuery({
 
 2. **No `undefined as T` or `x as T` for API return types.** If `fetchApi` can return `undefined` (204, empty body), the return type must be `Promise<T | undefined>`. Casting `undefined as T` gives callers a lie.
 
-3. **Centralize query keys.** All React Query keys must go through a `queryKeys` factory. Ad-hoc `['resource', id]` arrays create stale-data risk when other components invalidate via the factory but miss the ad-hoc key.
+3. **Use assertion helpers for internal invariants.** Prefer `asserts value is ...` helpers or `assertNever(...)` for impossible states and exhaustive switches. Do not use `console.assert` or assertion helpers as a substitute for API/input validation.
 
-4. **No inline styles for layout.** If a grid/flex pattern is used more than once, it belongs in a SCSS class. Inline `style={{ display: 'grid', ... }}` objects are not reusable, not inspectable in DevTools by class name, and duplicate easily.
+4. **Centralize query keys.** All React Query keys must go through a `queryKeys` factory. Ad-hoc `['resource', id]` arrays create stale-data risk when other components invalidate via the factory but miss the ad-hoc key.
 
-5. **No `!important` in SCSS.** Increase selector specificity instead (nest under a root `.acx-` container). WordPress admin styles have high specificity, but `!important` creates an arms race.
+5. **No inline styles for layout.** If a grid/flex pattern is used more than once, it belongs in a SCSS class. Inline `style={{ display: 'grid', ... }}` objects are not reusable, not inspectable in DevTools by class name, and duplicate easily.
 
-6. **Use design tokens for colors.** Hex literals (`#fef2f2`) must be CSS custom properties (`var(--acx-color-error-bg)`). Magic colors diverge silently across components.
+6. **No `!important` in SCSS.** Increase selector specificity instead (nest under a root `.acx-` container). WordPress admin styles have high specificity, but `!important` creates an arms race.
 
-7. **API calls go through the API module.** Components must not import `fetchApi` directly and build URLs with string interpolation. All API calls should go through a dedicated function in the relevant API module (e.g., `clusterApi.ts`) for mockability and consistency.
+7. **Use design tokens for colors.** Hex literals (`#fef2f2`) must be CSS custom properties (`var(--acx-color-error-bg)`). Magic colors diverge silently across components.
 
-8. **Use `URLSearchParams` for query strings.** String interpolation (`` `?limit=${n}&tenant_id=${id}` ``) fails on special characters. Use `new URLSearchParams({ limit: String(n), tenant_id: id })` instead.
+8. **API calls go through the API module.** Components must not import `fetchApi` directly and build URLs with string interpolation. All API calls should go through a dedicated function in the relevant API module (e.g., `clusterApi.ts`) for mockability and consistency.
 
-9. **No REST transport in page or hook layers.** Pages (`js/admin/pages/`) and hooks (`js/admin/hooks/`) must not construct their own `fetch()` calls with custom nonce/base-URL plumbing. All HTTP calls go through `js/admin/api/` modules.
+9. **Use `URLSearchParams` for query strings.** String interpolation (`` `?limit=${n}&tenant_id=${id}` ``) fails on special characters. Use `new URLSearchParams({ limit: String(n), tenant_id: id })` instead.
 
-10. **Browser API capability guards.** Code using `crypto.randomUUID`, `BroadcastChannel`, `navigator.locks`, or other APIs not universally available must check for availability and degrade gracefully.
+10. **No REST transport in page or hook layers.** Pages (`js/admin/pages/`) and hooks (`js/admin/hooks/`) must not construct their own `fetch()` calls with custom nonce/base-URL plumbing. All HTTP calls go through `js/admin/api/` modules.
 
-11. **No origin-derived admin URLs.** Do not construct WordPress admin links via `window.location.origin + '/wp-admin/...'`. Localize the canonical admin URL from PHP via `wp_localize_script`.
+11. **Browser API capability guards.** Code using `crypto.randomUUID`, `BroadcastChannel`, `navigator.locks`, or other APIs not universally available must check for availability and degrade gracefully.
 
-12. **Complete barrel exports.** If an API module uses a barrel file (`index.ts`), all public functions must be re-exported from it. Deep imports that bypass the barrel break the module boundary.
+12. **No origin-derived admin URLs.** Do not construct WordPress admin links via `window.location.origin + '/wp-admin/...'`. Localize the canonical admin URL from PHP via `wp_localize_script`.
 
-13. **API types must match payload reality.** If the backend sends both `thumb_url` and legacy `thumbnail_url`, the TypeScript interface must declare both. Normalize variant shapes once in the API layer.
+13. **Complete barrel exports.** If an API module uses a barrel file (`index.ts`), all public functions must be re-exported from it. Deep imports that bypass the barrel break the module boundary.
+
+14. **API types must match payload reality.** If the backend sends both `thumb_url` and legacy `thumbnail_url`, the TypeScript interface must declare both. Normalize variant shapes once in the API layer.
 
 ---
 

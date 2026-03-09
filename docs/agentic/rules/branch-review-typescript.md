@@ -19,6 +19,7 @@
 ## Type Safety
 
 - [ ] No non-null assertions (`!`) on API data — use type guards.
+- [ ] Assertion helpers, not `console.assert` — internal invariants use `asserts ...` / exhaustive helpers, while API/input validation stays explicit.
 - [ ] No `undefined as T` or `x as T` casts — use proper union return types.
 - [ ] No ad-hoc query keys — all keys through `queryKeys` factory.
 

@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style
 
 # Default target
 help:
@@ -25,6 +25,7 @@ help:
 	@echo "  make fix-php-style - Auto-fix WordPress plugin PHPCS violations (manual)"
 	@echo "  make test-all     - Run tests for all apps"
 	@echo "  make clean-all    - Clean cache files in all apps"
+	@echo "  make reset-local  - Reset local backend DB + WordPress projection data (destructive, dev-only)"
 	@echo ""
 	@echo "App-Specific Commands:"
 	@echo "  cd apps/prototype-description-service && make help"
@@ -87,6 +88,39 @@ clean-all:
 	@cd apps/prototype-wp-alt-context && rm -rf node_modules/.cache 2>/dev/null || true
 	@echo ""
 	@echo "✅ All caches cleaned"
+
+# Reset local backend DB + local WordPress projection data.
+# Usage:
+#   make reset-local WP_PATH="/path/to/wordpress/site" CONFIRM_LOCAL_RESET="RESET"
+#
+# This is intentionally dev-only. The backend reset already targets the local dev
+# database, and the plugin target refuses non-local WordPress sites unless
+# ALLOW_NON_LOCAL=1 is passed explicitly.
+# For LocalWP on this machine, WP_PATH is typically the site's `app/public`
+# directory, e.g. `/Users/daniel/Development/wp-context-alt-text/app/public`.
+reset-local:
+	@if [ "$(CONFIRM_LOCAL_RESET)" != "RESET" ]; then \
+		echo "Refusing destructive local reset."; \
+		echo "Re-run with CONFIRM_LOCAL_RESET=\"RESET\" to confirm."; \
+		echo "Example: make reset-local WP_PATH=\"$$HOME/Development/wp-context-alt-text/app/public\" CONFIRM_LOCAL_RESET=\"RESET\""; \
+		exit 1; \
+	fi
+	@if [ -z "$(WP_PATH)" ]; then \
+		echo "WP_PATH is required (path to WordPress root containing wp-load.php)."; \
+		echo "Example: make reset-local WP_PATH=\"$$HOME/Development/wp-context-alt-text/app/public\" CONFIRM_LOCAL_RESET=\"RESET\""; \
+		exit 1; \
+	fi
+	@echo "=== Resetting local backend database ==="
+	@$(MAKE) -C apps/prototype-description-service reset
+	@echo ""
+	@echo "=== Resetting local WordPress projection data ==="
+	@$(MAKE) -C apps/prototype-wp-alt-context projection-reset \
+		WP_PATH="$(WP_PATH)" \
+		CONFIRM_ACX_PROJECTION_RESET="RESET" \
+		LOCALWP_SOCKET="$(LOCALWP_SOCKET)" \
+		ALLOW_NON_LOCAL="$(ALLOW_NON_LOCAL)"
+	@echo ""
+	@echo "✅ Local backend DB and WordPress projection data reset"
 
 # Auto-fix PHP style violations in the WordPress plugin (manual, mutating).
 fix-php-style:

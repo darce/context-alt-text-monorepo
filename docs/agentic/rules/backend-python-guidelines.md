@@ -80,6 +80,7 @@ recognition/
 - Target < 40 lines per function
 - 120 character line length
 - `ruff check` and `mypy` must pass
+- Use `assert` only for narrow internal invariants and tests. For request validation, external data checks, and behavior that must always run in production, raise explicit exceptions or HTTP errors instead.
 
 ---
 

@@ -19,6 +19,7 @@
 - [ ] No `object` parameters — use the domain type or a Protocol.
 - [ ] No `getattr()` + `callable()` guards — declare methods on the Protocol.
 - [ ] No `contextlib.suppress(Exception)` — catch specific exceptions and log.
+- [ ] `assert` used only for internal invariants/tests — request validation and external-data checks use explicit exceptions or HTTP errors.
 
 ---
 

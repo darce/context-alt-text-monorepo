@@ -76,7 +76,14 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
   return (
     <div className="acx-roster-section">
       <header className="acx-roster-section__header">
-        <h2>{__('Managed Identities', 'alt-context')}</h2>
+        <div className="acx-roster-section__title-group">
+          <h2>{__('Managed Identities', 'alt-context')}</h2>
+          {isUnassignedFilter && (
+            <span className="acx-roster-section__filter-badge">
+              {__('Filtered: Unassigned', 'alt-context')}
+            </span>
+          )}
+        </div>
         {!isAdding && (
           <button
             type="button"

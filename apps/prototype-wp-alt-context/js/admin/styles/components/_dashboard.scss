@@ -99,6 +99,26 @@
   }
 }
 
+.acx-dashboard__guidance-link {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--acx-space-8);
+}
+
+.acx-dashboard__guidance-count {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 1.75rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--acx-color-accent);
+  color: var(--acx-color-accent-contrast);
+  font-size: 0.75rem;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
 .acx-dashboard__progress {
   width: 100%;
   height: 8px;
@@ -116,4 +136,3 @@
     transition: width 0.3s ease;
   }
 }
-

@@ -148,6 +148,7 @@ describe('RosterEntriesSection', () => {
 
     expect(screen.getByText('Alice')).toBeInTheDocument();
     expect(screen.getByText('Bob')).toBeInTheDocument();
+    expect(screen.queryByText('Filtered: Unassigned')).not.toBeInTheDocument();
     expect(screen.queryByText('Showing unassigned people only.')).not.toBeInTheDocument();
   });
 
@@ -155,6 +156,7 @@ describe('RosterEntriesSection', () => {
     const query: RosterEntriesQuery = { isLoading: false, isError: false, data: entries, refetch: vi.fn() };
     renderSection(query, '/?tab=entries&personFilter=unassigned');
 
+    expect(screen.getByText('Filtered: Unassigned')).toBeInTheDocument();
     expect(screen.getByText('Showing unassigned people only.')).toBeInTheDocument();
     expect(screen.getByText('Bob')).toBeInTheDocument();
     expect(screen.queryByText('Alice')).not.toBeInTheDocument();

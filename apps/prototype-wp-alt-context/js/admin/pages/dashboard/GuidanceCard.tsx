@@ -26,6 +26,12 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
   }
 
   if (stats.unassigned_persons_count > 0) {
+    const reviewLabel = sprintf(
+      /* translators: %d: number of unassigned persons */
+      __('Review %d unassigned persons', 'alt-context'),
+      stats.unassigned_persons_count
+    );
+
     return (
       <>
         <p>
@@ -35,8 +41,13 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
             stats.unassigned_persons_count
           )}
         </p>
-        <a href="#/roster?tab=entries&personFilter=unassigned" className="acx-link-button">
-          {__('Review unassigned persons', 'alt-context')}
+        <a
+          href="#/roster?tab=entries&personFilter=unassigned"
+          className="acx-link-button acx-dashboard__guidance-link"
+          aria-label={reviewLabel}
+        >
+          <span>{__('Review unassigned persons', 'alt-context')}</span>
+          <span className="acx-dashboard__guidance-count">{stats.unassigned_persons_count}</span>
         </a>
       </>
     );

@@ -208,7 +208,9 @@ class CurationSyncService:
         candidate = str(payload_cluster).strip() if isinstance(payload_cluster, str) else entity_key
         return self._parse_uuid(candidate, field_name="cluster_uuid")
 
-    def _resolve_desired_roster_id(self, operation: Any, operation_type: str, current_roster_id: str | None) -> str | None:
+    def _resolve_desired_roster_id(
+        self, operation: Any, operation_type: str, current_roster_id: str | None
+    ) -> str | None:
         if operation_type in {"cluster_dismissed", "cluster_undismissed"}:
             return current_roster_id
 

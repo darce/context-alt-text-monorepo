@@ -66,7 +66,10 @@ async def sync_curation_operation(
 
     if isinstance(request, CurationSyncBatchRequest):
         return {
-            "results": [_serialize_result(operation, result) for operation, result in zip(request.operations, results, strict=True)],
+            "results": [
+                _serialize_result(operation, result)
+                for operation, result in zip(request.operations, results, strict=True)
+            ],
         }
 
     if result.status == "conflict":

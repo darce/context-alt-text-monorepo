@@ -53,6 +53,7 @@ When a component needs 4+ related state variables, consolidate into a single `us
 - The reducer is a pure function exportable for unit testing.
 - Maximum 1 `useEffect` in the hook (typically for debounce). If you need more, the abstraction is wrong.
 - Related state transitions (filter change resetting page to 1) belong in the reducer, not in an effect.
+- Internal impossible states belong in hook/util assertion helpers (`asserts ...`, `assertNever(...)`), not as non-null assertions on raw API data inside presentational components.
 
 ---
 

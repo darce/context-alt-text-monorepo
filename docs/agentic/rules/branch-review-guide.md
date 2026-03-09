@@ -65,6 +65,7 @@ These items apply regardless of language. Stack-specific items are in the langua
 - [ ] **No unreachable code** — dead branches inside conditionals.
 - [ ] **No duplicate field declarations** — Pydantic models, dataclasses.
 - [ ] **API contract alignment** — response schemas match `docs/agentic/contracts/`. New fields have tests.
+- [ ] **Assertion intent matches layer** — assertions are used only for internal invariants/unreachable states, never as a substitute for boundary validation.
 - [ ] **Runtime dependency integrity** — no local type-only shims masking missing runtime packages; verify new imports with real build/test execution.
 - [ ] **Atomic mutation path preserved** — avoid splitting an existing atomic backend write flow into multiple client mutations without explicit architecture sign-off.
 - [ ] **Primary control reachability** — primary actions (for example select-all) are reachable from initial zero-state UI.

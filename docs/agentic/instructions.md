@@ -118,6 +118,9 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - Every `composer`/`npm` gate script must succeed on invocation, not just be defined.
 - **npm** for Node.js (not pnpm). **Composer** for PHP.
 - When editing CSS/SCSS, use existing design tokens or `--acx-*` CSS custom properties for colors instead of raw hex literals. If a needed color token does not exist, add it to the shared token surface first.
+- In TypeScript, use assertion helpers (`asserts value is ...`) for internal invariants and unreachable branches instead of `console.assert` or non-null assertions on API data. Do not use assertion helpers for request/input validation; validate boundary data explicitly.
+- In Python, use `assert` only for narrow internal invariants during development and tests. Do not use `assert` for request validation, external data checks, or behavior that must always execute in production; raise explicit exceptions or HTTP errors instead.
+- For a full local-only development reset of both databases, use `make reset-local WP_PATH="<wordpress>/app/public" CONFIRM_LOCAL_RESET="RESET"` from the repo root. `WP_PATH` must point to the WordPress directory containing `wp-load.php` (for LocalWP here, typically `/Users/daniel/Development/wp-context-alt-text/app/public`). Never use this against non-local environments.
 
 ### Cross-Branch Regression Guards
 

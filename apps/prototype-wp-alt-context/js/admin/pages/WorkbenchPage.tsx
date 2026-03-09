@@ -8,7 +8,6 @@ import { BatchTabContent } from './workbench/BatchTabContent';
 import { ConfirmTabContent } from './workbench/ConfirmTabContent';
 import { WorkbenchProvider, useWorkbenchContext, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
 
-
 interface WorkbenchSection {
   id: WorkbenchTab;
   label: string;
@@ -47,14 +46,8 @@ export const WorkbenchPage = (): React.JSX.Element => (
 );
 
 const WorkbenchPageContent = (): React.JSX.Element => {
-  const {
-    activeSection,
-    setActiveSection,
-    recognitionUrlFallback,
-    isOnline,
-    isPrimary,
-    latestJobId,
-  } = useWorkbenchContext();
+  const { activeSection, setActiveSection, recognitionUrlFallback, isOnline, isPrimary, latestJobId } =
+    useWorkbenchContext();
 
   const scanSection = WORKBENCH_SECTIONS[0];
   const batchSection = WORKBENCH_SECTIONS[1];

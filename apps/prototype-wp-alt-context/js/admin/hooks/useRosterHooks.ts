@@ -1,13 +1,7 @@
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 
 import { queryKeys } from '../api/queryKeys';
-import {
-  listRosterEntries,
-  createPerson,
-  updatePerson,
-  deletePerson,
-  type RosterEntry,
-} from '../api/rosterApi';
+import { listRosterEntries, createPerson, updatePerson, deletePerson, type RosterEntry } from '../api/rosterApi';
 
 const rosterEntriesKey = queryKeys.roster.entries();
 
@@ -60,8 +54,7 @@ export const useCreatePerson = () => {
 export const useUpdatePerson = () => {
   const queryClient = useQueryClient();
   return useMutation({
-    mutationFn: ({ id, name, tags }: { id: number; name?: string; tags?: string[] }) =>
-      updatePerson(id, name, tags),
+    mutationFn: ({ id, name, tags }: { id: number; name?: string; tags?: string[] }) => updatePerson(id, name, tags),
     onMutate: async ({ id, name, tags }): Promise<RosterMutationContext> => {
       await queryClient.cancelQueries({ queryKey: rosterEntriesKey });
       const previousEntries = queryClient.getQueryData<RosterEntry[]>(rosterEntriesKey);

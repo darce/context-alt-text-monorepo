@@ -212,7 +212,6 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     [selectJob, setActiveSection],
   );
 
-
   const statusMessage = useMemo(() => {
     if (mediaQuery.isFetching) {
       return __('Updating media queue…', 'alt-context');

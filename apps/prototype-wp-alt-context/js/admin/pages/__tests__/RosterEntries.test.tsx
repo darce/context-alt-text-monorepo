@@ -48,13 +48,21 @@ interface RosterMutationContext {
   optimisticId?: number;
 }
 
-const createMutation = createMockMutation<RosterEntry, Error, { name: string; tags?: string[] }, CreateRosterMutationContext>(
-  {
-    mutate: vi.fn(),
-    isPending: false,
-  },
-);
-const updateMutation = createMockMutation<RosterEntry, Error, { id: number; name?: string; tags?: string[] }, RosterMutationContext>({
+const createMutation = createMockMutation<
+  RosterEntry,
+  Error,
+  { name: string; tags?: string[] },
+  CreateRosterMutationContext
+>({
+  mutate: vi.fn(),
+  isPending: false,
+});
+const updateMutation = createMockMutation<
+  RosterEntry,
+  Error,
+  { id: number; name?: string; tags?: string[] },
+  RosterMutationContext
+>({
   mutate: vi.fn(),
   isPending: false,
 });
@@ -89,7 +97,9 @@ describe('RosterEntriesTable', () => {
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete person' })[0]);
 
-    expect(screen.getByText('Are you sure you want to delete this person? Assigned clusters will be dissociated.')).toBeInTheDocument();
+    expect(
+      screen.getByText('Are you sure you want to delete this person? Assigned clusters will be dissociated.'),
+    ).toBeInTheDocument();
 
     await userEvent.click(screen.getAllByRole('button', { name: 'Delete' }).at(-1)!);
 
@@ -103,7 +113,7 @@ describe('RosterEntriesSection', () => {
       <MemoryRouter initialEntries={[route]}>
         <RosterEntriesSection query={query} />
         <LocationProbe />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
   it('shows loading state', () => {

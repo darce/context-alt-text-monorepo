@@ -18,61 +18,73 @@ export const useWorkbenchFilters = () => {
     : DEFAULT_MEDIA_PAGE_SIZE;
   const statusFilter = (searchParams.get('status') as WorkbenchMediaStatus) || 'all';
 
-  const handleSearchChange = useCallback((event: ChangeEvent<HTMLInputElement>) => {
-    const s = event.target.value;
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        if (s) {
-          next.set('s', s);
-        } else {
-          next.delete('s');
-        }
-        next.set('p', '1');
-        return next;
-      },
-      { replace: true }
-    );
-  }, [setSearchParams]);
+  const handleSearchChange = useCallback(
+    (event: ChangeEvent<HTMLInputElement>) => {
+      const s = event.target.value;
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          if (s) {
+            next.set('s', s);
+          } else {
+            next.delete('s');
+          }
+          next.set('p', '1');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
-  const handleStatusChange = useCallback((status: WorkbenchMediaStatus) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set('status', status);
-        next.set('p', '1');
-        return next;
-      },
-      { replace: true }
-    );
-  }, [setSearchParams]);
+  const handleStatusChange = useCallback(
+    (status: WorkbenchMediaStatus) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('status', status);
+          next.set('p', '1');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
-  const setCurrentPage = useCallback((page: number) => {
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set('p', page.toString());
-        return next;
-      },
-      { replace: true }
-    );
-  }, [setSearchParams]);
+  const setCurrentPage = useCallback(
+    (page: number) => {
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('p', page.toString());
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
-  const setPerPage = useCallback((nextPerPage: number) => {
-    if (!MEDIA_PAGE_SIZE_OPTIONS.includes(nextPerPage as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])) {
-      return;
-    }
+  const setPerPage = useCallback(
+    (nextPerPage: number) => {
+      if (!MEDIA_PAGE_SIZE_OPTIONS.includes(nextPerPage as (typeof MEDIA_PAGE_SIZE_OPTIONS)[number])) {
+        return;
+      }
 
-    setSearchParams(
-      (prev) => {
-        const next = new URLSearchParams(prev);
-        next.set('perPage', nextPerPage.toString());
-        next.set('p', '1');
-        return next;
-      },
-      { replace: true }
-    );
-  }, [setSearchParams]);
+      setSearchParams(
+        (prev) => {
+          const next = new URLSearchParams(prev);
+          next.set('perPage', nextPerPage.toString());
+          next.set('p', '1');
+          return next;
+        },
+        { replace: true },
+      );
+    },
+    [setSearchParams],
+  );
 
   const normalizedSearch = useMemo(() => searchQuery.trim(), [searchQuery]);
 

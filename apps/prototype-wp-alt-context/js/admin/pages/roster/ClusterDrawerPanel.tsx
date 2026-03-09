@@ -184,7 +184,6 @@ export const ClusterDrawerPanel = ({
           </button>
         </header>
 
-
         <div className="acx-cluster-drawer__faces">
           {isDetailLoading ? (
             <p>{__('Loading identities…', 'alt-context')}</p>
@@ -283,10 +282,7 @@ export const ClusterDrawerPanel = ({
             </button>
           </div>
         </div>
-
-
       </aside>
     </>
-
   );
 };

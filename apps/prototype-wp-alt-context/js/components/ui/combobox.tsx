@@ -204,9 +204,7 @@ export const Combobox = ({
               onValueChange={handleInputChange}
             />
             <CommandList>
-              {isLoading && (
-                <div className="acx-combobox__empty">{__('Loading options...', 'alt-context')}</div>
-              )}
+              {isLoading && <div className="acx-combobox__empty">{__('Loading options...', 'alt-context')}</div>}
               <CommandEmpty>
                 {emptyMessage ?? emptyText}
                 {onCreate && inputValue && (

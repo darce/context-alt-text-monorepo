@@ -27,11 +27,14 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
     setToasts((prev) => prev.filter((t) => t.id !== id));
   }, []);
 
-  const toast = useCallback((message: string, type: ToastType = 'info') => {
-    const id = Math.random().toString(36).substring(2, 9);
-    setToasts((prev) => [...prev, { id, message, type }]);
-    setTimeout(() => removeToast(id), 5000);
-  }, [removeToast]);
+  const toast = useCallback(
+    (message: string, type: ToastType = 'info') => {
+      const id = Math.random().toString(36).substring(2, 9);
+      setToasts((prev) => [...prev, { id, message, type }]);
+      setTimeout(() => removeToast(id), 5000);
+    },
+    [removeToast],
+  );
 
   const success = useCallback((message: string) => toast(message, 'success'), [toast]);
   const error = useCallback((message: string) => toast(message, 'error'), [toast]);
@@ -43,11 +46,16 @@ export const ToastProvider = ({ children }: { children: ReactNode }) => {
         {children}
         <RadixToast.Viewport className="acx-toast-container" />
         {toasts.map((t) => (
-          <RadixToast.Root key={t.id} className={`acx-toast acx-toast--${t.type}`} open onOpenChange={(open: boolean) => {
-            if (!open) {
-              removeToast(t.id);
-            }
-          }}>
+          <RadixToast.Root
+            key={t.id}
+            className={`acx-toast acx-toast--${t.type}`}
+            open
+            onOpenChange={(open: boolean) => {
+              if (!open) {
+                removeToast(t.id);
+              }
+            }}
+          >
             <RadixToast.Title asChild>
               <span className="acx-toast__icon">
                 {t.type === 'success' && <CheckCircle size={18} />}

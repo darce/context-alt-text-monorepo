@@ -33,7 +33,8 @@ export const MediaSelection = (): React.JSX.Element => {
   const isError = mediaQuery.isError;
   const onRetry = () => void mediaQuery.refetch();
   const totalPages = mediaData?.totalPages ?? 1;
-  const areAllPageRowsChecked = items.length > 0 && items.every((item: WorkbenchMediaItem) => selection[item.id.toString()]);
+  const areAllPageRowsChecked =
+    items.length > 0 && items.every((item: WorkbenchMediaItem) => selection[item.id.toString()]);
   const identityQuery = mediaQuery.identitiesQuery;
 
   const onToggleAll = (checked: boolean) => toggleAll(items, checked);
@@ -132,10 +133,7 @@ const MediaSelectionToolbar = ({
     <div className="acx-media-selection__status-filter">
       <span id="acx-media-status-label">{__('Status', 'alt-context')}</span>
       <Select.Root value={statusFilter} onValueChange={(value) => onStatusFilterChange(value as WorkbenchMediaStatus)}>
-        <Select.Trigger
-          className="acx-media-selection__status-filter-trigger"
-          aria-labelledby="acx-media-status-label"
-        >
+        <Select.Trigger className="acx-media-selection__status-filter-trigger" aria-labelledby="acx-media-status-label">
           <Select.Value />
           <Select.Icon className="acx-media-selection__status-filter-icon">
             <ChevronDown aria-hidden="true" size={16} />

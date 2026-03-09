@@ -4,13 +4,12 @@ import { useSearchParams } from 'react-router-dom';
 export const useTabParam = <T extends string>(
   paramName: string,
   defaultValue: T,
-  validValues: readonly T[]
+  validValues: readonly T[],
 ): [T, (value: T) => void] => {
   const [searchParams, setSearchParams] = useSearchParams();
 
   const rawParam = searchParams.get(paramName);
-  const activeTab =
-    rawParam && validValues.includes(rawParam as T) ? (rawParam as T) : defaultValue;
+  const activeTab = rawParam && validValues.includes(rawParam as T) ? (rawParam as T) : defaultValue;
 
   const setTab = useCallback(
     (value: T) => {
@@ -20,10 +19,10 @@ export const useTabParam = <T extends string>(
           next.set(paramName, value);
           return next;
         },
-        { replace: true }
+        { replace: true },
       );
     },
-    [paramName, setSearchParams]
+    [paramName, setSearchParams],
   );
 
   return [activeTab, setTab];

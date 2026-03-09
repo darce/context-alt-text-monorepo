@@ -3,14 +3,8 @@ import { BatchPanel, RecentJobsPanel } from './Panels';
 import { useWorkbenchContext } from './WorkbenchContext';
 
 export const BatchTabContent = (): React.JSX.Element => {
-  const {
-    selectedMedia,
-    jobHistory,
-    jobStatuses,
-    jobId,
-    handleSelectJobFromHistory,
-    clearHistory,
-  } = useWorkbenchContext();
+  const { selectedMedia, jobHistory, jobStatuses, jobId, handleSelectJobFromHistory, clearHistory } =
+    useWorkbenchContext();
   return (
     <>
       {selectedMedia.length === 0 ? (

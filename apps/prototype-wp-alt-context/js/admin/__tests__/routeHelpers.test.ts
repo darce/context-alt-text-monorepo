@@ -17,7 +17,6 @@ describe('routeHelpers', () => {
     vi.restoreAllMocks();
   });
 
-
   describe('extractRouteFromHash', () => {
     it('handles #/workbench without query params', () => {
       window.location.hash = '#/workbench';

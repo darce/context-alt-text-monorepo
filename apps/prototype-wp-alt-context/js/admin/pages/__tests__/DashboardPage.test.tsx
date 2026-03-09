@@ -57,16 +57,18 @@ describe('DashboardPage', () => {
   });
 
   it('renders identity stats and pending-review guidance', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 10,
-        assigned_clusters_count: 7,
-        pending_clusters_count: 3,
-        media_with_faces_count: 22,
-        unassigned_persons_count: 0,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 10,
+          assigned_clusters_count: 7,
+          pending_clusters_count: 3,
+          media_with_faces_count: 22,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
 
     render(<DashboardPage />);
 
@@ -80,16 +82,18 @@ describe('DashboardPage', () => {
   });
 
   it('shows first-use guidance when roster is empty and nothing pending', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 0,
-        assigned_clusters_count: 0,
-        pending_clusters_count: 0,
-        media_with_faces_count: 0,
-        unassigned_persons_count: 0,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 0,
+          assigned_clusters_count: 0,
+          pending_clusters_count: 0,
+          media_with_faces_count: 0,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
 
     render(<DashboardPage />);
 
@@ -98,16 +102,18 @@ describe('DashboardPage', () => {
   });
 
   it('shows all-caught-up guidance when no pending review remains', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 4,
-        assigned_clusters_count: 4,
-        pending_clusters_count: 0,
-        media_with_faces_count: 10,
-        unassigned_persons_count: 0,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
 
     render(<DashboardPage />);
 
@@ -115,16 +121,18 @@ describe('DashboardPage', () => {
   });
 
   it('renders recent activity duration and results link when timing is available', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 4,
-        assigned_clusters_count: 4,
-        pending_clusters_count: 0,
-        media_with_faces_count: 10,
-        unassigned_persons_count: 0,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
     mockedUseRecognitionJobHistory.mockReturnValue({
       jobHistory: ['job-1'],
       jobStatuses: { 'job-1': 'completed' },
@@ -153,16 +161,18 @@ describe('DashboardPage', () => {
   });
 
   it('shows status unavailable copy and keeps results link when job details are missing', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 4,
-        assigned_clusters_count: 4,
-        pending_clusters_count: 0,
-        media_with_faces_count: 10,
-        unassigned_persons_count: 0,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
     mockedUseRecognitionJobHistory.mockReturnValue({
       jobHistory: ['job-unavailable'],
       jobStatuses: {},
@@ -181,16 +191,18 @@ describe('DashboardPage', () => {
   });
 
   it('shows unassigned-person guidance when there are unassigned persons', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 8,
-        assigned_clusters_count: 5,
-        pending_clusters_count: 0,
-        media_with_faces_count: 21,
-        unassigned_persons_count: 3,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 8,
+          assigned_clusters_count: 5,
+          pending_clusters_count: 0,
+          media_with_faces_count: 21,
+          unassigned_persons_count: 3,
+        },
+        refetch: vi.fn(),
+      }),
+    );
 
     render(<DashboardPage />);
 
@@ -203,16 +215,18 @@ describe('DashboardPage', () => {
   });
 
   it('renders zero for media-with-faces when no faces are detected', () => {
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      data: {
-        people_count: 2,
-        assigned_clusters_count: 1,
-        pending_clusters_count: 0,
-        media_with_faces_count: 0,
-        unassigned_persons_count: 1,
-      },
-      refetch: vi.fn(),
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 2,
+          assigned_clusters_count: 1,
+          pending_clusters_count: 0,
+          media_with_faces_count: 0,
+          unassigned_persons_count: 1,
+        },
+        refetch: vi.fn(),
+      }),
+    );
 
     render(<DashboardPage />);
 
@@ -224,12 +238,14 @@ describe('DashboardPage', () => {
 
   it('shows identity error state with retry action', () => {
     const refetch = vi.fn();
-    mockedUseIdentityStats.mockReturnValue(createMockQuery<DashboardStats>({
-      status: 'error',
-      isError: true,
-      error: new Error('Unable to load identity stats.'),
-      refetch,
-    }));
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        status: 'error',
+        isError: true,
+        error: new Error('Unable to load identity stats.'),
+        refetch,
+      }),
+    );
 
     render(<DashboardPage />);
 

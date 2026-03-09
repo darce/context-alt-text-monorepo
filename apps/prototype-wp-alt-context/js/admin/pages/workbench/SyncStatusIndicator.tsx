@@ -48,7 +48,9 @@ export const SyncStatusIndicator = (): React.JSX.Element | null => {
     pendingCuration > 0 || conflictCount > 0 || acknowledgedAt || conflictAt ? (
       <div className="acx-sync-status__meta" aria-label={__('Curation sync details', 'alt-context')}>
         {pendingCuration > 0 ? (
-          <span className="acx-sync-status__badge">{sprintf(__('Pending curation: %d', 'alt-context'), pendingCuration)}</span>
+          <span className="acx-sync-status__badge">
+            {sprintf(__('Pending curation: %d', 'alt-context'), pendingCuration)}
+          </span>
         ) : null}
         {conflictCount > 0 ? (
           <span className="acx-sync-status__badge acx-sync-status__badge--warning">

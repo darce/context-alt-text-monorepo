@@ -42,7 +42,6 @@ export const RosterPage = (): React.JSX.Element => {
     clearSelection();
   }, [activeTab, clearSelection]);
 
-
   const selectedCluster = React.useMemo(
     () => clusters.find((cluster) => cluster.id === selectedClusterId) ?? null,
     [clusters, selectedClusterId],
@@ -68,7 +67,6 @@ export const RosterPage = (): React.JSX.Element => {
     onBulkMergeSettled: selection.clear,
     onBulkDismissSettled: selection.clear,
   });
-
 
   const handleDropFace = (targetClusterId: string | null): void => {
     const payload = dragDrop.dragPayload;
@@ -157,11 +155,7 @@ export const RosterPage = (): React.JSX.Element => {
     [setConfirmAction],
   );
 
-  const selectAllState = selection.isAllSelected(clusterIds)
-    ? true
-    : selection.count > 0
-      ? 'indeterminate'
-      : false;
+  const selectAllState = selection.isAllSelected(clusterIds) ? true : selection.count > 0 ? 'indeterminate' : false;
 
   const confirmDialogCopy =
     confirmAction === 'merge'
@@ -185,7 +179,6 @@ export const RosterPage = (): React.JSX.Element => {
             confirmLabel: __('Dismiss', 'alt-context'),
           }
         : null;
-
 
   return (
     <section className="acx-roster" aria-labelledby="acx-roster-title">
@@ -270,7 +263,6 @@ export const RosterPage = (): React.JSX.Element => {
         </TabsContent>
       </Tabs>
 
-
       <ClusterDrawerPanel
         cluster={selectedCluster}
         identities={drawerIdentities}
@@ -287,8 +279,6 @@ export const RosterPage = (): React.JSX.Element => {
         onCommitCluster={handleCommitCluster}
         isCommitting={actions.commitMutation.isPending}
         rosterEntries={rosterEntries}
-
-
         onFaceDragStart={dragDrop.handleFaceDragStart}
         onFaceDragEnd={dragDrop.handleFaceDragEnd}
         onDropTargetChange={dragDrop.handleDropTargetChange}

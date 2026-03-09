@@ -58,4 +58,3 @@ if (!globalThis.ResizeObserver) {
 if (typeof window !== 'undefined') {
   Object.defineProperty(window, 'scrollTo', { value: () => {}, writable: true });
 }
-

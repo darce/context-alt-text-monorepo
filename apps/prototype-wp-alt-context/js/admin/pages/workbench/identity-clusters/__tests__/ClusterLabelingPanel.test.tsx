@@ -81,12 +81,14 @@ describe('ClusterLabelingPanel', () => {
       moved_identity_ids: [],
       target_identity_count: 10,
     });
-    vi.mocked(useRosterEntries).mockReturnValue(createMockQuery({
-      data: [],
-      isLoading: false,
-      isError: false,
-      refetch: vi.fn(),
-    }));
+    vi.mocked(useRosterEntries).mockReturnValue(
+      createMockQuery({
+        data: [],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
   });
 
   const selectOrCreateName = async (name: string) => {

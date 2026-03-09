@@ -35,8 +35,7 @@ export const useJobStateMachineEffects = ({
   latestClusterJob,
   currentPhase,
 }: JobStateMachineEffectsOptions) => {
-  const backendHandledClustering =
-    scanStatus?.type === 'clustering' || scanStatus?.progress?.phase === 'clustering';
+  const backendHandledClustering = scanStatus?.type === 'clustering' || scanStatus?.progress?.phase === 'clustering';
 
   useEffect(() => {
     if (scanStatus?.status === 'completed') {

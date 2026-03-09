@@ -103,7 +103,11 @@ describe('RosterPage route container', () => {
       mutate: vi.fn(),
       isPending: false,
     }),
-    commitMutation: createMockMutation<void, Error, { clusterId: string; rosterEntryId?: number; newEntryName?: string }>({
+    commitMutation: createMockMutation<
+      void,
+      Error,
+      { clusterId: string; rosterEntryId?: number; newEntryName?: string }
+    >({
       mutate: vi.fn(),
       isPending: false,
     }),
@@ -137,37 +141,49 @@ describe('RosterPage route container', () => {
 
     const cluster = makeCluster();
 
-    mockedUseRecognitionClusters.mockReturnValue(createMockQuery({
-      data: [cluster],
-      isLoading: false,
-      isError: false,
-      refetch: vi.fn(),
-    }));
+    mockedUseRecognitionClusters.mockReturnValue(
+      createMockQuery({
+        data: [cluster],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
 
-    mockedUseRecognitionCluster.mockReturnValue(createMockQuery<ClusterSummary, Error>({
-      data: cluster,
-      isLoading: false,
-      isError: false,
-    }));
+    mockedUseRecognitionCluster.mockReturnValue(
+      createMockQuery<ClusterSummary, Error>({
+        data: cluster,
+        isLoading: false,
+        isError: false,
+      }),
+    );
 
-    mockedUseRosterEntries.mockReturnValue(createMockQuery({
-      data: [],
-      isLoading: false,
-      isError: false,
-      refetch: vi.fn(),
-    }));
-    mockedUseCreatePerson.mockReturnValue(createMockMutation({
-      mutate: vi.fn(),
-      isPending: false,
-    }));
-    mockedUseUpdatePerson.mockReturnValue(createMockMutation({
-      mutate: vi.fn(),
-      isPending: false,
-    }));
-    mockedUseDeletePerson.mockReturnValue(createMockMutation({
-      mutate: vi.fn(),
-      isPending: false,
-    }));
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
+    mockedUseCreatePerson.mockReturnValue(
+      createMockMutation({
+        mutate: vi.fn(),
+        isPending: false,
+      }),
+    );
+    mockedUseUpdatePerson.mockReturnValue(
+      createMockMutation({
+        mutate: vi.fn(),
+        isPending: false,
+      }),
+    );
+    mockedUseDeletePerson.mockReturnValue(
+      createMockMutation({
+        mutate: vi.fn(),
+        isPending: false,
+      }),
+    );
     mockedUseClusterSelection.mockReturnValue(selectionState);
 
     mockedUseClusterMediaMap.mockReturnValue({});
@@ -179,7 +195,7 @@ describe('RosterPage route container', () => {
     render(
       <MemoryRouter initialEntries={['/?tab=clusters']}>
         <RosterPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.getByRole('tab', { name: 'Clusters' })).toHaveAttribute('aria-selected', 'true');
@@ -187,25 +203,27 @@ describe('RosterPage route container', () => {
   });
 
   it('[PAG-M3] preserves entries tab bootstrap with personFilter=unassigned', () => {
-    mockedUseRosterEntries.mockReturnValue(createMockQuery({
-      data: [
-        {
-          id: 7,
-          name: 'Unassigned Person',
-          tags: [],
-          cluster_count: 0,
-          updated_at: new Date().toISOString(),
-        },
-      ],
-      isLoading: false,
-      isError: false,
-      refetch: vi.fn(),
-    }));
+    mockedUseRosterEntries.mockReturnValue(
+      createMockQuery({
+        data: [
+          {
+            id: 7,
+            name: 'Unassigned Person',
+            tags: [],
+            cluster_count: 0,
+            updated_at: new Date().toISOString(),
+          },
+        ],
+        isLoading: false,
+        isError: false,
+        refetch: vi.fn(),
+      }),
+    );
 
     render(
       <MemoryRouter initialEntries={['/?tab=entries&personFilter=unassigned']}>
         <RosterPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     expect(screen.getByRole('tab', { name: 'Entries' })).toHaveAttribute('aria-selected', 'true');
@@ -219,7 +237,7 @@ describe('RosterPage route container', () => {
     render(
       <MemoryRouter>
         <RosterPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
@@ -245,7 +263,7 @@ describe('RosterPage route container', () => {
     render(
       <MemoryRouter>
         <RosterPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
@@ -266,7 +284,7 @@ describe('RosterPage route container', () => {
     render(
       <MemoryRouter>
         <RosterPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));
@@ -282,7 +300,7 @@ describe('RosterPage route container', () => {
     render(
       <MemoryRouter>
         <RosterPage />
-      </MemoryRouter>
+      </MemoryRouter>,
     );
 
     await userEvent.click(screen.getByRole('tab', { name: 'Clusters' }));

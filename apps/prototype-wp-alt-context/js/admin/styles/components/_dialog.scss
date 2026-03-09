@@ -18,9 +18,7 @@
   background: var(--acx-color-surface-alt);
   border-radius: 12px;
   padding: 20px;
-  box-shadow:
-    var(--acx-shadow-dialog-primary),
-    var(--acx-shadow-dialog-secondary);
+  box-shadow: var(--acx-shadow-dialog-primary), var(--acx-shadow-dialog-secondary);
   z-index: 9999;
 }
 

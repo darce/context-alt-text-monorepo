@@ -32,7 +32,7 @@ describe('ErrorBoundary', () => {
     render(
       <ErrorBoundary>
         <ThrowError shouldThrow={false} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
     expect(screen.getByText('Everything is fine')).toBeInTheDocument();
   });
@@ -41,7 +41,7 @@ describe('ErrorBoundary', () => {
     render(
       <ErrorBoundary>
         <ThrowError shouldThrow={true} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
     expect(screen.getByText('Something went wrong.')).toBeInTheDocument();
   });
@@ -50,21 +50,21 @@ describe('ErrorBoundary', () => {
     const { rerender } = render(
       <ErrorBoundary>
         <ThrowError shouldThrow={true} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
-    
+
     expect(screen.getByText('Something went wrong.')).toBeInTheDocument();
-    
+
     rerender(
       <ErrorBoundary>
         <ThrowError shouldThrow={false} />
-      </ErrorBoundary>
+      </ErrorBoundary>,
     );
-    
+
     expect(screen.getByText('Something went wrong.')).toBeInTheDocument();
-    
+
     fireEvent.click(screen.getByRole('button', { name: 'Try again' }));
-    
+
     expect(screen.getByText('Everything is fine')).toBeInTheDocument();
   });
 });

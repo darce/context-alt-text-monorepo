@@ -24,18 +24,24 @@
   max-width: 400px;
 
   &--success {
-    border-left: 4px solid #10b981;
-    .acx-toast__icon { color: #10b981; }
+    border-left: 4px solid var(--acx-color-success);
+    .acx-toast__icon {
+      color: var(--acx-color-success);
+    }
   }
 
   &--error {
-    border-left: 4px solid #ef4444;
-    .acx-toast__icon { color: #ef4444; }
+    border-left: 4px solid var(--acx-color-error);
+    .acx-toast__icon {
+      color: var(--acx-color-error);
+    }
   }
 
   &--info {
     border-left: 4px solid var(--acx-color-primary);
-    .acx-toast__icon { color: var(--acx-color-primary); }
+    .acx-toast__icon {
+      color: var(--acx-color-primary);
+    }
   }
 
   &__message {

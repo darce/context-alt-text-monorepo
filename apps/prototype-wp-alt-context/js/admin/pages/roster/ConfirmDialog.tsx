@@ -37,20 +37,10 @@ export const ConfirmDialog = ({
         <DialogTitle>{title}</DialogTitle>
         <DialogDescription>{description}</DialogDescription>
         <div className="acx-dialog__actions">
-          <button
-            type="button"
-            className="acx-button acx-button--secondary"
-            onClick={onCancel}
-            disabled={isPending}
-          >
+          <button type="button" className="acx-button acx-button--secondary" onClick={onCancel} disabled={isPending}>
             {__('Cancel', 'alt-context')}
           </button>
-          <button
-            type="button"
-            className="acx-button acx-button--danger"
-            onClick={onConfirm}
-            disabled={isPending}
-          >
+          <button type="button" className="acx-button acx-button--danger" onClick={onConfirm} disabled={isPending}>
             {isPending ? __('Processing...', 'alt-context') : confirmLabel}
           </button>
         </div>

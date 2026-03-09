@@ -34,7 +34,7 @@ const EditableRow = ({ entry }: EditableRowProps) => {
       },
       {
         onSuccess: () => setIsEditing(false),
-      }
+      },
     );
   };
 
@@ -132,7 +132,10 @@ const EditableRow = ({ entry }: EditableRowProps) => {
         onConfirm={handleDelete}
         onCancel={() => setIsDeleteConfirmOpen(false)}
         title={__('Delete person', 'alt-context')}
-        description={__('Are you sure you want to delete this person? Assigned clusters will be dissociated.', 'alt-context')}
+        description={__(
+          'Are you sure you want to delete this person? Assigned clusters will be dissociated.',
+          'alt-context',
+        )}
         confirmLabel={__('Delete', 'alt-context')}
         isPending={deletePerson.isPending}
       />

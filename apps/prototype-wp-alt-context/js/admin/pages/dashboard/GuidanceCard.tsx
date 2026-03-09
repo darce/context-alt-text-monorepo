@@ -15,7 +15,7 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
           {sprintf(
             /* translators: %d: number of pending clusters */
             __('%d faces are waiting for names.', 'alt-context'),
-            stats.pending_clusters_count
+            stats.pending_clusters_count,
           )}
         </p>
         <a href="#/workbench?tab=confirm" className="acx-link-button">
@@ -28,13 +28,8 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
   if (stats.unassigned_persons_count > 0) {
     const reviewLabel = sprintf(
       /* translators: %d: number of unassigned persons */
-      _n(
-        'Review %d unassigned person',
-        'Review %d unassigned persons',
-        stats.unassigned_persons_count,
-        'alt-context'
-      ),
-      stats.unassigned_persons_count
+      _n('Review %d unassigned person', 'Review %d unassigned persons', stats.unassigned_persons_count, 'alt-context'),
+      stats.unassigned_persons_count,
     );
 
     return (
@@ -46,9 +41,9 @@ export const GuidanceCard = ({ stats }: GuidanceCardProps): React.JSX.Element =>
               '%d person has no assigned clusters.',
               '%d persons have no assigned clusters.',
               stats.unassigned_persons_count,
-              'alt-context'
+              'alt-context',
             ),
-            stats.unassigned_persons_count
+            stats.unassigned_persons_count,
           )}
         </p>
         <a

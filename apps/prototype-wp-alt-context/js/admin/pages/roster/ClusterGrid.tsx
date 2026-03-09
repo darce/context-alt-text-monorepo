@@ -6,7 +6,6 @@ import { IdentityThumbnail } from './IdentityThumbnail';
 import { Checkbox } from '../../../components/ui/checkbox';
 import { useClusterSelection } from '../../hooks/useClusterSelection';
 
-
 interface Props {
   clusters: ClusterSummary[];
   isLoading: boolean;
@@ -46,10 +45,7 @@ export const ClusterGrid = ({
   const handleClusterClick = React.useCallback(
     (cluster: ClusterSummary, event: React.MouseEvent | React.KeyboardEvent) => {
       // If checkbox was clicked via mouse, don't trigger drawer
-      if (
-        event.type === 'click' &&
-        (event.target as HTMLElement).closest('.acx-checkbox')
-      ) {
+      if (event.type === 'click' && (event.target as HTMLElement).closest('.acx-checkbox')) {
         return;
       }
 
@@ -116,7 +112,6 @@ export const ClusterGrid = ({
     [onSelectCluster, selection],
   );
 
-
   const handleDragOver = React.useCallback(
     (clusterId: string) => (event: React.DragEvent<HTMLElement>) => {
       if (!isDragging) {
@@ -168,7 +163,10 @@ export const ClusterGrid = ({
       <div className="acx-apply-panel acx-apply-panel--empty">
         <h3>{__('No clusters yet', 'alt-context')}</h3>
         <p>
-          {__('Once you scan your media library and run the clustering process, groups of similar faces will appear here for you to label.', 'alt-context')}
+          {__(
+            'Once you scan your media library and run the clustering process, groups of similar faces will appear here for you to label.',
+            'alt-context',
+          )}
         </p>
         <a href="#/workbench?tab=scan" className="acx-button acx-button--secondary">
           {__('Go to Scan tab', 'alt-context')}
@@ -176,7 +174,6 @@ export const ClusterGrid = ({
       </div>
     );
   }
-
 
   return (
     <div className="acx-cluster-grid" ref={gridRef} role="group" aria-label={__('Cluster cards', 'alt-context')}>

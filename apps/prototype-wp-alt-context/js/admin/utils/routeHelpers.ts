@@ -4,7 +4,7 @@ export const DEFAULT_ROUTE: RoutePath = '/dashboard';
 export const extractRouteFromHash = (): RoutePath | null => {
   const hash = window.location.hash.replace('#', '').trim();
   const path = hash.split('?')[0];
-  
+
   if (path === '/workbench') {
     return '/workbench';
   }
@@ -33,7 +33,7 @@ export const ensureHashInitialized = (initialRoute: RoutePath): void => {
     searchParams.delete('page'); // WordPress 'page' arg not needed in SPA hash
     const searchString = searchParams.toString();
     const query = searchString ? `?${searchString}` : '';
-    
+
     window.location.hash = `#${initialRoute}${query}`;
   }
 };

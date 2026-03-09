@@ -25,9 +25,7 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
   const personFilter = searchParams.get('personFilter');
   const isUnassignedFilter = personFilter === 'unassigned';
   const entries = query.data ?? [];
-  const visibleEntries = isUnassignedFilter
-    ? entries.filter((entry) => entry.cluster_count === 0)
-    : entries;
+  const visibleEntries = isUnassignedFilter ? entries.filter((entry) => entry.cluster_count === 0) : entries;
 
   const clearFilter = () => {
     setSearchParams(
@@ -37,7 +35,7 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
         next.set('tab', 'entries');
         return next;
       },
-      { replace: true }
+      { replace: true },
     );
   };
 
@@ -54,7 +52,7 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
           setNewName('');
           setIsAdding(false);
         },
-      }
+      },
     );
   };
 
@@ -79,17 +77,11 @@ export const RosterEntriesSection = ({ query }: RosterEntriesSectionProps): Reac
         <div className="acx-roster-section__title-group">
           <h2>{__('Managed Identities', 'alt-context')}</h2>
           {isUnassignedFilter && (
-            <span className="acx-roster-section__filter-badge">
-              {__('Filtered: Unassigned', 'alt-context')}
-            </span>
+            <span className="acx-roster-section__filter-badge">{__('Filtered: Unassigned', 'alt-context')}</span>
           )}
         </div>
         {!isAdding && (
-          <button
-            type="button"
-            className="acx-button acx-button--primary"
-            onClick={() => setIsAdding(true)}
-          >
+          <button type="button" className="acx-button acx-button--primary" onClick={() => setIsAdding(true)}>
             <UserPlus size={16} />
             {__('Add Person', 'alt-context')}
           </button>

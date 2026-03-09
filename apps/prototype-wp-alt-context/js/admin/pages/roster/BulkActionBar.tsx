@@ -30,12 +30,7 @@ export const BulkActionBar = ({
           count,
         )}
       </span>
-      <button
-        type="button"
-        className="acx-icon-button"
-        onClick={onClear}
-        title={__('Clear selection', 'alt-context')}
-      >
+      <button type="button" className="acx-icon-button" onClick={onClear} title={__('Clear selection', 'alt-context')}>
         <X size={16} />
       </button>
     </div>
@@ -48,11 +43,7 @@ export const BulkActionBar = ({
       >
         {isMerging ? <span className="acx-spinner" aria-hidden="true" /> : <Gavel size={16} />}
         {isMerging && mergeProgress
-          ? sprintf(
-              __('Merging %1$d of %2$d…', 'alt-context'),
-              mergeProgress.current,
-              mergeProgress.total,
-            )
+          ? sprintf(__('Merging %1$d of %2$d…', 'alt-context'), mergeProgress.current, mergeProgress.total)
           : isMerging
             ? __('Merging…', 'alt-context')
             : __('Merge', 'alt-context')}

@@ -11,11 +11,11 @@ export const useScrollRestoration = (componentKey: string): void => {
     if (savedPos !== null) {
       // Use setTimeout to ensure the DOM is fully rendered before scrolling
       window.requestAnimationFrame(() => {
-          window.scrollTo(0, parseInt(savedPos, 10));
+        window.scrollTo(0, parseInt(savedPos, 10));
       });
     } else {
       window.requestAnimationFrame(() => {
-          window.scrollTo(0, 0);
+        window.scrollTo(0, 0);
       });
     }
 

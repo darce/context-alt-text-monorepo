@@ -7,7 +7,6 @@ import { ClusterLabelingPanel, ClusterReviewPanel, SuggestionReviewPanel } from 
 import { MediaSelection } from './MediaSelection';
 import { useWorkbenchContext } from './WorkbenchContext';
 
-
 const ScanScrollRestoration = () => {
   useScrollRestoration('workbench-scan');
   return null;
@@ -17,11 +16,13 @@ const NoMediaPanel = () => (
   <div className="acx-apply-panel acx-apply-panel--empty">
     <h3>{__('Your analysis queue is empty', 'alt-context')}</h3>
     <p>
-      {__('Search for specific media items below or adjust your filters to find images that need analysis. Once you select items, they will appear here ready to be scanned.', 'alt-context')}
+      {__(
+        'Search for specific media items below or adjust your filters to find images that need analysis. Once you select items, they will appear here ready to be scanned.',
+        'alt-context',
+      )}
     </p>
   </div>
 );
-
 
 export const ScanTabContent = (): React.JSX.Element => {
   const {
@@ -41,7 +42,6 @@ export const ScanTabContent = (): React.JSX.Element => {
     scan,
     cancelScan,
     activeJobIds,
-
   } = useWorkbenchContext();
 
   const handleScanFaces = (): void => {
@@ -61,7 +61,6 @@ export const ScanTabContent = (): React.JSX.Element => {
   };
 
   return (
-
     <>
       <ScanActionPanel
         selectedCount={selectedMedia.length}

@@ -27,15 +27,35 @@ export const App = (): React.JSX.Element => {
       <ToastProvider>
         <HashRouter>
           <Routes>
-            <Route path="/dashboard" element={<ErrorBoundary><DashboardPage /></ErrorBoundary>} />
-            <Route path="/workbench" element={<ErrorBoundary><WorkbenchPage /></ErrorBoundary>} />
-            <Route path="/roster" element={<ErrorBoundary><RosterPage /></ErrorBoundary>} />
+            <Route
+              path="/dashboard"
+              element={
+                <ErrorBoundary>
+                  <DashboardPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/workbench"
+              element={
+                <ErrorBoundary>
+                  <WorkbenchPage />
+                </ErrorBoundary>
+              }
+            />
+            <Route
+              path="/roster"
+              element={
+                <ErrorBoundary>
+                  <RosterPage />
+                </ErrorBoundary>
+              }
+            />
             <Route path="*" element={<Navigate to={DEFAULT_ROUTE} replace />} />
           </Routes>
         </HashRouter>
       </ToastProvider>
     </QueryClientProvider>
-
   );
 };
 
@@ -58,4 +78,3 @@ const determineInitialRoute = (): RoutePath => {
 
   return DEFAULT_ROUTE;
 };
-

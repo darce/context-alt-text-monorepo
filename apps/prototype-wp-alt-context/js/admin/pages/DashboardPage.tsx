@@ -15,11 +15,15 @@ import { sprintf } from '@wordpress/i18n';
 import { OrientationCard } from './dashboard/OrientationCard';
 import { GuidanceCard } from './dashboard/GuidanceCard';
 
-
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobHistory, jobStatuses, jobDetails } = useRecognitionJobHistory();
-  const { data: identityStats, isLoading: isIdentityLoading, isError: isIdentityError, refetch: refetchIdentity } = useIdentityStats();
+  const {
+    data: identityStats,
+    isLoading: isIdentityLoading,
+    isError: isIdentityError,
+    refetch: refetchIdentity,
+  } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
   const formatDuration = (startedAt: string, finishedAt: string | null): string | null => {
@@ -65,7 +69,6 @@ export const DashboardPage = (): React.JSX.Element => {
       <OrientationCard />
 
       <div className="acx-dashboard__grid">
-
         <section className="acx-dashboard__panel acx-dashboard__panel--stats">
           <h2>{__('Library Coverage', 'alt-context')}</h2>
           {isStatsLoading ? (
@@ -112,35 +115,40 @@ export const DashboardPage = (): React.JSX.Element => {
               <div className="acx-dashboard__stats-grid">
                 <div className="acx-dashboard__stat">
                   <span className="acx-dashboard__stat-value">{identityStats.people_count}</span>
-                  <span className="acx-dashboard__stat-label" title={__('Total unique persons created in your roster.', 'alt-context')}>
+                  <span
+                    className="acx-dashboard__stat-label"
+                    title={__('Total unique persons created in your roster.', 'alt-context')}
+                  >
                     {__('People', 'alt-context')}
                   </span>
                 </div>
                 <div className="acx-dashboard__stat">
-                  <span className="acx-dashboard__stat-value">
-                    {identityStats.assigned_clusters_count}
-                  </span>
-                  <span className="acx-dashboard__stat-label" title={__('Clusters that have been matched to a person.', 'alt-context')}>
+                  <span className="acx-dashboard__stat-value">{identityStats.assigned_clusters_count}</span>
+                  <span
+                    className="acx-dashboard__stat-label"
+                    title={__('Clusters that have been matched to a person.', 'alt-context')}
+                  >
                     {__('Assigned', 'alt-context')}
                   </span>
                 </div>
                 <div className="acx-dashboard__stat acx-dashboard__stat--highlight">
-                  <span className="acx-dashboard__stat-value">
-                    {identityStats.pending_clusters_count}
-                  </span>
-                  <span className="acx-dashboard__stat-label" title={__('New clusters waiting for your review and labeling.', 'alt-context')}>
+                  <span className="acx-dashboard__stat-value">{identityStats.pending_clusters_count}</span>
+                  <span
+                    className="acx-dashboard__stat-label"
+                    title={__('New clusters waiting for your review and labeling.', 'alt-context')}
+                  >
                     {__('Pending Review', 'alt-context')}
                   </span>
                 </div>
                 <div className="acx-dashboard__stat">
-                  <span className="acx-dashboard__stat-value">
-                    {identityStats.media_with_faces_count}
-                  </span>
-                  <span className="acx-dashboard__stat-label" title={__('Media items that have at least one detected face.', 'alt-context')}>
+                  <span className="acx-dashboard__stat-value">{identityStats.media_with_faces_count}</span>
+                  <span
+                    className="acx-dashboard__stat-label"
+                    title={__('Media items that have at least one detected face.', 'alt-context')}
+                  >
                     {__('Media with faces', 'alt-context')}
                   </span>
                 </div>
-
               </div>
               <div className="acx-dashboard__guidance">
                 <GuidanceCard stats={identityStats} />
@@ -182,12 +190,8 @@ export const DashboardPage = (): React.JSX.Element => {
                 return (
                   <li key={id} className="acx-dashboard__activity-item">
                     <span className="acx-dashboard__activity-id">{id}</span>
-                    <span className="acx-dashboard__activity-status">
-                      {statusLabel}
-                    </span>
-                    {durationLabel && (
-                      <span className="acx-dashboard__activity-duration">{durationLabel}</span>
-                    )}
+                    <span className="acx-dashboard__activity-status">{statusLabel}</span>
+                    {durationLabel && <span className="acx-dashboard__activity-duration">{durationLabel}</span>}
                     <a href={`#/workbench?tab=confirm&jobId=${id}`} className="acx-link-button">
                       {__('View Results', 'alt-context')}
                     </a>

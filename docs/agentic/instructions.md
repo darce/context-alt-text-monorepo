@@ -153,6 +153,19 @@ Hard guardrails from real failures in this project:
 
 You are one of multiple concurrent agents. MCP handoff tools are required for task state coordination.
 
+Canonical handoff runtime:
+
+- Use `agent-handoff-mcp` exclusively for handoff state.
+- Do not use handoff tools or CLI subcommands from `scripts/mcp/unified_server.py`; they are deprecated and fail by design.
+- The legacy unified server is now repo-intel-only.
+
+Primary binary shape:
+
+- `agent-handoff-mcp --workspace-root <repo> serve-stdio`
+- `agent-handoff-mcp --workspace-root <repo> doctor`
+- `agent-handoff-mcp --workspace-root <repo> state`
+- `agent-handoff-mcp --workspace-root <repo> task <task_ref>`
+
 Before any code exploration:
 
 1. Call `get_handoff_state(task_ref="<task>")`.
@@ -186,7 +199,7 @@ Read discipline:
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
 - `get_review_finding` accepts either `finding_db_id` (integer PK) or `finding_id` (human-readable string like `"H-OCI-28"`). Prefer `finding_id` when referencing findings from review output.
-- Do **not** use legacy `scripts/mcp/unified_server.py` CLI subcommands. The supported fallback path is the packaged `agent-handoff-mcp` CLI described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
+- Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
 
 State integrity invariants:
 

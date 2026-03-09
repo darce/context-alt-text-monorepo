@@ -16,6 +16,10 @@ Run from monorepo root:
 
 Or via FastMCP CLI:
     fastmcp run scripts/mcp/unified_server.py
+
+Deprecated:
+    Handoff state tooling no longer lives in this server.
+    Use the installed `agent-handoff-mcp` binary for all handoff reads/writes.
 """
 
 import json
@@ -94,6 +98,72 @@ def _resolve_task_ref(conn: sqlite3.Connection, task_ref: str | None) -> str:
 def _json_response(payload: dict) -> str:
     """Return stable JSON text for consistent cross-client parsing."""
     return json.dumps(payload, indent=2, sort_keys=True)
+
+
+LEGACY_HANDOFF_TOOL_NAMES = [
+    "set_handoff_state",
+    "get_handoff_state",
+    "record_decision",
+    "update_next_actions",
+    "record_test_result",
+    "report_blocker",
+    "record_review_finding",
+    "update_review_finding",
+    "reopen_review_finding",
+    "list_review_findings",
+    "get_review_finding",
+    "get_review_findings_summary",
+    "reconcile_review_findings",
+    "handoff_close_check",
+    "generate_current_task_md",
+    "export_handoff_state",
+    "import_handoff_state",
+    "archive_task_state",
+    "get_handoff_dashboard",
+]
+
+LEGACY_HANDOFF_CLI_COMMANDS = {
+    "dashboard",
+    "state",
+    "task",
+    "export",
+    "import",
+    "archive",
+    "set",
+    "decision",
+    "action",
+    "blocker",
+    "test",
+    "review-record",
+    "review-update",
+    "review-reopen",
+    "review-list",
+    "review-get",
+    "review-summary",
+    "review-reconcile",
+    "handoff-close-check",
+}
+
+
+def _legacy_handoff_deprecation_response(surface: str, mode: str) -> str:
+    """Return a stable error payload for deprecated legacy handoff entrypoints."""
+    return _json_response(
+        {
+            "ok": False,
+            "error": "deprecated_handoff_surface",
+            "surface": surface,
+            "mode": mode,
+            "message": (
+                "Legacy handoff tooling in scripts/mcp/unified_server.py has been deprecated. "
+                "Use the installed `agent-handoff-mcp` binary instead."
+            ),
+            "replacement": {
+                "command": "agent-handoff-mcp",
+                "args": ["--workspace-root", str(MONOREPO_ROOT)],
+                "docs": str(MONOREPO_ROOT / "docs" / "agentic" / "contracts" / "agent-handoff-mcp.md"),
+            },
+        }
+    )
 
 
 def _has_column(conn: sqlite3.Connection, table_name: str, column_name: str) -> bool:
@@ -2931,6 +3001,10 @@ def get_handoff_dashboard(limit: int = 20, include_archived: bool = True) -> str
         )
 
 
+for _legacy_handoff_tool in LEGACY_HANDOFF_TOOL_NAMES:
+    mcp.local_provider.remove_tool(_legacy_handoff_tool)
+
+
 # =============================================================================
 # Cross-Boundary Tools
 # =============================================================================
@@ -3272,6 +3346,10 @@ def _cli() -> None:
         except json.JSONDecodeError:
             print(json_str)
             # If not JSON, assume success print (though all tools return JSON)
+
+    if args.cli_command in LEGACY_HANDOFF_CLI_COMMANDS:
+        process_result(_legacy_handoff_deprecation_response(args.cli_command, mode="legacy-cli"))
+        sys.exit(1)
 
     # Dispatch
     if args.cli_command == "mcp":

@@ -251,6 +251,8 @@ const formatJobPhase = (phase: NonNullable<JobProgress['phase']>): string => {
       return __('Detecting', 'alt-context');
     case 'clustering':
       return __('Clustering', 'alt-context');
+    case 'awaiting_projection':
+      return __('Projecting', 'alt-context');
     case 'complete':
       return __('Complete', 'alt-context');
     default:

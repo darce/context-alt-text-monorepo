@@ -33,7 +33,17 @@ class JobPhase(str, Enum):
     QUEUED = "queued"
     DETECTING = "detecting"
     CLUSTERING = "clustering"
+    AWAITING_PROJECTION = "awaiting_projection"
     COMPLETE = "complete"
+
+
+@dataclass(frozen=True)
+class ProjectionStatus:
+    """Projection acknowledgement state for a pipeline job."""
+
+    snapshot_version: int
+    source_job_id: str
+    acknowledged_at: datetime | None = None
 
 
 class SplitJobPayload(BaseModel):

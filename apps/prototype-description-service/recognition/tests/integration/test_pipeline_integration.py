@@ -41,7 +41,7 @@ def _make_client(session, tenant: Tenant) -> TestClient:
         yield session
 
     def _scan_service_builder():
-        def _builder(tenant_id: str) -> ScanService:
+        async def _builder(tenant_id: str) -> ScanService:
             return ScanService(
                 session=session,
                 detector=StubFaceDetector(),

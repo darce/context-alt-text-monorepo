@@ -15,7 +15,7 @@ import numpy as np
 from recognition.domain.cluster import IdentityCluster
 from recognition.domain.constraints import IdentityConstraint
 from recognition.domain.identity import MediaIdentity
-from recognition.domain.job import Job
+from recognition.domain.job import Job, ProjectionStatus
 from recognition.domain.maturity import ClusterMaturityInfo
 from recognition.domain.representative import ClusterRepresentative
 from recognition.domain.suggestion import AssignmentSuggestion, MergeSuggestion, SuggestionStatus
@@ -579,6 +579,33 @@ class JobRepository(Protocol):
 
     async def update(self, job: Job) -> Job:
         """Update a job's state."""
+        ...
+
+    async def get_followup_clustering_job(self, scan_job_id: str) -> Job | None:
+        """Return the newest clustering job linked to a scan job, if one exists."""
+        ...
+
+    async def get_active_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        """Return the newest pending/running clustering job for a tenant, if one exists."""
+        ...
+
+    async def get_latest_completed_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        """Return the newest completed clustering job for a tenant, if one exists."""
+        ...
+
+    async def get_projection_status(self, job_id: str, tenant_id: str) -> ProjectionStatus | None:
+        """Return projection metadata for a clustering job when available."""
+        ...
+
+    async def record_projection_acknowledgement(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        snapshot_version: int,
+        acknowledged_at: datetime,
+    ) -> ProjectionStatus | None:
+        """Persist a projection acknowledgement for the provided job."""
         ...
 
 

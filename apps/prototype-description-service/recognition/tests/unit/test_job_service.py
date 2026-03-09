@@ -4,26 +4,9 @@ from __future__ import annotations
 
 import pytest
 
-from recognition.application.orchestration.job_service import JobRepository, JobService
+from recognition.application.orchestration.job_service import JobService
 from recognition.domain.job import Job, JobStatus, JobType
-
-
-class InMemoryJobRepo(JobRepository):
-    """Lightweight in-memory job store for behavior tests."""
-
-    def __init__(self) -> None:
-        self.jobs: dict[str, Job] = {}
-
-    async def save(self, job: Job) -> Job:
-        self.jobs[job.id] = job
-        return job
-
-    async def get(self, job_id: str) -> Job | None:
-        return self.jobs.get(job_id)
-
-    async def update(self, job: Job) -> Job:
-        self.jobs[job.id] = job
-        return job
+from recognition.tests.unit.job_repo_stub import InMemoryJobRepo
 
 
 class StubClusterService:

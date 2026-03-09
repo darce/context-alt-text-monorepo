@@ -190,11 +190,18 @@ class PinRepresentativeRequest(BaseModel):
         return _validate_uuid(v)
 
 
+class AcknowledgeProjectionRequest(BaseModel):
+    """Request to acknowledge that a snapshot version was projected locally."""
+
+    snapshot_version: int = Field(..., gt=0)
+
+
 __all__ = [
     "AnalyzeRequest",
     "ClusteringJobRequest",
     "RecoverOrphansRequest",
     "AssignOutlierRequest",
+    "AcknowledgeProjectionRequest",
     "CreateClusterForIdentityRequest",
     "MergeClusterRequest",
     "PatchClusterRequest",

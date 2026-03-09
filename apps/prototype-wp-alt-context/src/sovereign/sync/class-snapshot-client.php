@@ -76,6 +76,10 @@ class SnapshotClient {
 		return $data;
 	}
 
+	public function acknowledge_projection( string $job_id, int $snapshot_version ): WP_REST_Response|WP_Error {
+		return $this->transport->acknowledge_projection( $job_id, $snapshot_version );
+	}
+
 	private function get_snapshot_endpoint_path(): string {
 		$default_path  = '/recognition/tenants/%s/clusters/snapshot';
 		$filtered_path = apply_filters( 'acx_snapshot_endpoint_path', $default_path );

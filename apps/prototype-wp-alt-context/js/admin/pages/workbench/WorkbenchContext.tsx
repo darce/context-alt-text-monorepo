@@ -10,6 +10,8 @@ import { useTabParam } from '../../hooks/useTabParam';
 import type { JobProgress } from '../../api/recognition/types/scan';
 import type { ClusterResponse } from '../../api/recognition';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
+import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
+import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 
 export const TAB_IDS = {
   scan: 'scan',
@@ -79,8 +81,12 @@ interface WorkbenchContextValue {
   // State Machine
   isScanRunning: boolean;
   isCancellingScan: boolean;
+  currentPhase: PipelinePhase;
+  projectionSyncState: ProjectionSyncState;
+  projectionError: string | null;
   statusText: string | undefined;
   scanProgress: JobProgress | null;
+  clusterProgress: JobProgress | null;
   etaSeconds: number | null;
   isOnline: boolean;
   isPrimary: boolean;
@@ -88,6 +94,7 @@ interface WorkbenchContextValue {
   scan: (mediaIds: number[]) => void;
   cancelScan: (jobIds: string[]) => void;
   cluster: () => void;
+  retryProjectionSync: () => void;
   activeJobIds: string[];
   handleSelectJobFromHistory: (id: string) => void;
 
@@ -166,8 +173,12 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
   const {
     isScanRunning,
     isCancellingScan,
+    currentPhase,
+    projectionSyncState,
+    projectionError,
     statusText,
     scanProgress,
+    clusterProgress,
     etaSeconds,
     isOnline,
     isPrimary,
@@ -176,6 +187,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     scan,
     cancelScan,
     cluster,
+    retryProjectionSync,
   } = useJobStateMachine({
     jobId,
     onScanStart: () => {
@@ -257,8 +269,12 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       statusMessage,
       isScanRunning,
       isCancellingScan,
+      currentPhase,
+      projectionSyncState,
+      projectionError,
       statusText,
       scanProgress,
+      clusterProgress,
       etaSeconds,
       isOnline,
       isPrimary,
@@ -266,6 +282,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       scan,
       cancelScan,
       cluster,
+      retryProjectionSync,
       activeJobIds,
       handleSelectJobFromHistory,
       clusterPanel,
@@ -302,8 +319,12 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       statusMessage,
       isScanRunning,
       isCancellingScan,
+      currentPhase,
+      projectionSyncState,
+      projectionError,
       statusText,
       scanProgress,
+      clusterProgress,
       etaSeconds,
       isOnline,
       isPrimary,
@@ -311,6 +332,7 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
       scan,
       cancelScan,
       cluster,
+      retryProjectionSync,
       activeJobIds,
       handleSelectJobFromHistory,
       clusterPanel,

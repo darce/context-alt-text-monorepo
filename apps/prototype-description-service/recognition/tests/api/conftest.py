@@ -504,6 +504,7 @@ def api_client(
     app.dependency_overrides[dependencies.get_cluster_service_builder] = cluster_builder
     app.dependency_overrides[dependencies.get_cluster_repository] = cluster_repo_dep
     app.dependency_overrides[dependencies.get_job_service_dependency] = job_service_dep
+    app.dependency_overrides[dependencies.get_persisted_cluster_job_service] = job_service_dep
     app.dependency_overrides[dependencies.get_persisted_job_service] = job_service_dep
     app.dependency_overrides[dependencies.get_observability_repository] = _no_observability_repo
     app.dependency_overrides[dependencies.get_suggestion_service] = _fake_suggestion_service

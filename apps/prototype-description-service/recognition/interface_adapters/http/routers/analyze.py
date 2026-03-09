@@ -24,7 +24,8 @@ from recognition.application.tasks.scan import (
     extract_media_id,
     scan_worker_available,
 )
-from recognition.domain.job import JobStatus, JobType
+from recognition.domain.job import Job, JobStatus, JobType
+from recognition.domain.repositories import JobRepository
 from recognition.interface_adapters.http.dependencies import (
     get_job_repo,
     get_job_service_dependency,
@@ -37,7 +38,11 @@ from recognition.interface_adapters.http.dependencies import (
     require_write_access,
 )
 from recognition.interface_adapters.http.job_utils import job_to_response as _job_to_response
-from recognition.interface_adapters.http.schemas.requests import AnalyzeRequest, _validate_uuid
+from recognition.interface_adapters.http.schemas.requests import (
+    AcknowledgeProjectionRequest,
+    AnalyzeRequest,
+    _validate_uuid,
+)
 from recognition.interface_adapters.http.schemas.responses import JobProgressResponse, JobStatusResponse
 from recognition.shared.db.dialect import is_postgres
 
@@ -49,13 +54,11 @@ router = APIRouter(tags=["analyze"], dependencies=[Depends(require_auth)])
 async def _resolve_pipeline_job(
     *,
     requested_job_id: str,
-    domain_job,
-    repo,
-):
+    domain_job: Job | None,
+    repo: JobRepository,
+) -> Job | None:
     """Treat auto-chained clustering work as part of the original analyze pipeline."""
     if domain_job is None or domain_job.type is not JobType.ANALYZE or domain_job.status is not JobStatus.COMPLETED:
-        return domain_job
-    if not hasattr(repo, "get_followup_clustering_job"):
         return domain_job
     followup_job = await repo.get_followup_clustering_job(requested_job_id)
     return followup_job or domain_job
@@ -64,14 +67,31 @@ async def _resolve_pipeline_job(
 async def _job_to_pipeline_response(
     *,
     requested_job_id: str,
-    domain_job,
-    repo,
+    domain_job: Job | None,
+    repo: JobRepository,
     scan_repo,
 ):
     resolved_job = await _resolve_pipeline_job(requested_job_id=requested_job_id, domain_job=domain_job, repo=repo)
     response = await _job_to_response(resolved_job, scan_repo=scan_repo)
     if resolved_job is not domain_job:
         response.id = requested_job_id
+    if (
+        resolved_job is not None
+        and resolved_job.type is JobType.CLUSTERING
+        and resolved_job.status is JobStatus.COMPLETED
+        and resolved_job.tenant_id != ""
+    ):
+        projection = await repo.get_projection_status(resolved_job.id, resolved_job.tenant_id)
+        if projection is not None:
+            if response.progress is None:
+                response.progress = JobProgressResponse(
+                    completed=resolved_job.progress_completed,
+                    total=resolved_job.progress_total,
+                )
+            response.progress.phase = "awaiting_projection" if projection.acknowledged_at is None else "complete"
+            response.snapshot_version = projection.snapshot_version
+            response.source_job_id = projection.source_job_id
+            response.projection_acknowledged_at = projection.acknowledged_at
     return response
 
 
@@ -244,6 +264,40 @@ async def get_job_status(
             )
 
     raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Job not found")
+
+
+@router.post("/jobs/{job_id}/acknowledge-projection")
+async def acknowledge_projection(
+    job_id: str,
+    request: AcknowledgeProjectionRequest,
+    tenant_id: str = Header(alias="X-Tenant-ID"),
+    auth=Depends(require_write_access),
+    session=Depends(get_optional_session),
+) -> dict[str, int | str]:
+    """Record that WordPress projected the provided snapshot version for the pipeline job."""
+    if session is None:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail="Database unavailable")
+    if auth and auth.tenant_claim and auth.tenant_claim != tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    from recognition.infrastructure.repositories.job_repository import SqlAlchemyJobRepository
+
+    repo = SqlAlchemyJobRepository(session)
+    projection = await repo.get_projection_status(job_id=job_id, tenant_id=tenant_id)
+    if projection is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="projection metadata not found for job")
+    if projection.snapshot_version != request.snapshot_version:
+        raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="snapshot_version does not match job")
+    if projection.acknowledged_at is None:
+        await repo.record_projection_acknowledgement(
+            job_id=job_id,
+            tenant_id=tenant_id,
+            snapshot_version=request.snapshot_version,
+            acknowledged_at=datetime.now(tz=UTC),
+        )
+        await session.commit()
+
+    return {"status": "acknowledged", "snapshot_version": request.snapshot_version}
 
 
 @router.get("/jobs/{job_id}/stream")

@@ -10,7 +10,7 @@ export const ConfirmTabContent = (): React.JSX.Element => {
     cluster,
     isScanRunning,
     clusterMessage,
-    scanProgress,
+    clusterProgress,
     etaSeconds,
     isPrimary,
     latestJobId,
@@ -35,7 +35,7 @@ export const ConfirmTabContent = (): React.JSX.Element => {
         status={statusText}
         onCluster={cluster}
         isClustering={isScanRunning}
-        progress={scanProgress}
+        progress={clusterProgress}
         clusterMessage={clusterMessage}
         onViewClusters={() => window.location.assign(rosterClustersUrl())}
         etaSeconds={etaSeconds}

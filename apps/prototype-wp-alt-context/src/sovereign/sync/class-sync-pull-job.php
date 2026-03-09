@@ -59,7 +59,6 @@ class SyncPullJob implements SyncPullJobInterface {
 
 		try {
 			$this->projector->project( $tenant_id, $snapshot );
-			return true;
 		} catch ( Throwable $throwable ) {
 			set_transient( $transient_key, 1, self::SYNC_COOLDOWN_SECONDS );
 			do_action(
@@ -71,6 +70,42 @@ class SyncPullJob implements SyncPullJobInterface {
 				)
 			);
 			return false;
+		}
+
+		try {
+			$this->maybe_acknowledge_projection( $snapshot );
+		} catch ( Throwable $throwable ) {
+			do_action(
+				'acx_sync_pull_failed',
+				array(
+					'tenant_id' => $tenant_id,
+					'context' => 'projection_acknowledgement_failed',
+					'message' => $throwable->getMessage(),
+				)
+			);
+		}
+
+		return true;
+	}
+
+	/**
+	 * Projection acknowledgement is coordination metadata only.
+	 *
+	 * A failed acknowledgement must not mark the sync itself as failed after the
+	 * snapshot has already been projected locally.
+	 *
+	 * @param array<string,mixed> $snapshot
+	 */
+	private function maybe_acknowledge_projection( array $snapshot ): void {
+		$snapshot_version = isset( $snapshot['snapshot_version'] ) ? (int) $snapshot['snapshot_version'] : 0;
+		$source_job_id    = isset( $snapshot['source_job_id'] ) ? trim( (string) $snapshot['source_job_id'] ) : '';
+		if ( $snapshot_version <= 0 || '' === $source_job_id ) {
+			return;
+		}
+
+		$response = $this->client->acknowledge_projection( $source_job_id, $snapshot_version );
+		if ( is_wp_error( $response ) ) {
+			throw new \RuntimeException( $response->get_error_message() );
 		}
 	}
 }

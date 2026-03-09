@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import uuid
 from collections.abc import Iterable
+from datetime import datetime
 
-from recognition.domain.job import Job, JobStatus, JobType, SplitJobPayload
+from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus, SplitJobPayload
 from recognition.domain.repositories import JobRepository
 from recognition.shared.ids import generate_id
 
@@ -137,6 +138,38 @@ class JobService:
     async def get_job_status(self, job_id: str) -> Job | None:
         """Return persisted job status."""
         return await self.repository.get(job_id)
+
+    async def get_followup_clustering_job(self, scan_job_id: str) -> Job | None:
+        """Return the chained clustering job for a scan job when present."""
+        return await self.repository.get_followup_clustering_job(scan_job_id)
+
+    async def get_active_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        """Return the active clustering job for a tenant when one is already queued/running."""
+        return await self.repository.get_active_clustering_job_for_tenant(tenant_id)
+
+    async def get_projection_status(self, job_id: str, tenant_id: str) -> ProjectionStatus | None:
+        """Return projection metadata for a job."""
+        return await self.repository.get_projection_status(job_id, tenant_id)
+
+    async def record_projection_acknowledgement(
+        self,
+        *,
+        job_id: str,
+        tenant_id: str,
+        snapshot_version: int,
+        acknowledged_at: datetime,
+    ) -> ProjectionStatus | None:
+        """Persist projection acknowledgement metadata for a job."""
+        return await self.repository.record_projection_acknowledgement(
+            job_id=job_id,
+            tenant_id=tenant_id,
+            snapshot_version=snapshot_version,
+            acknowledged_at=acknowledged_at,
+        )
+
+    async def get_latest_completed_clustering_job_for_tenant(self, tenant_id: str) -> Job | None:
+        """Return the newest completed clustering job for a tenant."""
+        return await self.repository.get_latest_completed_clustering_job_for_tenant(tenant_id)
 
     async def cancel_job(self, job_id: str) -> Job:
         """Mark a job as canceled and transition to failed with message."""

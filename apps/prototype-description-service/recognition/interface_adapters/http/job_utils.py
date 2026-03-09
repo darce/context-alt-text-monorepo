@@ -39,6 +39,9 @@ async def job_to_response(job: Job, *, scan_repo: ScanQueueRepository | None = N
         started_at=started_at,
         finished_at=job.finished_at,
         message=job.message,
+        snapshot_version=None,
+        source_job_id=None,
+        projection_acknowledged_at=None,
     )
 
 
@@ -145,6 +148,9 @@ def job_to_clustering_response(job: Job) -> ClusteringJobStatusResponse:
         started_at=started_at,
         finished_at=job.finished_at,
         message=job.message,
+        snapshot_version=None,
+        source_job_id=None,
+        projection_acknowledged_at=None,
         clusters_created=0,  # Not known until job completes
         total_identities_clustered=job.progress_completed,
     )

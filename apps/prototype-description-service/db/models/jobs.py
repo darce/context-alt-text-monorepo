@@ -9,6 +9,7 @@ from db.models.base_imports import (
     TIMESTAMP,
     UUID,
     Base,
+    BigInteger,
     CheckConstraint,
     Float,
     ForeignKey,
@@ -114,6 +115,9 @@ class IdentityClusteringJob(Base):
     total_identities: Mapped[int | None] = mapped_column(Integer)
     processed_identities: Mapped[int | None] = mapped_column(Integer, server_default=text("0"))
     message: Mapped[str | None] = mapped_column(Text)
+    snapshot_version: Mapped[int | None] = mapped_column(BigInteger)
+    source_job_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True))
+    projection_acknowledged_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True))
     payload: Mapped[dict[str, object]] = mapped_column(
         JSONB().with_variant(JSON(), "sqlite"),
         nullable=False,

@@ -9,7 +9,9 @@ import logging
 from datetime import UTC, datetime
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
+from sqlalchemy import select
 
+from db.models import Tenant
 from db.session import async_session_factory
 from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.config import get_settings as get_recognition_settings
@@ -21,8 +23,7 @@ from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
     get_cluster_repository,
     get_cluster_service_builder,
-    get_persisted_job_service,
-    get_scan_service_builder,
+    get_persisted_cluster_job_service,
     get_session,
     get_suggestion_refresh_service,
     get_suggestion_service,
@@ -74,7 +75,7 @@ async def create_clustering_job(
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
-    job_service=Depends(get_persisted_job_service),
+    job_service=Depends(get_persisted_cluster_job_service),
 ) -> ClusteringJobStatusResponse:
     """Trigger clustering for unclustered identities."""
     _logger.info("Clustering request: tenant_id=%s, mode=%s", request.tenant_id, request.mode)
@@ -103,8 +104,15 @@ async def create_clustering_job(
             total_identities_clustered=completed,
         )
 
-    # Async mode: create a pending job for background worker to process
-    # The generic /recognition/jobs/{id}/stream endpoint handles all job types
+    # Async mode: create a pending job for background worker to process.
+    # Reuse an existing pending/running clustering job for the tenant to avoid
+    # duplicate expensive work from repeated clicks or repeated UI effects.
+    await session.execute(select(Tenant.id).where(Tenant.id == request.tenant_id).with_for_update())
+    existing_job = await job_service.get_active_clustering_job_for_tenant(request.tenant_id)
+    if existing_job is not None:
+        return _job_to_clustering_response(existing_job)
+
+    # The generic /recognition/jobs/{id}/stream endpoint handles all job types.
     job = await job_service.create_job(JobType.CLUSTERING, tenant_id=request.tenant_id)
     # Do NOT start the job - leave it in pending state for worker to pick up
     return _job_to_clustering_response(job)
@@ -229,6 +237,7 @@ async def get_tenant_cluster_snapshot(
     tenant_uuid: str,
     auth=Depends(require_auth),
     repo=Depends(get_cluster_repository),
+    job_service=Depends(get_persisted_cluster_job_service),
 ) -> ClusterSnapshotResponse:
     """Get complete cluster snapshot for WordPress plugin projection.
 
@@ -248,6 +257,7 @@ async def get_tenant_cluster_snapshot(
 
     # Get snapshot data
     clusters, members_with_identities, snapshot_version = await repo.get_snapshot(tenant_id)
+    latest_clustering_job = await job_service.get_latest_completed_clustering_job_for_tenant(tenant_id)
 
     if not clusters and not members_with_identities:
         # Return 404 if tenant has no clusters (unknown tenant or empty tenant)
@@ -260,6 +270,7 @@ async def get_tenant_cluster_snapshot(
     return ClusterSnapshotResponse(
         tenant_id=tenant_uuid,
         snapshot_version=snapshot_version,
+        source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
         generated_at=datetime.now(tz=UTC),
         clusters=cluster_responses,
         members=member_responses,
@@ -548,7 +559,7 @@ async def merge_cluster(
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
-    job_service=Depends(get_persisted_job_service),
+    job_service=Depends(get_persisted_cluster_job_service),
 ) -> ClusterResponse:
     """Merge cluster into target (by label)."""
     validate_entity_id(cluster_id, field_name="cluster_id")
@@ -590,9 +601,8 @@ async def split_cluster(
     auth=Depends(require_write_access),
     session=Depends(get_session),
     cluster_service_builder=Depends(get_cluster_service_builder),
-    scan_service_builder=Depends(get_scan_service_builder),
     suggestion_refresh_service=Depends(get_suggestion_refresh_service),
-    job_service=Depends(get_persisted_job_service),
+    job_service=Depends(get_persisted_cluster_job_service),
 ) -> SplitClusterResponse | AsyncSplitClusterResponse:
     """
     Split a cluster using hierarchical clustering.
@@ -609,11 +619,10 @@ async def split_cluster(
 
     if request.mode == "async":
         if not hasattr(job_service, "queue_split"):
-            job_service = await get_persisted_job_service(
+            job_service = await get_persisted_cluster_job_service(
                 session=session,
                 tenant_id=request.tenant_id,
                 cluster_service_builder=cluster_service_builder,
-                scan_service_builder=scan_service_builder,
             )
         payload = SplitJobPayload(
             cluster_id=cluster_id,
@@ -680,7 +689,7 @@ async def reassign_identity(
     cluster_service_builder=Depends(get_cluster_service_builder),
     suggestion_service=Depends(get_suggestion_service),
     suggestion_refresh_service=Depends(get_suggestion_refresh_service),
-    job_service=Depends(get_persisted_job_service),
+    job_service=Depends(get_persisted_cluster_job_service),
 ) -> ReassignIdentityResponse:
     """Reassign an identity to a different cluster.
 

@@ -70,11 +70,26 @@ export const cancelScanJob = async (jobId: string): Promise<JobStatusResponse> =
   const base = getEndpoint('recognitionJobs');
   const separator = base.endsWith('/') ? '' : '/';
 
-  return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}${separator}cancel`, {
+  return fetchRequiredApi<JobStatusResponse>(`${base}${separator}${jobId}/cancel`, {
     method: 'POST',
     restNonce: getConfig().nonce,
     signal: createRecognitionTimeoutSignal(5_000),
   });
+};
+
+export const acknowledgeProjection = async (jobId: string, snapshotVersion: number): Promise<{ status: string; snapshot_version: number }> => {
+  const base = getEndpoint('recognitionJobs');
+  const separator = base.endsWith('/') ? '' : '/';
+
+  return fetchRequiredApi<{ status: string; snapshot_version: number }>(
+    `${base}${separator}${jobId}/acknowledge-projection`,
+    {
+      method: 'POST',
+      body: { snapshot_version: snapshotVersion },
+      restNonce: getConfig().nonce,
+      signal: createRecognitionTimeoutSignal(5_000),
+    },
+  );
 };
 
 export const clusterFaces = async (mode: 'sync' | 'async' = 'async'): Promise<ClusterResponse> => {

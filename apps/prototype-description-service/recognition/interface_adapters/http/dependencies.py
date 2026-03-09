@@ -30,6 +30,7 @@ from recognition.interface_adapters.http.deps.services import (
     get_job_service_dependency,
     get_media_identity_service,
     get_observability_repository,
+    get_persisted_cluster_job_service,
     get_persisted_job_service,
     get_scan_queue_repo,
     get_scan_queue_service,
@@ -86,6 +87,7 @@ __all__ = [
     "get_job_repo",
     "get_job_service",
     "get_job_service_dependency",
+    "get_persisted_cluster_job_service",
     "get_persisted_job_service",
     # Stores
     "InMemoryJobService",

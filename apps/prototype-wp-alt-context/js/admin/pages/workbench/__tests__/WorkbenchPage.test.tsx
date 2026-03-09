@@ -98,6 +98,9 @@ vi.mock('../../../hooks/useRecognitionHooks', () => ({
   useClusterIdentities: vi.fn(),
   useMultiScanStatus: vi.fn(),
   useCombinedScanStatus: vi.fn(),
+  useAcknowledgeProjection: vi.fn(() => ({
+    mutateAsync: vi.fn(),
+  })),
   useTrainingStage: vi.fn(() => ({
     data: null,
     isLoading: false,
@@ -406,7 +409,7 @@ describe('WorkbenchPage', () => {
 
     renderWorkbench();
 
-    const select = screen.getByLabelText('Images per page');
+    const select = screen.getAllByLabelText('Images per page')[0];
     expect(select).toHaveTextContent('50');
 
     expect(mockUseWorkbenchMedia).toHaveBeenCalledWith(
@@ -414,6 +417,13 @@ describe('WorkbenchPage', () => {
         perPage: 50,
       }),
     );
+  });
+
+  it('renders pagination controls above and below the media table', () => {
+    renderWorkbench();
+
+    expect(screen.getAllByRole('navigation', { name: 'Media pagination' })).toHaveLength(2);
+    expect(screen.getAllByLabelText('Images per page')).toHaveLength(2);
   });
 
   it('clamps current page when total pages shrink', async () => {
@@ -467,7 +477,7 @@ describe('WorkbenchPage', () => {
 
     renderWorkbench();
 
-    const select = screen.getByLabelText('Images per page');
+    const select = screen.getAllByLabelText('Images per page')[0];
     const user = userEvent.setup();
 
     // Open the select dropdown and use keyboard to navigate

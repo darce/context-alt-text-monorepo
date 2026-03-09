@@ -6,6 +6,7 @@ import uuid
 
 import pytest
 
+from recognition.domain.job import Job, JobStatus, JobType
 from recognition.tests.api.conftest import seed_cluster
 
 
@@ -21,6 +22,25 @@ def test_clustering_job_async_returns_status(api_client, tenant_id, fake_job_ser
     assert body["status"] in {"running", "completed", "pending"}
     assert body["progress"]["total"] == 0
     assert body["id"] in fake_job_service.repository.jobs
+
+
+def test_clustering_job_async_reuses_existing_active_job(api_client, tenant_id, fake_job_service) -> None:
+    existing_job = Job(
+        id=str(uuid.uuid4()),
+        type=JobType.CLUSTERING,
+        tenant_id=tenant_id,
+        status=JobStatus.PENDING,
+        progress_completed=0,
+        progress_total=0,
+    )
+    fake_job_service.repository.jobs[existing_job.id] = existing_job
+
+    resp = api_client.post("/recognition/clustering/jobs", json={"tenant_id": tenant_id, "mode": "async"})
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["id"] == existing_job.id
+    assert len(fake_job_service.repository.jobs) == 1
 
 
 def test_clustering_job_sync_returns_completed_status(api_client, tenant_id) -> None:
@@ -198,7 +218,7 @@ def test_get_tenant_snapshot_returns_404_for_unknown_tenant(api_client) -> None:
 
 
 def test_get_tenant_snapshot_returns_correct_shape(
-    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository, fake_job_service
 ) -> None:
     # Seed some clusters and members (seeds both service and repository)
     cluster1 = seed_cluster(
@@ -207,6 +227,17 @@ def test_get_tenant_snapshot_returns_correct_shape(
     cluster2 = seed_cluster(
         fake_cluster_service, tenant_id, label=None, fake_cluster_repository=fake_cluster_repository
     )
+    latest_job = Job(
+        id=str(uuid.uuid4()),
+        type=JobType.CLUSTERING,
+        tenant_id=tenant_id,
+        status=JobStatus.COMPLETED,
+        progress_completed=2,
+        progress_total=2,
+        payload={"snapshot_version": 99, "source_job_id": str(uuid.uuid4())},
+    )
+    latest_job.message = "Clustering complete"
+    fake_job_service.repository.jobs[latest_job.id] = latest_job
 
     resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
 
@@ -218,6 +249,7 @@ def test_get_tenant_snapshot_returns_correct_shape(
     assert body["tenant_id"] == tenant_id
     assert "snapshot_version" in body
     assert isinstance(body["snapshot_version"], int)
+    assert body["source_job_id"] == latest_job.id
     assert "generated_at" in body
     assert "clusters" in body
     assert "members" in body

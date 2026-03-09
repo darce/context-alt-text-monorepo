@@ -2,7 +2,7 @@
 
 ## Status
 
-Phases 1-4 complete. Phase 5 (Sovereign Sync -- Person Push) is next.
+All phases complete. **Epic closed.**
 
 ## Objective
 
@@ -67,10 +67,7 @@ The v0.1.0 sovereign architecture and v0.2.0 reliability baseline established a 
 
 ### Gaps
 
-- Backend has no `roster_entries` table; `identity_clusters.roster_id` exists but is non-functional.
-- `commit_roster_cluster` does not set `is_user_confirmed = 1`, so snapshot sync can overwrite person assignments.
-- No outbox or push mechanism exists; local curation changes are not propagated to the backend.
-- Person UUIDs are generated locally but never synced to backend `roster_id`.
+_All gaps addressed by Phases 1-5. Remaining work (delta ingest, drift reconciliation, bidirectional conflict resolution) is tracked in [Recognition State Reconciliation + Offline Continuity](recognition-state-reconciliation-and-offline-continuity-epic.md)._
 
 ## Target Architecture
 
@@ -205,6 +202,30 @@ Exit criteria:
 - Cluster labeling offers person suggestions.
 - Every mutation shows a toast confirmation.
 
+### Phase 5: Sovereign Sync -- Person Push and Curation Protection -- COMPLETED
+
+> **Status**: completed
+> **Task plan**: [phase-5-sovereign-sync-person-push-task-plan.md](../../tasks/5.0/phase-5-sovereign-sync-person-push-task-plan.md)
+
+**Goal**: Cluster review is efficient for large batches via multi-select, bulk actions, keyboard nav, and roster-aware labeling.
+
+Deliverables:
+
+- **Curation protection**: `is_user_confirmed = 1` on cluster when person is assigned. Curated dissociation preserved on person delete.
+- **Durable outbox**: `wp_acx_sync_outbox` table with idempotency keys, expected base version, local revision, and status tracking.
+- **Outbox drain**: Action Scheduler integration with WP cron fallback. Batch dispatch to backend.
+- **Conflict recording**: `wp_acx_sync_conflicts` table with machine vs local payload capture.
+- **Backend curation endpoint**: `POST /roster/curation/sync` with acknowledgement and conflict response semantics.
+- **Person binding**: `identity_clusters.roster_id` bound to `person_uuid` on backend.
+- **Sync status**: REST endpoint with pending operations and conflict counts.
+
+Exit criteria:
+
+- Person assignment and deliberate person removal are both preserved as curated local state.
+- Person CRUD and cluster-person binding mutations produce durable outbox operations.
+- The backend acknowledges or conflicts each replayed curation operation explicitly.
+- Conflicts are stored and surfaced locally instead of being silently dropped or retried forever.
+
 ## External Dependencies
 
 | Dependency                            | Owner                 | Status   | Blocks                       |
@@ -291,21 +312,26 @@ Exit criteria:
 - [x] Add metadata display to ClusterDrawerPanel (face count, confidence, age).
 - [x] Vitest and interaction test coverage for all new behaviors.
 
-## Phase 5: Sovereign Sync -- Person Push and Curation Protection -- NOT STARTED
+## Phase 5: Sovereign Sync -- Person Push and Curation Protection -- COMPLETED
 
+> **Status**: completed
 > **Task plan**: [phase-5-sovereign-sync-person-push-task-plan.md](../../tasks/5.0/phase-5-sovereign-sync-person-push-task-plan.md)
 
-- [ ] Set `is_user_confirmed = 1` on cluster when person is assigned (curation protection).
-- [ ] Revert `is_user_confirmed = 0` on cluster when person is deleted (soft dissociation).
-- [ ] Add `wp_acx_outbox` table for async push events.
-- [ ] Wire outbox writes into person CRUD and cluster commit endpoints.
-- [ ] Implement outbox drain via WP cron.
-- [ ] Add backend `POST /roster/persons/sync` endpoint.
-- [ ] Bind `identity_clusters.roster_id` to `person_uuid` on backend.
-- [ ] Remove broken `roster_entries` reference from `cluster_repository.get_roster_entry_name()`.
+- [x] Set `is_user_confirmed = 1` on cluster when person is assigned (curation protection).
+- [x] Preserve curated dissociation on cluster when person is deleted (keep `is_user_confirmed = 1`).
+- [x] Add `wp_acx_sync_outbox` table for durable curation replay.
+- [x] Wire outbox writes into person CRUD and cluster commit endpoints.
+- [x] Implement outbox drain with Action Scheduler + WP cron fallback.
+- [x] Add backend `POST /roster/curation/sync` endpoint.
+- [x] Bind `identity_clusters.roster_id` to `person_uuid` on backend.
+- [x] Add `wp_acx_sync_conflicts` table and conflict recording infrastructure.
+- [x] Add sync-status REST endpoint with pending and conflict counts.
+- [x] Remove phantom `roster_entries` reference from `cluster_repository`.
 
 ## Deferred (Post-Epic)
 
-- [ ] Action Scheduler integration (upgrade from WP cron drain).
-- [ ] Delta ingest and drift reconciliation.
-- [ ] Bidirectional conflict resolution for person name edits.
+> Tracked in: [deferred-ux-ergonomics-post-epic-task-plan.md](../../tasks/5.0/deferred-ux-ergonomics-post-epic-task-plan.md) and [Recognition State Reconciliation + Offline Continuity](recognition-state-reconciliation-and-offline-continuity-epic.md)
+
+- [x] Action Scheduler integration (upgrade from WP cron drain) -- delivered in Phase 5.
+- [ ] Delta ingest and drift reconciliation -- moved to reconciliation epic.
+- [ ] Bidirectional conflict resolution for person name edits -- moved to reconciliation epic.

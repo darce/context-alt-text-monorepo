@@ -117,6 +117,7 @@ If a task seems to require external changes, STOP and propose an alternative wit
 - Do not relax compliance/lint scripts to silence violations. Fix the offending code.
 - Every `composer`/`npm` gate script must succeed on invocation, not just be defined.
 - **npm** for Node.js (not pnpm). **Composer** for PHP.
+- When editing CSS/SCSS, use existing design tokens or `--acx-*` CSS custom properties for colors instead of raw hex literals. If a needed color token does not exist, add it to the shared token surface first.
 
 ### Cross-Branch Regression Guards
 

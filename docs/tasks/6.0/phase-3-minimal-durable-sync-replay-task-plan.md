@@ -45,7 +45,7 @@ Extend the existing outbox and curation sync infrastructure in three layers:
 
 2. **Backend: expand sync surface for state-only operations; delegate topology mutations to existing recognition endpoints**.
    - **State-only operation** (`cluster_label_updated`): add handler to `CurationSyncService` alongside existing bind/unbind/dismiss handlers. Label updates are pure state mutations with no side effects.
-   - **Replay-plane topology mutations** (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`, `revert_merge_cluster`, `assign_outlier_to_cluster`): these carry side effects (follow-up re-clustering jobs, suggestion refresh, representative pinning) that already live in the recognition boundary. The outbox drain dispatches merge, reassign, create-for-identity, and assign-outlier to the active recognition endpoints (`/clusters/{id}/merge`, `/clusters/reassign`, `/clusters/create-for-identity`, `/clusters/{id}/assign`) instead of re-implementing logic in `CurationSyncService`. `revert_merge_cluster` remains pending backend endpoint/contract work in this phase; the plugin currently proxies `/recognition/clusters/revert-merge`, but the recognition router does not expose that replay endpoint yet.
+   - **Replay-plane topology mutations** (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`, `revert_merge_cluster`, `assign_outlier_to_cluster`): these carry side effects (follow-up re-clustering jobs, suggestion refresh, representative pinning) that already live in the recognition boundary. The outbox drain dispatches merge, reassign, and create-for-identity to active replay-ready recognition endpoints (`/clusters/{id}/merge`, `/clusters/reassign`, `/clusters/create-for-identity`) instead of re-implementing logic in `CurationSyncService`. `revert_merge_cluster` remains pending backend endpoint/contract work in this phase; the plugin currently proxies `/recognition/clusters/revert-merge`, but the recognition router does not expose that replay endpoint yet. `assign_outlier_to_cluster` has an active manual route (`/clusters/{id}/assign`), but it still needs replay-contract alignment (`idempotency_key`, replay cache load/store, and acknowledged-version response semantics) before the plan can treat it as exact-once replay-ready.
    - **Split topology command** (`cluster_split`): this is carved out of the outbox plane. It persists to the dedicated topology-command journal and dispatches to the split topology-command endpoint because the backend authors the final partition result.
 
 3. **Plugin: build on the delivered sync status baseline**. The failed-count and failure-timestamp fields already exist in `wp_acx_sync_state` and `SyncStatusController`. This phase should extend that baseline only where needed for richer per-operation visibility and split topology-command status.
@@ -90,7 +90,7 @@ if operation_type == "cluster_label_updated":
 
 ### Plugin: Replay-Plane Topology Mutation Drain Dispatch
 
-Replay-plane topology mutations are dispatched by the outbox drain to recognition endpoints, not to `CurationSyncService`. Merge, reassign, create-for-identity, and assign-outlier already have active recognition router targets. `revert_merge_cluster` is still pending explicit backend route/contract work in this phase. The intended drain mapping is:
+Replay-plane topology mutations are dispatched by the outbox drain to recognition endpoints, not to `CurationSyncService`. Merge, reassign, and create-for-identity already have replay-ready recognition router targets. `revert_merge_cluster` is still pending explicit backend route/contract work in this phase, and `assign_outlier_to_cluster` still needs replay-contract alignment before it can satisfy the plan's exact-once guarantees. The intended drain mapping is:
 
 ```php
 // In OutboxDispatcher -- topology operation routing:
@@ -101,10 +101,11 @@ $topology_routes = [
     'revert_merge_cluster'         => ['POST', '/recognition/clusters/revert-merge'],
     'assign_outlier_to_cluster'    => ['POST', '/recognition/clusters/%s/assign'],
 ];
-// Merge/reassign/create-for-identity/assign already handle the business logic and side effects.
-// This phase must add the missing revert-merge recognition endpoint and align replay-plane
-// topology responses to return `backend_version` (or an equivalent acknowledged version field)
-// so OutboxDispatcher can persist acknowledgement/version state correctly.
+// Merge/reassign/create-for-identity already handle the business logic and side effects for replay.
+// This phase must add the missing revert-merge recognition endpoint, align assign-outlier to the
+// replay contract (`idempotency_key`, replay cache load/store), and align replay-plane topology
+// responses to return `backend_version` (or an equivalent acknowledged version field) so
+// OutboxDispatcher can persist acknowledgement/version state correctly.
 ```
 
 ### Plugin: Split Topology Command Dispatch
@@ -149,53 +150,53 @@ $failed_count = (int) $wpdb->get_var($wpdb->prepare(
 
 ### Plugin (WordPress)
 
-| File | Line | Change |
-| --- | --- | --- |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | update_cluster_label | Convert from direct backend proxy to local-write + outbox enqueue pattern. Remove synchronous HTTP call; write label locally in transaction, enqueue `cluster_label_updated` operation. |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | merge_cluster | Convert from direct backend proxy to local-write + outbox. Apply merge locally (move members, update cluster state), enqueue `cluster_merged` operation for backend replay. |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | split_cluster | Convert from direct backend proxy to durable topology command. Persist split intent locally, do not mutate projection rows during request handling, and return pending command state. |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | reassign_cluster_identity | Convert from direct backend proxy to local-write + outbox. Apply reassign locally (move member row), enqueue `identity_reassigned` operation. Keep `mark_as_curated()` call. |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | create_cluster_for_identity | Convert from direct backend proxy to local-write + outbox. Create cluster locally, move identity, enqueue `cluster_created_for_identity` operation. |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | revert_merge_cluster | Convert from direct backend proxy to durable local intent. Preserve the existing revert-merge payload, enqueue a replayable operation, and return pending local intent instead of synchronous backend success. |
-| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | assign_outlier_to_cluster | Add a plugin mutation path for assign-outlier and make it durable local intent instead of a direct backend-only action. |
-| `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php` | refresh_curation_metrics | Add `failed_curation_operations` count from outbox `status = 'failed'`. Add `last_curation_failed_at` from `MAX(last_attempted_at)` of failed operations. |
-| `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php` | schema | Add `failed_curation_operations` and `last_curation_failed_at` columns to `wp_acx_sync_state` CREATE TABLE. |
-| `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php` | get_sync_status | Include `failed_curation_operations` and `last_curation_failed_at` in REST response. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-writer.php` | interface | Extract `OutboxWriterInterface` for test seam. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-dispatcher.php` | dispatch | Extend topology operation routing from the currently landed replay-plane mutations (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`) to also cover `revert_merge_cluster` and `assign_outlier_to_cluster`. State-only operations continue to route to `/roster/curation/sync`. Coordinate shared sequencing with the split topology-command plane. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php` | sequencing | Enforce cross-plane ordering between replay-plane outbox operations and split topology commands targeting the same cluster lineage. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/` | topology command support | Add split topology-command repository/drain support around `wp_acx_topology_commands`, durable result storage, and reconciliation tracking. |
+| File                                                                                       | Line                        | Change                                                                                                                                                                                                                                                                                                                                                                     |
+| ------------------------------------------------------------------------------------------ | --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | update_cluster_label        | Convert from direct backend proxy to local-write + outbox enqueue pattern. Remove synchronous HTTP call; write label locally in transaction, enqueue `cluster_label_updated` operation.                                                                                                                                                                                    |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | merge_cluster               | Convert from direct backend proxy to local-write + outbox. Apply merge locally (move members, update cluster state), enqueue `cluster_merged` operation for backend replay.                                                                                                                                                                                                |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | split_cluster               | Convert from direct backend proxy to durable topology command. Persist split intent locally, do not mutate projection rows during request handling, and return pending command state.                                                                                                                                                                                      |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | reassign_cluster_identity   | Convert from direct backend proxy to local-write + outbox. Apply reassign locally (move member row), enqueue `identity_reassigned` operation. Keep `mark_as_curated()` call.                                                                                                                                                                                               |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | create_cluster_for_identity | Convert from direct backend proxy to local-write + outbox. Create cluster locally, move identity, enqueue `cluster_created_for_identity` operation.                                                                                                                                                                                                                        |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | revert_merge_cluster        | Convert from direct backend proxy to durable local intent. Preserve the existing revert-merge payload, enqueue a replayable operation, and return pending local intent instead of synchronous backend success.                                                                                                                                                             |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`             | assign_outlier_to_cluster   | Add a plugin mutation path for assign-outlier and make it durable local intent instead of a direct backend-only action.                                                                                                                                                                                                                                                    |
+| `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php` | refresh_curation_metrics    | Add `failed_curation_operations` count from outbox `status = 'failed'`. Add `last_curation_failed_at` from `MAX(last_attempted_at)` of failed operations.                                                                                                                                                                                                                  |
+| `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php`                   | schema                      | Add `failed_curation_operations` and `last_curation_failed_at` columns to `wp_acx_sync_state` CREATE TABLE.                                                                                                                                                                                                                                                                |
+| `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`                   | get_sync_status             | Include `failed_curation_operations` and `last_curation_failed_at` in REST response.                                                                                                                                                                                                                                                                                       |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-writer.php`                 | interface                   | Extract `OutboxWriterInterface` for test seam.                                                                                                                                                                                                                                                                                                                             |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-dispatcher.php`             | dispatch                    | Extend topology operation routing from the currently landed replay-plane mutations (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`) to also cover `revert_merge_cluster` and `assign_outlier_to_cluster`. State-only operations continue to route to `/roster/curation/sync`. Coordinate shared sequencing with the split topology-command plane. |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php`                  | sequencing                  | Enforce cross-plane ordering between replay-plane outbox operations and split topology commands targeting the same cluster lineage.                                                                                                                                                                                                                                        |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/`                                        | topology command support    | Add split topology-command repository/drain support around `wp_acx_topology_commands`, durable result storage, and reconciliation tracking.                                                                                                                                                                                                                                |
 
 ### Backend (Python)
 
-| File | Line | Change |
-| --- | --- | --- |
-| `apps/prototype-description-service/roster/application/curation_sync_service.py` | _SUPPORTED_OPERATION_TYPES | Add `cluster_label_updated` to supported types. |
-| `apps/prototype-description-service/roster/application/curation_sync_service.py` | _apply | Add handler branch for `cluster_label_updated`: load cluster, apply version conflict check, update `cluster.label` from `payload.label`. |
-| `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | split topology command route | Add the dedicated `POST /recognition/topology-commands/split` endpoint and any optional command-status lookup route used by the split command plane. |
-| `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | revert/assign replay endpoints | Ensure replay-plane endpoints and payload contracts cover durable `revert-merge` and `assign-outlier` dispatch once the plugin stops proxying them synchronously. |
-| `apps/prototype-description-service/recognition/interface_adapters/http/schemas/` | request/response contracts | Add request and response schemas for split topology-command execution, including `expected_base_version`, `idempotency_key`, conflict payload, and typed result metadata. |
-| `apps/prototype-description-service/recognition/application/orchestration/` | split command orchestration | Add or extend the split orchestration/service layer so the topology-command route reuses the existing partition algorithm while returning durable typed command results. |
-| `apps/prototype-description-service/recognition/application/persistence/` | command/result persistence | Add the persistence path for split command acknowledgement/result state if backend-side durable command lookup is required by the final route contract. |
+| File                                                                                         | Line                           | Change                                                                                                                                                                                                                                                      |
+| -------------------------------------------------------------------------------------------- | ------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/prototype-description-service/roster/application/curation_sync_service.py`             | \_SUPPORTED_OPERATION_TYPES    | Add `cluster_label_updated` to supported types.                                                                                                                                                                                                             |
+| `apps/prototype-description-service/roster/application/curation_sync_service.py`             | \_apply                        | Add handler branch for `cluster_label_updated`: load cluster, apply version conflict check, update `cluster.label` from `payload.label`.                                                                                                                    |
+| `apps/prototype-description-service/recognition/interface_adapters/http/routers/`            | split topology command route   | Add the dedicated `POST /recognition/topology-commands/split` endpoint and any optional command-status lookup route used by the split command plane.                                                                                                        |
+| `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | revert/assign replay endpoints | Add the missing replay endpoint/contract for `revert-merge`, and align `assign-outlier` to the replay contract (`idempotency_key`, replay cache load/store, acknowledged-version response fields) before the plugin treats it as durable exact-once replay. |
+| `apps/prototype-description-service/recognition/interface_adapters/http/schemas/`            | request/response contracts     | Add request and response schemas for split topology-command execution, including `expected_base_version`, `idempotency_key`, conflict payload, and typed result metadata.                                                                                   |
+| `apps/prototype-description-service/recognition/application/orchestration/`                  | split command orchestration    | Add or extend the split orchestration/service layer so the topology-command route reuses the existing partition algorithm while returning durable typed command results.                                                                                    |
+| `apps/prototype-description-service/recognition/application/persistence/`                    | command/result persistence     | Add the persistence path for split command acknowledgement/result state if backend-side durable command lookup is required by the final route contract.                                                                                                     |
 
-> **Note:** Replay-plane topology mutations (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`, `revert_merge_cluster`, `assign_outlier_to_cluster`) are NOT added to `CurationSyncService`; they remain dispatched by `OutboxDispatcher` to the existing recognition cluster router endpoints. `cluster_split` is also excluded from `CurationSyncService`, but it is no longer an `OutboxDispatcher` concern: it moves to the dedicated split topology-command surface and endpoint.
+> **Note:** Replay-plane topology mutations (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`, `revert_merge_cluster`, `assign_outlier_to_cluster`) are NOT added to `CurationSyncService`; they remain recognition-boundary work. However, only merge/reassign/create-for-identity are currently replay-ready router targets. Phase 3 still needs backend contract work before `revert_merge_cluster` and `assign_outlier_to_cluster` can be treated as exact-once replay operations. `cluster_split` is also excluded from `CurationSyncService`, but it is no longer an `OutboxDispatcher` concern: it moves to the dedicated split topology-command surface and endpoint.
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php` | Existing drain infrastructure. Needs shared sequencing coordination with split topology commands so replay-plane mutations cannot reorder across cluster lineage. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-dispatcher.php` | Existing HTTP transport. Already routes the landed replay-plane topology operations (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`); still needs routing extension for `revert_merge_cluster` and `assign_outlier_to_cluster`, and must participate in the shared sequencing contract with split topology-command dispatch. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/` | New split topology-command repository/drain surface. Owns `wp_acx_topology_commands`, split dispatch, durable result storage, and reconciliation state. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-conflict-repository.php` | Existing conflict recording. No changes needed -- already handles 409 responses from drain and writes conflict records. |
-| `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php` | Phase 2 conflict-aware projector. No changes needed for Phase 3. |
-| `apps/prototype-wp-alt-context/src/api/class-api.php` | Person CRUD + cluster assignment endpoints already use outbox pattern. Reference implementation for the pattern being extended to mutations controller. |
-| `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Existing recognition endpoints for merge, reassign, create-for-identity, assign-outlier, and label update. Phase 3 still needs to add or align the revert-merge replay endpoint and return-version contract here before outbox replay can depend on them. |
-| `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | New split topology-command route surface. Owns the dedicated split command endpoint and any optional command-status lookup path required by the addendum. |
-| `apps/prototype-description-service/roster/interface_adapters/http/curation_router.py` | Curation sync endpoint. Handles state-only operations (bind/unbind/dismiss/label). No changes needed. |
-| `apps/prototype-description-service/db/models/identity.py` | `CurationReplayRecord` model for idempotency. No schema changes needed. |
-| `docs/epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md` | Parent epic with Phase 3 exit criteria. |
-| `docs/tasks/6.0/phase-2-curation-first-merge-contract-task-plan.md` | Phase 2 task plan -- prerequisite for Phase 3. Curation guards and conflict recording must be in place before mutations move to outbox-first. |
+| File                                                                                         | Note                                                                                                                                                                                                                                                                                                                                                  |
+| -------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php`                    | Existing drain infrastructure. Needs shared sequencing coordination with split topology commands so replay-plane mutations cannot reorder across cluster lineage.                                                                                                                                                                                     |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-dispatcher.php`               | Existing HTTP transport. Already routes the landed replay-plane topology operations (`cluster_merged`, `identity_reassigned`, `cluster_created_for_identity`); still needs routing extension for `revert_merge_cluster` and `assign_outlier_to_cluster`, and must participate in the shared sequencing contract with split topology-command dispatch. |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/`                                          | New split topology-command repository/drain surface. Owns `wp_acx_topology_commands`, split dispatch, durable result storage, and reconciliation state.                                                                                                                                                                                               |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-conflict-repository.php`             | Existing conflict recording. No changes needed -- already handles 409 responses from drain and writes conflict records.                                                                                                                                                                                                                               |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php`              | Phase 2 conflict-aware projector. No changes needed for Phase 3.                                                                                                                                                                                                                                                                                      |
+| `apps/prototype-wp-alt-context/src/api/class-api.php`                                        | Person CRUD + cluster assignment endpoints already use outbox pattern. Reference implementation for the pattern being extended to mutations controller.                                                                                                                                                                                               |
+| `apps/prototype-description-service/recognition/interface_adapters/http/routers/clusters.py` | Existing recognition endpoints for merge, reassign, create-for-identity, assign-outlier, and label update. Phase 3 still needs to add the revert-merge replay endpoint and align assign-outlier plus the broader return-version contract here before outbox replay can depend on them.                                                                |
+| `apps/prototype-description-service/recognition/interface_adapters/http/routers/`            | New split topology-command route surface. Owns the dedicated split command endpoint and any optional command-status lookup path required by the addendum.                                                                                                                                                                                             |
+| `apps/prototype-description-service/roster/interface_adapters/http/curation_router.py`       | Curation sync endpoint. Handles state-only operations (bind/unbind/dismiss/label). No changes needed.                                                                                                                                                                                                                                                 |
+| `apps/prototype-description-service/db/models/identity.py`                                   | `CurationReplayRecord` model for idempotency. No schema changes needed.                                                                                                                                                                                                                                                                               |
+| `docs/epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md`          | Parent epic with Phase 3 exit criteria.                                                                                                                                                                                                                                                                                                               |
+| `docs/tasks/6.0/phase-2-curation-first-merge-contract-task-plan.md`                          | Phase 2 task plan -- prerequisite for Phase 3. Curation guards and conflict recording must be in place before mutations move to outbox-first.                                                                                                                                                                                                         |
 
 ---
 
@@ -240,6 +241,10 @@ $failed_count = (int) $wpdb->get_var($wpdb->prepare(
 
 - [x] Convert `merge_cluster()` to outbox-first: apply merge locally (move source cluster members to target, mark source as dismissed, update identity counts), enqueue `cluster_merged` with `entity_key = source_cluster_uuid` and `payload = {target_cluster_uuid, ...}`.
 - [ ] Convert `split_cluster()` to durable topology command: persist split intent locally without mutating projection rows, dispatch through the split topology-command plane, and reconcile projection only after backend-authored result arrives.
+      Phase 2 progress:
+  - [x] Plugin persists durable split intent in `wp_acx_topology_commands` and no longer routes split through `OutboxDispatcher`.
+  - [x] Backend exposes the first `POST /recognition/topology-commands/split` execution surface with typed result + idempotency replay.
+  - [ ] Dedicated topology-command drain, durable result persistence on the plugin side, and post-ack reconciliation are still pending.
 - [x] Convert `create_cluster_for_identity()` to outbox-first: create cluster locally, move identity member, enqueue `cluster_created_for_identity` with a plugin-supplied cluster UUID that the backend now honors during replay.
 - [ ] Convert `revert_merge_cluster()` to durable local intent: enqueue replayable revert-merge intent instead of proxying synchronously, and return pending local status.
 - [ ] Add plugin support for assign-outlier durable intent: add the missing mutation path, enqueue replayable assign-outlier intent, and return pending local status.
@@ -250,7 +255,7 @@ $failed_count = (int) $wpdb->get_var($wpdb->prepare(
 - [x] Add `cluster_label_updated` handler in `CurationSyncService._apply()`: load cluster by entity_key, apply version conflict check, update `cluster.label` from `payload.label`.
 - [x] Add pytest coverage: label handler applies mutation correctly; version conflict returns 409; idempotency key prevents duplicate execution.
 - [x] Add topology operation routing to `OutboxDispatcher` for the currently landed replay-plane mutations: map `cluster_merged`, `identity_reassigned`, and `cluster_created_for_identity` to their recognition endpoints and include idempotency keys for backend-side replay deduplication.
-- [ ] Add or align the missing replay-plane backend contract for `revert_merge_cluster`, and ensure replay-plane topology responses return `backend_version` (or equivalent) so outbox acknowledgements can persist version lineage correctly.
+- [ ] Add or align the missing replay-plane backend contract for `revert_merge_cluster` and `assign_outlier_to_cluster`: add the missing revert-merge endpoint, add assign-outlier `idempotency_key` + replay cache load/store, and ensure replay-plane topology responses return `backend_version` (or equivalent) so outbox acknowledgements can persist version lineage correctly.
 - [ ] Extend replay-plane topology routing to include durable `revert-merge` and `assign-outlier` dispatch once those plugin mutation paths exist.
 - [x] Add PHPUnit tests for `OutboxDispatcher` routing: state-only operations route to `/roster/curation/sync`; the currently landed replay-plane topology mutations route to the correct recognition endpoints.
 - [ ] Add integration test: topology operation (merge) enqueued, drain dispatches to recognition endpoint, response acknowledged, outbox status transitions correctly.
@@ -494,65 +499,189 @@ If `member_delta` is absent or incomplete, the next-best acceptable model is:
 
 But the long-term architecture should prefer direct typed result application over mandatory snapshot refresh.
 
+### Addendum Patterns to Follow
+
+#### Pattern A: Split Intent Enqueue (No Projection Mutation)
+
+```php
+// In ClusterMutationsController::split_cluster()
+$wpdb->query('START TRANSACTION');
+
+$command_id = $this->topology_command_repository->enqueue(
+  array(
+    'command_type' => 'cluster_split',
+    'entity_key' => $cluster_id,
+    'payload_json' => $payload,
+    'expected_base_version' => $cluster_version,
+    'idempotency_key' => wp_generate_uuid4(),
+  )
+);
+
+$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+$wpdb->query('COMMIT');
+
+return rest_ensure_response(
+  array(
+    'command_id' => $command_id,
+    'synced' => false,
+    'status' => 'pending',
+    'command_state' => 'queued',
+    'projection_state' => 'awaiting_backend_partition',
+  )
+);
+```
+
+#### Pattern B: Cross-Plane Sequencing Before Dispatch
+
+```php
+// Shared sequencing key for both replay-plane and split-command dispatch.
+$sequencing_key = $source_cluster_uuid;
+
+if ( $this->sequencing_locks->is_blocked( $sequencing_key ) ) {
+  return; // defer dispatch for this cycle
+}
+
+$this->sequencing_locks->acquire( $sequencing_key, $operation_id );
+try {
+  $response = $this->transport->request( 'POST', '/recognition/topology-commands/split', $body, array() );
+  $this->topology_command_repository->record_dispatch_result( $command_id, $response );
+} finally {
+  $this->sequencing_locks->release( $sequencing_key, $operation_id );
+}
+```
+
+#### Pattern C: Reconciliation State Machine
+
+- If command response includes complete identity-level `member_delta`: apply local delta directly, validate invariants, mark `reconciled`.
+- If response is acknowledged but `member_delta` is incomplete/aggregate-only: persist `result_json`, schedule targeted projection refresh, mark `reconciled` only after refresh succeeds.
+- If backend returns `409`: mark command `conflict`, write durable conflict record, surface in sync status.
+- If retry budget is exhausted: mark command `failed` and surface failed topology status to operators.
+
+#### Pattern D: Backend Split Command Idempotency + Conflict Gate
+
+```python
+# In topology command router/service
+cached = await replay_repo.load(tenant_id=request.tenant_id, idempotency_key=request.idempotency_key)
+if cached is not None:
+  return cached
+
+current_version = await cluster_repo.backend_version(request.cluster_id)
+if request.expected_base_version > 0 and request.expected_base_version < current_version:
+  raise HTTPException(
+    status_code=409,
+    detail={
+      "conflict_code": "version_conflict",
+      "backend_version": current_version,
+      "source_cluster_id": request.cluster_id,
+      "machine_payload": {...},
+    },
+  )
+
+result = await split_service.execute_command(request)
+await replay_repo.store(tenant_id=request.tenant_id, idempotency_key=request.idempotency_key, payload=result)
+return result
+```
+
+### Addendum Files to Touch
+
+| File                                                                                                    | Split Addendum Responsibility                                                                                                                          |
+| ------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`                          | Change `split_cluster()` to enqueue topology commands locally and return pending command state instead of proxying `/recognition/clusters/{id}/split`. |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-dispatcher.php`                          | Remove legacy `cluster_split` topology route in the hard-cutover slice; keep replay-plane routing for non-split operations only.                       |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/class-outbox-drain.php`                               | Enforce shared sequencing contract between replay-plane operations and split topology commands.                                                        |
+| `apps/prototype-wp-alt-context/src/sovereign/sync/`                                                     | Add topology-command repository/drain/lock support (or equivalent) for split command lifecycle and durable result storage.                             |
+| `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php`                                | Create/upgrade `wp_acx_topology_commands` schema with durable status/result/retry fields.                                                              |
+| `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php`              | Fold topology-command pending/failed/conflict metrics into sync-state reporting (or publish explicit topology metrics).                                |
+| `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`                                | Expose split topology command durability state to operators in REST sync status.                                                                       |
+| `apps/prototype-description-service/recognition/interface_adapters/http/routers/`                       | Add `POST /recognition/topology-commands/split` and optional command-status read endpoint; make this the single durable split target.                  |
+| `apps/prototype-description-service/recognition/interface_adapters/http/schemas/requests.py`            | Add split topology-command request model (`idempotency_key`, `expected_base_version`, split parameters, desired IDs rules).                            |
+| `apps/prototype-description-service/recognition/interface_adapters/http/schemas/responses.py`           | Add typed split command response model (`command_id`, status, member delta/affected clusters, lineage marker, conflict shape).                         |
+| `apps/prototype-description-service/recognition/application/orchestration/`                             | Implement split command orchestration that reuses partition logic and emits deterministic typed result metadata.                                       |
+| `apps/prototype-description-service/recognition/application/persistence/`                               | Persist command result/lookup state when command polling or durable replay lookups are required by contract.                                           |
+| `apps/prototype-wp-alt-context/tests/Unit/` and `apps/prototype-description-service/recognition/tests/` | Add unit/integration coverage for split enqueue, split dispatch, sequencing, conflict handling, and reconciliation completion semantics.               |
+
 ### Implementation Plan
 
 1. Plugin `split_cluster()` endpoint behavior:
-    - Validate source cluster exists and capture current row context (`snapshot_version`, `local_revision`).
-    - Persist a `cluster_split` topology command locally before any network call.
-    - Do not move members locally.
-    - Do not create local replacement clusters in projection tables during request handling.
-    - Return immediate command-state response:
-      - `synced: false`
-      - `status: pending`
-      - `command_state: queued`
-      - `projection_state: awaiting_backend_partition`
+   - Validate source cluster exists and capture current row context (`snapshot_version`, `local_revision`).
+   - Persist a `cluster_split` topology command locally before any network call.
+   - Do not move members locally.
+   - Do not create local replacement clusters in projection tables during request handling.
+   - Return immediate command-state response:
+     - `synced: false`
+     - `status: pending`
+     - `command_state: queued`
+     - `projection_state: awaiting_backend_partition`
 
 2. Backend split replay behavior:
-    - Keep partition algorithm ownership in recognition split orchestration.
-    - Execute split as a backend topology command.
-    - Accept `desired_cluster_ids` only for fixed-count splits (`n_clusters >= 2`), validate exact count/uniqueness, and reject them for auto mode (`n_clusters = 0`).
-    - Enforce `expected_base_version` before command execution and return a typed `409 Conflict` payload for stale commands.
-    - Persist and/or return typed split result metadata:
-      - `new_cluster_ids`
-      - `member_delta` with explicit identity assignment per affected cluster when direct local apply is expected
-      - `moved_counts`
-      - `affected_cluster_ids`
-      - resulting version marker
+   - Keep partition algorithm ownership in recognition split orchestration.
+   - Execute split as a backend topology command.
+   - Accept `desired_cluster_ids` only for fixed-count splits (`n_clusters >= 2`), validate exact count/uniqueness, and reject them for auto mode (`n_clusters = 0`).
+   - Enforce `expected_base_version` before command execution and return a typed `409 Conflict` payload for stale commands.
+   - Persist and/or return typed split result metadata:
+     - `new_cluster_ids`
+     - `member_delta` with explicit identity assignment per affected cluster when direct local apply is expected
+     - `moved_counts`
+     - `affected_cluster_ids`
+     - resulting version marker
 
 3. Command drain / reconciliation behavior:
-    - Drain topology commands separately from state replay outbox operations.
-    - Respect the shared per-cluster sequencing rule across both durability planes before dispatch.
-    - On acknowledged split, persist the typed result durably to the topology command row.
-    - Apply a typed result/delta directly to local projection as the primary completion path only when identity-level `member_delta` is present and complete.
-    - Use targeted projection refresh as the primary completion path when only aggregate split metadata is available.
-    - Use full tenant snapshot refresh only as last-resort repair.
-    - Mark command `reconciled` only after projection convergence succeeds locally.
+   - Drain topology commands separately from state replay outbox operations.
+   - Respect the shared per-cluster sequencing rule across both durability planes before dispatch.
+   - On acknowledged split, persist the typed result durably to the topology command row.
+   - Apply a typed result/delta directly to local projection as the primary completion path only when identity-level `member_delta` is present and complete.
+   - Use targeted projection refresh as the primary completion path when only aggregate split metadata is available.
+   - Use full tenant snapshot refresh only as last-resort repair.
+   - Mark command `reconciled` only after projection convergence succeeds locally.
 
 4. Sync status / operator status behavior:
-    - Extend sync-state reporting so split topology command states are visible in operator durability status.
-    - Either fold open split commands into the existing `pending_curation_operations` / `failed_curation_operations` / `conflict_count` surfaces, or add explicit topology-command fields and expose them in `SyncStatusController`.
-    - Record at least one topology failure timestamp and ensure tests cover the REST status surface.
+   - Extend sync-state reporting so split topology command states are visible in operator durability status.
+   - Either fold open split commands into the existing `pending_curation_operations` / `failed_curation_operations` / `conflict_count` surfaces, or add explicit topology-command fields and expose them in `SyncStatusController`.
+   - Record at least one topology failure timestamp and ensure tests cover the REST status surface.
 
 5. UI/operator semantics:
-    - Show split as a pending topology command immediately after local enqueue.
-    - Overlay command state on top of projection state instead of pretending projected members already moved.
-    - Distinguish at least:
-      - queued
-      - applied remotely
-      - reconciled locally
-      - failed / conflict
-    - Do not represent member movement as final until backend result has been applied or reconciled.
+   - Show split as a pending topology command immediately after local enqueue.
+   - Overlay command state on top of projection state instead of pretending projected members already moved.
+   - Distinguish at least:
+     - queued
+     - applied remotely
+     - reconciled locally
+     - failed / conflict
+   - Do not represent member movement as final until backend result has been applied or reconciled.
 
 ### Checklist Delta (Append-Only Override)
 
-- [ ] Replace the existing Phase 2 split checkbox text with: convert `split_cluster()` from replayable local mutation to durable topology command (`payload = {cluster_id, n_clusters, anchor_identity_id?, split_mode?, desired_cluster_ids?}`), where desired IDs are allowed only for fixed-count splits; backend owns partitioning and returns typed result metadata.
-- [ ] Add topology command schema and repository support in WordPress (`wp_acx_topology_commands`) with typed status, durable result_json, and projection reconciliation tracking.
-- [ ] Add PHPUnit coverage: split enqueue writes durable topology-command row and returns pending without synchronous backend proxy call.
-- [ ] Add backend command/result contract support for split, including validation for fixed-count `desired_cluster_ids`, rejection for auto mode, explicit `409 Conflict` behavior for stale `expected_base_version`, and typed conflict payload fields.
-- [ ] Add cross-plane ordering support so replay-plane topology operations and split topology commands share a per-cluster sequencing rule.
-- [ ] Add hard-cutover implementation step: plugin split dispatch and drain route only to the topology-command split endpoint, with tests/docs updated in the same slice.
-- [ ] Remove the legacy `cluster_split` entry from `OutboxDispatcher::TOPOLOGY_ROUTES` during the same hard-cutover slice so the old split replay path cannot survive as dead routing.
-- [ ] Add command-drain unit coverage: acknowledged split persists typed result metadata durably, survives restart, applies direct local delta only when identity-level `member_delta` is complete, and otherwise falls back to targeted reconciliation before marking convergence.
-- [ ] Add sync-state / sync-status coverage: split topology command states are surfaced to operators through pending/failed/conflict durability metrics or explicit new topology status fields.
-- [ ] Add backend validation coverage: fixed-count splits validate `desired_cluster_ids` cardinality/uniqueness and auto mode rejects caller-supplied `desired_cluster_ids`.
-- [ ] Add integration coverage: offline split command queues successfully, backend applies partition, typed result is stored locally, local projection converges via direct apply when identity-level delta is present, and otherwise via targeted reconciliation with full snapshot refresh reserved for repair-only fallback.
+- [x] Replace the existing Phase 2 split checkbox text with: convert `split_cluster()` from replayable local mutation to durable topology command (`payload = {cluster_id, n_clusters, anchor_identity_id?, split_mode?, desired_cluster_ids?}`), where desired IDs are allowed only for fixed-count splits; backend owns partitioning and returns typed result metadata.
+- [x] Add topology command schema and repository support in WordPress (`wp_acx_topology_commands`) with typed status, durable result_json, and projection reconciliation tracking.
+  Progress:
+  - [x] `wp_acx_topology_commands` and repository support now exist for durable split intent records.
+  - [x] The repository seam now includes pending-query and status/result update methods needed for the upcoming split drain slice.
+  - [x] The topology command table now has a tenant/status index to support sync-state queries efficiently.
+  - [x] Typed result persistence, retry state, and projection reconciliation tracking now exist through durable `result_json`, attempt/error updates, and `projection_reconciled_at`.
+- [x] Add PHPUnit coverage: split enqueue writes durable topology-command row and returns pending without synchronous backend proxy call.
+- [x] Add backend command/result contract support for split, including validation for fixed-count `desired_cluster_ids`, rejection for auto mode, explicit `409 Conflict` behavior for stale `expected_base_version`, and typed conflict payload fields.
+  Progress:
+  - [x] The first `POST /recognition/topology-commands/split` endpoint is in place with idempotency replay, typed result payload, and stale-base `409` behavior.
+  - [x] Member delta construction now uses targeted cluster-member reads instead of a full tenant snapshot fetch.
+  - [x] API coverage now includes both the stale-base `409` path and non-empty identity-level `member_delta` assertions.
+  - [x] Fixed-count `desired_cluster_ids` validation and auto-mode rejection now pass through the request model and API coverage, and fixed-count desired IDs are honored by the split executor.
+- [x] Add cross-plane ordering support so replay-plane topology operations and split topology commands share a per-cluster sequencing rule.
+- [x] Add hard-cutover implementation step: plugin split dispatch and drain route only to the topology-command split endpoint, with tests/docs updated in the same slice.
+      Progress:
+  - [x] Plugin request handling no longer proxies split to the legacy recognition split route and now records durable topology-command intent only.
+  - [x] Dedicated split drain routing is now in place, with focused PHPUnit coverage for direct member-delta apply, targeted reconciliation, and repair-only full snapshot fallback.
+  - [x] Cross-plane sequencing now blocks replay-plane topology mutations behind earlier split commands and blocks pending split dispatch behind earlier replay-plane topology mutations on the same cluster lineage.
+- [x] Remove the legacy `cluster_split` entry from `OutboxDispatcher::TOPOLOGY_ROUTES` during the same hard-cutover slice so the old split replay path cannot survive as dead routing.
+- [x] Add command-drain unit coverage: acknowledged split persists typed result metadata durably, survives restart, applies direct local delta only when identity-level `member_delta` is complete, and otherwise falls back to targeted reconciliation before marking convergence.
+  Progress:
+  - [x] PHPUnit now covers the dedicated split drain, durable result recording, direct local delta application, targeted reconciliation when the member delta is incomplete, and repair-only full snapshot fallback when targeted reconciliation is unavailable.
+  - [x] Applied split commands can now resume local reconciliation from durable `result_json` after restart without re-dispatch, and focused PHPUnit covers that restart-safe path.
+  - [x] Targeted per-cluster reconciliation now uses the dedicated targeted snapshot endpoint and synthetic member-delta application before any full snapshot repair fallback.
+- [x] Add sync-state / sync-status coverage: split topology command states are surfaced to operators through pending/failed/conflict durability metrics or explicit new topology status fields.
+  Progress:
+  - [x] `SyncStatusController` now includes explicit `topology_commands` lifecycle fields (`pending`, `applied`, `failed`, `conflict`, `last_reconciled_at`) alongside the aggregate durability counters.
+  - [x] Focused PHPUnit now covers both the sync-state repository readers and the REST sync-status response for split topology command lifecycle visibility.
+- [x] Add backend validation coverage: fixed-count splits validate `desired_cluster_ids` cardinality/uniqueness and auto mode rejects caller-supplied `desired_cluster_ids`.
+- [x] Add integration coverage: offline split command queues successfully, backend applies partition, typed result is stored locally, local projection converges via direct apply when identity-level delta is present, and otherwise via targeted reconciliation with full snapshot refresh reserved for repair-only fallback.
+  Progress:
+  - [x] PHPUnit flow coverage now drives split intent through `ClusterMutationsController`, persists the topology command locally, drains it through the dedicated split command plane, and verifies both direct-apply and targeted-reconciliation convergence paths.

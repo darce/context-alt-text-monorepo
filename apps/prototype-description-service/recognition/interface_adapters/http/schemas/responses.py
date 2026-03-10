@@ -354,6 +354,34 @@ class AsyncSplitClusterResponse(BaseModel):
     message: str = "Split operation queued"
 
 
+class SplitCommandCreatedCluster(BaseModel):
+    """Identity-level delta for a created cluster after split."""
+
+    cluster_id: str
+    identity_ids: list[str] = Field(default_factory=list)
+
+
+class SplitCommandMemberDelta(BaseModel):
+    """Identity-level split reconciliation payload."""
+
+    source_cluster_id: str
+    remaining_identity_ids: list[str] = Field(default_factory=list)
+    created_clusters: list[SplitCommandCreatedCluster] = Field(default_factory=list)
+
+
+class SplitTopologyCommandResponse(BaseModel):
+    """Typed result for backend split topology command execution."""
+
+    command_id: str
+    status: Literal["applied", "queued", "conflict", "failed"]
+    original_cluster_id: str
+    new_cluster_ids: list[str] = Field(default_factory=list)
+    member_delta: SplitCommandMemberDelta
+    moved_counts: list[int] = Field(default_factory=list)
+    affected_cluster_ids: list[str] = Field(default_factory=list)
+    result_snapshot_version: int
+
+
 class ClusterSnapshotMemberResponse(BaseModel):
     """Cluster member in the snapshot payload.
 
@@ -416,6 +444,9 @@ __all__ = [
     "ReassignIdentityResponse",
     "RepresentativeResponse",
     "SplitClusterResponse",
+    "SplitCommandCreatedCluster",
+    "SplitCommandMemberDelta",
+    "SplitTopologyCommandResponse",
     "MergeSuggestionResponse",
     "SuggestionResponse",
 ]

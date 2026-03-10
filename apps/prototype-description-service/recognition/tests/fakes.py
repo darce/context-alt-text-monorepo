@@ -8,7 +8,10 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import cast
 
+import numpy as np
+
 from recognition.domain.cluster import IdentityCluster
+from recognition.domain.identity import MediaIdentity
 from recognition.domain.job import Job, JobStatus, JobType, ProjectionStatus
 from recognition.domain.repositories import IdentityMember
 from recognition.interface_adapters.http.schemas.responses import ClusterResponse
@@ -60,11 +63,19 @@ class _FakeClusterRepository:
 class FakeClusterForRepo:
     """Minimal cluster object returned by FakeClusterRepository."""
 
-    def __init__(self, cluster_id: str, tenant_id: str, label: str | None = None, identity_count: int = 1) -> None:
+    def __init__(
+        self,
+        cluster_id: str,
+        tenant_id: str,
+        label: str | None = None,
+        identity_count: int = 1,
+        backend_version: int = 0,
+    ) -> None:
         self.id = cluster_id
         self.tenant_id = tenant_id
         self.label = label
         self.identity_count = identity_count
+        self.backend_version = backend_version
         self.user_confirmed = bool(label)
         self.is_labeled = bool(label)
         self.created_at = datetime.now(tz=UTC)
@@ -78,6 +89,8 @@ class FakeClusterRepository:
 
     def __init__(self) -> None:
         self.clusters: dict[str, FakeClusterForRepo] = {}
+        self.members_by_cluster: dict[str, list[tuple[IdentityMember, MediaIdentity]]] = {}
+        self._snapshot_version = 1
 
     def seed(
         self,
@@ -85,8 +98,71 @@ class FakeClusterRepository:
         tenant_id: str = "00000000-0000-0000-0000-000000000000",
         label: str | None = None,
         identity_count: int = 1,
+        backend_version: int = 0,
     ) -> None:
-        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, tenant_id, label, identity_count)
+        self.clusters[cluster_id] = FakeClusterForRepo(cluster_id, tenant_id, label, identity_count, backend_version)
+        self._snapshot_version += 1
+
+    def seed_member(self, *, tenant_id: str, cluster_id: str, identity_id: str, media_id: str = "1") -> None:
+        member = IdentityMember(
+            id=str(uuid.uuid4()),
+            cluster_id=cluster_id,
+            identity_id=identity_id,
+            similarity=0.9,
+            tenant_id=tenant_id,
+        )
+        identity = MediaIdentity(
+            id=identity_id,
+            tenant_id=tenant_id,
+            media_id=media_id,
+            embedding=np.zeros(512, dtype=np.float32),
+            confidence=0.99,
+            bbox_width=1,
+            bbox_height=1,
+            cluster_id=cluster_id,
+        )
+        self.members_by_cluster.setdefault(cluster_id, []).append((member, identity))
+        self._snapshot_version += 1
+
+    def apply_split(self, source_cluster_id: str, new_cluster_ids: Sequence[str]) -> None:
+        source_members = list(self.members_by_cluster.get(source_cluster_id, []))
+        if not source_members:
+            return
+
+        retained_members = list(source_members)
+        for new_cluster_id in new_cluster_ids:
+            if len(retained_members) <= 1:
+                break
+            member, identity = retained_members.pop()
+            moved_member = IdentityMember(
+                id=member.id,
+                cluster_id=new_cluster_id,
+                identity_id=member.identity_id,
+                similarity=member.similarity,
+                tenant_id=member.tenant_id,
+                assigned_at=member.assigned_at,
+            )
+            moved_identity = MediaIdentity(
+                id=identity.id,
+                tenant_id=identity.tenant_id,
+                media_id=identity.media_id,
+                embedding=identity.embedding,
+                confidence=identity.confidence,
+                bbox_width=identity.bbox_width,
+                bbox_height=identity.bbox_height,
+                bbox_x=identity.bbox_x,
+                bbox_y=identity.bbox_y,
+                pose_pitch=identity.pose_pitch,
+                pose_yaw=identity.pose_yaw,
+                pose_roll=identity.pose_roll,
+                image_phash=identity.image_phash,
+                metadata=dict(identity.metadata),
+                cluster_id=new_cluster_id,
+            )
+            self.members_by_cluster.setdefault(new_cluster_id, []).append((moved_member, moved_identity))
+
+        self.members_by_cluster[source_cluster_id] = retained_members
+        self._snapshot_version += 1
 
     async def get_by_id(self, cluster_id: str) -> FakeClusterForRepo | None:
         return self.clusters.get(cluster_id)
@@ -131,7 +207,6 @@ class FakeClusterRepository:
     async def get_snapshot(
         self, tenant_id: str
     ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, object]], int]:
-        """Get snapshot data for tests - returns empty members list."""
         # Filter clusters by tenant_id and convert to IdentityCluster domain objects
         clusters_for_tenant = [c for c in self.clusters.values() if c.tenant_id == tenant_id]
         identity_clusters = [
@@ -148,9 +223,41 @@ class FakeClusterRepository:
             )
             for c in clusters_for_tenant
         ]
-        # Return clusters with empty members and a simple version number
-        snapshot_version = int(datetime.now(tz=UTC).timestamp())
-        return (identity_clusters, [], snapshot_version)
+        snapshot_version = await self.get_snapshot_version(tenant_id)
+        members = await self.get_members_by_cluster_ids(tenant_id, list(self.clusters.keys()))
+        return (identity_clusters, members, snapshot_version)
+
+    async def get_members_by_cluster_ids(
+        self, tenant_id: str, cluster_ids: Sequence[str]
+    ) -> list[tuple[IdentityMember, MediaIdentity]]:
+        rows: list[tuple[IdentityMember, MediaIdentity]] = []
+        for cluster_id in cluster_ids:
+            for member, identity in self.members_by_cluster.get(cluster_id, []):
+                if identity.tenant_id == tenant_id:
+                    rows.append((member, identity))
+        return rows
+
+    async def get_clusters_by_ids(self, tenant_id: str, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
+        return [
+            IdentityCluster(
+                id=cluster.id,
+                tenant_id=cluster.tenant_id,
+                label=cluster.label,
+                is_labeled=cluster.is_labeled,
+                identity_count=cluster.identity_count,
+                user_confirmed=cluster.user_confirmed,
+                created_at=cluster.created_at,
+                dismissed_at=cluster.dismissed_at,
+                representatives=cluster.representatives,
+            )
+            for cluster_id, cluster in self.clusters.items()
+            if cluster_id in cluster_ids and cluster.tenant_id == tenant_id
+        ]
+
+    async def get_snapshot_version(self, tenant_id: str) -> int:
+        if not any(c.tenant_id == tenant_id for c in self.clusters.values()):
+            return 0
+        return self._snapshot_version
 
 
 class FakeJobRepository:
@@ -335,6 +442,7 @@ class FakeClusterService:
         self.identity_cluster_map: dict[str, str] = {}
         self.assignment_writer = SimpleNamespace(cluster_repository=_FakeClusterRepository(self))
         self.suggestion_refresh_service = None
+        self.fake_cluster_repository: FakeClusterRepository | None = None
 
     async def list_clusters(
         self,
@@ -437,6 +545,53 @@ class FakeClusterService:
         if not defer_recompute:
             self.clusters = [c for c in self.clusters if c.id != source_cluster_id]
         return updated_target
+
+    async def split_cluster(
+        self,
+        cluster_id: str,
+        n_clusters: int = 0,
+        anchor_identity_id: str | None = None,
+        split_mode: str | None = None,
+        desired_cluster_ids: list[str] | None = None,
+        recompute: bool = True,
+    ) -> tuple[list[str], list[int]]:
+        self.calls.append(
+            {
+                "method": "split_cluster",
+                "cluster_id": cluster_id,
+                "n_clusters": n_clusters,
+                "anchor_identity_id": anchor_identity_id,
+                "split_mode": split_mode,
+                "desired_cluster_ids": desired_cluster_ids,
+                "recompute": recompute,
+            }
+        )
+        source = next((c for c in self.clusters if c.id == cluster_id), None)
+        if source is None:
+            return ([], [])
+
+        split_count = n_clusters if n_clusters >= 2 else 2
+        new_cluster_count = split_count - 1
+        desired_ids = desired_cluster_ids or []
+        new_ids = [desired_ids[index] if index < len(desired_ids) else str(uuid.uuid4()) for index in range(new_cluster_count)]
+        counts = [1 for _ in range(new_cluster_count)]
+        retained_count = max(0, source.identity_count - sum(counts))
+        self._replace_cluster(self._copy_cluster(source, identity_count=retained_count or 1))
+        for new_cluster_id in new_ids:
+            self.clusters.append(
+                ClusterResponse(
+                    id=new_cluster_id,
+                    tenant_id=source.tenant_id,
+                    label=source.label,
+                    is_labeled=bool(source.label),
+                    is_auto_label=False,
+                    identity_count=1,
+                    representatives=[],
+                )
+            )
+        if self.fake_cluster_repository is not None:
+            self.fake_cluster_repository.apply_split(cluster_id, new_ids)
+        return (new_ids, counts)
 
     async def assign_outlier_to_cluster(
         self, identity_id: str, target_cluster_id: str, tenant_id: str, similarity: float = 0.0

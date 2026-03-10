@@ -20,6 +20,11 @@ if TYPE_CHECKING:
 class SuggestionServiceProtocol(Protocol):
     """Protocol for creating and resolving assignment suggestions."""
 
+    @property
+    def tenant_id(self) -> str | None:
+        """Tenant scope for the current service instance."""
+        ...
+
     async def create(self, candidate: AssignmentCandidate, confidence: float | None = None) -> None:
         """Create a suggestion record for later human review."""
         ...
@@ -61,6 +66,11 @@ class SuggestionServiceProtocol(Protocol):
 
 class SuggestionRefreshServiceProtocol(Protocol):
     """Protocol for refreshing and surfacing suggestions."""
+
+    @property
+    def tenant_id(self) -> str | None:
+        """Tenant scope for the current service instance."""
+        ...
 
     async def refresh_for_identity(
         self,

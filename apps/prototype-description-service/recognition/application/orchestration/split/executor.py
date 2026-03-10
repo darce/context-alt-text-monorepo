@@ -47,12 +47,15 @@ async def _create_split_clusters(
     label_assignments: dict[int, str],
     cluster_repo: ClusterRepository,
     original_cluster_id: str,
+    desired_cluster_ids: list[str] | None = None,
 ) -> list[str]:
     """Create new clusters for each split group. Returns new cluster IDs."""
     new_cluster_ids: list[str] = []
 
-    for group in split_groups:
-        new_cluster_id = str(generate_id())
+    normalized_desired_cluster_ids = desired_cluster_ids or []
+
+    for index, group in enumerate(split_groups):
+        new_cluster_id = normalized_desired_cluster_ids[index] if index < len(normalized_desired_cluster_ids) else str(generate_id())
         assigned_label = label_assignments.get(group.label)
         unique_suffix = new_cluster_id[:4]
         fallback_label = f"Split from {original_cluster_id[:8]} ({unique_suffix})"
@@ -142,6 +145,7 @@ async def split_cluster(
     n_clusters: int,
     anchor_identity_id: str | None = None,
     split_mode: str | None = None,
+    desired_cluster_ids: list[str] | None = None,
     session: AsyncSession | None,
     cluster_repo: ClusterRepository,
     member_repo: MemberRepository,
@@ -304,6 +308,7 @@ async def split_cluster(
         label_assignments=label_assignments,
         cluster_repo=cluster_repo,
         original_cluster_id=cluster_id,
+        desired_cluster_ids=desired_cluster_ids,
     )
     moved_counts = [group.count for group in split_groups]
     moved_identity_ids_all = [identity_id for group in split_groups for identity_id in group.identity_ids]

@@ -237,6 +237,7 @@ class FakeSuggestionService:
 
     def __init__(self) -> None:
         self.suggestions: dict[str, object] = {}
+        self.tenant_id: str | None = None
 
     async def list_for_identity(self, identity_id: str) -> list[FakeSuggestion]:
         return [s for s in self.suggestions.values() if isinstance(s, FakeSuggestion) and s.identity_id == identity_id]
@@ -311,6 +312,7 @@ class FakeSuggestionRefreshService:
 
     def __init__(self) -> None:
         self.refresh_calls: list[tuple[str, object]] = []
+        self.tenant_id: str | None = None
 
     async def refresh_for_identity(self, *, identity_id: str, reason) -> list[FakeSuggestion]:
         self.refresh_calls.append((identity_id, reason))
@@ -475,6 +477,9 @@ def api_client(
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
     fake_session = FakeSession()
+    fake_cluster_service.fake_cluster_repository = fake_cluster_repository
+    fake_suggestion_service.tenant_id = tenant_id
+    fake_suggestion_refresh_service.tenant_id = tenant_id
 
     async def _no_session():
         yield fake_session
@@ -525,8 +530,10 @@ def api_client(
 def seed_cluster(
     fake_cluster_service: FakeClusterService,
     tenant_id: str,
-    label: str = "test",
+    label: str | None = "test",
     fake_cluster_repository: FakeClusterRepository | None = None,
+    identity_count: int = 1,
+    backend_version: int = 0,
 ) -> ClusterResponse:
     """Helper to seed a fake cluster for API tests.
 
@@ -545,13 +552,19 @@ def seed_cluster(
         label=label,
         is_labeled=bool(label),
         is_auto_label=False,
-        identity_count=1,
+        identity_count=identity_count,
         representatives=[],
     )
     fake_cluster_service.clusters.append(cluster)
 
     # Also seed the repository if provided
     if fake_cluster_repository:
-        fake_cluster_repository.seed(cluster.id, tenant_id, label=label, identity_count=1)
+        fake_cluster_repository.seed(
+            cluster.id,
+            tenant_id,
+            label=label,
+            identity_count=identity_count,
+            backend_version=backend_version,
+        )
 
     return cluster

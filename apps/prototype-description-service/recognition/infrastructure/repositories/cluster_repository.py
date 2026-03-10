@@ -1046,6 +1046,90 @@ class SqlAlchemyClusterRepository(ClusterRepository):
 
         return (clusters, members_with_identities, snapshot_version)
 
+    async def get_members_by_cluster_ids(
+        self, tenant_id: str, cluster_ids: Sequence[str]
+    ) -> list[tuple[DomainMember, DomainIdentity]]:
+        """Fetch member+identity tuples for a targeted set of clusters."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        cluster_uuids = [_coerce_uuid(cluster_id) for cluster_id in cluster_ids]
+        cluster_uuids = [cluster_uuid for cluster_uuid in cluster_uuids if cluster_uuid is not None]
+        if tenant_uuid is None or not cluster_uuids:
+            return []
+
+        members_stmt = (
+            select(IdentityMemberModel, MediaIdentity)
+            .join(MediaIdentity, IdentityMemberModel.identity_id == MediaIdentity.id)
+            .join(ClusterModel, IdentityMemberModel.cluster_id == ClusterModel.id)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(IdentityMemberModel.cluster_id.in_(cluster_uuids))
+            .order_by(IdentityMemberModel.cluster_id, IdentityMemberModel.assigned_at)
+        )
+        members_result = await self._session.execute(members_stmt)
+        member_rows = list(members_result.all())
+
+        members_with_identities: list[tuple[DomainMember, DomainIdentity]] = []
+        for member_model, identity_model in member_rows:
+            domain_member = DomainMember(
+                id=str(member_model.id),
+                cluster_id=str(member_model.cluster_id),
+                identity_id=str(member_model.identity_id),
+                similarity=float(member_model.similarity),
+                tenant_id=str(member_model.tenant_id) if member_model.tenant_id else None,
+                assigned_at=member_model.assigned_at if isinstance(member_model.assigned_at, datetime) else None,
+            )
+            domain_identity = self._to_domain_identity(identity_model, cluster_id=str(member_model.cluster_id))
+            members_with_identities.append((domain_member, domain_identity))
+
+        return members_with_identities
+
+    async def get_clusters_by_ids(self, tenant_id: str, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
+        """Fetch cluster summaries for a targeted set of clusters."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        cluster_uuids = [_coerce_uuid(cluster_id) for cluster_id in cluster_ids]
+        cluster_uuids = [cluster_uuid for cluster_uuid in cluster_uuids if cluster_uuid is not None]
+        if tenant_uuid is None or not cluster_uuids:
+            return []
+
+        stmt = (
+            select(ClusterModel)
+            .where(ClusterModel.tenant_id == tenant_uuid)
+            .where(ClusterModel.id.in_(cluster_uuids))
+            .order_by(ClusterModel.updated_at.asc(), ClusterModel.created_at.asc())
+        )
+        result = await self._session.execute(stmt)
+        cluster_models = list(result.scalars().all())
+
+        clusters: list[IdentityCluster] = []
+        for model in cluster_models:
+            clusters.append(
+                IdentityCluster(
+                    id=str(model.id),
+                    tenant_id=str(model.tenant_id),
+                    label=model.label,
+                    is_labeled=bool(model.label),
+                    identity_count=int(model.identity_count),
+                    user_confirmed=bool(model.user_confirmed),
+                    created_at=model.created_at if isinstance(model.created_at, datetime) else None,
+                    dismissed_at=model.dismissed_at if isinstance(model.dismissed_at, datetime) else None,
+                    representatives=[],
+                )
+            )
+
+        return clusters
+
+    async def get_snapshot_version(self, tenant_id: str) -> int:
+        """Fetch the tenant snapshot version without loading full snapshot rows."""
+        tenant_uuid = _coerce_uuid(tenant_id)
+        if tenant_uuid is None:
+            return 0
+
+        stmt = select(func.max(ClusterModel.updated_at)).where(ClusterModel.tenant_id == tenant_uuid)
+        result = await self._session.execute(stmt)
+        max_updated_at = result.scalar_one_or_none()
+        if not isinstance(max_updated_at, datetime):
+            max_updated_at = datetime(1970, 1, 1, tzinfo=UTC)
+        return int(max_updated_at.timestamp() * 1_000_000)
+
     def _to_domain_identity(self, model: MediaIdentity, *, cluster_id: str | None = None) -> DomainIdentity:
         """Convert MediaIdentity ORM model to domain representation."""
         return DomainIdentity(

@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 from recognition.interface_adapters.http.validation_utils import validate_uuid_format
 
@@ -198,6 +198,55 @@ class SplitClusterRequest(BaseModel):
         return [_validate_uuid(item) for item in v]
 
 
+class SplitTopologyCommandRequest(BaseModel):
+    """Request to execute split through the topology-command plane."""
+
+    tenant_id: str
+    cluster_id: str
+    n_clusters: int = Field(default=0, ge=0, description="0=auto-detect, 2+=fixed count")
+    anchor_identity_id: str | None = None
+    split_mode: str | None = Field(default=None, description="Optional split mode hint")
+    desired_cluster_ids: list[str] | None = None
+    expected_base_version: int = Field(default=0, ge=0)
+    idempotency_key: str
+
+    @field_validator("tenant_id", "cluster_id", "idempotency_key")
+    @classmethod
+    def validate_topology_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("anchor_identity_id")
+    @classmethod
+    def validate_topology_anchor_identity_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _validate_uuid(v)
+
+    @field_validator("desired_cluster_ids")
+    @classmethod
+    def validate_topology_desired_cluster_ids(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        return [_validate_uuid(item) for item in v]
+
+    @model_validator(mode="after")
+    def validate_desired_cluster_ids_shape(self) -> SplitTopologyCommandRequest:
+        if not self.desired_cluster_ids:
+            return self
+
+        if self.n_clusters < 2:
+            raise ValueError("desired_cluster_ids are only allowed for fixed-count splits")
+
+        if len(set(self.desired_cluster_ids)) != len(self.desired_cluster_ids):
+            raise ValueError("desired_cluster_ids must be unique")
+
+        expected_new_cluster_count = self.n_clusters - 1
+        if len(self.desired_cluster_ids) != expected_new_cluster_count:
+            raise ValueError(f"desired_cluster_ids must contain exactly {expected_new_cluster_count} ids")
+
+        return self
+
+
 class PinRepresentativeRequest(BaseModel):
     """Request to pin/unpin a representative."""
 
@@ -228,5 +277,6 @@ __all__ = [
     "PinRepresentativeRequest",
     "ReassignIdentityRequest",
     "SplitClusterRequest",
+    "SplitTopologyCommandRequest",
     "SuggestionActionRequest",
 ]

@@ -335,7 +335,7 @@ class ClustersRepository implements ClustersRepositoryInterface {
 
 		$now_utc = gmdate( 'Y-m-d H:i:s' );
 		$sql     = $this->prepare_query(
-			'UPDATE %i SET label = %s, is_user_confirmed = 1, updated_at = %s WHERE cluster_uuid = %s',
+			'UPDATE %i SET label = %s, is_user_confirmed = 1, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
 			array(
 				$this->table_name,
 				$normalized_label,
@@ -421,6 +421,57 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		}
 
 		return 0;
+	}
+
+	/**
+	 * @return array<string,array<string,mixed>>
+	 */
+	public function get_curated_clusters_for_tenant( string $tenant_id ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT * FROM %i WHERE tenant_id = %s AND is_user_confirmed = 1',
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$clusters = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$cluster_uuid = trim( (string) ( $row['cluster_uuid'] ?? '' ) );
+			if ( '' === $cluster_uuid ) {
+				continue;
+			}
+
+			$clusters[ $cluster_uuid ] = $row;
+		}
+
+		return $clusters;
 	}
 
 	/**

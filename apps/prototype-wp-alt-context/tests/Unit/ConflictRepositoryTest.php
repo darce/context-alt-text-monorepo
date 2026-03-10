@@ -39,6 +39,82 @@ class ConflictRepositoryTest extends TestCase
 		$this->assertStringContainsString("'open'", $insertQuery);
 	}
 
+	public function testRecordProjectionConflictUsesUpsertSemantics(): void
+	{
+		global $wpdb;
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_projection_conflict(
+			'tenant-projection',
+			'member',
+			'identity-88',
+			'member_cluster_reassignment',
+			54,
+			33,
+			9,
+			['cluster_uuid' => 'cluster-remote'],
+			['cluster_uuid' => 'cluster-local']
+		);
+
+		$this->assertSame(1, $result);
+
+		$insertQuery = $this->findQueryContaining($wpdb->queries, 'INSERT INTO `wp_acx_sync_conflicts`');
+		$this->assertStringContainsString("'tenant-projection'", $insertQuery);
+		$this->assertStringContainsString("'member_cluster_reassignment'", $insertQuery);
+		$this->assertStringContainsString('ON DUPLICATE KEY UPDATE', $insertQuery);
+		$this->assertStringContainsString('machine_payload = VALUES(machine_payload)', $insertQuery);
+		$this->assertStringContainsString('local_payload = VALUES(local_payload)', $insertQuery);
+		$this->assertStringNotContainsString('resolution_status = VALUES(resolution_status)', $insertQuery);
+	}
+
+	public function testRecordProjectionConflictUpdatesExistingOpenConflictAcrossVersions(): void
+	{
+		global $wpdb;
+		$wpdb->mockRow = [
+			'id' => 7,
+			'backend_version' => 54,
+			'resolution_status' => 'open',
+		];
+
+		$repository = new ConflictRepository();
+		$result = $repository->record_projection_conflict(
+			'tenant-projection',
+			'cluster',
+			'cluster-7',
+			'curated_cluster_deleted',
+			55,
+			33,
+			9,
+			['status' => 'missing_from_snapshot'],
+			['label' => 'Curated']
+		);
+
+		$this->assertSame(7, $result);
+
+		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_conflicts SET');
+		$this->assertStringContainsString("backend_version = 55", $updateQuery);
+		$this->assertStringContainsString("WHERE id = 7", $updateQuery);
+	}
+
+	public function testRecordProjectionConflictRejectsMissingRequiredIdentifiers(): void
+	{
+		$repository = new ConflictRepository();
+
+		$result = $repository->record_projection_conflict(
+			'',
+			'member',
+			'identity-88',
+			'member_cluster_reassignment',
+			54,
+			33,
+			9,
+			['cluster_uuid' => 'cluster-remote'],
+			['cluster_uuid' => 'cluster-local']
+		);
+
+		$this->assertFalse($result);
+	}
+
 	/**
 	 * @param array<int,string> $queries
 	 */
@@ -51,6 +127,5 @@ class ConflictRepositoryTest extends TestCase
 		}
 
 		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
-		return '';
 	}
 }

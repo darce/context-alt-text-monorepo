@@ -7,6 +7,7 @@ namespace AltContext\Tests\Unit;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Sovereign\Sync\ConflictRepository;
 use AltContext\Sovereign\Sync\SnapshotProjector;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
@@ -117,6 +118,88 @@ class SnapshotProjectorTest extends TestCase
         $this->assertCount(1, $warnings);
         $this->assertSame('empty_tenant_id', $warnings[0][0]);
     }
+
+    public function testProjectRecordsCuratedClusterDeletionConflictsAndRefreshesMetrics(): void
+    {
+        global $wpdb;
+
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $syncRepo->postRefreshConflictCount = 1;
+        $projector = new SnapshotProjector(
+            new SnapshotProjectorClustersSpy([
+                'cluster-missing' => [
+                    'cluster_uuid' => 'cluster-missing',
+                    'label' => 'Curated',
+                    'person_id' => 22,
+                    'curation_state' => 'dismissed',
+                    'snapshot_version' => 12,
+                    'local_revision' => 5,
+                ],
+            ]),
+            new SnapshotProjectorMembersSpy(),
+            $syncRepo,
+            new ConflictRepository()
+        );
+
+        $hookCalls = [];
+        add_action(
+            'acx_projection_conflicts_detected',
+            static function (int $count, string $tenantId) use (&$hookCalls): void {
+                $hookCalls[] = [$count, $tenantId];
+            },
+            10,
+            2
+        );
+
+        $projector->project(
+            'tenant-conflicts',
+            [
+                'snapshot_version' => 19,
+                'clusters' => [],
+                'members' => [],
+            ]
+        );
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_conflicts`', $sql);
+        $this->assertStringContainsString("'curated_cluster_deleted'", $sql);
+        $this->assertSame('tenant-conflicts', $syncRepo->refreshedTenantId);
+        $this->assertSame([[1, 'tenant-conflicts']], $hookCalls);
+    }
+
+    public function testProjectEmitsConflictHookForMemberConflictsAfterMetricsRefresh(): void
+    {
+        $syncRepo = new SnapshotProjectorSyncStateSpy();
+        $syncRepo->postRefreshConflictCount = 2;
+
+        $hookCalls = [];
+        add_action(
+            'acx_projection_conflicts_detected',
+            static function (int $count, string $tenantId) use (&$hookCalls): void {
+                $hookCalls[] = [$count, $tenantId];
+            },
+            10,
+            2
+        );
+
+        $projector = new SnapshotProjector(
+            new SnapshotProjectorClustersSpy(),
+            new SnapshotProjectorMembersSpy(),
+            $syncRepo,
+            new ConflictRepository()
+        );
+
+        $projector->project(
+            'tenant-member-conflicts',
+            [
+                'snapshot_version' => 21,
+                'clusters' => [],
+                'members' => [],
+            ]
+        );
+
+        $this->assertSame([[2, 'tenant-member-conflicts']], $hookCalls);
+    }
 }
 
 class SnapshotProjectorClustersSpy extends NullClustersRepository
@@ -125,6 +208,16 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
     public int $snapshotVersion = 0;
     public array $clusters = [];
     public bool $shouldThrow = false;
+    /** @var array<string,array<string,mixed>> */
+    private array $curatedClusters;
+
+    /**
+     * @param array<string,array<string,mixed>> $curatedClusters
+     */
+    public function __construct(array $curatedClusters = [])
+    {
+        $this->curatedClusters = $curatedClusters;
+    }
 
     public function merge_snapshot_for_tenant(string $tenant_id, array $clusters, int $snapshot_version): void
     {
@@ -135,6 +228,11 @@ class SnapshotProjectorClustersSpy extends NullClustersRepository
         $this->tenantId = $tenant_id;
         $this->clusters = $clusters;
         $this->snapshotVersion = $snapshot_version;
+    }
+
+    public function get_curated_clusters_for_tenant(string $tenant_id): array
+    {
+        return $this->curatedClusters;
     }
 }
 
@@ -151,6 +249,10 @@ class SnapshotProjectorMembersSpy extends NullIdentityMembersRepository
 class SnapshotProjectorSyncStateSpy extends NullSyncStateRepository
 {
     public int $snapshotVersion = 0;
+    public string $refreshedTenantId = '';
+    public int $conflictCount = 0;
+    public int $preRefreshConflictCount = 0;
+    public int $postRefreshConflictCount = 0;
 
     public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void
     {
@@ -160,5 +262,16 @@ class SnapshotProjectorSyncStateSpy extends NullSyncStateRepository
     public function get_snapshot_version(string $tenant_id): int
     {
         return $this->snapshotVersion;
+    }
+
+    public function get_conflict_count(string $tenant_id): int
+    {
+        return $this->conflictCount;
+    }
+
+    public function refresh_curation_metrics(string $tenant_id): void
+    {
+        $this->refreshedTenantId = $tenant_id;
+        $this->conflictCount = $this->postRefreshConflictCount;
     }
 }

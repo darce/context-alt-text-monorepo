@@ -197,6 +197,88 @@ class SovereignProjectionIntegrationTest extends TestCase
         );
     }
 
+    public function testProjectMixedCuratedAndUncuratedDataRefreshesConflictMetrics(): void
+    {
+        $projector = new SnapshotProjector(
+            new ClustersRepository(),
+            new IdentityMembersRepository(),
+            new SyncStateRepository()
+        );
+
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'cluster-curated-local',
+                'label' => 'Curated Local',
+                'identity_uuid' => 'identity-curated-local',
+                'is_curated' => 1,
+                'projection_version' => 40,
+            ],
+        ];
+        $wpdb->queries = [];
+
+        $projector->project(
+            'tenant-mixed-conflicts',
+            [
+                'snapshot_version' => 41,
+                'clusters' => [
+                    [
+                        'cluster_uuid' => 'cluster-curated-local',
+                        'label' => 'Curated Local',
+                        'curation_state' => 'confirmed',
+                        'is_user_confirmed' => true,
+                        'identity_count' => 1,
+                        'representative_media_id' => 701,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-uncurated',
+                        'label' => 'Machine Updated',
+                        'curation_state' => 'auto',
+                        'is_user_confirmed' => false,
+                        'identity_count' => 2,
+                        'representative_media_id' => 702,
+                    ],
+                    [
+                        'cluster_uuid' => 'cluster-machine-target',
+                        'label' => 'Machine Target',
+                        'curation_state' => 'auto',
+                        'is_user_confirmed' => false,
+                        'identity_count' => 2,
+                        'representative_media_id' => 703,
+                    ],
+                ],
+                'members' => [
+                    [
+                        'identity_uuid' => 'identity-curated-local',
+                        'cluster_uuid' => 'cluster-machine-target',
+                        'attachment_id' => 701,
+                    ],
+                    [
+                        'identity_uuid' => 'identity-uncurated',
+                        'cluster_uuid' => 'cluster-machine-target',
+                        'attachment_id' => 702,
+                    ],
+                    [
+                        'identity_uuid' => 'identity-new',
+                        'cluster_uuid' => 'cluster-machine-target',
+                        'attachment_id' => 703,
+                    ],
+                ],
+            ]
+        );
+
+        $queries = $wpdb->queries;
+        $sql = implode("\n", $queries);
+
+        $this->assertStringContainsString("'member_cluster_reassignment'", $sql);
+        $this->assertStringContainsString('wp_acx_sync_state', $sql);
+        $this->assertStringContainsString('conflict_count', $sql);
+
+        $memberInsert = $this->findQueryContaining($queries, 'INSERT INTO `wp_acx_identity_members`');
+        $this->assertStringContainsString("SELECT 'identity-uncurated', 'cluster-machine-target', 702", $memberInsert);
+        $this->assertStringNotContainsString("SELECT 'identity-curated-local', 'cluster-machine-target', 701", $sql);
+    }
+
     /**
      * @param array<int,string> $queries
      */
@@ -209,6 +291,5 @@ class SovereignProjectionIntegrationTest extends TestCase
         }
 
         $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-        return '';
     }
 }

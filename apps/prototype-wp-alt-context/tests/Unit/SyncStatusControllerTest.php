@@ -196,6 +196,62 @@ class SyncStatusControllerTest extends TestCase
         $this->assertFalse($data['is_stale']);
     }
 
+    public function testTriggerSyncReturnsUpdatedConflictCountAfterProjection(): void
+    {
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 10);
+
+        $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+            private int $conflictCount = 0;
+
+            public function __construct(string $timestamp) {
+                $this->timestamp = $timestamp;
+            }
+
+            public function get_snapshot_version(string $tenant_id): int {
+                return 7;
+            }
+
+            public function get_last_updated(string $tenant_id): ?string {
+                return $this->timestamp;
+            }
+
+            public function get_conflict_count(string $tenant_id): int {
+                return $this->conflictCount;
+            }
+
+            public function setConflictCount(int $conflictCount): void {
+                $this->conflictCount = $conflictCount;
+            }
+        };
+
+        $syncJob = new class($syncRepo) implements SyncPullJobInterface {
+            private object $syncRepo;
+
+            public function __construct(object $syncRepo) {
+                $this->syncRepo = $syncRepo;
+            }
+
+            public function perform(string $tenant_id): bool {
+                return $this->perform_bypass_cooldown($tenant_id);
+            }
+
+            public function perform_bypass_cooldown(string $tenant_id): bool {
+                $this->syncRepo->setConflictCount(3);
+                return true;
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertTrue($data['synced']);
+        $this->assertSame(3, $data['conflict_count']);
+        $this->assertSame($recentTimestamp, $data['last_synced_at']);
+    }
+
     public function testTriggerSyncReturnsSyncedFalseOnFailure(): void
     {
           $syncRepo = new class() extends NullSyncStateRepository {

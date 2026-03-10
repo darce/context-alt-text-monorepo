@@ -5,11 +5,18 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Sovereign\Sync\SyncPullJob;
+use AltContext\Api\SyncStatusController;
+use AltContext\Sovereign\Repositories\ClustersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SnapshotClient;
+use AltContext\Sovereign\Sync\SnapshotProjector;
 use AltContext\Sovereign\Sync\SnapshotProjectorInterface;
+use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_Error;
 use WP_REST_Response;
+use WP_REST_Request;
 
 /**
  * @covers \AltContext\Sovereign\Sync\SyncPullJob
@@ -196,6 +203,113 @@ class SyncPullJobTest extends TestCase
         $this->assertIsArray($received);
         $this->assertSame('tenant-ack', $received['tenant_id']);
         $this->assertSame('projection_acknowledgement_failed', $received['context']);
+    }
+
+    public function testTriggerSyncEndToEndReturnsConflictCountAfterProjection(): void
+    {
+        global $wpdb;
+        $wpdb->mockResults = [
+            [
+                'cluster_uuid' => 'cluster-curated-local',
+                'label' => 'Curated Local',
+                'curation_state' => 'confirmed',
+                'is_user_confirmed' => 1,
+                'identity_uuid' => 'identity-curated-local',
+                'is_curated' => 1,
+                'projection_version' => 40,
+            ],
+        ];
+
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $projector = new SnapshotProjector(
+            new ClustersRepository(),
+            new IdentityMembersRepository(),
+            $syncRepo
+        );
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 41,
+            'source_job_id' => 'job-41',
+            'clusters' => [
+                [
+                    'cluster_uuid' => 'cluster-curated-local',
+                    'label' => 'Curated Local',
+                    'curation_state' => 'confirmed',
+                    'is_user_confirmed' => true,
+                    'identity_count' => 1,
+                    'representative_media_id' => 701,
+                ],
+                [
+                    'cluster_uuid' => 'cluster-machine-target',
+                    'label' => 'Machine Target',
+                    'curation_state' => 'auto',
+                    'is_user_confirmed' => false,
+                    'identity_count' => 2,
+                    'representative_media_id' => 703,
+                ],
+            ],
+            'members' => [
+                [
+                    'identity_uuid' => 'identity-curated-local',
+                    'cluster_uuid' => 'cluster-machine-target',
+                    'attachment_id' => 701,
+                ],
+                [
+                    'identity_uuid' => 'identity-new',
+                    'cluster_uuid' => 'cluster-machine-target',
+                    'attachment_id' => 703,
+                ],
+            ],
+        ]);
+        $syncJob = new SyncPullJob($client, $projector);
+        $controller = new SyncStatusController($syncRepo, $syncJob);
+
+        $response = $controller->trigger_sync(new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger'));
+        $data = $response->get_data();
+
+        $this->assertTrue($data['synced']);
+        $this->assertSame('ok', $data['reason']);
+        $this->assertSame(1, $data['conflict_count']);
+        $this->assertSame(41, $data['last_snapshot_version']);
+        $this->assertSame('job-41', $client->acknowledgedJobId);
+        $this->assertSame(41, $client->acknowledgedSnapshotVersion);
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("'member_cluster_reassignment'", $sql);
+    }
+}
+
+class SyncPullJobSyncStateSpy extends NullSyncStateRepository implements SyncStateRepositoryInterface
+{
+    private int $snapshotVersion = 0;
+    private ?string $lastUpdated = null;
+    private int $conflictCount = 0;
+
+    public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void
+    {
+        $this->snapshotVersion = $snapshot_version;
+        $this->lastUpdated = gmdate('Y-m-d H:i:s');
+    }
+
+    public function get_snapshot_version(string $tenant_id): int
+    {
+        return $this->snapshotVersion;
+    }
+
+    public function get_last_updated(string $tenant_id): ?string
+    {
+        return $this->lastUpdated;
+    }
+
+    public function refresh_curation_metrics(string $tenant_id): void
+    {
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+        $this->conflictCount = str_contains($sql, "'member_cluster_reassignment'") ? 1 : 0;
+    }
+
+    public function get_conflict_count(string $tenant_id): int
+    {
+        return $this->conflictCount;
     }
 }
 

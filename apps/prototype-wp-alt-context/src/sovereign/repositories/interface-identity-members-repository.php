@@ -34,4 +34,21 @@ interface IdentityMembersRepositoryInterface {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function list_for_media_ids( string $tenant_id, array $media_ids ): array;
+
+	/**
+	 * Mark one projected member row as locally curated.
+	 */
+	public function mark_as_curated( string $identity_uuid ): int;
+
+	/**
+	 * Reassign one projected member row to a different cluster and mark it as curated.
+	 */
+	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int;
+
+	/**
+	 * Return curated member rows for one tenant keyed by identity_uuid.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	public function get_curated_members_for_tenant( string $tenant_id ): array;
 }

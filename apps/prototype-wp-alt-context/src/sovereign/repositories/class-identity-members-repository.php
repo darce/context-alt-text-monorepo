@@ -5,7 +5,9 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/../sync/class-conflict-repository.php';
 
+use AltContext\Sovereign\Sync\ConflictRepository;
 use function absint;
 use function array_fill;
 use function array_filter;
@@ -31,8 +33,9 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 	private string $members_table_name;
 	private string $clusters_table_name;
+	private ConflictRepository $conflict_repository;
 
-	public function __construct( ?string $members_table_name = null, ?string $clusters_table_name = null ) {
+	public function __construct( ?string $members_table_name = null, ?string $clusters_table_name = null, ?ConflictRepository $conflict_repository = null ) {
 		global $wpdb;
 
 		$prefix = 'wp_';
@@ -42,6 +45,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 		$this->members_table_name  = $members_table_name ?? $prefix . 'acx_identity_members';
 		$this->clusters_table_name = $clusters_table_name ?? $prefix . 'acx_clusters';
+		$this->conflict_repository = $conflict_repository ?? new ConflictRepository();
 	}
 
 	/**
@@ -82,6 +86,9 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 			)
 		);
 
+		$curated_members = $this->get_curated_members_for_tenant( $normalized_tenant_id );
+		$this->record_missing_curated_member_conflicts( $normalized_tenant_id, $curated_members, $incoming_identity_ids, $snapshot_version );
+
 		$this->delete_stale_non_curated_rows( $normalized_tenant_id, $incoming_identity_ids );
 		$this->delete_orphan_rows();
 
@@ -93,6 +100,12 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 				continue;
 			}
 
+			$existing_curated_member = $curated_members[ $identity_uuid ] ?? null;
+			if ( is_array( $existing_curated_member ) && $this->is_member_cluster_conflict( $existing_curated_member, $cluster_uuid ) ) {
+				$this->record_member_cluster_reassignment_conflict( $normalized_tenant_id, $identity_uuid, $cluster_uuid, $similarity_value = $this->normalize_similarity_value( $member ), $snapshot_version, $existing_curated_member );
+				continue;
+			}
+
 			$attachment_id    = absint( $member['attachment_id'] ?? $member['media_id'] ?? 0 );
 			$similarity_value = $this->normalize_similarity_value( $member );
 			$thumb_path       = $this->normalize_thumb_path( $member, $identity_uuid, $attachment_id );
@@ -100,8 +113,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 
 			$sql = $this->prepare_query(
 				"INSERT INTO %i
-					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, created_at, updated_at)
-				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), %s, %s
+					(identity_uuid, cluster_uuid, attachment_id, bbox_json, thumb_path, similarity, is_curated, projection_version, created_at, updated_at)
+				SELECT %s, %s, %d, %s, %s, NULLIF(%s, ''), %d, %d, %s, %s
 				FROM DUAL
 				WHERE EXISTS (
 					SELECT 1
@@ -110,11 +123,12 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 						AND c.tenant_id = %s
 				)
 				ON DUPLICATE KEY UPDATE
-					cluster_uuid = VALUES(cluster_uuid),
+					cluster_uuid = IF(is_curated = 1, cluster_uuid, VALUES(cluster_uuid)),
 					attachment_id = VALUES(attachment_id),
 					bbox_json = VALUES(bbox_json),
 					thumb_path = VALUES(thumb_path),
 					similarity = NULLIF(%s, ''),
+					projection_version = IF(is_curated = 1, projection_version, VALUES(projection_version)),
 					updated_at = VALUES(updated_at)",
 				array(
 					$this->members_table_name,
@@ -124,6 +138,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 					$bbox_json,
 					$thumb_path,
 					$similarity_value,
+					0,
+					max( 0, $snapshot_version ),
 					$now_utc,
 					$now_utc,
 					$this->clusters_table_name,
@@ -335,6 +351,124 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		return is_array( $rows ) ? $rows : array();
 	}
 
+	public function mark_as_curated( string $identity_uuid ): int {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		if ( '' === $normalized_identity_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET is_curated = 1, updated_at = %s WHERE identity_uuid = %s',
+			array(
+				$this->members_table_name,
+				$now_utc,
+				$normalized_identity_uuid,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
+	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		$normalized_target_cluster_uuid = trim( $target_cluster_uuid );
+		if ( '' === $normalized_identity_uuid || '' === $normalized_target_cluster_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql = $this->prepare_query(
+			'UPDATE %i SET cluster_uuid = %s, is_curated = 1, updated_at = %s WHERE identity_uuid = %s',
+			array(
+				$this->members_table_name,
+				$normalized_target_cluster_uuid,
+				$now_utc,
+				$normalized_identity_uuid,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
+	/**
+	 * @return array<string,array<string,mixed>>
+	 */
+	public function get_curated_members_for_tenant( string $tenant_id ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return array();
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_results' ) ) {
+			return array();
+		}
+
+		$sql = $this->prepare_query(
+			"SELECT m.* FROM %i m
+			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			WHERE c.tenant_id = %s AND m.is_curated = 1",
+			array(
+				$this->members_table_name,
+				$this->clusters_table_name,
+				$normalized_tenant_id,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		$members = array();
+		foreach ( $rows as $row ) {
+			if ( ! is_array( $row ) ) {
+				continue;
+			}
+
+			$identity_uuid = trim( (string) ( $row['identity_uuid'] ?? '' ) );
+			if ( '' === $identity_uuid ) {
+				continue;
+			}
+
+			$members[ $identity_uuid ] = $row;
+		}
+
+		return $members;
+	}
+
 	/**
 	 * @param string[] $incoming_identity_ids
 	 */
@@ -350,7 +484,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 				"DELETE m FROM %i m
 				INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 				WHERE c.tenant_id = %s
-					AND c.is_user_confirmed = 0",
+					AND c.is_user_confirmed = 0
+					AND m.is_curated = 0",
 				array(
 					$this->members_table_name,
 					$this->clusters_table_name,
@@ -377,6 +512,7 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
 			WHERE c.tenant_id = %s
 				AND c.is_user_confirmed = 0
+				AND m.is_curated = 0
 				AND m.identity_uuid NOT IN ($placeholders)",
 			array_merge(
 				array(
@@ -404,7 +540,8 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		$sql = $this->prepare_query(
 			"DELETE m FROM %i m
 			LEFT JOIN %i c ON c.cluster_uuid = m.cluster_uuid
-			WHERE c.cluster_uuid IS NULL",
+			WHERE c.cluster_uuid IS NULL
+				AND m.is_curated = 0",
 			array(
 				$this->members_table_name,
 				$this->clusters_table_name,
@@ -414,6 +551,74 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		if ( is_string( $sql ) && '' !== $sql ) {
 			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 			$wpdb->query( $sql );
+		}
+	}
+
+	/**
+	 * @param array<string,mixed> $existing_member
+	 */
+	private function is_member_cluster_conflict( array $existing_member, string $incoming_cluster_uuid ): bool {
+		$existing_cluster_uuid = trim( (string) ( $existing_member['cluster_uuid'] ?? '' ) );
+		return '' !== $existing_cluster_uuid && $existing_cluster_uuid !== trim( $incoming_cluster_uuid );
+	}
+
+	/**
+	 * @param array<string,mixed> $existing_member
+	 */
+	private function record_member_cluster_reassignment_conflict(
+		string $tenant_id,
+		string $identity_uuid,
+		string $incoming_cluster_uuid,
+		string $similarity_value,
+		int $snapshot_version,
+		array $existing_member
+	): void {
+		$this->conflict_repository->record_projection_conflict(
+			$tenant_id,
+			'member',
+			$identity_uuid,
+			'member_cluster_reassignment',
+			max( 0, $snapshot_version ),
+			max( 0, (int) ( $existing_member['projection_version'] ?? 0 ) ),
+			0,
+			array(
+				'cluster_uuid' => $incoming_cluster_uuid,
+				'similarity' => '' !== $similarity_value ? (float) $similarity_value : null,
+			),
+			array(
+				'cluster_uuid' => $existing_member['cluster_uuid'] ?? null,
+			)
+		);
+	}
+
+	/**
+	 * @param array<string,array<string,mixed>> $curated_members
+	 * @param string[] $incoming_identity_ids
+	 */
+	private function record_missing_curated_member_conflicts( string $tenant_id, array $curated_members, array $incoming_identity_ids, int $snapshot_version ): void {
+		$incoming_identity_lookup = array_fill_keys( $this->sanitize_uuid_list( $incoming_identity_ids ), true );
+
+		foreach ( $curated_members as $identity_uuid => $member ) {
+			if ( isset( $incoming_identity_lookup[ $identity_uuid ] ) || ! is_array( $member ) ) {
+				continue;
+			}
+
+			$this->conflict_repository->record_projection_conflict(
+				$tenant_id,
+				'member',
+				(string) $identity_uuid,
+				'curated_member_deleted',
+				max( 0, $snapshot_version ),
+				max( 0, (int) ( $member['projection_version'] ?? 0 ) ),
+				0,
+				array(
+					'identity_uuid' => (string) $identity_uuid,
+					'status' => 'missing_from_snapshot',
+				),
+				array(
+					'cluster_uuid' => $member['cluster_uuid'] ?? null,
+				)
+			);
 		}
 	}
 

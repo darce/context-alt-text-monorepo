@@ -4,6 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/../repositories/trait-prepares-sql-queries.php';
+
+use AltContext\Sovereign\Repositories\PreparesSqlQueries;
+
 use function current_time;
 use function is_array;
 use function is_numeric;
@@ -15,6 +19,8 @@ use function trim;
 use function wp_json_encode;
 
 class ConflictRepository {
+	use PreparesSqlQueries;
+
 	private string $table_name;
 
 	public function __construct( ?string $table_name = null ) {
@@ -86,6 +92,166 @@ class ConflictRepository {
 		}
 
 		return $this->resolve_insert_id( $wpdb );
+	}
+
+	/**
+	 * Persist one projection conflict using idempotent upsert semantics.
+	 *
+	 * @param array<string,mixed> $machine_payload
+	 * @param array<string,mixed> $local_payload
+	 */
+	public function record_projection_conflict(
+		string $tenant_id,
+		string $entity_type,
+		string $entity_key,
+		string $conflict_code,
+		int $backend_version,
+		int $expected_base_version,
+		int $local_revision,
+		array $machine_payload,
+		array $local_payload
+	): int|false {
+		global $wpdb;
+
+		$normalized_tenant_id  = trim( $tenant_id );
+		$normalized_entity_type = trim( $entity_type );
+		$normalized_entity_key = trim( $entity_key );
+		$normalized_conflict_code = trim( $conflict_code );
+
+		if (
+			'' === $normalized_tenant_id
+			|| '' === $normalized_entity_type
+			|| '' === $normalized_entity_key
+			|| '' === $normalized_conflict_code
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'query' )
+			|| ! method_exists( $wpdb, 'update' )
+		) {
+			return false;
+		}
+
+		$existing_open_conflict = $this->find_open_projection_conflict(
+			$normalized_tenant_id,
+			$normalized_entity_type,
+			$normalized_entity_key,
+			$normalized_conflict_code
+		);
+
+		$machine_payload_json = $this->encode_payload_json( $machine_payload );
+		$local_payload_json   = $this->encode_payload_json( $local_payload );
+		$created_at           = current_time( 'mysql' );
+
+		if ( is_array( $existing_open_conflict ) ) {
+			$updated = $wpdb->update(
+				$this->table_name,
+				array(
+					'expected_base_version' => max( 0, $expected_base_version ),
+					'backend_version' => max( 0, $backend_version ),
+					'local_revision' => max( 0, $local_revision ),
+					'machine_payload' => $machine_payload_json,
+					'local_payload' => $local_payload_json,
+				),
+				array( 'id' => max( 0, (int) ( $existing_open_conflict['id'] ?? 0 ) ) ),
+				array( '%d', '%d', '%d', '%s', '%s' ),
+				array( '%d' )
+			);
+
+			if ( false === $updated ) {
+				return false;
+			}
+
+			return max( 1, (int) ( $existing_open_conflict['id'] ?? 1 ) );
+		}
+
+		$sql = $this->prepare_query(
+			"INSERT INTO %i
+				(tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, machine_payload, local_payload, resolution_status, created_at)
+			VALUES (%s, %s, %s, %d, %d, %d, %d, %s, %s, %s, %s, %s)
+			ON DUPLICATE KEY UPDATE
+				machine_payload = VALUES(machine_payload),
+				local_payload = VALUES(local_payload),
+				expected_base_version = VALUES(expected_base_version),
+				local_revision = VALUES(local_revision)",
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+				$normalized_entity_type,
+				$normalized_entity_key,
+				0,
+				max( 0, $expected_base_version ),
+				max( 0, $backend_version ),
+				max( 0, $local_revision ),
+				$normalized_conflict_code,
+				$machine_payload_json,
+				$local_payload_json,
+				'open',
+				$created_at,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return false;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		if ( false === $query_result ) {
+			return false;
+		}
+
+		return $this->resolve_insert_id( $wpdb );
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	private function encode_payload_json( array $payload ): string {
+		$encoded_payload = wp_json_encode( $payload );
+		if ( ! is_string( $encoded_payload ) || '' === $encoded_payload ) {
+			return '{}';
+		}
+
+		return $encoded_payload;
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	private function find_open_projection_conflict( string $tenant_id, string $entity_type, string $entity_key, string $conflict_code ): ?array {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT id, backend_version, resolution_status FROM %i
+			WHERE tenant_id = %s
+				AND entity_type = %s
+				AND entity_key = %s
+				AND conflict_code = %s
+				AND resolution_status = %s
+			ORDER BY id DESC
+			LIMIT 1',
+			array(
+				$this->table_name,
+				$tenant_id,
+				$entity_type,
+				$entity_key,
+				$conflict_code,
+				'open',
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$row = $wpdb->get_row( $sql, ARRAY_A );
+		return is_array( $row ) ? $row : null;
 	}
 
 	/**

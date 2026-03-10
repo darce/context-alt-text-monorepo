@@ -4,12 +4,15 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+use RuntimeException;
 use Throwable;
 
 use function do_action;
+use function esc_html;
 use function is_wp_error;
 use function get_transient;
 use function md5;
+use function sanitize_text_field;
 use function set_transient;
 
 class SyncPullJob implements SyncPullJobInterface {
@@ -95,6 +98,7 @@ class SyncPullJob implements SyncPullJobInterface {
 	 * snapshot has already been projected locally.
 	 *
 	 * @param array<string,mixed> $snapshot
+	 * @throws RuntimeException When the backend acknowledgement returns a WP_Error.
 	 */
 	private function maybe_acknowledge_projection( array $snapshot ): void {
 		$snapshot_version = isset( $snapshot['snapshot_version'] ) ? (int) $snapshot['snapshot_version'] : 0;
@@ -105,7 +109,7 @@ class SyncPullJob implements SyncPullJobInterface {
 
 		$response = $this->client->acknowledge_projection( $source_job_id, $snapshot_version );
 		if ( is_wp_error( $response ) ) {
-			throw new \RuntimeException( $response->get_error_message() );
+			throw new RuntimeException( esc_html( sanitize_text_field( $response->get_error_message() ) ) );
 		}
 	}
 }

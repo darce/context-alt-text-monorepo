@@ -330,7 +330,8 @@ describe('WorkbenchPage (integration-lite)', () => {
     expect(await screen.findByText('Photo Page One')).toBeInTheDocument();
 
     const user = userEvent.setup();
-    await user.click(screen.getByRole('button', { name: 'Next' }));
+    const nextButtons = screen.getAllByRole('button', { name: 'Next' });
+    await user.click(nextButtons[0]);
 
     expect(await screen.findByText('Photo Page Two')).toBeInTheDocument();
     expect(screen.queryByText('Photo Page One')).not.toBeInTheDocument();

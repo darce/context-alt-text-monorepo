@@ -47,6 +47,14 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return 0;
 	}
 
+	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null ): int {
+		return 0;
+	}
+
+	public function update_projection_cluster( string $cluster_uuid, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null ): int {
+		return 0;
+	}
+
 	public function undismiss( string $cluster_uuid ): int {
 		return 0;
 	}

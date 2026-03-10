@@ -49,4 +49,24 @@ class NullSyncStateRepository implements SyncStateRepositoryInterface {
 	public function get_last_curation_failed_at( string $tenant_id ): ?string {
 		return null;
 	}
+
+	public function get_pending_topology_commands( string $tenant_id ): int {
+		return 0;
+	}
+
+	public function get_applied_topology_commands( string $tenant_id ): int {
+		return 0;
+	}
+
+	public function get_failed_topology_commands( string $tenant_id ): int {
+		return 0;
+	}
+
+	public function get_conflicted_topology_commands( string $tenant_id ): int {
+		return 0;
+	}
+
+	public function get_last_topology_reconciled_at( string $tenant_id ): ?string {
+		return null;
+	}
 }

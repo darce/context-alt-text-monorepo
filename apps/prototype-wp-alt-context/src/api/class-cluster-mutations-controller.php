@@ -4,6 +4,12 @@ declare(strict_types=1);
 
 namespace AltContext\Api;
 
+require_once __DIR__ . '/../sovereign/sync/interface-outbox-writer.php';
+require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
+require_once __DIR__ . '/../sovereign/sync/interface-topology-command-repository.php';
+require_once __DIR__ . '/../sovereign/sync/class-topology-command-repository.php';
+require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
+
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
@@ -12,6 +18,9 @@ use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\OutboxWriter;
 use AltContext\Sovereign\Sync\OutboxWriterInterface;
+use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
+use AltContext\Sovereign\Sync\TopologyCommandRepository;
+use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -28,15 +37,18 @@ use function in_array;
 use function is_array;
 use function is_object;
 use function is_wp_error;
+use function md5;
 use function max;
 use function method_exists;
 use function rest_sanitize_boolean;
 use function sanitize_text_field;
 use function sprintf;
+use function substr;
 use function time;
 use function trim;
 use function wp_generate_uuid4;
 use function wp_next_scheduled;
+use function wp_json_encode;
 use function wp_schedule_single_event;
 
 class ClusterMutationsController extends AbstractRecognitionProxyController {
@@ -46,17 +58,20 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private OutboxWriterInterface $outbox_writer;
+	private TopologyCommandRepositoryInterface $topology_command_repository;
 
 	public function __construct(
 		?ClustersRepositoryInterface $clusters_repository = null,
 		?SyncStateRepositoryInterface $sync_state_repository = null,
 		?IdentityMembersRepositoryInterface $members_repository = null,
-		?OutboxWriterInterface $outbox_writer = null
+		?OutboxWriterInterface $outbox_writer = null,
+		?TopologyCommandRepositoryInterface $topology_command_repository = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
 		$this->outbox_writer = $outbox_writer ?? new OutboxWriter();
+		$this->topology_command_repository = $topology_command_repository ?? new TopologyCommandRepository();
 		add_action( self::XMP_REFRESH_CLUSTER_HOOK, array( $this, 'refresh_xmp_for_cluster_ids_async' ), 10, 2 );
 	}
 
@@ -465,17 +480,26 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	}
 
 	public function split_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 
 		if ( '' === $cluster_id ) {
 			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
 		}
 
-		$n_clusters = absint( $request->get_param( 'n_clusters' ) ?? 0 );
+		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( ! is_array( $cluster ) ) {
+			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		}
 
-		$payload = array(
+			$n_clusters = absint( $request->get_param( 'n_clusters' ) ?? 0 );
+
+			$payload = array(
 			'tenant_id'  => $this->get_tenant_id(),
+			'cluster_id' => $cluster_id,
 			'n_clusters' => $n_clusters,
+			'user_id'    => get_current_user_id(),
 		);
 		$anchor_identity_id = sanitize_text_field( (string) $request->get_param( 'anchor_identity_id' ) );
 		if ( '' !== $anchor_identity_id ) {
@@ -486,9 +510,74 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			$payload['split_mode'] = $split_mode;
 		}
 
-		$response = $this->proxy_request( 'POST', sprintf( '/recognition/clusters/%s/split', $cluster_id ), $payload );
-		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $cluster_id ), 'cluster-split' );
-		return $response;
+		$desired_cluster_ids = $request->get_param( 'desired_cluster_ids' );
+		if ( is_array( $desired_cluster_ids ) && ! empty( $desired_cluster_ids ) ) {
+			$payload['desired_cluster_ids'] = array_values(
+				array_filter(
+					array_map(
+						static function ( $value ): string {
+							return sanitize_text_field( (string) $value );
+						},
+						$desired_cluster_ids
+					),
+					static function ( string $value ): bool {
+						return '' !== $value;
+					}
+				)
+			);
+		}
+
+		$idempotency_key = $this->resolve_split_idempotency_key(
+			$request,
+			$cluster_id,
+			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $this->get_tenant_id() ) ) ),
+			$payload
+		);
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
+		$command_id = $this->topology_command_repository->enqueue(
+			$this->get_tenant_id(),
+			'cluster_split',
+			$cluster_id,
+			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $this->get_tenant_id() ) ) ),
+			$payload,
+			$idempotency_key
+		);
+
+		if ( false === $command_id ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue split topology command.', array( 'status' => 500 ) );
+		}
+
+		$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		$this->sync_state_repository->refresh_curation_metrics( $this->get_tenant_id() );
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
+
+		SplitTopologyCommandDrain::maybe_schedule_drain();
+
+		return new WP_REST_Response(
+			array(
+				'command_id' => $command_id,
+				'synced' => false,
+				'status' => 'pending',
+				'command_state' => 'queued',
+				'projection_state' => 'awaiting_backend_partition',
+				'cluster_id' => $cluster_id,
+				'idempotency_key' => $idempotency_key,
+			),
+			200
+		);
 	}
 
 	public function create_cluster_for_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -749,6 +838,42 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 		);
 
 		return false !== $result;
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 */
+	private function resolve_split_idempotency_key( WP_REST_Request $request, string $cluster_id, int $expected_base_version, array $payload ): string {
+		$provided = sanitize_text_field( (string) $request->get_param( 'idempotency_key' ) );
+		if ( '' !== $provided ) {
+			return $provided;
+		}
+
+		$basis = wp_json_encode(
+			array(
+				'cluster_id'             => trim( $cluster_id ),
+				'expected_base_version'  => max( 0, $expected_base_version ),
+				'n_clusters'             => max( 0, (int) ( $payload['n_clusters'] ?? 0 ) ),
+				'anchor_identity_id'     => trim( (string) ( $payload['anchor_identity_id'] ?? '' ) ),
+				'split_mode'             => trim( (string) ( $payload['split_mode'] ?? '' ) ),
+				'desired_cluster_ids'    => $this->sanitize_cluster_ids( is_array( $payload['desired_cluster_ids'] ?? null ) ? $payload['desired_cluster_ids'] : array() ),
+			)
+		);
+
+		if ( ! is_string( $basis ) || '' === $basis ) {
+			return wp_generate_uuid4();
+		}
+
+		$hash = md5( $basis );
+
+		return sprintf(
+			'%s-%s-%s-%s-%s',
+			substr( $hash, 0, 8 ),
+			substr( $hash, 8, 4 ),
+			substr( $hash, 12, 4 ),
+			substr( $hash, 16, 4 ),
+			substr( $hash, 20, 12 )
+		);
 	}
 
 	/**

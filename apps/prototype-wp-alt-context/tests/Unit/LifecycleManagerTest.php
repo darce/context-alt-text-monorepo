@@ -72,14 +72,15 @@ class LifecycleManagerTest extends TestCase
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
         $this->assertIsArray($queries);
-        $this->assertCount(6, $queries);
+        $this->assertCount(7, $queries);
 
         $personsSql = $queries[0];
         $clustersSql = $queries[1];
         $membersSql = $queries[2];
         $syncSql = $queries[3];
         $outboxSql = $queries[4];
-        $conflictsSql = $queries[5];
+        $topologySql = $queries[5];
+        $conflictsSql = $queries[6];
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_persons', $personsSql);
         $this->assertStringContainsString('person_uuid', $personsSql);
@@ -110,6 +111,11 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('idempotency_key', $outboxSql);
         $this->assertStringContainsString('acknowledged_version', $outboxSql);
 
+        $this->assertStringContainsString('CREATE TABLE wp_acx_topology_commands', $topologySql);
+        $this->assertStringContainsString('command_type', $topologySql);
+        $this->assertStringContainsString('payload_json', $topologySql);
+        $this->assertStringContainsString('projection_reconciled_at', $topologySql);
+
         $this->assertStringContainsString('CREATE TABLE wp_acx_sync_conflicts', $conflictsSql);
         $this->assertStringContainsString('conflict_code', $conflictsSql);
         $this->assertStringContainsString('resolution_status', $conflictsSql);
@@ -122,7 +128,7 @@ class LifecycleManagerTest extends TestCase
         $this->manager->activate();
 
         $queries = $GLOBALS['__ac_dbdelta_queries'] ?? [];
-        $this->assertCount(12, $queries);
+        $this->assertCount(14, $queries);
         $this->assertStringNotContainsString('DROP TABLE', implode("\n", $queries));
     }
 
@@ -218,6 +224,7 @@ class LifecycleManagerTest extends TestCase
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_state`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_persons`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_outbox`', $wpdb->queries);
+        $this->assertContains('DROP TABLE IF EXISTS `wp_acx_topology_commands`', $wpdb->queries);
         $this->assertContains('DROP TABLE IF EXISTS `wp_acx_sync_conflicts`', $wpdb->queries);
     }
 

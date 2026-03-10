@@ -30,10 +30,6 @@ class OutboxDispatcher {
 			'method' => 'POST',
 			'path' => '/recognition/clusters/%s/merge',
 		),
-		'cluster_split' => array(
-			'method' => 'POST',
-			'path' => '/recognition/clusters/%s/split',
-		),
 		'identity_reassigned' => array(
 			'method' => 'POST',
 			'path' => '/recognition/clusters/reassign',

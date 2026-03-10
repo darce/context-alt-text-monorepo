@@ -81,6 +81,17 @@ class SyncStateRepositoryTest extends TestCase
         $this->assertStringContainsString('conflict_count', $sql);
     }
 
+    public function testRefreshCurationMetricsKeepsReplayPlaneCountsSeparateFromTopologyPlane(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '4';
+
+        $this->repository->refresh_curation_metrics('tenant-sync');
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringNotContainsString('wp_acx_topology_commands', $sql);
+    }
+
     public function testGetPendingCurationOperationsReadsStoredValue(): void
     {
         global $wpdb;
@@ -139,5 +150,32 @@ class SyncStateRepositoryTest extends TestCase
         $value = $this->repository->get_last_curation_failed_at('tenant-sync');
 
         $this->assertSame('2026-03-07 03:00:00', $value);
+    }
+
+    public function testTopologyCommandStatusReadersQueryTopologyTable(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '6';
+
+        $this->assertSame(6, $this->repository->get_pending_topology_commands('tenant-sync'));
+        $this->assertSame(6, $this->repository->get_applied_topology_commands('tenant-sync'));
+        $this->assertSame(6, $this->repository->get_failed_topology_commands('tenant-sync'));
+        $this->assertSame(6, $this->repository->get_conflicted_topology_commands('tenant-sync'));
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString("FROM `wp_acx_topology_commands` WHERE tenant_id = 'tenant-sync' AND status IN ('pending', 'dispatched')", $sql);
+        $this->assertStringContainsString("FROM `wp_acx_topology_commands` WHERE tenant_id = 'tenant-sync' AND status IN ('applied')", $sql);
+        $this->assertStringContainsString("FROM `wp_acx_topology_commands` WHERE tenant_id = 'tenant-sync' AND status IN ('failed')", $sql);
+        $this->assertStringContainsString("FROM `wp_acx_topology_commands` WHERE tenant_id = 'tenant-sync' AND status IN ('conflict')", $sql);
+    }
+
+    public function testGetLastTopologyReconciledAtReturnsTimestamp(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '2026-03-07 04:00:00';
+
+        $value = $this->repository->get_last_topology_reconciled_at('tenant-sync');
+
+        $this->assertSame('2026-03-07 04:00:00', $value);
     }
 }

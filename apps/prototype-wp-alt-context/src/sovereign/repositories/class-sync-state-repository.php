@@ -20,6 +20,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 
 	private string $table_name;
 	private string $outbox_table_name;
+	private string $topology_commands_table_name;
 	private string $conflicts_table_name;
 
 	public function __construct( ?string $table_name = null ) {
@@ -27,15 +28,18 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 
 		$default_table = 'wp_acx_sync_state';
 		$default_outbox_table = 'wp_acx_sync_outbox';
+		$default_topology_table = 'wp_acx_topology_commands';
 		$default_conflicts_table = 'wp_acx_sync_conflicts';
 		if ( isset( $wpdb ) && is_object( $wpdb ) && isset( $wpdb->prefix ) && is_string( $wpdb->prefix ) ) {
 			$default_table = $wpdb->prefix . 'acx_sync_state';
 			$default_outbox_table = $wpdb->prefix . 'acx_sync_outbox';
+			$default_topology_table = $wpdb->prefix . 'acx_topology_commands';
 			$default_conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
 		}
 
 		$this->table_name = $table_name ?? $default_table;
 		$this->outbox_table_name = $default_outbox_table;
+		$this->topology_commands_table_name = $default_topology_table;
 		$this->conflicts_table_name = $default_conflicts_table;
 	}
 
@@ -251,6 +255,26 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 
 	public function get_last_curation_failed_at( string $tenant_id ): ?string {
 		return $this->get_string_state_value( $tenant_id, 'last_curation_failed_at' );
+	}
+
+	public function get_pending_topology_commands( string $tenant_id ): int {
+		return $this->count_topology_rows( trim( $tenant_id ), array( 'pending', 'dispatched' ) );
+	}
+
+	public function get_applied_topology_commands( string $tenant_id ): int {
+		return $this->count_topology_rows( trim( $tenant_id ), array( 'applied' ) );
+	}
+
+	public function get_failed_topology_commands( string $tenant_id ): int {
+		return $this->count_topology_rows( trim( $tenant_id ), array( 'failed' ) );
+	}
+
+	public function get_conflicted_topology_commands( string $tenant_id ): int {
+		return $this->count_topology_rows( trim( $tenant_id ), array( 'conflict' ) );
+	}
+
+	public function get_last_topology_reconciled_at( string $tenant_id ): ?string {
+		return $this->max_topology_reconciled_at( trim( $tenant_id ) );
 	}
 
 	private function stream_name_for_tenant( string $tenant_id ): string {
@@ -496,4 +520,64 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		$normalized = trim( $value );
 		return '' !== $normalized ? $normalized : null;
 	}
+
+	/**
+	 * @param string[] $statuses
+	 */
+	private function count_topology_rows( string $tenant_id, array $statuses ): int {
+		global $wpdb;
+
+		if ( empty( $statuses ) || ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$placeholders = implode( ', ', array_fill( 0, count( $statuses ), '%s' ) );
+		$args = array_merge(
+			array( $this->topology_commands_table_name, $tenant_id ),
+			$statuses
+		);
+		$sql = $this->prepare_query(
+			"SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status IN ({$placeholders})",
+			$args
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		return max( 0, (int) $value );
+	}
+
+	private function max_topology_reconciled_at( string $tenant_id ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT MAX(projection_reconciled_at) FROM %i WHERE tenant_id = %s AND status = %s',
+			array(
+				$this->topology_commands_table_name,
+				$tenant_id,
+				'reconciled',
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
+	}
+
 }

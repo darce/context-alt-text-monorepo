@@ -66,7 +66,7 @@ class RecognitionController {
 				$sync_pull_job       = new SyncPullJob( new SnapshotClient(), $snapshot_projector );
 				$this->clusterFacade = new ClusterFacade( $clusters_repository, $members_repository );
 				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job, null, null, $this->clusterFacade );
-				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( $clusters_repository, $sync_repository );
+				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( $clusters_repository, $sync_repository, $members_repository );
 			} catch ( Throwable $throwable ) {
 				do_action(
 					'acx_recognition_composition_failed',
@@ -85,7 +85,8 @@ class RecognitionController {
 		} elseif ( ! isset( $this->clusterMutationsController ) ) {
 			$this->clusterMutationsController = new ClusterMutationsController(
 				$this->clustersController->get_clusters_repository(),
-				$this->clustersController->get_sync_state_repository()
+				$this->clustersController->get_sync_state_repository(),
+				new IdentityMembersRepository()
 			);
 		}
 		$this->mediaIdentitiesController = $media_identities_controller ?? new MediaIdentitiesController();

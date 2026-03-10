@@ -294,6 +294,8 @@ class LifecycleManager {
 			bbox_json longtext NOT NULL,
 			thumb_path text NULL,
 			similarity double NULL,
+			is_curated tinyint(1) NOT NULL DEFAULT 0,
+			projection_version bigint(20) unsigned NOT NULL DEFAULT 0,
 			created_at datetime NOT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (identity_uuid),
@@ -352,6 +354,7 @@ class LifecycleManager {
 			created_at datetime NOT NULL,
 			resolved_at datetime DEFAULT NULL,
 			PRIMARY KEY  (id),
+			UNIQUE KEY uq_projection_conflict (tenant_id, entity_type, entity_key, conflict_code, backend_version),
 			KEY idx_entity_resolution (entity_type, entity_key, resolution_status)
 		) {$charset_collate};";
 

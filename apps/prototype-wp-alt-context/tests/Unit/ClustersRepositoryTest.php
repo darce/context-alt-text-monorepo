@@ -81,6 +81,18 @@ class ClustersRepositoryTest extends TestCase
         $this->assertStringContainsString('acx://cluster/cluster-thumb/media/501', $mergedSql);
     }
 
+    public function testMergeSnapshotWithNoIncomingClustersOnlyDeletesNonCuratedRows(): void
+    {
+        $this->repository->merge_snapshot_for_tenant('tenant-empty-clusters', [], 5);
+
+        global $wpdb;
+        $mergedSql = implode("\n", $wpdb->queries);
+
+        $this->assertStringContainsString('DELETE FROM `wp_acx_clusters`', $mergedSql);
+        $this->assertStringContainsString("tenant_id = 'tenant-empty-clusters'", $mergedSql);
+        $this->assertStringContainsString('is_user_confirmed = 0', $mergedSql);
+    }
+
     public function testListForTenantReturnsRowsFromDatabaseLayer(): void
     {
         global $wpdb;

@@ -95,6 +95,8 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_identity_members', $membersSql);
         $this->assertStringContainsString('bbox_json', $membersSql);
+        $this->assertStringContainsString('is_curated', $membersSql);
+        $this->assertStringContainsString('projection_version', $membersSql);
         $this->assertStringContainsString('attachment_lookup', $membersSql);
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_sync_state', $syncSql);
@@ -109,6 +111,7 @@ class LifecycleManagerTest extends TestCase
         $this->assertStringContainsString('CREATE TABLE wp_acx_sync_conflicts', $conflictsSql);
         $this->assertStringContainsString('conflict_code', $conflictsSql);
         $this->assertStringContainsString('resolution_status', $conflictsSql);
+        $this->assertStringContainsString('UNIQUE KEY uq_projection_conflict', $conflictsSql);
     }
 
     public function testActivateProjectionDbDeltaIsIdempotentAcrossReactivation(): void

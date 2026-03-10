@@ -55,4 +55,11 @@ interface ClustersRepositoryInterface {
 	 * Clear dismissal on a cluster and return it to uncurated state.
 	 */
 	public function undismiss( string $cluster_uuid ): int;
+
+	/**
+	 * Return curated tenant-scoped projected clusters keyed by cluster_uuid.
+	 *
+	 * @return array<string,array<string,mixed>>
+	 */
+	public function get_curated_clusters_for_tenant( string $tenant_id ): array;
 }

@@ -87,17 +87,17 @@ The key rule is that the system should not act like an active-active dual master
 
 ### Design Decisions
 
-| Decision | Rationale |
-| --- | --- |
-| WordPress local projection is the rendering source of truth | The product requirement is offline usability. The UI cannot depend on live backend reads. |
-| User curation always wins over machine clustering | This matches operator expectation and prevents silent regression of curated work. |
-| Backend clustering results are treated as proposals, not final truth | This avoids active-active collisions and makes offline replay safe. |
-| Pipeline status must unify analyze, clustering, and projection | Operators should not have to reason about hidden follow-up jobs. |
-| Conflicts must be recorded explicitly, not silently dropped or overwritten | Collision handling is product behavior, not just storage behavior. |
-| MVP uses versioned snapshots plus outbox replay before richer delta sync | This is enough for a launchable proof of concept without overbuilding distributed sync. |
-| Curated cluster membership locks backend re-clustering out of auto-apply | Once the operator has merged, split, assigned, or dismissed, backend membership changes must become reviewable proposals. |
-| Privacy posture for v0.2.0 is minimized retention, not sovereignty | This keeps product messaging aligned with the real MVP architecture while still improving trust and operator control. |
-| Backend machine state should have auditable lifecycle markers | Retain, export, acknowledge, and purge events make split-state operations inspectable and easier to debug. |
+| Decision                                                                   | Rationale                                                                                                                 |
+| -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------- |
+| WordPress local projection is the rendering source of truth                | The product requirement is offline usability. The UI cannot depend on live backend reads.                                 |
+| User curation always wins over machine clustering                          | This matches operator expectation and prevents silent regression of curated work.                                         |
+| Backend clustering results are treated as proposals, not final truth       | This avoids active-active collisions and makes offline replay safe.                                                       |
+| Pipeline status must unify analyze, clustering, and projection             | Operators should not have to reason about hidden follow-up jobs.                                                          |
+| Conflicts must be recorded explicitly, not silently dropped or overwritten | Collision handling is product behavior, not just storage behavior.                                                        |
+| MVP uses versioned snapshots plus outbox replay before richer delta sync   | This is enough for a launchable proof of concept without overbuilding distributed sync.                                   |
+| Curated cluster membership locks backend re-clustering out of auto-apply   | Once the operator has merged, split, assigned, or dismissed, backend membership changes must become reviewable proposals. |
+| Privacy posture for v0.2.0 is minimized retention, not sovereignty         | This keeps product messaging aligned with the real MVP architecture while still improving trust and operator control.     |
+| Backend machine state should have auditable lifecycle markers              | Retain, export, acknowledge, and purge events make split-state operations inspectable and easier to debug.                |
 
 ### Data Model
 
@@ -242,7 +242,7 @@ Exit criteria:
 ### Phase 4: Offline and Conflict UX -- NOT STARTED
 
 > **Status**: not-started
-> **Task plans**: not yet scoped
+> **Task plan**: [phase-4-offline-and-conflict-ux-task-plan.md](../../tasks/6.0/phase-4-offline-and-conflict-ux-task-plan.md)
 
 **Goal**: Make stale data, queued work, and conflicts understandable to operators.
 
@@ -256,51 +256,52 @@ Deliverables:
 - Conflict inbox or review surface for machine proposals blocked by curation.
 - Manual resync and replay controls for administrators.
 - Dashboard and workbench indicators showing whether the user is looking at a fresh or stale machine baseline.
-- Tenant-admin export and purge controls, or admin-visible endpoints, for machine-derived biometric state.
-- Operator-visible audit history for retain, export, and purge actions where those actions affect trust in the projected machine baseline.
+- Dead-letter management surface for failed outbox operations (retry/discard).
+
+Export, purge, and retention controls are split to Phase 5 (see below) because they depend on backend tenant policy infrastructure that does not yet exist.
 
 Exit criteria:
 
 - Operators can tell whether the system is safe to continue using offline.
 - Operators can find and resolve any collisions between backend clustering updates and local curation without database intervention.
-- The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
+- Operators can inspect and manage failed outbox operations without database access.
 
 ## External Dependencies
 
-| Dependency | Owner | Status | Blocks |
-| --- | --- | --- | --- |
-| Snapshot projector merge contract hardening | Plugin | In progress | Phase 2 exit criteria |
-| Outbox and replay transport | Plugin | Not started | Phase 3 exit criteria |
-| Curation push endpoint with idempotency and expected-base semantics | Backend | Not started | Phase 3 exit criteria |
-| Pipeline-aware job status contract | Backend | Completed | Phase 1 exit criteria |
-| Conflict review UX | Frontend | Not started | Phase 4 exit criteria |
-| Tenant retention-policy fields and lifecycle audit events | Backend | Not started | Phase 3 and Phase 4 exit criteria |
-| Product/privacy messaging for minimized retention | Product | Not started | Phase 4 launch readiness |
+| Dependency                                                          | Owner    | Status      | Blocks                   |
+| ------------------------------------------------------------------- | -------- | ----------- | ------------------------ |
+| Snapshot projector merge contract hardening                         | Plugin   | In progress | Phase 2 exit criteria    |
+| Outbox and replay transport                                         | Plugin   | Not started | Phase 3 exit criteria    |
+| Curation push endpoint with idempotency and expected-base semantics | Backend  | Not started | Phase 3 exit criteria    |
+| Pipeline-aware job status contract                                  | Backend  | Completed   | Phase 1 exit criteria    |
+| Conflict review UX                                                  | Frontend | Not started | Phase 4 exit criteria    |
+| Tenant retention-policy fields and lifecycle audit events           | Backend  | Not started | Phase 5 exit criteria    |
+| Product/privacy messaging for minimized retention                   | Product  | Not started | Phase 5 launch readiness |
 
 ## Code Anchors
 
-| Layer | File | Note |
-| --- | --- | --- |
-| Plugin lifecycle | `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php` | Current schema owner for `wp_acx_clusters`, `wp_acx_identity_members`, and `wp_acx_sync_state`; extend for lineage, outbox, and conflict tables |
-| Plugin sync | `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php` | Current snapshot merge path; must enforce curation-first field and membership rules |
-| Plugin sync | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php` | Current pull orchestration; must evolve into projection acknowledgement and replay-aware sync |
-| Plugin repositories | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php` | Current cluster merge behavior; add projection version, local revision, and conflict-safe merge semantics |
-| Plugin repositories | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php` | Current membership projection path; must distinguish machine rows from curated overrides |
-| Plugin repositories | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php` | Current coarse sync metadata; extend for queue, acknowledgement, and conflict indicators |
-| Plugin API | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php` | Current sync status surface; extend with stale, queued, and conflict states |
-| Plugin API | `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php` | Cluster curation entrypoint; enqueue durable local operations rather than assuming immediate backend alignment |
-| Frontend | `apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachineEffects.ts` | Current job orchestration hook; continue toward unified pipeline semantics |
-| Frontend | `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx` | Current coarse freshness UI; expand for offline, queued, and conflict states |
-| Backend API | `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py` | Current job polling and streaming; own unified pipeline job contract |
-| Backend config | `apps/prototype-description-service/recognition/config/settings.py` | Add tenant-visible retention defaults and policy controls that support MVP privacy messaging |
-| Backend config | `apps/prototype-description-service/recognition/config/security.py` | Extend runtime policy surface for retention, export, and purge behavior |
-| Backend worker | `apps/prototype-description-service/recognition/worker/handlers/scan.py` | Current auto-chaining from scan to clustering; must participate in stable pipeline linkage |
-| Backend repository | `apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py` | Current follow-up clustering lookup; extend for pipeline-aware job status and acknowledgement |
-| Backend snapshot | `apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py` | Current snapshot export path; extend for proposal lineage, acknowledged curation, and future delta support |
-| Backend model | `apps/prototype-description-service/db/models/tenant.py` | Add tenant policy fields needed for retention-mode visibility and auditability |
-| Backend model | `apps/prototype-description-service/db/models/identity.py` | Current machine-derived biometric storage; annotate durable vs purgeable state for MVP |
-| Backend model | `apps/prototype-description-service/db/models/observability.py` | Add retain, export, and purge audit events tied to operator-visible history |
-| Backend HTTP | `apps/prototype-description-service/recognition/interface_adapters/http/router.py` | Mount export, purge, and policy visibility endpoints used by plugin or admin surfaces |
+| Layer               | File                                                                                               | Note                                                                                                                                            |
+| ------------------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| Plugin lifecycle    | `apps/prototype-wp-alt-context/src/support/class-life-cycle-manager.php`                           | Current schema owner for `wp_acx_clusters`, `wp_acx_identity_members`, and `wp_acx_sync_state`; extend for lineage, outbox, and conflict tables |
+| Plugin sync         | `apps/prototype-wp-alt-context/src/sovereign/sync/class-snapshot-projector.php`                    | Current snapshot merge path; must enforce curation-first field and membership rules                                                             |
+| Plugin sync         | `apps/prototype-wp-alt-context/src/sovereign/sync/class-sync-pull-job.php`                         | Current pull orchestration; must evolve into projection acknowledgement and replay-aware sync                                                   |
+| Plugin repositories | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-clusters-repository.php`           | Current cluster merge behavior; add projection version, local revision, and conflict-safe merge semantics                                       |
+| Plugin repositories | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-identity-members-repository.php`   | Current membership projection path; must distinguish machine rows from curated overrides                                                        |
+| Plugin repositories | `apps/prototype-wp-alt-context/src/sovereign/repositories/class-sync-state-repository.php`         | Current coarse sync metadata; extend for queue, acknowledgement, and conflict indicators                                                        |
+| Plugin API          | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`                           | Current sync status surface; extend with stale, queued, and conflict states                                                                     |
+| Plugin API          | `apps/prototype-wp-alt-context/src/api/class-cluster-mutations-controller.php`                     | Cluster curation entrypoint; enqueue durable local operations rather than assuming immediate backend alignment                                  |
+| Frontend            | `apps/prototype-wp-alt-context/js/admin/hooks/useJobStateMachineEffects.ts`                        | Current job orchestration hook; continue toward unified pipeline semantics                                                                      |
+| Frontend            | `apps/prototype-wp-alt-context/js/admin/pages/workbench/SyncStatusIndicator.tsx`                   | Current coarse freshness UI; expand for offline, queued, and conflict states                                                                    |
+| Backend API         | `apps/prototype-description-service/recognition/interface_adapters/http/routers/analyze.py`        | Current job polling and streaming; own unified pipeline job contract                                                                            |
+| Backend config      | `apps/prototype-description-service/recognition/config/settings.py`                                | Add tenant-visible retention defaults and policy controls that support MVP privacy messaging                                                    |
+| Backend config      | `apps/prototype-description-service/recognition/config/security.py`                                | Extend runtime policy surface for retention, export, and purge behavior                                                                         |
+| Backend worker      | `apps/prototype-description-service/recognition/worker/handlers/scan.py`                           | Current auto-chaining from scan to clustering; must participate in stable pipeline linkage                                                      |
+| Backend repository  | `apps/prototype-description-service/recognition/infrastructure/repositories/job_repository.py`     | Current follow-up clustering lookup; extend for pipeline-aware job status and acknowledgement                                                   |
+| Backend snapshot    | `apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py` | Current snapshot export path; extend for proposal lineage, acknowledged curation, and future delta support                                      |
+| Backend model       | `apps/prototype-description-service/db/models/tenant.py`                                           | Add tenant policy fields needed for retention-mode visibility and auditability                                                                  |
+| Backend model       | `apps/prototype-description-service/db/models/identity.py`                                         | Current machine-derived biometric storage; annotate durable vs purgeable state for MVP                                                          |
+| Backend model       | `apps/prototype-description-service/db/models/observability.py`                                    | Add retain, export, and purge audit events tied to operator-visible history                                                                     |
+| Backend HTTP        | `apps/prototype-description-service/recognition/interface_adapters/http/router.py`                 | Mount export, purge, and policy visibility endpoints used by plugin or admin surfaces                                                           |
 
 ---
 
@@ -335,8 +336,15 @@ Exit criteria:
 - [ ] Add conflict review or inbox UX for machine proposals blocked by curation.
 - [ ] Add admin-triggered replay and resync controls.
 - [ ] Show local freshness and pending-sync state in dashboard and workbench.
+- [ ] Add dead-letter management surface for failed outbox operations (inspect, retry, discard).
+
+## Phase 5: Retention, Export, and Audit Controls -- NOT STARTED
+
+Depends on backend tenant policy infrastructure (retention mode fields, audit event tables) that does not yet exist. Scoped separately from Phase 4 so conflict/offline UX can ship independently.
+
 - [ ] Add export and purge controls, or admin-visible endpoints, for machine-derived biometric state.
 - [ ] Surface retain, export, and purge audit history where it affects operator trust in the projected state.
+- [ ] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
 
 ## Deferred (Post-v0.2.0)
 

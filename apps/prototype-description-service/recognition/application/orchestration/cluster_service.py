@@ -446,6 +446,7 @@ class ClusterService:
         n_clusters: int = 0,
         anchor_identity_id: str | None = None,
         split_mode: str | None = None,
+        desired_cluster_ids: list[str] | None = None,
         recompute: bool = True,
     ) -> tuple[list[str], list[int]]:
         """Split a mixed cluster using hierarchical clustering."""
@@ -454,6 +455,7 @@ class ClusterService:
             n_clusters=n_clusters,
             anchor_identity_id=anchor_identity_id,
             split_mode=split_mode,
+            desired_cluster_ids=desired_cluster_ids,
             session=self._session,
             cluster_repo=self.assignment_writer.cluster_repository,
             member_repo=self.assignment_writer.member_repository,

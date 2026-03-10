@@ -270,8 +270,38 @@ class NullClusterRepository(ClusterRepository):
     async def get_snapshot(
         self, tenant_id: str
     ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
-        """Get snapshot data for tests - returns clusters with empty members."""
+        """Get snapshot data for tests from configured cluster/member fixtures."""
         clusters = [cluster for cluster in self._clusters_by_id.values() if cluster.tenant_id == tenant_id]
-        # Return clusters with empty members and a simple version number
-        snapshot_version = 1
-        return (clusters, [], snapshot_version)
+        members = await self.get_members_by_cluster_ids(tenant_id, [cluster.id for cluster in clusters if cluster.id])
+        snapshot_version = await self.get_snapshot_version(tenant_id)
+        return (clusters, members, snapshot_version)
+
+    async def get_members_by_cluster_ids(
+        self, tenant_id: str, cluster_ids: Sequence[str]
+    ) -> list[tuple[IdentityMember, MediaIdentity]]:
+        rows: list[tuple[IdentityMember, MediaIdentity]] = []
+        for cluster_id in cluster_ids:
+            for index, identity in enumerate(self._member_identities_by_cluster.get(cluster_id, [])):
+                if identity.tenant_id != tenant_id:
+                    continue
+                members = self._members_by_cluster.get(cluster_id, [])
+                member = members[index] if index < len(members) else IdentityMember(
+                    id=f"member-{cluster_id}-{index}",
+                    cluster_id=cluster_id,
+                    identity_id=identity.id,
+                    similarity=0.0,
+                    tenant_id=identity.tenant_id,
+                )
+                rows.append((member, identity))
+        return rows
+
+    async def get_clusters_by_ids(self, tenant_id: str, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
+        return [
+            cluster
+            for cluster in self._clusters_by_id.values()
+            if cluster.tenant_id == tenant_id and cluster.id in cluster_ids
+        ]
+
+    async def get_snapshot_version(self, tenant_id: str) -> int:
+        _ = tenant_id
+        return 1

@@ -323,6 +323,20 @@ class ClusterRepository(Protocol):
         """
         ...
 
+    async def get_members_by_cluster_ids(
+        self, tenant_id: str, cluster_ids: Sequence[str]
+    ) -> list[tuple[IdentityMember, MediaIdentity]]:
+        """Get member+identity tuples for the requested clusters only."""
+        ...
+
+    async def get_clusters_by_ids(self, tenant_id: str, cluster_ids: Sequence[str]) -> list[IdentityCluster]:
+        """Get cluster summaries for the requested cluster ids only."""
+        ...
+
+    async def get_snapshot_version(self, tenant_id: str) -> int:
+        """Get the tenant snapshot version without loading full snapshot payloads."""
+        ...
+
 
 class MemberRepository(Protocol):
     """Abstract interface for cluster member persistence."""

@@ -117,9 +117,6 @@ def test_merge_cluster_relabels_target(api_client, tenant_id, fake_cluster_servi
     assert resp.status_code == 200
     body = resp.json()
     assert body["label"] == "merged"
-    assert resp.status_code == 200
-    body = resp.json()
-    assert body["label"] == "merged"
 
     # Source cluster should NOT be deleted immediately (deferred)
     assert any(c.id == source.id for c in fake_cluster_service.clusters)
@@ -168,6 +165,196 @@ def test_merge_cluster_is_idempotent_with_idempotency_key(
 
     curation_calls = [c for c in fake_job_service.calls if c["method"] == "queue_curation_followup"]
     assert len(curation_calls) == 1
+
+
+def test_split_topology_command_returns_typed_result(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    source = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="source",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=2,
+    )
+    moved_identity_id = str(uuid.uuid4())
+    retained_identity_id = str(uuid.uuid4())
+    fake_cluster_repository.seed_member(tenant_id=tenant_id, cluster_id=source.id, identity_id=moved_identity_id)
+    fake_cluster_repository.seed_member(tenant_id=tenant_id, cluster_id=source.id, identity_id=retained_identity_id)
+
+    resp = api_client.post(
+        "/recognition/topology-commands/split",
+        json={
+            "tenant_id": tenant_id,
+            "cluster_id": source.id,
+            "n_clusters": 2,
+            "expected_base_version": 0,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["status"] == "applied"
+    assert body["original_cluster_id"] == source.id
+    assert len(body["new_cluster_ids"]) == 1
+    assert body["affected_cluster_ids"][0] == source.id
+    assert body["new_cluster_ids"][0] in body["affected_cluster_ids"]
+    assert body["moved_counts"] == [1]
+    assert body["member_delta"]["source_cluster_id"] == source.id
+    assert body["member_delta"]["remaining_identity_ids"] == [moved_identity_id]
+    assert len(body["member_delta"]["created_clusters"]) == 1
+    assert body["member_delta"]["created_clusters"][0]["cluster_id"] == body["new_cluster_ids"][0]
+    assert body["member_delta"]["created_clusters"][0]["identity_ids"] == [retained_identity_id]
+    assert isinstance(body["result_snapshot_version"], int)
+
+
+def test_split_topology_command_is_idempotent(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    source = seed_cluster(
+        fake_cluster_service, tenant_id, label="source", fake_cluster_repository=fake_cluster_repository
+    )
+    idempotency_key = str(uuid.uuid4())
+    payload = {
+        "tenant_id": tenant_id,
+        "cluster_id": source.id,
+        "n_clusters": 2,
+        "expected_base_version": 0,
+        "idempotency_key": idempotency_key,
+    }
+
+    first = api_client.post("/recognition/topology-commands/split", json=payload)
+    second = api_client.post("/recognition/topology-commands/split", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+
+def test_targeted_snapshot_returns_only_requested_clusters(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    requested = seed_cluster(
+        fake_cluster_service, tenant_id, label="requested", fake_cluster_repository=fake_cluster_repository
+    )
+    ignored = seed_cluster(
+        fake_cluster_service, tenant_id, label="ignored", fake_cluster_repository=fake_cluster_repository
+    )
+    fake_cluster_repository.seed_member(tenant_id=tenant_id, cluster_id=requested.id, identity_id=str(uuid.uuid4()))
+    fake_cluster_repository.seed_member(tenant_id=tenant_id, cluster_id=ignored.id, identity_id=str(uuid.uuid4()))
+
+    resp = api_client.get(
+        f"/recognition/tenants/{tenant_id}/clusters/targeted-snapshot",
+        params=[("cluster_ids", requested.id)],
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert [cluster["cluster_uuid"] for cluster in body["clusters"]] == [requested.id]
+    assert {member["cluster_uuid"] for member in body["members"]} == {requested.id}
+
+
+def test_split_topology_command_honors_fixed_count_desired_cluster_ids(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    source = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="source",
+        fake_cluster_repository=fake_cluster_repository,
+        identity_count=3,
+    )
+    desired_cluster_ids = [str(uuid.uuid4()), str(uuid.uuid4())]
+
+    resp = api_client.post(
+        "/recognition/topology-commands/split",
+        json={
+            "tenant_id": tenant_id,
+            "cluster_id": source.id,
+            "n_clusters": 3,
+            "desired_cluster_ids": desired_cluster_ids,
+            "expected_base_version": 0,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["new_cluster_ids"] == desired_cluster_ids
+    assert fake_cluster_service.calls[-1]["desired_cluster_ids"] == desired_cluster_ids
+
+
+def test_split_topology_command_rejects_desired_cluster_ids_for_auto_mode(
+    api_client, tenant_id, fake_cluster_service
+) -> None:
+    source = seed_cluster(fake_cluster_service, tenant_id, label="source")
+
+    resp = api_client.post(
+        "/recognition/topology-commands/split",
+        json={
+            "tenant_id": tenant_id,
+            "cluster_id": source.id,
+            "n_clusters": 0,
+            "desired_cluster_ids": [str(uuid.uuid4())],
+            "expected_base_version": 0,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "fixed-count splits" in resp.text
+
+
+def test_split_topology_command_rejects_wrong_desired_cluster_id_count(
+    api_client, tenant_id, fake_cluster_service
+) -> None:
+    source = seed_cluster(fake_cluster_service, tenant_id, label="source")
+
+    resp = api_client.post(
+        "/recognition/topology-commands/split",
+        json={
+            "tenant_id": tenant_id,
+            "cluster_id": source.id,
+            "n_clusters": 3,
+            "desired_cluster_ids": [str(uuid.uuid4())],
+            "expected_base_version": 0,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+
+    assert resp.status_code == 422
+    assert "exactly 2 ids" in resp.text
+
+
+def test_split_topology_command_rejects_stale_expected_base_version(
+    api_client, tenant_id, fake_cluster_service, fake_cluster_repository
+) -> None:
+    source = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="source",
+        fake_cluster_repository=fake_cluster_repository,
+        backend_version=9,
+    )
+
+    resp = api_client.post(
+        "/recognition/topology-commands/split",
+        json={
+            "tenant_id": tenant_id,
+            "cluster_id": source.id,
+            "n_clusters": 2,
+            "expected_base_version": 4,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+
+    assert resp.status_code == 409
+    body = resp.json()["detail"]
+    assert body["conflict_code"] == "cluster_version_conflict"
+    assert body["backend_version"] == 9
+    assert body["source_cluster_id"] == source.id
+    assert body["machine_payload"]["entity_key"] == source.id
 
 
 def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:
@@ -304,6 +491,7 @@ def test_get_tenant_snapshot_includes_members(
     )
     identity_id = str(uuid.uuid4())
     fake_cluster_service.seed_identity_membership(identity_id, cluster.id)
+    fake_cluster_repository.seed_member(tenant_id=tenant_id, cluster_id=cluster.id, identity_id=identity_id)
 
     resp = api_client.get(f"/recognition/tenants/{tenant_id}/clusters/snapshot")
 
@@ -313,22 +501,19 @@ def test_get_tenant_snapshot_includes_members(
     # Verify members exists
     assert "members" in body
     assert isinstance(body["members"], list)
+    assert len(body["members"]) > 0
+    member = body["members"][0]
+    assert "identity_uuid" in member
+    assert "cluster_uuid" in member
+    assert "attachment_id" in member
+    assert "similarity" in member
+    assert "bbox" in member
+    assert "image_width" in member
+    assert "image_height" in member
+    assert "thumb_path" in member
 
-    # Note: The fake service may not return members if not implemented - this validates structure
-    if len(body["members"]) > 0:
-        member = body["members"][0]
-        assert "identity_uuid" in member
-        assert "cluster_uuid" in member
-        assert "attachment_id" in member
-        assert "similarity" in member
-        assert "bbox" in member
-        assert "image_width" in member
-        assert "image_height" in member
-        assert "thumb_path" in member
-
-        # Verify bbox structure
-        bbox = member["bbox"]
-        assert "x" in bbox
-        assert "y" in bbox
-        assert "width" in bbox
-        assert "height" in bbox
+    bbox = member["bbox"]
+    assert "x" in bbox
+    assert "y" in bbox
+    assert "width" in bbox
+    assert "height" in bbox

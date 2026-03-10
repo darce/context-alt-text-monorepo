@@ -47,6 +47,7 @@ from recognition.interface_adapters.http.schemas.requests import (
     ReassignIdentityRequest,
     RecoverOrphansRequest,
     SplitClusterRequest,
+    SplitTopologyCommandRequest,
 )
 from recognition.interface_adapters.http.schemas.responses import (
     AsyncSplitClusterResponse,
@@ -63,6 +64,9 @@ from recognition.interface_adapters.http.schemas.responses import (
     ReassignIdentityResponse,
     RepresentativeResponse,
     SplitClusterResponse,
+    SplitCommandCreatedCluster,
+    SplitCommandMemberDelta,
+    SplitTopologyCommandResponse,
 )
 from recognition.interface_adapters.http.validation import validate_entity_id, validate_label, validate_paging
 from recognition.shared.ids import generate_id
@@ -330,6 +334,42 @@ async def get_tenant_cluster_snapshot(
         generated_at=datetime.now(tz=UTC),
         clusters=cluster_responses,
         members=member_responses,
+    )
+
+
+@router.get("/tenants/{tenant_uuid}/clusters/targeted-snapshot", response_model=ClusterSnapshotResponse)
+async def get_tenant_targeted_cluster_snapshot(
+    tenant_uuid: str,
+    cluster_ids: list[str] = Query(default_factory=list),
+    auth=Depends(require_auth),
+    repo=Depends(get_cluster_repository),
+    job_service=Depends(get_persisted_cluster_job_service),
+) -> ClusterSnapshotResponse:
+    """Get a targeted cluster snapshot for a subset of cluster ids."""
+    tenant_id = tenant_uuid
+
+    if auth and auth.tenant_claim and auth.tenant_claim != tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    normalized_cluster_ids = [cluster_id.strip() for cluster_id in cluster_ids if cluster_id.strip()]
+    if not normalized_cluster_ids:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="cluster_ids required")
+
+    clusters = await repo.get_clusters_by_ids(tenant_id, normalized_cluster_ids)
+    members_with_identities = await repo.get_members_by_cluster_ids(tenant_id, normalized_cluster_ids)
+    snapshot_version = await repo.get_snapshot_version(tenant_id)
+    latest_clustering_job = await job_service.get_latest_completed_clustering_job_for_tenant(tenant_id)
+
+    if not clusters and not members_with_identities:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="No clusters found for requested ids")
+
+    return ClusterSnapshotResponse(
+        tenant_id=tenant_uuid,
+        snapshot_version=snapshot_version,
+        source_job_id=latest_clustering_job.id if latest_clustering_job is not None else None,
+        generated_at=datetime.now(tz=UTC),
+        clusters=_build_cluster_responses(clusters),
+        members=_build_member_responses(members_with_identities),
     )
 
 
@@ -713,11 +753,7 @@ async def split_cluster(
         await session.commit()
         return response_obj
 
-    try:
-        needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
-    except AttributeError:
-        needs_tenant_scoped_refresh = False
-    if needs_tenant_scoped_refresh:
+    if getattr(suggestion_refresh_service, "tenant_id", None) != request.tenant_id:
         suggestion_refresh_service = await get_suggestion_refresh_service(
             session=session,
             tenant_id=request.tenant_id,
@@ -757,6 +793,97 @@ async def split_cluster(
     return response_obj
 
 
+@router.post("/topology-commands/split", response_model=SplitTopologyCommandResponse)
+async def split_topology_command(
+    request: SplitTopologyCommandRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+    cluster_repo=Depends(get_cluster_repository),
+) -> SplitTopologyCommandResponse:
+    """Execute a split through the topology-command plane."""
+    validate_entity_id(request.cluster_id, field_name="cluster_id")
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        return SplitTopologyCommandResponse.model_validate(cached_response)
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    source_cluster = await cluster_repo.get_by_id(request.cluster_id)
+    if source_cluster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+
+    source_tenant_id = getattr(source_cluster, "tenant_id", None)
+    if source_tenant_id and str(source_tenant_id) != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Cluster not found")
+
+    backend_version = int(getattr(source_cluster, "backend_version", 0) or 0)
+    if request.expected_base_version > 0 and backend_version > request.expected_base_version:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail={
+                "conflict_code": "cluster_version_conflict",
+                "backend_version": backend_version,
+                "source_cluster_id": request.cluster_id,
+                "machine_payload": {
+                    "entity_type": "cluster",
+                    "entity_key": request.cluster_id,
+                    "backend_version": backend_version,
+                },
+            },
+        )
+
+    cluster_service = await cluster_service_builder(request.tenant_id)
+    new_ids, counts = await cluster_service.split_cluster(
+        request.cluster_id,
+        n_clusters=request.n_clusters,
+        anchor_identity_id=request.anchor_identity_id,
+        split_mode=request.split_mode,
+        desired_cluster_ids=request.desired_cluster_ids,
+        recompute=False,
+    )
+
+    # Ensure the snapshot read sees the split writes before deriving response lineage.
+    await session.flush()
+
+    affected_cluster_ids = [request.cluster_id, *new_ids]
+    snapshot_members = await cluster_repo.get_members_by_cluster_ids(request.tenant_id, affected_cluster_ids)
+    snapshot_version = await cluster_repo.get_snapshot_version(request.tenant_id)
+    remaining_identity_ids: list[str] = []
+    created_clusters: list[SplitCommandCreatedCluster] = []
+    for member, _identity in snapshot_members:
+        if member.cluster_id == request.cluster_id:
+            remaining_identity_ids.append(member.identity_id)
+            continue
+        if member.cluster_id in new_ids:
+            matching_cluster = next(
+                (cluster for cluster in created_clusters if cluster.cluster_id == member.cluster_id),
+                None,
+            )
+            if matching_cluster is None:
+                matching_cluster = SplitCommandCreatedCluster(cluster_id=member.cluster_id, identity_ids=[])
+                created_clusters.append(matching_cluster)
+            matching_cluster.identity_ids.append(member.identity_id)
+
+    response_obj = SplitTopologyCommandResponse(
+        command_id=str(generate_id()),
+        status="applied",
+        original_cluster_id=request.cluster_id,
+        new_cluster_ids=new_ids,
+        member_delta=SplitCommandMemberDelta(
+            source_cluster_id=request.cluster_id,
+            remaining_identity_ids=remaining_identity_ids,
+            created_clusters=created_clusters,
+        ),
+        moved_counts=counts,
+        affected_cluster_ids=affected_cluster_ids,
+        result_snapshot_version=snapshot_version,
+    )
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
+    await session.commit()
+    return response_obj
+
+
 @router.post("/clusters/reassign", response_model=ReassignIdentityResponse)
 async def reassign_identity(
     request: ReassignIdentityRequest,
@@ -786,20 +913,12 @@ async def reassign_identity(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    try:
-        needs_tenant_scoped_suggestion_service = not suggestion_service._tenant_id
-    except AttributeError:
-        needs_tenant_scoped_suggestion_service = False
-    if needs_tenant_scoped_suggestion_service:
+    if getattr(suggestion_service, "tenant_id", None) != request.tenant_id:
         suggestion_service = await get_suggestion_service(
             session=session,
             tenant_id=request.tenant_id,
         )
-    try:
-        needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
-    except AttributeError:
-        needs_tenant_scoped_refresh = False
-    if needs_tenant_scoped_refresh:
+    if getattr(suggestion_refresh_service, "tenant_id", None) != request.tenant_id:
         suggestion_refresh_service = await get_suggestion_refresh_service(
             session=session,
             tenant_id=request.tenant_id,
@@ -927,11 +1046,7 @@ async def assign_outlier(
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
-    try:
-        needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
-    except AttributeError:
-        needs_tenant_scoped_refresh = False
-    if needs_tenant_scoped_refresh:
+    if getattr(suggestion_refresh_service, "tenant_id", None) != request.tenant_id:
         suggestion_refresh_service = await get_suggestion_refresh_service(
             session=session,
             tenant_id=request.tenant_id,

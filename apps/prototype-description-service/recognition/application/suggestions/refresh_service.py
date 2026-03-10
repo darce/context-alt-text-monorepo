@@ -83,6 +83,11 @@ class SuggestionRefreshService:
         """Attach or clear the active recognition run context."""
         self._run_context = context
 
+    @property
+    def tenant_id(self) -> str | None:
+        """Public tenant scope for HTTP routing decisions."""
+        return self._tenant_id
+
     @staticmethod
     def _build_identity(model: MediaIdentityModel) -> MediaIdentity:
         return MediaIdentity(

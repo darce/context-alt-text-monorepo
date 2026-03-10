@@ -62,6 +62,11 @@ class SuggestionService:
         """
         self._run_context = context
 
+    @property
+    def tenant_id(self) -> str | None:
+        """Public tenant scope for HTTP routing decisions."""
+        return self._tenant_id
+
     def _emit_suggestion_resolved_event(
         self,
         *,

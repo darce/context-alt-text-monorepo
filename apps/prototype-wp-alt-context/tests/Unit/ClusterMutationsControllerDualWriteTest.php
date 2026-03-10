@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
+use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
@@ -16,14 +17,16 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
 {
     private ClusterMutationsController $controller;
     private ClusterMutationsRepositorySpy $repository;
+    private ClusterMutationsMembersSpy $membersRepository;
     private ClusterMutationsSyncStateSpy $syncStateRepository;
 
     protected function setUp(): void
     {
         parent::setUp();
         $this->repository = new ClusterMutationsRepositorySpy();
+        $this->membersRepository = new ClusterMutationsMembersSpy();
         $this->syncStateRepository = new ClusterMutationsSyncStateSpy();
-        $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository);
+        $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository, $this->membersRepository);
     }
 
     public function testDismissQueuesReplayOperationInsideTransaction(): void
@@ -123,6 +126,83 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame('acknowledged', $response->get_data()['status']);
     }
 
+    public function testReassignQueuesReplayOperationInsideTransaction(): void
+    {
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/reassign', [
+            'identity_id' => 'identity-77',
+            'target_cluster_id' => 'cluster-target',
+        ]);
+
+        $response = $this->controller->reassign_cluster_identity($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('identity-77', $this->membersRepository->lastReassignedIdentityId);
+        $this->assertSame('cluster-target', $this->membersRepository->lastTargetClusterId);
+        $this->assertSame(md5((string) get_site_url()), $this->syncStateRepository->lastTouchedTenantId);
+        $this->assertContains('START TRANSACTION', $GLOBALS['wpdb']->queries);
+        $this->assertContains('COMMIT', $GLOBALS['wpdb']->queries);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testReassignRollbackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/reassign', [
+            'identity_id' => 'identity-77',
+            'target_cluster_id' => 'cluster-target',
+        ]);
+
+        $response = $this->controller->reassign_cluster_identity($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testReassignDoesNotTouchCurationMarkerWhenNoRowsAffected(): void
+    {
+        $this->membersRepository->nextReassignRows = 0;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/reassign', [
+            'identity_id' => 'identity-77',
+            'target_cluster_id' => 'cluster-target',
+        ]);
+
+        $response = $this->controller->reassign_cluster_identity($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame('identity-77', $this->membersRepository->lastReassignedIdentityId);
+        $this->assertSame('', $this->syncStateRepository->lastTouchedTenantId);
+    }
+
+    public function testLabelUpdateQueuesReplayOperationInsideTransaction(): void
+    {
+        global $wpdb;
+
+        $request = new \WP_REST_Request('PATCH', '/recognition/clusters/cluster-xyz', [
+            'cluster_id' => 'cluster-xyz',
+            'label' => 'Known Person',
+        ]);
+
+        $response = $this->controller->update_cluster_label($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('cluster-xyz', $this->repository->updatedLabelClusterId);
+        $this->assertSame('Known Person', $this->repository->updatedLabel);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'cluster_label_updated'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-xyz'", $outboxInsert);
+        $this->assertStringContainsString('Known Person', $outboxInsert);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
     /**
      * @param array<int,string> $queries
      */
@@ -135,7 +215,6 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         }
 
         $this->fail(sprintf('Unable to find query containing "%s".', $needle));
-        return '';
     }
 }
 
@@ -143,6 +222,8 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
 {
     public string $dismissedClusterId = '';
     public string $undismissedClusterId = '';
+    public string $updatedLabelClusterId = '';
+    public string $updatedLabel = '';
     public int $nextDismissRows = 1;
     public int $nextUndismissRows = 1;
     /** @var array<string,array<string,mixed>> */
@@ -171,12 +252,48 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     {
         return $this->localClusterRows[$cluster_uuid] ?? null;
     }
+
+    public function update_label(string $cluster_uuid, string $label): int
+    {
+        $this->updatedLabelClusterId = $cluster_uuid;
+        $this->updatedLabel = $label;
+        return 1;
+    }
 }
 
 class ClusterMutationsSyncStateSpy extends NullSyncStateRepository
 {
+    public string $lastTouchedTenantId = '';
+
     public function get_snapshot_version(string $tenant_id): int
     {
         return 99;
+    }
+
+    public function touch_local_curation_marker(string $tenant_id): void
+    {
+        $this->lastTouchedTenantId = $tenant_id;
+    }
+}
+
+class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
+{
+    public string $lastCuratedIdentityId = '';
+    public string $lastReassignedIdentityId = '';
+    public string $lastTargetClusterId = '';
+    public int $nextMarkRows = 1;
+    public int $nextReassignRows = 1;
+
+    public function mark_as_curated(string $identity_uuid): int
+    {
+        $this->lastCuratedIdentityId = $identity_uuid;
+        return $this->nextMarkRows;
+    }
+
+    public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int
+    {
+        $this->lastReassignedIdentityId = $identity_uuid;
+        $this->lastTargetClusterId = $target_cluster_uuid;
+        return $this->nextReassignRows;
     }
 }

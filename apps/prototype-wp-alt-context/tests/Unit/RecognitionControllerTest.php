@@ -8,6 +8,7 @@ use AltContext\Api\ClusterMutationsController;
 use AltContext\Api\RecognitionController;
 use AltContext\Tests\TestCase;
 use AltContext\Tests\Stubs\NullClustersRepository;
+use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use WP_REST_Request;
 
@@ -298,6 +299,17 @@ class RecognitionControllerTest extends TestCase
     {
         $clusterId = '5bc82b54-e3ca-41f9-a665-87f57ab2b3ce';
         $captured = [];
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $repository->seedCluster($clusterId, 17, 4);
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                $repository,
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
 
         add_action(
             'acx_recognition_complete',
@@ -311,13 +323,6 @@ class RecognitionControllerTest extends TestCase
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
-                'id' => $clusterId,
-                'label' => 'Daniel',
-            ]),
-        ]);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
                 ['identity_id' => 'a', 'media_id' => 501],
                 ['identity_id' => 'b', 'media_id' => 502],
             ]),
@@ -327,7 +332,7 @@ class RecognitionControllerTest extends TestCase
         $request->set_param('cluster_id', $clusterId);
         $request->set_param('label', 'Daniel');
 
-        $response = $this->controller->update_cluster_label($request);
+        $response = $controller->update_cluster_label($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
@@ -349,9 +354,17 @@ class RecognitionControllerTest extends TestCase
 
     public function testReassignClusterIdentityTriggersXmpRefreshForSourceAndTargetClusters(): void
     {
-        $sourceClusterId = '92b407ec-2768-4ff3-90e4-e33afbf7c609';
         $targetClusterId = '19734ad5-4d95-4077-a711-8e407a9dd9ff';
         $captured = [];
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                new RecognitionControllerClusterMutationsRepositorySpy(),
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
 
         add_action(
             'acx_recognition_complete',
@@ -362,21 +375,6 @@ class RecognitionControllerTest extends TestCase
             2
         );
 
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                'identity_id' => 'f30df8eb-4946-4a09-9df9-b5d74e8e0d1d',
-                'source_cluster_id' => $sourceClusterId,
-                'target_cluster_id' => $targetClusterId,
-            ]),
-        ]);
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                ['identity_id' => 'm1', 'media_id' => 601],
-                ['identity_id' => 'm2', 'media_id' => 602],
-            ]),
-        ]);
         $this->queueHttpResponse([
             'response' => ['code' => 200, 'message' => 'OK'],
             'body' => json_encode([
@@ -391,20 +389,19 @@ class RecognitionControllerTest extends TestCase
         $request->set_param('identity_id', 'f30df8eb-4946-4a09-9df9-b5d74e8e0d1d');
         $request->set_param('target_cluster_id', $targetClusterId);
 
-        $response = $this->controller->reassign_cluster_identity($request);
+        $response = $controller->reassign_cluster_identity($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
         $this->assertSame([], $captured);
         $this->assertNotFalse(
-            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$sourceClusterId, $targetClusterId], 'cluster-reassign'])
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$targetClusterId], 'cluster-reassign'])
         );
 
-        do_action('acx_refresh_xmp_for_clusters', [$sourceClusterId, $targetClusterId], 'cluster-reassign');
+        do_action('acx_refresh_xmp_for_clusters', [$targetClusterId], 'cluster-reassign');
 
         $this->assertSame(
             [
-                [601, 'cluster-reassign'],
                 [602, 'cluster-reassign'],
                 [603, 'cluster-reassign'],
             ],
@@ -554,6 +551,26 @@ class RecognitionControllerClusterMutationsRepositorySpy extends NullClustersRep
         return $this->localClusterRows[$cluster_uuid] ?? null;
     }
 
+    public function seedCluster(string $cluster_uuid, int $snapshot_version, int $local_revision): void
+    {
+        $this->localClusterRows[$cluster_uuid] = [
+            'cluster_uuid' => $cluster_uuid,
+            'snapshot_version' => $snapshot_version,
+            'local_revision' => $local_revision,
+            'curation_state' => 'uncurated',
+        ];
+    }
+
+    public function update_label(string $cluster_uuid, string $label): int
+    {
+        if (!isset($this->localClusterRows[$cluster_uuid])) {
+            return 0;
+        }
+
+        $this->localClusterRows[$cluster_uuid]['label'] = $label;
+        return 1;
+    }
+
     public function dismiss(string $cluster_uuid): int
     {
         $this->dismissedClusterId = $cluster_uuid;
@@ -572,5 +589,13 @@ class RecognitionControllerSyncStateRepositorySpy extends NullSyncStateRepositor
     public function get_snapshot_version(string $tenant_id): int
     {
         return 99;
+    }
+}
+
+class RecognitionControllerIdentityMembersRepositorySpy extends NullIdentityMembersRepository
+{
+    public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int
+    {
+        return 1;
     }
 }

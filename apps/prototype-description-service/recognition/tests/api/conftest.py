@@ -474,9 +474,10 @@ def api_client(
     monkeypatch.setenv("RECOGNITION_ASYNC_ANALYZE_INLINE", "0")
     app = FastAPI()
     app.include_router(recognition_router, prefix="/recognition")
+    fake_session = FakeSession()
 
     async def _no_session():
-        yield FakeSession()
+        yield fake_session
 
     def cluster_builder():
         async def _build(_tenant_id: str):

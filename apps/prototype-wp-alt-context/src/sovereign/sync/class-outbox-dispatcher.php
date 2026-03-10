@@ -17,9 +17,33 @@ use function is_string;
 use function is_wp_error;
 use function ltrim;
 use function max;
+use function rawurlencode;
+use function strpos;
 use function trim;
 
 class OutboxDispatcher {
+	/**
+	 * @var array<string,array{method:string,path:string}>
+	 */
+	private const TOPOLOGY_ROUTES = array(
+		'cluster_merged' => array(
+			'method' => 'POST',
+			'path' => '/recognition/clusters/%s/merge',
+		),
+		'cluster_split' => array(
+			'method' => 'POST',
+			'path' => '/recognition/clusters/%s/split',
+		),
+		'identity_reassigned' => array(
+			'method' => 'POST',
+			'path' => '/recognition/clusters/reassign',
+		),
+		'cluster_created_for_identity' => array(
+			'method' => 'POST',
+			'path' => '/recognition/clusters/create-for-identity',
+		),
+	);
+
 	private SnapshotClientTransport $transport;
 
 	public function __construct( ?SnapshotClientTransport $transport = null ) {
@@ -33,6 +57,11 @@ class OutboxDispatcher {
 	 * @return array<string,mixed>
 	 */
 	public function dispatch( array $operation ): array {
+		$operation_type = $this->normalize_text( $operation['operation_type'] ?? '', '' );
+		if ( isset( self::TOPOLOGY_ROUTES[ $operation_type ] ) ) {
+			return $this->dispatch_topology_operation( $operation );
+		}
+
 		$results = $this->dispatch_batch( array( $operation ) );
 		return $results[0] ?? array(
 			'status' => 'failed',
@@ -49,6 +78,47 @@ class OutboxDispatcher {
 	 * @return array<int,array<string,mixed>>
 	 */
 	public function dispatch_batch( array $operations ): array {
+		if ( empty( $operations ) ) {
+			return array();
+		}
+
+		$results = array_fill( 0, count( $operations ), array() );
+		$state_indexes = array();
+		$state_operations = array();
+
+		foreach ( $operations as $index => $operation ) {
+			$operation_type = $this->normalize_text( $operation['operation_type'] ?? '', '' );
+			if ( isset( self::TOPOLOGY_ROUTES[ $operation_type ] ) ) {
+				$results[ $index ] = $this->dispatch_topology_operation( $operation );
+				continue;
+			}
+
+			$state_indexes[] = $index;
+			$state_operations[] = $operation;
+		}
+
+		if ( empty( $state_operations ) ) {
+			return $results;
+		}
+
+		$state_results = $this->dispatch_state_batch( $state_operations );
+		foreach ( $state_indexes as $offset => $index ) {
+			$results[ $index ] = $state_results[ $offset ] ?? array(
+				'status' => 'failed',
+				'error_code' => 'unexpected_response',
+				'error_message' => 'Remote curation replay did not return a result for this operation.',
+				'retryable' => true,
+			);
+		}
+
+		return $results;
+	}
+
+	/**
+	 * @param array<int,array<string,mixed>> $operations
+	 * @return array<int,array<string,mixed>>
+	 */
+	private function dispatch_state_batch( array $operations ): array {
 		$bodies = array();
 		foreach ( $operations as $index => $operation ) {
 			$body = $this->build_request_body( $operation );
@@ -229,6 +299,10 @@ class OutboxDispatcher {
 
 		$payload = is_array( $operation['payload'] ?? null ) ? $operation['payload'] : array();
 
+		if ( isset( self::TOPOLOGY_ROUTES[ $operation_type ] ) ) {
+			return $this->build_topology_request_body( $operation_type, $payload, $idempotency_key );
+		}
+
 		return array(
 			'operation_type' => $operation_type,
 			'entity_type' => $entity_type,
@@ -238,6 +312,102 @@ class OutboxDispatcher {
 			'local_revision' => max( 0, (int) ( $operation['local_revision'] ?? 0 ) ),
 			'payload' => $payload,
 		);
+	}
+
+	/**
+	 * @param array<string,mixed> $operation
+	 * @return array<string,mixed>
+	 */
+	private function dispatch_topology_operation( array $operation ): array {
+		$operation_type = $this->normalize_text( $operation['operation_type'] ?? '', '' );
+		$route = self::TOPOLOGY_ROUTES[ $operation_type ] ?? null;
+		$body = $this->build_request_body( $operation );
+		if ( ! is_array( $route ) || ! is_array( $body ) ) {
+			return array(
+				'status' => 'failed',
+				'error_code' => 'invalid_payload',
+				'error_message' => 'Outbox operation payload is missing required fields.',
+				'retryable' => false,
+			);
+		}
+
+		$path = $route['path'];
+		if ( false !== strpos( $path, '%s' ) ) {
+			$entity_key = $this->normalize_text( $operation['entity_key'] ?? '', '' );
+			if ( '' === $entity_key ) {
+				return array(
+					'status' => 'failed',
+					'error_code' => 'invalid_payload',
+					'error_message' => 'Outbox topology operation is missing an entity key.',
+					'retryable' => false,
+				);
+			}
+			$path = sprintf( $path, rawurlencode( $entity_key ) );
+		}
+
+		$response = $this->transport->request( $route['method'], $path, $body, array() );
+		if ( is_wp_error( $response ) ) {
+			return array(
+				'status' => 'failed',
+				'error_code' => $this->normalize_text( $response->get_error_code(), 'transport_error' ),
+				'error_message' => $this->normalize_text( $response->get_error_message(), 'Remote transport failed.' ),
+				'retryable' => true,
+			);
+		}
+
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return array(
+				'status' => 'failed',
+				'error_code' => 'unexpected_response',
+				'error_message' => 'Remote transport returned an unexpected response type.',
+				'retryable' => true,
+			);
+		}
+
+		return $this->normalize_single_response( $response );
+	}
+
+	/**
+	 * @param array<string,mixed> $payload
+	 * @return array<string,mixed>|null
+	 */
+	private function build_topology_request_body( string $operation_type, array $payload, string $idempotency_key ): ?array {
+		$tenant_id = $this->transport->tenant_id();
+		if ( '' === trim( $tenant_id ) ) {
+			return null;
+		}
+
+		$body = $payload;
+		$body['tenant_id'] = $tenant_id;
+		$body['idempotency_key'] = $idempotency_key;
+
+		if ( 'cluster_merged' === $operation_type ) {
+			$target_cluster_id = $this->normalize_text( $payload['target_cluster_id'] ?? '', '' );
+			if ( '' === $target_cluster_id ) {
+				return null;
+			}
+			$body['target_cluster_id'] = $target_cluster_id;
+		}
+
+		if ( 'identity_reassigned' === $operation_type ) {
+			$identity_id = $this->normalize_text( $payload['identity_id'] ?? '', '' );
+			if ( '' === $identity_id ) {
+				return null;
+			}
+			$body['identity_id'] = $identity_id;
+		}
+
+		if ( 'cluster_created_for_identity' === $operation_type ) {
+			$identity_id = $this->normalize_text( $payload['identity_id'] ?? '', '' );
+			$label = $this->normalize_text( $payload['label'] ?? '', '' );
+			if ( '' === $identity_id || '' === $label ) {
+				return null;
+			}
+			$body['identity_id'] = $identity_id;
+			$body['label'] = $label;
+		}
+
+		return $body;
 	}
 
 	private function normalize_text( mixed $value, string $default ): string {

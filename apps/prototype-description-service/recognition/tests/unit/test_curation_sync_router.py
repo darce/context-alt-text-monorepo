@@ -172,3 +172,40 @@ def test_curation_sync_router_returns_batch_results(monkeypatch) -> None:
             },
         ]
     }
+
+
+def test_curation_sync_router_accepts_cluster_label_updated(monkeypatch) -> None:
+    captured: dict[str, object] = {}
+
+    async def _fake_apply(self, tenant_id: str, operation):  # noqa: ANN001
+        captured["tenant_id"] = tenant_id
+        captured["operation_type"] = operation.operation_type
+        captured["label"] = operation.payload["label"]
+        return CurationSyncResult(status="acknowledged", backend_version=33)
+
+    monkeypatch.setattr(curation_router.CurationSyncService, "apply", _fake_apply)
+
+    client = _build_client()
+    response = client.post(
+        "/roster/curation/sync",
+        headers={"X-Tenant-ID": TENANT_ID},
+        json={
+            **_payload("cluster_label_updated", idempotency_key="idem-label"),
+            "payload": {
+                "cluster_uuid": "8dd2c1d7-b9df-4d0d-9f47-265ff9ea5e7e",
+                "label": "Known Person",
+            },
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "status": "acknowledged",
+        "backend_version": 33,
+        "idempotency_key": "idem-label",
+    }
+    assert captured == {
+        "tenant_id": TENANT_ID,
+        "operation_type": "cluster_label_updated",
+        "label": "Known Person",
+    }

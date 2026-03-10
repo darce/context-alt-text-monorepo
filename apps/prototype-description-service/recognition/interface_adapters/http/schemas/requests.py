@@ -75,6 +75,7 @@ class MergeClusterRequest(BaseModel):
     tenant_id: str
     target_cluster_id: str
     target_label: str | None = None
+    idempotency_key: str | None = None
 
     @field_validator("tenant_id", "target_cluster_id")
     @classmethod
@@ -101,6 +102,7 @@ class CreateClusterForIdentityRequest(BaseModel):
     tenant_id: str
     identity_id: str
     label: str
+    idempotency_key: str | None = None
 
     @field_validator("tenant_id", "identity_id")
     @classmethod
@@ -132,6 +134,7 @@ class ReassignIdentityRequest(BaseModel):
     identity_id: str
     target_cluster_id: str | None = None
     block_from_cluster: bool = True
+    idempotency_key: str | None = None
 
     @field_validator("tenant_id", "identity_id")
     @classmethod
@@ -164,6 +167,7 @@ class SplitClusterRequest(BaseModel):
     anchor_identity_id: str | None = None
     split_mode: str | None = Field(default=None, description="Optional split mode hint")
     mode: Literal["sync", "async"] = Field(default="sync", description="Execution mode")
+    idempotency_key: str | None = None
 
     @field_validator("tenant_id")
     @classmethod

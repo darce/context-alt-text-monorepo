@@ -114,7 +114,7 @@ class SqlAlchemyJobRepository(JobRepository):
             .limit(1)
         )
         result = await self._session.execute(stmt)
-        clustering = result.scalars().first()
+        clustering = _first_clustering_row(result)
         if clustering is None:
             return None
         return Job(
@@ -146,7 +146,7 @@ class SqlAlchemyJobRepository(JobRepository):
             .order_by(IdentityClusteringJob.started_at.desc(), IdentityClusteringJob.created_at.desc())
         )
         result = await self._session.execute(stmt)
-        clustering = result.scalars().first()
+        clustering = _first_clustering_row(result)
         if clustering is None:
             return None
         return Job(
@@ -178,7 +178,7 @@ class SqlAlchemyJobRepository(JobRepository):
             .order_by(IdentityClusteringJob.completed_at.desc(), IdentityClusteringJob.created_at.desc())
         )
         result = await self._session.execute(stmt)
-        clustering = result.scalars().first()
+        clustering = _first_clustering_row(result)
         if clustering is None:
             return None
         return Job(
@@ -310,6 +310,27 @@ def _hydrate_projection_payload(clustering: IdentityClusteringJob) -> dict[str, 
     if clustering.projection_acknowledged_at is not None:
         payload["projection_acknowledged_at"] = clustering.projection_acknowledged_at.isoformat()
     return payload
+
+
+def _first_clustering_row(result: object) -> IdentityClusteringJob | None:
+    scalars = getattr(result, "scalars", None)
+    if not callable(scalars):
+        return None
+
+    scalar_result = scalars()
+    first = getattr(scalar_result, "first", None)
+    if callable(first):
+        value = first()
+        return value if isinstance(value, IdentityClusteringJob) else None
+
+    all_rows = getattr(scalar_result, "all", None)
+    if callable(all_rows):
+        rows = all_rows()
+        if isinstance(rows, list) and rows:
+            first_row = rows[0]
+            return first_row if isinstance(first_row, IdentityClusteringJob) else None
+
+    return None
 
 
 def _coerce_payload_uuid(value: object) -> UUID | None:

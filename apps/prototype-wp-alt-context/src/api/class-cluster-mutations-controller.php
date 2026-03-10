@@ -6,9 +6,12 @@ namespace AltContext\Api;
 
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
+use AltContext\Sovereign\Repositories\IdentityMembersRepository;
+use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\OutboxWriter;
+use AltContext\Sovereign\Sync\OutboxWriterInterface;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -40,14 +43,20 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	private const XMP_REFRESH_CLUSTER_HOOK = 'acx_refresh_xmp_for_clusters';
 	private const XMP_REFRESH_DELAY_SECONDS = 1;
 	private ClustersRepositoryInterface $clusters_repository;
+	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
+	private OutboxWriterInterface $outbox_writer;
 
 	public function __construct(
 		?ClustersRepositoryInterface $clusters_repository = null,
-		?SyncStateRepositoryInterface $sync_state_repository = null
+		?SyncStateRepositoryInterface $sync_state_repository = null,
+		?IdentityMembersRepositoryInterface $members_repository = null,
+		?OutboxWriterInterface $outbox_writer = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
+		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
+		$this->outbox_writer = $outbox_writer ?? new OutboxWriter();
 		add_action( self::XMP_REFRESH_CLUSTER_HOOK, array( $this, 'refresh_xmp_for_cluster_ids_async' ), 10, 2 );
 	}
 
@@ -158,16 +167,26 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	}
 
 	public function reassign_cluster_identity( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
 		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
 		if ( '' === $identity_id ) {
 			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
 		}
 
-		$target  = $request->get_param( 'target_cluster_id' );
+		$target = sanitize_text_field( (string) ( $request->get_param( 'target_cluster_id' ) ?? '' ) );
+		if ( '' === $target ) {
+			return new WP_Error( 'missing_target_cluster_id', 'Target cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
 		$payload = array(
 			'tenant_id'         => $this->get_tenant_id(),
 			'identity_id'       => $identity_id,
-			'target_cluster_id' => $target ? sanitize_text_field( (string) $target ) : null,
+			'target_cluster_id' => $target,
 			'user_id'           => get_current_user_id(),
 		);
 		$block_from_cluster = $request->get_param( 'block_from_cluster' );
@@ -175,12 +194,43 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			$payload['block_from_cluster'] = rest_sanitize_boolean( $block_from_cluster );
 		}
 
-		$response = $this->proxy_request( 'POST', '/recognition/clusters/reassign', $payload );
-		$this->maybe_trigger_xmp_refresh_for_response( $response, array(), 'cluster-reassign' );
-		return $response;
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
+		$affected_rows = $this->members_repository->reassign_to_cluster( $identity_id, $target );
+		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'identity_reassigned', $identity_id, array(), $payload, 'member' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue reassign replay operation.', array( 'status' => 500 ) );
+		}
+
+		if ( $affected_rows > 0 ) {
+			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
+		}
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
+
+		if ( $affected_rows > 0 ) {
+			$this->trigger_xmp_refresh_for_cluster_ids( array( $target ), 'cluster-reassign' );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'identity_id' => $identity_id,
+				'target_cluster_id' => $target,
+				'synced' => false,
+				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+			),
+			200
+		);
 	}
 
 	public function update_cluster_label( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
 		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
 		$label      = sanitize_text_field( (string) $request->get_param( 'label' ) );
 
@@ -192,19 +242,55 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_label', 'Label cannot be empty.', array( 'status' => 400 ) );
 		}
 
+		$cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( ! is_array( $cluster ) ) {
+			return new WP_Error( 'cluster_not_found', 'Cluster not found.', array( 'status' => 404 ) );
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
 		$affected_rows = $this->clusters_repository->update_label( $cluster_id, $label );
+		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation(
+			'cluster_label_updated',
+			$cluster_id,
+			$cluster,
+			array(
+				'cluster_uuid' => $cluster_id,
+				'label' => $label,
+			)
+		) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue label replay operation.', array( 'status' => 500 ) );
+		}
+
 		if ( $affected_rows > 0 ) {
 			$this->sync_state_repository->touch_local_curation_marker( $this->get_tenant_id() );
 		}
 
-		$payload = array(
-			'tenant_id' => $this->get_tenant_id(),
-			'label'     => $label,
-		);
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
 
-		$response = $this->proxy_request( 'PATCH', sprintf( '/recognition/clusters/%s', $cluster_id ), $payload );
-		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $cluster_id ), 'cluster-label-update' );
-		return $response;
+		if ( $affected_rows > 0 ) {
+			$this->trigger_xmp_refresh_for_cluster_ids( array( $cluster_id ), 'cluster-label-update' );
+		}
+
+		return new WP_REST_Response(
+			array(
+				'cluster_id' => $cluster_id,
+				'label' => $label,
+				'synced' => false,
+				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+			),
+			200
+		);
 	}
 
 	public function dismiss_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -525,25 +611,26 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * @param array<string,mixed> $cluster
+	 * @param array<string,mixed> $context_row
+	 * @param array<string,mixed> $payload
 	 */
-	private function enqueue_curation_operation( string $operation_type, string $cluster_id, array $cluster ): bool {
+	private function enqueue_curation_operation( string $operation_type, string $entity_key, array $context_row, array $payload = array(), string $entity_type = 'cluster' ): bool {
 		$tenant_id = trim( $this->get_tenant_id() );
 		if ( '' === $tenant_id ) {
 			return false;
 		}
 
-		$writer = new OutboxWriter();
-		$result = $writer->enqueue(
+		$resolved_payload = ! empty( $payload ) ? $payload : array(
+			'cluster_uuid' => $entity_key,
+		);
+		$result = $this->outbox_writer->enqueue(
 			$tenant_id,
 			$operation_type,
-			'cluster',
-			$cluster_id,
-			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
-			max( 1, (int) ( $cluster['local_revision'] ?? 0 ) + 1 ),
-			array(
-				'cluster_uuid' => $cluster_id,
-			),
+			$entity_type,
+			$entity_key,
+			max( 0, (int) ( $context_row['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $tenant_id ) ) ),
+			max( 1, (int) ( $context_row['local_revision'] ?? 0 ) + 1 ),
+			$resolved_payload,
 			wp_generate_uuid4()
 		);
 

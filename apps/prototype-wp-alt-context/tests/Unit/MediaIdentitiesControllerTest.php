@@ -24,6 +24,12 @@ class MediaIdentitiesControllerTest extends TestCase
 				return []; }
             public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array {
 				return []; }
+            public function mark_as_curated(string $identity_uuid): int {
+				return 0; }
+            public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
+				return 0; }
+            public function get_curated_members_for_tenant(string $tenant_id): array {
+				return []; }
             public function list_for_media_ids(string $tenant_id, array $media_ids): array
             {
                 return [
@@ -80,6 +86,13 @@ class MediaIdentitiesControllerTest extends TestCase
             public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array {
                 return [];
             }
+            public function mark_as_curated(string $identity_uuid): int {
+				return 0; }
+            public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
+                return 0;
+            }
+            public function get_curated_members_for_tenant(string $tenant_id): array {
+				return []; }
             public function list_for_media_ids(string $tenant_id, array $media_ids): array {
                 return [];
             }

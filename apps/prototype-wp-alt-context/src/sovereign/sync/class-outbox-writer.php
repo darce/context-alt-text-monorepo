@@ -6,6 +6,7 @@ namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/class-outbox-drain.php';
+require_once __DIR__ . '/interface-outbox-writer.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 
@@ -19,7 +20,7 @@ use function trim;
 use function wp_generate_uuid4;
 use function wp_json_encode;
 
-class OutboxWriter {
+class OutboxWriter implements OutboxWriterInterface {
 	private string $table_name;
 	private SyncStateRepository $sync_state_repository;
 

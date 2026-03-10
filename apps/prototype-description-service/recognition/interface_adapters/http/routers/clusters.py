@@ -5,13 +5,16 @@ Cluster management routes.
 from __future__ import annotations
 
 import contextlib
+import json
 import logging
 from datetime import UTC, datetime
+from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 
 from db.models import Tenant
+from db.models.identity import CurationReplayRecord
 from db.session import async_session_factory
 from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.config import get_settings as get_recognition_settings
@@ -67,6 +70,59 @@ from recognition.shared.ids import generate_id
 _logger = logging.getLogger(__name__)
 
 router = APIRouter(tags=["clusters"], dependencies=[Depends(require_auth)])
+
+
+async def _load_topology_replay(session, tenant_id: str, idempotency_key: str | None) -> dict | None:
+    if not idempotency_key:
+        return None
+
+    tenant_uuid = UUID(tenant_id)
+    result = await session.execute(
+        select(CurationReplayRecord).where(
+            CurationReplayRecord.tenant_id == tenant_uuid,
+            CurationReplayRecord.idempotency_key == idempotency_key,
+        )
+    )
+    record = result.scalar_one_or_none()
+    if not isinstance(record, CurationReplayRecord):
+        for candidate in getattr(session, "added", []):
+            if (
+                isinstance(candidate, CurationReplayRecord)
+                and candidate.tenant_id == tenant_uuid
+                and candidate.idempotency_key == idempotency_key
+            ):
+                record = candidate
+                break
+
+    if not isinstance(record, CurationReplayRecord):
+        return None
+
+    if not isinstance(record.machine_payload_json, str) or not record.machine_payload_json.strip():
+        return None
+
+    payload = json.loads(record.machine_payload_json)
+    return payload if isinstance(payload, dict) else None
+
+
+async def _store_topology_replay(session, tenant_id: str, idempotency_key: str | None, payload: dict) -> None:
+    if not idempotency_key:
+        return
+
+    tenant_uuid = UUID(tenant_id)
+    existing = await _load_topology_replay(session, tenant_id, idempotency_key)
+    if existing is not None:
+        return
+
+    session.add(
+        CurationReplayRecord(
+            tenant_id=tenant_uuid,
+            idempotency_key=idempotency_key,
+            result_status="acknowledged",
+            backend_version=0,
+            machine_payload_json=json.dumps(payload, sort_keys=True),
+        )
+    )
+    await session.flush()
 
 
 @router.post("/clustering/jobs", response_model=ClusteringJobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -524,6 +580,9 @@ async def create_cluster_for_identity(
     """Create a new labeled cluster for a single identity."""
     validate_entity_id(request.identity_id, field_name="identity_id")
     label = validate_label(request.label)
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        return CreateClusterForIdentityResponse.model_validate(cached_response)
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -541,14 +600,16 @@ async def create_cluster_for_identity(
         raise HTTPException(status_code=status.HTTP_500_INTERNAL_SERVER_ERROR, detail="Cluster creation failed")
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
-    await session.commit()
-
-    return CreateClusterForIdentityResponse(
+    response_obj = CreateClusterForIdentityResponse(
         cluster_id=cluster.id,
         label=cluster.label or label,
         identity_id=request.identity_id,
         message="Cluster created",
     )
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
+    await session.commit()
+
+    return response_obj
 
 
 @router.post("/clusters/{cluster_id}/merge", response_model=ClusterResponse)
@@ -564,6 +625,9 @@ async def merge_cluster(
     """Merge cluster into target (by label)."""
     validate_entity_id(cluster_id, field_name="cluster_id")
     validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        return ClusterResponse.model_validate(cached_response)
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -588,9 +652,11 @@ async def merge_cluster(
         )
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
+    response_obj = ClusterResponse.model_validate(cluster)
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
     await session.commit()
 
-    return cluster
+    return response_obj
 
 
 @router.post("/clusters/{cluster_id}/split", response_model=SplitClusterResponse | AsyncSplitClusterResponse)
@@ -614,6 +680,11 @@ async def split_cluster(
     If mode="async", the split is queued and returns 202 Accepted with a job ID.
     """
     validate_entity_id(cluster_id, field_name="cluster_id")
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        if "job_id" in cached_response:
+            return AsyncSplitClusterResponse.model_validate(cached_response)
+        return SplitClusterResponse.model_validate(cached_response)
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -632,11 +703,14 @@ async def split_cluster(
         )
         job = await job_service.queue_split(tenant_id=request.tenant_id, payload=payload)
         response.status_code = status.HTTP_202_ACCEPTED
-        return AsyncSplitClusterResponse(
+        response_obj = AsyncSplitClusterResponse(
             job_id=job.id,
             status=job.status.value,
             message=f"Split operation queued for cluster {cluster_id[:8]}",
         )
+        await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
+        await session.commit()
+        return response_obj
 
     try:
         needs_tenant_scoped_refresh = not suggestion_refresh_service._tenant_id
@@ -676,6 +750,7 @@ async def split_cluster(
         await suggestion_refresh_service.refresh_for_cluster(cid)
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
     await session.commit()
 
     return response_obj
@@ -702,6 +777,9 @@ async def reassign_identity(
     is automatically marked as accepted.
     """
     validate_entity_id(request.identity_id, field_name="identity_id")
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        return ReassignIdentityResponse.model_validate(cached_response)
     if request.target_cluster_id:
         validate_entity_id(request.target_cluster_id, field_name="target_cluster_id")
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
@@ -821,14 +899,16 @@ async def reassign_identity(
             await suggestion_refresh_service.refresh_for_cluster(source_cluster_id)
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
-    await session.commit()
-
-    return ReassignIdentityResponse(
+    response_obj = ReassignIdentityResponse(
         identity_id=request.identity_id,
         source_cluster_id=source_cluster_id,
         target_cluster_id=request.target_cluster_id,
         success=True,
     )
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
+    await session.commit()
+
+    return response_obj
 
 
 @router.post("/clusters/{cluster_id}/assign", response_model=ClusterResponse)

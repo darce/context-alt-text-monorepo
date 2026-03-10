@@ -147,6 +147,27 @@ def test_merge_cluster_same_target_does_not_queue_followup(
     assert not curation_calls
 
 
+def test_merge_cluster_is_idempotent_with_idempotency_key(api_client, tenant_id, fake_cluster_service, fake_job_service) -> None:
+    target = seed_cluster(fake_cluster_service, tenant_id, label="target")
+    source = seed_cluster(fake_cluster_service, tenant_id, label="source")
+    payload = {
+        "tenant_id": tenant_id,
+        "target_cluster_id": target.id,
+        "target_label": "merged",
+        "idempotency_key": "merge-idem-1",
+    }
+
+    first = api_client.post(f"/recognition/clusters/{source.id}/merge", json=payload)
+    second = api_client.post(f"/recognition/clusters/{source.id}/merge", json=payload)
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert second.json() == first.json()
+
+    curation_calls = [c for c in fake_job_service.calls if c["method"] == "queue_curation_followup"]
+    assert len(curation_calls) == 1
+
+
 def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:
     cluster = seed_cluster(fake_cluster_service, tenant_id, label="target")
     starting_count = cluster.identity_count

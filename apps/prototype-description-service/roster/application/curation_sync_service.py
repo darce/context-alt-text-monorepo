@@ -35,6 +35,7 @@ class CurationSyncService:
         "cluster_person_unbound",
         "cluster_dismissed",
         "cluster_undismissed",
+        "cluster_label_updated",
     }
     _SUPPORTED_OPERATION_TYPES: ClassVar[set[str]] = _PERSON_OPERATION_TYPES | _CLUSTER_OPERATION_TYPES
 
@@ -83,11 +84,13 @@ class CurationSyncService:
         desired_dismissed = self._resolve_desired_dismissed(operation_type)
         current_roster_id = str(cluster.roster_id) if cluster.roster_id is not None else None
         current_dismissed = cluster.dismissed_at is not None
+        current_label = cluster.label or ""
+        desired_label = self._resolve_desired_label(operation, operation_type, current_label)
         desired_roster_id = self._resolve_desired_roster_id(operation, operation_type, current_roster_id)
         cluster_backend_version = self._version_from_datetime(cluster.updated_at)
 
         dismissal_matches = desired_dismissed is None or current_dismissed == desired_dismissed
-        if current_roster_id == desired_roster_id and dismissal_matches:
+        if current_roster_id == desired_roster_id and dismissal_matches and current_label == desired_label:
             result = CurationSyncResult(status="acknowledged", backend_version=cluster_backend_version)
             await self._store_replay_result(tenant_uuid, idempotency_key, result)
             return result
@@ -101,12 +104,14 @@ class CurationSyncService:
                     "cluster_uuid": str(cluster.id),
                     "current_roster_id": current_roster_id,
                     "dismissed": current_dismissed,
+                    "label": current_label,
                 },
             )
             await self._store_replay_result(tenant_uuid, idempotency_key, result)
             return result
 
         cluster.roster_id = UUID(desired_roster_id) if desired_roster_id is not None else None
+        cluster.label = desired_label
         if desired_dismissed is True:
             cluster.dismissed_at = datetime.now(tz=UTC)
         elif desired_dismissed is False:
@@ -211,7 +216,7 @@ class CurationSyncService:
     def _resolve_desired_roster_id(
         self, operation: Any, operation_type: str, current_roster_id: str | None
     ) -> str | None:
-        if operation_type in {"cluster_dismissed", "cluster_undismissed"}:
+        if operation_type in {"cluster_dismissed", "cluster_undismissed", "cluster_label_updated"}:
             return current_roster_id
 
         if operation_type == "cluster_person_unbound":
@@ -230,6 +235,17 @@ class CurationSyncService:
         if operation_type == "cluster_undismissed":
             return False
         return None
+
+    def _resolve_desired_label(self, operation: Any, operation_type: str, current_label: str) -> str:
+        if operation_type != "cluster_label_updated":
+            return current_label
+
+        payload = self._payload(operation)
+        label = payload.get("label")
+        if not isinstance(label, str) or not label.strip():
+            raise ValueError("label is required for cluster_label_updated")
+
+        return label.strip()
 
     def _payload(self, operation: Any) -> dict[str, Any]:
         value = getattr(operation, "payload", None)

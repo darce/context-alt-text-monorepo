@@ -38,6 +38,16 @@ class SyncStatusControllerTest extends TestCase
         $this->assertNull($data['last_curation_acknowledged_at']);
         $this->assertNull($data['last_curation_conflict_at']);
         $this->assertNull($data['last_curation_failed_at']);
+        $this->assertSame(
+            [
+                'pending' => 0,
+                'applied' => 0,
+                'failed' => 0,
+                'conflict' => 0,
+                'last_reconciled_at' => null,
+            ],
+            $data['topology_commands']
+        );
     }
 
     public function testGetSyncStatusIncludesCurationCountersWhenAvailable(): void
@@ -67,6 +77,21 @@ class SyncStatusControllerTest extends TestCase
             public function get_last_curation_failed_at(string $tenant_id): ?string {
                 return '2026-03-07 03:00:00';
             }
+            public function get_pending_topology_commands(string $tenant_id): int {
+                return 2;
+            }
+            public function get_applied_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_failed_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_conflicted_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
+                return '2026-03-07 04:00:00';
+            }
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -80,6 +105,16 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame('2026-03-07 02:00:00', $data['last_curation_acknowledged_at']);
         $this->assertSame('2026-03-07 02:30:00', $data['last_curation_conflict_at']);
         $this->assertSame('2026-03-07 03:00:00', $data['last_curation_failed_at']);
+        $this->assertSame(
+            [
+                'pending' => 2,
+                'applied' => 1,
+                'failed' => 1,
+                'conflict' => 1,
+                'last_reconciled_at' => '2026-03-07 04:00:00',
+            ],
+            $data['topology_commands']
+        );
     }
 
     public function testGetSyncStatusReturnsStaleTrueWhenOld(): void
@@ -260,6 +295,7 @@ class SyncStatusControllerTest extends TestCase
         $this->assertTrue($data['synced']);
         $this->assertSame(3, $data['conflict_count']);
         $this->assertSame($recentTimestamp, $data['last_synced_at']);
+        $this->assertSame(0, $data['topology_commands']['pending']);
     }
 
     public function testTriggerSyncReturnsSyncedFalseOnFailure(): void
@@ -312,6 +348,64 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_failed', $data['reason']);
+    }
+
+    public function testTriggerSyncReturnsFullShapeWhenSyncJobCannotBeBuilt(): void
+    {
+        $syncRepo = new class() extends NullSyncStateRepository {
+            public function get_snapshot_version(string $tenant_id): int {
+                return 11;
+            }
+            public function get_last_updated(string $tenant_id): ?string {
+                return '2026-03-08 01:00:00';
+            }
+            public function get_pending_curation_operations(string $tenant_id): int {
+                return 2;
+            }
+            public function get_failed_curation_operations(string $tenant_id): int {
+                return 1;
+            }
+            public function get_conflict_count(string $tenant_id): int {
+                return 3;
+            }
+            public function get_pending_topology_commands(string $tenant_id): int {
+                return 4;
+            }
+            public function get_applied_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_failed_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_conflicted_topology_commands(string $tenant_id): int {
+                return 1;
+            }
+            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
+                return '2026-03-08 01:05:00';
+            }
+        };
+
+        $controller = new class($syncRepo) extends SyncStatusController {
+            protected function build_sync_pull_job(): SyncPullJobInterface
+            {
+                throw new \RuntimeException('composition failed');
+            }
+        };
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger');
+        $response = $controller->trigger_sync($request);
+
+        $data = $response->get_data();
+        $this->assertFalse($data['synced']);
+        $this->assertSame('sync_unavailable', $data['reason']);
+        $this->assertSame('composition failed', $data['error']);
+        $this->assertSame(11, $data['last_snapshot_version']);
+        $this->assertSame('2026-03-08 01:00:00', $data['last_synced_at']);
+        $this->assertSame(2, $data['pending_curation_operations']);
+        $this->assertSame(1, $data['failed_curation_operations']);
+        $this->assertSame(3, $data['conflict_count']);
+        $this->assertSame(4, $data['topology_commands']['pending']);
+        $this->assertSame('2026-03-08 01:05:00', $data['topology_commands']['last_reconciled_at']);
     }
 
     public function testTriggerSyncReturnsNoRemoteDataReasonOnEmptyTenant(): void

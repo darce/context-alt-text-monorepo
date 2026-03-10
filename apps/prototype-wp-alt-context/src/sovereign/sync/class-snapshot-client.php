@@ -76,6 +76,64 @@ class SnapshotClient {
 		return $data;
 	}
 
+	/**
+	 * @param string[] $cluster_ids
+	 */
+	public function fetch_targeted_snapshot( string $tenant_id, array $cluster_ids ): array|WP_Error {
+		$normalized_tenant_id = $this->normalize_tenant_id_for_path( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			return new WP_Error( 'invalid_tenant_id', 'Tenant ID is required for targeted snapshot fetch.', array( 'status' => 400 ) );
+		}
+
+		$normalized_cluster_ids = array_values(
+			array_filter(
+				array_map(
+					static function ( $cluster_id ): string {
+						return sanitize_text_field( trim( (string) $cluster_id ) );
+					},
+					$cluster_ids
+				),
+				static function ( string $cluster_id ): bool {
+					return '' !== $cluster_id;
+				}
+			)
+		);
+		if ( empty( $normalized_cluster_ids ) ) {
+			return new WP_Error( 'invalid_cluster_ids', 'One or more cluster IDs are required for targeted snapshot fetch.', array( 'status' => 400 ) );
+		}
+
+		$path = sprintf( '/recognition/tenants/%s/clusters/targeted-snapshot', rawurlencode( $normalized_tenant_id ) );
+		$response = $this->transport->request(
+			'GET',
+			$path,
+			array(),
+			array(
+				'cluster_ids' => $normalized_cluster_ids,
+			)
+		);
+		if ( ! ( $response instanceof WP_REST_Response ) ) {
+			return $response;
+		}
+
+		if ( $response->get_status() >= 400 ) {
+			return new WP_Error(
+				'targeted_snapshot_fetch_failed',
+				'Targeted snapshot endpoint returned an error status.',
+				array(
+					'status'   => $response->get_status(),
+					'response' => $response->get_data(),
+				)
+			);
+		}
+
+		$data = $response->get_data();
+		if ( ! is_array( $data ) ) {
+			return new WP_Error( 'invalid_snapshot_payload', 'Targeted snapshot payload must be an object.', array( 'status' => 502 ) );
+		}
+
+		return $data;
+	}
+
 	public function acknowledge_projection( string $job_id, int $snapshot_version ): WP_REST_Response|WP_Error {
 		return $this->transport->acknowledge_projection( $job_id, $snapshot_version );
 	}

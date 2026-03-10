@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Tests\Unit;
 
+use AltContext\Sovereign\Sync\CrossPlaneSequencer;
 use AltContext\Sovereign\Sync\OutboxDispatcher;
 use AltContext\Sovereign\Sync\OutboxDrain;
+use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Tests\TestCase;
 
 class OutboxDrainTest extends TestCase
@@ -130,6 +132,60 @@ class OutboxDrainTest extends TestCase
 		$this->assertStringContainsString("status = 'failed'", $updateQuery);
 	}
 
+	public function testDrainSkipsReplayPlaneTopologyOperationBlockedByEarlierSplitCommand(): void
+	{
+		global $wpdb;
+		$row = $this->pendingOperationRow();
+		$row['operation_type'] = 'cluster_merged';
+		$row['payload'] = '{"target_cluster_id":"cluster-target"}';
+		$row['created_at'] = '2026-03-10 12:00:01';
+		$wpdb->mockResults = [$row];
+		$wpdb->mockVar = '1';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public int $dispatchCalls = 0;
+
+			public function dispatch_batch(array $operations): array {
+				++$this->dispatchCalls;
+				return parent::dispatch_batch($operations);
+			}
+		};
+		$topologyRepository = new class() implements TopologyCommandRepositoryInterface {
+			public function enqueue(string $tenant_id, string $command_type, string $entity_key, int $expected_base_version, array $payload, ?string $idempotency_key = null): int|false {
+				return false;
+			}
+			public function find_pending(?string $tenant_id = null, int $limit = 25): array { return []; }
+			public function find_reconcilable(?string $tenant_id = null, int $limit = 25): array {
+				return [[
+					'id' => 3,
+					'tenant_id' => 'tenant-test-123',
+					'command_type' => 'cluster_split',
+					'entity_key' => 'cluster-1',
+					'status' => 'pending',
+					'payload_json' => ['cluster_id' => 'cluster-1'],
+					'result_json' => null,
+					'created_at' => '2026-03-10 12:00:00',
+				]];
+			}
+			public function update_status(int $command_id, string $status, ?array $result_payload = null, ?string $backend_command_id = null): bool { return true; }
+			public function record_dispatch_result(int $command_id, array $response): bool { return true; }
+			public function mark_reconciled(int $command_id, ?array $result_payload = null): bool { return true; }
+			public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool { return true; }
+		};
+
+		$drain = new OutboxDrain(
+			$dispatcher,
+			null,
+			null,
+			new CrossPlaneSequencer($topologyRepository),
+		);
+		$drain->drain();
+
+		$this->assertSame(0, $dispatcher->dispatchCalls);
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET'));
+	}
+
 	/**
 	 * @return array<string,mixed>
 	 */
@@ -146,6 +202,7 @@ class OutboxDrainTest extends TestCase
 			'local_revision' => 4,
 			'payload' => '{"cluster_uuid":"cluster-1","person_uuid":"person-1"}',
 			'attempts' => 0,
+			'created_at' => '2026-03-10 12:00:00',
 		];
 	}
 
@@ -161,6 +218,16 @@ class OutboxDrainTest extends TestCase
 		}
 
 		$this->fail(sprintf('Unable to find query containing "%s".', $needle));
+	}
+
+	private function findFirstQueryContaining(array $queries, string $needle): string
+	{
+		foreach ($queries as $query) {
+			if (str_contains($query, $needle)) {
+				return $query;
+			}
+		}
+
 		return '';
 	}
 

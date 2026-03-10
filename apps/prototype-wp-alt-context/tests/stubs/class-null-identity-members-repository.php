@@ -34,6 +34,10 @@ class NullIdentityMembersRepository implements IdentityMembersRepositoryInterfac
 		return 0;
 	}
 
+	public function assign_to_cluster_for_projection( string $identity_uuid, string $target_cluster_uuid, int $projection_version ): int {
+		return 0;
+	}
+
 	public function reassign_cluster_members( string $source_cluster_uuid, string $target_cluster_uuid ): int {
 		return 0;
 	}

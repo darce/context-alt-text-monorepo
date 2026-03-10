@@ -46,6 +46,11 @@ interface IdentityMembersRepositoryInterface {
 	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int;
 
 	/**
+	 * Reassign one projected member row based on backend-authored projection state.
+	 */
+	public function assign_to_cluster_for_projection( string $identity_uuid, string $target_cluster_uuid, int $projection_version ): int;
+
+	/**
 	 * Reassign every projected member from one cluster to another and mark them as curated.
 	 */
 	public function reassign_cluster_members( string $source_cluster_uuid, string $target_cluster_uuid ): int;

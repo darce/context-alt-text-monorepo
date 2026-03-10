@@ -6,10 +6,12 @@ namespace AltContext\Api;
 
 require_once __DIR__ . '/../sovereign/sync/class-outbox-drain.php';
 require_once __DIR__ . '/../sovereign/sync/class-outbox-writer.php';
+require_once __DIR__ . '/../sovereign/sync/class-split-topology-command-drain.php';
 
 use AltContext\Api\RecognitionController;
 use AltContext\Sovereign\Sync\OutboxDrain;
 use AltContext\Sovereign\Sync\OutboxWriter;
+use AltContext\Sovereign\Sync\SplitTopologyCommandDrain;
 use WP_Error;
 use WP_Query;
 use WP_REST_Request;
@@ -47,15 +49,18 @@ class Api {
 	private RecognitionController $recognitionController;
 	private ?XmpEmbedController $xmpEmbedController;
 	private OutboxDrain $outboxDrain;
+	private SplitTopologyCommandDrain $splitTopologyCommandDrain;
 
-	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null ) {
+	public function __construct( ?XmpEmbedController $xmp_embed_controller = null, ?OutboxDrain $outbox_drain = null, ?SplitTopologyCommandDrain $split_topology_command_drain = null ) {
 		$this->recognitionController = new RecognitionController();
 		$this->xmpEmbedController = $xmp_embed_controller;
 		$this->outboxDrain = $outbox_drain ?? new OutboxDrain();
+		$this->splitTopologyCommandDrain = $split_topology_command_drain ?? new SplitTopologyCommandDrain();
 	}
 
 	public function init(): void {
 		$this->outboxDrain->register();
+		$this->splitTopologyCommandDrain->register();
 		add_action( 'rest_api_init', array( $this, 'register_routes' ) );
 	}
 

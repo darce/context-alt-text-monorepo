@@ -5,6 +5,7 @@ declare(strict_types=1);
 namespace AltContext\Tests\Unit;
 
 use AltContext\Api\ClusterMutationsController;
+use AltContext\Sovereign\Sync\TopologyCommandRepositoryInterface;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
@@ -19,6 +20,7 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
     private ClusterMutationsRepositorySpy $repository;
     private ClusterMutationsMembersSpy $membersRepository;
     private ClusterMutationsSyncStateSpy $syncStateRepository;
+    private ClusterMutationsTopologyCommandSpy $topologyCommandRepository;
 
     protected function setUp(): void
     {
@@ -26,7 +28,8 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->repository = new ClusterMutationsRepositorySpy();
         $this->membersRepository = new ClusterMutationsMembersSpy();
         $this->syncStateRepository = new ClusterMutationsSyncStateSpy();
-        $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository, $this->membersRepository);
+        $this->topologyCommandRepository = new ClusterMutationsTopologyCommandSpy();
+        $this->controller = new ClusterMutationsController($this->repository, $this->syncStateRepository, $this->membersRepository, null, $this->topologyCommandRepository);
     }
 
     public function testDismissQueuesReplayOperationInsideTransaction(): void
@@ -262,6 +265,61 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    public function testSplitQueuesTopologyCommandInsideTransaction(): void
+    {
+        global $wpdb;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-source/split', [
+            'cluster_id' => 'cluster-source',
+            'n_clusters' => 2,
+            'split_mode' => 'manual',
+        ]);
+
+        $response = $this->controller->split_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame(77, $data['command_id']);
+        $this->assertSame('pending', $data['status']);
+        $this->assertSame('queued', $data['command_state']);
+        $this->assertSame('awaiting_backend_partition', $data['projection_state']);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+        $this->assertSame('cluster_split', $this->topologyCommandRepository->lastCommandType);
+        $this->assertSame('cluster-source', $this->topologyCommandRepository->lastEntityKey);
+        $this->assertSame(17, $this->topologyCommandRepository->lastExpectedBaseVersion);
+        $this->assertSame(2, $this->topologyCommandRepository->lastPayload['n_clusters']);
+        $this->assertSame('manual', $this->topologyCommandRepository->lastPayload['split_mode']);
+        $this->assertNotSame('', $this->topologyCommandRepository->lastIdempotencyKey);
+        $this->assertSame($this->topologyCommandRepository->lastIdempotencyKey, $data['idempotency_key']);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testSplitClusterDerivesStableIdempotencyKeyWhenRequestOmitsOne(): void
+    {
+        $requestA = new \WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/split');
+        $requestA->set_param('cluster_id', 'cluster-source');
+        $requestA->set_param('n_clusters', 2);
+        $requestA->set_param('split_mode', 'manual');
+
+        $requestB = new \WP_REST_Request('POST', '/acx/v1/recognition/clusters/cluster-source/split');
+        $requestB->set_param('cluster_id', 'cluster-source');
+        $requestB->set_param('n_clusters', 2);
+        $requestB->set_param('split_mode', 'manual');
+
+        $responseA = $this->controller->split_cluster($requestA);
+        $firstKey = $this->topologyCommandRepository->lastIdempotencyKey;
+
+        $responseB = $this->controller->split_cluster($requestB);
+        $secondKey = $this->topologyCommandRepository->lastIdempotencyKey;
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $responseA);
+        $this->assertInstanceOf(\WP_REST_Response::class, $responseB);
+        $this->assertNotSame('', $firstKey);
+        $this->assertSame($firstKey, $secondKey);
+    }
+
     /**
      * @param array<int,string> $queries
      */
@@ -368,6 +426,67 @@ class ClusterMutationsSyncStateSpy extends NullSyncStateRepository
     public function touch_local_curation_marker(string $tenant_id): void
     {
         $this->lastTouchedTenantId = $tenant_id;
+    }
+}
+
+class ClusterMutationsTopologyCommandSpy implements TopologyCommandRepositoryInterface
+{
+    public string $lastCommandType = '';
+    public string $lastEntityKey = '';
+    public int $lastExpectedBaseVersion = 0;
+    public string $lastIdempotencyKey = '';
+    /** @var array<string,mixed> */
+    public array $lastPayload = [];
+
+    public function enqueue(
+        string $tenant_id,
+        string $command_type,
+        string $entity_key,
+        int $expected_base_version,
+        array $payload,
+        ?string $idempotency_key = null
+    ): int|false {
+        $this->lastCommandType = $command_type;
+        $this->lastEntityKey = $entity_key;
+        $this->lastExpectedBaseVersion = $expected_base_version;
+        $this->lastPayload = $payload;
+        $this->lastIdempotencyKey = (string) $idempotency_key;
+
+        return 77;
+    }
+
+    public function find_pending(?string $tenant_id = null, int $limit = 25): array
+    {
+        return array();
+    }
+
+    public function find_reconcilable(?string $tenant_id = null, int $limit = 25): array
+    {
+        return array();
+    }
+
+    public function update_status(
+        int $command_id,
+        string $status,
+        ?array $result_payload = null,
+        ?string $backend_command_id = null
+    ): bool {
+        return true;
+    }
+
+    public function record_dispatch_result(int $command_id, array $response): bool
+    {
+        return true;
+    }
+
+    public function mark_reconciled(int $command_id, ?array $result_payload = null): bool
+    {
+        return true;
+    }
+
+    public function record_failure(int $command_id, string $status, string $error_code, string $error_message, bool $increment_attempt = true): bool
+    {
+        return true;
     }
 }
 

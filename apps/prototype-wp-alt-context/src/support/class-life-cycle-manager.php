@@ -20,6 +20,7 @@ class LifecycleManager {
 	private const OPTION_INSTALLED_AT = 'acx_installed';
 	private const SNAPSHOT_SYNC_HOOK  = 'acx_sync_pull_snapshot';
 	private const CURATION_OUTBOX_DRAIN_HOOK = 'acx_sync_drain_curation_outbox';
+	private const SPLIT_TOPOLOGY_DRAIN_HOOK = 'acx_sync_drain_split_topology_commands';
 	private const ACTION_SCHEDULER_GROUP = 'acx-sync';
 	/**
 	 * Plugin-owned custom table suffixes (without WordPress prefix).
@@ -32,6 +33,7 @@ class LifecycleManager {
 		'acx_sync_state',
 		'acx_persons',
 		'acx_sync_outbox',
+		'acx_topology_commands',
 		'acx_sync_conflicts',
 	);
 
@@ -170,6 +172,7 @@ class LifecycleManager {
 	public function deactivate(): void {
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_curation_outbox_drain_schedule();
+		$this->clear_split_topology_drain_schedule();
 		flush_rewrite_rules( false );
 	}
 
@@ -178,15 +181,16 @@ class LifecycleManager {
 	 *
 	 * Cleans up plugin-owned persistence:
 	 * - options: acx_version, acx_installed
-	 * - scheduled hooks: acx_sync_pull_snapshot, acx_sync_drain_curation_outbox
+	 * - scheduled hooks: acx_sync_pull_snapshot, acx_sync_drain_curation_outbox, acx_sync_drain_split_topology_commands
 	 * - custom tables: wp_acx_clusters, wp_acx_identity_members, wp_acx_sync_state,
-	 *   wp_acx_persons, wp_acx_sync_outbox, wp_acx_sync_conflicts
+	 *   wp_acx_persons, wp_acx_sync_outbox, wp_acx_topology_commands, wp_acx_sync_conflicts
 	 */
 	public function uninstall(): void {
 		delete_option( self::OPTION_VERSION );
 		delete_option( self::OPTION_INSTALLED_AT );
 		wp_clear_scheduled_hook( self::SNAPSHOT_SYNC_HOOK );
 		$this->clear_curation_outbox_drain_schedule();
+		$this->clear_split_topology_drain_schedule();
 		$this->drop_tables();
 		flush_rewrite_rules( false );
 	}
@@ -196,6 +200,14 @@ class LifecycleManager {
 
 		if ( function_exists( 'as_unschedule_all_actions' ) ) {
 			as_unschedule_all_actions( self::CURATION_OUTBOX_DRAIN_HOOK, array(), self::ACTION_SCHEDULER_GROUP );
+		}
+	}
+
+	private function clear_split_topology_drain_schedule(): void {
+		wp_clear_scheduled_hook( self::SPLIT_TOPOLOGY_DRAIN_HOOK );
+
+		if ( function_exists( 'as_unschedule_all_actions' ) ) {
+			as_unschedule_all_actions( self::SPLIT_TOPOLOGY_DRAIN_HOOK, array(), self::ACTION_SCHEDULER_GROUP );
 		}
 	}
 
@@ -250,6 +262,7 @@ class LifecycleManager {
 		$sync_table      = $wpdb->prefix . 'acx_sync_state';
 		$persons_table   = $wpdb->prefix . 'acx_persons';
 		$outbox_table    = $wpdb->prefix . 'acx_sync_outbox';
+		$topology_table  = $wpdb->prefix . 'acx_topology_commands';
 		$conflicts_table = $wpdb->prefix . 'acx_sync_conflicts';
 
 		$persons_sql = "CREATE TABLE {$persons_table} (
@@ -340,6 +353,32 @@ class LifecycleManager {
 			KEY idx_entity (entity_type, entity_key)
 		) {$charset_collate};";
 
+		$topology_sql = "CREATE TABLE {$topology_table} (
+			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
+			tenant_id varchar(64) NOT NULL,
+			command_type varchar(64) NOT NULL,
+			entity_key varchar(128) NOT NULL,
+			payload_json longtext NOT NULL,
+			idempotency_key char(36) NOT NULL,
+			expected_base_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			status varchar(20) NOT NULL DEFAULT 'pending',
+			attempts int(11) unsigned NOT NULL DEFAULT 0,
+			backend_command_id varchar(128) DEFAULT NULL,
+			result_json longtext DEFAULT NULL,
+			projection_reconciled_at datetime DEFAULT NULL,
+			last_error_code varchar(64) DEFAULT NULL,
+			last_error_message text DEFAULT NULL,
+			created_at datetime NOT NULL,
+			updated_at datetime NOT NULL,
+			last_attempted_at datetime DEFAULT NULL,
+			acknowledged_at datetime DEFAULT NULL,
+				PRIMARY KEY  (id),
+				UNIQUE KEY uq_idempotency (idempotency_key),
+				KEY idx_tenant_status (tenant_id, status),
+				KEY idx_status_created (status, created_at),
+				KEY idx_entity (entity_key, command_type)
+			) {$charset_collate};";
+
 		$conflicts_sql = "CREATE TABLE {$conflicts_table} (
 			id bigint(20) unsigned NOT NULL AUTO_INCREMENT,
 			tenant_id varchar(64) NOT NULL,
@@ -365,6 +404,7 @@ class LifecycleManager {
 		dbDelta( $members_sql );
 		dbDelta( $sync_sql );
 		dbDelta( $outbox_sql );
+		dbDelta( $topology_sql );
 		dbDelta( $conflicts_sql );
 	}
 }

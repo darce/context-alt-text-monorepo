@@ -62,6 +62,16 @@ interface ClustersRepositoryInterface {
 	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int;
 
 	/**
+	 * Create or update a projected cluster row from backend-authored topology state.
+	 */
+	public function upsert_projection_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null ): int;
+
+	/**
+	 * Update projection-owned cluster metadata without marking the row locally curated.
+	 */
+	public function update_projection_cluster( string $cluster_uuid, int $identity_count, int $snapshot_version, ?string $representative_thumb_path = null ): int;
+
+	/**
 	 * Clear dismissal on a cluster and return it to uncurated state.
 	 */
 	public function undismiss( string $cluster_uuid ): int;

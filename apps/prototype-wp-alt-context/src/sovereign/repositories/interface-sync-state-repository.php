@@ -26,4 +26,14 @@ interface SyncStateRepositoryInterface {
 	public function get_last_curation_conflict_at( string $tenant_id ): ?string;
 
 	public function get_last_curation_failed_at( string $tenant_id ): ?string;
+
+	public function get_pending_topology_commands( string $tenant_id ): int;
+
+	public function get_applied_topology_commands( string $tenant_id ): int;
+
+	public function get_failed_topology_commands( string $tenant_id ): int;
+
+	public function get_conflicted_topology_commands( string $tenant_id ): int;
+
+	public function get_last_topology_reconciled_at( string $tenant_id ): ?string;
 }

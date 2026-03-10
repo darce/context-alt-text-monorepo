@@ -88,6 +88,7 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
 				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
 				'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
+				'topology_commands' => $curation_state['topology_commands'],
 			),
 			200
 		);
@@ -96,16 +97,17 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	public function trigger_sync( WP_REST_Request $request ): WP_REST_Response {
 		$tenant_id = $this->get_tenant_id();
 		$sync_pull_job = $this->resolve_sync_pull_job();
+		$version = $this->sync_state_repository->get_snapshot_version( $tenant_id );
+		$updated = $this->sync_state_repository->get_last_updated( $tenant_id );
+		$curation_state = $this->get_curation_sync_state( $tenant_id );
 
 		if ( null === $sync_pull_job ) {
-			return new WP_REST_Response(
-				array(
-					'synced' => false,
-					'reason' => 'sync_unavailable',
-					'error' => $this->sync_pull_job_error,
-				),
-				200
-			);
+			$payload = $this->build_sync_status_payload( $version, $updated, $curation_state );
+			$payload['synced'] = false;
+			$payload['reason'] = 'sync_unavailable';
+			$payload['error'] = $this->sync_pull_job_error;
+
+			return new WP_REST_Response( $payload, 200 );
 		}
 
 		try {
@@ -117,23 +119,11 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		$version = $this->sync_state_repository->get_snapshot_version( $tenant_id );
 		$updated = $this->sync_state_repository->get_last_updated( $tenant_id );
 		$curation_state = $this->get_curation_sync_state( $tenant_id );
+		$payload = $this->build_sync_status_payload( $version, $updated, $curation_state );
+		$payload['synced'] = $success;
+		$payload['reason'] = $this->determine_sync_reason( $success, $version );
 
-		return new WP_REST_Response(
-			array(
-				'synced'                => $success,
-				'reason'                => $this->determine_sync_reason( $success, $version ),
-				'last_snapshot_version' => $version,
-				'last_synced_at'        => $updated,
-				'is_stale'              => $this->is_projection_stale( $updated ),
-				'pending_curation_operations' => $curation_state['pending_curation_operations'],
-				'failed_curation_operations' => $curation_state['failed_curation_operations'],
-				'conflict_count' => $curation_state['conflict_count'],
-				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
-				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
-				'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
-			),
-			200
-		);
+		return new WP_REST_Response( $payload, 200 );
 	}
 
 	private function determine_sync_reason( bool $success, ?int $version ): string {
@@ -147,12 +137,26 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * @return array{pending_curation_operations:int,failed_curation_operations:int,conflict_count:int,last_curation_acknowledged_at:?string,last_curation_conflict_at:?string,last_curation_failed_at:?string}
+	 * @return array{
+	 *   pending_curation_operations:int,
+	 *   failed_curation_operations:int,
+	 *   conflict_count:int,
+	 *   last_curation_acknowledged_at:?string,
+	 *   last_curation_conflict_at:?string,
+	 *   last_curation_failed_at:?string,
+	 *   topology_commands:array{
+	 *     pending:int,
+	 *     applied:int,
+	 *     failed:int,
+	 *     conflict:int,
+	 *     last_reconciled_at:?string
+	 *   }
+	 * }
 	 */
 	private function get_curation_sync_state( string $tenant_id ): array {
-		$pending_operations = max( 0, (int) $this->sync_state_repository->get_pending_curation_operations( $tenant_id ) );
-		$failed_operations = max( 0, (int) $this->sync_state_repository->get_failed_curation_operations( $tenant_id ) );
-		$conflict_count = max( 0, (int) $this->sync_state_repository->get_conflict_count( $tenant_id ) );
+		$pending_operations = $this->sync_state_repository->get_pending_curation_operations( $tenant_id );
+		$failed_operations = $this->sync_state_repository->get_failed_curation_operations( $tenant_id );
+		$conflict_count = $this->sync_state_repository->get_conflict_count( $tenant_id );
 
 		$last_acknowledged_at = null;
 		$value = $this->sync_state_repository->get_last_curation_acknowledged_at( $tenant_id );
@@ -172,6 +176,12 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			$last_failed_at = $value;
 		}
 
+		$last_topology_reconciled_at = null;
+		$value = $this->sync_state_repository->get_last_topology_reconciled_at( $tenant_id );
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			$last_topology_reconciled_at = $value;
+		}
+
 		return array(
 			'pending_curation_operations' => $pending_operations,
 			'failed_curation_operations' => $failed_operations,
@@ -179,6 +189,46 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			'last_curation_acknowledged_at' => $last_acknowledged_at,
 			'last_curation_conflict_at' => $last_conflict_at,
 			'last_curation_failed_at' => $last_failed_at,
+			'topology_commands' => array(
+				'pending' => max( 0, (int) $this->sync_state_repository->get_pending_topology_commands( $tenant_id ) ),
+				'applied' => max( 0, (int) $this->sync_state_repository->get_applied_topology_commands( $tenant_id ) ),
+				'failed' => max( 0, (int) $this->sync_state_repository->get_failed_topology_commands( $tenant_id ) ),
+				'conflict' => max( 0, (int) $this->sync_state_repository->get_conflicted_topology_commands( $tenant_id ) ),
+				'last_reconciled_at' => $last_topology_reconciled_at,
+			),
+		);
+	}
+
+	/**
+	 * @param array{
+	 *   pending_curation_operations:int,
+	 *   failed_curation_operations:int,
+	 *   conflict_count:int,
+	 *   last_curation_acknowledged_at:?string,
+	 *   last_curation_conflict_at:?string,
+	 *   last_curation_failed_at:?string,
+	 *   topology_commands:array{
+	 *     pending:int,
+	 *     applied:int,
+	 *     failed:int,
+	 *     conflict:int,
+	 *     last_reconciled_at:?string
+	 *   }
+	 * } $curation_state
+	 * @return array<string,mixed>
+	 */
+	private function build_sync_status_payload( int $version, ?string $updated, array $curation_state ): array {
+		return array(
+			'last_snapshot_version' => $version,
+			'last_synced_at' => $updated,
+			'is_stale' => $this->is_projection_stale( $updated ),
+			'pending_curation_operations' => $curation_state['pending_curation_operations'],
+			'failed_curation_operations' => $curation_state['failed_curation_operations'],
+			'conflict_count' => $curation_state['conflict_count'],
+			'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
+			'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
+			'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
+			'topology_commands' => $curation_state['topology_commands'],
 		);
 	}
 
@@ -191,14 +241,7 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		}
 
 		try {
-			$this->sync_pull_job = new SyncPullJob(
-				new SnapshotClient(),
-				new SnapshotProjector(
-					new ClustersRepository(),
-					new IdentityMembersRepository(),
-					$this->sync_state_repository
-				)
-			);
+			$this->sync_pull_job = $this->build_sync_pull_job();
 		} catch ( Throwable $e ) {
 			$this->sync_pull_job_error = $e->getMessage();
 			$this->sync_pull_job_resolution_failed = true;
@@ -214,5 +257,16 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		}
 
 		return $this->sync_pull_job;
+	}
+
+	protected function build_sync_pull_job(): SyncPullJobInterface {
+		return new SyncPullJob(
+			new SnapshotClient(),
+			new SnapshotProjector(
+				new ClustersRepository(),
+				new IdentityMembersRepository(),
+				$this->sync_state_repository
+			)
+		);
 	}
 }

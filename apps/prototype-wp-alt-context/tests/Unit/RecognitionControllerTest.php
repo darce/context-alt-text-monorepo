@@ -440,29 +440,36 @@ class RecognitionControllerTest extends TestCase
         );
     }
 
-    public function testSplitClusterSchedulesAsyncXmpRefreshIncludingNewClusterIds(): void
+    public function testSplitClusterReturnsPendingCommandStateWithoutProxyingBackend(): void
     {
         $clusterId = '7e2e1003-0e24-4e8c-a4d8-97ec8d269ba8';
-        $newClusterA = '9b0a0e4d-2658-4eac-81f0-fba5f89e5b82';
-        $newClusterB = 'dd333f66-e5fd-4c26-84a0-5f3df64d7c66';
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                'new_cluster_ids' => [$newClusterA, $newClusterB],
-            ]),
-        ]);
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $repository->seedCluster($clusterId, 44, 5);
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                $repository,
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $clusterId . '/split');
         $request->set_param('cluster_id', $clusterId);
         $request->set_param('n_clusters', 2);
 
-        $response = $this->controller->split_cluster($request);
+        $response = $controller->split_cluster($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
-        $this->assertNotFalse(
-            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$clusterId, $newClusterA, $newClusterB], 'cluster-split'])
+        $data = $response->get_data();
+        $this->assertSame('pending', $data['status']);
+        $this->assertSame('queued', $data['command_state']);
+        $this->assertSame('awaiting_backend_partition', $data['projection_state']);
+        $this->assertSame([], $this->getHttpCalls());
+        $this->assertFalse(
+            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$clusterId], 'cluster-split'])
         );
     }
 

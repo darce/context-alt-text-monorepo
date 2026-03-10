@@ -415,6 +415,40 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		return is_int( $query_result ) ? $query_result : 0;
 	}
 
+	public function assign_to_cluster_for_projection( string $identity_uuid, string $target_cluster_uuid, int $projection_version ): int {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		$normalized_target_cluster_uuid = trim( $target_cluster_uuid );
+		if ( '' === $normalized_identity_uuid || '' === $normalized_target_cluster_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql = $this->prepare_query(
+			'UPDATE %i SET cluster_uuid = %s, projection_version = GREATEST(projection_version, %d), updated_at = %s WHERE identity_uuid = %s',
+			array(
+				$this->members_table_name,
+				$normalized_target_cluster_uuid,
+				max( 0, $projection_version ),
+				$now_utc,
+				$normalized_identity_uuid,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
 	public function reassign_cluster_members( string $source_cluster_uuid, string $target_cluster_uuid ): int {
 		global $wpdb;
 

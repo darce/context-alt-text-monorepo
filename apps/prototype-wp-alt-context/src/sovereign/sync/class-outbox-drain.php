@@ -6,7 +6,9 @@ namespace AltContext\Sovereign\Sync;
 
 require_once __DIR__ . '/../repositories/class-sync-state-repository.php';
 require_once __DIR__ . '/class-conflict-repository.php';
+require_once __DIR__ . '/class-cross-plane-sequencer.php';
 require_once __DIR__ . '/class-outbox-dispatcher.php';
+require_once __DIR__ . '/class-topology-command-repository.php';
 
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use Throwable;
@@ -39,6 +41,7 @@ class OutboxDrain {
 	private OutboxDispatcher $dispatcher;
 	private ConflictRepository $conflict_repository;
 	private SyncStateRepository $sync_state_repository;
+	private CrossPlaneSequencer $sequencer;
 	private string $table_name;
 	private int $batch_size;
 
@@ -46,6 +49,7 @@ class OutboxDrain {
 		?OutboxDispatcher $dispatcher = null,
 		?ConflictRepository $conflict_repository = null,
 		?SyncStateRepository $sync_state_repository = null,
+		?CrossPlaneSequencer $sequencer = null,
 		?string $table_name = null
 	) {
 		global $wpdb;
@@ -59,6 +63,7 @@ class OutboxDrain {
 		$this->conflict_repository = $conflict_repository ?? new ConflictRepository();
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->table_name = $table_name ?? $default_table;
+		$this->sequencer = $sequencer ?? new CrossPlaneSequencer( new TopologyCommandRepository(), $this->table_name );
 		$this->batch_size = max( 1, (int) apply_filters( 'acx_outbox_drain_batch_size', self::DEFAULT_BATCH_SIZE ) );
 	}
 
@@ -103,8 +108,11 @@ class OutboxDrain {
 	}
 
 	public function drain(): void {
-		$operations = $this->load_pending_operations();
+		$operations = $this->sequencer->filter_ready_outbox_operations( $this->load_pending_operations() );
 		if ( empty( $operations ) ) {
+			if ( $this->has_pending_operations() ) {
+				self::maybe_schedule_drain();
+			}
 			return;
 		}
 
@@ -149,6 +157,7 @@ class OutboxDrain {
 		$rows = $wpdb->get_results(
 			$wpdb->prepare(
 				'SELECT id, tenant_id, operation_type, entity_type, entity_key, idempotency_key, expected_base_version, local_revision, payload, attempts
+				, created_at
 				FROM %i
 				WHERE status = %s
 				ORDER BY created_at ASC, id ASC

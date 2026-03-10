@@ -165,6 +165,16 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 				'permission_callback' => array( $this, 'can_manage_recognition' ),
 			)
 		);
+
+		register_rest_route(
+			'acx/v1',
+			'/recognition/clusters/(?P<cluster_id>[a-f0-9-]+)/assign',
+			array(
+				'methods'             => 'POST',
+				'callback'            => array( $this, 'assign_outlier_to_cluster' ),
+				'permission_callback' => array( $this, 'can_manage_recognition' ),
+			)
+		);
 	}
 
 	public function cluster_media( WP_REST_Request $request ): WP_REST_Response|WP_Error {
@@ -500,19 +510,19 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			'cluster_id' => $cluster_id,
 			'n_clusters' => $n_clusters,
 			'user_id'    => get_current_user_id(),
-		);
-		$anchor_identity_id = sanitize_text_field( (string) $request->get_param( 'anchor_identity_id' ) );
-		if ( '' !== $anchor_identity_id ) {
-			$payload['anchor_identity_id'] = $anchor_identity_id;
-		}
-		$split_mode = sanitize_text_field( (string) $request->get_param( 'split_mode' ) );
-		if ( '' !== $split_mode ) {
-			$payload['split_mode'] = $split_mode;
-		}
+			);
+			$anchor_identity_id = sanitize_text_field( (string) $request->get_param( 'anchor_identity_id' ) );
+			if ( '' !== $anchor_identity_id ) {
+				$payload['anchor_identity_id'] = $anchor_identity_id;
+			}
+			$split_mode = sanitize_text_field( (string) $request->get_param( 'split_mode' ) );
+			if ( '' !== $split_mode ) {
+				$payload['split_mode'] = $split_mode;
+			}
 
-		$desired_cluster_ids = $request->get_param( 'desired_cluster_ids' );
-		if ( is_array( $desired_cluster_ids ) && ! empty( $desired_cluster_ids ) ) {
-			$payload['desired_cluster_ids'] = array_values(
+			$desired_cluster_ids = $request->get_param( 'desired_cluster_ids' );
+			if ( is_array( $desired_cluster_ids ) && ! empty( $desired_cluster_ids ) ) {
+				$payload['desired_cluster_ids'] = array_values(
 				array_filter(
 					array_map(
 						static function ( $value ): string {
@@ -524,10 +534,10 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 						return '' !== $value;
 					}
 				)
-			);
-		}
+				);
+			}
 
-		$idempotency_key = $this->resolve_split_idempotency_key(
+			$idempotency_key = $this->resolve_split_idempotency_key(
 			$request,
 			$cluster_id,
 			max( 0, (int) ( $cluster['snapshot_version'] ?? $this->sync_state_repository->get_snapshot_version( $this->get_tenant_id() ) ) ),
@@ -661,9 +671,12 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 	}
 
 	public function revert_merge_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
 		$target_cluster_id  = sanitize_text_field( (string) $request->get_param( 'target_cluster_id' ) );
 		$moved_identity_ids = $request->get_param( 'moved_identity_ids' );
 		$source_label       = $request->get_param( 'source_label' );
+		$requested_source_cluster_id = sanitize_text_field( (string) ( $request->get_param( 'source_cluster_id' ) ?? '' ) );
 
 		if ( '' === $target_cluster_id ) {
 			return new WP_Error( 'missing_target_cluster_id', 'Target cluster ID is required.', array( 'status' => 400 ) );
@@ -673,80 +686,202 @@ class ClusterMutationsController extends AbstractRecognitionProxyController {
 			return new WP_Error( 'missing_moved_identity_ids', 'Provide one or more identity IDs to revert.', array( 'status' => 400 ) );
 		}
 
-		$sanitized_ids = array_map(
-			static function ( $value ): string {
-				return sanitize_text_field( (string) $value );
-			},
-			$moved_identity_ids
+		$sanitized_ids = array_values(
+			array_unique(
+				array_filter(
+					array_map(
+						static function ( $value ): string {
+							return sanitize_text_field( (string) $value );
+						},
+						$moved_identity_ids
+					),
+					static function ( string $value ): bool {
+						return '' !== $value;
+					}
+				)
+			)
 		);
+		if ( empty( $sanitized_ids ) ) {
+			return new WP_Error( 'missing_moved_identity_ids', 'Provide one or more valid identity IDs to revert.', array( 'status' => 400 ) );
+		}
+
+		$target_cluster = $this->clusters_repository->find_by_uuid( $target_cluster_id );
+		if ( ! is_array( $target_cluster ) ) {
+			return new WP_Error( 'target_cluster_not_found', 'Target cluster not found.', array( 'status' => 404 ) );
+		}
+
+		foreach ( $sanitized_ids as $identity_id ) {
+			$member = $this->members_repository->find_by_identity_uuid( $identity_id );
+			if ( ! is_array( $member ) ) {
+				return new WP_Error( 'identity_not_found', 'One or more identities are not present in the local projection.', array( 'status' => 404 ) );
+			}
+
+			$current_cluster_id = sanitize_text_field( (string) ( $member['cluster_uuid'] ?? '' ) );
+			if ( $target_cluster_id !== $current_cluster_id ) {
+				return new WP_Error( 'identity_not_in_target_cluster', 'One or more identities are no longer assigned to the target cluster.', array( 'status' => 409 ) );
+			}
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		$tenant_id = $this->get_tenant_id();
+		$source_cluster_id = '' !== $requested_source_cluster_id ? $requested_source_cluster_id : wp_generate_uuid4();
+		$restored_label = $source_label ? sanitize_text_field( (string) $source_label ) : '';
+		$target_member_count = $this->members_repository->count_for_cluster( $target_cluster_id );
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
+		if ( $this->clusters_repository->create_local_cluster( $tenant_id, $source_cluster_id, $restored_label, count( $sanitized_ids ) ) <= 0 ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not create restored local cluster projection.', array( 'status' => 500 ) );
+		}
+
+		$moved_rows = 0;
+		foreach ( $sanitized_ids as $identity_id ) {
+			$moved_rows += $this->members_repository->reassign_to_cluster( $identity_id, $source_cluster_id );
+		}
+
+		$this->clusters_repository->update_identity_count( $target_cluster_id, max( 0, $target_member_count - $moved_rows ) );
 
 		$payload = array(
-			'tenant_id'          => $this->get_tenant_id(),
-			'target_cluster_id'  => $target_cluster_id,
+			'tenant_id' => $tenant_id,
+			'target_cluster_id' => $target_cluster_id,
 			'moved_identity_ids' => $sanitized_ids,
-			'source_label'       => $source_label ? sanitize_text_field( (string) $source_label ) : null,
-			'user_id'            => get_current_user_id(),
+			'user_id' => get_current_user_id(),
+			'desired_source_cluster_id' => $source_cluster_id,
+		);
+		if ( '' !== $restored_label ) {
+			$payload['source_label'] = $restored_label;
+		}
+
+		if ( ! $this->enqueue_curation_operation( 'revert_merge_cluster', $target_cluster_id, $target_cluster, $payload ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue revert-merge replay operation.', array( 'status' => 500 ) );
+		}
+
+		$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
+
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
+		}
+
+		$this->trigger_xmp_refresh_for_cluster_ids( array( $target_cluster_id, $source_cluster_id ), 'cluster-revert-merge' );
+
+		return new WP_REST_Response(
+			array(
+				'restored_cluster_id' => $source_cluster_id,
+				'restored_label' => '' !== $restored_label ? $restored_label : null,
+				'restored_identity_count' => $moved_rows,
+				'target_cluster_id' => $target_cluster_id,
+				'target_identity_count' => max( 0, $target_member_count - $moved_rows ),
+				'synced' => false,
+				'status' => 'pending',
+			),
+			200
+		);
+	}
+
+	public function assign_outlier_to_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		global $wpdb;
+
+		$cluster_id = sanitize_text_field( (string) $request->get_param( 'cluster_id' ) );
+		$identity_id = sanitize_text_field( (string) $request->get_param( 'identity_id' ) );
+		$similarity = (float) $request->get_param( 'similarity' );
+
+		if ( '' === $cluster_id ) {
+			return new WP_Error( 'missing_cluster_id', 'Cluster ID is required.', array( 'status' => 400 ) );
+		}
+
+		if ( '' === $identity_id ) {
+			return new WP_Error( 'missing_identity_id', 'Identity ID is required.', array( 'status' => 400 ) );
+		}
+
+		$target_cluster = $this->clusters_repository->find_by_uuid( $cluster_id );
+		if ( ! is_array( $target_cluster ) ) {
+			return new WP_Error( 'target_cluster_not_found', 'Target cluster not found.', array( 'status' => 404 ) );
+		}
+
+		$existing_member = $this->members_repository->find_by_identity_uuid( $identity_id );
+		if ( ! is_array( $existing_member ) ) {
+			return new WP_Error( 'identity_not_found', 'Identity is not present in the local projection.', array( 'status' => 404 ) );
+		}
+
+		$source_cluster_id = sanitize_text_field( (string) ( $existing_member['cluster_uuid'] ?? '' ) );
+		if ( '' === $source_cluster_id ) {
+			return new WP_Error( 'missing_source_cluster_id', 'Identity is not currently assigned to a projected cluster.', array( 'status' => 409 ) );
+		}
+
+		if ( $cluster_id === $source_cluster_id ) {
+			return new WP_REST_Response(
+				array(
+					'identity_id' => $identity_id,
+					'source_cluster_id' => $source_cluster_id,
+					'target_cluster_id' => $cluster_id,
+					'synced' => true,
+					'status' => 'acknowledged',
+				),
+				200
+			);
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return new WP_Error( 'acx_db_error', 'Database access is unavailable.', array( 'status' => 500 ) );
+		}
+
+		$tenant_id = $this->get_tenant_id();
+		$source_member_count = $this->members_repository->count_for_cluster( $source_cluster_id );
+		$target_member_count = $this->members_repository->count_for_cluster( $cluster_id );
+
+		if ( false === $wpdb->query( 'START TRANSACTION' ) ) {
+			return new WP_Error( 'acx_db_error', 'Could not start local transaction.', array( 'status' => 500 ) );
+		}
+
+		$affected_rows = $this->members_repository->reassign_to_cluster( $identity_id, $cluster_id );
+		if ( $affected_rows > 0 ) {
+			$this->clusters_repository->update_identity_count( $source_cluster_id, max( 0, $source_member_count - 1 ) );
+			$this->clusters_repository->update_identity_count( $cluster_id, $target_member_count + 1 );
+		}
+
+		$payload = array(
+			'tenant_id' => $tenant_id,
+			'identity_id' => $identity_id,
+			'similarity' => $similarity,
+			'user_id' => get_current_user_id(),
 		);
 
-		$response = $this->proxy_request( 'POST', '/recognition/clusters/revert-merge', $payload );
-		$this->maybe_trigger_xmp_refresh_for_response( $response, array( $target_cluster_id ), 'cluster-revert-merge' );
-		return $response;
-	}
-
-	/**
-	 * @param string[] $default_cluster_ids
-	 */
-	private function maybe_trigger_xmp_refresh_for_response( WP_REST_Response|WP_Error $response, array $default_cluster_ids, string $context ): void {
-		if ( ! ( $response instanceof WP_REST_Response ) || $response->get_status() >= 400 ) {
-			return;
+		if ( $affected_rows > 0 && ! $this->enqueue_curation_operation( 'assign_outlier_to_cluster', $cluster_id, $target_cluster, $payload ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not queue assign-outlier replay operation.', array( 'status' => 500 ) );
 		}
 
-		$cluster_ids = $this->extract_cluster_ids_from_response_data( $response->get_data(), $default_cluster_ids );
-		$this->trigger_xmp_refresh_for_cluster_ids( $cluster_ids, $context );
-	}
-
-	/**
-	 * @param mixed $data
-	 * @param string[] $default_cluster_ids
-	 * @return string[]
-	 */
-	private function extract_cluster_ids_from_response_data( $data, array $default_cluster_ids = array() ): array {
-		$cluster_ids = $default_cluster_ids;
-
-		if ( ! is_array( $data ) ) {
-			return $this->sanitize_cluster_ids( $cluster_ids );
+		if ( $affected_rows > 0 ) {
+			$this->sync_state_repository->touch_local_curation_marker( $tenant_id );
 		}
 
-		foreach ( array( 'cluster_id', 'source_cluster_id', 'target_cluster_id', 'new_cluster_id' ) as $key ) {
-			$value = sanitize_text_field( (string) ( $data[ $key ] ?? '' ) );
-			if ( '' !== $value ) {
-				$cluster_ids[] = $value;
-			}
+		if ( false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return new WP_Error( 'acx_db_error', 'Could not commit local transaction.', array( 'status' => 500 ) );
 		}
 
-		if ( is_array( $data['new_cluster_ids'] ?? null ) ) {
-			foreach ( $data['new_cluster_ids'] as $new_cluster_id ) {
-				$value = sanitize_text_field( (string) $new_cluster_id );
-				if ( '' !== $value ) {
-					$cluster_ids[] = $value;
-				}
-			}
+		if ( $affected_rows > 0 ) {
+			$this->trigger_xmp_refresh_for_cluster_ids( array( $source_cluster_id, $cluster_id ), 'cluster-assign-outlier' );
 		}
 
-		if ( is_array( $data['clusters'] ?? null ) ) {
-			foreach ( $data['clusters'] as $cluster ) {
-				if ( ! is_array( $cluster ) ) {
-					continue;
-				}
-
-				$value = sanitize_text_field( (string) ( $cluster['id'] ?? $cluster['cluster_id'] ?? '' ) );
-				if ( '' !== $value ) {
-					$cluster_ids[] = $value;
-				}
-			}
-		}
-
-		return $this->sanitize_cluster_ids( $cluster_ids );
+		return new WP_REST_Response(
+			array(
+				'identity_id' => $identity_id,
+				'source_cluster_id' => $source_cluster_id,
+				'target_cluster_id' => $cluster_id,
+				'synced' => false,
+				'status' => $affected_rows > 0 ? 'pending' : 'acknowledged',
+			),
+			200
+		);
 	}
 
 	/**

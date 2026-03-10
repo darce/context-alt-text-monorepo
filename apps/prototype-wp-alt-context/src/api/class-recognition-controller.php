@@ -186,6 +186,10 @@ class RecognitionController {
 		return $this->clusterMutationsController->revert_merge_cluster( $request );
 	}
 
+	public function assign_outlier_to_cluster( WP_REST_Request $request ): WP_REST_Response|WP_Error {
+		return $this->clusterMutationsController->assign_outlier_to_cluster( $request );
+	}
+
 	public function get_media_identities( WP_REST_Request $request ): WP_REST_Response|WP_Error {
 		return $this->mediaIdentitiesController->get_media_identities( $request );
 	}

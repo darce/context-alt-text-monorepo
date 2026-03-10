@@ -235,6 +235,37 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    public function testMergeRollbackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-source/merge', [
+            'source_id' => 'cluster-source',
+            'target_cluster_id' => 'cluster-target',
+        ]);
+
+        $response = $this->controller->merge_cluster($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testMergeRejectsSourceAndTargetBeingTheSame(): void
+    {
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-source/merge', [
+            'source_id' => 'cluster-source',
+            'target_cluster_id' => 'cluster-source',
+        ]);
+
+        $response = $this->controller->merge_cluster($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('invalid_target_cluster_id', $response->get_error_code());
+        $this->assertSame(400, $response->get_error_data()['status']);
+    }
+
     public function testCreateClusterForIdentityQueuesReplayOperationInsideTransaction(): void
     {
         global $wpdb;
@@ -318,6 +349,111 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $responseB);
         $this->assertNotSame('', $firstKey);
         $this->assertSame($firstKey, $secondKey);
+    }
+
+    public function testRevertMergeQueuesReplayOperationInsideTransaction(): void
+    {
+        global $wpdb;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/revert-merge', [
+            'target_cluster_id' => 'cluster-target',
+            'moved_identity_ids' => ['identity-77', 'identity-88'],
+            'source_label' => 'Restored Cluster',
+        ]);
+
+        $response = $this->controller->revert_merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame('pending', $data['status']);
+        $this->assertSame('cluster-target', $data['target_cluster_id']);
+        $this->assertSame(2, $data['restored_identity_count']);
+        $this->assertNotSame('', $data['restored_cluster_id']);
+        $this->assertSame($data['restored_cluster_id'], $this->repository->createdLocalClusterId);
+        $this->assertSame('identity-88', $this->membersRepository->lastReassignedIdentityId);
+        $this->assertSame($data['restored_cluster_id'], $this->membersRepository->lastTargetClusterId);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'revert_merge_cluster'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-target'", $outboxInsert);
+        $this->assertStringContainsString('desired_source_cluster_id', $outboxInsert);
+        $this->assertStringContainsString($data['restored_cluster_id'], $outboxInsert);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testRevertMergeRollbackWhenOutboxEnqueueFails(): void
+    {
+        global $wpdb;
+        $wpdb->queryResults['COMMIT'] = false;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/revert-merge', [
+            'target_cluster_id' => 'cluster-target',
+            'moved_identity_ids' => ['identity-77'],
+        ]);
+
+        $response = $this->controller->revert_merge_cluster($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('acx_db_error', $response->get_error_code());
+        $this->assertContains('ROLLBACK', $wpdb->queries);
+    }
+
+    public function testRevertMergeRejectsIdentityNotInTargetCluster(): void
+    {
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/revert-merge', [
+            'target_cluster_id' => 'cluster-target',
+            'moved_identity_ids' => ['identity-outlier'],
+        ]);
+
+        $response = $this->controller->revert_merge_cluster($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('identity_not_in_target_cluster', $response->get_error_code());
+        $this->assertSame(409, $response->get_error_data()['status']);
+    }
+
+    public function testAssignOutlierQueuesReplayOperationInsideTransaction(): void
+    {
+        global $wpdb;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-target/assign', [
+            'cluster_id' => 'cluster-target',
+            'identity_id' => 'identity-outlier',
+            'similarity' => 0.42,
+        ]);
+
+        $response = $this->controller->assign_outlier_to_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('identity-outlier', $this->membersRepository->lastReassignedIdentityId);
+        $this->assertSame('cluster-target', $this->membersRepository->lastTargetClusterId);
+        $this->assertSame([['cluster-source', 2], ['cluster-target', 3]], $this->repository->identityCountUpdates);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'assign_outlier_to_cluster'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-target'", $outboxInsert);
+        $this->assertStringContainsString('\\"similarity\\":0.42', $outboxInsert);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testAssignOutlierReturnsAcknowledgedWhenIdentityAlreadyInTargetCluster(): void
+    {
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-target/assign', [
+            'cluster_id' => 'cluster-target',
+            'identity_id' => 'identity-77',
+        ]);
+
+        $response = $this->controller->assign_outlier_to_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('acknowledged', $response->get_data()['status']);
     }
 
     /**
@@ -509,7 +645,15 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
     public array $membersByIdentity = [
         'identity-77' => [
             'identity_uuid' => 'identity-77',
-            'cluster_uuid' => 'cluster-xyz',
+            'cluster_uuid' => 'cluster-target',
+        ],
+        'identity-88' => [
+            'identity_uuid' => 'identity-88',
+            'cluster_uuid' => 'cluster-target',
+        ],
+        'identity-outlier' => [
+            'identity_uuid' => 'identity-outlier',
+            'cluster_uuid' => 'cluster-source',
         ],
     ];
 
@@ -523,6 +667,9 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
     {
         $this->lastReassignedIdentityId = $identity_uuid;
         $this->lastTargetClusterId = $target_cluster_uuid;
+        if (isset($this->membersByIdentity[$identity_uuid])) {
+            $this->membersByIdentity[$identity_uuid]['cluster_uuid'] = $target_cluster_uuid;
+        }
         return $this->nextReassignRows;
     }
 

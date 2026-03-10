@@ -240,47 +240,47 @@ $failed_count = (int) $wpdb->get_var($wpdb->prepare(
 > **Compound operation contract:** Merge touches multiple clusters and member rows, but the outbox carries one `entity_key` and one `expected_base_version` per record. For merge: `entity_key` is the **source** cluster UUID, `expected_base_version` is the source cluster's version (the target is referenced in `payload.target_cluster_uuid`). For `revert_merge_cluster`: `entity_key` is the **target/current merged** cluster UUID being reverted, `expected_base_version` is that cluster's version at enqueue time, and `payload` carries the moved identity IDs plus any source-label metadata needed to rebuild the prior cluster. For `assign_outlier_to_cluster`: `entity_key` is the **target** cluster UUID receiving the outlier, `expected_base_version` is that target cluster's version at enqueue time, and `payload` carries the outlier/member identity references required by the recognition route. For all replay-plane topology operations, the outbox `idempotency_key` remains the backend dedupe key and the backend contract must return either acknowledged `{backend_version}` or conflict `{backend_version, conflict_code}` payloads. Split is not modeled as an outbox replay row in this phase; it uses the dedicated topology-command plane defined in the addendum because the backend authors the final partition result.
 
 - [x] Convert `merge_cluster()` to outbox-first: apply merge locally (move source cluster members to target, mark source as dismissed, update identity counts), enqueue `cluster_merged` with `entity_key = source_cluster_uuid` and `payload = {target_cluster_uuid, ...}`.
-- [ ] Convert `split_cluster()` to durable topology command: persist split intent locally without mutating projection rows, dispatch through the split topology-command plane, and reconcile projection only after backend-authored result arrives.
+- [x] Convert `split_cluster()` to durable topology command: persist split intent locally without mutating projection rows, dispatch through the split topology-command plane, and reconcile projection only after backend-authored result arrives.
       Phase 2 progress:
   - [x] Plugin persists durable split intent in `wp_acx_topology_commands` and no longer routes split through `OutboxDispatcher`.
   - [x] Backend exposes the first `POST /recognition/topology-commands/split` execution surface with typed result + idempotency replay.
-  - [ ] Dedicated topology-command drain, durable result persistence on the plugin side, and post-ack reconciliation are still pending.
+  - [x] Dedicated topology-command drain, durable result persistence on the plugin side, and post-ack reconciliation are now in place, including direct apply, targeted reconciliation, and repair-only full snapshot fallback.
 - [x] Convert `create_cluster_for_identity()` to outbox-first: create cluster locally, move identity member, enqueue `cluster_created_for_identity` with a plugin-supplied cluster UUID that the backend now honors during replay.
-- [ ] Convert `revert_merge_cluster()` to durable local intent: enqueue replayable revert-merge intent instead of proxying synchronously, and return pending local status.
-- [ ] Add plugin support for assign-outlier durable intent: add the missing mutation path, enqueue replayable assign-outlier intent, and return pending local status.
-- [ ] Add PHPUnit tests: merge enqueues correct operation and updates both clusters locally; split writes durable topology-command intent without local member movement; create-for-identity generates new cluster with correct membership; revert-merge and assign-outlier persist durable intent instead of proxying.
+- [x] Convert `revert_merge_cluster()` to durable local intent: enqueue replayable revert-merge intent instead of proxying synchronously, and return pending local status.
+- [x] Add plugin support for assign-outlier durable intent: add the missing mutation path, enqueue replayable assign-outlier intent, and return pending local status.
+- [x] Add PHPUnit tests: merge enqueues correct operation and updates both clusters locally; split writes durable topology-command intent without local member movement; create-for-identity generates new cluster with correct membership; revert-merge and assign-outlier persist durable intent instead of proxying.
 
 ## Phase 3: Backend -- Label Sync Handler + Topology Dispatch Routing
 
 - [x] Add `cluster_label_updated` handler in `CurationSyncService._apply()`: load cluster by entity_key, apply version conflict check, update `cluster.label` from `payload.label`.
 - [x] Add pytest coverage: label handler applies mutation correctly; version conflict returns 409; idempotency key prevents duplicate execution.
 - [x] Add topology operation routing to `OutboxDispatcher` for the currently landed replay-plane mutations: map `cluster_merged`, `identity_reassigned`, and `cluster_created_for_identity` to their recognition endpoints and include idempotency keys for backend-side replay deduplication.
-- [ ] Add or align the missing replay-plane backend contract for `revert_merge_cluster` and `assign_outlier_to_cluster`: add the missing revert-merge endpoint, add assign-outlier `idempotency_key` + replay cache load/store, and ensure replay-plane topology responses return `backend_version` (or equivalent) so outbox acknowledgements can persist version lineage correctly.
-- [ ] Extend replay-plane topology routing to include durable `revert-merge` and `assign-outlier` dispatch once those plugin mutation paths exist.
+- [x] Add or align the missing replay-plane backend contract for `revert_merge_cluster` and `assign_outlier_to_cluster`: add the missing revert-merge endpoint, add assign-outlier `idempotency_key` + replay cache load/store, and ensure replay-plane topology responses return `backend_version` (or equivalent) so outbox acknowledgements can persist version lineage correctly.
+- [x] Extend replay-plane topology routing to include durable `revert-merge` and `assign-outlier` dispatch once those plugin mutation paths exist.
 - [x] Add PHPUnit tests for `OutboxDispatcher` routing: state-only operations route to `/roster/curation/sync`; the currently landed replay-plane topology mutations route to the correct recognition endpoints.
-- [ ] Add integration test: topology operation (merge) enqueued, drain dispatches to recognition endpoint, response acknowledged, outbox status transitions correctly.
-- [ ] Add integration test: split topology command queues locally, dispatches through the split command plane, stores durable result metadata, and reconciles projection without outbox replay semantics.
-- [ ] Add integration test: revert-merge and assign-outlier durable intents dispatch to their recognition endpoints and transition to acknowledged/conflict/failed states correctly.
+- [x] Add integration test: topology operation (merge) enqueued, drain dispatches to recognition endpoint, response acknowledged, outbox status transitions correctly.
+- [x] Add integration test: split topology command queues locally, dispatches through the split command plane, stores durable result metadata, and reconciles projection without outbox replay semantics.
+- [x] Add integration test: revert-merge and assign-outlier durable intents dispatch to their recognition endpoints and transition to acknowledged/conflict/failed states correctly.
 
 ## Phase 4: Sync State Reporting Enhancements
 
 - [x] Extend `SyncStateRepository::refresh_curation_metrics()` to count `failed` outbox operations and extract `MAX(last_attempted_at)` for failed operations.
 - [x] Upsert `failed_curation_operations` and `last_curation_failed_at` to `wp_acx_sync_state`.
 - [x] Include `failed_curation_operations` and `last_curation_failed_at` in `SyncStatusController` REST response.
-- [ ] Add PHPUnit test: metrics refresh correctly counts pending, failed, and conflict tallies after mixed outbox states.
+- [x] Add PHPUnit test: metrics refresh correctly counts pending, failed, and conflict tallies after mixed outbox states.
 
 ## Phase 5: Tests
 
 - [x] Unit tests for the currently converted `ClusterMutationsController` mutations: correct local state written, correct outbox operation enqueued, transaction atomicity preserved, no direct HTTP calls to backend.
 - [x] Unit tests for `cluster_label_updated` backend sync handler: mutation applies correctly, version conflict detection works, idempotency key caching works.
 - [x] Unit tests for `OutboxDispatcher` routing: state-only operations dispatch to curation sync; the currently landed replay-plane topology mutations dispatch to the correct recognition endpoints.
-- [ ] Unit tests for newly in-scope replay-plane mutations once implemented: `revert_merge_cluster` and `assign_outlier_to_cluster` dispatch through `OutboxDispatcher` without synchronous backend proxying.
-- [ ] Integration test: full cycle -- plugin enqueues label mutation, drain dispatches to curation sync endpoint, backend applies and returns acknowledged, outbox status transitions to acknowledged, sync state metrics updated.
-- [ ] Integration test: topology cycle -- plugin enqueues merge mutation, drain dispatches to recognition cluster merge endpoint, response acknowledged, outbox status transitions correctly.
-- [ ] Integration test: split cycle -- plugin enqueues split topology command, split drain dispatches to the split command endpoint, durable result metadata is stored, and local reconciliation completes.
-- [ ] Integration test: conflict cycle -- plugin enqueues stale mutation, backend returns 409, drain records conflict in `wp_acx_sync_conflicts`, sync state reflects new conflict count.
-- [ ] Integration test: dead-letter cycle -- backend repeatedly fails (5xx), drain retries up to max_attempts, operation transitions to `failed`, sync state reflects failed count.
-- [ ] All PHPUnit, PHPStan, pytest, and ruff checks pass.
+- [x] Unit tests for newly in-scope replay-plane mutations once implemented: `revert_merge_cluster` and `assign_outlier_to_cluster` dispatch through `OutboxDispatcher` without synchronous backend proxying.
+- [x] Integration test: full cycle -- plugin enqueues label mutation, drain dispatches to curation sync endpoint, backend applies and returns acknowledged, outbox status transitions to acknowledged, sync state metrics updated.
+- [x] Integration test: topology cycle -- plugin enqueues merge mutation, drain dispatches to recognition cluster merge endpoint, response acknowledged, outbox status transitions correctly.
+- [x] Integration test: split cycle -- plugin enqueues split topology command, split drain dispatches to the split command endpoint, durable result metadata is stored, and local reconciliation completes.
+- [x] Integration test: conflict cycle -- plugin enqueues stale mutation, backend returns 409, drain records conflict in `wp_acx_sync_conflicts`, sync state reflects new conflict count.
+- [x] Integration test: dead-letter cycle -- backend repeatedly fails (5xx), drain retries up to max_attempts, operation transitions to `failed`, sync state reflects failed count.
+- [x] All PHPUnit, PHPStan, pytest, and ruff checks pass.
 
 ## Stretch Goals
 
@@ -296,7 +296,7 @@ $failed_count = (int) $wpdb->get_var($wpdb->prepare(
 - [ ] Stale mutations (expected_base_version behind backend) produce 409 conflicts that are recorded in `wp_acx_sync_conflicts` for operator review.
 - [ ] Dead-letter operations (max retries exhausted) are marked `failed` and surfaced in sync status.
 - [ ] `SyncStatusController` REST response includes pending queue size, failed count, and last acknowledgement/failure timestamps.
-- [ ] All PHPUnit, PHPStan, pytest, and ruff checks pass.
+- [x] All PHPUnit, PHPStan, pytest, and ruff checks pass.
 
 > **Not in scope:** Pin-representative remains outside this phase. Revert-merge and assign-outlier are intentionally kept in core scope so the remaining backend-first mutation set is actually closed out.
 

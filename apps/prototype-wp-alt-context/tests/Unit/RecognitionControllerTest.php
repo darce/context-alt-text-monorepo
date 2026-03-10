@@ -506,26 +506,66 @@ class RecognitionControllerTest extends TestCase
 
     public function testRevertMergeClusterSchedulesAsyncXmpRefresh(): void
     {
-        $targetClusterId = 'de7e4cc7-bfe2-45f7-9c04-79f34dcd73f1';
-        $sourceClusterId = '62096ccf-1c96-4de8-bf1c-2ca71411c96a';
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                'source_cluster_id' => $sourceClusterId,
-            ]),
-        ]);
+        $targetClusterId = 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae';
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                $repository,
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/revert-merge');
         $request->set_param('target_cluster_id', $targetClusterId);
-        $request->set_param('moved_identity_ids', ['id-1', 'id-2']);
+        $request->set_param('moved_identity_ids', [
+            'f30df8eb-4946-4a09-9df9-b5d74e8e0d1d',
+            'd07a0e5b-0607-49dc-8b7f-8f63f6f18d2a',
+        ]);
 
-        $response = $this->controller->revert_merge_cluster($request);
+        $response = $controller->revert_merge_cluster($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
+        $sourceClusterId = $response->get_data()['restored_cluster_id'];
+        $this->assertSame([], $this->getHttpCalls());
         $this->assertNotFalse(
             wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$targetClusterId, $sourceClusterId], 'cluster-revert-merge'])
+        );
+    }
+
+    public function testAssignOutlierClusterSchedulesAsyncXmpRefresh(): void
+    {
+        $targetClusterId = '2e489e1d-0f64-4694-9082-5779d6cc7e52';
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $repository->seedCluster($targetClusterId, 18, 2);
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                $repository,
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
+
+        $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $targetClusterId . '/assign');
+        $request->set_param('cluster_id', $targetClusterId);
+        $request->set_param('identity_id', 'f30df8eb-4946-4a09-9df9-b5d74e8e0d1d');
+        $request->set_param('similarity', 0.31);
+
+        $response = $controller->assign_outlier_to_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame([], $this->getHttpCalls());
+        $this->assertNotFalse(
+            wp_next_scheduled(
+                'acx_refresh_xmp_for_clusters',
+                [['eb3d26d3-dbb6-4c99-be66-068e1f3b82ae', $targetClusterId], 'cluster-assign-outlier']
+            )
         );
     }
 

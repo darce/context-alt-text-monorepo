@@ -579,5 +579,4 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		$normalized = trim( $value );
 		return '' !== $normalized ? $normalized : null;
 	}
-
 }

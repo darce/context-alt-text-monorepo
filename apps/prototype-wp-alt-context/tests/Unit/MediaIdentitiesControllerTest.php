@@ -28,6 +28,8 @@ class MediaIdentitiesControllerTest extends TestCase
 				return 0; }
             public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
 				return 0; }
+            public function assign_to_cluster_for_projection(string $identity_uuid, string $target_cluster_uuid, int $projection_version): int {
+				return 0; }
             public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int {
 				return 0; }
             public function count_for_cluster(string $cluster_uuid): int {
@@ -74,6 +76,21 @@ class MediaIdentitiesControllerTest extends TestCase
             public function get_last_curation_failed_at(string $tenant_id): ?string {
                 return null;
             }
+            public function get_pending_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_applied_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_failed_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_conflicted_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
+                return null;
+            }
         };
 
         $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
@@ -101,6 +118,9 @@ class MediaIdentitiesControllerTest extends TestCase
             public function mark_as_curated(string $identity_uuid): int {
 				return 0; }
             public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
+                return 0;
+            }
+            public function assign_to_cluster_for_projection(string $identity_uuid, string $target_cluster_uuid, int $projection_version): int {
                 return 0;
             }
             public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int {
@@ -145,6 +165,21 @@ class MediaIdentitiesControllerTest extends TestCase
                 return null;
             }
             public function get_last_curation_failed_at(string $tenant_id): ?string {
+                return null;
+            }
+            public function get_pending_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_applied_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_failed_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_conflicted_topology_commands(string $tenant_id): int {
+                return 0;
+            }
+            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
                 return null;
             }
         };

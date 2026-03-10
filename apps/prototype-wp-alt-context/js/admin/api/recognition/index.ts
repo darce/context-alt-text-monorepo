@@ -26,6 +26,8 @@ export type {
   UpdateClusterLabelRequest,
   MergeClusterRequest,
   MergeClusterResponse,
+  AssignOutlierRequest,
+  AssignOutlierResponse,
   ReassignClusterIdentityRequest,
   RevertMergeRequest,
   RevertMergeResponse,
@@ -50,6 +52,7 @@ export { scanFaces, scanFacesBatched, fetchScanStatus, cancelScanJob, clusterFac
 export {
   updateClusterLabel,
   mergeCluster,
+  assignOutlierToCluster,
   listRecognitionClusters,
   getRecognitionCluster,
   reassignClusterIdentity,

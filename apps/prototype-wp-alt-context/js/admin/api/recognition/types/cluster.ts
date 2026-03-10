@@ -102,6 +102,22 @@ export interface RevertMergeResponse {
   restored_identity_count: number;
   target_cluster_id: string;
   target_identity_count: number;
+  synced?: boolean;
+  status?: 'pending' | 'acknowledged';
+}
+
+export interface AssignOutlierRequest {
+  clusterId: string;
+  identityId: string;
+  similarity?: number;
+}
+
+export interface AssignOutlierResponse {
+  identity_id: string;
+  source_cluster_id: string;
+  target_cluster_id: string;
+  synced: boolean;
+  status: 'pending' | 'acknowledged';
 }
 
 export interface SplitClusterResponse {

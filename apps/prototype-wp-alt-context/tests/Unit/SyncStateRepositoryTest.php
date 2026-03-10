@@ -92,6 +92,63 @@ class SyncStateRepositoryTest extends TestCase
         $this->assertStringNotContainsString('wp_acx_topology_commands', $sql);
     }
 
+    public function testRefreshCurationMetricsPersistsMixedPendingFailedAndConflictTallies(): void
+    {
+        global $wpdb;
+        $wpdb->mockRow = [
+            'last_curation_acknowledged_at' => null,
+            'last_curation_conflict_at' => null,
+            'last_curation_failed_at' => null,
+        ];
+
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status = %s',
+            'wp_acx_sync_outbox',
+            'tenant-sync',
+            'pending'
+        )] = 3;
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND status = %s',
+            'wp_acx_sync_outbox',
+            'tenant-sync',
+            'failed'
+        )] = 2;
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+            'wp_acx_sync_conflicts',
+            'tenant-sync',
+            'open'
+        )] = 1;
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT MAX(acknowledged_at) FROM %i WHERE tenant_id = %s AND status = %s',
+            'wp_acx_sync_outbox',
+            'tenant-sync',
+            'acknowledged'
+        )] = '2026-03-10 09:00:00';
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT MAX(created_at) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+            'wp_acx_sync_conflicts',
+            'tenant-sync',
+            'open'
+        )] = '2026-03-10 09:05:00';
+        $wpdb->queryResults[$wpdb->prepare(
+            'SELECT MAX(last_attempted_at) FROM %i WHERE tenant_id = %s AND status = %s',
+            'wp_acx_sync_outbox',
+            'tenant-sync',
+            'failed'
+        )] = '2026-03-10 09:10:00';
+
+        $this->repository->refresh_curation_metrics('tenant-sync');
+
+        $sql = implode("\n", $wpdb->queries);
+        $this->assertStringContainsString('UPDATE wp_acx_sync_state SET pending_curation_operations = 3', $sql);
+        $this->assertStringContainsString('failed_curation_operations = 2', $sql);
+        $this->assertStringContainsString('conflict_count = 1', $sql);
+        $this->assertStringContainsString("last_curation_acknowledged_at = '2026-03-10 09:00:00'", $sql);
+        $this->assertStringContainsString("last_curation_conflict_at = '2026-03-10 09:05:00'", $sql);
+        $this->assertStringContainsString("last_curation_failed_at = '2026-03-10 09:10:00'", $sql);
+    }
+
     public function testGetPendingCurationOperationsReadsStoredValue(): void
     {
         global $wpdb;

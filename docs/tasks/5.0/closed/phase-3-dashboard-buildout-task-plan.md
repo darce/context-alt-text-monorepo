@@ -159,28 +159,28 @@ export const useIdentityStats = () =>
 
 ## Functions to Change
 
-| File | Line | Change |
-| --- | --- | --- |
-| `src/api/class-api.php` | `Api::get_dashboard_stats()` | Add `media_with_faces_count` and `unassigned_persons_count` to `get_dashboard_stats()` response by querying `wp_acx_identity_members` and `wp_acx_persons`/`wp_acx_clusters` |
-| `js/admin/api/dashboardApi.ts` | `DashboardStats` interface | Add `media_with_faces_count: number` and `unassigned_persons_count: number` to `DashboardStats` interface |
-| `js/admin/hooks/useIdentityStats.ts` | `useIdentityStats` query options | Add `staleTime: 30_000` and `refetchOnWindowFocus: true` to query options |
-| `js/admin/pages/DashboardPage.tsx` | Identity stats panel render branch | Add "Media with faces" stat and "persons with no clusters" guidance state using `unassigned_persons_count`; keep guidance inline |
-| `js/admin/pages/DashboardPage.tsx` | Identity stats error branch | Add error state handling for identity stats (show retry button on failure) |
-| `js/admin/pages/dashboard/GuidanceCard.tsx` | new (optional) | Optional: extract guidance logic into standalone component if inline complexity warrants it |
-| `tests/Unit/DashboardApiTest.php` | `DashboardApiTest::testGetDashboardStatsRespondsWithCorrectCounts` | Add test for `media_with_faces_count` and `unassigned_persons_count` in response |
-| `js/admin/pages/__tests__/DashboardPage.test.tsx` | `DashboardPage` test suite | Update mock data shape to include `media_with_faces_count` and `unassigned_persons_count`; add guidance/error/zero-value test cases |
+| File                                              | Line                                                               | Change                                                                                                                                                                       |
+| ------------------------------------------------- | ------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `src/api/class-api.php`                           | `Api::get_dashboard_stats()`                                       | Add `media_with_faces_count` and `unassigned_persons_count` to `get_dashboard_stats()` response by querying `wp_acx_identity_members` and `wp_acx_persons`/`wp_acx_clusters` |
+| `js/admin/api/dashboardApi.ts`                    | `DashboardStats` interface                                         | Add `media_with_faces_count: number` and `unassigned_persons_count: number` to `DashboardStats` interface                                                                    |
+| `js/admin/hooks/useIdentityStats.ts`              | `useIdentityStats` query options                                   | Add `staleTime: 30_000` and `refetchOnWindowFocus: true` to query options                                                                                                    |
+| `js/admin/pages/DashboardPage.tsx`                | Identity stats panel render branch                                 | Add "Media with faces" stat and "persons with no clusters" guidance state using `unassigned_persons_count`; keep guidance inline                                             |
+| `js/admin/pages/DashboardPage.tsx`                | Identity stats error branch                                        | Add error state handling for identity stats (show retry button on failure)                                                                                                   |
+| `js/admin/pages/dashboard/GuidanceCard.tsx`       | new (optional)                                                     | Optional: extract guidance logic into standalone component if inline complexity warrants it                                                                                  |
+| `tests/Unit/DashboardApiTest.php`                 | `DashboardApiTest::testGetDashboardStatsRespondsWithCorrectCounts` | Add test for `media_with_faces_count` and `unassigned_persons_count` in response                                                                                             |
+| `js/admin/pages/__tests__/DashboardPage.test.tsx` | `DashboardPage` test suite                                         | Update mock data shape to include `media_with_faces_count` and `unassigned_persons_count`; add guidance/error/zero-value test cases                                          |
 
 ## Related Files
 
-| File | Note |
-| --- | --- |
-| `js/admin/hooks/useMediaStats.ts` | Existing coverage hook. Not changed but may be composed with identity stats for enhanced coverage display. |
-| `js/admin/pages/dashboard/OrientationCard.tsx` | Existing first-use onboarding card. Not changed. |
-| `js/admin/api/queryKeys.ts` | Has `dashboard.stats()` key already. Not changed. |
-| `js/admin/api/config.ts` | Endpoint config. `dashboardStats` endpoint already registered. Not changed. |
-| `js/admin/hooks/useRecognitionJobHistory.ts` | Provides `jobHistory`, `jobStatuses`, `jobDetails` consumed by Recent Activity panel. Already functional for duration and result links. Not changed unless robustness hardening is pursued. |
-| `src/support/class-life-cycle-manager.php` | Creates projection tables including `wp_acx_identity_members`. Not changed. |
-| `js/admin/context/ToastContext.tsx` | Toast system already wired. Not changed. |
+| File                                           | Note                                                                                                                                                                                        |
+| ---------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `js/admin/hooks/useMediaStats.ts`              | Existing coverage hook. Not changed but may be composed with identity stats for enhanced coverage display.                                                                                  |
+| `js/admin/pages/dashboard/OrientationCard.tsx` | Existing first-use onboarding card. Not changed.                                                                                                                                            |
+| `js/admin/api/queryKeys.ts`                    | Has `dashboard.stats()` key already. Not changed.                                                                                                                                           |
+| `js/admin/api/config.ts`                       | Endpoint config. `dashboardStats` endpoint already registered. Not changed.                                                                                                                 |
+| `js/admin/hooks/useRecognitionJobHistory.ts`   | Provides `jobHistory`, `jobStatuses`, `jobDetails` consumed by Recent Activity panel. Already functional for duration and result links. Not changed unless robustness hardening is pursued. |
+| `src/support/class-life-cycle-manager.php`     | Creates projection tables including `wp_acx_identity_members`. Not changed.                                                                                                                 |
+| `js/admin/context/ToastContext.tsx`            | Toast system already wired. Not changed.                                                                                                                                                    |
 
 ---
 

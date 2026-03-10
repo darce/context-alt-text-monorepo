@@ -224,6 +224,42 @@ class OutboxDispatcherTest extends TestCase
         $this->assertStringContainsString('"idempotency_key":"idem-bind"', $stateBody);
     }
 
+    public function testDispatchRoutesCreateClusterForIdentityWithDesiredClusterId(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode([
+                'cluster_id' => 'cluster-new',
+            ]),
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $result = $dispatcher->dispatch([
+            'operation_type' => 'cluster_created_for_identity',
+            'entity_type' => 'cluster',
+            'entity_key' => 'cluster-new',
+            'idempotency_key' => 'idem-create',
+            'expected_base_version' => 0,
+            'local_revision' => 1,
+            'payload' => [
+                'identity_id' => 'identity-1',
+                'label' => 'Known Person',
+                'desired_cluster_id' => 'cluster-new',
+            ],
+        ]);
+
+        $this->assertSame('acknowledged', $result['status']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/clusters/create-for-identity', $calls[0]['url']);
+        $body = (string) ($calls[0]['body'] ?? '');
+        $this->assertStringContainsString('"identity_id":"identity-1"', $body);
+        $this->assertStringContainsString('"label":"Known Person"', $body);
+        $this->assertStringContainsString('"desired_cluster_id":"cluster-new"', $body);
+    }
+
     /**
      * @return array<string,mixed>
      */

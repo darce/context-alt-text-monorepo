@@ -95,7 +95,7 @@ class WriterStub(AssignmentWriter):
         self.assigned.append(decision)
 
     async def persist_new_cluster(
-        self, tenant_id: str, identities, similarities, algorithm="graph", clustering_logger=None
+        self, tenant_id: str, identities, similarities, algorithm="graph", cluster_id=None, clustering_logger=None
     ):
         self.created_clusters.append((tenant_id, list(identities), list(similarities), algorithm))
 

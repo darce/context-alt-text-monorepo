@@ -765,6 +765,7 @@ class AssignmentWriter:
         identities: list[MediaIdentity],
         similarities: list[float],
         algorithm: str = "graph",
+        cluster_id: str | None = None,
         clustering_logger: ClusteringLogger | None = None,
     ) -> IdentityCluster:
         """Create a new cluster for the provided identities."""
@@ -773,7 +774,7 @@ class AssignmentWriter:
 
         cluster = await self._clusters.save(
             IdentityCluster(
-                id=None,
+                id=cluster_id,
                 tenant_id=tenant_id,
                 label=None,
                 is_labeled=False,

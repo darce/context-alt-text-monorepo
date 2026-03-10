@@ -34,11 +34,19 @@ class NullSyncStateRepository implements SyncStateRepositoryInterface {
 		return 0;
 	}
 
+	public function get_failed_curation_operations( string $tenant_id ): int {
+		return 0;
+	}
+
 	public function get_last_curation_acknowledged_at( string $tenant_id ): ?string {
 		return null;
 	}
 
 	public function get_last_curation_conflict_at( string $tenant_id ): ?string {
+		return null;
+	}
+
+	public function get_last_curation_failed_at( string $tenant_id ): ?string {
 		return null;
 	}
 }

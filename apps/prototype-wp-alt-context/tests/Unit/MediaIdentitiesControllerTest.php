@@ -28,6 +28,12 @@ class MediaIdentitiesControllerTest extends TestCase
 				return 0; }
             public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
 				return 0; }
+            public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int {
+				return 0; }
+            public function count_for_cluster(string $cluster_uuid): int {
+				return 0; }
+            public function find_by_identity_uuid(string $identity_uuid): ?array {
+				return null; }
             public function get_curated_members_for_tenant(string $tenant_id): array {
 				return []; }
             public function list_for_media_ids(string $tenant_id, array $media_ids): array
@@ -56,10 +62,16 @@ class MediaIdentitiesControllerTest extends TestCase
             public function get_conflict_count(string $tenant_id): int {
                 return 0;
             }
+            public function get_failed_curation_operations(string $tenant_id): int {
+                return 0;
+            }
             public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
                 return null;
             }
             public function get_last_curation_conflict_at(string $tenant_id): ?string {
+                return null;
+            }
+            public function get_last_curation_failed_at(string $tenant_id): ?string {
                 return null;
             }
         };
@@ -91,6 +103,15 @@ class MediaIdentitiesControllerTest extends TestCase
             public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
                 return 0;
             }
+            public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int {
+                return 0;
+            }
+            public function count_for_cluster(string $cluster_uuid): int {
+                return 0;
+            }
+            public function find_by_identity_uuid(string $identity_uuid): ?array {
+                return null;
+            }
             public function get_curated_members_for_tenant(string $tenant_id): array {
 				return []; }
             public function list_for_media_ids(string $tenant_id, array $media_ids): array {
@@ -114,10 +135,16 @@ class MediaIdentitiesControllerTest extends TestCase
             public function get_conflict_count(string $tenant_id): int {
                 return 0;
             }
+            public function get_failed_curation_operations(string $tenant_id): int {
+                return 0;
+            }
             public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
                 return null;
             }
             public function get_last_curation_conflict_at(string $tenant_id): ?string {
+                return null;
+            }
+            public function get_last_curation_failed_at(string $tenant_id): ?string {
                 return null;
             }
         };

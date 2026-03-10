@@ -46,6 +46,23 @@ interface IdentityMembersRepositoryInterface {
 	public function reassign_to_cluster( string $identity_uuid, string $target_cluster_uuid ): int;
 
 	/**
+	 * Reassign every projected member from one cluster to another and mark them as curated.
+	 */
+	public function reassign_cluster_members( string $source_cluster_uuid, string $target_cluster_uuid ): int;
+
+	/**
+	 * Count projected members for one cluster.
+	 */
+	public function count_for_cluster( string $cluster_uuid ): int;
+
+	/**
+	 * Return one projected member row by identity UUID when present.
+	 *
+	 * @return array<string,mixed>|null
+	 */
+	public function find_by_identity_uuid( string $identity_uuid ): ?array;
+
+	/**
 	 * Return curated member rows for one tenant keyed by identity_uuid.
 	 *
 	 * @return array<string,array<string,mixed>>

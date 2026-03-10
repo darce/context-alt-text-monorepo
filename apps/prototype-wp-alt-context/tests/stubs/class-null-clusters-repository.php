@@ -39,6 +39,14 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 		return 0;
 	}
 
+	public function update_identity_count( string $cluster_uuid, int $identity_count ): int {
+		return 0;
+	}
+
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int {
+		return 0;
+	}
+
 	public function undismiss( string $cluster_uuid ): int {
 		return 0;
 	}

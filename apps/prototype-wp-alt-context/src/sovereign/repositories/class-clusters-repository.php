@@ -389,6 +389,76 @@ class ClustersRepository implements ClustersRepositoryInterface {
 		return 0;
 	}
 
+	public function update_identity_count( string $cluster_uuid, int $identity_count ): int {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql     = $this->prepare_query(
+			'UPDATE %i SET identity_count = %d, local_revision = local_revision + 1, updated_at = %s WHERE cluster_uuid = %s',
+			array(
+				$this->table_name,
+				max( 0, $identity_count ),
+				$now_utc,
+				$normalized_cluster_uuid,
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$query_result = $wpdb->query( $sql );
+			if ( is_int( $query_result ) ) {
+				return $query_result;
+			}
+		}
+
+		return 0;
+	}
+
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		$normalized_label = trim( $label );
+		if ( '' === $normalized_tenant_id || '' === $normalized_cluster_uuid || '' === $normalized_label ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'insert' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$inserted = $wpdb->insert(
+			$this->table_name,
+			array(
+				'cluster_uuid' => $normalized_cluster_uuid,
+				'tenant_id' => $normalized_tenant_id,
+				'label' => $normalized_label,
+				'curation_state' => 'uncurated',
+				'identity_count' => max( 0, $identity_count ),
+				'snapshot_version' => 0,
+				'is_user_confirmed' => 1,
+				'local_revision' => 1,
+				'created_at' => $now_utc,
+				'updated_at' => $now_utc,
+				'last_synced_at' => $now_utc,
+			),
+			array( '%s', '%s', '%s', '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s' )
+		);
+
+		return is_int( $inserted ) ? $inserted : 0;
+	}
+
 	public function undismiss( string $cluster_uuid ): int {
 		global $wpdb;
 

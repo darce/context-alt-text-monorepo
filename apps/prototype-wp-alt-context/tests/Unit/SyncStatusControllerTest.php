@@ -33,9 +33,11 @@ class SyncStatusControllerTest extends TestCase
         $this->assertSame(12, $data['last_snapshot_version']);
         $this->assertSame('2026-02-14 00:00:00', $data['last_synced_at']);
         $this->assertSame(0, $data['pending_curation_operations']);
+        $this->assertSame(0, $data['failed_curation_operations']);
         $this->assertSame(0, $data['conflict_count']);
         $this->assertNull($data['last_curation_acknowledged_at']);
         $this->assertNull($data['last_curation_conflict_at']);
+        $this->assertNull($data['last_curation_failed_at']);
     }
 
     public function testGetSyncStatusIncludesCurationCountersWhenAvailable(): void
@@ -53,11 +55,17 @@ class SyncStatusControllerTest extends TestCase
             public function get_conflict_count(string $tenant_id): int {
                 return 2;
             }
+            public function get_failed_curation_operations(string $tenant_id): int {
+                return 1;
+            }
             public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
                 return '2026-03-07 02:00:00';
             }
             public function get_last_curation_conflict_at(string $tenant_id): ?string {
                 return '2026-03-07 02:30:00';
+            }
+            public function get_last_curation_failed_at(string $tenant_id): ?string {
+                return '2026-03-07 03:00:00';
             }
         };
 
@@ -67,9 +75,11 @@ class SyncStatusControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertSame(4, $data['pending_curation_operations']);
+        $this->assertSame(1, $data['failed_curation_operations']);
         $this->assertSame(2, $data['conflict_count']);
         $this->assertSame('2026-03-07 02:00:00', $data['last_curation_acknowledged_at']);
         $this->assertSame('2026-03-07 02:30:00', $data['last_curation_conflict_at']);
+        $this->assertSame('2026-03-07 03:00:00', $data['last_curation_failed_at']);
     }
 
     public function testGetSyncStatusReturnsStaleTrueWhenOld(): void

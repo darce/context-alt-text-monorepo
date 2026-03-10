@@ -307,9 +307,11 @@ class LifecycleManager {
 			stream_name varchar(100) NOT NULL,
 			last_snapshot_version bigint(20) unsigned NOT NULL DEFAULT 0,
 			pending_curation_operations int(11) unsigned NOT NULL DEFAULT 0,
+			failed_curation_operations int(11) unsigned NOT NULL DEFAULT 0,
 			conflict_count int(11) unsigned NOT NULL DEFAULT 0,
 			last_curation_acknowledged_at datetime DEFAULT NULL,
 			last_curation_conflict_at datetime DEFAULT NULL,
+			last_curation_failed_at datetime DEFAULT NULL,
 			updated_at datetime NOT NULL,
 			PRIMARY KEY  (stream_name)
 		) {$charset_collate};";

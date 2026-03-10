@@ -34,6 +34,18 @@ class NullIdentityMembersRepository implements IdentityMembersRepositoryInterfac
 		return 0;
 	}
 
+	public function reassign_cluster_members( string $source_cluster_uuid, string $target_cluster_uuid ): int {
+		return 0;
+	}
+
+	public function count_for_cluster( string $cluster_uuid ): int {
+		return 0;
+	}
+
+	public function find_by_identity_uuid( string $identity_uuid ): ?array {
+		return null;
+	}
+
 	public function get_curated_members_for_tenant( string $tenant_id ): array {
 		return array();
 	}

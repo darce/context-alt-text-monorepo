@@ -69,7 +69,9 @@ async def test_scan_worker_retries_runtime_init_after_failure(monkeypatch: pytes
     )
     monkeypatch.setattr(scan_worker_module, "get_shared_insightface_adapter", _failing_get_shared_adapter)
 
-    worker = scan_worker_module.ScanWorker(scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:"))
+    worker = scan_worker_module.ScanWorker(
+        scan_worker_module.ScanWorkerConfig(postgres_dsn="sqlite+aiosqlite:///:memory:")
+    )
     await worker._ensure_embedding_runtime()
 
     assert calls == 1

@@ -135,6 +135,95 @@ class OutboxDispatcherTest extends TestCase
         $this->assertTrue($result['retryable']);
     }
 
+    public function testDispatchRoutesTopologyOperationsToRecognitionEndpoints(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode([
+                'cluster_id' => 'cluster-target',
+            ]),
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $result = $dispatcher->dispatch([
+            'operation_type' => 'cluster_merged',
+            'entity_type' => 'cluster',
+            'entity_key' => 'cluster-source',
+            'idempotency_key' => 'idem-merge',
+            'expected_base_version' => 19,
+            'local_revision' => 7,
+            'payload' => [
+                'target_cluster_id' => 'cluster-target',
+                'target_label' => 'Merged Cluster',
+            ],
+        ]);
+
+        $this->assertSame('acknowledged', $result['status']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/clusters/cluster-source/merge', $calls[0]['url']);
+
+        $body = (string) ($calls[0]['body'] ?? '');
+        $this->assertStringContainsString('"tenant_id"', $body);
+        $this->assertStringContainsString('"target_cluster_id":"cluster-target"', $body);
+        $this->assertStringContainsString('"idempotency_key":"idem-merge"', $body);
+    }
+
+    public function testDispatchBatchPartitionsTopologyAndStateOnlyOperations(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode(['cluster_id' => 'cluster-source']),
+        ]);
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode(['cluster_id' => 'cluster-2']),
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $results = $dispatcher->dispatch_batch([
+            [
+                'operation_type' => 'cluster_merged',
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-source',
+                'idempotency_key' => 'idem-merge',
+                'expected_base_version' => 19,
+                'local_revision' => 7,
+                'payload' => [
+                    'target_cluster_id' => 'cluster-target',
+                ],
+            ],
+            [
+                'operation_type' => 'cluster_person_bound',
+                'entity_type' => 'cluster',
+                'entity_key' => 'cluster-2',
+                'idempotency_key' => 'idem-bind',
+                'expected_base_version' => 21,
+                'local_revision' => 3,
+                'payload' => [
+                    'cluster_uuid' => 'cluster-2',
+                    'person_uuid' => 'person-2',
+                ],
+            ],
+        ]);
+
+        $this->assertCount(2, $results);
+        $this->assertSame('acknowledged', $results[0]['status']);
+        $this->assertSame('acknowledged', $results[1]['status']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(2, $calls);
+        $this->assertStringContainsString('/recognition/clusters/cluster-source/merge', $calls[0]['url']);
+        $this->assertStringContainsString('/roster/curation/sync', $calls[1]['url']);
+
+        $stateBody = (string) ($calls[1]['body'] ?? '');
+        $this->assertStringContainsString('"operation_type":"cluster_person_bound"', $stateBody);
+        $this->assertStringContainsString('"idempotency_key":"idem-bind"', $stateBody);
+    }
+
     /**
      * @return array<string,mixed>
      */

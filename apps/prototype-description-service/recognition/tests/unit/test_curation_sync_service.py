@@ -130,6 +130,7 @@ async def test_cluster_bind_conflicts_when_expected_base_is_stale(db_session: As
         "cluster_uuid": str(cluster.id),
         "current_roster_id": None,
         "dismissed": False,
+        "label": "Assigned",
     }
 
 
@@ -212,3 +213,97 @@ async def test_cluster_dismiss_and_undismiss_replay_mutate_backend_state(db_sess
     assert undismissed.status == "acknowledged"
     assert cluster.roster_id == roster_id
     assert cluster.dismissed_at is None
+
+
+@pytest.mark.asyncio
+async def test_cluster_label_updated_replay_mutates_backend_label(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=1)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    service = CurationSyncService(session=db_session)
+
+    result = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_label_updated",
+            entity_key=str(cluster.id),
+            idempotency_key="label-idem",
+            expected_base_version=base_version,
+            payload={"cluster_uuid": str(cluster.id), "label": "Known Person"},
+        ),
+    )
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    assert result.status == "acknowledged"
+    assert cluster.label == "Known Person"
+
+
+@pytest.mark.asyncio
+async def test_cluster_label_updated_is_idempotent(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Unassigned", identity_count=1)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    operation = _operation(
+        "cluster_label_updated",
+        entity_key=str(cluster.id),
+        idempotency_key="label-idempotent",
+        expected_base_version=base_version,
+        payload={"cluster_uuid": str(cluster.id), "label": "Known Person"},
+    )
+
+    first_result = await CurationSyncService(session=db_session).apply(tenant_id=str(tenant.id), operation=operation)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+    first_updated_at = cluster.updated_at
+
+    second_result = await CurationSyncService(session=db_session).apply(tenant_id=str(tenant.id), operation=operation)
+    await db_session.refresh(cluster)
+
+    assert second_result == first_result
+    assert cluster.label == "Known Person"
+    assert cluster.updated_at == first_updated_at
+
+
+@pytest.mark.asyncio
+async def test_cluster_label_updated_conflicts_when_expected_base_is_stale(db_session: AsyncSession) -> None:
+    tenant = await _create_tenant(db_session)
+    cluster = IdentityCluster(id=uuid4(), tenant_id=tenant.id, label="Old", identity_count=1)
+    db_session.add(cluster)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    stale_base_version = int(cluster.updated_at.timestamp() * 1_000_000) if cluster.updated_at else 0
+    cluster.label = "Newer"
+    cluster.updated_at = datetime.now(tz=UTC) + timedelta(microseconds=30)
+    await db_session.commit()
+    await db_session.refresh(cluster)
+
+    service = CurationSyncService(session=db_session)
+    result = await service.apply(
+        tenant_id=str(tenant.id),
+        operation=_operation(
+            "cluster_label_updated",
+            entity_key=str(cluster.id),
+            idempotency_key="label-stale-idem",
+            expected_base_version=stale_base_version,
+            payload={"cluster_uuid": str(cluster.id), "label": "Local Label"},
+        ),
+    )
+
+    assert result.status == "conflict"
+    assert result.conflict_code == "version_conflict"
+    assert result.machine_payload == {
+        "cluster_uuid": str(cluster.id),
+        "current_roster_id": None,
+        "dismissed": False,
+        "label": "Newer",
+    }

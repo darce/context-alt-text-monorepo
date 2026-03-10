@@ -67,6 +67,7 @@ Choose your domain to load targeted context. **Always load the testing guide** a
 | PHP tests (PHPUnit)                  | [rules/testing-php.md](rules/testing-php.md)                                         |
 | Workflow, commits, scaffolding       | [rules/development-workflow.md](rules/development-workflow.md)                       |
 | Branch review                        | [rules/branch-review-guide.md](rules/branch-review-guide.md)                         |
+| Planning document review             | [rules/planning-review-guide.md](rules/planning-review-guide.md)                     |
 | Component architecture patterns      | [rules/component-architecture-patterns.md](rules/component-architecture-patterns.md) |
 | Radix UI / accessibility primitives  | [rules/RADIX_UI_COMPONENT_GUIDE.md](rules/RADIX_UI_COMPONENT_GUIDE.md)               |
 | Roster auto-resolve vs pending       | [rules/roster_auto_resolve_behavior.md](rules/roster_auto_resolve_behavior.md)       |
@@ -137,6 +138,7 @@ Hard guardrails from real failures in this project:
 
 - Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
 - Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
+- When reviewing task plans, epics, roadmaps, ADRs, or other planning documents for gaps, bugs, obsolete assumptions, or unnecessary complexity, record every finding in MCP handoff before presenting it in chat.
 
 ### Naming Convention: acx\_\* / ACX\_\* Prefix
 
@@ -241,6 +243,36 @@ When a user request matches any of these patterns, **load and follow** [rules/br
 7. Call `record_decision(..., actor={ ... })` summarizing the review + `generate_current_task_md(...)`.
 
 **Do NOT** perform ad-hoc reviews. The guide exists to ensure consistent, structured, cross-agent-visible output.
+
+### Planning Document Review Rule (MANDATORY)
+
+When a user asks to review a task plan, epic, roadmap, ADR, or other planning document:
+
+1. Review the document against the current codebase and adjacent planning docs.
+2. Record each finding in MCP handoff before presenting it.
+3. Focus findings on obsolete assumptions, implementation gaps, contradictory scope, contract mismatches, rollout/test gaps, and unnecessary complexity.
+4. Treat the recorded handoff finding as the canonical review artifact even if no separate report file is requested.
+
+Branch review guidance is code-change specific. Planning-document reviews still require handoff recording, but should use planning-specific judgment rather than forcing the branch-diff checklist onto docs.
+
+### Planning Review Trigger (MANDATORY)
+
+When a user request matches any of these patterns, **load and follow** [rules/planning-review-guide.md](rules/planning-review-guide.md) before starting the review:
+
+- "review" + ("task plan" | "epic" | "roadmap" | "ADR" | "planning document")
+- "flag issues" | "flag gaps" | "flag obsolete assumptions" on a doc under `docs/`
+- "audit" + ("plan" | "epic" | "roadmap")
+- Any request to evaluate implementation realism, dependencies, or checklist consistency in planning docs
+
+Procedure:
+
+1. Read `rules/planning-review-guide.md`.
+2. Review the document against the current codebase and adjacent planning/contracts.
+3. Record each finding in MCP handoff before presenting it.
+4. Cite both the planning-doc lines and the current code/contract lines that justify the finding.
+5. If asked to patch the document, resolve the recorded findings and then update their status.
+
+Do not use the branch review guide as a substitute for planning reviews.
 
 ---
 

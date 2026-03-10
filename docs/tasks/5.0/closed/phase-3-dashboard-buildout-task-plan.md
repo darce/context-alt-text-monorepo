@@ -32,10 +32,10 @@ The dashboard is the admin's landing page, but it underserves its "home base" ro
   - OrientationCard (dismissible first-use onboarding).
   - Quick Actions panel with links to Scan, Review, Roster.
   - Recent Activity panel with job history, status, duration formatting (`formatDuration`), and "View Results" links (`#/workbench?tab=confirm&jobId=...`) -- all functional.
-- `dashboardApi.ts` exposes `fetchDashboardStats()` returning `DashboardStats { people_count, assigned_clusters_count, pending_clusters_count, media_with_faces_count, unassigned_persons_count }`.
+- `dashboardApi.ts` exposes `fetchDashboardStats()` returning `DashboardStats { people_count, assigned_clusters_count, pending_clusters_count }`.
 - `useIdentityStats.ts` wraps the API call via TanStack Query with `queryKeys.dashboard.stats()`.
 - `useRecognitionJobHistory.ts` provides `jobHistory`, `jobStatuses`, and `jobDetails` (including `started_at`/`finished_at` used for duration display).
-- `get_dashboard_stats()` in `class-api.php` (L539-570) queries `wp_acx_persons` and `wp_acx_clusters`.
+- `get_dashboard_stats()` in `class-api.php` queries `wp_acx_persons` and `wp_acx_clusters`.
 - `DashboardPage.test.tsx` covers identity stats rendering and guidance card states.
 - `DashboardApiTest.php` covers the PHP endpoint response shape.
 
@@ -118,11 +118,11 @@ const renderGuidance = (stats: DashboardStats) => {
   if (stats.pending_clusters_count > 0) {
     return (/* pending review CTA: "N faces are waiting for names." */);
   }
-  if (stats.people_count === 0) {
-    return (/* first-use: "Start by scanning your media library." */);
-  }
   if (stats.unassigned_persons_count > 0) {
     return (/* "N persons have no assigned clusters." + link to Roster */);
+  }
+  if (stats.people_count === 0) {
+    return (/* first-use: "Start by scanning your media library." */);
   }
   return (/* "All caught up." */);
 };
@@ -202,8 +202,8 @@ export const useIdentityStats = () =>
 - [x] **Implement**: add fourth guidance state for "persons with no clusters" using explicit `unassigned_persons_count` from API (not a heuristic). Add inline to `DashboardPage.tsx`.
 - [x] **Test (green)**: all four guidance states render correct copy and CTAs:
   - pending_clusters_count > 0: "N faces are waiting for names." + link to Workbench.
-  - people_count === 0: "Start by scanning your media library." + link to Scan tab.
   - unassigned_persons_count > 0: "N persons have no assigned clusters." + link to Roster.
+  - people_count === 0: "Start by scanning your media library." + link to Scan tab.
   - Default: "All caught up."
 - [x] **Test (green)**: existing `DashboardPage.test.tsx` tests continue passing.
 

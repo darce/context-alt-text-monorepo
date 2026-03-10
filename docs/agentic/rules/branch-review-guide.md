@@ -7,6 +7,8 @@
 
 **Start here:** This file covers universal process, common checklist, severity classification, and report template.
 
+For task plans, epics, roadmaps, ADRs, and other planning documents, use [planning-review-guide.md](planning-review-guide.md) instead of this guide.
+
 **Then load the relevant stack guide(s):**
 
 - Python / FastAPI / SQLAlchemy → [branch-review-python.md](branch-review-python.md)

@@ -167,9 +167,9 @@ The MVP does not require a perfect event-sourced model, but it does require expl
 
 ## Phased Delivery
 
-### Phase 1: Unified Pipeline Lifecycle -- NOT STARTED
+### Phase 1: Unified Pipeline Lifecycle -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plan**: [phase-1-unified-pipeline-lifecycle-task-plan.md](../../tasks/6.0/phase-1-unified-pipeline-lifecycle-task-plan.md)
 
 **Goal**: Present analyze, clustering, and local projection as one durable operator-visible pipeline.
@@ -194,7 +194,7 @@ Exit criteria:
 ### Phase 2: Curation-First Merge Contract -- NOT STARTED
 
 > **Status**: not-started
-> **Task plans**: not yet scoped
+> **Task plan**: [phase-2-curation-first-merge-contract-task-plan.md](../../tasks/6.0/phase-2-curation-first-merge-contract-task-plan.md)
 
 **Goal**: Make machine projection and local curation merge safely without silent overwrite.
 
@@ -219,7 +219,8 @@ Exit criteria:
 ### Phase 3: Minimal Durable Sync Replay -- NOT STARTED
 
 > **Status**: not-started
-> **Task plans**: [v0.2-sovereign-outbox-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-outbox-task-plan.md), [v0.2-sovereign-drift-reconciliation-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-drift-reconciliation-task-plan.md)
+> **Task plan**: [phase-3-minimal-durable-sync-replay-task-plan.md](../../tasks/6.0/phase-3-minimal-durable-sync-replay-task-plan.md)
+> **Archived plans**: [v0.2-sovereign-outbox-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-outbox-task-plan.md), [v0.2-sovereign-drift-reconciliation-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-drift-reconciliation-task-plan.md)
 
 **Goal**: Make local curation durable offline and replayable when the backend reconnects.
 
@@ -271,7 +272,7 @@ Exit criteria:
 | Snapshot projector merge contract hardening | Plugin | In progress | Phase 2 exit criteria |
 | Outbox and replay transport | Plugin | Not started | Phase 3 exit criteria |
 | Curation push endpoint with idempotency and expected-base semantics | Backend | Not started | Phase 3 exit criteria |
-| Pipeline-aware job status contract | Backend | In progress | Phase 1 exit criteria |
+| Pipeline-aware job status contract | Backend | Completed | Phase 1 exit criteria |
 | Conflict review UX | Frontend | Not started | Phase 4 exit criteria |
 | Tenant retention-policy fields and lifecycle audit events | Backend | Not started | Phase 3 and Phase 4 exit criteria |
 | Product/privacy messaging for minimized retention | Product | Not started | Phase 4 launch readiness |
@@ -305,12 +306,12 @@ Exit criteria:
 
 # Consolidated Checklist
 
-## Phase 1: Unified Pipeline Lifecycle -- NOT STARTED
+## Phase 1: Unified Pipeline Lifecycle -- COMPLETED
 
-- [ ] Link analyze, clustering, and projection under one stable pipeline contract.
-- [ ] Surface pipeline phase transitions from backend job APIs and streams.
-- [ ] Add projection acknowledgement so backend work is not considered complete before local visibility exists.
-- [ ] Update frontend job state handling to respect the unified pipeline contract.
+- [x] Link analyze, clustering, and projection under one stable pipeline contract.
+- [x] Surface pipeline phase transitions from backend job APIs and streams.
+- [x] Add projection acknowledgement so backend work is not considered complete before local visibility exists.
+- [x] Update frontend job state handling to respect the unified pipeline contract.
 
 ## Phase 2: Curation-First Merge Contract -- NOT STARTED
 

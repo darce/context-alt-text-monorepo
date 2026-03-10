@@ -415,6 +415,97 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		return is_int( $query_result ) ? $query_result : 0;
 	}
 
+	public function reassign_cluster_members( string $source_cluster_uuid, string $target_cluster_uuid ): int {
+		global $wpdb;
+
+		$normalized_source_cluster_uuid = trim( $source_cluster_uuid );
+		$normalized_target_cluster_uuid = trim( $target_cluster_uuid );
+		if ( '' === $normalized_source_cluster_uuid || '' === $normalized_target_cluster_uuid || $normalized_source_cluster_uuid === $normalized_target_cluster_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql = $this->prepare_query(
+			'UPDATE %i SET cluster_uuid = %s, is_curated = 1, updated_at = %s WHERE cluster_uuid = %s',
+			array(
+				$this->members_table_name,
+				$normalized_target_cluster_uuid,
+				$now_utc,
+				$normalized_source_cluster_uuid,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
+	public function count_for_cluster( string $cluster_uuid ): int {
+		global $wpdb;
+
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		if ( '' === $normalized_cluster_uuid ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT COUNT(*) FROM %i WHERE cluster_uuid = %s',
+			array(
+				$this->members_table_name,
+				$normalized_cluster_uuid,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		return max( 0, (int) $value );
+	}
+
+	public function find_by_identity_uuid( string $identity_uuid ): ?array {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		if ( '' === $normalized_identity_uuid ) {
+			return null;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_row' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT * FROM %i WHERE identity_uuid = %s LIMIT 1',
+			array(
+				$this->members_table_name,
+				$normalized_identity_uuid,
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$row = $wpdb->get_row( $sql, ARRAY_A );
+		return is_array( $row ) ? $row : null;
+	}
+
 	/**
 	 * @return array<string,array<string,mixed>>
 	 */

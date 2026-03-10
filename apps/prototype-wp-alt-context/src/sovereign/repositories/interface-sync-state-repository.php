@@ -19,7 +19,11 @@ interface SyncStateRepositoryInterface {
 
 	public function get_conflict_count( string $tenant_id ): int;
 
+	public function get_failed_curation_operations( string $tenant_id ): int;
+
 	public function get_last_curation_acknowledged_at( string $tenant_id ): ?string;
 
 	public function get_last_curation_conflict_at( string $tenant_id ): ?string;
+
+	public function get_last_curation_failed_at( string $tenant_id ): ?string;
 }

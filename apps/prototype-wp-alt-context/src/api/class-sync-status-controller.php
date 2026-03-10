@@ -83,9 +83,11 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'last_synced_at' => $updated,
 				'is_stale' => $this->is_projection_stale( $updated ),
 				'pending_curation_operations' => $curation_state['pending_curation_operations'],
+				'failed_curation_operations' => $curation_state['failed_curation_operations'],
 				'conflict_count' => $curation_state['conflict_count'],
 				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
 				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
+				'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
 			),
 			200
 		);
@@ -124,9 +126,11 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 				'last_synced_at'        => $updated,
 				'is_stale'              => $this->is_projection_stale( $updated ),
 				'pending_curation_operations' => $curation_state['pending_curation_operations'],
+				'failed_curation_operations' => $curation_state['failed_curation_operations'],
 				'conflict_count' => $curation_state['conflict_count'],
 				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
 				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
+				'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
 			),
 			200
 		);
@@ -143,10 +147,11 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	/**
-	 * @return array{pending_curation_operations:int,conflict_count:int,last_curation_acknowledged_at:?string,last_curation_conflict_at:?string}
+	 * @return array{pending_curation_operations:int,failed_curation_operations:int,conflict_count:int,last_curation_acknowledged_at:?string,last_curation_conflict_at:?string,last_curation_failed_at:?string}
 	 */
 	private function get_curation_sync_state( string $tenant_id ): array {
 		$pending_operations = max( 0, (int) $this->sync_state_repository->get_pending_curation_operations( $tenant_id ) );
+		$failed_operations = max( 0, (int) $this->sync_state_repository->get_failed_curation_operations( $tenant_id ) );
 		$conflict_count = max( 0, (int) $this->sync_state_repository->get_conflict_count( $tenant_id ) );
 
 		$last_acknowledged_at = null;
@@ -161,11 +166,19 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			$last_conflict_at = $value;
 		}
 
+		$last_failed_at = null;
+		$value = $this->sync_state_repository->get_last_curation_failed_at( $tenant_id );
+		if ( is_string( $value ) && '' !== trim( $value ) ) {
+			$last_failed_at = $value;
+		}
+
 		return array(
 			'pending_curation_operations' => $pending_operations,
+			'failed_curation_operations' => $failed_operations,
 			'conflict_count' => $conflict_count,
 			'last_curation_acknowledged_at' => $last_acknowledged_at,
 			'last_curation_conflict_at' => $last_conflict_at,
+			'last_curation_failed_at' => $last_failed_at,
 		);
 	}
 

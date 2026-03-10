@@ -592,6 +592,7 @@ async def create_cluster_for_identity(
             identity_id=request.identity_id,
             label=label,
             tenant_id=request.tenant_id,
+            desired_cluster_id=request.desired_cluster_id,
         )
     except ValueError as exc:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=str(exc)) from exc

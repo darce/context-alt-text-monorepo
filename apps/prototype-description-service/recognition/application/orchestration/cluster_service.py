@@ -321,11 +321,14 @@ class ClusterService:
 
         return result
 
-    async def create_cluster_for_identity(self, identity_id: str, label: str, tenant_id: str) -> IdentityCluster:
+    async def create_cluster_for_identity(
+        self, identity_id: str, label: str, tenant_id: str, desired_cluster_id: str | None = None
+    ) -> IdentityCluster:
         return await create_cluster_for_identity_op(
             identity_id=identity_id,
             label=label,
             tenant_id=tenant_id,
+            desired_cluster_id=desired_cluster_id,
             session=self._session,
             assignment_writer=self.assignment_writer,
             suggestion_service=self.suggestion_service,

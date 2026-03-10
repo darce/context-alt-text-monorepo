@@ -102,11 +102,19 @@ class CreateClusterForIdentityRequest(BaseModel):
     tenant_id: str
     identity_id: str
     label: str
+    desired_cluster_id: str | None = None
     idempotency_key: str | None = None
 
     @field_validator("tenant_id", "identity_id")
     @classmethod
     def validate_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("desired_cluster_id")
+    @classmethod
+    def validate_desired_cluster_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
         return _validate_uuid(v)
 
 
@@ -167,6 +175,7 @@ class SplitClusterRequest(BaseModel):
     anchor_identity_id: str | None = None
     split_mode: str | None = Field(default=None, description="Optional split mode hint")
     mode: Literal["sync", "async"] = Field(default="sync", description="Execution mode")
+    desired_cluster_ids: list[str] | None = None
     idempotency_key: str | None = None
 
     @field_validator("tenant_id")
@@ -180,6 +189,13 @@ class SplitClusterRequest(BaseModel):
         if v is None:
             return None
         return _validate_uuid(v)
+
+    @field_validator("desired_cluster_ids")
+    @classmethod
+    def validate_desired_cluster_ids(cls, v: list[str] | None) -> list[str] | None:
+        if v is None:
+            return None
+        return [_validate_uuid(item) for item in v]
 
 
 class PinRepresentativeRequest(BaseModel):

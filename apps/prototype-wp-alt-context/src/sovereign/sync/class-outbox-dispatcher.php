@@ -405,6 +405,10 @@ class OutboxDispatcher {
 			}
 			$body['identity_id'] = $identity_id;
 			$body['label'] = $label;
+			$desired_cluster_id = $this->normalize_text( $payload['desired_cluster_id'] ?? '', '' );
+			if ( '' !== $desired_cluster_id ) {
+				$body['desired_cluster_id'] = $desired_cluster_id;
+			}
 		}
 
 		return $body;

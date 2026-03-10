@@ -394,17 +394,20 @@ class FakeClusterService:
         self._replace_cluster(updated)
         return updated
 
-    async def create_cluster_for_identity(self, identity_id: str, label: str, tenant_id: str) -> ClusterResponse:
+    async def create_cluster_for_identity(
+        self, identity_id: str, label: str, tenant_id: str, desired_cluster_id: str | None = None
+    ) -> ClusterResponse:
         self.calls.append(
             {
                 "method": "create_cluster_for_identity",
                 "tenant_id": tenant_id,
                 "identity_id": identity_id,
                 "label": label,
+                "desired_cluster_id": desired_cluster_id,
             }
         )
         cluster = ClusterResponse(
-            id=str(uuid.uuid4()),
+            id=desired_cluster_id or str(uuid.uuid4()),
             tenant_id=str(tenant_id),
             label=label,
             is_labeled=True,

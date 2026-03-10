@@ -147,7 +147,9 @@ def test_merge_cluster_same_target_does_not_queue_followup(
     assert not curation_calls
 
 
-def test_merge_cluster_is_idempotent_with_idempotency_key(api_client, tenant_id, fake_cluster_service, fake_job_service) -> None:
+def test_merge_cluster_is_idempotent_with_idempotency_key(
+    api_client, tenant_id, fake_cluster_service, fake_job_service
+) -> None:
     target = seed_cluster(fake_cluster_service, tenant_id, label="target")
     source = seed_cluster(fake_cluster_service, tenant_id, label="source")
     payload = {

@@ -413,20 +413,28 @@ class RecognitionControllerTest extends TestCase
     {
         $sourceClusterId = '6f83f4e9-fe44-49d0-9ed9-62581f5a6ddf';
         $targetClusterId = '2e489e1d-0f64-4694-9082-5779d6cc7e52';
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode(['merged' => true]),
-        ]);
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $repository->seedCluster($sourceClusterId, 17, 4);
+        $repository->seedCluster($targetClusterId, 18, 2);
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                $repository,
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/' . $sourceClusterId . '/merge');
         $request->set_param('source_id', $sourceClusterId);
         $request->set_param('target_cluster_id', $targetClusterId);
 
-        $response = $this->controller->merge_cluster($request);
+        $response = $controller->merge_cluster($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
+        $this->assertSame([], $this->getHttpCalls());
         $this->assertNotFalse(
             wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$sourceClusterId, $targetClusterId], 'cluster-merge'])
         );
@@ -460,25 +468,32 @@ class RecognitionControllerTest extends TestCase
 
     public function testCreateClusterForIdentitySchedulesAsyncXmpRefresh(): void
     {
-        $newClusterId = 'a3e8ac0f-3f7e-494c-a814-265184ceb4c2';
-
-        $this->queueHttpResponse([
-            'response' => ['code' => 200, 'message' => 'OK'],
-            'body' => json_encode([
-                'cluster_id' => $newClusterId,
-            ]),
-        ]);
+        $repository = new RecognitionControllerClusterMutationsRepositorySpy();
+        $controller = new RecognitionController(
+            null,
+            null,
+            new ClusterMutationsController(
+                $repository,
+                new RecognitionControllerSyncStateRepositorySpy(),
+                new RecognitionControllerIdentityMembersRepositorySpy()
+            )
+        );
 
         $request = new WP_REST_Request('POST', '/acx/v1/recognition/clusters/create-for-identity');
         $request->set_param('identity_id', 'd07a0e5b-0607-49dc-8b7f-8f63f6f18d2a');
         $request->set_param('label', 'Curated Name');
 
-        $response = $this->controller->create_cluster_for_identity($request);
+        $response = $controller->create_cluster_for_identity($request);
 
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $this->assertSame(200, $response->get_status());
+        $newClusterId = $response->get_data()['cluster_id'];
+        $this->assertSame([], $this->getHttpCalls());
         $this->assertNotFalse(
-            wp_next_scheduled('acx_refresh_xmp_for_clusters', [[$newClusterId], 'cluster-create-for-identity'])
+            wp_next_scheduled(
+                'acx_refresh_xmp_for_clusters',
+                [['eb3d26d3-dbb6-4c99-be66-068e1f3b82ae', $newClusterId], 'cluster-create-for-identity']
+            )
         );
     }
 
@@ -582,6 +597,21 @@ class RecognitionControllerClusterMutationsRepositorySpy extends NullClustersRep
         $this->undismissedClusterId = $cluster_uuid;
         return 1;
     }
+
+    public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int
+    {
+        $this->localClusterRows[$cluster_uuid] = [
+            'cluster_uuid' => $cluster_uuid,
+            'tenant_id' => $tenant_id,
+            'label' => $label,
+            'snapshot_version' => 0,
+            'local_revision' => 1,
+            'curation_state' => 'uncurated',
+            'identity_count' => $identity_count,
+        ];
+
+        return 1;
+    }
 }
 
 class RecognitionControllerSyncStateRepositorySpy extends NullSyncStateRepository
@@ -597,5 +627,23 @@ class RecognitionControllerIdentityMembersRepositorySpy extends NullIdentityMemb
     public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int
     {
         return 1;
+    }
+
+    public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int
+    {
+        return 2;
+    }
+
+    public function count_for_cluster(string $cluster_uuid): int
+    {
+        return '2e489e1d-0f64-4694-9082-5779d6cc7e52' === $cluster_uuid ? 3 : 2;
+    }
+
+    public function find_by_identity_uuid(string $identity_uuid): ?array
+    {
+        return [
+            'identity_uuid' => $identity_uuid,
+            'cluster_uuid' => 'eb3d26d3-dbb6-4c99-be66-068e1f3b82ae',
+        ];
     }
 }

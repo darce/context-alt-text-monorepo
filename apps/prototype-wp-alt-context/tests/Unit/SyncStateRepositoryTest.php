@@ -77,6 +77,7 @@ class SyncStateRepositoryTest extends TestCase
         $this->assertStringContainsString('SELECT COUNT(*) FROM `wp_acx_sync_conflicts`', $sql);
         $this->assertStringContainsString('INSERT INTO wp_acx_sync_state', $sql);
         $this->assertStringContainsString('pending_curation_operations', $sql);
+        $this->assertStringContainsString('failed_curation_operations', $sql);
         $this->assertStringContainsString('conflict_count', $sql);
     }
 
@@ -100,6 +101,16 @@ class SyncStateRepositoryTest extends TestCase
         $this->assertSame(2, $value);
     }
 
+    public function testGetFailedCurationOperationsReadsStoredValue(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '5';
+
+        $value = $this->repository->get_failed_curation_operations('tenant-sync');
+
+        $this->assertSame(5, $value);
+    }
+
     public function testGetLastCurationAcknowledgedAtReturnsTimestamp(): void
     {
         global $wpdb;
@@ -118,5 +129,15 @@ class SyncStateRepositoryTest extends TestCase
         $value = $this->repository->get_last_curation_conflict_at('tenant-sync');
 
         $this->assertNull($value);
+    }
+
+    public function testGetLastCurationFailedAtReturnsTimestamp(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '2026-03-07 03:00:00';
+
+        $value = $this->repository->get_last_curation_failed_at('tenant-sync');
+
+        $this->assertSame('2026-03-07 03:00:00', $value);
     }
 }

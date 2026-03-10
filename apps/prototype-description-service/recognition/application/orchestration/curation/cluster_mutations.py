@@ -192,6 +192,7 @@ async def create_cluster_for_identity(
     identity_id: str,
     label: str,
     tenant_id: str,
+    desired_cluster_id: str | None,
     session: AsyncSession | None,
     assignment_writer: AssignmentWriter,
     suggestion_service: SuggestionServiceProtocol | None = None,
@@ -240,6 +241,7 @@ async def create_cluster_for_identity(
         identities=[identity],
         similarities=[1.0],
         algorithm="manual",
+        cluster_id=desired_cluster_id,
     )
 
     if cluster.id is None:

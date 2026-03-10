@@ -203,6 +203,65 @@ class ClusterMutationsControllerDualWriteTest extends TestCase
         $this->assertSame([], $this->getHttpCalls());
     }
 
+    public function testMergeQueuesReplayOperationInsideTransaction(): void
+    {
+        global $wpdb;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/cluster-source/merge', [
+            'source_id' => 'cluster-source',
+            'target_cluster_id' => 'cluster-target',
+            'target_label' => 'Merged Cluster',
+        ]);
+
+        $response = $this->controller->merge_cluster($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $this->assertSame('cluster-source', $this->membersRepository->lastReassignedSourceClusterId);
+        $this->assertSame('cluster-target', $this->membersRepository->lastReassignedTargetClusterId);
+        $this->assertSame([['cluster-source', 0], ['cluster-target', 5]], $this->repository->identityCountUpdates);
+        $this->assertSame('cluster-source', $this->repository->dismissedClusterId);
+        $this->assertSame('cluster-target', $this->repository->updatedLabelClusterId);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'cluster_merged'", $outboxInsert);
+        $this->assertStringContainsString("'cluster-source'", $outboxInsert);
+        $this->assertStringContainsString('cluster-target', $outboxInsert);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
+    public function testCreateClusterForIdentityQueuesReplayOperationInsideTransaction(): void
+    {
+        global $wpdb;
+
+        $request = new \WP_REST_Request('POST', '/recognition/clusters/create-for-identity', [
+            'identity_id' => 'identity-77',
+            'label' => 'Curated Name',
+        ]);
+
+        $response = $this->controller->create_cluster_for_identity($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(200, $response->get_status());
+        $data = $response->get_data();
+        $this->assertSame('identity-77', $data['identity_id']);
+        $this->assertSame('Curated Name', $data['label']);
+        $this->assertNotSame('', $this->repository->createdLocalClusterId);
+        $this->assertSame($this->repository->createdLocalClusterId, $data['cluster_id']);
+        $this->assertSame('identity-77', $this->membersRepository->lastReassignedIdentityId);
+        $this->assertSame($this->repository->createdLocalClusterId, $this->membersRepository->lastTargetClusterId);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
+
+        $outboxInsert = $this->findQueryContaining($wpdb->queries, 'INSERT INTO wp_acx_sync_outbox');
+        $this->assertStringContainsString("'cluster_created_for_identity'", $outboxInsert);
+        $this->assertStringContainsString('desired_cluster_id', $outboxInsert);
+        $this->assertStringContainsString($this->repository->createdLocalClusterId, $outboxInsert);
+        $this->assertSame([], $this->getHttpCalls());
+    }
+
     /**
      * @param array<int,string> $queries
      */
@@ -224,14 +283,29 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     public string $undismissedClusterId = '';
     public string $updatedLabelClusterId = '';
     public string $updatedLabel = '';
+    public string $createdLocalClusterId = '';
     public int $nextDismissRows = 1;
     public int $nextUndismissRows = 1;
+    /** @var array<int,array{0:string,1:int}> */
+    public array $identityCountUpdates = [];
     /** @var array<string,array<string,mixed>> */
     public array $localClusterRows = [
         'cluster-xyz' => [
             'cluster_uuid' => 'cluster-xyz',
             'snapshot_version' => 17,
             'local_revision' => 4,
+            'curation_state' => 'uncurated',
+        ],
+        'cluster-source' => [
+            'cluster_uuid' => 'cluster-source',
+            'snapshot_version' => 17,
+            'local_revision' => 4,
+            'curation_state' => 'uncurated',
+        ],
+        'cluster-target' => [
+            'cluster_uuid' => 'cluster-target',
+            'snapshot_version' => 18,
+            'local_revision' => 2,
             'curation_state' => 'uncurated',
         ],
     ];
@@ -248,6 +322,12 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
         return $this->nextUndismissRows;
     }
 
+    public function update_identity_count(string $cluster_uuid, int $identity_count): int
+    {
+        $this->identityCountUpdates[] = [$cluster_uuid, $identity_count];
+        return 1;
+    }
+
     public function find_by_uuid(string $cluster_uuid): ?array
     {
         return $this->localClusterRows[$cluster_uuid] ?? null;
@@ -257,6 +337,21 @@ class ClusterMutationsRepositorySpy extends NullClustersRepository
     {
         $this->updatedLabelClusterId = $cluster_uuid;
         $this->updatedLabel = $label;
+        return 1;
+    }
+
+    public function create_local_cluster(string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1): int
+    {
+        $this->createdLocalClusterId = $cluster_uuid;
+        $this->localClusterRows[$cluster_uuid] = [
+            'cluster_uuid' => $cluster_uuid,
+            'tenant_id' => $tenant_id,
+            'label' => $label,
+            'snapshot_version' => 0,
+            'local_revision' => 1,
+            'curation_state' => 'uncurated',
+            'identity_count' => $identity_count,
+        ];
         return 1;
     }
 }
@@ -281,8 +376,23 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
     public string $lastCuratedIdentityId = '';
     public string $lastReassignedIdentityId = '';
     public string $lastTargetClusterId = '';
+    public string $lastReassignedSourceClusterId = '';
+    public string $lastReassignedTargetClusterId = '';
     public int $nextMarkRows = 1;
     public int $nextReassignRows = 1;
+    /** @var array<string,int> */
+    public array $clusterCounts = [
+        'cluster-source' => 3,
+        'cluster-target' => 2,
+        'cluster-xyz' => 1,
+    ];
+    /** @var array<string,array<string,mixed>> */
+    public array $membersByIdentity = [
+        'identity-77' => [
+            'identity_uuid' => 'identity-77',
+            'cluster_uuid' => 'cluster-xyz',
+        ],
+    ];
 
     public function mark_as_curated(string $identity_uuid): int
     {
@@ -295,5 +405,22 @@ class ClusterMutationsMembersSpy extends NullIdentityMembersRepository
         $this->lastReassignedIdentityId = $identity_uuid;
         $this->lastTargetClusterId = $target_cluster_uuid;
         return $this->nextReassignRows;
+    }
+
+    public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int
+    {
+        $this->lastReassignedSourceClusterId = $source_cluster_uuid;
+        $this->lastReassignedTargetClusterId = $target_cluster_uuid;
+        return $this->clusterCounts[$source_cluster_uuid] ?? 0;
+    }
+
+    public function count_for_cluster(string $cluster_uuid): int
+    {
+        return $this->clusterCounts[$cluster_uuid] ?? 0;
+    }
+
+    public function find_by_identity_uuid(string $identity_uuid): ?array
+    {
+        return $this->membersByIdentity[$identity_uuid] ?? null;
     }
 }

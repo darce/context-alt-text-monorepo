@@ -186,15 +186,19 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		$stream_name = $this->stream_name_for_tenant( $normalized_tenant_id );
 		$existing = $this->get_sync_state_row( $stream_name );
 		$pending = $this->count_outbox_rows( $normalized_tenant_id, 'pending' );
+		$failed = $this->count_outbox_rows( $normalized_tenant_id, 'failed' );
 		$conflicts = $this->count_conflict_rows( $normalized_tenant_id, 'open' );
 		$last_acknowledged_at = $this->max_outbox_acknowledged_at( $normalized_tenant_id );
 		$last_conflict_at = $this->max_conflict_created_at( $normalized_tenant_id );
+		$last_failed_at = $this->max_outbox_failed_at( $normalized_tenant_id );
 
 		$data = array(
 			'pending_curation_operations' => $pending,
+			'failed_curation_operations' => $failed,
 			'conflict_count' => $conflicts,
 			'last_curation_acknowledged_at' => $last_acknowledged_at ?? ( $existing['last_curation_acknowledged_at'] ?? null ),
 			'last_curation_conflict_at' => $last_conflict_at ?? ( $existing['last_curation_conflict_at'] ?? null ),
+			'last_curation_failed_at' => $last_failed_at ?? ( $existing['last_curation_failed_at'] ?? null ),
 		);
 
 		if ( is_array( $existing ) ) {
@@ -202,7 +206,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 				$this->table_name,
 				$data,
 				array( 'stream_name' => $stream_name ),
-				array( '%d', '%d', '%s', '%s' ),
+				array( '%d', '%d', '%d', '%s', '%s', '%s' ),
 				array( '%s' )
 			);
 			return;
@@ -214,12 +218,14 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 				'stream_name' => $stream_name,
 				'last_snapshot_version' => 0,
 				'pending_curation_operations' => $pending,
+				'failed_curation_operations' => $failed,
 				'conflict_count' => $conflicts,
 				'last_curation_acknowledged_at' => $data['last_curation_acknowledged_at'],
 				'last_curation_conflict_at' => $data['last_curation_conflict_at'],
+				'last_curation_failed_at' => $data['last_curation_failed_at'],
 				'updated_at' => '1970-01-01 00:00:00',
 			),
-			array( '%s', '%d', '%d', '%d', '%s', '%s', '%s' )
+			array( '%s', '%d', '%d', '%d', '%d', '%s', '%s', '%s', '%s' )
 		);
 	}
 
@@ -231,12 +237,20 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		return max( 0, $this->get_numeric_state_value( $tenant_id, 'conflict_count' ) );
 	}
 
+	public function get_failed_curation_operations( string $tenant_id ): int {
+		return max( 0, $this->get_numeric_state_value( $tenant_id, 'failed_curation_operations' ) );
+	}
+
 	public function get_last_curation_acknowledged_at( string $tenant_id ): ?string {
 		return $this->get_string_state_value( $tenant_id, 'last_curation_acknowledged_at' );
 	}
 
 	public function get_last_curation_conflict_at( string $tenant_id ): ?string {
 		return $this->get_string_state_value( $tenant_id, 'last_curation_conflict_at' );
+	}
+
+	public function get_last_curation_failed_at( string $tenant_id ): ?string {
+		return $this->get_string_state_value( $tenant_id, 'last_curation_failed_at' );
 	}
 
 	private function stream_name_for_tenant( string $tenant_id ): string {
@@ -322,7 +336,7 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 		}
 
 		$sql = $this->prepare_query(
-			'SELECT last_curation_acknowledged_at, last_curation_conflict_at
+			'SELECT last_curation_acknowledged_at, last_curation_conflict_at, last_curation_failed_at
 			FROM %i
 			WHERE stream_name = %s
 			LIMIT 1',
@@ -436,6 +450,36 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 				$this->conflicts_table_name,
 				$tenant_id,
 				'open',
+			)
+		);
+
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$value = $wpdb->get_var( $sql );
+		if ( ! is_string( $value ) ) {
+			return null;
+		}
+
+		$normalized = trim( $value );
+		return '' !== $normalized ? $normalized : null;
+	}
+
+	private function max_outbox_failed_at( string $tenant_id ): ?string {
+		global $wpdb;
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'get_var' ) ) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT MAX(last_attempted_at) FROM %i WHERE tenant_id = %s AND status = %s',
+			array(
+				$this->outbox_table_name,
+				$tenant_id,
+				'failed',
 			)
 		);
 

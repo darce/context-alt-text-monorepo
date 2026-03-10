@@ -52,6 +52,16 @@ interface ClustersRepositoryInterface {
 	public function dismiss( string $cluster_uuid ): int;
 
 	/**
+	 * Update the projected identity count for one cluster.
+	 */
+	public function update_identity_count( string $cluster_uuid, int $identity_count ): int;
+
+	/**
+	 * Create a projected local cluster row.
+	 */
+	public function create_local_cluster( string $tenant_id, string $cluster_uuid, string $label, int $identity_count = 1 ): int;
+
+	/**
 	 * Clear dismissal on a cluster and return it to uncurated state.
 	 */
 	public function undismiss( string $cluster_uuid ): int;

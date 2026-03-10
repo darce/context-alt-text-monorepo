@@ -285,12 +285,16 @@ class NullClusterRepository(ClusterRepository):
                 if identity.tenant_id != tenant_id:
                     continue
                 members = self._members_by_cluster.get(cluster_id, [])
-                member = members[index] if index < len(members) else IdentityMember(
-                    id=f"member-{cluster_id}-{index}",
-                    cluster_id=cluster_id,
-                    identity_id=identity.id,
-                    similarity=0.0,
-                    tenant_id=identity.tenant_id,
+                member = (
+                    members[index]
+                    if index < len(members)
+                    else IdentityMember(
+                        id=f"member-{cluster_id}-{index}",
+                        cluster_id=cluster_id,
+                        identity_id=identity.id,
+                        similarity=0.0,
+                        tenant_id=identity.tenant_id,
+                    )
                 )
                 rows.append((member, identity))
         return rows

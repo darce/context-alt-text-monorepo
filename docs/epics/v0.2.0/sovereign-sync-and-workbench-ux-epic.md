@@ -25,15 +25,15 @@ This epic owns:
 
 The v0.2.0 [production-readiness-epic.md](./production-readiness-epic.md) Phase 1 now owns all **frontend-only reliability fixes**, specifically:
 
-| Item | Owned By | Rationale |
-| --- | --- | --- |
-| Error Boundaries (AP-1) | production-readiness Phase 1a | Reliability: crash prevention |
-| "Saving..." hang fix (AP-2) | production-readiness Phase 1a | Reliability: bounded mutation lifecycle |
-| Non-disruptive scan complete (AP-3) | production-readiness Phase 1a | Reliability: user context preservation |
+| Item                                        | Owned By                      | Rationale                                |
+| ------------------------------------------- | ----------------------------- | ---------------------------------------- |
+| Error Boundaries (AP-1)                     | production-readiness Phase 1a | Reliability: crash prevention            |
+| "Saving..." hang fix (AP-2)                 | production-readiness Phase 1a | Reliability: bounded mutation lifecycle  |
+| Non-disruptive scan complete (AP-3)         | production-readiness Phase 1a | Reliability: user context preservation   |
 | URL-synced tabs and pagination (AP-4, AP-5) | production-readiness Phase 1b | Reliability: navigation state continuity |
-| Scroll restoration (AP-4) | production-readiness Phase 1b | Reliability: navigation state continuity |
-| SyncStatusIndicator above tabs (PG-1) | production-readiness Phase 1c | Reliability: sync visibility |
-| WorkbenchPage decomposition (AP-6, AP-7) | production-readiness Phase 1c | Reliability: structural maintainability |
+| Scroll restoration (AP-4)                   | production-readiness Phase 1b | Reliability: navigation state continuity |
+| SyncStatusIndicator above tabs (PG-1)       | production-readiness Phase 1c | Reliability: sync visibility             |
+| WorkbenchPage decomposition (AP-6, AP-7)    | production-readiness Phase 1c | Reliability: structural maintainability  |
 
 This follow-on epic captures **product expansion** and **architecture evolution** that should be tracked now but not block the v0.2.0 production baseline.
 
@@ -134,16 +134,16 @@ Exit criteria:
 
 ## Code Anchors
 
-| Layer | File/Area | Note |
-| --- | --- | --- |
-| Plugin sync | `apps/prototype-wp-alt-context/src/sovereign/sync/` | Outbox, scheduler, replay, reconciliation |
-| Plugin API | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php` | Sync status semantics and UX-facing state |
-| Frontend workbench | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx` | Tab removal after Phase 1c decomposition |
-| Frontend dashboard | `apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx` | Static placeholder -- needs live data buildout |
-| Frontend roster | `apps/prototype-wp-alt-context/js/admin/pages/roster/` | Entries CRUD, clusters rendering/copy |
-| Frontend roster hooks | `apps/prototype-wp-alt-context/js/admin/pages/roster/hooks/` | useClusterActions, useClusterDragDrop, useClusterMediaMap |
-| Roster API | `apps/prototype-wp-alt-context/js/admin/api/rosterApi.ts` | Roster data fetching layer |
-| Backend API | `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | Delta/snapshot ingest endpoints |
+| Layer                 | File/Area                                                                         | Note                                                      |
+| --------------------- | --------------------------------------------------------------------------------- | --------------------------------------------------------- |
+| Plugin sync           | `apps/prototype-wp-alt-context/src/sovereign/sync/`                               | Outbox, scheduler, replay, reconciliation                 |
+| Plugin API            | `apps/prototype-wp-alt-context/src/api/class-sync-status-controller.php`          | Sync status semantics and UX-facing state                 |
+| Frontend workbench    | `apps/prototype-wp-alt-context/js/admin/pages/WorkbenchPage.tsx`                  | Tab removal after Phase 1c decomposition                  |
+| Frontend dashboard    | `apps/prototype-wp-alt-context/js/admin/pages/DashboardPage.tsx`                  | Static placeholder -- needs live data buildout            |
+| Frontend roster       | `apps/prototype-wp-alt-context/js/admin/pages/roster/`                            | Entries CRUD, clusters rendering/copy                     |
+| Frontend roster hooks | `apps/prototype-wp-alt-context/js/admin/pages/roster/hooks/`                      | useClusterActions, useClusterDragDrop, useClusterMediaMap |
+| Roster API            | `apps/prototype-wp-alt-context/js/admin/api/rosterApi.ts`                         | Roster data fetching layer                                |
+| Backend API           | `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | Delta/snapshot ingest endpoints                           |
 
 ## Consolidated Checklist
 
@@ -162,4 +162,3 @@ Exit criteria:
 - [ ] Add Roster Entries CRUD operations (create, edit, delete).
 - [ ] Clarify Entries vs Clusters in UI copy and structure.
 - [ ] Add top-of-page previous/next media navigation controls.
-

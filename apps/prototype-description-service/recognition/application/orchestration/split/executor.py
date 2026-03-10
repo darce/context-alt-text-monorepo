@@ -55,7 +55,9 @@ async def _create_split_clusters(
     normalized_desired_cluster_ids = desired_cluster_ids or []
 
     for index, group in enumerate(split_groups):
-        new_cluster_id = normalized_desired_cluster_ids[index] if index < len(normalized_desired_cluster_ids) else str(generate_id())
+        new_cluster_id = (
+            normalized_desired_cluster_ids[index] if index < len(normalized_desired_cluster_ids) else str(generate_id())
+        )
         assigned_label = label_assignments.get(group.label)
         unique_suffix = new_cluster_id[:4]
         fallback_label = f"Split from {original_cluster_id[:8]} ({unique_suffix})"

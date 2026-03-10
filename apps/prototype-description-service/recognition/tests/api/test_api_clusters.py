@@ -351,10 +351,121 @@ def test_split_topology_command_rejects_stale_expected_base_version(
 
     assert resp.status_code == 409
     body = resp.json()["detail"]
-    assert body["conflict_code"] == "cluster_version_conflict"
+    assert body["conflict_code"] == "version_conflict"
     assert body["backend_version"] == 9
     assert body["source_cluster_id"] == source.id
     assert body["machine_payload"]["entity_key"] == source.id
+
+
+@pytest.mark.parametrize(
+    ("build_request", "expected_entity_key"),
+    [
+        (
+            lambda tenant_id, source, target: (
+                "post",
+                f"/recognition/clusters/{source.id}/merge",
+                {
+                    "tenant_id": tenant_id,
+                    "target_cluster_id": target.id,
+                    "target_label": "merged",
+                    "expected_base_version": 4,
+                    "idempotency_key": str(uuid.uuid4()),
+                },
+            ),
+            lambda source, _target: source.id,
+        ),
+        (
+            lambda tenant_id, source, _target: (
+                "post",
+                "/recognition/clusters/create-for-identity",
+                {
+                    "tenant_id": tenant_id,
+                    "identity_id": str(uuid.uuid4()),
+                    "desired_cluster_id": source.id,
+                    "label": "Created",
+                    "expected_base_version": 4,
+                    "idempotency_key": str(uuid.uuid4()),
+                },
+            ),
+            lambda source, _target: source.id,
+        ),
+        (
+            lambda tenant_id, source, _target: (
+                "post",
+                "/recognition/clusters/reassign",
+                {
+                    "tenant_id": tenant_id,
+                    "identity_id": str(uuid.uuid4()),
+                    "target_cluster_id": source.id,
+                    "expected_base_version": 4,
+                    "idempotency_key": str(uuid.uuid4()),
+                },
+            ),
+            lambda source, _target: source.id,
+        ),
+        (
+            lambda tenant_id, source, _target: (
+                "post",
+                "/recognition/clusters/revert-merge",
+                {
+                    "tenant_id": tenant_id,
+                    "target_cluster_id": source.id,
+                    "moved_identity_ids": [str(uuid.uuid4())],
+                    "desired_source_cluster_id": str(uuid.uuid4()),
+                    "source_label": "Restored source",
+                    "expected_base_version": 4,
+                    "idempotency_key": str(uuid.uuid4()),
+                },
+            ),
+            lambda source, _target: source.id,
+        ),
+        (
+            lambda tenant_id, source, _target: (
+                "post",
+                f"/recognition/clusters/{source.id}/assign",
+                {
+                    "tenant_id": tenant_id,
+                    "identity_id": str(uuid.uuid4()),
+                    "similarity": 0.5,
+                    "expected_base_version": 4,
+                    "idempotency_key": str(uuid.uuid4()),
+                },
+            ),
+            lambda source, _target: source.id,
+        ),
+    ],
+)
+def test_topology_endpoints_reject_stale_expected_base_version(
+    api_client,
+    tenant_id,
+    fake_cluster_service,
+    fake_cluster_repository,
+    build_request,
+    expected_entity_key,
+) -> None:
+    source = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="source",
+        fake_cluster_repository=fake_cluster_repository,
+        backend_version=9,
+    )
+    target = seed_cluster(
+        fake_cluster_service,
+        tenant_id,
+        label="target",
+        fake_cluster_repository=fake_cluster_repository,
+        backend_version=9,
+    )
+
+    method, path, payload = build_request(tenant_id, source, target)
+    resp = getattr(api_client, method)(path, json=payload)
+
+    assert resp.status_code == 409
+    body = resp.json()["detail"]
+    assert body["conflict_code"] == "version_conflict"
+    assert body["backend_version"] == 9
+    assert body["machine_payload"]["entity_key"] == expected_entity_key(source, target)
 
 
 def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:
@@ -363,11 +474,77 @@ def test_assign_outlier_to_cluster_via_api(api_client, tenant_id, fake_cluster_s
 
     resp = api_client.post(
         f"/recognition/clusters/{cluster.id}/assign",
-        json={"tenant_id": tenant_id, "identity_id": str(uuid.uuid4()), "similarity": 0.5},
+        json={
+            "tenant_id": tenant_id,
+            "identity_id": str(uuid.uuid4()),
+            "similarity": 0.5,
+            "expected_base_version": 0,
+            "idempotency_key": str(uuid.uuid4()),
+        },
     )
 
     assert resp.status_code == 200
     assert resp.json()["identity_count"] == starting_count + 1
+    assert "backend_version" in resp.json()
+
+
+def test_assign_outlier_replays_cached_response(api_client, tenant_id, fake_cluster_service) -> None:
+    cluster = seed_cluster(fake_cluster_service, tenant_id, label="target")
+    identity_id = str(uuid.uuid4())
+    idempotency_key = str(uuid.uuid4())
+
+    first = api_client.post(
+        f"/recognition/clusters/{cluster.id}/assign",
+        json={
+            "tenant_id": tenant_id,
+            "identity_id": identity_id,
+            "similarity": 0.25,
+            "expected_base_version": 0,
+            "idempotency_key": idempotency_key,
+        },
+    )
+    second = api_client.post(
+        f"/recognition/clusters/{cluster.id}/assign",
+        json={
+            "tenant_id": tenant_id,
+            "identity_id": identity_id,
+            "similarity": 0.25,
+            "expected_base_version": 0,
+            "idempotency_key": idempotency_key,
+        },
+    )
+
+    assert first.status_code == 200
+    assert second.status_code == 200
+    assert first.json() == second.json()
+
+
+def test_revert_merge_cluster_via_api(api_client, tenant_id, fake_cluster_service) -> None:
+    target = seed_cluster(fake_cluster_service, tenant_id, label="merged target")
+    identity_a = str(uuid.uuid4())
+    identity_b = str(uuid.uuid4())
+    fake_cluster_service.seed_identity_membership(identity_a, target.id)
+    fake_cluster_service.seed_identity_membership(identity_b, target.id)
+
+    resp = api_client.post(
+        "/recognition/clusters/revert-merge",
+        json={
+            "tenant_id": tenant_id,
+            "target_cluster_id": target.id,
+            "moved_identity_ids": [identity_a, identity_b],
+            "desired_source_cluster_id": str(uuid.uuid4()),
+            "source_label": "Restored source",
+            "expected_base_version": 0,
+            "idempotency_key": str(uuid.uuid4()),
+        },
+    )
+
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["restored_identity_count"] == 2
+    assert body["target_cluster_id"] == target.id
+    assert body["restored_label"] == "Restored source"
+    assert "backend_version" in body
 
 
 def test_include_outliers_flag_is_passed_to_service(api_client, tenant_id, fake_cluster_service) -> None:

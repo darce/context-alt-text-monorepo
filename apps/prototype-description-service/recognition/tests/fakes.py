@@ -206,7 +206,7 @@ class FakeClusterRepository:
 
     async def get_snapshot(
         self, tenant_id: str
-    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, object]], int]:
+    ) -> tuple[list[IdentityCluster], list[tuple[IdentityMember, MediaIdentity]], int]:
         # Filter clusters by tenant_id and convert to IdentityCluster domain objects
         clusters_for_tenant = [c for c in self.clusters.values() if c.tenant_id == tenant_id]
         identity_clusters = [
@@ -573,7 +573,9 @@ class FakeClusterService:
         split_count = n_clusters if n_clusters >= 2 else 2
         new_cluster_count = split_count - 1
         desired_ids = desired_cluster_ids or []
-        new_ids = [desired_ids[index] if index < len(desired_ids) else str(uuid.uuid4()) for index in range(new_cluster_count)]
+        new_ids = [
+            desired_ids[index] if index < len(desired_ids) else str(uuid.uuid4()) for index in range(new_cluster_count)
+        ]
         counts = [1 for _ in range(new_cluster_count)]
         retained_count = max(0, source.identity_count - sum(counts))
         self._replace_cluster(self._copy_cluster(source, identity_count=retained_count or 1))

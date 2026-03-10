@@ -10,6 +10,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from db.models.identity import CurationReplayRecord
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
 from recognition.interface_adapters.http.deps.tenant import get_tenant_id
@@ -50,6 +51,13 @@ class FakeSession:
     async def execute(self, _statement, _params=None):  # noqa: ANN001
         if self._execute_results:
             return self._execute_results.pop(0)
+        if any(isinstance(obj, CurationReplayRecord) for obj in self.added):
+            return FakeSessionResult(
+                scalar_one_or_none_value=next(
+                    (obj for obj in reversed(self.added) if isinstance(obj, CurationReplayRecord)),
+                    None,
+                )
+            )
         return FakeSessionResult()
 
     def add(self, obj) -> None:  # noqa: ANN001

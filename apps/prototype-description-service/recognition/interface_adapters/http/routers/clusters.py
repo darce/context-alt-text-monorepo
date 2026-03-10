@@ -4,10 +4,10 @@ Cluster management routes.
 
 from __future__ import annotations
 
-import contextlib
 import json
 import logging
 from datetime import UTC, datetime
+from json import JSONDecodeError
 from uuid import UUID
 
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
@@ -19,9 +19,13 @@ from db.session import async_session_factory
 from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
+from recognition.domain.constraints import ConstraintSource, ConstraintType
 from recognition.domain.job import JobType, SplitJobPayload
 from recognition.domain.suggestion import SuggestionRefreshReason
-from recognition.infrastructure.repositories import SqlAlchemyIdentityClusterBlockRepository
+from recognition.infrastructure.repositories import (
+    SqlAlchemyConstraintRepository,
+    SqlAlchemyIdentityClusterBlockRepository,
+)
 from recognition.interface_adapters.http.dependencies import (
     build_cluster_service,
     get_cluster_repository,
@@ -46,6 +50,7 @@ from recognition.interface_adapters.http.schemas.requests import (
     PinRepresentativeRequest,
     ReassignIdentityRequest,
     RecoverOrphansRequest,
+    RevertMergeClusterRequest,
     SplitClusterRequest,
     SplitTopologyCommandRequest,
 )
@@ -63,6 +68,7 @@ from recognition.interface_adapters.http.schemas.responses import (
     OrphanRecoveryResponse,
     ReassignIdentityResponse,
     RepresentativeResponse,
+    RevertMergeClusterResponse,
     SplitClusterResponse,
     SplitCommandCreatedCluster,
     SplitCommandMemberDelta,
@@ -88,15 +94,6 @@ async def _load_topology_replay(session, tenant_id: str, idempotency_key: str | 
         )
     )
     record = result.scalar_one_or_none()
-    if not isinstance(record, CurationReplayRecord):
-        for candidate in getattr(session, "added", []):
-            if (
-                isinstance(candidate, CurationReplayRecord)
-                and candidate.tenant_id == tenant_uuid
-                and candidate.idempotency_key == idempotency_key
-            ):
-                record = candidate
-                break
 
     if not isinstance(record, CurationReplayRecord):
         return None
@@ -104,7 +101,11 @@ async def _load_topology_replay(session, tenant_id: str, idempotency_key: str | 
     if not isinstance(record.machine_payload_json, str) or not record.machine_payload_json.strip():
         return None
 
-    payload = json.loads(record.machine_payload_json)
+    try:
+        payload = json.loads(record.machine_payload_json)
+    except JSONDecodeError:
+        return None
+
     return payload if isinstance(payload, dict) else None
 
 
@@ -127,6 +128,36 @@ async def _store_topology_replay(session, tenant_id: str, idempotency_key: str |
         )
     )
     await session.flush()
+
+
+async def _get_cluster_backend_version(cluster_repo, cluster_id: str) -> int:
+    cluster = await cluster_repo.get_by_id(cluster_id)
+    if cluster is None:
+        return 0
+    return int(getattr(cluster, "backend_version", 0) or 0)
+
+
+async def _raise_if_cluster_stale(*, cluster_repo, cluster_id: str, expected_base_version: int) -> None:
+    if expected_base_version <= 0:
+        return
+
+    backend_version = await _get_cluster_backend_version(cluster_repo, cluster_id)
+    if backend_version <= expected_base_version:
+        return
+
+    raise HTTPException(
+        status_code=status.HTTP_409_CONFLICT,
+        detail={
+            "conflict_code": "version_conflict",
+            "backend_version": backend_version,
+            "source_cluster_id": cluster_id,
+            "machine_payload": {
+                "entity_type": "cluster",
+                "entity_key": cluster_id,
+                "backend_version": backend_version,
+            },
+        },
+    )
 
 
 @router.post("/clustering/jobs", response_model=ClusteringJobStatusResponse, status_code=status.HTTP_202_ACCEPTED)
@@ -627,6 +658,13 @@ async def create_cluster_for_identity(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     cluster_service = await cluster_service_builder(request.tenant_id)
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    if request.desired_cluster_id:
+        await _raise_if_cluster_stale(
+            cluster_repo=cluster_repo,
+            cluster_id=request.desired_cluster_id,
+            expected_base_version=request.expected_base_version,
+        )
     try:
         cluster = await cluster_service.create_cluster_for_identity(
             identity_id=request.identity_id,
@@ -646,6 +684,7 @@ async def create_cluster_for_identity(
         label=cluster.label or label,
         identity_id=request.identity_id,
         message="Cluster created",
+        backend_version=await _get_cluster_backend_version(cluster_repo, cluster.id),
     )
     await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
     await session.commit()
@@ -673,6 +712,12 @@ async def merge_cluster(
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
     cluster_service = await cluster_service_builder(request.tenant_id)
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    await _raise_if_cluster_stale(
+        cluster_repo=cluster_repo,
+        cluster_id=cluster_id,
+        expected_base_version=request.expected_base_version,
+    )
     cluster = await cluster_service.merge_cluster(
         source_cluster_id=cluster_id,
         tenant_id=request.tenant_id,
@@ -694,6 +739,7 @@ async def merge_cluster(
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
     response_obj = ClusterResponse.model_validate(cluster)
+    response_obj.backend_version = await _get_cluster_backend_version(cluster_repo, request.target_cluster_id)
     await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
     await session.commit()
 
@@ -822,7 +868,7 @@ async def split_topology_command(
         raise HTTPException(
             status_code=status.HTTP_409_CONFLICT,
             detail={
-                "conflict_code": "cluster_version_conflict",
+                "conflict_code": "version_conflict",
                 "backend_version": backend_version,
                 "source_cluster_id": request.cluster_id,
                 "machine_payload": {
@@ -925,6 +971,13 @@ async def reassign_identity(
         )
 
     cluster_service = await cluster_service_builder(request.tenant_id)
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    if request.target_cluster_id:
+        await _raise_if_cluster_stale(
+            cluster_repo=cluster_repo,
+            cluster_id=request.target_cluster_id,
+            expected_base_version=request.expected_base_version,
+        )
 
     # Get identity's current cluster (if any)
     source_cluster_id = await cluster_service.get_identity_cluster_id(request.identity_id)
@@ -974,24 +1027,20 @@ async def reassign_identity(
 
                 # Create CANNOT_LINK constraint to permanently prevent linking
                 try:
-                    from recognition.domain.constraints import ConstraintSource, ConstraintType
-                    from recognition.infrastructure.repositories import SqlAlchemyConstraintRepository
-
                     # We need the cluster's representative to anchor the constraint
                     cluster_repo = cluster_service.assignment_writer.cluster_repository
                     source_cluster = await cluster_repo.get_by_id(source_cluster_id)
 
                     if source_cluster and source_cluster.representative_identity_id:
                         constraint_repo = SqlAlchemyConstraintRepository(session)
-                        with contextlib.suppress(Exception):
-                            await constraint_repo.create(
-                                tenant_id=request.tenant_id,
-                                identity_a=request.identity_id,
-                                identity_b=str(source_cluster.representative_identity_id),
-                                constraint_type=ConstraintType.CANNOT_LINK.value,
-                                source=ConstraintSource.WRONG_PERSON.value,
-                                created_by_user_id=None,  # User ID not currently available in request
-                            )
+                        await constraint_repo.create(
+                            tenant_id=request.tenant_id,
+                            identity_a=request.identity_id,
+                            identity_b=str(source_cluster.representative_identity_id),
+                            constraint_type=ConstraintType.CANNOT_LINK.value,
+                            source=ConstraintSource.WRONG_PERSON.value,
+                            created_by_user_id=None,  # User ID not currently available in request
+                        )
                 except Exception as exc:
                     # Don't fail the request if constraint creation fails
                     _logger.warning(
@@ -1024,10 +1073,85 @@ async def reassign_identity(
         source_cluster_id=source_cluster_id,
         target_cluster_id=request.target_cluster_id,
         success=True,
+        backend_version=(
+            await _get_cluster_backend_version(
+                cluster_repo,
+                request.target_cluster_id if request.target_cluster_id else (source_cluster_id or ""),
+            )
+            if request.target_cluster_id or source_cluster_id
+            else 0
+        ),
     )
     await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
     await session.commit()
 
+    return response_obj
+
+
+@router.post("/clusters/revert-merge", response_model=RevertMergeClusterResponse)
+async def revert_merge_cluster(
+    request: RevertMergeClusterRequest,
+    auth=Depends(require_write_access),
+    session=Depends(get_session),
+    cluster_service_builder=Depends(get_cluster_service_builder),
+) -> RevertMergeClusterResponse:
+    """Restore moved identities into a recreated source cluster."""
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        return RevertMergeClusterResponse.model_validate(cached_response)
+    if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
+
+    cluster_service = await cluster_service_builder(request.tenant_id)
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    await _raise_if_cluster_stale(
+        cluster_repo=cluster_repo,
+        cluster_id=request.target_cluster_id,
+        expected_base_version=request.expected_base_version,
+    )
+
+    target_cluster = await cluster_repo.get_by_id(request.target_cluster_id)
+    if target_cluster is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Target cluster not found")
+
+    for identity_id in request.moved_identity_ids:
+        current_cluster_id = await cluster_service.get_identity_cluster_id(identity_id)
+        if current_cluster_id != request.target_cluster_id:
+            raise HTTPException(
+                status_code=status.HTTP_409_CONFLICT,
+                detail="One or more identities are no longer assigned to the target cluster",
+            )
+
+    restored_label = request.source_label or ""
+    source_cluster_id = request.desired_source_cluster_id or str(generate_id())
+    restored_cluster = await cluster_service.create_cluster_for_identity(
+        identity_id=request.moved_identity_ids[0],
+        label=restored_label,
+        tenant_id=request.tenant_id,
+        desired_cluster_id=source_cluster_id,
+    )
+
+    for identity_id in request.moved_identity_ids[1:]:
+        reassigned = await cluster_service.assign_outlier_to_cluster(
+            identity_id=identity_id,
+            target_cluster_id=restored_cluster.id,
+            tenant_id=request.tenant_id,
+            similarity=0.0,
+        )
+        if reassigned is None:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Identity not found")
+
+    refreshed_target = await cluster_repo.get_by_id(request.target_cluster_id)
+    response_obj = RevertMergeClusterResponse(
+        restored_cluster_id=restored_cluster.id,
+        restored_identity_count=len(request.moved_identity_ids),
+        target_cluster_id=request.target_cluster_id,
+        target_identity_count=int(getattr(refreshed_target, "identity_count", 0) or 0),
+        restored_label=request.source_label,
+        backend_version=await _get_cluster_backend_version(cluster_repo, request.target_cluster_id),
+    )
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
+    await session.commit()
     return response_obj
 
 
@@ -1043,6 +1167,9 @@ async def assign_outlier(
     """Assign an unclustered identity (outlier) to an existing cluster."""
     validate_entity_id(cluster_id, field_name="cluster_id")
     validate_entity_id(request.identity_id, field_name="identity_id")
+    cached_response = await _load_topology_replay(session, request.tenant_id, request.idempotency_key)
+    if cached_response is not None:
+        return ClusterResponse.model_validate(cached_response)
     if auth and auth.tenant_claim and auth.tenant_claim != request.tenant_id:
         raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 
@@ -1053,6 +1180,12 @@ async def assign_outlier(
         )
 
     cluster_service = await cluster_service_builder(request.tenant_id)
+    cluster_repo = cluster_service.assignment_writer.cluster_repository
+    await _raise_if_cluster_stale(
+        cluster_repo=cluster_repo,
+        cluster_id=cluster_id,
+        expected_base_version=request.expected_base_version,
+    )
     cluster = await cluster_service.assign_outlier_to_cluster(
         identity_id=request.identity_id,
         target_cluster_id=cluster_id,
@@ -1066,9 +1199,12 @@ async def assign_outlier(
     await suggestion_refresh_service.refresh_for_cluster(cluster_id)
 
     # Commit before response so client refetches see committed state (see PATCH handler comment).
+    response_obj = ClusterResponse.model_validate(cluster)
+    response_obj.backend_version = await _get_cluster_backend_version(cluster_repo, cluster_id)
+    await _store_topology_replay(session, request.tenant_id, request.idempotency_key, response_obj.model_dump())
     await session.commit()
 
-    return cluster
+    return response_obj
 
 
 @router.patch("/clusters/{cluster_id}/representatives/{representative_id}/pin", status_code=status.HTTP_204_NO_CONTENT)

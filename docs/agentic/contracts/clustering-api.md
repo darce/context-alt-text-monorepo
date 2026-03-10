@@ -365,7 +365,6 @@ The following proxy routes exist in WordPress but the backend endpoints are not
 implemented in the recognition service yet (expect 404 until wired):
 
 - `GET /recognition/clusters/labels`
-- `POST /recognition/clusters/revert-merge`
 
 The recognition service does support representative pinning, but the WordPress
 proxy does not currently expose it.

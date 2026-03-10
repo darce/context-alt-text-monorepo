@@ -134,6 +134,7 @@ class ClusterResponse(BaseModel):
     suggested_label_source: Literal["identity", "roster", "similar_cluster", "none"] | None = None
     suggested_label_confidence: float | None = None
     suggested_target_cluster_id: str | None = None
+    backend_version: int | None = None
 
     @field_validator("id", "tenant_id")
     @classmethod
@@ -269,6 +270,7 @@ class CreateClusterForIdentityResponse(BaseModel):
     label: str
     identity_id: str
     message: str
+    backend_version: int | None = None
 
     @field_validator("cluster_id", "identity_id")
     @classmethod
@@ -321,6 +323,14 @@ class ReassignIdentityResponse(BaseModel):
     source_cluster_id: str | None = None
     target_cluster_id: str | None = None
     success: bool = True
+    backend_version: int | None = None
+
+    @field_validator("target_cluster_id", "source_cluster_id")
+    @classmethod
+    def validate_optional_cluster_ids(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _validate_uuid(v)
 
     @field_validator("identity_id")
     @classmethod
@@ -382,6 +392,22 @@ class SplitTopologyCommandResponse(BaseModel):
     result_snapshot_version: int
 
 
+class RevertMergeClusterResponse(BaseModel):
+    """Response after restoring a source cluster from a merged target."""
+
+    restored_cluster_id: str
+    restored_identity_count: int
+    target_cluster_id: str
+    target_identity_count: int
+    restored_label: str | None = None
+    backend_version: int | None = None
+
+    @field_validator("restored_cluster_id", "target_cluster_id")
+    @classmethod
+    def validate_revert_cluster_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class ClusterSnapshotMemberResponse(BaseModel):
     """Cluster member in the snapshot payload.
 
@@ -429,19 +455,27 @@ class ClusterSnapshotResponse(BaseModel):
 __all__ = [
     "BboxResponse",
     "ClusterResponse",
+    "ClusterMemberResponse",
+    "ClusterSuggestionMatch",
     "ClusteringJobStatusResponse",
     "ClusterSnapshotClusterResponse",
     "ClusterSnapshotMemberResponse",
     "ClusterSnapshotResponse",
     "ConnectionPoolStats",
     "CreateClusterForIdentityResponse",
+    "DetectedIdentityDebugExtras",
+    "FaceBoxResponse",
     "HealthCheckResponse",
     "IdentityResponse",
     "IdentitySuggestionsResponse",
     "JobProgressResponse",
     "JobStatusResponse",
     "AsyncSplitClusterResponse",
+    "OrphanRecoveryResponse",
+    "PoseBucketResponse",
+    "PoseResponse",
     "ReassignIdentityResponse",
+    "RevertMergeClusterResponse",
     "RepresentativeResponse",
     "SplitClusterResponse",
     "SplitCommandCreatedCluster",

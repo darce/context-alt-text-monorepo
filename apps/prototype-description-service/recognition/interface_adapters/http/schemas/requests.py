@@ -75,6 +75,7 @@ class MergeClusterRequest(BaseModel):
     tenant_id: str
     target_cluster_id: str
     target_label: str | None = None
+    expected_base_version: int = Field(default=0, ge=0)
     idempotency_key: str | None = None
 
     @field_validator("tenant_id", "target_cluster_id")
@@ -89,6 +90,8 @@ class AssignOutlierRequest(BaseModel):
     tenant_id: str
     identity_id: str
     similarity: float = 0.0
+    expected_base_version: int = Field(default=0, ge=0)
+    idempotency_key: str | None = None
 
     @field_validator("tenant_id", "identity_id")
     @classmethod
@@ -103,6 +106,7 @@ class CreateClusterForIdentityRequest(BaseModel):
     identity_id: str
     label: str
     desired_cluster_id: str | None = None
+    expected_base_version: int = Field(default=0, ge=0)
     idempotency_key: str | None = None
 
     @field_validator("tenant_id", "identity_id")
@@ -142,6 +146,7 @@ class ReassignIdentityRequest(BaseModel):
     identity_id: str
     target_cluster_id: str | None = None
     block_from_cluster: bool = True
+    expected_base_version: int = Field(default=0, ge=0)
     idempotency_key: str | None = None
 
     @field_validator("tenant_id", "identity_id")
@@ -210,10 +215,18 @@ class SplitTopologyCommandRequest(BaseModel):
     expected_base_version: int = Field(default=0, ge=0)
     idempotency_key: str
 
-    @field_validator("tenant_id", "cluster_id", "idempotency_key")
+    @field_validator("tenant_id", "cluster_id")
     @classmethod
     def validate_topology_ids(cls, v: str) -> str:
         return _validate_uuid(v)
+
+    @field_validator("idempotency_key")
+    @classmethod
+    def validate_idempotency_key(cls, v: str) -> str:
+        normalized = v.strip()
+        if not normalized:
+            raise ValueError("idempotency_key must not be empty")
+        return normalized
 
     @field_validator("anchor_identity_id")
     @classmethod
@@ -247,6 +260,43 @@ class SplitTopologyCommandRequest(BaseModel):
         return self
 
 
+class RevertMergeClusterRequest(BaseModel):
+    """Request to restore a previously merged source cluster."""
+
+    tenant_id: str
+    target_cluster_id: str
+    moved_identity_ids: list[str]
+    desired_source_cluster_id: str | None = None
+    source_label: str | None = None
+    expected_base_version: int = Field(default=0, ge=0)
+    idempotency_key: str | None = None
+
+    @field_validator("tenant_id", "target_cluster_id")
+    @classmethod
+    def validate_revert_ids(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+    @field_validator("desired_source_cluster_id")
+    @classmethod
+    def validate_desired_source_cluster_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _validate_uuid(v)
+
+    @field_validator("moved_identity_ids")
+    @classmethod
+    def validate_moved_identity_ids(cls, v: list[str]) -> list[str]:
+        return [_validate_uuid(item) for item in v]
+
+    @model_validator(mode="after")
+    def validate_moved_identity_payload(self) -> RevertMergeClusterRequest:
+        if not self.moved_identity_ids:
+            raise ValueError("moved_identity_ids must not be empty")
+        if len(set(self.moved_identity_ids)) != len(self.moved_identity_ids):
+            raise ValueError("moved_identity_ids must be unique")
+        return self
+
+
 class PinRepresentativeRequest(BaseModel):
     """Request to pin/unpin a representative."""
 
@@ -272,10 +322,12 @@ __all__ = [
     "AssignOutlierRequest",
     "AcknowledgeProjectionRequest",
     "CreateClusterForIdentityRequest",
+    "MediaItem",
     "MergeClusterRequest",
     "PatchClusterRequest",
     "PinRepresentativeRequest",
     "ReassignIdentityRequest",
+    "RevertMergeClusterRequest",
     "SplitClusterRequest",
     "SplitTopologyCommandRequest",
     "SuggestionActionRequest",

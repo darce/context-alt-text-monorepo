@@ -224,6 +224,48 @@ class OutboxDispatcherTest extends TestCase
         $this->assertStringContainsString('"idempotency_key":"idem-bind"', $stateBody);
     }
 
+    public function testDispatchBatchKeepsValidStateOperationsWhenAnotherStatePayloadIsInvalid(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode([
+                'status' => 'acknowledged',
+                'backend_version' => 44,
+            ]),
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $results = $dispatcher->dispatch_batch([
+            $this->sampleOperation(),
+            [
+                'operation_type' => 'cluster_person_bound',
+                'entity_type' => 'cluster',
+                'entity_key' => '',
+                'idempotency_key' => 'idem-invalid',
+                'expected_base_version' => 0,
+                'local_revision' => 1,
+                'payload' => [
+                    'cluster_uuid' => '',
+                    'person_uuid' => 'person-x',
+                ],
+            ],
+        ]);
+
+        $this->assertCount(2, $results);
+        $this->assertSame('acknowledged', $results[0]['status']);
+        $this->assertSame(44, $results[0]['backend_version']);
+        $this->assertSame('failed', $results[1]['status']);
+        $this->assertSame('invalid_payload', $results[1]['error_code']);
+        $this->assertFalse($results[1]['retryable']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $body = (string) ($calls[0]['body'] ?? '');
+        $this->assertStringContainsString('"operation_type":"cluster_person_bound"', $body);
+        $this->assertStringNotContainsString('"idempotency_key":"idem-invalid"', $body);
+    }
+
     public function testDispatchRoutesCreateClusterForIdentityWithDesiredClusterId(): void
     {
         $this->setOption('acx_recognition_url', 'http://localhost:8000');
@@ -258,6 +300,87 @@ class OutboxDispatcherTest extends TestCase
         $this->assertStringContainsString('"identity_id":"identity-1"', $body);
         $this->assertStringContainsString('"label":"Known Person"', $body);
         $this->assertStringContainsString('"desired_cluster_id":"cluster-new"', $body);
+    }
+
+    public function testDispatchRoutesRevertMergeClusterToRecognitionEndpoint(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode([
+                'restored_cluster_id' => 'cluster-restored',
+                'backend_version' => 17,
+            ]),
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $result = $dispatcher->dispatch([
+            'operation_type' => 'revert_merge_cluster',
+            'entity_type' => 'cluster',
+            'entity_key' => 'cluster-target',
+            'idempotency_key' => 'idem-revert',
+            'expected_base_version' => 13,
+            'local_revision' => 6,
+            'payload' => [
+                'target_cluster_id' => 'cluster-target',
+                'desired_source_cluster_id' => 'cluster-restored',
+                'moved_identity_ids' => ['identity-1', 'identity-2'],
+            ],
+        ]);
+
+        $this->assertSame('acknowledged', $result['status']);
+        $this->assertSame(17, $result['backend_version']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/clusters/revert-merge', $calls[0]['url']);
+        $body = (string) ($calls[0]['body'] ?? '');
+        $this->assertStringContainsString('"target_cluster_id":"cluster-target"', $body);
+        $this->assertStringContainsString('"desired_source_cluster_id":"cluster-restored"', $body);
+        $this->assertStringContainsString('"expected_base_version":13', $body);
+    }
+
+    public function testDispatchRoutesAssignOutlierToClusterToRecognitionEndpoint(): void
+    {
+        $this->setOption('acx_recognition_url', 'http://localhost:8000');
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => wp_json_encode([
+                'id' => 'cluster-target',
+                'tenant_id' => 'tenant-1',
+                'label' => 'Target',
+                'is_labeled' => true,
+                'is_auto_label' => false,
+                'identity_count' => 3,
+                'backend_version' => 21,
+                'representatives' => [],
+            ]),
+        ]);
+
+        $dispatcher = new OutboxDispatcher();
+        $result = $dispatcher->dispatch([
+            'operation_type' => 'assign_outlier_to_cluster',
+            'entity_type' => 'cluster',
+            'entity_key' => 'cluster-target',
+            'idempotency_key' => 'idem-assign',
+            'expected_base_version' => 20,
+            'local_revision' => 5,
+            'payload' => [
+                'identity_id' => 'identity-1',
+                'similarity' => 0.42,
+            ],
+        ]);
+
+        $this->assertSame('acknowledged', $result['status']);
+        $this->assertSame(21, $result['backend_version']);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertStringContainsString('/recognition/clusters/cluster-target/assign', $calls[0]['url']);
+        $body = (string) ($calls[0]['body'] ?? '');
+        $this->assertStringContainsString('"identity_id":"identity-1"', $body);
+        $this->assertStringContainsString('"expected_base_version":20', $body);
+        $this->assertStringContainsString('"idempotency_key":"idem-assign"', $body);
     }
 
     /**

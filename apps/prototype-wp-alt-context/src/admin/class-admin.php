@@ -277,6 +277,7 @@ class Admin {
 					'recognitionSyncTrigger'         => rest_url( 'acx/v1/recognition/sync/trigger' ),
 					'recognitionMediaIdentities'     => rest_url( 'acx/v1/recognition/media-identities' ),
 					'recognitionReassignIdentity'    => rest_url( 'acx/v1/recognition/clusters/reassign' ),
+					'recognitionAssignOutlier'       => rest_url( 'acx/v1/recognition/clusters' ),
 					'recognitionIdentitySuggestions' => rest_url( 'acx/v1/recognition/identities' ),
 					'recognitionSuggestions'         => rest_url( 'acx/v1/recognition/suggestions' ),
 					'recognitionMergeSuggestions'    => rest_url( 'acx/v1/recognition/suggestions/merge' ),

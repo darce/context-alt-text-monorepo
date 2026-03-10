@@ -38,6 +38,14 @@ class OutboxDispatcher {
 			'method' => 'POST',
 			'path' => '/recognition/clusters/create-for-identity',
 		),
+		'revert_merge_cluster' => array(
+			'method' => 'POST',
+			'path' => '/recognition/clusters/revert-merge',
+		),
+		'assign_outlier_to_cluster' => array(
+			'method' => 'POST',
+			'path' => '/recognition/clusters/%s/assign',
+		),
 	);
 
 	private SnapshotClientTransport $transport;
@@ -116,6 +124,8 @@ class OutboxDispatcher {
 	 */
 	private function dispatch_state_batch( array $operations ): array {
 		$bodies = array();
+		$valid_operations = array();
+		$valid_body_indexes = array();
 		foreach ( $operations as $index => $operation ) {
 			$body = $this->build_request_body( $operation );
 			if ( ! is_array( $body ) ) {
@@ -124,47 +134,66 @@ class OutboxDispatcher {
 			}
 
 			$bodies[ $index ] = $body;
+			$valid_operations[] = $operation;
+			$valid_body_indexes[] = $index;
 		}
 
-		if ( in_array( null, $bodies, true ) ) {
-			return array_map(
-				static function ( $body ): array {
-					if ( is_array( $body ) ) {
-						return array();
-					}
-
-					return array(
-						'status' => 'failed',
-						'error_code' => 'invalid_payload',
-						'error_message' => 'Outbox operation payload is missing required fields.',
-						'retryable' => false,
-					);
-				},
-				$bodies
-			);
-		}
-
-		$request_body = 1 === count( $bodies )
-			? $bodies[0]
-			: array( 'operations' => array_values( $bodies ) );
-
-		$response = $this->transport->request( 'POST', $this->resolve_endpoint_path(), $request_body, array() );
-
-		if ( is_wp_error( $response ) ) {
+		if ( empty( $valid_operations ) ) {
 			return array_fill(
 				0,
 				count( $operations ),
 				array(
 					'status' => 'failed',
-					'error_code' => $this->normalize_text( $response->get_error_code(), 'transport_error' ),
-					'error_message' => $this->normalize_text( $response->get_error_message(), 'Remote transport failed.' ),
-					'retryable' => true,
+					'error_code' => 'invalid_payload',
+					'error_message' => 'Outbox operation payload is missing required fields.',
+					'retryable' => false,
 				)
 			);
 		}
 
+		$request_body = 1 === count( $valid_operations )
+			? $bodies[ $valid_body_indexes[0] ]
+			: array(
+				'operations' => array_values(
+					array_map(
+						static fn ( int $index ): array => $bodies[ $index ],
+						$valid_body_indexes
+					)
+				),
+			);
+
+		$response = $this->transport->request( 'POST', $this->resolve_endpoint_path(), $request_body, array() );
+
+		if ( is_wp_error( $response ) ) {
+			$failed_result = array(
+				'status' => 'failed',
+				'error_code' => $this->normalize_text( $response->get_error_code(), 'transport_error' ),
+				'error_message' => $this->normalize_text( $response->get_error_message(), 'Remote transport failed.' ),
+				'retryable' => true,
+			);
+
+			$results = array_fill(
+				0,
+				count( $operations ),
+				$failed_result
+			);
+
+			foreach ( $bodies as $index => $body ) {
+				if ( ! is_array( $body ) ) {
+					$results[ $index ] = array(
+						'status' => 'failed',
+						'error_code' => 'invalid_payload',
+						'error_message' => 'Outbox operation payload is missing required fields.',
+						'retryable' => false,
+					);
+				}
+			}
+
+			return $results;
+		}
+
 		if ( ! ( $response instanceof WP_REST_Response ) ) {
-			return array_fill(
+			$results = array_fill(
 				0,
 				count( $operations ),
 				array(
@@ -174,13 +203,46 @@ class OutboxDispatcher {
 					'retryable' => true,
 				)
 			);
+
+			foreach ( $bodies as $index => $body ) {
+				if ( ! is_array( $body ) ) {
+					$results[ $index ] = array(
+						'status' => 'failed',
+						'error_code' => 'invalid_payload',
+						'error_message' => 'Outbox operation payload is missing required fields.',
+						'retryable' => false,
+					);
+				}
+			}
+
+			return $results;
 		}
 
-		if ( 1 === count( $bodies ) ) {
-			return array( $this->normalize_single_response( $response ) );
+		$valid_results = 1 === count( $valid_operations )
+			? array( $this->normalize_single_response( $response ) )
+			: $this->normalize_batch_response( $response, count( $valid_operations ) );
+
+		$results = array_fill(
+			0,
+			count( $operations ),
+			array(
+				'status' => 'failed',
+				'error_code' => 'invalid_payload',
+				'error_message' => 'Outbox operation payload is missing required fields.',
+				'retryable' => false,
+			)
+		);
+
+		foreach ( $valid_body_indexes as $offset => $index ) {
+			$results[ $index ] = $valid_results[ $offset ] ?? array(
+				'status' => 'failed',
+				'error_code' => 'unexpected_response',
+				'error_message' => 'Remote curation replay did not return a result for this operation.',
+				'retryable' => true,
+			);
 		}
 
-		return $this->normalize_batch_response( $response, count( $operations ) );
+		return $results;
 	}
 
 	/**
@@ -296,7 +358,13 @@ class OutboxDispatcher {
 		$payload = is_array( $operation['payload'] ?? null ) ? $operation['payload'] : array();
 
 		if ( isset( self::TOPOLOGY_ROUTES[ $operation_type ] ) ) {
-			return $this->build_topology_request_body( $operation_type, $payload, $idempotency_key );
+			return $this->build_topology_request_body(
+				$operation_type,
+				$payload,
+				$idempotency_key,
+				max( 0, (int) ( $operation['expected_base_version'] ?? 0 ) ),
+				$entity_key
+			);
 		}
 
 		return array(
@@ -367,7 +435,7 @@ class OutboxDispatcher {
 	 * @param array<string,mixed> $payload
 	 * @return array<string,mixed>|null
 	 */
-	private function build_topology_request_body( string $operation_type, array $payload, string $idempotency_key ): ?array {
+	private function build_topology_request_body( string $operation_type, array $payload, string $idempotency_key, int $expected_base_version, string $entity_key ): ?array {
 		$tenant_id = $this->transport->tenant_id();
 		if ( '' === trim( $tenant_id ) ) {
 			return null;
@@ -376,6 +444,7 @@ class OutboxDispatcher {
 		$body = $payload;
 		$body['tenant_id'] = $tenant_id;
 		$body['idempotency_key'] = $idempotency_key;
+		$body['expected_base_version'] = max( 0, $expected_base_version );
 
 		if ( 'cluster_merged' === $operation_type ) {
 			$target_cluster_id = $this->normalize_text( $payload['target_cluster_id'] ?? '', '' );
@@ -405,6 +474,29 @@ class OutboxDispatcher {
 			if ( '' !== $desired_cluster_id ) {
 				$body['desired_cluster_id'] = $desired_cluster_id;
 			}
+		}
+
+		if ( 'revert_merge_cluster' === $operation_type ) {
+			$target_cluster_id = $this->normalize_text( $payload['target_cluster_id'] ?? '', '' );
+			if ( '' === $target_cluster_id ) {
+				return null;
+			}
+			$body['target_cluster_id'] = $target_cluster_id;
+			$desired_source_cluster_id = $this->normalize_text( $payload['desired_source_cluster_id'] ?? '', '' );
+			if ( '' !== $desired_source_cluster_id ) {
+				$body['desired_source_cluster_id'] = $desired_source_cluster_id;
+			}
+			if ( ! is_array( $payload['moved_identity_ids'] ?? null ) || empty( $payload['moved_identity_ids'] ) ) {
+				return null;
+			}
+		}
+
+		if ( 'assign_outlier_to_cluster' === $operation_type ) {
+			$identity_id = $this->normalize_text( $payload['identity_id'] ?? '', '' );
+			if ( '' === $identity_id || '' === $entity_key ) {
+				return null;
+			}
+			$body['identity_id'] = $identity_id;
 		}
 
 		return $body;

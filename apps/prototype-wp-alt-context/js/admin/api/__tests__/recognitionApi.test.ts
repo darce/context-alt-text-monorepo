@@ -10,6 +10,7 @@ import {
   fetchTopUnlabeledClusters,
   getRecognitionCluster,
   listRecognitionClusters,
+  assignOutlierToCluster,
   mergeCluster,
   revertMergeCluster,
   acknowledgeProjection,
@@ -115,6 +116,24 @@ describe('recognitionApi', () => {
         source_label: 'Alice',
       },
       restNonce: 'nonce-123',
+    });
+  });
+
+  it('posts assign outlier payload', async () => {
+    fetchApiMock.mockResolvedValue({});
+    await assignOutlierToCluster({
+      clusterId: 'target-1',
+      identityId: 'identity-1',
+      similarity: 0.25,
+    });
+    expect(fetchApiMock).toHaveBeenCalledWith(expect.stringContaining('/target-1/assign'), {
+      method: 'POST',
+      body: {
+        identity_id: 'identity-1',
+        similarity: 0.25,
+      },
+      restNonce: 'nonce-123',
+      signal: undefined,
     });
   });
 

@@ -2,6 +2,8 @@ import { fetchApi, fetchRequiredApi, stripTrailingSlash } from '../../utils/http
 import { getEndpoint, getConfig } from '../config';
 import type {
   AsyncSplitClusterResponse,
+  AssignOutlierRequest,
+  AssignOutlierResponse,
   CreateClusterForIdentityRequest,
   CreateClusterForIdentityResponse,
   MergeClusterResponse,
@@ -68,6 +70,23 @@ export const revertMergeCluster = async (request: RevertMergeRequest): Promise<R
       source_label: request.sourceLabel ?? null,
     },
     restNonce: getConfig().nonce,
+  });
+};
+
+export const assignOutlierToCluster = async (
+  request: AssignOutlierRequest,
+  signal?: AbortSignal,
+): Promise<AssignOutlierResponse> => {
+  const base = getEndpoint('recognitionAssignOutlier') || getEndpoint('recognitionClusters');
+  const url = `${stripTrailingSlash(base)}/${request.clusterId}/assign`;
+  return fetchRequiredApi<AssignOutlierResponse>(url, {
+    method: 'POST',
+    body: {
+      identity_id: request.identityId,
+      similarity: request.similarity ?? 0,
+    },
+    restNonce: getConfig().nonce,
+    signal,
   });
 };
 

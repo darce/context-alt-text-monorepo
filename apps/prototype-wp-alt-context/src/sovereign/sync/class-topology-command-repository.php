@@ -157,6 +157,7 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 			return array();
 		}
 
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$results = $wpdb->get_results( $query, ARRAY_A );
 
 		return is_array( $results ) ? $results : array();
@@ -302,11 +303,18 @@ class TopologyCommandRepository implements TopologyCommandRepositoryInterface {
 			return false;
 		}
 
-		$query = $wpdb->prepare(
-			"UPDATE {$this->table_name} SET attempts = attempts + 1, last_attempted_at = %s WHERE id = %d",
-			current_time( 'mysql' ),
-			max( 1, $command_id )
+		$query = $this->prepare_query(
+			'UPDATE %i SET attempts = attempts + 1, last_attempted_at = %s WHERE id = %d',
+			array(
+				$this->table_name,
+				current_time( 'mysql' ),
+				max( 1, $command_id ),
+			)
 		);
+		if ( ! is_string( $query ) || '' === $query ) {
+			return false;
+		}
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$result = $wpdb->query( $query );
 
 		return false !== $result;

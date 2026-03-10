@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/../repositories/trait-prepares-sql-queries.php';
 require_once __DIR__ . '/interface-topology-command-repository.php';
 
+use AltContext\Sovereign\Repositories\PreparesSqlQueries;
 use function array_fill;
 use function array_filter;
 use function array_map;
@@ -22,6 +24,8 @@ use function method_exists;
 use function trim;
 
 class CrossPlaneSequencer {
+	use PreparesSqlQueries;
+
 	/**
 	 * @var string[]
 	 */
@@ -146,19 +150,24 @@ class CrossPlaneSequencer {
 		}
 
 		$placeholders = implode( ', ', array_fill( 0, count( self::REPLAY_PLANE_TOPOLOGY_OPERATIONS ), '%s' ) );
-		$query = $wpdb->prepare(
-			"SELECT id, tenant_id, operation_type, entity_type, entity_key, payload, status, created_at
-			FROM {$this->outbox_table_name}
+		$query = $this->prepare_query(
+			'SELECT id, tenant_id, operation_type, entity_type, entity_key, payload, status, created_at
+			FROM %i
 			WHERE tenant_id = %s
 				AND status = %s
-				AND operation_type IN ($placeholders)
-			ORDER BY created_at ASC, id ASC",
+				AND operation_type IN (' . $placeholders . ')
+			ORDER BY created_at ASC, id ASC',
 			array_merge(
-				array( $tenant_id, 'pending' ),
+				array( $this->outbox_table_name, $tenant_id, 'pending' ),
 				self::REPLAY_PLANE_TOPOLOGY_OPERATIONS
 			)
 		);
 
+		if ( ! is_string( $query ) || '' === $query ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
 		$rows = $wpdb->get_results( $query, ARRAY_A );
 		if ( ! is_array( $rows ) ) {
 			return array();

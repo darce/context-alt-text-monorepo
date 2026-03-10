@@ -96,6 +96,8 @@ class SplitTopologyCommandDrainTest extends TestCase
         $this->assertSame([['tenant-test', 44]], $syncStateRepository->snapshotUpserts);
         $this->assertSame([], $projector->projectCalls);
         $this->assertSame([['tenant-test']], $syncStateRepository->metricRefreshCalls);
+        $this->assertContains('START TRANSACTION', $wpdb->queries);
+        $this->assertContains('COMMIT', $wpdb->queries);
     }
 
     public function testDrainFallsBackToTargetedReconciliationWhenMemberDeltaIsIncomplete(): void
@@ -463,7 +465,7 @@ class SplitTopologyCommandDrainTest extends TestCase
             'payload' => '{"target_cluster_id":"cluster-target"}',
             'status' => 'pending',
             'created_at' => '2026-03-10 12:00:00',
-        ]];
+        ],];
 
         $sequencer = new CrossPlaneSequencer($repository);
         $transport = new SplitTransportFake([]);

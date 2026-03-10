@@ -7,6 +7,7 @@
 export {
   updateClusterLabel,
   mergeCluster,
+  assignOutlierToCluster,
   reassignClusterIdentity,
   revertMergeCluster,
   splitCluster,

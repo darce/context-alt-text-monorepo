@@ -564,6 +564,8 @@ class SplitTopologyCommandDrain {
 	}
 
 	private function apply_member_delta( string $tenant_id, array $result ): bool {
+		global $wpdb;
+
 		$member_delta = is_array( $result['member_delta'] ?? null ) ? $result['member_delta'] : array();
 		$source_cluster_id = trim( (string) ( $member_delta['source_cluster_id'] ?? '' ) );
 		$snapshot_version = max( 0, (int) ( $result['result_snapshot_version'] ?? 0 ) );
@@ -590,21 +592,35 @@ class SplitTopologyCommandDrain {
 
 		$remaining_identity_ids = $this->normalize_identity_ids( $member_delta['remaining_identity_ids'] ?? array() );
 		$created_clusters = is_array( $member_delta['created_clusters'] ?? null ) ? $member_delta['created_clusters'] : array();
+		$transaction_started = false;
+
+		if ( isset( $wpdb ) && is_object( $wpdb ) && method_exists( $wpdb, 'query' ) ) {
+			$transaction_started = false !== $wpdb->query( 'START TRANSACTION' );
+		}
 
 		foreach ( $created_clusters as $created_cluster ) {
 			if ( ! is_array( $created_cluster ) ) {
+				if ( $transaction_started ) {
+					$wpdb->query( 'ROLLBACK' );
+				}
 				return false;
 			}
 
 			$cluster_id = trim( (string) ( $created_cluster['cluster_id'] ?? '' ) );
 			$identity_ids = $this->normalize_identity_ids( $created_cluster['identity_ids'] ?? array() );
 			if ( '' === $cluster_id || empty( $identity_ids ) ) {
+				if ( $transaction_started ) {
+					$wpdb->query( 'ROLLBACK' );
+				}
 				return false;
 			}
 
 			$representative_thumb_path = null;
 			foreach ( $identity_ids as $identity_id ) {
 				if ( ! isset( $members_by_identity[ $identity_id ] ) ) {
+					if ( $transaction_started ) {
+						$wpdb->query( 'ROLLBACK' );
+					}
 					return false;
 				}
 				if ( null === $representative_thumb_path ) {
@@ -632,6 +648,9 @@ class SplitTopologyCommandDrain {
 		$source_thumb_path = null;
 		foreach ( $remaining_identity_ids as $identity_id ) {
 			if ( ! isset( $members_by_identity[ $identity_id ] ) ) {
+				if ( $transaction_started ) {
+					$wpdb->query( 'ROLLBACK' );
+				}
 				return false;
 			}
 			if ( null === $source_thumb_path ) {
@@ -653,6 +672,11 @@ class SplitTopologyCommandDrain {
 			$source_thumb_path
 		);
 		$this->sync_state_repository->upsert_snapshot_version( $tenant_id, $snapshot_version );
+
+		if ( $transaction_started && false === $wpdb->query( 'COMMIT' ) ) {
+			$wpdb->query( 'ROLLBACK' );
+			return false;
+		}
 
 		return true;
 	}

@@ -191,9 +191,9 @@ Exit criteria:
 - Launching analysis for 500 media items yields a single visible pipeline that advances through clustering and finishes only after projection is available locally.
 - Operators do not need to manually infer whether clustering happened on the backend but failed to reach the UI.
 
-### Phase 2: Curation-First Merge Contract -- NOT STARTED
+### Phase 2: Curation-First Merge Contract -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plan**: [phase-2-curation-first-merge-contract-task-plan.md](../../tasks/6.0/phase-2-curation-first-merge-contract-task-plan.md)
 
 **Goal**: Make machine projection and local curation merge safely without silent overwrite.
@@ -216,9 +216,9 @@ Exit criteria:
 - Snapshot or replay cannot overwrite curated labels, assignments, merges, splits, or dismissals.
 - Backend reclustering of previously curated material is preserved as a machine proposal or conflict record, not as a destructive overwrite.
 
-### Phase 3: Minimal Durable Sync Replay -- NOT STARTED
+### Phase 3: Minimal Durable Sync Replay -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plan**: [phase-3-minimal-durable-sync-replay-task-plan.md](../../tasks/6.0/phase-3-minimal-durable-sync-replay-task-plan.md)
 > **Archived plans**: [v0.2-sovereign-outbox-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-outbox-task-plan.md), [v0.2-sovereign-drift-reconciliation-task-plan.md](../../tasks/4.0/4.13.3/v0.2-sovereign-drift-reconciliation-task-plan.md)
 
@@ -231,13 +231,11 @@ Deliverables:
 - Expected-base-version checks so stale local mutations are rejected cleanly instead of partially applied.
 - Retry and dead-letter handling for failed pushes.
 - Sync-state reporting that includes pending queue size and last successful acknowledgement.
-- Tenant-visible retention metadata and audit reporting that can be surfaced alongside sync health.
 
 Exit criteria:
 
 - Operators can curate while the backend is offline and see those changes locally immediately.
 - When connectivity resumes, queued mutations replay exactly once or land in an explicit error or conflict state.
-- Operators can inspect whether machine-derived biometric working state is retained, purged, or awaiting disposal after acknowledgement.
 
 ### Phase 4: Offline and Conflict UX -- NOT STARTED
 
@@ -270,9 +268,9 @@ Exit criteria:
 
 | Dependency                                                          | Owner    | Status      | Blocks                   |
 | ------------------------------------------------------------------- | -------- | ----------- | ------------------------ |
-| Snapshot projector merge contract hardening                         | Plugin   | In progress | Phase 2 exit criteria    |
-| Outbox and replay transport                                         | Plugin   | Not started | Phase 3 exit criteria    |
-| Curation push endpoint with idempotency and expected-base semantics | Backend  | Not started | Phase 3 exit criteria    |
+| Snapshot projector merge contract hardening                         | Plugin   | Completed   | Phase 2 exit criteria    |
+| Outbox and replay transport                                         | Plugin   | Completed   | Phase 3 exit criteria    |
+| Curation push endpoint with idempotency and expected-base semantics | Backend  | Completed   | Phase 3 exit criteria    |
 | Pipeline-aware job status contract                                  | Backend  | Completed   | Phase 1 exit criteria    |
 | Conflict review UX                                                  | Frontend | Not started | Phase 4 exit criteria    |
 | Tenant retention-policy fields and lifecycle audit events           | Backend  | Not started | Phase 5 exit criteria    |
@@ -314,21 +312,20 @@ Exit criteria:
 - [x] Add projection acknowledgement so backend work is not considered complete before local visibility exists.
 - [x] Update frontend job state handling to respect the unified pipeline contract.
 
-## Phase 2: Curation-First Merge Contract -- NOT STARTED
+## Phase 2: Curation-First Merge Contract -- COMPLETED
 
-- [ ] Add projection version and local revision fields to local cluster state.
-- [ ] Add projection version and curated override semantics to local membership state.
-- [ ] Define field-by-field and relationship-by-relationship merge rules.
-- [ ] Record explicit conflicts when backend proposals touch curated entities.
-- [ ] Add regression tests for reclustering against curated local state.
+- [x] Add projection version and local revision fields to local cluster state.
+- [x] Add projection version and curated override semantics to local membership state.
+- [x] Define field-by-field and relationship-by-relationship merge rules.
+- [x] Record explicit conflicts when backend proposals touch curated entities.
+- [x] Add regression tests for reclustering against curated local state.
 
-## Phase 3: Minimal Durable Sync Replay -- NOT STARTED
+## Phase 3: Minimal Durable Sync Replay -- COMPLETED
 
-- [ ] Add `wp_acx_sync_outbox` and durable local mutation lifecycle.
-- [ ] Add idempotent backend curation push endpoint with expected-base checks.
-- [ ] Extend sync state with queue size, last acknowledgement, and replay health.
-- [ ] Implement retry, dead-letter, and operator-visible failure states.
-- [ ] Add tenant-visible retention mode metadata and audit reporting tied to sync status.
+- [x] Add `wp_acx_sync_outbox` and durable local mutation lifecycle.
+- [x] Add idempotent backend curation push endpoint with expected-base checks.
+- [x] Extend sync state with queue size, last acknowledgement, and replay health.
+- [x] Implement retry, dead-letter, and operator-visible failure states.
 
 ## Phase 4: Offline and Conflict UX -- NOT STARTED
 
@@ -342,6 +339,18 @@ Exit criteria:
 
 Depends on backend tenant policy infrastructure (retention mode fields, audit event tables) that does not yet exist. Scoped separately from Phase 4 so conflict/offline UX can ship independently.
 
+- [ ] Add low-frequency mutation parity for representative pin/unpin after representative metadata is projected locally.
+  This requires extending the backend snapshot/export and WordPress projection schema so representative `id` and `is_pinned` state survive sync, then wiring the existing manual pin endpoint into the durable replay/outbox contract. Do not ship this as a replay-only mutation before the local read model can reflect it.
+- [ ] Add backend tenant policy fields and migration support for retention/disposal posture.
+  Fields should cover `retention_mode`, working-state disposal eligibility/defaults, and last export/purge metadata needed for operator-visible status.
+- [ ] Add backend audit event storage for retention lifecycle actions.
+  Persist tenant-scoped events for retain/export/purge/disposal actions with actor, timestamp, scope, and payload metadata.
+- [ ] Add backend policy, export, purge, and audit HTTP endpoints.
+  Minimum surface: policy read endpoint, audit-event listing endpoint, export trigger endpoint, and purge trigger endpoint with admin-only enforcement.
+- [ ] Add backend service-layer enforcement for retention and disposal rules.
+  Projection acknowledgement and replay flows must be able to mark machine-derived working state as retained, disposable, exported, or purged and emit matching audit records transactionally.
+- [ ] Add tenant-visible retention mode metadata and audit reporting tied to sync status/admin surfaces.
+  The plugin should be able to read the backend policy/audit summary and expose retention mode, disposal state, and recent export/purge activity without direct database inspection.
 - [ ] Add export and purge controls, or admin-visible endpoints, for machine-derived biometric state.
 - [ ] Surface retain, export, and purge audit history where it affects operator trust in the projected state.
 - [ ] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.

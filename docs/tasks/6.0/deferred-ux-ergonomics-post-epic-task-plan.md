@@ -28,7 +28,8 @@ The Recognition UX and Plugin Ergonomics epic (v0.2.0) is complete. Two items we
 Route both deferred items to the reconciliation epic where they fit naturally:
 
 1. **Delta ingest and drift reconciliation** maps to Reconciliation Epic Phase 2 (Curation-First Merge Contract) and Phase 3 (Minimal Durable Sync Replay).
-2. **Bidirectional conflict resolution for person name edits** maps to Reconciliation Epic Phase 4 (Offline and Conflict UX).
+2. **Operator-facing person-name conflict UX** maps to Reconciliation Epic Phase 4 (Offline and Conflict UX): conflict inbox, payload review, and resolution affordances for existing person-side outbox conflicts.
+3. **Backend-authored machine proposals for person name edits** remain a follow-on after Phase 4, because proposal generation/storage does not exist yet.
 
 No implementation work is needed in this document. It exists only to close the UX epic cleanly.
 
@@ -55,4 +56,5 @@ _None -- this is a routing document._
 ## Routed to Reconciliation Epic
 
 - [ ] Delta ingest and drift reconciliation -- Reconciliation Epic Phases 2-3.
-- [ ] Bidirectional conflict resolution for person name edits -- Reconciliation Epic Phase 4.
+- [ ] Operator-facing person-name conflict UX for existing replay conflicts -- Reconciliation Epic Phase 4.
+- [ ] Backend-authored machine proposals for person name edits -- follow-on after Phase 4 once proposal storage exists.

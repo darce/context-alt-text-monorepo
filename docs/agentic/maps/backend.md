@@ -6,12 +6,38 @@
 
 | Priority | File                                                                              | Purpose                                             |
 | -------- | --------------------------------------------------------------------------------- | --------------------------------------------------- |
-| 🔥 1     | `apps/prototype-description-service/api/main.py`                                  | FastAPI app entry point                             |
-| 🔥 2     | `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | All API endpoints                                   |
-| 🔥 3     | `apps/prototype-description-service/recognition/application/`                     | Service layer (business logic)                      |
-| 🔥 4     | `apps/prototype-description-service/db/models.py`                                 | SQLAlchemy models                                   |
-| 🔥 5     | `docs/agentic/contracts/recognition-clustering.md`                                | API contract specification                          |
-| 🔥 6     | `docs/agentic/ADR-001-face-identity-nomenclature.md`                              | Face* (infra) vs *Identity (domain) naming boundary |
+| 1        | `apps/prototype-description-service/api/main.py`                                  | FastAPI app entry point                             |
+| 2        | `apps/prototype-description-service/recognition/interface_adapters/http/routers/` | All API endpoints                                   |
+| 3        | `apps/prototype-description-service/recognition/application/`                     | Service layer (business logic)                      |
+| 4        | `apps/prototype-description-service/db/models.py`                                 | SQLAlchemy models                                   |
+| 5        | `apps/prototype-description-service/roster/`                                      | Curation sync (person/cluster-person operations)    |
+| 6        | `docs/agentic/contracts/recognition-clustering.md`                                | API contract specification                          |
+| 7        | `docs/agentic/contracts/curation-sync-api.md`                                     | Outbox replay contract                              |
+| 8        | `docs/agentic/ADR-001-face-identity-nomenclature.md`                              | Face* (infra) vs *Identity (domain) naming boundary |
+
+## Architecture Layers
+
+### API Routers (`recognition/interface_adapters/http/routers/`)
+
+| Router          | Key Endpoints                                          | Purpose                            |
+| --------------- | ------------------------------------------------------ | ---------------------------------- |
+| `analyze.py`    | `POST /analyze`, `GET /jobs/{id}`                      | Scan/recognition job submission    |
+| `clusters.py`   | `GET /clusters`, `PATCH /clusters/{id}`, merge/split   | Cluster CRUD and topology          |
+| `suggestions.py`| `GET /suggestions`, accept/reject                      | Merge suggestions                  |
+| `events.py`     | `GET /events`                                          | Observability events               |
+
+### Curation Sync (`roster/`)
+
+| File                | Key Endpoint                | Purpose                                      |
+| ------------------- | --------------------------- | -------------------------------------------- |
+| `roster/router.py`  | `POST /roster/curation/sync`| Idempotent replay of local curation mutations |
+
+### Snapshot (`recognition/interface_adapters/http/routers/`)
+
+| Endpoint                                          | Purpose                                     |
+| ------------------------------------------------- | ------------------------------------------- |
+| `GET /tenants/{tenant_uuid}/clusters/snapshot`    | Pull snapshot for sovereign projection      |
+| `POST /tenants/{tenant_uuid}/acknowledge-projection` | Acknowledge snapshot projection          |
 
 ## Test Entry Points
 

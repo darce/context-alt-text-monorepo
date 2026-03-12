@@ -5,7 +5,7 @@ flowchart TB
     %% =======================================================================
     %% HIGH-LEVEL SYSTEM ARCHITECTURE
     %% Shows interaction between WordPress Plugin and Recognition Service
-    %% Updated: 2026-02-03
+    %% Updated: 2025-06-15
     %% =======================================================================
 
     subgraph WordPress["WordPress Plugin (prototype-wp-alt-context)"]
@@ -13,52 +13,78 @@ flowchart TB
             Dashboard["DashboardPage"]
             Workbench["WorkbenchPage<br/>Media + Clustering"]
             Roster["RosterPage<br/>Identity Management"]
+            ConflictInbox["ConflictInbox"]
+            DeadLetterPanel["DeadLetterPanel"]
+            SyncHealth["SyncStatusIndicator"]
         end
-        
+
         subgraph Hooks["React Hooks"]
             useRecognition["useRecognitionHooks"]
             useJobHistory["useJobProgressStream"]
             useMediaIdentities["useMediaIdentities"]
             useJobCoord["useJobCoordination"]
+            useSyncHealth["useSyncHealth"]
         end
-        
+
         subgraph ApiClient["TypeScript API Client"]
             scanApi["scanApi"]
             clusterApi["clusterApi"]
             identityApi["identityApi"]
+            syncApi["syncApi"]
+            conflictApi["conflictApi"]
         end
-        
+
         subgraph PHPLayer["PHP REST Layer"]
             ApiClass["Api (class-api.php)<br/>Route Registration"]
-            RecognitionController["RecognitionController<br/>Recognition proxy + headers"]
+            RecognitionCtrl["RecognitionController<br/>Recognition proxy"]
+            ConflictCtrl["ConflictController<br/>Conflict resolution"]
+            SyncCtrl["SyncController<br/>Health + dead-letter"]
+        end
+
+        subgraph SovereignSync["Sovereign Sync Layer"]
+            Projector["SnapshotProjector"]
+            OutboxDrain["OutboxDrain +<br/>OutboxDispatcher"]
+            ConflictSvc["ConflictResolutionService"]
+            Sequencer["CrossPlaneSequencer"]
+            SyncStateRepo["SyncStateRepository"]
+        end
+
+        subgraph WPData["WP Database Tables"]
+            WPCluster["wp_acx_clusters"]
+            WPMembers["wp_acx_identity_members"]
+            WPOutbox["wp_acx_sync_outbox"]
+            WPConflicts["wp_acx_sync_conflicts"]
+            WPSyncState["wp_acx_sync_state"]
         end
     end
 
     subgraph Backend["Recognition Service (prototype-description-service)"]
         subgraph API["FastAPI Routers"]
             AnalyzeRouter["POST /analyze<br/>GET /jobs/{id}"]
-            ClusterRouter["POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}<br/>POST /clusters/{id}/merge<br/>POST /clusters/{id}/split"]
-            SuggestionRouter["GET /suggestions, /suggestions/merge<br/>POST accept/reject"]
+            ClusterRouter["POST /clustering/jobs<br/>GET /clusters<br/>PATCH /clusters/{id}<br/>POST /merge, /split"]
+            SuggestionRouter["GET /suggestions<br/>POST accept/reject"]
+            SnapshotRouter["GET /snapshot/{tenant}"]
+            CurationRouter["POST /curation/sync<br/>POST /topology/*"]
         end
-        
+
         subgraph Orchestration["Orchestration"]
             ScanService["ScanService<br/>Detection + Embedding"]
             ClusterService["ClusterService<br/>Clustering Workflow"]
             JobService["JobService<br/>Job Tracking"]
         end
-        
+
         subgraph Discovery["Discovery Layer"]
             RepDiscovery["RepresentativeDiscovery"]
             CentroidDiscovery["CentroidDiscovery"]
             GraphDiscovery["GraphDiscovery"]
         end
-        
+
         subgraph Assignment["Assignment Layer"]
             Gate["AssignmentGate<br/>Quality Checks"]
             Writer["AssignmentWriter<br/>Persistence"]
             Suggestions["SuggestionService"]
         end
-        
+
         subgraph Infra["Infrastructure"]
             EmbeddingService["InsightFaceAdapter<br/>Detector + Generator"]
             ClusterRepo["ClusterRepository"]
@@ -74,14 +100,45 @@ flowchart TB
         CentroidMV["mv_identity_cluster_centroids"]
     end
 
-    %% WordPress internal flow
+    %% WordPress internal flow (UI)
     ReactUI --> Hooks
     Hooks --> ApiClient
     ApiClient --> ApiClass
-    ApiClass --> RecognitionController
+    ApiClass --> RecognitionCtrl
+    ApiClass --> ConflictCtrl
+    ApiClass --> SyncCtrl
 
-    %% Cross-boundary call
-    RecognitionController -->|"HTTP + X-API-Key<br/>tenant_id (query/body)"| API
+    %% Cross-boundary: recognition proxy
+    RecognitionCtrl -->|"HTTP + X-API-Key<br/>tenant_id (query/body)"| API
+
+    %% Cross-boundary: snapshot pull (WP pulls from backend)
+    SnapshotRouter -->|"JSON snapshot"| Projector
+    Projector -->|"Atomic projection"| WPCluster
+    Projector -->|"Atomic projection"| WPMembers
+    Projector -->|"Conflict detection"| WPConflicts
+    Projector -->|"Update metrics"| WPSyncState
+
+    %% Cross-boundary: outbox push (WP pushes to backend)
+    OutboxDrain -->|"Curation ops"| CurationRouter
+    OutboxDrain -->|"Topology ops"| CurationRouter
+    WPOutbox -->|"Drain cycle"| OutboxDrain
+    OutboxDrain -->|"Update metrics"| SyncStateRepo
+    SyncStateRepo --> WPSyncState
+
+    %% Conflict resolution
+    ConflictCtrl --> ConflictSvc
+    ConflictSvc --> WPCluster
+    ConflictSvc --> WPConflicts
+    ConflictSvc -->|"Re-enqueue"| WPOutbox
+
+    %% Sync health
+    SyncCtrl --> SyncStateRepo
+    SyncHealth --> useSyncHealth
+    ConflictInbox --> conflictApi
+    DeadLetterPanel --> syncApi
+
+    %% Sequencing
+    Sequencer --> OutboxDrain
 
     %% Backend flow
     API --> Orchestration
@@ -89,7 +146,7 @@ flowchart TB
     Discovery --> Gate
     Gate --> Writer
     Gate --> Suggestions
-    
+
     Orchestration --> Infra
     Writer --> ClusterRepo
     Writer --> MemberRepo
@@ -109,3 +166,5 @@ flowchart TB
     style Database fill:#fff3e0,stroke:#f57c00,stroke-width:2px,color:#e65100
     style Discovery fill:#f3e5f5,stroke:#6a1b9a,color:#4a148c
     style Assignment fill:#fce4ec,stroke:#ad1457,color:#880e4f
+    style SovereignSync fill:#fff9c4,stroke:#f9a825,stroke-width:2px,color:#f57f17
+    style WPData fill:#e0f7fa,stroke:#00838f,color:#006064

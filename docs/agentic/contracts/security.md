@@ -85,19 +85,38 @@ If an API key's tenant claim doesn't match the `X-Tenant-ID` header, the request
 
 Mutate endpoints (POST, PATCH, DELETE) require additional write access verification via the `require_write_access` dependency:
 
-| Endpoint                   | Method | Requires Write Access |
-| -------------------------- | ------ | --------------------- |
-| `/analyze`                 | POST   | ✅                    |
-| `/clustering/jobs`         | POST   | ✅                    |
-| `/clusters/{id}`           | PATCH  | ✅                    |
-| `/clusters/{id}/merge`     | POST   | ✅                    |
-| `/clusters/{id}/assign`    | POST   | ✅                    |
-| `/suggestions/{id}/accept` | POST   | ✅                    |
-| `/suggestions/{id}/reject` | POST   | ✅                    |
-| `/jobs/{id}/cancel`        | POST   | ✅                    |
-| `/clusters`                | GET    | ❌ (read-only)        |
-| `/suggestions`             | GET    | ❌ (read-only)        |
-| `/jobs/{id}`               | GET    | ❌ (read-only)        |
+| Endpoint                          | Method | Requires Write Access |
+| --------------------------------- | ------ | --------------------- |
+| `/analyze`                        | POST   | Yes                   |
+| `/clustering/jobs`                | POST   | Yes                   |
+| `/clusters/{id}`                  | PATCH  | Yes                   |
+| `/clusters/{id}/merge`            | POST   | Yes                   |
+| `/clusters/{id}/assign`           | POST   | Yes                   |
+| `/clusters/reassign`              | POST   | Yes                   |
+| `/clusters/create-for-identity`   | POST   | Yes                   |
+| `/clusters/revert-merge`          | POST   | Yes                   |
+| `/suggestions/{id}/accept`        | POST   | Yes                   |
+| `/suggestions/{id}/reject`        | POST   | Yes                   |
+| `/jobs/{id}/cancel`               | POST   | Yes                   |
+| `/roster/curation/sync`           | POST   | Yes                   |
+| `/tenants/{id}/acknowledge-projection` | POST | Yes                |
+| `/clusters`                       | GET    | No (read-only)        |
+| `/suggestions`                    | GET    | No (read-only)        |
+| `/jobs/{id}`                      | GET    | No (read-only)        |
+| `/tenants/{id}/clusters/snapshot` | GET    | No (read-only)        |
+
+### WordPress-Side Authorization (WP REST)
+
+All conflict, dead-letter, and sync status endpoints in the WordPress plugin require `manage_options` capability:
+
+| WP REST Endpoint                                  | Capability Required |
+| ------------------------------------------------- | ------------------- |
+| `GET/POST /acx/v1/recognition/conflicts`          | `manage_options`    |
+| `GET/POST /acx/v1/recognition/conflicts/{id}/*`   | `manage_options`    |
+| `GET /acx/v1/recognition/outbox/failed`            | `manage_options`    |
+| `POST /acx/v1/recognition/outbox/{id}/retry`       | `manage_options`    |
+| `POST /acx/v1/recognition/outbox/{id}/discard`     | `manage_options`    |
+| `GET/POST /acx/v1/recognition/sync-status`         | `manage_options`    |
 
 Write access is granted when:
 

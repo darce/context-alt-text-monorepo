@@ -89,6 +89,32 @@ Timeout expectations:
   - non-authoritative fields (`identity_count`, `representative_thumb_path`, `snapshot_version`, `last_synced_at`) may refresh
 - Plugin stale-row cleanup deletes only non-curated rows absent from incoming snapshot.
 
+### Projection Conflict Detection
+
+The `SnapshotProjector` detects conflicts when backend state contradicts local operator curation:
+
+| Conflict Code                  | Trigger                                                        | Stored In                    |
+| ------------------------------ | -------------------------------------------------------------- | ---------------------------- |
+| `curated_cluster_deleted`      | Backend omits a cluster that has `is_user_confirmed = 1`       | `wp_acx_sync_conflicts`      |
+| `curated_member_deleted`       | Backend omits a member whose cluster has `is_curated = 1`      | `wp_acx_sync_conflicts`      |
+| `member_cluster_reassignment`  | Backend moves a member to a different cluster than local state  | `wp_acx_sync_conflicts`      |
+
+When a conflict is detected:
+
+1. The projector writes a conflict record with `resolution_status = 'open'`, `machine_payload` (backend state), and `local_payload` (curated state).
+2. The conflicting local row is NOT deleted or overwritten -- the curated value is preserved.
+3. `SyncStateRepository` increments `conflict_count` in `wp_acx_sync_state`.
+4. The conflict surfaces in the frontend `ConflictInbox` via `GET /acx/v1/recognition/conflicts`.
+
+Resolution is handled by `ConflictResolutionService` -- see [curation-sync-api.md](curation-sync-api.md) for conflict resolution contracts.
+
+### Projection Acknowledgement
+
+After successful projection:
+
+- Plugin POSTs `POST /tenants/{tenant_uuid}/acknowledge-projection` with `{ "snapshot_version": <projected_version> }`.
+- Backend uses acknowledgement to track tenant synchronization state.
+
 ## `bbox_json` Storage Contract (Plugin)
 
 Plugin persists members `bbox` payload into `wp_acx_identity_members.bbox_json`:

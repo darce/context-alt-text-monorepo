@@ -52,3 +52,14 @@
 | Max selector nesting depth                 | 4         | Flatten or restructure          |
 
 Component size limits and hook counts are enforced by `check-architecture-compliance.js`.
+
+---
+
+## Sovereign Sync UI (Overlay / Conflicts / Dead-Letter)
+
+When the diff touches `js/admin/pages/workbench/`, overlay hooks, or sync-status surfaces:
+
+- [ ] **URL param source of truth** — overlay visibility is driven by the `panel` query param via `useOverlayParam`, not duplicated in React state.
+- [ ] **No stale closure captures** — `setSearchParams` uses the functional updater form to avoid capturing stale params.
+- [ ] **Query invalidation on mutation settle** — conflict resolution invalidates `conflicts`, `outbox`, `sync`, and affected cluster queries; dead-letter retry/discard invalidates `outbox` and `sync`.
+- [ ] **Sync health coverage** — UI branches on the `SyncHealth` union cover all states (`healthy`, `queued`, `stale`, `conflicts`, `failures`, `offline`) without falling back to stale copy.

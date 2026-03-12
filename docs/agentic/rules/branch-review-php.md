@@ -56,3 +56,15 @@ For each function accepting numeric or collection inputs:
 - [ ] **Empty** — empty array, empty string, zero. Does the function degrade gracefully or produce invalid SQL / divide-by-zero?
 - [ ] **Single element** — does `implode()` produce valid SQL? Does a loop body work on first-and-only iteration?
 - [ ] **Large input** — at 10k+ items, does a `NOT IN (...)` clause hit MySQL limits? Is there an unbounded `LEFT JOIN` scan?
+
+---
+
+## Sovereign Sync (Outbox / Conflict / Projection)
+
+When the diff touches `src/sovereign/`:
+
+- [ ] **Projection atomicity** — `SnapshotProjector` writes are inside a single transaction (`START TRANSACTION` / `COMMIT`).
+- [ ] **Outbox entry completeness** — new outbox writes include all required payload fields per the topology contract in [curation-sync-api.md](../contracts/curation-sync-api.md).
+- [ ] **Projection conflict reuse** — `record_projection_conflict()` updates an existing open conflict for the same tenant/entity/conflict code instead of accumulating duplicates.
+- [ ] **SyncState metrics updated** — projection, drain, retry/discard, and resolution paths refresh `SyncStateRepository` so `SyncStatusController` reflects current state.
+- [ ] **Dead-letter status transitions** — dead letters are `failed` rows; retry mutates the same row back to `pending`, discard mutates `failed`/`conflict` to `discarded`.

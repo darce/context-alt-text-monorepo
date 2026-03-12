@@ -153,3 +153,27 @@ http.get('http://example.test/api/clusters', () => {
   return HttpResponse.json({ clusters: [] });
 });
 ```
+
+---
+
+## Sovereign Sync Test Patterns
+
+### Testing overlay panels (ConflictInbox, DeadLetterPanel)
+
+Overlay panels read their visibility from the `panel` query param. Tests must render inside a `MemoryRouter` with the appropriate initial entries:
+
+```tsx
+render(
+  <MemoryRouter initialEntries={['/workbench?tab=scan&panel=conflicts']}>
+    <WorkbenchPage />
+  </MemoryRouter>
+);
+```
+
+### Testing sync health surfaces
+
+`SyncStatusIndicator` and `DashboardPage` read `sync_health` from `useSyncStatus()`. Mock the sync-status query to return each `SyncHealth` state (`healthy`, `queued`, `stale`, `conflicts`, `failures`, `offline`) and assert the UI renders the correct badge, copy, and links.
+
+### Testing conflict resolution flows
+
+Conflict accept/dismiss invalidates `queryKeys.conflicts.all`, `queryKeys.outbox.all`, `queryKeys.sync.all`, the conflict detail key, and affected cluster data. Dead-letter retry/discard invalidates `queryKeys.outbox.all` and `queryKeys.sync.all`. Assert the expected invalidations after the mutation settles.

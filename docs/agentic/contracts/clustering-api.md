@@ -368,3 +368,11 @@ implemented in the recognition service yet (expect 404 until wired):
 
 The recognition service does support representative pinning, but the WordPress
 proxy does not currently expose it.
+
+## Related contracts
+
+The WordPress plugin exposes additional REST endpoints outside the `/recognition` proxy path:
+
+- **Sovereign Sync (outbox, conflict, dead-letter, sync health):** [curation-sync-api.md](curation-sync-api.md)
+- **Snapshot projection and conflict detection:** [cluster-snapshot-api.md](cluster-snapshot-api.md)
+- **Endpoint authorization (capability requirements):** [security.md](security.md)

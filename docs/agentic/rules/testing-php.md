@@ -112,6 +112,25 @@ Without this, the new file won't be found by the autoloader, causing "class not 
 
 ---
 
+## Sovereign Sync Test Patterns
+
+### ConflictController and SyncStatusController
+
+These controllers combine sync-specific repositories/services (`ConflictRepository`, `OutboxDrain`, `ConflictResolutionService`, `SyncStateRepository`) with cluster/member repository interfaces. Use focused test doubles for each dependency instead of broad “god” stubs.
+
+### Outbox entry assertions
+
+When testing operations that enqueue outbox entries (reassign, merge, label), assert:
+1. The entry was written with the correct `operation_type` (for example `identity_reassigned`, `cluster_merged`, `assign_outlier_to_cluster`)
+2. The payload contains required fields per the topology contract
+3. The entry status is `pending`
+
+### Conflict detection during projection
+
+When testing projection conflict handling, provide a snapshot payload that triggers a known conflict code (for example `curated_member_deleted`) and assert that `ConflictRepository::record_projection_conflict()` persists the expected open conflict shape.
+
+---
+
 ## Commands
 
 ```bash

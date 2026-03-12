@@ -349,3 +349,11 @@ Returns database connectivity and service status.
 ### GET /recognition/health/pool
 
 Returns connection pool statistics (auth required when enabled).
+
+## Related contracts
+
+The recognition service exposes additional endpoint groups outside `/recognition`:
+
+- **Curation sync and topology operations (`/roster/`):** [curation-sync-api.md](curation-sync-api.md)
+- **Snapshot projection (`/tenants/{tenant_uuid}/...`):** [cluster-snapshot-api.md](cluster-snapshot-api.md)
+- **WordPress proxy layer for these endpoints:** [clustering-api.md](clustering-api.md)

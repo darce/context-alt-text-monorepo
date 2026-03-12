@@ -9,3 +9,4 @@ export * from './identity';
 export * from './cluster';
 export * from './suggestion';
 export * from './sync';
+export * from './conflict';

@@ -41,9 +41,22 @@ export type {
   PendingMergeSuggestion,
   PendingMergeSuggestionsResponse,
   SuggestionActionResponse,
+  SyncHealth,
   SyncStatusResponse,
   SyncTriggerResponse,
+  ConflictResolutionChoice,
+  ConflictRecord,
+  ConflictListResponse,
+  ConflictDetailResponse,
+  ResolveConflictRequest,
+  ResolveConflictResponse,
+  OutboxOperation,
+  OutboxListResponse,
+  OutboxMutationResponse,
+  WorkbenchOverlay,
 } from './types';
+
+export type { ConflictListParams, FailedOutboxListParams, OutboxListParams } from './conflictApi';
 
 // Scan operations
 export { scanFaces, scanFacesBatched, fetchScanStatus, cancelScanJob, clusterFaces, acknowledgeProjection } from './scanApi';
@@ -80,3 +93,14 @@ export {
 
 // Sync status
 export { fetchSyncStatus, triggerSync } from './syncApi';
+
+// Conflict and dead-letter operations
+export {
+  fetchConflicts,
+  fetchConflictDetail,
+  resolveConflict,
+  fetchOutboxOperations,
+  fetchFailedOutboxOperations,
+  retryFailedOperation,
+  discardFailedOperation,
+} from './conflictApi';

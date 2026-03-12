@@ -191,6 +191,29 @@ class OutboxDrainTest extends TestCase
 		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET'));
 	}
 
+	public function testDrainReturnsImmediatelyWhenNoPendingOperationsExist(): void
+	{
+		global $wpdb;
+		$wpdb->mockResults = [];
+		$wpdb->mockVar = '0';
+
+		$dispatcher = new class() extends OutboxDispatcher {
+			public int $dispatchCalls = 0;
+
+			public function dispatch_batch(array $operations): array {
+				++$this->dispatchCalls;
+				return [];
+			}
+		};
+
+		$drain = new OutboxDrain($dispatcher);
+		$drain->drain();
+
+		$this->assertSame(0, $dispatcher->dispatchCalls);
+		$this->assertFalse($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+		$this->assertSame('', $this->findFirstQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET'));
+	}
+
 	public function testDrainDispatchesMergeTopologyOperationAndMarksAcknowledged(): void
 	{
 		global $wpdb;
@@ -416,6 +439,125 @@ class OutboxDrainTest extends TestCase
 		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
 		$this->assertStringContainsString('failed_curation_operations = 1', $syncStateUpdate);
 		$this->assertStringContainsString("last_curation_failed_at = '2026-03-10 14:10:00'", $syncStateUpdate);
+	}
+
+	public function testFindFailedOperationsReturnsDecodedRowsOrderedByDate(): void
+	{
+		global $wpdb;
+
+		$tenantId = 'tenant-test-123';
+		$rows = [
+			[
+				'id' => 12,
+				'tenant_id' => $tenantId,
+				'operation_type' => 'cluster_label_updated',
+				'entity_type' => 'cluster',
+				'entity_key' => 'cluster-2',
+				'status' => 'failed',
+				'attempts' => 5,
+				'expected_base_version' => 8,
+				'local_revision' => 3,
+				'last_error_code' => 'dispatch_failed',
+				'last_error_message' => 'newer failure',
+				'payload' => '{"cluster_uuid":"cluster-2"}',
+				'created_at' => '2026-03-10 12:05:00',
+				'last_attempted_at' => '2026-03-10 12:06:00',
+				'acknowledged_at' => null,
+			],
+			[
+				'id' => 11,
+				'tenant_id' => $tenantId,
+				'operation_type' => 'cluster_dismissed',
+				'entity_type' => 'cluster',
+				'entity_key' => 'cluster-1',
+				'status' => 'failed',
+				'attempts' => 4,
+				'expected_base_version' => 7,
+				'local_revision' => 2,
+				'last_error_code' => 'remote_error',
+				'last_error_message' => 'older failure',
+				'payload' => '{"cluster_uuid":"cluster-1"}',
+				'created_at' => '2026-03-10 12:00:00',
+				'last_attempted_at' => '2026-03-10 12:01:00',
+				'acknowledged_at' => null,
+			],
+		];
+
+		$wpdb->mockResults = $rows;
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$result = $drain->find_failed_operations($tenantId);
+
+		$this->assertSame([12, 11], array_column($result, 'id'));
+		$this->assertSame(['cluster_uuid' => 'cluster-2'], $result[0]['payload']);
+		$this->assertSame('dispatch_failed', $result[0]['last_error_code']);
+	}
+
+	public function testRetryFailedOperationResetsStateRefreshesMetricsAndSchedulesDrain(): void
+	{
+		global $wpdb;
+
+		$tenantId = 'tenant-test-123';
+		$this->configureSyncMetricQueries($tenantId, [
+			'pending' => 1,
+			'failed' => 0,
+			'conflicts' => 0,
+		]);
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$result = $drain->retry_failed_operation(9, $tenantId);
+
+		$this->assertTrue($result);
+		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$this->assertStringContainsString("status = 'pending'", $updateQuery);
+		$this->assertStringContainsString('attempts = 0', $updateQuery);
+		$this->assertStringContainsString('last_error_code = NULL', $updateQuery);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('pending_curation_operations = 1', $syncStateUpdate);
+		$this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
+		$this->assertTrue($this->isHookScheduled('acx_sync_drain_curation_outbox'));
+	}
+
+	public function testDiscardOperationMarksDiscardedAndRefreshesMetrics(): void
+	{
+		global $wpdb;
+
+		$tenantId = 'tenant-test-123';
+		$operationId = 15;
+		$this->configureSyncMetricQueries($tenantId, [
+			'pending' => 0,
+			'failed' => 0,
+			'conflicts' => 0,
+		]);
+		$wpdb->mockRow = [
+			'id' => $operationId,
+			'tenant_id' => $tenantId,
+			'operation_type' => 'cluster_label_updated',
+			'entity_type' => 'cluster',
+			'entity_key' => 'cluster-1',
+			'status' => 'failed',
+			'attempts' => 5,
+			'expected_base_version' => 8,
+			'local_revision' => 3,
+			'last_error_code' => 'dispatch_failed',
+			'last_error_message' => 'dead letter',
+			'payload' => '{"cluster_uuid":"cluster-1"}',
+			'created_at' => '2026-03-10 12:00:00',
+			'last_attempted_at' => '2026-03-10 12:05:00',
+			'acknowledged_at' => null,
+		];
+		$wpdb->mockResults = [];
+
+		$drain = new OutboxDrain(new OutboxDispatcher());
+		$result = $drain->discard_operation($operationId, $tenantId);
+
+		$this->assertTrue($result);
+		$updateQuery = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_outbox SET');
+		$this->assertStringContainsString("status = 'discarded'", $updateQuery);
+
+		$syncStateUpdate = $this->findQueryContaining($wpdb->queries, 'UPDATE wp_acx_sync_state SET');
+		$this->assertStringContainsString('failed_curation_operations = 0', $syncStateUpdate);
 	}
 
 	/**

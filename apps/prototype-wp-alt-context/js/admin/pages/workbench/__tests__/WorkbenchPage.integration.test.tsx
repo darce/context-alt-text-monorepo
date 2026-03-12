@@ -8,6 +8,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { resetConfigCache } from '../../../api/config';
 import { queryKeys } from '../../../api/queryKeys';
 import * as recognitionApi from '../../../api/recognition';
+import type { SyncStatusResponse } from '../../../api/recognition';
 import { WorkbenchPage } from '../../WorkbenchPage';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -67,6 +68,24 @@ vi.mock('../../workbench/identity-clusters', async (importOriginal) => {
 describe('WorkbenchPage (integration-lite)', () => {
   const originalFetch = globalThis.fetch;
   let queryClient: QueryClient | null = null;
+  const baseMediaResponse = {
+    items: [
+      {
+        id: 11,
+        title: 'Photo Name',
+        altText: null,
+        status: 'missing',
+        thumbnailUrl: null,
+        mimeType: 'image/jpeg',
+        editUrl: '#',
+        updatedAt: '2025-01-01T00:00:00Z',
+        dimensions: { width: 800, height: 600 },
+        tags: [],
+      },
+    ],
+    total: 1,
+    totalPages: 1,
+  };
 
   class MockEventSource {
     onmessage: ((event: MessageEvent) => void) | null = null;
@@ -105,6 +124,11 @@ describe('WorkbenchPage (integration-lite)', () => {
         recognitionClusters: '/wp-json/acx/v1/recognition/clusters',
         recognitionMediaIdentities: '/wp-json/acx/v1/recognition/media-identities',
         recognitionSuggestions: '/wp-json/acx/v1/recognition/suggestions',
+        recognitionConflicts: '/wp-json/acx/v1/recognition/conflicts',
+        recognitionOutbox: '/wp-json/acx/v1/recognition/outbox',
+        recognitionFailedOutbox: '/wp-json/acx/v1/recognition/outbox/failed',
+        recognitionSyncStatus: '/wp-json/acx/v1/recognition/sync-status',
+        recognitionSyncTrigger: '/wp-json/acx/v1/recognition/sync/trigger',
       },
       tenant_id: 'test-tenant',
     };
@@ -128,29 +152,10 @@ describe('WorkbenchPage (integration-lite)', () => {
   });
 
   it('uses real hooks to trigger scan and invalidate identities', async () => {
-    const mediaResponse = {
-      items: [
-        {
-          id: 11,
-          title: 'Photo Name',
-          altText: null,
-          status: 'missing',
-          thumbnailUrl: null,
-          mimeType: 'image/jpeg',
-          editUrl: '#',
-          updatedAt: '2025-01-01T00:00:00Z',
-          dimensions: { width: 800, height: 600 },
-          tags: [],
-        },
-      ],
-      total: 1,
-      totalPages: 1,
-    };
-
     globalThis.fetch = vi.fn().mockResolvedValue({
       ok: true,
       status: 200,
-      json: () => Promise.resolve(mediaResponse),
+      json: () => Promise.resolve(baseMediaResponse),
     }) as typeof fetch;
 
     vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
@@ -228,7 +233,7 @@ describe('WorkbenchPage (integration-lite)', () => {
     const invalidateSpy = vi.spyOn(client, 'invalidateQueries');
     client.setQueryData(
       queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
-      mediaResponse,
+      baseMediaResponse,
     );
     client.setQueryData(queryKeys.media.identitiesByIds([11]), {
       identities_by_media: { '11': [] },
@@ -253,6 +258,190 @@ describe('WorkbenchPage (integration-lite)', () => {
     });
 
     expect(await screen.findByText(/Starting scan/i)).toBeInTheDocument();
+  });
+
+  it.each([
+    {
+      name: 'healthy',
+      syncStatus: {
+        last_snapshot_version: 4,
+        last_synced_at: '2026-03-11T10:00:00Z',
+        is_stale: false,
+        sync_health: 'healthy',
+        last_sync_result: 'ok',
+        pending_curation_operations: 0,
+        failed_curation_operations: 0,
+        conflict_count: 0,
+        topology_commands: {
+          pending: 0,
+          applied: 0,
+          failed: 0,
+          conflict: 0,
+          last_reconciled_at: null,
+        },
+      } satisfies SyncStatusResponse,
+      expectedText: 'Fresh',
+      linkName: null,
+      linkHref: null,
+    },
+    {
+      name: 'queued',
+      syncStatus: {
+        last_snapshot_version: 4,
+        last_synced_at: '2026-03-11T10:00:00Z',
+        is_stale: false,
+        sync_health: 'queued',
+        last_sync_result: 'ok',
+        pending_curation_operations: 3,
+        failed_curation_operations: 0,
+        conflict_count: 0,
+        topology_commands: {
+          pending: 1,
+          applied: 0,
+          failed: 0,
+          conflict: 0,
+          last_reconciled_at: null,
+        },
+      } satisfies SyncStatusResponse,
+      expectedText: 'Queued',
+      linkName: null,
+      linkHref: null,
+    },
+    {
+      name: 'stale',
+      syncStatus: {
+        last_snapshot_version: 4,
+        last_synced_at: '2026-03-01T10:00:00Z',
+        is_stale: true,
+        sync_health: 'stale',
+        last_sync_result: 'ok',
+        pending_curation_operations: 0,
+        failed_curation_operations: 0,
+        conflict_count: 0,
+        topology_commands: {
+          pending: 0,
+          applied: 0,
+          failed: 0,
+          conflict: 0,
+          last_reconciled_at: null,
+        },
+      } satisfies SyncStatusResponse,
+      expectedText: 'Stale',
+      linkName: null,
+      linkHref: null,
+    },
+    {
+      name: 'conflicts',
+      syncStatus: {
+        last_snapshot_version: 4,
+        last_synced_at: '2026-03-11T10:00:00Z',
+        is_stale: false,
+        sync_health: 'conflicts',
+        last_sync_result: 'ok',
+        pending_curation_operations: 0,
+        failed_curation_operations: 0,
+        conflict_count: 2,
+        topology_commands: {
+          pending: 0,
+          applied: 0,
+          failed: 0,
+          conflict: 0,
+          last_reconciled_at: null,
+        },
+      } satisfies SyncStatusResponse,
+      expectedText: 'Conflicts',
+      linkName: 'Conflicts',
+      linkHref: '#/workbench?tab=scan&panel=conflicts',
+    },
+    {
+      name: 'failures',
+      syncStatus: {
+        last_snapshot_version: 4,
+        last_synced_at: '2026-03-11T10:00:00Z',
+        is_stale: false,
+        sync_health: 'failures',
+        last_sync_result: 'ok',
+        pending_curation_operations: 0,
+        failed_curation_operations: 2,
+        conflict_count: 0,
+        topology_commands: {
+          pending: 0,
+          applied: 0,
+          failed: 0,
+          conflict: 0,
+          last_reconciled_at: null,
+        },
+      } satisfies SyncStatusResponse,
+      expectedText: 'Failures',
+      linkName: 'Failures',
+      linkHref: '#/workbench?tab=scan&panel=dead-letter',
+    },
+    {
+      name: 'offline',
+      syncStatus: {
+        last_snapshot_version: 4,
+        last_synced_at: '2026-03-11T10:00:00Z',
+        is_stale: false,
+        sync_health: 'offline',
+        last_sync_result: 'unreachable',
+        pending_curation_operations: 0,
+        failed_curation_operations: 0,
+        conflict_count: 0,
+        topology_commands: {
+          pending: 0,
+          applied: 0,
+          failed: 0,
+          conflict: 0,
+          last_reconciled_at: null,
+        },
+      } satisfies SyncStatusResponse,
+      expectedText: 'Offline',
+      linkName: null,
+      linkHref: null,
+    },
+  ])('renders sync health state $name with real sync-status data and stable panel links', async ({
+    syncStatus,
+    expectedText,
+    linkName,
+    linkHref,
+  }) => {
+    vi.mocked(recognitionApi.fetchMediaIdentities).mockResolvedValue({
+      identities_by_media: { '11': [] },
+    });
+    vi.mocked(recognitionApi.fetchPendingSuggestions).mockResolvedValue({
+      suggestions: [],
+      total: 0,
+      limit: 10,
+      offset: 0,
+    });
+
+    const client = new QueryClient({
+      defaultOptions: {
+        queries: {
+          retry: false,
+          staleTime: Infinity,
+          refetchOnMount: false,
+          refetchOnWindowFocus: false,
+          refetchOnReconnect: false,
+        },
+      },
+    });
+    client.setQueryData(
+      queryKeys.media.workbenchPage({ page: 1, perPage: 10, search: '', status: 'all' }),
+      baseMediaResponse,
+    );
+    client.setQueryData(queryKeys.sync.status(), syncStatus);
+    client.setQueryData(queryKeys.media.identitiesByIds([11]), {
+      identities_by_media: { '11': [] },
+    });
+
+    renderWithClient(client);
+
+    expect(await screen.findByText(expectedText)).toBeInTheDocument();
+
+    if (linkName && linkHref) {
+      expect(screen.getByRole('link', { name: linkName })).toHaveAttribute('href', linkHref);
+    }
   });
 
   it('renders page 2 media when the queue has multiple pages', async () => {

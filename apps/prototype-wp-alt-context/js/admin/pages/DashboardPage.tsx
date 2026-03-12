@@ -10,14 +10,24 @@ import { __ } from '@wordpress/i18n';
 import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useIdentityStats } from '../hooks/useIdentityStats';
+import { useSyncStatus } from '../hooks/useSyncStatus';
 import { rosterClustersUrl } from './workbench/Panels';
 import { sprintf } from '@wordpress/i18n';
 import { OrientationCard } from './dashboard/OrientationCard';
 import { GuidanceCard } from './dashboard/GuidanceCard';
 
+const normalizeCount = (value: number | null | undefined): number => {
+  if (typeof value !== 'number' || Number.isNaN(value) || value <= 0) {
+    return 0;
+  }
+
+  return Math.floor(value);
+};
+
 export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobHistory, jobStatuses, jobDetails } = useRecognitionJobHistory();
+  const { data: syncStatus, isLoading: isSyncStatusLoading, isError: isSyncStatusError } = useSyncStatus();
   const {
     data: identityStats,
     isLoading: isIdentityLoading,
@@ -26,6 +36,12 @@ export const DashboardPage = (): React.JSX.Element => {
   } = useIdentityStats();
 
   const coveragePercent = Math.round(stats.coverage);
+  const pendingReplayCount = normalizeCount(syncStatus?.pending_curation_operations);
+  const conflictCount = normalizeCount(syncStatus?.conflict_count);
+  const failedReplayCount = normalizeCount(syncStatus?.failed_curation_operations);
+  const topologyPending = normalizeCount(syncStatus?.topology_commands?.pending);
+  const topologyFailed = normalizeCount(syncStatus?.topology_commands?.failed);
+  const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);
   const formatDuration = (startedAt: string, finishedAt: string | null): string | null => {
     if (!startedAt || !finishedAt) {
       return null;
@@ -152,6 +168,73 @@ export const DashboardPage = (): React.JSX.Element => {
               </div>
               <div className="acx-dashboard__guidance">
                 <GuidanceCard stats={identityStats} />
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="acx-dashboard__panel">
+          <h2>{__('Sync Health', 'alt-context')}</h2>
+          {isSyncStatusLoading ? (
+            <p>{__('Loading sync health…', 'alt-context')}</p>
+          ) : isSyncStatusError || !syncStatus ? (
+            <p>{__('Sync health is unavailable right now.', 'alt-context')}</p>
+          ) : (
+            <>
+              <p>
+                {syncStatus.sync_health === 'healthy'
+                  ? __('Machine sync is healthy and curation replay is caught up.', 'alt-context')
+                  : syncStatus.sync_health === 'queued'
+                    ? __('Local curation changes are queued for replay.', 'alt-context')
+                    : syncStatus.sync_health === 'conflicts'
+                      ? __('Conflict resolution is blocking part of the replay queue.', 'alt-context')
+                      : syncStatus.sync_health === 'failures'
+                        ? __('Some replay operations failed and need operator attention.', 'alt-context')
+                        : syncStatus.sync_health === 'offline'
+                          ? __('The recognition backend is currently unreachable.', 'alt-context')
+                          : __('Machine state is stale and should be refreshed.', 'alt-context')}
+              </p>
+              <div className="acx-dashboard__stats-grid">
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value">{pendingReplayCount}</span>
+                  <span className="acx-dashboard__stat-label">{__('Pending Replay', 'alt-context')}</span>
+                </div>
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value">{conflictCount}</span>
+                  <span className="acx-dashboard__stat-label">{__('Conflicts', 'alt-context')}</span>
+                </div>
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value">{failedReplayCount}</span>
+                  <span className="acx-dashboard__stat-label">{__('Failed Replay', 'alt-context')}</span>
+                </div>
+              </div>
+              {topologyPending > 0 || topologyFailed > 0 || topologyConflicts > 0 ? (
+                <p>
+                  {sprintf(
+                    __('Topology backlog: pending %1$d, failed %2$d, conflicts %3$d', 'alt-context'),
+                    topologyPending,
+                    topologyFailed,
+                    topologyConflicts,
+                  )}
+                </p>
+              ) : null}
+              <div className="acx-dashboard__actions">
+                <a href="#/workbench?tab=scan" className="acx-dashboard__action-card">
+                  <h3>{__('Open Workbench', 'alt-context')}</h3>
+                  <p>{__('Inspect sync status, scans, and queued replay work.', 'alt-context')}</p>
+                </a>
+                {conflictCount > 0 ? (
+                  <a href="#/workbench?tab=scan&panel=conflicts" className="acx-dashboard__action-card">
+                    <h3>{__('Open Conflict Inbox', 'alt-context')}</h3>
+                    <p>{__('Review and resolve recorded sync conflicts.', 'alt-context')}</p>
+                  </a>
+                ) : null}
+                {failedReplayCount > 0 ? (
+                  <a href="#/workbench?tab=scan&panel=dead-letter" className="acx-dashboard__action-card">
+                    <h3>{__('Open Dead-Letter Queue', 'alt-context')}</h3>
+                    <p>{__('Retry or discard failed replay operations.', 'alt-context')}</p>
+                  </a>
+                ) : null}
               </div>
             </>
           )}

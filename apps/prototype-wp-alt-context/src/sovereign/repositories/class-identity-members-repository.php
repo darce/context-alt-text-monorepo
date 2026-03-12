@@ -594,6 +594,119 @@ class IdentityMembersRepository implements IdentityMembersRepositoryInterface {
 		return $members;
 	}
 
+	public function reset_curation( string $identity_uuid, string $tenant_id ): int {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_identity_uuid || '' === $normalized_tenant_id ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql = $this->prepare_query(
+			'UPDATE %i m
+			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			SET m.is_curated = 0, m.updated_at = %s
+			WHERE m.identity_uuid = %s AND c.tenant_id = %s',
+			array(
+				$this->members_table_name,
+				$this->clusters_table_name,
+				$now_utc,
+				$normalized_identity_uuid,
+				$normalized_tenant_id,
+			)
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
+	public function delete_member( string $identity_uuid, string $tenant_id ): int {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_identity_uuid || '' === $normalized_tenant_id ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			'DELETE m FROM %i m
+			INNER JOIN %i c ON c.cluster_uuid = m.cluster_uuid
+			WHERE m.identity_uuid = %s AND c.tenant_id = %s',
+			array(
+				$this->members_table_name,
+				$this->clusters_table_name,
+				$normalized_identity_uuid,
+				$normalized_tenant_id,
+			)
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
+	public function accept_machine_cluster_assignment( string $identity_uuid, string $cluster_uuid, string $tenant_id ): int {
+		global $wpdb;
+
+		$normalized_identity_uuid = trim( $identity_uuid );
+		$normalized_cluster_uuid = trim( $cluster_uuid );
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_identity_uuid || '' === $normalized_cluster_uuid || '' === $normalized_tenant_id ) {
+			return 0;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'query' ) ) {
+			return 0;
+		}
+
+		$now_utc = gmdate( 'Y-m-d H:i:s' );
+		$sql = $this->prepare_query(
+			'UPDATE %i m
+			INNER JOIN %i current_cluster ON current_cluster.cluster_uuid = m.cluster_uuid
+			INNER JOIN %i target_cluster ON target_cluster.cluster_uuid = %s
+			SET m.cluster_uuid = %s, m.is_curated = 0, m.updated_at = %s
+			WHERE m.identity_uuid = %s
+				AND current_cluster.tenant_id = %s
+				AND target_cluster.tenant_id = %s',
+			array(
+				$this->members_table_name,
+				$this->clusters_table_name,
+				$this->clusters_table_name,
+				$normalized_cluster_uuid,
+				$normalized_cluster_uuid,
+				$now_utc,
+				$normalized_identity_uuid,
+				$normalized_tenant_id,
+				$normalized_tenant_id,
+			)
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$query_result = $wpdb->query( $sql );
+		return is_int( $query_result ) ? $query_result : 0;
+	}
+
 	/**
 	 * @param string[] $incoming_identity_ids
 	 */

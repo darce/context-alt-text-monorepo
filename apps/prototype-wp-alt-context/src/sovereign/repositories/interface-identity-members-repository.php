@@ -73,4 +73,19 @@ interface IdentityMembersRepositoryInterface {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public function get_curated_members_for_tenant( string $tenant_id ): array;
+
+	/**
+	 * Clear curation from one tenant-scoped member row so projection may overwrite it.
+	 */
+	public function reset_curation( string $identity_uuid, string $tenant_id ): int;
+
+	/**
+	 * Delete one tenant-scoped projected member row.
+	 */
+	public function delete_member( string $identity_uuid, string $tenant_id ): int;
+
+	/**
+	 * Accept a machine reassignment by updating cluster_uuid and clearing is_curated.
+	 */
+	public function accept_machine_cluster_assignment( string $identity_uuid, string $cluster_uuid, string $tenant_id ): int;
 }

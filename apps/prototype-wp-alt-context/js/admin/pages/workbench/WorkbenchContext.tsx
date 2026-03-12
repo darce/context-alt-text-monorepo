@@ -7,8 +7,9 @@ import { useJobStateMachine } from '../../hooks/useJobStateMachine';
 import { useWorkbenchMedia, type WorkbenchMediaItem } from '../../hooks/useWorkbenchMedia';
 import { getConfig } from '../../api/config';
 import { useTabParam } from '../../hooks/useTabParam';
+import { useOverlayParam } from '../../hooks/useOverlayParam';
 import type { JobProgress } from '../../api/recognition/types/scan';
-import type { ClusterResponse } from '../../api/recognition';
+import type { ClusterResponse, WorkbenchOverlay } from '../../api/recognition';
 import type { WorkbenchMediaStatus } from '../../api/workbenchMediaApi';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
@@ -20,6 +21,7 @@ export const TAB_IDS = {
 } as const;
 
 export type WorkbenchTab = (typeof TAB_IDS)[keyof typeof TAB_IDS];
+export type { WorkbenchOverlay } from '../../api/recognition';
 
 type ClusterPanelMode = 'none' | 'label' | 'review';
 
@@ -50,6 +52,8 @@ interface WorkbenchContextValue {
   // Navigation
   activeSection: WorkbenchTab;
   setActiveSection: (section: WorkbenchTab) => void;
+  activeOverlay: WorkbenchOverlay;
+  setActiveOverlay: (overlay: WorkbenchOverlay) => void;
 
   // Job History
   jobId: string | undefined | null;
@@ -118,6 +122,10 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     TAB_IDS.scan,
     TAB_IDS.batch,
     TAB_IDS.confirm,
+  ]);
+  const [activeOverlay, setActiveOverlay] = useOverlayParam<Exclude<WorkbenchOverlay, null>>('panel', [
+    'conflicts',
+    'dead-letter',
   ]);
   const [clusterMessage, setClusterMessage] = useState<string | null>(null);
   const [scanError, setScanError] = useState<string | null>(null);
@@ -246,6 +254,8 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     () => ({
       activeSection,
       setActiveSection,
+      activeOverlay,
+      setActiveOverlay,
       jobId,
       jobHistory,
       jobStatuses,
@@ -296,7 +306,9 @@ export const WorkbenchProvider: React.FC<{ children: React.ReactNode }> = ({ chi
     }),
     [
       activeSection,
+      activeOverlay,
       setActiveSection,
+      setActiveOverlay,
       jobId,
       jobHistory,
       jobStatuses,

@@ -62,4 +62,12 @@ class NullClustersRepository implements ClustersRepositoryInterface {
 	public function get_curated_clusters_for_tenant( string $tenant_id ): array {
 		return array();
 	}
+
+	public function reset_curation( string $cluster_uuid, string $tenant_id ): int {
+		return 0;
+	}
+
+	public function delete_cluster_with_members( string $cluster_uuid, string $tenant_id ): int {
+		return 0;
+	}
 }

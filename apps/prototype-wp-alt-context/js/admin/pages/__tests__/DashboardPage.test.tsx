@@ -5,14 +5,20 @@ import type { DashboardStats } from '../../api/dashboardApi';
 import { useIdentityStats } from '../../hooks/useIdentityStats';
 import { useMediaStats } from '../../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
+import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { createMockQuery } from '../../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
   __: (text: string) => text,
   _n: (single: string, plural: string, count: number) => (count === 1 ? single : plural),
   sprintf: (format: string, ...args: (string | number)[]) => {
-    let index = 0;
-    return format.replace(/%(s|d)/g, () => String(args[index++]));
+    let sequentialIndex = 0;
+    return format.replace(/%((\d+)\$)?([sd])/g, (_match, _position, explicitIndex) => {
+      if (explicitIndex) {
+        return String(args[Number(explicitIndex) - 1] ?? '');
+      }
+      return String(args[sequentialIndex++] ?? '');
+    });
   },
 }));
 
@@ -28,6 +34,10 @@ vi.mock('../../hooks/useIdentityStats', () => ({
   useIdentityStats: vi.fn(),
 }));
 
+vi.mock('../../hooks/useSyncStatus', () => ({
+  useSyncStatus: vi.fn(),
+}));
+
 vi.mock('../dashboard/OrientationCard', () => ({
   OrientationCard: () => <div>Orientation</div>,
 }));
@@ -36,6 +46,7 @@ describe('DashboardPage', () => {
   const mockedUseMediaStats = vi.mocked(useMediaStats);
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
   const mockedUseIdentityStats = vi.mocked(useIdentityStats);
+  const mockedUseSyncStatus = vi.mocked(useSyncStatus);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -54,6 +65,19 @@ describe('DashboardPage', () => {
       selectJob: vi.fn(),
       clearHistory: vi.fn(),
     });
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'healthy',
+          last_sync_result: 'ok',
+          conflict_count: 0,
+          failed_curation_operations: 0,
+        },
+      }),
+    );
   });
 
   it('renders identity stats and pending-review guidance', () => {
@@ -254,5 +278,211 @@ describe('DashboardPage', () => {
     const retryButton = screen.getByRole('button', { name: 'Retry' });
     retryButton.click();
     expect(refetch).toHaveBeenCalledTimes(1);
+  });
+
+  it('shows dashboard sync links for conflicts and dead-letter work', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'conflicts',
+          last_sync_result: 'ok',
+          pending_curation_operations: 3,
+          conflict_count: 2,
+          failed_curation_operations: 1,
+          topology_commands: {
+            pending: 4,
+            applied: 0,
+            failed: 1,
+            conflict: 2,
+            last_reconciled_at: null,
+          },
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Conflict resolution is blocking part of the replay queue.')).toBeInTheDocument();
+    expect(screen.getByText('Pending Replay')).toBeInTheDocument();
+    expect(screen.getByText('Conflicts')).toBeInTheDocument();
+    expect(screen.getByText('Failed Replay')).toBeInTheDocument();
+    expect(screen.getByText('Topology backlog: pending 4, failed 1, conflicts 2')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Conflict Inbox/ })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan&panel=conflicts',
+    );
+    expect(screen.getByRole('link', { name: /Open Dead-Letter Queue/ })).toHaveAttribute(
+      'href',
+      '#/workbench?tab=scan&panel=dead-letter',
+    );
+  });
+
+  it('renders healthy sync summary copy without conflict or dead-letter links when counts are zero', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Machine sync is healthy and curation replay is caught up.')).toBeInTheDocument();
+    expect(screen.getByText('Pending Replay')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Conflict Inbox/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Dead-Letter Queue/ })).not.toBeInTheDocument();
+  });
+
+  it('renders queued sync summary copy with pending replay count', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'queued',
+          last_sync_result: 'ok',
+          pending_curation_operations: 5,
+          conflict_count: 0,
+          failed_curation_operations: 0,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Local curation changes are queued for replay.')).toBeInTheDocument();
+    expect(screen.getByText('Pending Replay')).toBeInTheDocument();
+    expect(screen.getByText('5')).toBeInTheDocument();
+  });
+
+  it('renders stale sync summary copy', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: true,
+          sync_health: 'stale',
+          last_sync_result: 'ok',
+          conflict_count: 0,
+          failed_curation_operations: 0,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Machine state is stale and should be refreshed.')).toBeInTheDocument();
+  });
+
+  it('renders failures sync summary copy', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'failures',
+          last_sync_result: 'failed',
+          conflict_count: 0,
+          failed_curation_operations: 2,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Some replay operations failed and need operator attention.')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Dead-Letter Queue/ })).toBeInTheDocument();
+  });
+
+  it('renders offline sync summary copy', () => {
+    mockedUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'offline',
+          last_sync_result: 'unreachable',
+          conflict_count: 0,
+          failed_curation_operations: 0,
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('The recognition backend is currently unreachable.')).toBeInTheDocument();
   });
 });

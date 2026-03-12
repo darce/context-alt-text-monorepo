@@ -6,6 +6,7 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\SyncStatusController;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
@@ -21,7 +22,7 @@ class SyncStatusControllerTest extends TestCase
             public function get_snapshot_version(string $tenant_id): int {
 					return 12; }
             public function get_last_updated(string $tenant_id): ?string {
-					return '2026-02-14 00:00:00'; }
+					return gmdate('Y-m-d H:i:s', time() - 60); }
         };
 
         $controller = new SyncStatusController($syncRepo);
@@ -31,7 +32,9 @@ class SyncStatusControllerTest extends TestCase
         $this->assertInstanceOf(\WP_REST_Response::class, $response);
         $data = $response->get_data();
         $this->assertSame(12, $data['last_snapshot_version']);
-        $this->assertSame('2026-02-14 00:00:00', $data['last_synced_at']);
+        $this->assertIsString($data['last_synced_at']);
+        $this->assertSame('healthy', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
         $this->assertSame(0, $data['pending_curation_operations']);
         $this->assertSame(0, $data['failed_curation_operations']);
         $this->assertSame(0, $data['conflict_count']);
@@ -99,6 +102,8 @@ class SyncStatusControllerTest extends TestCase
         $response = $controller->get_sync_status($request);
 
         $data = $response->get_data();
+        $this->assertSame('failures', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
         $this->assertSame(4, $data['pending_curation_operations']);
         $this->assertSame(1, $data['failed_curation_operations']);
         $this->assertSame(2, $data['conflict_count']);
@@ -137,6 +142,7 @@ class SyncStatusControllerTest extends TestCase
         $response = $controller->get_sync_status($request);
 
         $data = $response->get_data();
+        $this->assertSame('stale', $data['sync_health']);
         $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is older than threshold');
     }
 
@@ -160,7 +166,44 @@ class SyncStatusControllerTest extends TestCase
         $response = $controller->get_sync_status($request);
 
         $data = $response->get_data();
+        $this->assertSame('healthy', $data['sync_health']);
         $this->assertFalse($data['is_stale'], 'Projection should not be stale when updated_at is recent');
+    }
+
+    public function testGetSyncStatusReturnsQueuedWhenPendingOperationsExist(): void
+    {
+        $recentTimestamp = gmdate('Y-m-d H:i:s', time() - 300);
+
+        $syncRepo = new class($recentTimestamp) extends NullSyncStateRepository {
+            private string $timestamp;
+
+            public function __construct(string $timestamp) {
+                $this->timestamp = $timestamp;
+            }
+
+            public function get_snapshot_version(string $tenant_id): int {
+                return 6;
+            }
+
+            public function get_last_updated(string $tenant_id): ?string {
+                return $this->timestamp;
+            }
+
+            public function get_pending_curation_operations(string $tenant_id): int {
+                return 3;
+            }
+        };
+
+        $controller = new SyncStatusController($syncRepo);
+        $request = new WP_REST_Request('GET', '/acx/v1/recognition/sync-status');
+        $response = $controller->get_sync_status($request);
+
+        $data = $response->get_data();
+        $this->assertSame('queued', $data['sync_health']);
+        $this->assertFalse($data['is_stale']);
+        $this->assertSame(3, $data['pending_curation_operations']);
+        $this->assertSame(0, $data['failed_curation_operations']);
+        $this->assertSame(0, $data['conflict_count']);
     }
 
     public function testGetSyncStatusReturnsStaleTrueWhenNullTimestamp(): void
@@ -177,16 +220,25 @@ class SyncStatusControllerTest extends TestCase
         $response = $controller->get_sync_status($request);
 
         $data = $response->get_data();
+        $this->assertSame('stale', $data['sync_health']);
         $this->assertTrue($data['is_stale'], 'Projection should be stale when updated_at is null');
     }
 
     public function testTriggerSyncBuildsLazySyncJobWhenNoSyncPullJobInjected(): void
     {
           $syncRepo = new class() extends NullSyncStateRepository {
+            private string $lastSyncResult = 'ok';
+
             public function get_snapshot_version(string $tenant_id): int {
 				return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 				return null; }
+            public function get_last_sync_result(string $tenant_id): string {
+                return $this->lastSyncResult;
+            }
+            public function set_last_sync_result(string $tenant_id, string $result): void {
+                $this->lastSyncResult = $result;
+            }
 		  };
 
         $this->queueHttpResponse([
@@ -202,6 +254,8 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_failed', $data['reason']);
+        $this->assertSame('offline', $data['sync_health']);
+        $this->assertSame('unreachable', $data['last_sync_result']);
 
         $calls = $this->getHttpCalls();
         $this->assertCount(1, $calls);
@@ -223,10 +277,10 @@ class SyncStatusControllerTest extends TestCase
 		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
-            public function perform(string $tenant_id): bool {
-				return true; }
-            public function perform_bypass_cooldown(string $tenant_id): bool {
-				return true; }
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
         };
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
@@ -236,6 +290,8 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertTrue($data['synced']);
         $this->assertSame('ok', $data['reason']);
+        $this->assertSame('healthy', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
         $this->assertSame(3, $data['last_snapshot_version']);
         $this->assertSame($recentTimestamp, $data['last_synced_at']);
         $this->assertFalse($data['is_stale']);
@@ -277,13 +333,13 @@ class SyncStatusControllerTest extends TestCase
                 $this->syncRepo = $syncRepo;
             }
 
-            public function perform(string $tenant_id): bool {
+            public function perform(string $tenant_id): SyncPullResult {
                 return $this->perform_bypass_cooldown($tenant_id);
             }
 
-            public function perform_bypass_cooldown(string $tenant_id): bool {
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
                 $this->syncRepo->setConflictCount(3);
-                return true;
+                return SyncPullResult::ok();
             }
         };
 
@@ -293,6 +349,7 @@ class SyncStatusControllerTest extends TestCase
 
         $data = $response->get_data();
         $this->assertTrue($data['synced']);
+        $this->assertSame('conflicts', $data['sync_health']);
         $this->assertSame(3, $data['conflict_count']);
         $this->assertSame($recentTimestamp, $data['last_synced_at']);
         $this->assertSame(0, $data['topology_commands']['pending']);
@@ -305,13 +362,16 @@ class SyncStatusControllerTest extends TestCase
 				return 0; }
             public function get_last_updated(string $tenant_id): ?string {
 				return null; }
+            public function get_last_sync_result(string $tenant_id): string {
+                return 'failed';
+            }
 		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
-            public function perform(string $tenant_id): bool {
-				return false; }
-            public function perform_bypass_cooldown(string $tenant_id): bool {
-				return false; }
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::failed(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::failed(); }
         };
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
@@ -321,6 +381,8 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_failed', $data['reason']);
+        $this->assertSame('stale', $data['sync_health']);
+        $this->assertSame('failed', $data['last_sync_result']);
         $this->assertTrue($data['is_stale']);
     }
 
@@ -334,9 +396,9 @@ class SyncStatusControllerTest extends TestCase
 		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
-            public function perform(string $tenant_id): bool {
-				return false; }
-            public function perform_bypass_cooldown(string $tenant_id): bool {
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::failed(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
                 throw new \RuntimeException('Connection refused');
             }
         };
@@ -348,6 +410,7 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_failed', $data['reason']);
+        $this->assertSame('stale', $data['sync_health']);
     }
 
     public function testTriggerSyncReturnsFullShapeWhenSyncJobCannotBeBuilt(): void
@@ -383,6 +446,9 @@ class SyncStatusControllerTest extends TestCase
             public function get_last_topology_reconciled_at(string $tenant_id): ?string {
                 return '2026-03-08 01:05:00';
             }
+            public function get_last_sync_result(string $tenant_id): string {
+                return 'ok';
+            }
         };
 
         $controller = new class($syncRepo) extends SyncStatusController {
@@ -399,6 +465,8 @@ class SyncStatusControllerTest extends TestCase
         $this->assertFalse($data['synced']);
         $this->assertSame('sync_unavailable', $data['reason']);
         $this->assertSame('composition failed', $data['error']);
+        $this->assertSame('failures', $data['sync_health']);
+        $this->assertSame('ok', $data['last_sync_result']);
         $this->assertSame(11, $data['last_snapshot_version']);
         $this->assertSame('2026-03-08 01:00:00', $data['last_synced_at']);
         $this->assertSame(2, $data['pending_curation_operations']);
@@ -418,10 +486,10 @@ class SyncStatusControllerTest extends TestCase
 		  };
 
         $syncJob = new class() implements SyncPullJobInterface {
-            public function perform(string $tenant_id): bool {
-				return true; }
-            public function perform_bypass_cooldown(string $tenant_id): bool {
-				return true; }
+            public function perform(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
+            public function perform_bypass_cooldown(string $tenant_id): SyncPullResult {
+				return SyncPullResult::ok(); }
         };
 
         $controller = new SyncStatusController($syncRepo, $syncJob);
@@ -431,6 +499,7 @@ class SyncStatusControllerTest extends TestCase
         $data = $response->get_data();
         $this->assertTrue($data['synced']);
         $this->assertSame('no_remote_data', $data['reason']);
+        $this->assertSame('stale', $data['sync_health']);
         $this->assertSame(0, $data['last_snapshot_version']);
     }
 }

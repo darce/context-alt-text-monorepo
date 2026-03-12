@@ -319,6 +319,8 @@ class LifecycleManager {
 		$sync_sql = "CREATE TABLE {$sync_table} (
 			stream_name varchar(100) NOT NULL,
 			last_snapshot_version bigint(20) unsigned NOT NULL DEFAULT 0,
+			last_sync_result varchar(20) NOT NULL DEFAULT 'ok',
+			last_sync_attempted_at datetime DEFAULT NULL,
 			pending_curation_operations int(11) unsigned NOT NULL DEFAULT 0,
 			failed_curation_operations int(11) unsigned NOT NULL DEFAULT 0,
 			conflict_count int(11) unsigned NOT NULL DEFAULT 0,

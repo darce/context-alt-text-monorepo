@@ -11,6 +11,10 @@ interface SyncStateRepositoryInterface {
 
 	public function get_last_updated( string $tenant_id ): ?string;
 
+	public function get_last_sync_result( string $tenant_id ): string;
+
+	public function set_last_sync_result( string $tenant_id, string $result ): void;
+
 	public function touch_local_curation_marker( string $tenant_id ): void;
 
 	public function refresh_curation_metrics( string $tenant_id ): void;

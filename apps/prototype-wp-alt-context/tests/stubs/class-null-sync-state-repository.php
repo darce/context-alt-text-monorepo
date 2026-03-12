@@ -22,6 +22,12 @@ class NullSyncStateRepository implements SyncStateRepositoryInterface {
 		return null;
 	}
 
+	public function get_last_sync_result( string $tenant_id ): string {
+		return 'ok';
+	}
+
+	public function set_last_sync_result( string $tenant_id, string $result ): void {}
+
 	public function touch_local_curation_marker( string $tenant_id ): void {}
 
 	public function refresh_curation_metrics( string $tenant_id ): void {}

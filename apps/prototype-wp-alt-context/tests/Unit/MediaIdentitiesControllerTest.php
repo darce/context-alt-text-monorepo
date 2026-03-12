@@ -6,8 +6,8 @@ namespace AltContext\Tests\Unit;
 
 use AltContext\Api\MediaIdentitiesController;
 use AltContext\Sovereign\Mappers\MemberResponseMapper;
-use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
-use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
+use AltContext\Tests\Stubs\NullIdentityMembersRepository;
+use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_REST_Request;
 
@@ -18,26 +18,7 @@ class MediaIdentitiesControllerTest extends TestCase
 {
     public function testMediaIdentitiesUsesLocalProjectionWhenSyncStatePresent(): void
     {
-        $membersRepo = new class() implements IdentityMembersRepositoryInterface {
-            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void {}
-            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array {
-				return []; }
-            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array {
-				return []; }
-            public function mark_as_curated(string $identity_uuid): int {
-				return 0; }
-            public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
-				return 0; }
-            public function assign_to_cluster_for_projection(string $identity_uuid, string $target_cluster_uuid, int $projection_version): int {
-				return 0; }
-            public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int {
-				return 0; }
-            public function count_for_cluster(string $cluster_uuid): int {
-				return 0; }
-            public function find_by_identity_uuid(string $identity_uuid): ?array {
-				return null; }
-            public function get_curated_members_for_tenant(string $tenant_id): array {
-				return []; }
+        $membersRepo = new class() extends NullIdentityMembersRepository {
             public function list_for_media_ids(string $tenant_id, array $media_ids): array
             {
                 return [
@@ -50,47 +31,11 @@ class MediaIdentitiesControllerTest extends TestCase
             }
         };
 
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
+        $syncRepo = new class() extends NullSyncStateRepository {
             public function get_snapshot_version(string $tenant_id): int {
 					return 1; }
             public function get_last_updated(string $tenant_id): ?string {
 					return '2026-02-14 00:00:00'; }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-            public function refresh_curation_metrics(string $tenant_id): void {}
-            public function get_pending_curation_operations(string $tenant_id): int {
-                return 0;
-            }
-            public function get_conflict_count(string $tenant_id): int {
-                return 0;
-            }
-            public function get_failed_curation_operations(string $tenant_id): int {
-                return 0;
-            }
-            public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
-                return null;
-            }
-            public function get_last_curation_conflict_at(string $tenant_id): ?string {
-                return null;
-            }
-            public function get_last_curation_failed_at(string $tenant_id): ?string {
-                return null;
-            }
-            public function get_pending_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_applied_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_failed_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_conflicted_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
-                return null;
-            }
         };
 
         $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
@@ -107,82 +52,13 @@ class MediaIdentitiesControllerTest extends TestCase
 
     public function testMediaIdentitiesReturnsEmptyPayloadWhenProxyUnavailable(): void
     {
-        $membersRepo = new class() implements IdentityMembersRepositoryInterface {
-            public function merge_snapshot_for_tenant(string $tenant_id, array $members, int $snapshot_version): void {}
-            public function list_for_cluster(string $cluster_uuid, int $limit = 500, int $offset = 0, ?string $tenant_id = null): array {
-                return [];
-            }
-            public function list_for_cluster_uuids(array $cluster_uuids, int $limit_per_cluster): array {
-                return [];
-            }
-            public function mark_as_curated(string $identity_uuid): int {
-				return 0; }
-            public function reassign_to_cluster(string $identity_uuid, string $target_cluster_uuid): int {
-                return 0;
-            }
-            public function assign_to_cluster_for_projection(string $identity_uuid, string $target_cluster_uuid, int $projection_version): int {
-                return 0;
-            }
-            public function reassign_cluster_members(string $source_cluster_uuid, string $target_cluster_uuid): int {
-                return 0;
-            }
-            public function count_for_cluster(string $cluster_uuid): int {
-                return 0;
-            }
-            public function find_by_identity_uuid(string $identity_uuid): ?array {
-                return null;
-            }
-            public function get_curated_members_for_tenant(string $tenant_id): array {
-				return []; }
+        $membersRepo = new class() extends NullIdentityMembersRepository {
             public function list_for_media_ids(string $tenant_id, array $media_ids): array {
                 return [];
             }
         };
 
-        $syncRepo = new class() implements SyncStateRepositoryInterface {
-            public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void {}
-            public function get_snapshot_version(string $tenant_id): int {
-                return 0;
-            }
-            public function get_last_updated(string $tenant_id): ?string {
-                return null;
-            }
-            public function touch_local_curation_marker(string $tenant_id): void {}
-            public function refresh_curation_metrics(string $tenant_id): void {}
-            public function get_pending_curation_operations(string $tenant_id): int {
-                return 0;
-            }
-            public function get_conflict_count(string $tenant_id): int {
-                return 0;
-            }
-            public function get_failed_curation_operations(string $tenant_id): int {
-                return 0;
-            }
-            public function get_last_curation_acknowledged_at(string $tenant_id): ?string {
-                return null;
-            }
-            public function get_last_curation_conflict_at(string $tenant_id): ?string {
-                return null;
-            }
-            public function get_last_curation_failed_at(string $tenant_id): ?string {
-                return null;
-            }
-            public function get_pending_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_applied_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_failed_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_conflicted_topology_commands(string $tenant_id): int {
-                return 0;
-            }
-            public function get_last_topology_reconciled_at(string $tenant_id): ?string {
-                return null;
-            }
-        };
+        $syncRepo = new NullSyncStateRepository();
 
         $controller = new MediaIdentitiesController($membersRepo, $syncRepo, new MemberResponseMapper());
         $this->queueHttpResponse(new \WP_Error('proxy_failed', 'Proxy failure.'));

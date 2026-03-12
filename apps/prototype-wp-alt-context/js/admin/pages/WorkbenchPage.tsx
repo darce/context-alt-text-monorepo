@@ -6,6 +6,8 @@ import { SyncStatusIndicator } from './workbench/SyncStatusIndicator';
 import { ScanTabContent } from './workbench/ScanTabContent';
 import { BatchTabContent } from './workbench/BatchTabContent';
 import { ConfirmTabContent } from './workbench/ConfirmTabContent';
+import { ConflictInbox } from './workbench/ConflictInbox';
+import { DeadLetterPanel } from './workbench/DeadLetterPanel';
 import { WorkbenchProvider, useWorkbenchContext, TAB_IDS, type WorkbenchTab } from './workbench/WorkbenchContext';
 
 interface WorkbenchSection {
@@ -50,6 +52,8 @@ const WorkbenchPageContent = (): React.JSX.Element => {
     activeSection,
     setActiveSection,
     recognitionUrlFallback,
+    activeOverlay,
+    setActiveOverlay,
     isOnline,
     isPrimary,
     latestJobId,
@@ -85,11 +89,31 @@ const WorkbenchPageContent = (): React.JSX.Element => {
 
         <div className="acx-workbench__panels">
           <SyncStatusIndicator
+            activeSection={activeSection}
             pipelinePhase={currentPhase}
             projectionState={projectionSyncState}
             projectionError={projectionError}
             onRetryProjection={retryProjectionSync}
           />
+          {activeOverlay ? (
+            <section className="acx-workbench__overlay" aria-label={__('Workbench overlay', 'alt-context')}>
+              <div className="acx-workbench__overlay-header">
+                <h2 className="acx-workbench__overlay-title">
+                  {activeOverlay === 'conflicts'
+                    ? __('Conflict Inbox', 'alt-context')
+                    : __('Dead-Letter Queue', 'alt-context')}
+                </h2>
+                <button
+                  type="button"
+                  className="button button-link"
+                  onClick={() => setActiveOverlay(null)}
+                >
+                  {__('Close', 'alt-context')}
+                </button>
+              </div>
+              {activeOverlay === 'conflicts' ? <ConflictInbox /> : <DeadLetterPanel />}
+            </section>
+          ) : null}
           {recognitionUrlFallback && (
             <div className="acx-notice acx-notice--warning">
               {__(

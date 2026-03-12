@@ -13,6 +13,7 @@ use function is_array;
 use function is_numeric;
 use function is_object;
 use function is_string;
+use function json_decode;
 use function max;
 use function method_exists;
 use function trim;
@@ -172,6 +173,7 @@ class ConflictRepository {
 			ON DUPLICATE KEY UPDATE
 				machine_payload = VALUES(machine_payload),
 				local_payload = VALUES(local_payload),
+				backend_version = VALUES(backend_version),
 				expected_base_version = VALUES(expected_base_version),
 				local_revision = VALUES(local_revision)",
 			array(
@@ -205,6 +207,165 @@ class ConflictRepository {
 	}
 
 	/**
+	 * @return array<int,array<string,mixed>>
+	 */
+	public function find_conflicts_for_tenant( string $tenant_id, string $resolution_status = 'open', int $limit = 50, int $offset = 0 ): array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_status = trim( $resolution_status );
+		if (
+			'' === $normalized_tenant_id
+			|| '' === $normalized_status
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_results' )
+		) {
+			return array();
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT id, tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, machine_payload, local_payload, resolution_status, resolved_at, created_at
+			FROM %i
+			WHERE tenant_id = %s AND resolution_status = %s
+			ORDER BY created_at DESC, id DESC
+			LIMIT %d OFFSET %d',
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+				$normalized_status,
+				max( 1, $limit ),
+				max( 0, $offset ),
+			)
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return array();
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$rows = $wpdb->get_results( $sql, ARRAY_A );
+		if ( ! is_array( $rows ) ) {
+			return array();
+		}
+
+		return array_values(
+			array_filter(
+				array_map( array( $this, 'decode_payload_fields' ), $rows ),
+				'is_array'
+			)
+		);
+	}
+
+	/**
+	 * @return array<string,mixed>|null
+	 */
+	public function find_conflict_by_id( int $conflict_id, string $tenant_id ): ?array {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if (
+			$conflict_id <= 0
+			|| '' === $normalized_tenant_id
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_row' )
+		) {
+			return null;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT id, tenant_id, entity_type, entity_key, outbox_id, expected_base_version, backend_version, local_revision, conflict_code, machine_payload, local_payload, resolution_status, resolved_at, created_at
+			FROM %i
+			WHERE id = %d AND tenant_id = %s
+			LIMIT 1',
+			array(
+				$this->table_name,
+				$conflict_id,
+				$normalized_tenant_id,
+			)
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return null;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		$row = $wpdb->get_row( $sql, ARRAY_A );
+		if ( ! is_array( $row ) ) {
+			return null;
+		}
+
+		return $this->decode_payload_fields( $row );
+	}
+
+	public function mark_resolved( int $conflict_id, string $resolution_status, string $tenant_id ): bool {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_status = trim( $resolution_status );
+		if (
+			$conflict_id <= 0
+			|| '' === $normalized_tenant_id
+			|| '' === $normalized_status
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'update' )
+		) {
+			return false;
+		}
+
+		$updated = $wpdb->update(
+			$this->table_name,
+			array(
+				'resolution_status' => $normalized_status,
+				'resolved_at' => current_time( 'mysql' ),
+			),
+			array(
+				'id' => $conflict_id,
+				'tenant_id' => $normalized_tenant_id,
+				'resolution_status' => 'open',
+			),
+			array( '%s', '%s' ),
+			array( '%d', '%s', '%s' )
+		);
+
+		return false !== $updated;
+	}
+
+	public function count_conflicts( string $tenant_id, string $resolution_status = 'open' ): int {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		$normalized_status = trim( $resolution_status );
+		if (
+			'' === $normalized_tenant_id
+			|| '' === $normalized_status
+			|| ! isset( $wpdb )
+			|| ! is_object( $wpdb )
+			|| ! method_exists( $wpdb, 'prepare' )
+			|| ! method_exists( $wpdb, 'get_var' )
+		) {
+			return 0;
+		}
+
+		$sql = $this->prepare_query(
+			'SELECT COUNT(*) FROM %i WHERE tenant_id = %s AND resolution_status = %s',
+			array(
+				$this->table_name,
+				$normalized_tenant_id,
+				$normalized_status,
+			)
+		);
+		if ( ! is_string( $sql ) || '' === $sql ) {
+			return 0;
+		}
+
+		// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+		return max( 0, (int) $wpdb->get_var( $sql ) );
+	}
+
+	/**
 	 * @param array<string,mixed> $payload
 	 */
 	private function encode_payload_json( array $payload ): string {
@@ -214,6 +375,22 @@ class ConflictRepository {
 		}
 
 		return $encoded_payload;
+	}
+
+	/**
+	 * @param array<string,mixed> $row
+	 * @return array<string,mixed>
+	 */
+	private function decode_payload_fields( array $row ): array {
+		foreach ( array( 'machine_payload', 'local_payload' ) as $field ) {
+			$value = $row[ $field ] ?? array();
+			if ( is_string( $value ) ) {
+				$decoded = json_decode( $value, true );
+				$row[ $field ] = is_array( $decoded ) ? $decoded : array();
+			}
+		}
+
+		return $row;
 	}
 
 	/**

@@ -6,6 +6,9 @@ require_once __DIR__ . '/stubs/wp.php';
 require_once __DIR__ . '/stubs/class-null-clusters-repository.php';
 require_once __DIR__ . '/stubs/class-null-identity-members-repository.php';
 require_once __DIR__ . '/stubs/class-null-sync-state-repository.php';
+require_once __DIR__ . '/stubs/class-in-memory-conflict-repository.php';
+require_once __DIR__ . '/stubs/class-in-memory-outbox-drain.php';
+require_once __DIR__ . '/stubs/class-tracking-sync-state-repository.php';
 
 spl_autoload_register(static function (string $class): void {
     $prefix = 'AltContext\\';

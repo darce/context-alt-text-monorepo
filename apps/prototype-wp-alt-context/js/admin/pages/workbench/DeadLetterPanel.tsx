@@ -1,0 +1,336 @@
+import React, { useState } from 'react';
+import { __, sprintf } from '@wordpress/i18n';
+
+import type { OutboxOperation } from '../../api/recognition';
+import { useDeadLetterOperations } from '../../hooks/useDeadLetterOperations';
+import { useDiscardOperation } from '../../hooks/useDiscardOperation';
+import { useOutboxOperations } from '../../hooks/useOutboxOperations';
+import { useRetryOperation } from '../../hooks/useRetryOperation';
+import { useSyncStatus } from '../../hooks/useSyncStatus';
+
+const PAGE_SIZE = 20;
+const TIMELINE_PAGE_SIZE = 10;
+const TIMELINE_STATUSES = ['all', 'pending', 'acknowledged', 'conflict', 'failed', 'discarded'] as const;
+type TimelineStatusFilter = (typeof TIMELINE_STATUSES)[number];
+
+const OPERATION_LABELS: Record<string, string> = {
+  cluster_label_updated: __('Cluster label update', 'alt-context'),
+  cluster_dismissed: __('Cluster dismiss', 'alt-context'),
+  cluster_undismissed: __('Cluster undismiss', 'alt-context'),
+  identity_reassigned: __('Identity reassignment', 'alt-context'),
+  cluster_person_bound: __('Cluster person bind', 'alt-context'),
+  cluster_person_unbound: __('Cluster person unbind', 'alt-context'),
+  person_created: __('Person created', 'alt-context'),
+  person_updated: __('Person updated', 'alt-context'),
+  person_deleted: __('Person deleted', 'alt-context'),
+  cluster_merged: __('Cluster merge', 'alt-context'),
+  revert_merge_cluster: __('Cluster merge revert', 'alt-context'),
+  assign_outlier_to_cluster: __('Assign outlier to cluster', 'alt-context'),
+  cluster_created_for_identity: __('Create cluster for identity', 'alt-context'),
+};
+
+const formatOperationType = (operationType: string): string =>
+  OPERATION_LABELS[operationType] ?? operationType.replaceAll('_', ' ');
+
+const formatStatusLabel = (status: string): string => status.replaceAll('_', ' ');
+
+const formatTimestamp = (value: string | null | undefined): string => {
+  if (!value) {
+    return __('Unknown time', 'alt-context');
+  }
+
+  const parsed = new Date(value);
+  if (Number.isNaN(parsed.getTime())) {
+    return value;
+  }
+
+  return parsed.toLocaleString();
+};
+
+const formatErrorSummary = (operation: OutboxOperation): string => {
+  if (operation.last_error_code && operation.last_error_message) {
+    return `${operation.last_error_code}: ${operation.last_error_message}`;
+  }
+
+  if (operation.last_error_message) {
+    return operation.last_error_message;
+  }
+
+  if (operation.last_error_code) {
+    return operation.last_error_code;
+  }
+
+  return __('No error details recorded.', 'alt-context');
+};
+
+const formatPayloadSummary = (payload: Record<string, unknown> | undefined): string | null => {
+  if (!payload || Object.keys(payload).length === 0) {
+    return null;
+  }
+
+  if (typeof payload.label === 'string') {
+    return sprintf(__('Payload label: %s', 'alt-context'), payload.label);
+  }
+
+  if (typeof payload.person_id === 'string') {
+    return sprintf(__('Payload person: %s', 'alt-context'), payload.person_id);
+  }
+
+  return JSON.stringify(payload);
+};
+
+export const DeadLetterPanel = (): React.JSX.Element => {
+  const [offset, setOffset] = useState(0);
+  const [timelineOffset, setTimelineOffset] = useState(0);
+  const [timelineStatus, setTimelineStatus] = useState<TimelineStatusFilter>('all');
+  const [pendingDiscardId, setPendingDiscardId] = useState<number | null>(null);
+  const [notice, setNotice] = useState<string | null>(null);
+  const [mutationError, setMutationError] = useState<string | null>(null);
+
+  const operationsQuery = useDeadLetterOperations({ limit: PAGE_SIZE, offset });
+  const timelineQuery = useOutboxOperations({
+    limit: TIMELINE_PAGE_SIZE,
+    offset: timelineOffset,
+    status: timelineStatus === 'all' ? undefined : timelineStatus,
+  });
+  const retryMutation = useRetryOperation();
+  const discardMutation = useDiscardOperation();
+  const syncStatusQuery = useSyncStatus();
+
+  const handleRetry = async (id: number): Promise<void> => {
+    try {
+      await retryMutation.mutateAsync(id);
+      setPendingDiscardId(null);
+      setMutationError(null);
+      setNotice(__('Operation moved back to pending replay.', 'alt-context'));
+    } catch {
+      setNotice(null);
+      setMutationError(__('Unable to retry this operation. Please try again.', 'alt-context'));
+    }
+  };
+
+  const handleDiscard = async (id: number): Promise<void> => {
+    if (pendingDiscardId !== id) {
+      setMutationError(null);
+      setPendingDiscardId(id);
+      return;
+    }
+
+    try {
+      await discardMutation.mutateAsync(id);
+      setPendingDiscardId(null);
+      setMutationError(null);
+      setNotice(__('Operation discarded from dead-letter queue.', 'alt-context'));
+    } catch {
+      setNotice(null);
+      setMutationError(__('Unable to discard this operation. Please try again.', 'alt-context'));
+    }
+  };
+
+  if (operationsQuery.isLoading) {
+    return <section aria-label="Dead-letter panel">{__('Loading failed operations…', 'alt-context')}</section>;
+  }
+
+  if (operationsQuery.isError || !operationsQuery.data) {
+    return (
+      <section aria-label="Dead-letter panel">
+        <div className="acx-error-state">
+          <p>{__('Unable to load failed operations.', 'alt-context')}</p>
+        </div>
+      </section>
+    );
+  }
+
+  const { items, total, limit } = operationsQuery.data;
+  const canPageBack = offset > 0;
+  const canPageForward = offset + items.length < total;
+  const rangeStart = total === 0 ? 0 : offset + 1;
+  const rangeEnd = offset + items.length;
+  const topologyStatus = syncStatusQuery.data?.topology_commands;
+  const hasTopologyStatus =
+    !!topologyStatus &&
+    (topologyStatus.pending > 0 ||
+      topologyStatus.applied > 0 ||
+      topologyStatus.failed > 0 ||
+      topologyStatus.conflict > 0);
+
+  return (
+    <section aria-label="Dead-letter panel">
+      <h3>{__('Failed replay operations', 'alt-context')}</h3>
+      <p>
+        {sprintf(
+          __('Showing %1$d-%2$d of %3$d failed operations.', 'alt-context'),
+          rangeStart,
+          rangeEnd,
+          total,
+        )}
+      </p>
+      {notice ? (
+        <div className="acx-notice acx-notice--info">
+          <p>{notice}</p>
+        </div>
+      ) : null}
+      {mutationError ? (
+        <div className="acx-notice acx-notice--warning">
+          <p>{mutationError}</p>
+        </div>
+      ) : null}
+      {hasTopologyStatus ? (
+        <div className="acx-notice acx-notice--info">
+          <p>
+            {sprintf(
+              __('Topology commands: pending %1$d, applied %2$d, failed %3$d, conflicts %4$d.', 'alt-context'),
+              topologyStatus.pending,
+              topologyStatus.applied,
+              topologyStatus.failed,
+              topologyStatus.conflict,
+            )}
+          </p>
+        </div>
+      ) : null}
+      <div className="acx-workbench__panel">
+        <h4>{__('Outbox operation timeline', 'alt-context')}</h4>
+        <div className="acx-dashboard__actions">
+          {TIMELINE_STATUSES.map((status) => (
+            <button
+              key={status}
+              type="button"
+              className="button button-secondary"
+              onClick={() => {
+                setTimelineStatus(status);
+                setTimelineOffset(0);
+              }}
+              disabled={timelineStatus === status}
+            >
+              {status === 'all' ? __('All', 'alt-context') : formatStatusLabel(status)}
+            </button>
+          ))}
+        </div>
+        {timelineQuery.isLoading ? <p>{__('Loading outbox timeline…', 'alt-context')}</p> : null}
+        {timelineQuery.isError ? <p>{__('Unable to load outbox timeline.', 'alt-context')}</p> : null}
+        {!timelineQuery.isLoading && !timelineQuery.isError && timelineQuery.data ? (
+          <>
+            <p>
+              {sprintf(
+                __('Showing %1$d-%2$d of %3$d operations (%4$s).', 'alt-context'),
+                timelineQuery.data.total === 0 ? 0 : timelineOffset + 1,
+                timelineOffset + timelineQuery.data.items.length,
+                timelineQuery.data.total,
+                timelineStatus === 'all' ? __('all statuses', 'alt-context') : formatStatusLabel(timelineStatus),
+              )}
+            </p>
+            {timelineQuery.data.items.length === 0 ? (
+              <p>{__('No outbox operations found for this filter.', 'alt-context')}</p>
+            ) : (
+              <>
+                <ul className="acx-dashboard__activity-list">
+                  {timelineQuery.data.items.map((operation) => (
+                    <li key={`timeline-${operation.id}`} className="acx-dashboard__activity-item">
+                      <div>
+                        <strong>{formatOperationType(operation.operation_type)}</strong>
+                        <p>{sprintf(__('Status: %s', 'alt-context'), formatStatusLabel(operation.status))}</p>
+                        <p>{sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}</p>
+                        <p>{sprintf(__('Created: %s', 'alt-context'), formatTimestamp(operation.created_at))}</p>
+                        {operation.last_attempted_at ? (
+                          <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
+                        ) : null}
+                        {operation.acknowledged_at ? (
+                          <p>{sprintf(__('Acknowledged: %s', 'alt-context'), formatTimestamp(operation.acknowledged_at))}</p>
+                        ) : null}
+                      </div>
+                    </li>
+                  ))}
+                </ul>
+                <div className="acx-dashboard__actions">
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setTimelineOffset(timelineOffset - TIMELINE_PAGE_SIZE)}
+                    disabled={timelineOffset === 0}
+                  >
+                    {__('Previous timeline page', 'alt-context')}
+                  </button>
+                  <button
+                    type="button"
+                    className="button button-secondary"
+                    onClick={() => setTimelineOffset(timelineOffset + TIMELINE_PAGE_SIZE)}
+                    disabled={timelineOffset + timelineQuery.data.items.length >= timelineQuery.data.total}
+                  >
+                    {__('Next timeline page', 'alt-context')}
+                  </button>
+                </div>
+              </>
+            )}
+          </>
+        ) : null}
+      </div>
+      {items.length === 0 ? (
+        <p>{__('No failed replay operations.', 'alt-context')}</p>
+      ) : (
+        <>
+          <ul className="acx-dashboard__activity-list">
+            {items.map((operation) => {
+              const payloadSummary = formatPayloadSummary(operation.payload);
+              const discardPending = pendingDiscardId === operation.id;
+
+              return (
+                <li key={operation.id} className="acx-dashboard__activity-item">
+                  <div>
+                    <strong>{formatOperationType(operation.operation_type)}</strong>
+                    <p>{sprintf(__('Entity: %1$s (%2$s)', 'alt-context'), operation.entity_key, operation.entity_type)}</p>
+                    <p>{sprintf(__('Attempts: %d', 'alt-context'), operation.attempts)}</p>
+                    <p>{sprintf(__('Last attempted: %s', 'alt-context'), formatTimestamp(operation.last_attempted_at))}</p>
+                    <p>{sprintf(__('Error: %s', 'alt-context'), formatErrorSummary(operation))}</p>
+                    {payloadSummary ? <p>{payloadSummary}</p> : null}
+                  </div>
+                  <div className="acx-dashboard__actions">
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => {
+                        void handleRetry(operation.id);
+                      }}
+                      disabled={retryMutation.isPending || discardMutation.isPending}
+                    >
+                      {__('Retry', 'alt-context')}
+                    </button>
+                    <button
+                      type="button"
+                      className="button button-secondary"
+                      onClick={() => {
+                        void handleDiscard(operation.id);
+                      }}
+                      disabled={retryMutation.isPending || discardMutation.isPending}
+                    >
+                      {discardPending ? __('Confirm discard', 'alt-context') : __('Discard', 'alt-context')}
+                    </button>
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+          <div className="acx-dashboard__actions">
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setOffset(offset - limit)}
+              disabled={!canPageBack}
+            >
+              {__('Previous', 'alt-context')}
+            </button>
+            <button
+              type="button"
+              className="button button-secondary"
+              onClick={() => setOffset(offset + limit)}
+              disabled={!canPageForward}
+            >
+              {__('Next', 'alt-context')}
+            </button>
+          </div>
+        </>
+      )}
+    </section>
+  );
+};
+
+export default DeadLetterPanel;

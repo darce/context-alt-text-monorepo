@@ -53,4 +53,16 @@ class NullIdentityMembersRepository implements IdentityMembersRepositoryInterfac
 	public function get_curated_members_for_tenant( string $tenant_id ): array {
 		return array();
 	}
+
+	public function reset_curation( string $identity_uuid, string $tenant_id ): int {
+		return 0;
+	}
+
+	public function delete_member( string $identity_uuid, string $tenant_id ): int {
+		return 0;
+	}
+
+	public function accept_machine_cluster_assignment( string $identity_uuid, string $cluster_uuid, string $tenant_id ): int {
+		return 0;
+	}
 }

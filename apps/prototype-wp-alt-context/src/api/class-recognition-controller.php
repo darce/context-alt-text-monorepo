@@ -9,18 +9,19 @@ require_once __DIR__ . '/class-abstract-recognition-proxy-controller.php';
 require_once __DIR__ . '/class-analysis-jobs-controller.php';
 require_once __DIR__ . '/class-clusters-controller.php';
 require_once __DIR__ . '/class-cluster-mutations-controller.php';
+require_once __DIR__ . '/class-conflict-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Sovereign\ClusterFacade;
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Sync\SnapshotClient;
-use AltContext\Sovereign\Sync\SnapshotProjector;
-use AltContext\Sovereign\Sync\SyncPullJob;
+use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -32,6 +33,7 @@ class RecognitionController {
 	private AnalysisJobsController $analysisJobsController;
 	private ClustersController $clustersController;
 	private ClusterMutationsController $clusterMutationsController;
+	private ConflictController $conflictController;
 	private MediaIdentitiesController $mediaIdentitiesController;
 	private SyncStatusController $syncStatusController;
 	private SuggestionsController $suggestionsController;
@@ -41,6 +43,7 @@ class RecognitionController {
 	 * @param ?AnalysisJobsController     $analysis_jobs_controller     Optional for testing.
 	 * @param ?ClustersController         $clusters_controller          Optional for testing.
 	 * @param ?ClusterMutationsController $cluster_mutations_controller Optional for testing.
+	 * @param ?ConflictController         $conflict_controller          Optional for testing.
 	 * @param ?MediaIdentitiesController  $media_identities_controller  Optional for testing.
 	 * @param ?SyncStatusController       $sync_status_controller       Optional for testing.
 	 * @param ?SuggestionsController      $suggestions_controller       Optional for testing.
@@ -49,6 +52,7 @@ class RecognitionController {
 		?AnalysisJobsController $analysis_jobs_controller = null,
 		?ClustersController $clusters_controller = null,
 		?ClusterMutationsController $cluster_mutations_controller = null,
+		?ConflictController $conflict_controller = null,
 		?MediaIdentitiesController $media_identities_controller = null,
 		?SyncStatusController $sync_status_controller = null,
 		?SuggestionsController $suggestions_controller = null
@@ -62,11 +66,21 @@ class RecognitionController {
 				$clusters_repository = new ClustersRepository();
 				$members_repository  = new IdentityMembersRepository();
 				$sync_repository     = new SyncStateRepository();
-				$snapshot_projector  = new SnapshotProjector( $clusters_repository, $members_repository, $sync_repository );
-				$sync_pull_job       = new SyncPullJob( new SnapshotClient(), $snapshot_projector );
+				$sync_pull_job_factory = new SyncPullJobFactory(
+					$clusters_repository,
+					$members_repository,
+					$sync_repository,
+					new SnapshotClient()
+				);
+				$sync_pull_job       = $sync_pull_job_factory->create();
 				$this->clusterFacade = new ClusterFacade( $clusters_repository, $members_repository );
-				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job, null, null, $this->clusterFacade );
+				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job, null, null, $this->clusterFacade, $sync_pull_job_factory );
 				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( $clusters_repository, $sync_repository, $members_repository );
+				$this->syncStatusController = $sync_status_controller ?? new SyncStatusController(
+					$sync_repository,
+					$sync_pull_job,
+					$sync_pull_job_factory
+				);
 			} catch ( Throwable $throwable ) {
 				do_action(
 					'acx_recognition_composition_failed',
@@ -89,11 +103,14 @@ class RecognitionController {
 				new IdentityMembersRepository()
 			);
 		}
+		$this->conflictController = $conflict_controller ?? new ConflictController();
 		$this->mediaIdentitiesController = $media_identities_controller ?? new MediaIdentitiesController();
-		$this->syncStatusController = $sync_status_controller ?? new SyncStatusController(
-			null,
-			$sync_pull_job ?? null
-		);
+		if ( ! isset( $this->syncStatusController ) ) {
+			$this->syncStatusController = $sync_status_controller ?? new SyncStatusController(
+				null,
+				$sync_pull_job ?? null
+			);
+		}
 		$this->suggestionsController = $suggestions_controller ?? new SuggestionsController();
 	}
 
@@ -101,6 +118,7 @@ class RecognitionController {
 		$this->analysisJobsController->register_routes();
 		$this->clustersController->register_routes();
 		$this->clusterMutationsController->register_routes();
+		$this->conflictController->register_routes();
 		$this->mediaIdentitiesController->register_routes();
 		$this->syncStatusController->register_routes();
 		$this->suggestionsController->register_routes();

@@ -21,6 +21,8 @@ import { useRecognitionJobHistory } from '../../../hooks/useRecognitionJobHistor
 import { useWorkbenchFilters } from '../../../hooks/useWorkbenchFilters';
 import { useJobPersistence } from '../../../hooks/useJobPersistence';
 import { useJobProgressStream } from '../../../hooks/useJobProgressStream';
+import { useSyncStatus } from '../../../hooks/useSyncStatus';
+import { useSyncTrigger } from '../../../hooks/useSyncTrigger';
 import {
   useScanIdentities,
   useScanStatus,
@@ -108,6 +110,14 @@ vi.mock('../../../hooks/useRecognitionHooks', () => ({
   })),
 }));
 
+vi.mock('../../../hooks/useSyncStatus', () => ({
+  useSyncStatus: vi.fn(),
+}));
+
+vi.mock('../../../hooks/useSyncTrigger', () => ({
+  useSyncTrigger: vi.fn(),
+}));
+
 type ScanOutcome = 'success' | 'error';
 
 describe('WorkbenchPage', () => {
@@ -142,6 +152,8 @@ describe('WorkbenchPage', () => {
   const mockUseCombinedScanStatus = vi.mocked(useCombinedScanStatus);
   const mockUseJobPersistence = vi.mocked(useJobPersistence);
   const mockUseJobProgressStream = vi.mocked(useJobProgressStream);
+  const mockUseSyncStatus = vi.mocked(useSyncStatus);
+  const mockUseSyncTrigger = vi.mocked(useSyncTrigger);
   let setCurrentPage: Dispatch<SetStateAction<number>>;
   let setPerPage: Mock<(nextPerPage: number) => void>;
 
@@ -178,11 +190,11 @@ describe('WorkbenchPage', () => {
     });
   };
 
-  const renderWorkbench = (client?: QueryClient) => {
+  const renderWorkbench = (client?: QueryClient, initialEntries: string[] = ['/']) => {
     const queryClient = client ?? new QueryClient({ defaultOptions: { queries: { retry: false } } });
     const wrapper = ({ children }: { children: ReactNode }) => (
       <QueryClientProvider client={queryClient}>
-        <MemoryRouter>{children}</MemoryRouter>
+        <MemoryRouter initialEntries={initialEntries}>{children}</MemoryRouter>
       </QueryClientProvider>
     );
     return { queryClient, ...render(<WorkbenchPage />, { wrapper }) };
@@ -227,6 +239,23 @@ describe('WorkbenchPage', () => {
       etaSeconds: null,
       isPrimary: true,
     });
+    mockUseSyncStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          last_snapshot_version: 1,
+          last_synced_at: '2026-03-10T10:00:00Z',
+          is_stale: false,
+          sync_health: 'healthy',
+          last_sync_result: 'ok',
+        },
+      }),
+    );
+    mockUseSyncTrigger.mockReturnValue(
+      createMockMutation({
+        mutate: vi.fn(),
+        isPending: false,
+      }),
+    );
 
     mockUseMediaSelectionState.mockReturnValue({
       selection: { '11': true },
@@ -488,6 +517,25 @@ describe('WorkbenchPage', () => {
 
     await waitFor(() => {
       expect(setPerPage).toHaveBeenCalledWith(100);
+    });
+  });
+
+  it('renders the conflict inbox overlay from the panel query param', () => {
+    renderWorkbench(undefined, ['/workbench?tab=confirm&panel=conflicts']);
+
+    expect(screen.getByRole('heading', { name: 'Conflict Inbox' })).toBeInTheDocument();
+    expect(screen.getByRole('region', { name: 'Conflict inbox' })).toBeInTheDocument();
+  });
+
+  it('closes the overlay when the dismiss action is used', async () => {
+    const user = userEvent.setup();
+    renderWorkbench(undefined, ['/workbench?tab=scan&panel=dead-letter']);
+
+    expect(screen.getByRole('heading', { name: 'Dead-Letter Queue' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Close' }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole('heading', { name: 'Dead-Letter Queue' })).not.toBeInTheDocument();
     });
   });
 });

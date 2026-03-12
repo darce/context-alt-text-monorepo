@@ -1,6 +1,7 @@
 import type { WorkbenchMediaStatus } from './workbenchMediaApi';
 
 import type { ClusterListParams } from './recognition/types';
+import type { ConflictListParams, FailedOutboxListParams, OutboxListParams } from './recognition/conflictApi';
 
 export interface WorkbenchMediaParams {
   page: number;
@@ -40,6 +41,20 @@ export const queryKeys = {
   sync: {
     all: ['sync'] as const,
     status: () => [...queryKeys.sync.all, 'status'] as const,
+  },
+  conflicts: {
+    all: ['conflicts'] as const,
+    lists: () => [...queryKeys.conflicts.all, 'list'] as const,
+    list: (params: ConflictListParams = {}) => [...queryKeys.conflicts.lists(), params] as const,
+    details: () => [...queryKeys.conflicts.all, 'detail'] as const,
+    detail: (id: number | null) => [...queryKeys.conflicts.details(), id] as const,
+  },
+  outbox: {
+    all: ['outbox'] as const,
+    lists: () => [...queryKeys.outbox.all, 'list'] as const,
+    list: (params: OutboxListParams = {}) => [...queryKeys.outbox.lists(), params] as const,
+    failed: () => [...queryKeys.outbox.all, 'failed'] as const,
+    failedList: (params: FailedOutboxListParams = {}) => [...queryKeys.outbox.failed(), params] as const,
   },
   suggestions: {
     all: ['suggestions'] as const,

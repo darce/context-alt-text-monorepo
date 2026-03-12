@@ -1,10 +1,12 @@
 import React from 'react';
 import { __, sprintf } from '@wordpress/i18n';
 
+import type { SyncHealth, WorkbenchOverlay } from '../../api/recognition';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
+import type { WorkbenchTab } from './WorkbenchContext';
 
 const formatTimestamp = (value: string | null | undefined): string | null => {
   if (!value) {
@@ -26,13 +28,81 @@ const normalizeCount = (value: number | null | undefined): number => {
 };
 
 interface SyncStatusIndicatorProps {
+  activeSection?: WorkbenchTab;
   pipelinePhase?: PipelinePhase;
   projectionState?: ProjectionSyncState;
   projectionError?: string | null;
   onRetryProjection?: () => void;
 }
 
+interface IdleStatePresentation {
+  toneClassName: string;
+  label: string;
+  badge: string;
+  badgeHref?: string;
+  actionLabel?: string;
+}
+
+const buildWorkbenchHref = (section: WorkbenchTab, overlay: Exclude<WorkbenchOverlay, null>): string =>
+  `#/workbench?tab=${encodeURIComponent(section)}&panel=${encodeURIComponent(overlay)}`;
+
+const buildIdleState = (
+  syncHealth: SyncHealth,
+  lastSyncedAt: string | null | undefined,
+  activeSection: WorkbenchTab,
+): IdleStatePresentation => {
+  const formatted = formatTimestamp(lastSyncedAt);
+  const lastSyncLabel = formatted
+    ? sprintf(__('Last sync: %s', 'alt-context'), formatted)
+    : __('No sync recorded yet', 'alt-context');
+
+  switch (syncHealth) {
+    case 'offline':
+      return {
+        toneClassName: 'acx-sync-status--warning',
+        label: __('Waiting for service…', 'alt-context'),
+        badge: __('Offline', 'alt-context'),
+        actionLabel: __('Retry', 'alt-context'),
+      };
+    case 'failures':
+      return {
+        toneClassName: 'acx-sync-status--warning',
+        label: __('Curation replay needs attention.', 'alt-context'),
+        badge: __('Failures', 'alt-context'),
+        badgeHref: buildWorkbenchHref(activeSection, 'dead-letter'),
+      };
+    case 'conflicts':
+      return {
+        toneClassName: 'acx-sync-status--warning',
+        label: __('Conflict resolution is required before replay can catch up.', 'alt-context'),
+        badge: __('Conflicts', 'alt-context'),
+        badgeHref: buildWorkbenchHref(activeSection, 'conflicts'),
+      };
+    case 'queued':
+      return {
+        toneClassName: 'acx-sync-status--info',
+        label: __('Local curation changes are queued for replay.', 'alt-context'),
+        badge: __('Queued', 'alt-context'),
+      };
+    case 'stale':
+      return {
+        toneClassName: 'acx-sync-status--warning',
+        label: lastSyncLabel,
+        badge: __('Stale', 'alt-context'),
+        actionLabel: __('Sync now', 'alt-context'),
+      };
+    case 'healthy':
+    default:
+      return {
+        toneClassName: '',
+        label: lastSyncLabel,
+        badge: __('Fresh', 'alt-context'),
+      };
+  }
+};
+
 export const SyncStatusIndicator = ({
+  activeSection = 'scan',
   pipelinePhase,
   projectionState = 'idle',
   projectionError = null,
@@ -54,12 +124,20 @@ export const SyncStatusIndicator = ({
   }
 
   const pendingCuration = normalizeCount(data.pending_curation_operations);
+  const failedCuration = normalizeCount(data.failed_curation_operations);
   const conflictCount = normalizeCount(data.conflict_count);
   const acknowledgedAt = formatTimestamp(data.last_curation_acknowledged_at);
   const conflictAt = formatTimestamp(data.last_curation_conflict_at);
+  const failedAt = formatTimestamp(data.last_curation_failed_at);
+  const topologyPending = normalizeCount(data.topology_commands?.pending);
+  const topologyApplied = normalizeCount(data.topology_commands?.applied);
+  const topologyFailed = normalizeCount(data.topology_commands?.failed);
+  const topologyConflict = normalizeCount(data.topology_commands?.conflict);
+  const conflictHref = buildWorkbenchHref(activeSection, 'conflicts');
+  const deadLetterHref = buildWorkbenchHref(activeSection, 'dead-letter');
 
   const curationDetails =
-    pendingCuration > 0 || conflictCount > 0 || acknowledgedAt || conflictAt ? (
+    pendingCuration > 0 || failedCuration > 0 || conflictCount > 0 || acknowledgedAt || conflictAt || failedAt ? (
       <div className="acx-sync-status__meta" aria-label={__('Curation sync details', 'alt-context')}>
         {pendingCuration > 0 ? (
           <span className="acx-sync-status__badge">
@@ -67,9 +145,14 @@ export const SyncStatusIndicator = ({
           </span>
         ) : null}
         {conflictCount > 0 ? (
-          <span className="acx-sync-status__badge acx-sync-status__badge--warning">
+          <a href={conflictHref} className="acx-sync-status__link">
             {sprintf(__('Conflicts: %d', 'alt-context'), conflictCount)}
-          </span>
+          </a>
+        ) : null}
+        {failedCuration > 0 ? (
+          <a href={deadLetterHref} className="acx-sync-status__link">
+            {sprintf(__('Failed replay: %d', 'alt-context'), failedCuration)}
+          </a>
         ) : null}
         {acknowledgedAt ? (
           <span className="acx-sync-status__label">
@@ -81,6 +164,26 @@ export const SyncStatusIndicator = ({
             {sprintf(__('Last curation conflict: %s', 'alt-context'), conflictAt)}
           </span>
         ) : null}
+        {failedAt ? (
+          <span className="acx-sync-status__label">
+            {sprintf(__('Last curation failure: %s', 'alt-context'), failedAt)}
+          </span>
+        ) : null}
+      </div>
+    ) : null;
+
+  const topologyDetails =
+    topologyPending > 0 || topologyApplied > 0 || topologyFailed > 0 || topologyConflict > 0 ? (
+      <div className="acx-sync-status__meta" aria-label={__('Topology command details', 'alt-context')}>
+        <span className="acx-sync-status__label">
+          {sprintf(
+            __('Topology backlog: pending %1$d, applied %2$d, failed %3$d, conflicts %4$d', 'alt-context'),
+            topologyPending,
+            topologyApplied,
+            topologyFailed,
+            topologyConflict,
+          )}
+        </span>
       </div>
     ) : null;
 
@@ -98,6 +201,7 @@ export const SyncStatusIndicator = ({
             {__('Retry sync', 'alt-context')}
           </button>
           {curationDetails}
+          {topologyDetails}
         </div>
       );
     }
@@ -111,32 +215,32 @@ export const SyncStatusIndicator = ({
         </span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
         {curationDetails}
+        {topologyDetails}
       </div>
     );
   }
 
-  // Show syncing state while trigger is in progress and stale.
   if (data.is_stale && syncTrigger.isPending) {
     return (
       <div className="acx-sync-status acx-sync-status--syncing">
         <span className="acx-sync-status__label">{__('Syncing…', 'alt-context')}</span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
         {curationDetails}
+        {topologyDetails}
       </div>
     );
   }
 
-  // Sync succeeded but no clusters exist yet — show informational state.
   if (syncTrigger.isSuccess && syncTrigger.data?.synced && syncTrigger.data.reason === 'no_remote_data') {
     return (
       <div className="acx-sync-status acx-sync-status--info">
         <span className="acx-sync-status__label">{__('Service connected — no clusters yet', 'alt-context')}</span>
         {curationDetails}
+        {topologyDetails}
       </div>
     );
   }
 
-  // Show success notification after sync completes
   if (syncTrigger.isSuccess && syncTrigger.data?.synced) {
     const syncedAt = formatTimestamp(syncTrigger.data.last_synced_at);
     return (
@@ -146,11 +250,11 @@ export const SyncStatusIndicator = ({
         </span>
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
         {curationDetails}
+        {topologyDetails}
       </div>
     );
   }
 
-  // Sync was attempted but the service is unreachable.
   if (data.is_stale && ((syncTrigger.isSuccess && !syncTrigger.data?.synced) || syncTrigger.isError)) {
     return (
       <div className="acx-sync-status acx-sync-status--syncing">
@@ -164,34 +268,42 @@ export const SyncStatusIndicator = ({
           {__('Retry', 'alt-context')}
         </button>
         {curationDetails}
+        {topologyDetails}
       </div>
     );
   }
 
-  const formatted = formatTimestamp(data.last_synced_at);
-  const label = formatted
-    ? sprintf(__('Last sync: %s', 'alt-context'), formatted)
-    : __('No sync recorded yet', 'alt-context');
+  const idleState = buildIdleState(data.sync_health, data.last_synced_at, activeSection);
 
   return (
-    <div className={`acx-sync-status${data.is_stale ? ' acx-sync-status--warning' : ''}`}>
-      <span className="acx-sync-status__label">{label}</span>
-      {data.is_stale ? (
-        <>
-          <span className="acx-sync-status__badge">{__('Stale', 'alt-context')}</span>
-          <button
-            type="button"
-            className="button button-link"
-            onClick={() => syncTrigger.mutate()}
-            disabled={syncTrigger.isPending}
-          >
-            {__('Sync now', 'alt-context')}
-          </button>
-        </>
+    <div className={`acx-sync-status${idleState.toneClassName ? ` ${idleState.toneClassName}` : ''}`}>
+      <span className="acx-sync-status__label">{idleState.label}</span>
+      {idleState.badgeHref ? (
+        <a
+          href={idleState.badgeHref}
+          className={`acx-sync-status__badge acx-sync-status__link${data.sync_health === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
+        >
+          {idleState.badge}
+        </a>
       ) : (
-        <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
+        <span
+          className={`acx-sync-status__badge${data.sync_health === 'healthy' ? ' acx-sync-status__badge--ok' : ''}`}
+        >
+          {idleState.badge}
+        </span>
       )}
+      {idleState.actionLabel ? (
+        <button
+          type="button"
+          className="button button-link"
+          onClick={() => syncTrigger.mutate()}
+          disabled={syncTrigger.isPending}
+        >
+          {idleState.actionLabel}
+        </button>
+      ) : null}
       {curationDetails}
+      {topologyDetails}
     </div>
   );
 };

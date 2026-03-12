@@ -38,6 +38,24 @@
     gap: var(--acx-space-24);
   }
 
+  &__overlay {
+    border: 1px solid var(--acx-color-border);
+    padding: var(--acx-space-16);
+    background-color: var(--acx-color-surface-alt);
+  }
+
+  &__overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--acx-space-12);
+    margin-bottom: var(--acx-space-12);
+  }
+
+  &__overlay-title {
+    margin: 0;
+  }
+
   &__panel {
     border: 1px solid var(--acx-color-border);
     padding: var(--acx-space-24);
@@ -67,6 +85,17 @@
     flex: 1;
   }
 
+  &__meta {
+    display: flex;
+    flex-wrap: wrap;
+    gap: var(--acx-space-8);
+  }
+
+  &__link {
+    color: var(--acx-color-accent);
+    text-decoration: underline;
+  }
+
   &__badge {
     text-transform: uppercase;
     letter-spacing: 0.04em;
@@ -84,6 +113,10 @@
 
   &--warning {
     border-color: var(--acx-color-warning-border, #f59e0b);
+  }
+
+  &--info {
+    border-color: var(--acx-color-info-border, #3b82f6);
   }
 
   &--syncing {

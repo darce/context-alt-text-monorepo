@@ -82,4 +82,14 @@ interface ClustersRepositoryInterface {
 	 * @return array<string,array<string,mixed>>
 	 */
 	public function get_curated_clusters_for_tenant( string $tenant_id ): array;
+
+	/**
+	 * Clear all curated fields on a tenant-scoped cluster so projection may overwrite it.
+	 */
+	public function reset_curation( string $cluster_uuid, string $tenant_id ): int;
+
+	/**
+	 * Delete a tenant-scoped cluster and any member rows attached to it.
+	 */
+	public function delete_cluster_with_members( string $cluster_uuid, string $tenant_id ): int;
 }

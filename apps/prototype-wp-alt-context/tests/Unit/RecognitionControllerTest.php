@@ -267,6 +267,8 @@ class RecognitionControllerTest extends TestCase
         $this->assertNotContains('/recognition/training-stage', $routes);
         $this->assertNotContains('/recognition/clusters/recover-orphans', $routes);
         $this->assertNotContains('/recognition/clusters/events', $routes);
+        $this->assertContains('/recognition/conflicts', $routes);
+        $this->assertContains('/recognition/outbox/failed', $routes);
     }
 
     public function testGetMediaIdentitiesForwardsIncludeDebugQueryWhenTruthy(): void

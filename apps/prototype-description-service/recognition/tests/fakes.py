@@ -45,6 +45,11 @@ class _FakeClusterRepository:
         self._service = service
 
     async def get_by_id(self, cluster_id: str) -> _FakeClusterRecord | None:
+        if self._service.fake_cluster_repository is not None:
+            seeded_cluster = await self._service.fake_cluster_repository.get_by_id(cluster_id)
+            if seeded_cluster is not None:
+                return seeded_cluster
+
         cluster = next((c for c in self._service.clusters if c.id == cluster_id), None)
         if not cluster:
             return None

@@ -31,14 +31,15 @@ const getOutboxOperationEndpoint = (id: number, action: 'retry' | 'discard'): st
   buildResourceEndpoint(getEndpoint('recognitionOutbox', 'recognitionFailedOutbox'), id, action);
 
 const withQuery = (baseEndpoint: string, params: Record<string, string | number | undefined>): string => {
-  const url = new URL(baseEndpoint);
+  const hasAbsoluteOrigin = /^[a-z][a-z\d+\-.]*:\/\//i.test(baseEndpoint);
+  const url = new URL(baseEndpoint, window.location.origin);
   Object.entries(params).forEach(([key, value]) => {
     if (value === undefined || value === '') {
       return;
     }
     url.searchParams.set(key, String(value));
   });
-  return url.toString();
+  return hasAbsoluteOrigin ? url.toString() : `${url.pathname}${url.search}`;
 };
 
 const buildResourceEndpoint = (baseEndpoint: string, id: number, action?: string): string => {

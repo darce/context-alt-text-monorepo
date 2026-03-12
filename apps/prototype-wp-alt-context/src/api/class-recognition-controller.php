@@ -11,6 +11,7 @@ require_once __DIR__ . '/class-clusters-controller.php';
 require_once __DIR__ . '/class-cluster-mutations-controller.php';
 require_once __DIR__ . '/class-conflict-controller.php';
 require_once __DIR__ . '/class-media-identities-controller.php';
+require_once __DIR__ . '/class-retention-controller.php';
 require_once __DIR__ . '/class-sync-status-controller.php';
 require_once __DIR__ . '/class-suggestions-controller.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
@@ -35,6 +36,7 @@ class RecognitionController {
 	private ClusterMutationsController $clusterMutationsController;
 	private ConflictController $conflictController;
 	private MediaIdentitiesController $mediaIdentitiesController;
+	private RetentionController $retentionController;
 	private SyncStatusController $syncStatusController;
 	private SuggestionsController $suggestionsController;
 	private ClusterFacade $clusterFacade;
@@ -45,6 +47,7 @@ class RecognitionController {
 	 * @param ?ClusterMutationsController $cluster_mutations_controller Optional for testing.
 	 * @param ?ConflictController         $conflict_controller          Optional for testing.
 	 * @param ?MediaIdentitiesController  $media_identities_controller  Optional for testing.
+	 * @param ?RetentionController        $retention_controller         Optional for testing.
 	 * @param ?SyncStatusController       $sync_status_controller       Optional for testing.
 	 * @param ?SuggestionsController      $suggestions_controller       Optional for testing.
 	 */
@@ -54,6 +57,7 @@ class RecognitionController {
 		?ClusterMutationsController $cluster_mutations_controller = null,
 		?ConflictController $conflict_controller = null,
 		?MediaIdentitiesController $media_identities_controller = null,
+		?RetentionController $retention_controller = null,
 		?SyncStatusController $sync_status_controller = null,
 		?SuggestionsController $suggestions_controller = null
 	) {
@@ -76,6 +80,7 @@ class RecognitionController {
 				$this->clusterFacade = new ClusterFacade( $clusters_repository, $members_repository );
 				$this->clustersController = new ClustersController( $clusters_repository, $members_repository, $sync_repository, $sync_pull_job, null, null, $this->clusterFacade, $sync_pull_job_factory );
 				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController( $clusters_repository, $sync_repository, $members_repository );
+				$this->retentionController = $retention_controller ?? new RetentionController( $sync_pull_job );
 				$this->syncStatusController = $sync_status_controller ?? new SyncStatusController(
 					$sync_repository,
 					$sync_pull_job,
@@ -92,6 +97,7 @@ class RecognitionController {
 				$this->clusterFacade = new ClusterFacade( new ClustersRepository(), new IdentityMembersRepository() );
 				$this->clustersController = new ClustersController( null, null, null, null, null, null, $this->clusterFacade );
 				$this->clusterMutationsController = $cluster_mutations_controller ?? new ClusterMutationsController();
+				$this->retentionController = $retention_controller ?? new RetentionController();
 			}
 		}
 		if ( null !== $cluster_mutations_controller ) {
@@ -105,6 +111,9 @@ class RecognitionController {
 		}
 		$this->conflictController = $conflict_controller ?? new ConflictController();
 		$this->mediaIdentitiesController = $media_identities_controller ?? new MediaIdentitiesController();
+		if ( ! isset( $this->retentionController ) ) {
+			$this->retentionController = $retention_controller ?? new RetentionController( $sync_pull_job ?? null );
+		}
 		if ( ! isset( $this->syncStatusController ) ) {
 			$this->syncStatusController = $sync_status_controller ?? new SyncStatusController(
 				null,
@@ -120,6 +129,7 @@ class RecognitionController {
 		$this->clusterMutationsController->register_routes();
 		$this->conflictController->register_routes();
 		$this->mediaIdentitiesController->register_routes();
+		$this->retentionController->register_routes();
 		$this->syncStatusController->register_routes();
 		$this->suggestionsController->register_routes();
 	}

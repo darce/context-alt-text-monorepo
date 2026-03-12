@@ -11,18 +11,26 @@ from .api import (
     generate_current_task_md,
     get_handoff_dashboard,
     get_handoff_state,
+    get_lane_activity,
     get_review_findings_summary,
     handoff_close_check,
     import_handoff_state,
+    list_lane_messages,
     list_review_findings,
+    list_worker_reports,
+    list_worktree_lanes,
+    record_lane_message,
     record_decision,
     record_review_finding,
     record_test_result,
+    record_worker_report,
     report_blocker,
     run_doctor,
     set_handoff_state,
+    update_lane_message,
     update_next_actions,
     update_review_finding,
+    upsert_worktree_lane,
 )
 from .config import RuntimeConfig
 
@@ -70,6 +78,31 @@ def _build_parser() -> argparse.ArgumentParser:
     action_parser.add_argument("--priority", type=int)
     action_parser.add_argument("--status")
 
+    lane_upsert_parser = subparsers.add_parser("lane-upsert")
+    lane_upsert_parser.add_argument("--lane-id", required=True)
+    lane_upsert_parser.add_argument("--worktree-path", required=True)
+    lane_upsert_parser.add_argument("--branch", required=True)
+    lane_upsert_parser.add_argument("--title")
+    lane_upsert_parser.add_argument("--objective")
+    lane_upsert_parser.add_argument("--owner-agent")
+    lane_upsert_parser.add_argument("--status", default="planned")
+    lane_upsert_parser.add_argument("--notes")
+
+    lane_list_parser = subparsers.add_parser("lane-list")
+    lane_list_parser.add_argument("--task-ref")
+    lane_list_parser.add_argument("--status", default="all")
+    lane_list_parser.add_argument("--limit", type=int, default=100)
+    lane_list_parser.add_argument("--offset", type=int, default=0)
+
+    lane_activity_parser = subparsers.add_parser("lane-activity")
+    lane_activity_parser.add_argument("--lane-id", required=True)
+    lane_activity_parser.add_argument("--task-ref")
+    lane_activity_parser.add_argument("--limit-decisions", type=int, default=20)
+    lane_activity_parser.add_argument("--limit-tests", type=int, default=20)
+    lane_activity_parser.add_argument("--limit-blockers", type=int, default=20)
+    lane_activity_parser.add_argument("--limit-actions", type=int, default=20)
+    lane_activity_parser.add_argument("--limit-findings", type=int, default=20)
+
     blocker_parser = subparsers.add_parser("blocker")
     blocker_parser.add_argument("--operation", required=True, choices=["add", "resolve", "reopen"])
     blocker_parser.add_argument("--description")
@@ -81,6 +114,41 @@ def _build_parser() -> argparse.ArgumentParser:
     test_parser.add_argument("--passed", action="store_true")
     test_parser.add_argument("--result")
     test_parser.add_argument("--exit-code", type=int)
+
+    report_parser = subparsers.add_parser("lane-report")
+    report_parser.add_argument("--lane-id", required=True)
+    report_parser.add_argument("--session", required=True)
+    report_parser.add_argument("--summary", required=True)
+    report_parser.add_argument("--changed-file", action="append", default=[])
+    report_parser.add_argument("--test-command", action="append", default=[])
+    report_parser.add_argument("--blocker", action="append", default=[])
+    report_parser.add_argument("--merge-ready", action="store_true")
+    report_parser.add_argument("--status", default="submitted")
+
+    report_list_parser = subparsers.add_parser("lane-report-list")
+    report_list_parser.add_argument("--task-ref")
+    report_list_parser.add_argument("--lane-id")
+    report_list_parser.add_argument("--limit", type=int, default=20)
+    report_list_parser.add_argument("--offset", type=int, default=0)
+
+    message_parser = subparsers.add_parser("lane-message")
+    message_parser.add_argument("--lane-id", required=True)
+    message_parser.add_argument("--session", required=True)
+    message_parser.add_argument("--direction", required=True)
+    message_parser.add_argument("--message", required=True)
+    message_parser.add_argument("--subject")
+    message_parser.add_argument("--status", default="open")
+
+    message_update_parser = subparsers.add_parser("lane-message-update")
+    message_update_parser.add_argument("--message-id", type=int, required=True)
+    message_update_parser.add_argument("--status", required=True)
+
+    message_list_parser = subparsers.add_parser("lane-message-list")
+    message_list_parser.add_argument("--task-ref")
+    message_list_parser.add_argument("--lane-id")
+    message_list_parser.add_argument("--status", default="all")
+    message_list_parser.add_argument("--limit", type=int, default=20)
+    message_list_parser.add_argument("--offset", type=int, default=0)
 
     review_record_parser = subparsers.add_parser("review-record")
     review_record_parser.add_argument("--session", required=True)
@@ -187,6 +255,43 @@ def main() -> None:
             )
         )
         return
+    if args.command == "lane-upsert":
+        _print_json(
+            upsert_worktree_lane(
+                lane_id=args.lane_id,
+                worktree_path=args.worktree_path,
+                branch=args.branch,
+                title=args.title,
+                objective=args.objective,
+                owner_agent=args.owner_agent,
+                status=args.status,
+                notes=args.notes,
+            )
+        )
+        return
+    if args.command == "lane-list":
+        _print_json(
+            list_worktree_lanes(
+                task_ref=args.task_ref,
+                status=args.status,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        )
+        return
+    if args.command == "lane-activity":
+        _print_json(
+            get_lane_activity(
+                lane_id=args.lane_id,
+                task_ref=args.task_ref,
+                limit_decisions=args.limit_decisions,
+                limit_tests=args.limit_tests,
+                limit_blockers=args.limit_blockers,
+                limit_actions=args.limit_actions,
+                limit_findings=args.limit_findings,
+            )
+        )
+        return
     if args.command == "blocker":
         _print_json(
             report_blocker(
@@ -204,6 +309,56 @@ def main() -> None:
                 passed=args.passed,
                 result=args.result,
                 exit_code=args.exit_code,
+            )
+        )
+        return
+    if args.command == "lane-report":
+        _print_json(
+            record_worker_report(
+                lane_id=args.lane_id,
+                session=args.session,
+                summary=args.summary,
+                changed_files=args.changed_file,
+                test_commands=args.test_command,
+                blockers=args.blocker,
+                merge_ready=args.merge_ready,
+                status=args.status,
+            )
+        )
+        return
+    if args.command == "lane-report-list":
+        _print_json(
+            list_worker_reports(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                limit=args.limit,
+                offset=args.offset,
+            )
+        )
+        return
+    if args.command == "lane-message":
+        _print_json(
+            record_lane_message(
+                lane_id=args.lane_id,
+                session=args.session,
+                direction=args.direction,
+                message=args.message,
+                subject=args.subject,
+                status=args.status,
+            )
+        )
+        return
+    if args.command == "lane-message-update":
+        _print_json(update_lane_message(message_id=args.message_id, status=args.status))
+        return
+    if args.command == "lane-message-list":
+        _print_json(
+            list_lane_messages(
+                task_ref=args.task_ref,
+                lane_id=args.lane_id,
+                status=args.status,
+                limit=args.limit,
+                offset=args.offset,
             )
         )
         return

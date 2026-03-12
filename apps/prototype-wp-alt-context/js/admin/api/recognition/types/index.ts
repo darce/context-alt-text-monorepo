@@ -10,3 +10,4 @@ export * from './cluster';
 export * from './suggestion';
 export * from './sync';
 export * from './conflict';
+export * from './retention';

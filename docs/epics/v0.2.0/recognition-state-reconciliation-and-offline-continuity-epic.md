@@ -237,9 +237,9 @@ Exit criteria:
 - Operators can curate while the backend is offline and see those changes locally immediately.
 - When connectivity resumes, queued mutations replay exactly once or land in an explicit error or conflict state.
 
-### Phase 4: Offline and Conflict UX -- NOT STARTED
+### Phase 4: Offline and Conflict UX -- COMPLETED
 
-> **Status**: not-started
+> **Status**: completed
 > **Task plan**: [phase-4-offline-and-conflict-ux-task-plan.md](../../tasks/6.0/phase-4-offline-and-conflict-ux-task-plan.md)
 
 **Goal**: Make stale data, queued work, and conflicts understandable to operators.
@@ -272,7 +272,7 @@ Exit criteria:
 | Outbox and replay transport                                         | Plugin   | Completed   | Phase 3 exit criteria    |
 | Curation push endpoint with idempotency and expected-base semantics | Backend  | Completed   | Phase 3 exit criteria    |
 | Pipeline-aware job status contract                                  | Backend  | Completed   | Phase 1 exit criteria    |
-| Conflict review UX                                                  | Frontend | Not started | Phase 4 exit criteria    |
+| Conflict review UX                                                  | Frontend | Completed   | Phase 4 exit criteria    |
 | Tenant retention-policy fields and lifecycle audit events           | Backend  | Not started | Phase 5 exit criteria    |
 | Product/privacy messaging for minimized retention                   | Product  | Not started | Phase 5 launch readiness |
 
@@ -327,13 +327,13 @@ Exit criteria:
 - [x] Extend sync state with queue size, last acknowledgement, and replay health.
 - [x] Implement retry, dead-letter, and operator-visible failure states.
 
-## Phase 4: Offline and Conflict UX -- NOT STARTED
+## Phase 4: Offline and Conflict UX -- COMPLETED
 
-- [ ] Expand sync indicators for offline, stale, queued, and conflict states.
-- [ ] Add conflict review or inbox UX for machine proposals blocked by curation.
-- [ ] Add admin-triggered replay and resync controls.
-- [ ] Show local freshness and pending-sync state in dashboard and workbench.
-- [ ] Add dead-letter management surface for failed outbox operations (inspect, retry, discard).
+- [x] Expand sync indicators for offline, stale, queued, and conflict states.
+- [x] Add conflict review or inbox UX for machine proposals blocked by curation.
+- [x] Add admin-triggered replay and resync controls.
+- [x] Show local freshness and pending-sync state in dashboard and workbench.
+- [x] Add dead-letter management surface for failed outbox operations (inspect, retry, discard).
 
 ## Phase 5: Retention, Export, and Audit Controls -- NOT STARTED
 

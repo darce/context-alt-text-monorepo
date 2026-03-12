@@ -1,0 +1,128 @@
+@use '../tokens/colors';
+
+.acx-retention {
+  &__hero {
+    margin-bottom: var(--acx-space-32);
+  }
+
+  &__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: var(--acx-space-24);
+  }
+
+  &__panel {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-16);
+  }
+
+  &__panel--wide {
+    grid-column: 1 / -1;
+  }
+
+  &__panel-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--acx-space-12);
+  }
+
+  &__options {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-12);
+    border: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  &__option {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--acx-space-12);
+    padding: var(--acx-space-12);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-space-8);
+    background: var(--acx-color-surface);
+
+    span {
+      display: flex;
+      flex-direction: column;
+      gap: var(--acx-space-4);
+    }
+
+    small {
+      color: var(--acx-color-text-muted);
+    }
+  }
+
+  &__detail {
+    margin: 0;
+    color: var(--acx-color-text-muted);
+  }
+
+  &__note {
+    margin: 0;
+    padding: var(--acx-space-12);
+    border-radius: var(--acx-space-8);
+    background: var(--acx-color-panel);
+  }
+
+  &__note--danger {
+    background: var(--acx-color-danger-soft);
+    color: var(--acx-color-danger-strong);
+  }
+
+  &__timeline {
+    display: grid;
+    gap: var(--acx-space-12);
+    list-style: none;
+    margin: 0;
+    padding: 0;
+  }
+
+  &__timeline-item {
+    padding: var(--acx-space-16);
+    border: 1px solid var(--acx-color-border);
+    border-radius: var(--acx-space-8);
+    background: var(--acx-color-surface);
+
+    p {
+      margin: var(--acx-space-8) 0 0;
+    }
+  }
+
+  &__timeline-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--acx-space-12);
+  }
+
+  &__dialog-fieldset {
+    display: grid;
+    gap: var(--acx-space-12);
+    border: 0;
+    margin: 0;
+    padding: 0;
+  }
+
+  &__confirm-input {
+    display: flex;
+    flex-direction: column;
+    gap: var(--acx-space-8);
+    color: var(--acx-color-text);
+
+    input {
+      padding: var(--acx-space-12);
+      border: 1px solid var(--acx-color-border);
+      border-radius: var(--acx-space-8);
+    }
+  }
+}
+
+.acx-dashboard__stat-value--compact {
+  font-size: 1rem;
+  line-height: 1.3;
+}

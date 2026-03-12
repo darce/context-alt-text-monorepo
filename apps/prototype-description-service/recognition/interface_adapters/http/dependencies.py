@@ -21,7 +21,12 @@ from recognition.interface_adapters.http.deps.auth import (
 
 # Re-export service factories
 from recognition.interface_adapters.http.deps.services import (
+    AuditRepositoryProtocol,
+    RetentionExportServiceProtocol,
+    RetentionPolicyServiceProtocol,
+    RetentionPurgeServiceProtocol,
     build_cluster_service,
+    get_audit_repository,
     get_cluster_repository,
     get_cluster_service,
     get_cluster_service_builder,
@@ -38,6 +43,9 @@ from recognition.interface_adapters.http.deps.services import (
     get_scan_queue_service_optional,
     get_scan_service_builder,
     get_settings,
+    get_retention_export_service,
+    get_retention_policy_service,
+    get_retention_purge_service,
     get_shared_insightface_adapter,
     get_suggestion_refresh_service,
     get_suggestion_service,
@@ -48,6 +56,9 @@ from recognition.interface_adapters.http.deps.session import (
     get_observability_session,
     get_optional_session,
     get_session,
+)
+from recognition.interface_adapters.http.deps.tenant import (
+    get_authenticated_tenant_id,
 )
 
 # Re-export stores and lightweight services
@@ -63,6 +74,7 @@ __all__ = [
     "get_session",
     "get_optional_session",
     "get_observability_session",
+    "get_authenticated_tenant_id",
     # Authentication
     "AuthContext",
     "require_auth",
@@ -76,6 +88,10 @@ __all__ = [
     "get_cluster_repository",
     "get_observability_repository",
     "get_media_identity_service",
+    "get_retention_policy_service",
+    "get_retention_export_service",
+    "get_retention_purge_service",
+    "get_audit_repository",
     "build_cluster_service",
     "get_cluster_service",
     "get_cluster_service_builder",
@@ -89,6 +105,10 @@ __all__ = [
     "get_job_service_dependency",
     "get_persisted_cluster_job_service",
     "get_persisted_job_service",
+    "RetentionPolicyServiceProtocol",
+    "RetentionExportServiceProtocol",
+    "RetentionPurgeServiceProtocol",
+    "AuditRepositoryProtocol",
     # Stores
     "InMemoryJobService",
     "DecisionStore",

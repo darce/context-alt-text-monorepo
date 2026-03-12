@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed (post-v0.2.0 release track, planning-ready now).
+Partially completed. Several items originally tracked here were delivered under the v0.2.0 reconciliation and UX task plans; remaining follow-on items stay planning-only.
 
 ## Objective
 
@@ -14,7 +14,10 @@ This epic owns:
   - outbox,
   - Action Scheduler migration,
   - delta ingest,
-  - drift reconciliation.
+  - drift reconciliation,
+  - representative pin/unpin replay parity,
+  - deferred compound conflict acceptance for `cluster_merged`,
+  - bidirectional conflict resolution for person-name edits.
 - Product-surface UX changes that are not reliability-critical but improve day-to-day curation and administration:
   - Batch tab retirement or re-homing under Dashboard IA.
   - Previous/next media navigation controls (top-of-page).
@@ -54,6 +57,9 @@ This follow-on epic captures **product expansion** and **architecture evolution*
 - Action Scheduler-backed job execution model for retries, backoff, and dead-letter handling.
 - Delta ingest contract to reduce full snapshot dependency for routine sync.
 - Drift reconciliation flow for long-outage or mismatch recovery.
+- Representative projection and pin/unpin replay parity.
+- Deferred compound conflict acceptance for `cluster_merged` once payload provenance is available.
+- Bidirectional conflict resolution for person-name edits.
 
 ### Track B: Workbench UX Continuation (Product Expansion)
 
@@ -149,16 +155,19 @@ Exit criteria:
 
 ### Track A: Sync Architecture
 
-- [ ] Implement outbox schema + lifecycle.
-- [ ] Migrate async sync execution to Action Scheduler.
+- [x] Implement outbox schema + lifecycle.
+- [x] Migrate async sync execution to Action Scheduler.
 - [ ] Implement delta ingest path with snapshot fallback.
 - [ ] Implement drift reconciliation flow and conflict-safe replay policy.
+- [ ] Implement representative projection and pin/unpin replay parity.
+- [ ] Complete `cluster_merged` accept-machine revert contract with moved-member provenance.
+- [ ] Implement bidirectional conflict resolution for person-name edits.
 
 ### Track B: Workbench UX Continuation
 
-- [ ] Build Dashboard page with live coverage data.
+- [x] Build Dashboard page with live coverage data.
 - [ ] Migrate Batch functionality from Workbench tab to Dashboard.
 - [ ] Remove Batch tab from Workbench (reduce to Scan + Confirm).
-- [ ] Add Roster Entries CRUD operations (create, edit, delete).
-- [ ] Clarify Entries vs Clusters in UI copy and structure.
-- [ ] Add top-of-page previous/next media navigation controls.
+- [x] Add Roster Entries CRUD operations (create, edit, delete).
+- [x] Clarify Entries vs Clusters in UI copy and structure.
+- [x] Add top-of-page previous/next media navigation controls.

@@ -4,6 +4,7 @@ import { __, sprintf } from '@wordpress/i18n';
 import type { SyncHealth, WorkbenchOverlay } from '../../api/recognition';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
 import { useSyncTrigger } from '../../hooks/useSyncTrigger';
+import { useRetentionStatus } from '../../hooks/useRetentionStatus';
 import type { PipelinePhase } from '../../hooks/jobStateMachineUtils';
 import type { ProjectionSyncState } from '../../hooks/useJobStateMachineEffects';
 import type { WorkbenchTab } from './WorkbenchContext';
@@ -25,6 +26,17 @@ const normalizeCount = (value: number | null | undefined): number => {
   }
 
   return Math.floor(value);
+};
+
+const formatRetentionMode = (mode: string): string => {
+  switch (mode) {
+    case 'dispose_after_ack':
+      return __('Retention: Dispose after ack', 'alt-context');
+    case 'purge_on_demand':
+      return __('Retention: Purge on demand', 'alt-context');
+    default:
+      return __('Retention: Retain all', 'alt-context');
+  }
 };
 
 interface SyncStatusIndicatorProps {
@@ -109,6 +121,7 @@ export const SyncStatusIndicator = ({
   onRetryProjection,
 }: SyncStatusIndicatorProps): React.JSX.Element | null => {
   const { data, isError, isLoading } = useSyncStatus();
+  const retentionStatus = useRetentionStatus();
   const syncTrigger = useSyncTrigger(data?.is_stale ?? false);
 
   if (isLoading) {
@@ -135,6 +148,15 @@ export const SyncStatusIndicator = ({
   const topologyConflict = normalizeCount(data.topology_commands?.conflict);
   const conflictHref = buildWorkbenchHref(activeSection, 'conflicts');
   const deadLetterHref = buildWorkbenchHref(activeSection, 'dead-letter');
+  const retentionMode = retentionStatus.data?.available ? retentionStatus.data.policy?.retention_mode : null;
+  const retentionDetails =
+    retentionMode && retentionMode !== 'retain_all' ? (
+      <div className="acx-sync-status__meta" aria-label={__('Retention details', 'alt-context')}>
+        <a href="#/retention" className="acx-sync-status__link">
+          {formatRetentionMode(retentionMode)}
+        </a>
+      </div>
+    ) : null;
 
   const curationDetails =
     pendingCuration > 0 || failedCuration > 0 || conflictCount > 0 || acknowledgedAt || conflictAt || failedAt ? (
@@ -197,12 +219,13 @@ export const SyncStatusIndicator = ({
             className="button button-link"
             onClick={() => onRetryProjection?.()}
             disabled={!onRetryProjection}
-          >
-            {__('Retry sync', 'alt-context')}
-          </button>
-          {curationDetails}
-          {topologyDetails}
-        </div>
+        >
+          {__('Retry sync', 'alt-context')}
+        </button>
+        {retentionDetails}
+        {curationDetails}
+        {topologyDetails}
+      </div>
       );
     }
 
@@ -214,6 +237,7 @@ export const SyncStatusIndicator = ({
             : __('Syncing results…', 'alt-context')}
         </span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+        {retentionDetails}
         {curationDetails}
         {topologyDetails}
       </div>
@@ -225,6 +249,7 @@ export const SyncStatusIndicator = ({
       <div className="acx-sync-status acx-sync-status--syncing">
         <span className="acx-sync-status__label">{__('Syncing…', 'alt-context')}</span>
         <span className="acx-sync-status__badge">{__('In Progress', 'alt-context')}</span>
+        {retentionDetails}
         {curationDetails}
         {topologyDetails}
       </div>
@@ -235,6 +260,7 @@ export const SyncStatusIndicator = ({
     return (
       <div className="acx-sync-status acx-sync-status--info">
         <span className="acx-sync-status__label">{__('Service connected — no clusters yet', 'alt-context')}</span>
+        {retentionDetails}
         {curationDetails}
         {topologyDetails}
       </div>
@@ -249,6 +275,7 @@ export const SyncStatusIndicator = ({
           {syncedAt ? sprintf(__('Sync completed: %s', 'alt-context'), syncedAt) : __('Sync completed', 'alt-context')}
         </span>
         <span className="acx-sync-status__badge acx-sync-status__badge--ok">{__('Fresh', 'alt-context')}</span>
+        {retentionDetails}
         {curationDetails}
         {topologyDetails}
       </div>
@@ -267,6 +294,7 @@ export const SyncStatusIndicator = ({
         >
           {__('Retry', 'alt-context')}
         </button>
+        {retentionDetails}
         {curationDetails}
         {topologyDetails}
       </div>
@@ -292,6 +320,7 @@ export const SyncStatusIndicator = ({
           {idleState.badge}
         </span>
       )}
+      {retentionDetails}
       {idleState.actionLabel ? (
         <button
           type="button"

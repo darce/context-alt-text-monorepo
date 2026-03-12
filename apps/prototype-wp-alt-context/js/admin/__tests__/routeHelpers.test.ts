@@ -23,6 +23,11 @@ describe('routeHelpers', () => {
       expect(extractRouteFromHash()).toBe('/workbench');
     });
 
+    it('handles #/retention without query params', () => {
+      window.location.hash = '#/retention';
+      expect(extractRouteFromHash()).toBe('/retention');
+    });
+
     it('handles #/workbench?tab=confirm without stripping query params from the hash itself (just parses path)', () => {
       window.location.hash = '#/workbench?tab=confirm';
       expect(extractRouteFromHash()).toBe('/workbench');
@@ -46,6 +51,12 @@ describe('routeHelpers', () => {
       window.location.hash = '#/workbench?tab=confirm';
       ensureHashInitialized('/workbench');
       expect(window.location.hash).toBe('#/workbench?tab=confirm');
+    });
+
+    it('does nothing if hash already targets retention', () => {
+      window.location.hash = '#/retention';
+      ensureHashInitialized('/retention');
+      expect(window.location.hash).toBe('#/retention');
     });
 
     it('initializes hash with initialRoute if hash is empty', () => {

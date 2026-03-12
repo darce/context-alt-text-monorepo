@@ -6,6 +6,7 @@ import { useIdentityStats } from '../../hooks/useIdentityStats';
 import { useMediaStats } from '../../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../../hooks/useRecognitionJobHistory';
 import { useSyncStatus } from '../../hooks/useSyncStatus';
+import { useRetentionStatus } from '../../hooks/useRetentionStatus';
 import { createMockQuery } from '../../test-utils/mockHooks';
 
 vi.mock('@wordpress/i18n', () => ({
@@ -38,6 +39,10 @@ vi.mock('../../hooks/useSyncStatus', () => ({
   useSyncStatus: vi.fn(),
 }));
 
+vi.mock('../../hooks/useRetentionStatus', () => ({
+  useRetentionStatus: vi.fn(),
+}));
+
 vi.mock('../dashboard/OrientationCard', () => ({
   OrientationCard: () => <div>Orientation</div>,
 }));
@@ -47,6 +52,7 @@ describe('DashboardPage', () => {
   const mockedUseRecognitionJobHistory = vi.mocked(useRecognitionJobHistory);
   const mockedUseIdentityStats = vi.mocked(useIdentityStats);
   const mockedUseSyncStatus = vi.mocked(useSyncStatus);
+  const mockedUseRetentionStatus = vi.mocked(useRetentionStatus);
 
   beforeEach(() => {
     vi.clearAllMocks();
@@ -75,6 +81,20 @@ describe('DashboardPage', () => {
           last_sync_result: 'ok',
           conflict_count: 0,
           failed_curation_operations: 0,
+        },
+      }),
+    );
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          available: true,
+          policy: {
+            retention_mode: 'dispose_after_ack',
+            last_export_at: '2026-03-08T10:00:00Z',
+            last_purge_at: null,
+            retention_updated_at: '2026-03-07T09:00:00Z',
+          },
+          recent_audit_events: [],
         },
       }),
     );
@@ -258,6 +278,57 @@ describe('DashboardPage', () => {
     const mediaStat = mediaLabel.closest('.acx-dashboard__stat');
     expect(mediaStat).not.toBeNull();
     expect(mediaStat).toHaveTextContent('0');
+  });
+
+  it('shows retention posture summary and links to the retention page', () => {
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText('Dispose after ack')).toBeInTheDocument();
+    expect(screen.getByRole('link', { name: /Open Retention Controls/ })).toHaveAttribute('href', '#/retention');
+  });
+
+  it('shows retention unavailable copy when the retention proxy is degraded', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          available: false,
+          policy: null,
+          recent_audit_events: [],
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText('Retention status is unavailable right now.')).toBeInTheDocument();
+    expect(screen.queryByRole('link', { name: /Open Retention Controls/ })).not.toBeInTheDocument();
   });
 
   it('shows identity error state with retry action', () => {

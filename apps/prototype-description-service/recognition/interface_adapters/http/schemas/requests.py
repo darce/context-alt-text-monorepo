@@ -133,6 +133,35 @@ class SuggestionActionRequest(BaseModel):
         return _validate_uuid(v)
 
 
+class UpdateRetentionPolicyRequest(BaseModel):
+    """Request to update the tenant retention mode."""
+
+    retention_mode: str
+
+    @field_validator("retention_mode")
+    @classmethod
+    def validate_retention_mode(cls, v: str) -> str:
+        normalized = v.strip()
+        if not normalized:
+            raise ValueError("retention_mode must not be empty")
+        return normalized
+
+
+class PurgeRequest(BaseModel):
+    """Request to permanently delete retained machine-derived state."""
+
+    scope: str = "disposed"
+    confirm: bool = False
+
+    @field_validator("scope")
+    @classmethod
+    def validate_scope(cls, v: str) -> str:
+        normalized = v.strip()
+        if not normalized:
+            raise ValueError("scope must not be empty")
+        return normalized
+
+
 class ReassignIdentityRequest(BaseModel):
     """Request to reassign an identity to a different cluster.
 

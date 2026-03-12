@@ -170,4 +170,30 @@ class SnapshotClientTest extends TestCase
         $this->assertSame('POST', $calls[0]['args']['method']);
         $this->assertSame('{"snapshot_version":44}', $calls[0]['args']['body']);
     }
+
+    public function testAcknowledgeProjectionIncludesSnapshotGenerationIdWhenProvided(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode([
+                'status' => 'acknowledged',
+                'snapshot_version' => 44,
+            ]),
+        ]);
+
+        $response = $this->client->acknowledge_projection(
+            'job-44',
+            44,
+            '4d48d60c-3ef1-47e7-bf0c-cfd4f3de4db6'
+        );
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+
+        $calls = $this->getHttpCalls();
+        $this->assertCount(1, $calls);
+        $this->assertSame(
+            '{"snapshot_version":44,"snapshot_generation_id":"4d48d60c-3ef1-47e7-bf0c-cfd4f3de4db6"}',
+            $calls[0]['args']['body']
+        );
+    }
 }

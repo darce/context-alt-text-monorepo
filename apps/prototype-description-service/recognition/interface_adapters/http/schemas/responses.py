@@ -219,6 +219,70 @@ class ClusterSuggestionMatch(BaseModel):
         return _validate_uuid(v)
 
 
+class RetentionPolicyResponse(BaseModel):
+    """Current retention policy and lifecycle timestamps."""
+
+    retention_mode: Literal["retain_all", "dispose_after_ack", "purge_on_demand"]
+    last_export_at: datetime | None = None
+    last_purge_at: datetime | None = None
+    retention_updated_at: datetime | None = None
+
+
+class AuditEventResponse(BaseModel):
+    """Tenant-scoped retention audit event."""
+
+    id: str
+    event_type: str
+    actor: str
+    scope: str = "tenant"
+    payload: dict[str, Any] = Field(default_factory=dict)
+    result_status: str = "success"
+    created_at: datetime
+
+    @field_validator("id")
+    @classmethod
+    def validate_audit_event_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class AuditEventListResponse(BaseModel):
+    """Paginated audit event list."""
+
+    items: list[AuditEventResponse] = Field(default_factory=list)
+    total: int = 0
+    limit: int = 50
+    offset: int = 0
+
+
+class ExportResponse(BaseModel):
+    """Inline tenant export response for the MVP."""
+
+    tenant_id: str
+    exported_at: datetime
+    schema_version: int = 1
+    counts: dict[str, int] = Field(default_factory=dict)
+    data: dict[str, Any] = Field(default_factory=dict)
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_export_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
+class PurgeResponse(BaseModel):
+    """Summary of a tenant purge operation."""
+
+    tenant_id: str
+    scope: Literal["disposed", "all"]
+    deleted_counts: dict[str, int] = Field(default_factory=dict)
+    last_purge_at: datetime | None = None
+
+    @field_validator("tenant_id")
+    @classmethod
+    def validate_purge_tenant_id(cls, v: str) -> str:
+        return _validate_uuid(v)
+
+
 class IdentitySuggestionsResponse(BaseModel):
     """Response for identity suggestions endpoint (frontend-compatible format)."""
 

@@ -3,6 +3,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
 import type { SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
+import { createMockQuery } from '../../../test-utils/mockHooks';
 
 const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatusResponse => ({
   last_snapshot_version: 0,
@@ -59,6 +60,22 @@ vi.mock('../../../hooks/useSyncStatus', () => ({
 
 vi.mock('../../../hooks/useSyncTrigger', () => ({
   useSyncTrigger: () => mockTrigger,
+}));
+
+vi.mock('../../../hooks/useRetentionStatus', () => ({
+  useRetentionStatus: () =>
+    createMockQuery({
+      data: {
+        available: true,
+        policy: {
+          retention_mode: 'dispose_after_ack',
+          last_export_at: null,
+          last_purge_at: null,
+          retention_updated_at: null,
+        },
+        recent_audit_events: [],
+      },
+    }),
 }));
 
 import { SyncStatusIndicator } from '../SyncStatusIndicator';
@@ -118,6 +135,14 @@ describe('SyncStatusIndicator', () => {
 
     expect(screen.getByText('Fresh')).toBeInTheDocument();
     expect(screen.getByText(/Last sync/)).toBeInTheDocument();
+  });
+
+  it('shows a retention badge link when the mode is not retain_all', () => {
+    mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByRole('link', { name: 'Retention: Dispose after ack' })).toHaveAttribute('href', '#/retention');
   });
 
   it('renders queued state when pending replay exists without failures or conflicts', () => {

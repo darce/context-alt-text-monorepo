@@ -227,6 +227,142 @@ Completion gate:
 
 - A task response is incomplete if MCP handoff was not updated.
 
+### Multi-Agent Worktree Orchestration (MANDATORY for delegated implementation)
+
+Use this pattern when a user explicitly asks for parallel agents/worktrees, or when the task naturally splits into independent backend/frontend/PHP lanes with clear contracts.
+
+Decomposition rules for the orchestrating agent:
+
+1. Keep the orchestrator in the current repo root/branch. Worker agents implement in sibling Git worktrees on `codex/*` branches.
+2. Split work only along stable seams: path ownership, API contract ownership, or test ownership. Do not delegate two workers to the same file set unless the user explicitly accepts merge churn.
+3. Give each worker lane a bounded brief: objective, owned paths, required contracts/docs, required tests, explicit non-goals, and merge readiness criteria.
+4. Keep shared plan/checklist truth centralized. The orchestrator owns final checklist updates, MCP review triage, cross-lane decisions, and merge order unless a worker is explicitly assigned one documentation block.
+5. Prefer lanes that can be verified independently. Good seams in this repo are backend domain/schema, backend HTTP, WordPress proxy, frontend UI, and review-only/documentation.
+
+Worktree setup and switching:
+
+```bash
+git worktree add ../context-alt-text-monorepo-<lane> -b codex/<task>-<lane>
+git worktree list
+cd ../context-alt-text-monorepo-<lane>
+git status -sb
+```
+
+- Create worktrees as siblings of the main repo, not nested inside it.
+- Use lane names that match ownership (`backend-domain`, `backend-http`, `wp-proxy`, `frontend`).
+- The orchestrator may inspect any lane without switching shells by using `git -C /abs/path/to/worktree status -sb` and `git -C /abs/path/to/worktree diff --stat`.
+- If local dependency directories must be shared into a worker worktree, keep them ignored via local exclude config so they never appear in review or staging output.
+
+Required domain boundaries per default Phase 5 lane split:
+
+- `backend-domain`: only `apps/prototype-description-service/db/**`, `apps/prototype-description-service/recognition/domain/**`, and `apps/prototype-description-service/recognition/infrastructure/**`
+- `backend-http`: only `apps/prototype-description-service/recognition/interface_adapters/http/**`
+- `wp-proxy`: only `apps/prototype-wp-alt-context/src/**` and `apps/prototype-wp-alt-context/tests/Unit/**`
+- `frontend`: only `apps/prototype-wp-alt-context/js/**`
+- Shared docs/contracts/checklists remain orchestrator-owned unless a worker is explicitly assigned one documentation block
+
+Domain guardrails for worker lanes:
+
+1. Workers may edit only files inside their lane's owned paths.
+2. If a required fix falls outside the lane's owned paths, record a blocker or lane message for the orchestrator instead of editing another domain.
+3. Workers must not "helpfully" patch sibling-lane files, shared contracts, or checklist truth unless explicitly assigned.
+4. Before handoff, workers should verify changed files with `git diff --name-only` from their worktree and confirm the list stays inside lane scope.
+5. Orchestrators should reject or selectively intake any out-of-scope file changes during merge review.
+
+How a worker self-queries its own lane and scope:
+
+1. Assume lane identity is discoverable from MCP, not only from chat memory.
+2. Query the shared handoff state and lane registry before doing substantive work:
+
+```bash
+agent-handoff-mcp --workspace-root <current-worktree> --state-dir <orchestrator>/.task-state --current-task-path <orchestrator>/CURRENT_TASK.md --exports-dir <orchestrator>/.task-state/exports state
+agent-handoff-mcp --workspace-root <current-worktree> --state-dir <orchestrator>/.task-state --current-task-path <orchestrator>/CURRENT_TASK.md --exports-dir <orchestrator>/.task-state/exports lane-list --status all
+agent-handoff-mcp --workspace-root <current-worktree> --state-dir <orchestrator>/.task-state --current-task-path <orchestrator>/CURRENT_TASK.md --exports-dir <orchestrator>/.task-state/exports lane-activity --lane-id <lane>
+```
+
+3. Use the returned `lane_id`, `branch`, `worktree_path`, notes, messages, and recent reports as the worker's source of truth for the current slice.
+4. If no lane exists for the current worktree, the orchestrator should create one with `lane-upsert` before implementation continues.
+5. Workers should include `actor.lane_id` on MCP writes whenever possible so decisions, tests, blockers, actions, and findings remain attributable to the lane.
+
+How workers communicate with the orchestrator:
+
+1. Assume Codex sessions do **not** talk directly to one another. The canonical shared channels are MCP handoff state, Git branch/worktree state, and generated `CURRENT_TASK.md`.
+2. At worker start, record a decision noting lane ownership and actor metadata (`agent`, `branch`, `commit_sha` when available). If the orchestrator assigned next actions, do not rewrite sibling lanes.
+3. During work, record blockers, targeted test results, and review findings in MCP as they occur. Workers should report lane-local facts only; the orchestrator synthesizes cross-lane conclusions.
+4. Before handing work back, record one decision summarizing:
+   - files changed
+   - tests run
+   - assumptions made
+   - blockers or follow-ups
+   - whether the lane is merge-ready
+5. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and optionally send a `lane-message` to the orchestrator. Do **not** mark the whole task `done`.
+6. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
+
+How the orchestrator should monitor and delegate:
+
+1. Create or reuse the active MCP task before opening worker lanes.
+2. Record lane assignments in MCP decisions/next actions with the owning branch and worktree path.
+3. Review each worker branch against [rules/branch-review-guide.md](rules/branch-review-guide.md) before intake.
+4. Merge lanes in dependency order: schema/domain before HTTP, backend contract before WordPress proxy, proxy before frontend, then run cross-lane integration checks in the orchestrator root.
+5. After each accepted lane, regenerate `CURRENT_TASK.md` so the next worker sees current state without reading every branch diff.
+
+How to merge worker worktree changes into the current branch:
+
+Preferred whole-slice intake:
+
+```bash
+git -C ../context-alt-text-monorepo-<lane> log --oneline --decorate -n 5
+git cherry-pick <worker-commit-sha>
+```
+
+Selective file intake when a worker branch contains extra churn:
+
+```bash
+git checkout codex/<task>-<lane> -- path/to/file1 path/to/file2
+git status -sb
+```
+
+- Prefer `git cherry-pick` for coherent reviewed commits.
+- Use `git checkout <branch> -- <paths>` only when intentionally taking a subset of a lane.
+- Never copy files by hand between worktrees.
+- After intake, run the lane's required tests from the orchestrator root, then update MCP decisions/actions/findings and regenerate `CURRENT_TASK.md`.
+
+How `agent-handoff-mcp` helps this process today:
+
+- It provides the single active task, next-action queue, blocker log, decision log, review findings, and test history across independent sessions.
+- It makes worker reports queryable without opening each worktree first.
+- It lets the orchestrator verify that review findings are actually closed before merge.
+- It keeps `CURRENT_TASK.md` as a generated summary for humans and newly opened agent sessions.
+
+Recommended Codex skills for this workflow:
+
+- `worktree-orchestrator`: decompose a plan into lanes, create worker briefs, assign merge order, and prepare integration checks.
+- `worktree-worker`: self-query lane scope, implement only the delegated slice, and hand the lane back with a merge-ready report.
+- Merge intake remains orchestrator-owned and is executed through the review/merge steps above plus `scripts/worktree-lane`.
+
+Repo-owned skill sources and templates:
+
+- skill sources live under [docs/agentic/skills/](skills/)
+- brief/report templates live under [docs/agentic/templates/](templates/)
+- `scripts/worktree-lane` is the supported helper for creating lanes, rendering briefs, self-querying lane scope, and submitting worker reports/messages
+
+Operational note:
+
+- Repo-owned skills are versioned here so they can be reviewed and evolved with the codebase.
+- If you want auto-discoverable Codex skills in `$CODEX_HOME/skills`, install or symlink these repo-owned skill folders there manually; do not maintain a second divergent copy.
+
+Current `agent-handoff-mcp` capabilities that support this workflow:
+
+- worktree lane records with `lane_id`, `worktree_path`, `branch`, `owner_agent`, and `status`
+- worker reports that link changed files, test commands, blockers, and merge readiness to a specific lane
+- lane-scoped activity queries so the orchestrator can inspect one worker lane without sifting the full task history
+- explicit lane messages for orchestrator-to-worker and worker-to-orchestrator communication when sessions cannot chat directly
+
+Still-useful future `agent-handoff-mcp` improvements:
+
+- a first-class orchestrator brief artifact so worker prompts can be generated and tracked without manual copy/paste
+- lane-scoped dashboard rollups and close-check rules for tasks that intentionally stay split across multiple long-lived worktrees
+
 ### Branch Review Trigger (MANDATORY)
 
 When a user request matches any of these patterns, **load and follow** [rules/branch-review-guide.md](rules/branch-review-guide.md) before starting the review:

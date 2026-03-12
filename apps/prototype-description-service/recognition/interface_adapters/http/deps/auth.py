@@ -15,7 +15,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from recognition.config.security import SecuritySettings, get_security_settings
 from recognition.infrastructure.repositories import SqlAlchemyApiKeyRepository
 from recognition.interface_adapters.http.deps.session import get_optional_session
-from recognition.interface_adapters.http.deps.tenant import _normalize_tenant_id
+from recognition.interface_adapters.http.deps.tenant_common import normalize_tenant_id
 
 
 class AuthContext:
@@ -108,7 +108,7 @@ async def require_auth(
 
     tenant_claim, api_key_id, rate_limit_tier, is_admin = await _lookup_api_key(api_key, settings, session)
     if tenant_claim and x_tenant_id:
-        provided = _normalize_tenant_id(x_tenant_id)
+        provided = normalize_tenant_id(x_tenant_id)
         if tenant_claim != provided:
             raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="tenant mismatch")
 

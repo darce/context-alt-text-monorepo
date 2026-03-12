@@ -2,6 +2,13 @@
 
 Portable MCP server for agent handoff state, review findings, exports, and close checks.
 
+It also supports multi-worktree coordination primitives for orchestrator/worker setups:
+
+- registered worktree lanes
+- lane-scoped activity queries
+- structured worker reports
+- explicit lane message threads
+
 ## Scope
 
 This package only handles handoff state. It does not include the old WordPress, React, or repo-intel helpers from the monorepo `unified_server.py`.
@@ -58,12 +65,27 @@ Run the MCP server over stdio:
 agent-handoff-mcp --workspace-root /path/to/repo serve-stdio
 ```
 
+Run the MCP server over HTTP:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo serve-http
+```
+
+Current HTTP defaults:
+
+- host: `127.0.0.1`
+- port: `8000`
+- endpoint path: `/mcp`
+
+This package's CLI does not currently expose dedicated `--host`, `--port`, or `--path` flags; `serve-http` uses FastMCP's current defaults.
+
 Run the fallback CLI:
 
 ```bash
 agent-handoff-mcp --workspace-root /path/to/repo doctor
 agent-handoff-mcp --workspace-root /path/to/repo state
 agent-handoff-mcp --workspace-root /path/to/repo review-list
+agent-handoff-mcp --workspace-root /path/to/repo lane-list
 ```
 
 Repo-local development without installing still works:
@@ -117,3 +139,61 @@ Claude / Gemini style wrapper config follows the same shape:
 - launch `agent-handoff-mcp`
 - pass `--workspace-root <repo> serve-stdio`
 - update any tool-prefix assumptions if the registration name changes
+
+## Multi-Worktree Workflow
+
+When one orchestrator coordinates multiple worker worktrees:
+
+1. Create a lane for each worker branch/worktree:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo lane-upsert \
+  --lane-id backend-http \
+  --worktree-path /path/to/repo-p5-backend-http \
+  --branch codex/p5-backend-http \
+  --status active
+```
+
+2. Workers record normal activity with `actor.lane_id=...` from MCP clients, or use the lane-specific CLI helpers below.
+
+3. Workers submit structured handbacks:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo lane-report \
+  --lane-id backend-http \
+  --session phase5-http \
+  --summary "Retention router slice is merge-ready." \
+  --changed-file apps/prototype-description-service/recognition/interface_adapters/http/routers/retention.py \
+  --test-command "pytest recognition/tests/api/test_retention_api.py" \
+  --merge-ready
+```
+
+4. Either side can use explicit lane messages when direct client-to-client chat is unavailable:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo lane-message \
+  --lane-id backend-http \
+  --session phase5-http \
+  --direction worker_to_orchestrator \
+  --subject "Ready for review" \
+  --message "Backend HTTP lane is ready for branch review."
+```
+
+5. The orchestrator can inspect one lane without reading the whole task history:
+
+```bash
+agent-handoff-mcp --workspace-root /path/to/repo lane-activity --lane-id backend-http
+```
+
+## Tool Summary
+
+Additional lane/worktree CLI commands:
+
+- `lane-upsert`
+- `lane-list`
+- `lane-activity`
+- `lane-report`
+- `lane-report-list`
+- `lane-message`
+- `lane-message-update`
+- `lane-message-list`

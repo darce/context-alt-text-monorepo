@@ -35,6 +35,14 @@ archive_task_state = core.archive_task_state
 get_handoff_dashboard = core.get_handoff_dashboard
 set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
+get_lane_activity = core.get_lane_activity
+list_lane_messages = core.list_lane_messages
+list_worker_reports = core.list_worker_reports
+list_worktree_lanes = core.list_worktree_lanes
+record_lane_message = core.record_lane_message
+record_worker_report = core.record_worker_report
+update_lane_message = core.update_lane_message
+upsert_worktree_lane = core.upsert_worktree_lane
 
 
 def generate_current_task_md(task_ref: str | None = None, write_file: bool = True) -> str:
@@ -78,10 +86,18 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     for tool in [
         set_handoff_state,
         get_handoff_state,
+        upsert_worktree_lane,
+        list_worktree_lanes,
+        get_lane_activity,
         record_decision,
         update_next_actions,
         record_test_result,
         report_blocker,
+        record_worker_report,
+        list_worker_reports,
+        record_lane_message,
+        update_lane_message,
+        list_lane_messages,
         record_review_finding,
         update_review_finding,
         reopen_review_finding,

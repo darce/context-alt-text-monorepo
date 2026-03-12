@@ -1,21 +1,71 @@
+---
+title: Sovereign Sync Data Flow
+---
 flowchart TD
     subgraph Backend["Recognition Service"]
         DB[(PostgreSQL)]
-        API["Snapshot Endpoint"]
+        SnapshotAPI["Snapshot Endpoint"]
+        CurationAPI["Curation Sync Endpoint"]
+        TopologyAPI["Topology Endpoints"]
     end
 
     subgraph Plugin["WordPress Plugin"]
-        Projector["Sovereign Projector"]
-        LocalDB[(WP Database)]
+        subgraph SyncLayer["Sovereign Sync Layer"]
+            Projector["SnapshotProjector"]
+            OutboxWriter["OutboxWriter"]
+            OutboxDrain["OutboxDrain"]
+            Dispatcher["OutboxDispatcher"]
+            ConflictRepo["ConflictRepository"]
+            ConflictSvc["ConflictResolutionService"]
+            Sequencer["CrossPlaneSequencer"]
+            SyncState["SyncStateRepository"]
+        end
+
+        subgraph LocalState["Local State"]
+            Clusters[(wp_acx_clusters)]
+            Members[(wp_acx_identity_members)]
+            Outbox[(wp_acx_sync_outbox)]
+            Conflicts[(wp_acx_sync_conflicts)]
+            SyncMeta[(wp_acx_sync_state)]
+        end
+
         UI["Admin UI"]
     end
 
-    DB -->|"get_snapshot()"| API
-    API -->|"JSON Snapshot Payload"| Projector
-    Projector -->|"Project Rows (Atomic Transaction)"| LocalDB
-    LocalDB -->|"Local Read Path"| UI
-    UI -->|"User Curation"| LocalDB
-    LocalDB -.->|"Delta/Sync (Future)"| DB
+    DB -->|"get_snapshot()"| SnapshotAPI
+    SnapshotAPI -->|"JSON Snapshot"| Projector
+    Projector -->|"Project (atomic tx)"| Clusters
+    Projector -->|"Project (atomic tx)"| Members
+    Projector -->|"Detect conflicts"| ConflictRepo
+    ConflictRepo -->|"Write open conflict"| Conflicts
+    Projector -->|"Update metrics"| SyncState
+    SyncState -->|"Persist"| SyncMeta
+
+    UI -->|"User curation"| OutboxWriter
+    OutboxWriter -->|"Enqueue"| Outbox
+    Outbox -->|"Drain cycle"| OutboxDrain
+    OutboxDrain --> Dispatcher
+    Dispatcher -->|"Curation ops"| CurationAPI
+    Dispatcher -->|"Topology ops"| TopologyAPI
+    CurationAPI -->|"200 ack / 409 conflict"| OutboxDrain
+    TopologyAPI -->|"200 ack / 409 conflict"| OutboxDrain
+    OutboxDrain -->|"Conflict"| ConflictRepo
+    OutboxDrain -->|"Update metrics"| SyncState
+
+    Sequencer -->|"Sequence topology"| OutboxDrain
+
+    UI -->|"Resolve conflict"| ConflictSvc
+    ConflictSvc -->|"Accept/Dismiss"| Clusters
+    ConflictSvc -->|"Accept/Dismiss"| Members
+    ConflictSvc -->|"Mark resolved"| Conflicts
+    ConflictSvc -->|"Re-enqueue"| Outbox
+
+    Clusters -->|"Local read path"| UI
+    Members -->|"Local read path"| UI
+    Conflicts -->|"Conflict inbox"| UI
+    SyncMeta -->|"Sync health badge"| UI
 
     style Projector fill:#f9f,stroke:#333,stroke-width:2px
-    style API fill:#bbf,stroke:#333,stroke-width:2px
+    style SnapshotAPI fill:#bbf,stroke:#333,stroke-width:2px
+    style ConflictSvc fill:#fbb,stroke:#333,stroke-width:2px
+    style OutboxDrain fill:#bfb,stroke:#333,stroke-width:2px

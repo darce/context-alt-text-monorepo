@@ -60,8 +60,9 @@ Backend curation replay endpoint
 5. **The backend must deduplicate by idempotency key.** Retrying the same outbox operation must return the same acknowledgement or conflict result.
 6. **Replay uses `expected_base_version`.** If local intent is built on stale backend state, the backend must reject it as a conflict rather than silently applying it.
 7. **Conflicts are explicit records, not implicit behavior.** Divergence between local curation and backend state must be stored and surfaced for review.
-8. **Projection acknowledgement is part of pipeline completion.** Backend compute is not operator-complete until WordPress has projected the resulting machine state.
-9. **The system is not active-active.** Backend state is compute state plus acknowledged curation alignment; it is not the live authority for rendered UX state.
+8. **Conflict resolution is operator-initiated and source-aware.** Conflict records transition through explicit review outcomes (`open` -> `accepted` or `dismissed`). Resolution semantics depend on conflict source: projection conflicts reconcile local projected state against machine proposals, while outbox conflicts reconcile replayed local intent against backend version conflicts. The system must not silently auto-resolve by overwriting curated state. Compound topology mutations may be excluded from machine-acceptance flows until they have explicit multi-entity revert contracts.
+9. **Projection acknowledgement is part of pipeline completion.** Backend compute is not operator-complete until WordPress has projected the resulting machine state.
+10. **The system is not active-active.** Backend state is compute state plus acknowledged curation alignment; it is not the live authority for rendered UX state.
 
 ## Rationale
 
@@ -93,7 +94,7 @@ Local curation can be made while backend clustering continues to evolve. A repla
 
 ### 5. Proposal import and curation replay are different flows
 
-Backend snapshots or deltas are machine proposals imported into WordPress projection state. Outbox replay is local operator intent being pushed back to the backend. Treating both directions as the same kind of sync would blur authority boundaries and make conflict semantics harder to reason about.
+Implemented backend snapshots, and any future delta imports, are machine proposals imported into WordPress projection state. Outbox replay is local operator intent being pushed back to the backend. Treating both directions as the same kind of sync would blur authority boundaries and make conflict semantics harder to reason about.
 
 ### 6. Projection acknowledgement closes the pipeline contract
 
@@ -125,6 +126,7 @@ The backend may finish compute before the operator can actually see the result. 
 - Local mutation intent survives crashes, timeouts, and drain restarts.
 - Retry behavior is well defined through idempotency keys.
 - Version conflicts become explicit reviewable records instead of silent corruption.
+- Operator-visible conflict resolution becomes part of the architecture, not an implementation detail hidden in a later phase.
 - Pipeline completion can reflect what the operator can actually see locally.
 - The authority split between plugin UX state and backend compute state is easier to reason about.
 
@@ -134,16 +136,18 @@ The backend may finish compute before the operator can actually see the result. 
 - Mutation handlers must preserve transaction boundaries between local write and enqueue.
 - Backend APIs must implement idempotency retention and version-aware conflict handling.
 - Operators may need conflict resolution UX for cases that used to fail silently.
-- Retention and audit semantics become part of the architecture once projected machine state is acknowledged and later disposed.
+- Outbox lifecycle now includes an operator-managed discard path as an explicit exception to normal at-least-once replay guarantees.
+- Retention and audit semantics become part of the architecture once projected machine state is acknowledged and later disposed; they require follow-on policy work rather than being defined by this ADR alone.
 
 ## Implementation Notes
 
 - WordPress stores projected machine state, curation overlays, outbox rows, sync state, and conflict records.
 - Replayable local mutations insert outbox rows with `idempotency_key`, `expected_base_version`, payload, and status metadata.
+- The normal outbox lifecycle is `pending` -> `acknowledged` | `conflict` | `failed`. Phase 4 adds an operator-initiated `discarded` terminal state for dead-letter handling. `discarded` is an explicit exception to the default at-least-once replay contract: it represents deliberate abandonment of local intent after inspection, not implicit delivery failure.
 - The backend persists replay results so the same idempotency key can be answered deterministically on retry.
-- Snapshot or delta imports must preserve curated local fields according to the curation-first merge contract.
+- Implemented snapshot imports, and any future delta imports, must preserve curated local fields according to the curation-first merge contract.
 - Compound topology operations require explicit conflict ownership and resolution rules; they must not be treated as naive single-row updates.
-- Tenant retention policy and audit infrastructure sit on top of this architecture and depend on projection acknowledgement semantics.
+- Tenant retention policy and audit infrastructure sit on top of this architecture and depend on projection acknowledgement semantics. Those disposal rules are follow-on work owned by the Phase 5 retention/export/purge planning track or a dedicated retention ADR, not by ADR-003 itself.
 
 ## References
 
@@ -151,6 +155,7 @@ The backend may finish compute before the operator can actually see the result. 
 - [ADR-002: Person as First-Class Local Entity](ADR-002-person-as-first-class-local-entity.md)
 - [Curation Sync API](contracts/curation-sync-api.md)
 - [Recognition State Reconciliation + Offline Continuity Epic](../epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md)
+- [Recognition State Reconciliation + Offline Continuity Epic Phase 5 (Retention, Export, Purge)](../epics/v0.2.0/recognition-state-reconciliation-and-offline-continuity-epic.md)
 - Plugin outbox implementation:
   - `apps/prototype-wp-alt-context/src/sovereign/sync`
 - Plugin lifecycle/schema entrypoint:

@@ -199,6 +199,91 @@ Plugin behavior: Halt drain cycle; surface auth error in sync status; do not ret
 
 Plugin behavior: Mark outbox record as `pending`, increment `attempts` counter; retry on next drain cycle with exponential backoff.
 
+## Topology Operation Types
+
+The following operations mutate cluster topology and are dispatched by `OutboxDispatcher` directly to recognition service endpoints (NOT through `POST /roster/curation/sync`):
+
+| Operation Type                | HTTP                                             | Payload Fields                                      |
+| ----------------------------- | ------------------------------------------------ | --------------------------------------------------- |
+| `cluster_merged`              | `POST /recognition/clusters/{id}/merge`          | `target_cluster_id`, optional `target_label`        |
+| `identity_reassigned`         | `POST /recognition/clusters/reassign`            | `identity_uuid`, `target_cluster_uuid`              |
+| `cluster_created_for_identity`| `POST /recognition/clusters/create-for-identity` | `identity_uuid`, `cluster_uuid`                     |
+| `revert_merge_cluster`        | `POST /recognition/clusters/revert-merge`        | `source_cluster_uuid`, `target_cluster_uuid`        |
+| `assign_outlier_to_cluster`   | `POST /recognition/clusters/{id}/assign`         | `identity_uuid`                                     |
+| `cluster_label_updated`       | via curation sync                                | `cluster_uuid`, `label`                             |
+| `cluster_dismissed`           | via curation sync                                | `cluster_uuid`                                      |
+| `cluster_undismissed`         | via curation sync                                | `cluster_uuid`                                      |
+| `cluster_person_bound`        | via curation sync                                | `cluster_uuid`, `person_uuid`                       |
+| `cluster_person_unbound`      | via curation sync                                | `cluster_uuid`                                      |
+
+### Topology Dispatch
+
+The `OutboxDispatcher` routes topology operations using `TOPOLOGY_ROUTES` constant with `%s` entity_key interpolation. These go directly to recognition service topology endpoints with `X-API-Key` and `X-Tenant-ID` headers.
+
+### Cross-Plane Sequencing
+
+Topology mutations that affect multiple entities (merge, split, reassign) are sequenced by `CrossPlaneSequencer` to prevent race conditions between local and remote state. The sequencer ensures that topology commands complete in order.
+
+## Outbox Lifecycle and Dead-Letter
+
+Outbox operations follow a bounded retry lifecycle:
+
+```
+pending -> acknowledged (success)
+pending -> conflict (409 from backend)
+pending -> failed (max attempts exhausted or non-retryable error)
+conflict -> pending (operator dismisses: re-enqueue with updated base)
+conflict -> discarded (operator accepts machine state)
+failed -> pending (operator retries from dead-letter panel)
+failed -> discarded (operator discards from dead-letter panel)
+```
+
+Max attempts: 5 (configurable). No backoff delay between drain cycles.
+
+### Dead-Letter Management Endpoints (WP REST)
+
+| Endpoint                                     | Method | Purpose                        |
+| -------------------------------------------- | ------ | ------------------------------ |
+| `GET /acx/v1/recognition/outbox/failed`      | GET    | Paginated list of failed ops   |
+| `POST /acx/v1/recognition/outbox/{id}/retry` | POST   | Reset to pending, reschedule   |
+| `POST /acx/v1/recognition/outbox/{id}/discard`| POST  | Mark discarded, refresh metrics|
+
+## Conflict Resolution Endpoints (WP REST)
+
+| Endpoint                                              | Method | Purpose                            |
+| ----------------------------------------------------- | ------ | ---------------------------------- |
+| `GET /acx/v1/recognition/conflicts`                   | GET    | Paginated list with status filter  |
+| `GET /acx/v1/recognition/conflicts/{id}`              | GET    | Detail with decoded payloads       |
+| `POST /acx/v1/recognition/conflicts/{id}/resolve`     | POST   | Accept or dismiss conflict         |
+
+### Conflict Resolution Semantics
+
+`ConflictResolutionService::resolve()` dispatches per source and `conflict_code`:
+
+**Outbox conflict accepted** (deterministic single-row operations only):
+- Clear curation flags on entity (`is_user_confirmed = 0` / `is_curated = 0`)
+- Discard outbox row
+- Next sync pull converges entity to machine state
+
+**Outbox conflict dismissed** (all operation types):
+- Re-enqueue outbox row with updated `expected_base_version`, reset attempts
+- Reschedule drain
+
+**Projection conflict accepted** per `conflict_code`:
+- `curated_cluster_deleted`: delete cluster row + all member rows (no FK cascade)
+- `curated_member_deleted`: delete member row
+- `member_cluster_reassignment`: update member's `cluster_uuid` to machine value, clear `is_curated`
+
+**Projection conflict dismissed**: no entity mutation (curated state preserved)
+
+### `allowed_resolutions` per conflict
+
+| Source      | Operation Category                                      | `allowed_resolutions`       |
+| ----------- | ------------------------------------------------------- | --------------------------- |
+| Projection  | any                                                     | `['accepted', 'dismissed']` |
+| Outbox      | deterministic single-row (`cluster_label_updated`, etc.) | `['accepted', 'dismissed']` |
+| Outbox      | person CRUD + compound topology (`cluster_merged`, etc.) | `['dismissed']`             |
+
 ## Data Flow Invariants
 
 ### Local Write Atomicity

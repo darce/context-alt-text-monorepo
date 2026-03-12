@@ -167,6 +167,18 @@ const { data, isLoading, error, refetch } = useQuery({
 
 ---
 
+## Workbench Overlay and URL State
+
+The Workbench page uses URL-synced overlay state via the `panel` query param to drive which secondary panel is visible (`conflicts`, `dead-letter`).
+
+### Rules
+
+- **URL is the source of truth.** Read overlay state from `useOverlayParam` / `useSearchParams`, not from component state. Setting `panel=conflicts` opens the conflict inbox; removing `panel` closes the overlay.
+- **No stale closure captures.** Overlay open/close handlers must use the functional form of `setSearchParams` to avoid capturing stale param snapshots.
+- **Panel hooks stay local.** `ConflictInbox` and `DeadLetterPanel` own their query/mutation hooks; `WorkbenchPage` and `WorkbenchContext` only coordinate visibility and chrome.
+
+---
+
 ## Accessibility Requirements
 
 - Query elements by accessible roles: `getByRole('button')`, not `getByTestId()`

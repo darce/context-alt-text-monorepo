@@ -49,6 +49,25 @@ Additional security rules:
 
 ---
 
+## Sovereign Sync Layer (`src/sovereign/`)
+
+The plugin's sync architecture is split into four cooperating subsystems:
+
+1. **Inbound projection** (`SnapshotProjector` + repositories): pulls backend snapshots into local tables inside one DB transaction and records projection conflicts when curated rows disagree with machine state.
+2. **Outbound replay** (`OutboxDrain` + `OutboxDispatcher`): drains `wp_acx_sync_outbox` entries to backend curation/topology endpoints and applies result transitions (`acknowledged`, `conflict`, `failed`, `discarded`).
+3. **Conflict resolution** (`ConflictResolutionService`): resolves `wp_acx_sync_conflicts` by either accepting machine state or keeping local state, with source-specific side effects.
+4. **Sync health aggregation** (`SyncStateRepository` + `SyncStatusController`): persists pull reachability and aggregate counts for sync health surfaces.
+
+### Rules for sovereign sync code
+
+- **Atomic projection transactions.** Snapshot projection work must stay inside one `$wpdb` transaction. Do not split cluster/member writes and conflict recording across separate request cycles.
+- **Outbox payloads are append-only input.** `OutboxDrain` may update row status, attempts, error fields, and acknowledgement metadata, but it must not rewrite the semantic payload to “fix” a bad operation after enqueue.
+- **Projection conflicts use idempotent open-conflict reuse.** `ConflictRepository::record_projection_conflict()` updates an existing open conflict for the same tenant/entity/conflict code instead of inserting duplicate rows.
+- **Outbox conflicts resolve through explicit status transitions.** Retry resets a `failed` row to `pending`; dismissing a `conflict` re-enqueues the same row with a new `expected_base_version`; discard is terminal.
+- **Sync metrics are part of the behavior, not incidental bookkeeping.** Projection, drain, retry, discard, and resolution paths must refresh `SyncStateRepository` metrics when they change conflict or outbox counts.
+
+---
+
 ## Repository & Query Patterns
 
 ### Schema-Key Parity Before Query Edits

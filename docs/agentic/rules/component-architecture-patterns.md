@@ -110,6 +110,28 @@ Before merging, verify NONE of these exist in the diff:
 
 ---
 
+## Overlay Panel Pattern (WorkbenchOverlay)
+
+The Workbench page uses a URL-synced overlay for secondary panels (`ConflictInbox`, `DeadLetterPanel`). This pattern applies whenever a page needs switchable side panels without changing the primary tab.
+
+```
+WorkbenchContext
+  +-- useOverlayParam("panel")
+WorkbenchPage
+  +-- overlay chrome / dismiss control
+  +-- ConflictInbox (owns conflict hooks + mutation flows)
+  +-- DeadLetterPanel (owns outbox hooks + mutation flows)
+  +-- SyncStatusIndicator
+```
+
+### Rules
+
+1. **URL param is source of truth.** The `panel` search param selects which overlay renders. Do not mirror it in local component state.
+2. **Context owns routing state, panels own their data.** `WorkbenchContext` / `useOverlayParam` manage which overlay is open. `ConflictInbox` and `DeadLetterPanel` call their own hooks directly.
+3. **Overlay components remain feature-local.** Conflict and dead-letter logic stays inside their own panel files and hooks; `WorkbenchPage` only handles container chrome and routing.
+
+---
+
 ## Summary Principles
 
 1. **Single Responsibility** -- each file does ONE thing well.

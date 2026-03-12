@@ -23,7 +23,9 @@ flowchart TB
             useJobHistory["useJobProgressStream"]
             useMediaIdentities["useMediaIdentities"]
             useJobCoord["useJobCoordination"]
-            useSyncHealth["useSyncHealth"]
+            useSyncStatus["useSyncStatus"]
+            useConflicts["useConflicts / useConflictDetail"]
+            useOutbox["useOutboxOperations"]
         end
 
         subgraph ApiClient["TypeScript API Client"]
@@ -37,8 +39,8 @@ flowchart TB
         subgraph PHPLayer["PHP REST Layer"]
             ApiClass["Api (class-api.php)<br/>Route Registration"]
             RecognitionCtrl["RecognitionController<br/>Recognition proxy"]
-            ConflictCtrl["ConflictController<br/>Conflict resolution"]
-            SyncCtrl["SyncController<br/>Health + dead-letter"]
+            ConflictCtrl["ConflictController<br/>Conflicts + dead-letter"]
+            SyncCtrl["SyncStatusController<br/>Sync health"]
         end
 
         subgraph SovereignSync["Sovereign Sync Layer"]
@@ -131,11 +133,14 @@ flowchart TB
     ConflictSvc --> WPConflicts
     ConflictSvc -->|"Re-enqueue"| WPOutbox
 
-    %% Sync health
+    %% Sync health and sovereign UI flows
     SyncCtrl --> SyncStateRepo
-    SyncHealth --> useSyncHealth
-    ConflictInbox --> conflictApi
-    DeadLetterPanel --> syncApi
+    SyncHealth --> useSyncStatus
+    ConflictInbox --> useConflicts
+    DeadLetterPanel --> useOutbox
+    useSyncStatus --> syncApi
+    useConflicts --> conflictApi
+    useOutbox --> conflictApi
 
     %% Sequencing
     Sequencer --> OutboxDrain

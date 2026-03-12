@@ -33,12 +33,16 @@ This document follows Autonomous Coding Engine principles for minimal, self-corr
 ```mermaid
 flowchart TB
     subgraph WordPress["WordPress Plugin"]
-        ReactUI["React Admin UI"] --> PHPLayer["PHP REST Layer"]
+        ReactUI["React Admin UI<br/>(Workbench, Dashboard, ConflictInbox, DeadLetterPanel)"] --> PHPLayer["PHP REST Layer<br/>(RecognitionController, ConflictController, SyncStatusController)"]
+        PHPLayer --> SovereignSync["Sovereign Sync Layer<br/>(SnapshotProjector, OutboxDrain, ConflictResolutionService, SyncStateRepository)"]
+        SovereignSync --> WPDB["WP Local Tables<br/>(clusters, members, outbox, conflicts, sync_state)"]
     end
     subgraph Backend["Recognition Service (FastAPI)"]
-        API["FastAPI Routers"] --> Services["Domain Services"]
+        API["FastAPI Routers<br/>(snapshot, curation sync, topology)"] --> Services["Domain Services"]
     end
     PHPLayer -->|"HTTP + API Key"| API
+    API -->|"Snapshot pull"| SovereignSync
+    SovereignSync -->|"Outbox push"| API
     Services --> Database["PostgreSQL + pgvector"]
 ```
 

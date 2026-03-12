@@ -135,8 +135,8 @@ class SnapshotClient implements SnapshotClientInterface {
 		return $data;
 	}
 
-	public function acknowledge_projection( string $job_id, int $snapshot_version ): WP_REST_Response|WP_Error {
-		return $this->transport->acknowledge_projection( $job_id, $snapshot_version );
+	public function acknowledge_projection( string $job_id, int $snapshot_version, ?string $snapshot_generation_id = null ): WP_REST_Response|WP_Error {
+		return $this->transport->acknowledge_projection( $job_id, $snapshot_version, $snapshot_generation_id );
 	}
 
 	private function get_snapshot_endpoint_path(): string {

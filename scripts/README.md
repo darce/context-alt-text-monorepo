@@ -7,6 +7,7 @@ Cross-project scripts for the monorepo. App-specific scripts live under each app
 ```
 scripts/
 ├── localwp-db.sh          # Connect to LocalWP MySQL (auto-discovers socket)
+├── worktree-lane          # Worktree + MCP helper for orchestrator/worker lanes
 └── mcp/
     ├── mcp-server.sh       # Agent Handoff MCP launch shim
     └── unified_server.py   # Legacy non-handoff/reference MCP implementation
@@ -26,6 +27,62 @@ Supports `LOCALWP_SOCKET`, `LOCALWP_DB_NAME`, `LOCALWP_DB_USER`, `LOCALWP_DB_PAS
 
 ## mcp/
 
-The canonical MCP runtime for handoff state is now the packaged `agent-handoff-mcp` server under [`packages/agent-handoff-mcp/`](/Users/daniel/Development/context-alt-text-monorepo/packages/agent-handoff-mcp/). Clients should launch the installed `agent-handoff-mcp` binary directly. `mcp/mcp-server.sh` remains a local fallback shim for development and diagnostics.
+The canonical MCP runtime for handoff state is now the packaged `agent-handoff-mcp` server under [`packages/agent-handoff-mcp/`](../packages/agent-handoff-mcp/). Clients should launch the installed `agent-handoff-mcp` binary directly. `mcp/mcp-server.sh` remains a local fallback shim for development and diagnostics.
 
 `unified_server.py` is no longer the handoff runtime. It remains only as legacy/reference code for any future extraction of non-handoff repo-intel workflows.
+
+## worktree-lane
+
+Helper for the orchestrator/worker pattern described in [instructions.md](../docs/agentic/instructions.md).
+
+It wraps:
+
+- `git worktree add`
+- shared-state `agent-handoff-mcp lane-upsert`
+- lane self-query via `state`, `lane-list`, `lane-activity`
+- merge-ready worker handback via `lane-report` and optional `lane-message`
+- brief/report template rendering
+
+Examples:
+
+```bash
+scripts/worktree-lane create \
+  --orchestrator-root /path/to/context-alt-text-monorepo \
+  --lane-id backend-http \
+  --branch codex/phase5-backend-http \
+  --title "Backend HTTP" \
+  --objective "Implement retention router and schema updates."
+```
+
+```bash
+scripts/worktree-lane brief \
+  --orchestrator-root /path/to/context-alt-text-monorepo \
+  --task-ref phase-5-retention-export-and-audit-controls \
+  --lane-id backend-http \
+  --branch codex/phase5-backend-http \
+  --worktree-path /path/to/context-alt-text-monorepo-backend-http \
+  --objective "Implement retention router and schema updates." \
+  --owned-path apps/prototype-description-service/recognition/interface_adapters/http/** \
+  --required-doc docs/agentic/instructions.md \
+  --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py"
+```
+
+```bash
+scripts/worktree-lane status \
+  --orchestrator-root /path/to/context-alt-text-monorepo \
+  --lane-id backend-http \
+  --worktree-path /path/to/context-alt-text-monorepo-backend-http
+```
+
+```bash
+scripts/worktree-lane report \
+  --orchestrator-root /path/to/context-alt-text-monorepo \
+  --task-ref phase-5-retention-export-and-audit-controls \
+  --lane-id backend-http \
+  --session phase5-http \
+  --summary "HTTP slice is ready for orchestrator review." \
+  --worktree-path /path/to/context-alt-text-monorepo-backend-http \
+  --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py" \
+  --merge-ready \
+  --message "This lane is ready for branch review."
+```

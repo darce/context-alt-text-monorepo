@@ -67,7 +67,7 @@ The v0.1.0 sovereign architecture and v0.2.0 reliability baseline established a 
 
 ### Gaps
 
-_All gaps addressed by Phases 1-5. Remaining work (delta ingest, drift reconciliation, bidirectional conflict resolution) is tracked in [Recognition State Reconciliation + Offline Continuity](recognition-state-reconciliation-and-offline-continuity-epic.md)._
+_All gaps addressed by Phases 1-5. Remaining sync follow-on work (delta ingest, drift reconciliation, representative pin parity, and bidirectional conflict resolution for person-name edits) is tracked in [Sovereign Sync Expansion + Workbench UX Continuation](sovereign-sync-and-workbench-ux-epic.md)._
 
 ## Target Architecture
 
@@ -330,8 +330,8 @@ Exit criteria:
 
 ## Deferred (Post-Epic)
 
-> Tracked in: [deferred-ux-ergonomics-post-epic-task-plan.md](../../tasks/5.0/deferred-ux-ergonomics-post-epic-task-plan.md) and [Recognition State Reconciliation + Offline Continuity](recognition-state-reconciliation-and-offline-continuity-epic.md)
+> Tracked in: [deferred-ux-ergonomics-post-epic-task-plan.md](../../tasks/5.0/deferred-ux-ergonomics-post-epic-task-plan.md) and [Sovereign Sync Expansion + Workbench UX Continuation](sovereign-sync-and-workbench-ux-epic.md)
 
 - [x] Action Scheduler integration (upgrade from WP cron drain) -- delivered in Phase 5.
-- [ ] Delta ingest and drift reconciliation -- moved to reconciliation epic.
-- [ ] Bidirectional conflict resolution for person name edits -- moved to reconciliation epic.
+- [ ] Delta ingest and drift reconciliation -- moved to sovereign sync follow-on epic.
+- [ ] Bidirectional conflict resolution for person name edits -- moved to sovereign sync follow-on epic.

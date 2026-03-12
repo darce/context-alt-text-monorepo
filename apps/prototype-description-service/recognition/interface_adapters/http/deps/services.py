@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from functools import lru_cache
 from pathlib import Path
+from typing import Any, Protocol
 
 from fastapi import Depends
 from sqlalchemy import text
@@ -57,6 +58,65 @@ from recognition.observability.persistence import ObservabilityRepository
 from recognition.observability.visualization import ClusterVisualizer
 
 logger = logging.getLogger(__name__)
+
+
+class RetentionPolicyServiceProtocol(Protocol):
+    """Policy read/write surface consumed by the retention router."""
+
+    async def get_policy(self, tenant_id: str) -> dict[str, Any]: ...
+
+    async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]: ...
+
+
+class RetentionExportServiceProtocol(Protocol):
+    """Export surface consumed by the retention router."""
+
+    async def count_exportable_identities(self, tenant_id: str) -> int: ...
+
+    async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, Any]: ...
+
+
+class RetentionPurgeServiceProtocol(Protocol):
+    """Purge surface consumed by the retention router."""
+
+    async def purge_tenant_data(self, tenant_id: str, actor: str, scope: str = "disposed") -> dict[str, Any]: ...
+
+
+class AuditRepositoryProtocol(Protocol):
+    """Audit listing surface consumed by the retention router."""
+
+    async def list_events(self, tenant_id: str, limit: int, offset: int) -> list[dict[str, Any]]: ...
+
+    async def count_events(self, tenant_id: str) -> int: ...
+
+
+class _NotImplementedRetentionPolicyService:
+    async def get_policy(self, tenant_id: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Retention policy service is not implemented for tenant {tenant_id}")
+
+    async def update_policy(self, tenant_id: str, retention_mode: str, actor: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Retention policy update is not implemented for tenant {tenant_id}")
+
+
+class _NotImplementedRetentionExportService:
+    async def count_exportable_identities(self, tenant_id: str) -> int:
+        return 0
+
+    async def export_tenant_data(self, tenant_id: str, actor: str) -> dict[str, Any]:
+        raise NotImplementedError(f"Tenant export service is not implemented for tenant {tenant_id}")
+
+
+class _NotImplementedRetentionPurgeService:
+    async def purge_tenant_data(self, tenant_id: str, actor: str, scope: str = "disposed") -> dict[str, Any]:
+        raise NotImplementedError(f"Tenant purge service is not implemented for tenant {tenant_id}")
+
+
+class _NotImplementedAuditRepository:
+    async def list_events(self, tenant_id: str, limit: int, offset: int) -> list[dict[str, Any]]:
+        raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
+
+    async def count_events(self, tenant_id: str) -> int:
+        raise NotImplementedError(f"Audit repository is not implemented for tenant {tenant_id}")
 
 
 @lru_cache
@@ -138,6 +198,60 @@ async def get_media_identity_service(
     if session is None or not isinstance(session, AsyncSession):
         return None
     return MediaIdentityService(session)
+
+
+async def get_retention_policy_service(
+    session: AsyncSession = Depends(get_session),
+) -> RetentionPolicyServiceProtocol:
+    """Return the real retention policy service when available."""
+    try:
+        from recognition.application.retention.retention_policy_service import RetentionPolicyService
+        from recognition.infrastructure.repositories.audit_repository import SqlAlchemyAuditRepository
+        from recognition.infrastructure.repositories.tenant_repository import SqlAlchemyTenantRepository
+
+        return RetentionPolicyService(
+            session=session,
+            tenant_repository=SqlAlchemyTenantRepository(session),
+            audit_repository=SqlAlchemyAuditRepository(session),
+        )
+    except ModuleNotFoundError:
+        return _NotImplementedRetentionPolicyService()
+
+
+async def get_retention_export_service(
+    session: AsyncSession = Depends(get_session),
+) -> RetentionExportServiceProtocol:
+    """Return the real tenant export service when available."""
+    try:
+        from recognition.application.retention.export_service import TenantExportService
+
+        return TenantExportService(session=session)
+    except ModuleNotFoundError:
+        return _NotImplementedRetentionExportService()
+
+
+async def get_retention_purge_service(
+    session: AsyncSession = Depends(get_session),
+) -> RetentionPurgeServiceProtocol:
+    """Return the real tenant purge service when available."""
+    try:
+        from recognition.application.retention.purge_service import TenantPurgeService
+
+        return TenantPurgeService(session=session)
+    except ModuleNotFoundError:
+        return _NotImplementedRetentionPurgeService()
+
+
+async def get_audit_repository(
+    session: AsyncSession = Depends(get_session),
+) -> AuditRepositoryProtocol:
+    """Return the real audit repository when available."""
+    try:
+        from recognition.infrastructure.repositories.audit_repository import SqlAlchemyAuditRepository
+
+        return SqlAlchemyAuditRepository(session)
+    except ModuleNotFoundError:
+        return _NotImplementedAuditRepository()
 
 
 async def build_cluster_service(

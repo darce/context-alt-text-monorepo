@@ -11,6 +11,7 @@ import { useMediaStats } from '../hooks/useMediaStats';
 import { useRecognitionJobHistory } from '../hooks/useRecognitionJobHistory';
 import { useIdentityStats } from '../hooks/useIdentityStats';
 import { useSyncStatus } from '../hooks/useSyncStatus';
+import { useRetentionStatus } from '../hooks/useRetentionStatus';
 import { rosterClustersUrl } from './workbench/Panels';
 import { sprintf } from '@wordpress/i18n';
 import { OrientationCard } from './dashboard/OrientationCard';
@@ -28,6 +29,7 @@ export const DashboardPage = (): React.JSX.Element => {
   const { stats, isLoading: isStatsLoading } = useMediaStats();
   const { jobHistory, jobStatuses, jobDetails } = useRecognitionJobHistory();
   const { data: syncStatus, isLoading: isSyncStatusLoading, isError: isSyncStatusError } = useSyncStatus();
+  const { data: retentionStatus } = useRetentionStatus();
   const {
     data: identityStats,
     isLoading: isIdentityLoading,
@@ -42,6 +44,13 @@ export const DashboardPage = (): React.JSX.Element => {
   const topologyPending = normalizeCount(syncStatus?.topology_commands?.pending);
   const topologyFailed = normalizeCount(syncStatus?.topology_commands?.failed);
   const topologyConflicts = normalizeCount(syncStatus?.topology_commands?.conflict);
+  const retentionPolicy = retentionStatus?.available ? retentionStatus.policy : null;
+  const retentionModeLabel =
+    retentionPolicy?.retention_mode === 'dispose_after_ack'
+      ? __('Dispose after ack', 'alt-context')
+      : retentionPolicy?.retention_mode === 'purge_on_demand'
+        ? __('Purge on demand', 'alt-context')
+        : __('Retain all', 'alt-context');
   const formatDuration = (startedAt: string, finishedAt: string | null): string | null => {
     if (!startedAt || !finishedAt) {
       return null;
@@ -235,6 +244,40 @@ export const DashboardPage = (): React.JSX.Element => {
                     <p>{__('Retry or discard failed replay operations.', 'alt-context')}</p>
                   </a>
                 ) : null}
+              </div>
+            </>
+          )}
+        </section>
+
+        <section className="acx-dashboard__panel">
+          <h2>{__('Retention posture', 'alt-context')}</h2>
+          {!retentionPolicy ? (
+            <p>{__('Retention status is unavailable right now.', 'alt-context')}</p>
+          ) : (
+            <>
+              <div className="acx-dashboard__stats-grid">
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">{retentionModeLabel}</span>
+                  <span className="acx-dashboard__stat-label">{__('Current Mode', 'alt-context')}</span>
+                </div>
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">
+                    {retentionPolicy.last_export_at ? new Date(retentionPolicy.last_export_at).toLocaleDateString() : __('Never', 'alt-context')}
+                  </span>
+                  <span className="acx-dashboard__stat-label">{__('Last Export', 'alt-context')}</span>
+                </div>
+                <div className="acx-dashboard__stat">
+                  <span className="acx-dashboard__stat-value acx-dashboard__stat-value--compact">
+                    {retentionPolicy.last_purge_at ? new Date(retentionPolicy.last_purge_at).toLocaleDateString() : __('Never', 'alt-context')}
+                  </span>
+                  <span className="acx-dashboard__stat-label">{__('Last Purge', 'alt-context')}</span>
+                </div>
+              </div>
+              <div className="acx-dashboard__actions">
+                <a href="#/retention" className="acx-dashboard__action-card">
+                  <h3>{__('Open Retention Controls', 'alt-context')}</h3>
+                  <p>{__('Review policy, run exports, and inspect recent audit events.', 'alt-context')}</p>
+                </a>
               </div>
             </>
           )}

@@ -57,6 +57,10 @@ class RecognitionSettings(BaseModel):
     clustering_limits: ClusteringLimitsSettings = Field(default_factory=ClusteringLimitsSettings)
     clustering: ClusteringSettings = Field(default_factory=ClusteringSettings)
     scan: ScanSettings = Field(default_factory=ScanSettings)
+    retention_export_max_identities: int = Field(
+        default=50000,
+        description="Max identities allowed for synchronous retention export responses.",
+    )
 
     # Runtime mode: "production" uses real InsightFace, "test" uses stubs
     runtime_mode: str = Field(default_factory=lambda: os.environ.get("RECOGNITION_RUNTIME_MODE", "production"))

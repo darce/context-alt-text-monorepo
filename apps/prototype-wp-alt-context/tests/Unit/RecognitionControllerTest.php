@@ -255,6 +255,16 @@ class RecognitionControllerTest extends TestCase
         $this->assertFalse($route['args']['args']['include_debug']['required']);
     }
 
+    public function testRegisterRoutesIncludesRetentionProxyRoutes(): void
+    {
+        $this->controller->register_routes();
+
+        $this->assertNotNull($this->findRegisteredRoute('/retention/status', 'GET'));
+        $this->assertNotNull($this->findRegisteredRoute('/retention/policy', 'PATCH'));
+        $this->assertNotNull($this->findRegisteredRoute('/retention/export', 'POST'));
+        $this->assertNotNull($this->findRegisteredRoute('/retention/purge', 'POST'));
+    }
+
     public function testRegisterRoutesDoesNotExposeRemovedSurfaces(): void
     {
         $this->controller->register_routes();

@@ -15,15 +15,24 @@ import {
   revertMergeCluster,
   acknowledgeProjection,
   cancelScanJob,
+  exportTenantData,
   scanFaces,
   triggerSync,
   undismissCluster,
+  updateRetentionPolicy,
   updateClusterLabel,
 } from '../recognition';
 
 vi.mock('../config', () => ({
   getEndpoint: vi.fn((...keys: string[]) => `https://example.com/${keys[0] ?? 'default'}`),
-  getConfig: vi.fn(() => ({ nonce: 'nonce-123', endpoints: {}, devMode: false })),
+  getConfig: vi.fn(() => ({
+    nonce: 'nonce-123',
+    endpoints: {
+      retentionPolicy: 'https://example.com/retentionPolicy',
+      retentionExport: 'https://example.com/retentionExport',
+    },
+    devMode: false,
+  })),
   isDevMode: vi.fn(() => false),
 }));
 
@@ -152,6 +161,60 @@ describe('recognitionApi', () => {
     expect(result.id).toBe('job-1');
     expect(result.status).toBe('pending');
     expect(result.progress?.total).toBe(20);
+  });
+
+  it('normalizes retention export payloads from backend data/counts fields', async () => {
+    fetchApiMock.mockResolvedValue({
+      tenant_id: 'tenant-1',
+      exported_at: '2026-03-12T12:00:00Z',
+      schema_version: 1,
+      counts: { clusters: 2, members: 3 },
+      data: {
+        clusters: [{ id: 'cluster-1' }],
+      },
+    });
+
+    const result = await exportTenantData();
+
+    expect(result).toEqual({
+      tenant_id: 'tenant-1',
+      exported_at: '2026-03-12T12:00:00Z',
+      schema_version: 1,
+      summary: { clusters: 2, members: 3 },
+      payload: {
+        clusters: [{ id: 'cluster-1' }],
+      },
+    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionExport'),
+      expect.objectContaining({ method: 'POST', restNonce: 'nonce-123' }),
+    );
+  });
+
+  it('returns the proxied retention policy payload from updateRetentionPolicy', async () => {
+    fetchApiMock.mockResolvedValue({
+      retention_mode: 'purge_on_demand',
+      last_export_at: '2026-03-12T12:00:00Z',
+      last_purge_at: null,
+      retention_updated_at: '2026-03-12T12:30:00Z',
+    });
+
+    const result = await updateRetentionPolicy({ retention_mode: 'purge_on_demand' });
+
+    expect(result).toEqual({
+      retention_mode: 'purge_on_demand',
+      last_export_at: '2026-03-12T12:00:00Z',
+      last_purge_at: null,
+      retention_updated_at: '2026-03-12T12:30:00Z',
+    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionPolicy'),
+      expect.objectContaining({
+        method: 'PATCH',
+        body: { retention_mode: 'purge_on_demand' },
+        restNonce: 'nonce-123',
+      }),
+    );
   });
 
   it('normalizes legacy pending suggestion array payloads', async () => {

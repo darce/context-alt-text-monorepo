@@ -1,0 +1,404 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+usage() {
+  cat <<'EOF'
+Usage:
+  scripts/worktree-lane create --orchestrator-root ROOT --lane-id LANE [--branch BRANCH] [--worktree-path PATH] [--title TITLE] [--objective TEXT] [--owner-agent AGENT] [--status STATUS] [--notes TEXT] [--dry-run]
+  scripts/worktree-lane brief --orchestrator-root ROOT --task-ref TASK --lane-id LANE --branch BRANCH --worktree-path PATH [--title TITLE] [--objective TEXT] [--owned-path PATH]... [--required-doc DOC]... [--test-command CMD]... [--non-goal TEXT]... [--definition TEXT]
+  scripts/worktree-lane status --orchestrator-root ROOT [--lane-id LANE] [--worktree-path PATH]
+  scripts/worktree-lane report --orchestrator-root ROOT --task-ref TASK --lane-id LANE --session SESSION --summary TEXT [--status STATUS] [--merge-ready] [--test-command CMD]... [--blocker TEXT]... [--subject TEXT] [--message TEXT] [--direction DIR] [--worktree-path PATH] [--dry-run]
+
+Notes:
+  - create is intended to run from the orchestrator root
+  - status and report are intended to run from the worker worktree
+  - shared MCP state always lives under the orchestrator root
+EOF
+}
+
+die() {
+  echo "worktree-lane: $*" >&2
+  exit 1
+}
+
+require_command() {
+  command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
+}
+
+git_root() {
+  git rev-parse --show-toplevel 2>/dev/null
+}
+
+default_worktree_path() {
+  local orchestrator_root="$1"
+  local lane_id="$2"
+  local parent_dir base_name
+  parent_dir="$(dirname "$orchestrator_root")"
+  base_name="$(basename "$orchestrator_root")"
+  printf '%s/%s-%s\n' "$parent_dir" "$base_name" "$lane_id"
+}
+
+shared_mcp_args() {
+  local orchestrator_root="$1"
+  local workspace_root="$2"
+  printf -- '--workspace-root\0%s\0--state-dir\0%s/.task-state\0--current-task-path\0%s/CURRENT_TASK.md\0--exports-dir\0%s/.task-state/exports\0' \
+    "$workspace_root" "$orchestrator_root" "$orchestrator_root" "$orchestrator_root"
+}
+
+run_mcp() {
+  local orchestrator_root="$1"
+  local workspace_root="$2"
+  shift 2
+
+  local -a args=()
+  while IFS= read -r -d '' item; do
+    args+=("$item")
+  done < <(shared_mcp_args "$orchestrator_root" "$workspace_root")
+
+  agent-handoff-mcp "${args[@]}" "$@"
+}
+
+bullet_list() {
+  if [ "$#" -eq 0 ]; then
+    printf '%s\n' '- none specified'
+    return
+  fi
+
+  local item
+  for item in "$@"; do
+    printf -- '- %s\n' "$item"
+  done
+}
+
+render_template() {
+  local template_path="$1"
+  shift
+
+  perl -0pe '
+    s/\{\{TASK_REF\}\}/$ENV{TASK_REF}/g;
+    s/\{\{LANE_ID\}\}/$ENV{LANE_ID}/g;
+    s/\{\{SESSION\}\}/$ENV{SESSION}/g;
+    s/\{\{BRANCH\}\}/$ENV{BRANCH}/g;
+    s/\{\{WORKTREE_PATH\}\}/$ENV{WORKTREE_PATH}/g;
+    s/\{\{OBJECTIVE\}\}/$ENV{OBJECTIVE}/g;
+    s/\{\{OWNED_PATHS\}\}/$ENV{OWNED_PATHS}/g;
+    s/\{\{REQUIRED_DOCS\}\}/$ENV{REQUIRED_DOCS}/g;
+    s/\{\{TEST_COMMANDS\}\}/$ENV{TEST_COMMANDS}/g;
+    s/\{\{NON_GOALS\}\}/$ENV{NON_GOALS}/g;
+    s/\{\{DONE_DEFINITION\}\}/$ENV{DONE_DEFINITION}/g;
+    s/\{\{STATUS_COMMAND\}\}/$ENV{STATUS_COMMAND}/g;
+    s/\{\{REPORT_COMMAND\}\}/$ENV{REPORT_COMMAND}/g;
+    s/\{\{STATUS\}\}/$ENV{STATUS}/g;
+    s/\{\{MERGE_READY\}\}/$ENV{MERGE_READY}/g;
+    s/\{\{SUMMARY\}\}/$ENV{SUMMARY}/g;
+    s/\{\{CHANGED_FILES\}\}/$ENV{CHANGED_FILES}/g;
+    s/\{\{BLOCKERS\}\}/$ENV{BLOCKERS}/g;
+    s/\{\{MESSAGE_SUBJECT\}\}/$ENV{MESSAGE_SUBJECT}/g;
+    s/\{\{MESSAGE_BODY\}\}/$ENV{MESSAGE_BODY}/g;
+  ' "$template_path"
+}
+
+subcommand="${1:-}"
+[ -n "$subcommand" ] || {
+  usage
+  exit 1
+}
+shift || true
+
+require_command git
+require_command agent-handoff-mcp
+
+case "$subcommand" in
+  create)
+    orchestrator_root=""
+    lane_id=""
+    branch=""
+    worktree_path=""
+    title=""
+    objective=""
+    owner_agent="${USER:-codex}"
+    status="active"
+    notes=""
+    dry_run=0
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --orchestrator-root) orchestrator_root="$2"; shift 2 ;;
+        --lane-id) lane_id="$2"; shift 2 ;;
+        --branch) branch="$2"; shift 2 ;;
+        --worktree-path) worktree_path="$2"; shift 2 ;;
+        --title) title="$2"; shift 2 ;;
+        --objective) objective="$2"; shift 2 ;;
+        --owner-agent) owner_agent="$2"; shift 2 ;;
+        --status) status="$2"; shift 2 ;;
+        --notes) notes="$2"; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "unknown create argument: $1" ;;
+      esac
+    done
+
+    [ -n "$orchestrator_root" ] || die "--orchestrator-root is required"
+    [ -n "$lane_id" ] || die "--lane-id is required"
+    orchestrator_root="$(cd "$orchestrator_root" && pwd)"
+    [ -n "$branch" ] || branch="codex/${lane_id}"
+    [ -n "$worktree_path" ] || worktree_path="$(default_worktree_path "$orchestrator_root" "$lane_id")"
+
+    if [ "$dry_run" -eq 1 ]; then
+      cat <<EOF
+[dry-run] git -C $orchestrator_root worktree add $worktree_path -b $branch
+[dry-run] agent-handoff-mcp lane-upsert for lane $lane_id using shared state at $orchestrator_root/.task-state
+EOF
+      exit 0
+    fi
+
+    if [ ! -d "$worktree_path/.git" ] && [ ! -f "$worktree_path/.git" ]; then
+      git -C "$orchestrator_root" worktree add "$worktree_path" -b "$branch"
+    fi
+
+    create_args=(lane-upsert --lane-id "$lane_id" --worktree-path "$worktree_path" --branch "$branch" --owner-agent "$owner_agent" --status "$status")
+    if [ -n "$title" ]; then
+      create_args+=(--title "$title")
+    fi
+    if [ -n "$objective" ]; then
+      create_args+=(--objective "$objective")
+    fi
+    if [ -n "$notes" ]; then
+      create_args+=(--notes "$notes")
+    fi
+    run_mcp "$orchestrator_root" "$worktree_path" "${create_args[@]}"
+    ;;
+
+  brief)
+    orchestrator_root=""
+    task_ref=""
+    lane_id=""
+    branch=""
+    worktree_path=""
+    title=""
+    objective=""
+    definition="Ready for orchestrator branch review."
+    owned_paths=()
+    required_docs=()
+    test_commands=()
+    non_goals=()
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --orchestrator-root) orchestrator_root="$2"; shift 2 ;;
+        --task-ref) task_ref="$2"; shift 2 ;;
+        --lane-id) lane_id="$2"; shift 2 ;;
+        --branch) branch="$2"; shift 2 ;;
+        --worktree-path) worktree_path="$2"; shift 2 ;;
+        --title) title="$2"; shift 2 ;;
+        --objective) objective="$2"; shift 2 ;;
+        --owned-path) owned_paths+=("$2"); shift 2 ;;
+        --required-doc) required_docs+=("$2"); shift 2 ;;
+        --test-command) test_commands+=("$2"); shift 2 ;;
+        --non-goal) non_goals+=("$2"); shift 2 ;;
+        --definition) definition="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "unknown brief argument: $1" ;;
+      esac
+    done
+
+    [ -n "$orchestrator_root" ] || die "--orchestrator-root is required"
+    [ -n "$task_ref" ] || die "--task-ref is required"
+    [ -n "$lane_id" ] || die "--lane-id is required"
+    [ -n "$branch" ] || die "--branch is required"
+    [ -n "$worktree_path" ] || die "--worktree-path is required"
+
+    STATUS_COMMAND="scripts/worktree-lane status --orchestrator-root $orchestrator_root --lane-id $lane_id --worktree-path $worktree_path"
+    REPORT_COMMAND="scripts/worktree-lane report --orchestrator-root $orchestrator_root --task-ref $task_ref --lane-id $lane_id --session <session> --summary \"<summary>\" --worktree-path $worktree_path --test-command \"<test command>\" --merge-ready --message \"<optional worker message>\""
+
+    export TASK_REF="$task_ref"
+    export LANE_ID="$lane_id"
+    export BRANCH="$branch"
+    export WORKTREE_PATH="$worktree_path"
+    export OBJECTIVE="${objective:-No objective supplied.}"
+    if [ "${#owned_paths[@]}" -gt 0 ]; then
+      export OWNED_PATHS="$(bullet_list "${owned_paths[@]}")"
+    else
+      export OWNED_PATHS="$(bullet_list)"
+    fi
+    if [ "${#required_docs[@]}" -gt 0 ]; then
+      export REQUIRED_DOCS="$(bullet_list "${required_docs[@]}")"
+    else
+      export REQUIRED_DOCS="$(bullet_list)"
+    fi
+    if [ "${#test_commands[@]}" -gt 0 ]; then
+      export TEST_COMMANDS="$(bullet_list "${test_commands[@]}")"
+    else
+      export TEST_COMMANDS="$(bullet_list)"
+    fi
+    if [ "${#non_goals[@]}" -gt 0 ]; then
+      export NON_GOALS="$(bullet_list "${non_goals[@]}")"
+    else
+      export NON_GOALS="$(bullet_list)"
+    fi
+    export DONE_DEFINITION="$definition"
+    export STATUS_COMMAND
+    export REPORT_COMMAND
+
+    render_template "$REPO_ROOT/docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md"
+    ;;
+
+  status)
+    orchestrator_root=""
+    lane_id=""
+    worktree_path=""
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --orchestrator-root) orchestrator_root="$2"; shift 2 ;;
+        --lane-id) lane_id="$2"; shift 2 ;;
+        --worktree-path) worktree_path="$2"; shift 2 ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "unknown status argument: $1" ;;
+      esac
+    done
+
+    [ -n "$orchestrator_root" ] || die "--orchestrator-root is required"
+    [ -n "$worktree_path" ] || worktree_path="$(git_root)"
+    [ -n "$worktree_path" ] || die "could not determine current worktree path"
+
+    run_mcp "$orchestrator_root" "$worktree_path" state
+    run_mcp "$orchestrator_root" "$worktree_path" lane-list --status all
+    if [ -n "$lane_id" ]; then
+      run_mcp "$orchestrator_root" "$worktree_path" lane-activity --lane-id "$lane_id"
+    fi
+    ;;
+
+  report)
+    orchestrator_root=""
+    task_ref=""
+    lane_id=""
+    session=""
+    summary=""
+    status="submitted"
+    merge_ready=0
+    test_commands=()
+    blockers=()
+    subject=""
+    message=""
+    direction="worker_to_orchestrator"
+    worktree_path=""
+    dry_run=0
+
+    while [ "$#" -gt 0 ]; do
+      case "$1" in
+        --orchestrator-root) orchestrator_root="$2"; shift 2 ;;
+        --task-ref) task_ref="$2"; shift 2 ;;
+        --lane-id) lane_id="$2"; shift 2 ;;
+        --session) session="$2"; shift 2 ;;
+        --summary) summary="$2"; shift 2 ;;
+        --status) status="$2"; shift 2 ;;
+        --merge-ready) merge_ready=1; shift ;;
+        --test-command) test_commands+=("$2"); shift 2 ;;
+        --blocker) blockers+=("$2"); shift 2 ;;
+        --subject) subject="$2"; shift 2 ;;
+        --message) message="$2"; shift 2 ;;
+        --direction) direction="$2"; shift 2 ;;
+        --worktree-path) worktree_path="$2"; shift 2 ;;
+        --dry-run) dry_run=1; shift ;;
+        -h|--help) usage; exit 0 ;;
+        *) die "unknown report argument: $1" ;;
+      esac
+    done
+
+    [ -n "$orchestrator_root" ] || die "--orchestrator-root is required"
+    [ -n "$task_ref" ] || die "--task-ref is required"
+    [ -n "$lane_id" ] || die "--lane-id is required"
+    [ -n "$session" ] || die "--session is required"
+    [ -n "$summary" ] || die "--summary is required"
+    [ -n "$worktree_path" ] || worktree_path="$(git_root)"
+    [ -n "$worktree_path" ] || die "could not determine current worktree path"
+
+    changed_files=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && changed_files+=("$line")
+    done < <(git -C "$worktree_path" diff --name-only)
+    if [ "${#changed_files[@]}" -eq 0 ]; then
+      while IFS= read -r line; do
+        [ -n "$line" ] && changed_files+=("$line")
+      done < <(git -C "$worktree_path" status --short | awk '{print $2}')
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+      cat <<EOF
+[dry-run] agent-handoff-mcp lane-report for lane $lane_id in shared state at $orchestrator_root/.task-state
+[dry-run] changed files:
+$(bullet_list "${changed_files[@]}")
+EOF
+      if [ -n "$message" ]; then
+        cat <<EOF
+[dry-run] agent-handoff-mcp lane-message direction=$direction subject=${subject:-"(none)"}
+EOF
+      fi
+      exit 0
+    fi
+
+    report_args=(lane-report --lane-id "$lane_id" --session "$session" --summary "$summary" --status "$status")
+    if [ "$merge_ready" -eq 1 ]; then
+      report_args+=(--merge-ready)
+    fi
+    for file in "${changed_files[@]}"; do
+      [ -n "$file" ] && report_args+=(--changed-file "$file")
+    done
+    for cmd in "${test_commands[@]}"; do
+      report_args+=(--test-command "$cmd")
+    done
+    for blocker in "${blockers[@]}"; do
+      report_args+=(--blocker "$blocker")
+    done
+    run_mcp "$orchestrator_root" "$worktree_path" "${report_args[@]}"
+
+    if [ -n "$message" ]; then
+      msg_args=(lane-message --lane-id "$lane_id" --session "$session" --direction "$direction" --message "$message" --status open)
+      if [ -n "$subject" ]; then
+        msg_args+=(--subject "$subject")
+      fi
+      run_mcp "$orchestrator_root" "$worktree_path" "${msg_args[@]}"
+    fi
+
+    export TASK_REF="$task_ref"
+    export LANE_ID="$lane_id"
+    export SESSION="$session"
+    export BRANCH="$(git -C "$worktree_path" branch --show-current)"
+    export WORKTREE_PATH="$worktree_path"
+    export STATUS="$status"
+    export MERGE_READY="$([ "$merge_ready" -eq 1 ] && printf yes || printf no)"
+    export SUMMARY="$summary"
+    if [ "${#changed_files[@]}" -gt 0 ]; then
+      export CHANGED_FILES="$(bullet_list "${changed_files[@]}")"
+    else
+      export CHANGED_FILES="$(bullet_list)"
+    fi
+    if [ "${#test_commands[@]}" -gt 0 ]; then
+      export TEST_COMMANDS="$(bullet_list "${test_commands[@]}")"
+    else
+      export TEST_COMMANDS="$(bullet_list)"
+    fi
+    if [ "${#blockers[@]}" -gt 0 ]; then
+      export BLOCKERS="$(bullet_list "${blockers[@]}")"
+    else
+      export BLOCKERS="$(bullet_list)"
+    fi
+    export MESSAGE_SUBJECT="${subject:-none}"
+    export MESSAGE_BODY="${message:-No lane message submitted.}"
+
+    render_template "$REPO_ROOT/docs/agentic/templates/WORKTREE_LANE_REPORT.template.md"
+    ;;
+
+  help|-h|--help)
+    usage
+    ;;
+
+  *)
+    die "unknown subcommand: $subcommand"
+    ;;
+esac

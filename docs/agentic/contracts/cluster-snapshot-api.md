@@ -49,6 +49,8 @@ Timeout expectations:
 {
   "tenant_id": "a9c2c2c0f6ef4a1f8d6d7a3f6c9b8e12",
   "snapshot_version": 1042,
+  "source_job_id": "b7077447-50cf-4e99-b327-8e60e6e645fd",
+  "snapshot_generation_id": "9b2feec0-6b92-44f5-aeb5-2697cd2e4bc8",
   "generated_at": "2026-02-10T17:00:00Z",
   "clusters": [
     {
@@ -112,8 +114,10 @@ Resolution is handled by `ConflictResolutionService` -- see [curation-sync-api.m
 
 After successful projection:
 
-- Plugin POSTs `POST /tenants/{tenant_uuid}/acknowledge-projection` with `{ "snapshot_version": <projected_version> }`.
+- Plugin POSTs `POST /recognition/jobs/{job_id}/acknowledge-projection` with `{ "snapshot_version": <projected_version>, "snapshot_generation_id": "<optional-uuid>" }`.
 - Backend uses acknowledgement to track tenant synchronization state.
+- `source_job_id` is the job identifier the plugin must use in the acknowledgement route.
+- `snapshot_generation_id` is optional during rollout, but when present it lets the backend mark the acknowledged snapshot rows as disposal-eligible.
 
 ## `bbox_json` Storage Contract (Plugin)
 

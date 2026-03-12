@@ -1,0 +1,45 @@
+export type RetentionMode = 'retain_all' | 'dispose_after_ack' | 'purge_on_demand';
+
+export interface RetentionPolicy {
+  retention_mode: RetentionMode;
+  last_export_at: string | null;
+  last_purge_at: string | null;
+  retention_updated_at: string | null;
+}
+
+export interface AuditEvent {
+  id: string;
+  event_type: string;
+  actor: string;
+  scope: string;
+  payload: Record<string, unknown>;
+  result_status: string;
+  created_at: string;
+}
+
+export interface RetentionStatusResponse {
+  available: boolean;
+  policy: RetentionPolicy | null;
+  recent_audit_events: AuditEvent[];
+}
+
+export interface UpdateRetentionPolicyRequest {
+  retention_mode: RetentionMode;
+}
+
+export interface RetentionExportResponse {
+  tenant_id?: string;
+  exported_at?: string;
+  schema_version?: number;
+  payload: Record<string, unknown>;
+  summary: Record<string, number>;
+}
+
+export interface PurgeTenantDataRequest {
+  scope: 'disposed' | 'all';
+  confirm: true;
+}
+
+export interface PurgeTenantDataResponse {
+  deleted_counts: Record<string, number>;
+}

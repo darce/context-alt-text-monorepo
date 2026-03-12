@@ -17,7 +17,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from db.session import get_session as _get_session
 from db.tenant_context import clear_tenant_context, set_tenant_context
-from recognition.interface_adapters.http.deps.tenant import get_tenant_id_optional
+from recognition.interface_adapters.http.deps.tenant_common import get_tenant_id_optional
 
 logger = logging.getLogger(__name__)
 

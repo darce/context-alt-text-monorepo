@@ -116,6 +116,19 @@ class AdminTest extends TestCase
         );
     }
 
+    public function testLocalizeSpaConfigIncludesRetentionEndpoints(): void
+    {
+        $this->invokePrivateMethod($this->admin, 'localize_spa_config', ['test-handle']);
+
+        $localized = $GLOBALS['__ac_localized_scripts']['test-handle']['AltContextAdmin'] ?? null;
+
+        $this->assertIsArray($localized);
+        $this->assertSame('http://example.test/wp-json/acx/v1/retention/status', $localized['endpoints']['retentionStatus'] ?? null);
+        $this->assertSame('http://example.test/wp-json/acx/v1/retention/policy', $localized['endpoints']['retentionPolicy'] ?? null);
+        $this->assertSame('http://example.test/wp-json/acx/v1/retention/export', $localized['endpoints']['retentionExport'] ?? null);
+        $this->assertSame('http://example.test/wp-json/acx/v1/retention/purge', $localized['endpoints']['retentionPurge'] ?? null);
+    }
+
     /**
      * Test enqueue_scripts enqueues and localizes build assets in production.
      */

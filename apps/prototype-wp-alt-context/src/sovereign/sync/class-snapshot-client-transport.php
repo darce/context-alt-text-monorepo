@@ -10,6 +10,7 @@ use WP_REST_Response;
 
 use function rawurlencode;
 use function sprintf;
+use function trim;
 
 class SnapshotClientTransport extends AbstractRecognitionProxyController {
 	public function register_routes(): void {
@@ -20,11 +21,16 @@ class SnapshotClientTransport extends AbstractRecognitionProxyController {
 		return $this->proxy_request( $method, $path, $body, $query, 'background_sync' );
 	}
 
-	public function acknowledge_projection( string $job_id, int $snapshot_version ): WP_REST_Response|WP_Error {
+	public function acknowledge_projection( string $job_id, int $snapshot_version, ?string $snapshot_generation_id = null ): WP_REST_Response|WP_Error {
+		$body = array( 'snapshot_version' => $snapshot_version );
+		if ( null !== $snapshot_generation_id && '' !== trim( $snapshot_generation_id ) ) {
+			$body['snapshot_generation_id'] = trim( $snapshot_generation_id );
+		}
+
 		return $this->request(
 			'POST',
 			sprintf( '/recognition/jobs/%s/acknowledge-projection', rawurlencode( $job_id ) ),
-			array( 'snapshot_version' => $snapshot_version ),
+			$body,
 			array()
 		);
 	}

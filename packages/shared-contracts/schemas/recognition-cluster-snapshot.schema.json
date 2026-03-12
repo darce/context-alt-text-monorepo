@@ -14,6 +14,16 @@
       "type": "integer",
       "description": "Monotonic version number for the tenant's snapshot state."
     },
+    "source_job_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Job identifier used when acknowledging projection back to the backend."
+    },
+    "snapshot_generation_id": {
+      "type": ["string", "null"],
+      "format": "uuid",
+      "description": "Snapshot build UUID echoed back during acknowledgement for disposal provenance."
+    },
     "generated_at": {
       "type": "string",
       "format": "date-time",

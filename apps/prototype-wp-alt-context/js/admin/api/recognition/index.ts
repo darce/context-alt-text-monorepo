@@ -44,6 +44,14 @@ export type {
   SyncHealth,
   SyncStatusResponse,
   SyncTriggerResponse,
+  RetentionMode,
+  RetentionPolicy,
+  AuditEvent,
+  RetentionStatusResponse,
+  UpdateRetentionPolicyRequest,
+  RetentionExportResponse,
+  PurgeTenantDataRequest,
+  PurgeTenantDataResponse,
   ConflictResolutionChoice,
   ConflictRecord,
   ConflictListResponse,
@@ -93,6 +101,9 @@ export {
 
 // Sync status
 export { fetchSyncStatus, triggerSync } from './syncApi';
+
+// Retention
+export { fetchRetentionStatus, updateRetentionPolicy, exportTenantData, purgeTenantData } from './retentionApi';
 
 // Conflict and dead-letter operations
 export {

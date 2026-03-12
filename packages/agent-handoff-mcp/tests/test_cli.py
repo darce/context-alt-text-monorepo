@@ -75,3 +75,64 @@ def test_state_review_list_and_close_check_cli_smoke(tmp_path: Path, capsys) -> 
     ], capsys)
     assert close_payload["ok"] is True
     assert close_payload["ready_to_close"] is False
+
+
+def test_lane_cli_smoke(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="task-lane", objective="lane cli"))
+
+    lane_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-upsert",
+            "--lane-id",
+            "frontend",
+            "--worktree-path",
+            "/tmp/frontend",
+            "--branch",
+            "codex/p5-frontend",
+            "--status",
+            "active",
+        ],
+        capsys,
+    )
+    assert lane_payload["ok"] is True
+
+    report_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-report",
+            "--lane-id",
+            "frontend",
+            "--session",
+            "cli",
+            "--summary",
+            "ready",
+            "--changed-file",
+            "apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx",
+            "--test-command",
+            "npm run test",
+            "--merge-ready",
+        ],
+        capsys,
+    )
+    assert report_payload["ok"] is True
+
+    activity_payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "lane-activity",
+            "--lane-id",
+            "frontend",
+        ],
+        capsys,
+    )
+    assert activity_payload["ok"] is True
+    assert activity_payload["lane"]["lane_id"] == "frontend"
+    assert len(activity_payload["reports"]) == 1

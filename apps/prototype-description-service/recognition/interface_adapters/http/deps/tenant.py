@@ -2,40 +2,45 @@
 
 from __future__ import annotations
 
-from fastapi import Header, HTTPException, Query, status
+from fastapi import Depends, Header, HTTPException, status
 
-from recognition.shared.ids import parse_id
+from recognition.interface_adapters.http.deps.auth import AuthContext, require_auth
+from recognition.interface_adapters.http.deps.tenant_common import (
+    get_tenant_id,
+    get_tenant_id_optional,
+    normalize_tenant_id,
+)
 
-
-def _normalize_tenant_id(value: str) -> str:
-    """Validate tenant identifier and return a canonical UUID string."""
-    try:
-        parsed = parse_id(str(value))
-    except ValueError as exc:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="invalid tenant_id format") from exc
-    return str(parsed)
+_normalize_tenant_id = normalize_tenant_id
 
 
-async def get_tenant_id(
+async def get_authenticated_tenant_id(
+    auth: AuthContext = Depends(require_auth),
     x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
-    tenant_id: str | None = Query(default=None),
 ) -> str:
-    """Resolve tenant ID from header or query and validate UUID format."""
-    value = x_tenant_id or tenant_id
-    if not value:
-        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="tenant_id is required")
-    return _normalize_tenant_id(value)
+    """Resolve tenant ID from the authenticated context for sensitive routes.
+
+    Tenant-scoped API keys always win. Admin keys may override via ``X-Tenant-ID``.
+    Query parameters are intentionally ignored for this dependency.
+    """
+    if not getattr(auth, "enabled", False):
+        if not x_tenant_id:
+            raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="X-Tenant-ID header required")
+        return normalize_tenant_id(x_tenant_id)
+
+    tenant_claim = getattr(auth, "tenant_claim", None)
+    if tenant_claim:
+        return normalize_tenant_id(str(tenant_claim))
+
+    if getattr(auth, "is_admin", False):
+        if not x_tenant_id:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="X-Tenant-ID header required")
+        return normalize_tenant_id(x_tenant_id)
+
+    raise HTTPException(
+        status_code=status.HTTP_403_FORBIDDEN,
+        detail="tenant-scoped API key or admin override required",
+    )
 
 
-async def get_tenant_id_optional(
-    x_tenant_id: str | None = Header(default=None, alias="X-Tenant-ID"),
-    tenant_id: str | None = Query(default=None),
-) -> str | None:
-    """Best-effort tenant resolution; returns None when missing."""
-    value = x_tenant_id or tenant_id
-    if not value:
-        return None
-    return _normalize_tenant_id(value)
-
-
-__all__ = ["get_tenant_id", "get_tenant_id_optional", "_normalize_tenant_id"]
+__all__ = ["get_tenant_id", "get_tenant_id_optional", "get_authenticated_tenant_id", "_normalize_tenant_id"]

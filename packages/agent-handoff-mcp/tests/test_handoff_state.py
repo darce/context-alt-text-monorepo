@@ -55,6 +55,9 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         "verified_tests",
         "review_findings",
         "task_archives",
+        "worktree_lanes",
+        "worker_reports",
+        "lane_messages",
     }
 
     # First bootstrap
@@ -63,7 +66,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives')"
+                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages')"
             )
         }
 
@@ -73,13 +76,15 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives')"
+                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages')"
             )
         }
         review_finding_columns = {row[1] for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()}
+        decision_columns = {row[1] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
 
     assert first_tables == expected_tables
     assert second_tables == expected_tables
+    assert "lane_id" in decision_columns
     assert {
         "resolution_notes",
         "reopen_count",
@@ -239,8 +244,36 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
         )
     )
     _parse(mcp_server.record_decision(session="s1", decision="seed decision"))
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            lane_id="backend-http",
+            worktree_path="/tmp/backend-http",
+            branch="codex/p5-backend-http",
+            title="Backend HTTP",
+            status="active",
+        )
+    )
     _parse(mcp_server.update_next_actions(operation="add", action="seed action", priority=1))
     _parse(mcp_server.report_blocker(operation="add", description="seed blocker"))
+    _parse(
+        mcp_server.record_worker_report(
+            lane_id="backend-http",
+            session="s1",
+            summary="lane summary",
+            changed_files=["apps/prototype-description-service/foo.py"],
+            test_commands=["pytest -q"],
+            merge_ready=True,
+        )
+    )
+    _parse(
+        mcp_server.record_lane_message(
+            lane_id="backend-http",
+            session="s1",
+            direction="worker_to_orchestrator",
+            subject="Need review",
+            message="Ready for merge",
+        )
+    )
     _parse(
         mcp_server.record_review_finding(
             session="s1",
@@ -275,6 +308,9 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
         conn.execute("DELETE FROM blockers WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM verified_tests WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM review_findings WHERE task_ref = '4.12.0'")
+        conn.execute("DELETE FROM worktree_lanes WHERE task_ref = '4.12.0'")
+        conn.execute("DELETE FROM worker_reports WHERE task_ref = '4.12.0'")
+        conn.execute("DELETE FROM lane_messages WHERE task_ref = '4.12.0'")
         conn.execute("DELETE FROM handoff_state WHERE id = 1")
 
     imported = _parse(
@@ -294,6 +330,95 @@ def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> N
     assert len(state["blockers_open"]) == 1
     assert len(state["tests_recent"]) == 1
     assert len(state["findings_open"]) == 1
+    assert len(state["worktree_lanes"]) == 1
+    assert len(state["worker_reports_recent"]) == 1
+    assert len(state["lane_messages_open"]) == 1
+
+
+def test_worktree_lane_activity_and_reports_are_recorded_by_lane(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="5.0.0",
+            objective="Lane tracking",
+            status="in_progress",
+        )
+    )
+    lane = _parse(
+        mcp_server.upsert_worktree_lane(
+            lane_id="frontend",
+            worktree_path="/tmp/frontend",
+            branch="codex/p5-frontend",
+            title="Frontend",
+            owner_agent="worker-a",
+            status="active",
+        )
+    )
+    assert lane["ok"] is True
+
+    actor = {"agent": "worker-a", "branch": "codex/p5-frontend", "lane_id": "frontend"}
+    _parse(mcp_server.record_decision(session="lane", decision="Started frontend slice", actor=actor))
+    _parse(mcp_server.record_test_result(session="lane", command="npm run test", passed=True, actor=actor))
+    _parse(mcp_server.update_next_actions(operation="add", action="Finish panel", priority=1, actor=actor))
+    _parse(mcp_server.report_blocker(operation="add", description="Waiting on copy", actor=actor))
+    _parse(
+        mcp_server.record_review_finding(
+            session="lane",
+            finding_id="F-1",
+            severity="low",
+            file_path="README.md",
+            description="lane scoped finding",
+            actor=actor,
+        )
+    )
+    report = _parse(
+        mcp_server.record_worker_report(
+            lane_id="frontend",
+            session="lane",
+            summary="Frontend ready for review",
+            changed_files=["apps/prototype-wp-alt-context/js/admin/pages/RetentionPage.tsx"],
+            test_commands=["npm run test"],
+            blockers=["Waiting on copy"],
+            merge_ready=False,
+            actor=actor,
+        )
+    )
+    assert report["ok"] is True
+    message = _parse(
+        mcp_server.record_lane_message(
+            lane_id="frontend",
+            session="lane",
+            direction="worker_to_orchestrator",
+            subject="Review requested",
+            message="Please review frontend lane",
+            actor=actor,
+        )
+    )
+    assert message["ok"] is True
+
+    activity = _parse(mcp_server.get_lane_activity(lane_id="frontend"))
+    assert activity["ok"] is True
+    assert activity["lane"]["branch"] == "codex/p5-frontend"
+    assert len(activity["decisions"]) == 1
+    assert len(activity["tests"]) == 1
+    assert len(activity["actions"]) == 1
+    assert len(activity["blockers"]) == 1
+    assert len(activity["findings"]) == 1
+    assert len(activity["reports"]) == 1
+    assert len(activity["messages"]) == 1
+
+    listed_reports = _parse(mcp_server.list_worker_reports(lane_id="frontend"))
+    assert listed_reports["total_matching"] == 1
+    assert listed_reports["reports"][0]["lane_id"] == "frontend"
+
+    listed_messages = _parse(mcp_server.list_lane_messages(lane_id="frontend"))
+    assert listed_messages["total_matching"] == 1
+    updated_message = _parse(
+        mcp_server.update_lane_message(
+            message_id=listed_messages["messages"][0]["id"],
+            status="acknowledged",
+        )
+    )
+    assert updated_message["message"]["status"] == "acknowledged"
 
 
 def test_import_handoff_state_rejects_malformed_snapshot_payload(isolated_handoff: dict) -> None:

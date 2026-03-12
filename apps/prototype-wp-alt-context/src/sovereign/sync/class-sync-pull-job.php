@@ -118,11 +118,16 @@ class SyncPullJob implements SyncPullJobInterface {
 	private function maybe_acknowledge_projection( array $snapshot ): void {
 		$snapshot_version = isset( $snapshot['snapshot_version'] ) ? (int) $snapshot['snapshot_version'] : 0;
 		$source_job_id    = isset( $snapshot['source_job_id'] ) ? trim( (string) $snapshot['source_job_id'] ) : '';
+		$snapshot_generation_id = isset( $snapshot['snapshot_generation_id'] ) ? trim( (string) $snapshot['snapshot_generation_id'] ) : '';
 		if ( $snapshot_version <= 0 || '' === $source_job_id ) {
 			return;
 		}
 
-		$response = $this->client->acknowledge_projection( $source_job_id, $snapshot_version );
+		$response = $this->client->acknowledge_projection(
+			$source_job_id,
+			$snapshot_version,
+			'' !== $snapshot_generation_id ? $snapshot_generation_id : null
+		);
 		if ( is_wp_error( $response ) ) {
 			throw new RuntimeException( esc_html( sanitize_text_field( $response->get_error_message() ) ) );
 		}

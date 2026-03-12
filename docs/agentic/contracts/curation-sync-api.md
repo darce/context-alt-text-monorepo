@@ -66,6 +66,7 @@ Timeout expectations:
 #### Person Operations
 
 **`person_created`**
+
 - Target: newly created person record
 - Payload fields:
   - `person_uuid` (string): UUID of the created person
@@ -73,6 +74,7 @@ Timeout expectations:
 - Backend behavior: No-op acknowledgement (person records are local-only in v0.2.0)
 
 **`person_updated`**
+
 - Target: existing person record
 - Payload fields:
   - `person_uuid` (string): UUID of the updated person
@@ -80,6 +82,7 @@ Timeout expectations:
 - Backend behavior: No-op acknowledgement (person records are local-only in v0.2.0)
 
 **`person_deleted`**
+
 - Target: person record being removed
 - Payload fields:
   - `person_uuid` (string): UUID of the deleted person
@@ -88,6 +91,7 @@ Timeout expectations:
 #### Cluster-Person Binding Operations
 
 **`cluster_person_bound`**
+
 - Target: cluster being assigned to a person
 - Payload fields:
   - `cluster_uuid` (string): UUID of the cluster
@@ -95,6 +99,7 @@ Timeout expectations:
 - Backend behavior: Sets `identity_clusters.roster_id = person_uuid`, increments `updated_at`
 
 **`cluster_person_unbound`**
+
 - Target: cluster being dissociated from a person
 - Payload fields:
   - `cluster_uuid` (string): UUID of the cluster
@@ -203,18 +208,18 @@ Plugin behavior: Mark outbox record as `pending`, increment `attempts` counter; 
 
 The following operations mutate cluster topology and are dispatched by `OutboxDispatcher` directly to recognition service endpoints (NOT through `POST /roster/curation/sync`):
 
-| Operation Type                | HTTP                                             | Payload Fields                                      |
-| ----------------------------- | ------------------------------------------------ | --------------------------------------------------- |
-| `cluster_merged`              | `POST /recognition/clusters/{id}/merge`          | `target_cluster_id`, optional `target_label`        |
-| `identity_reassigned`         | `POST /recognition/clusters/reassign`            | `identity_uuid`, `target_cluster_uuid`              |
-| `cluster_created_for_identity`| `POST /recognition/clusters/create-for-identity` | `identity_uuid`, `cluster_uuid`                     |
-| `revert_merge_cluster`        | `POST /recognition/clusters/revert-merge`        | `source_cluster_uuid`, `target_cluster_uuid`        |
-| `assign_outlier_to_cluster`   | `POST /recognition/clusters/{id}/assign`         | `identity_uuid`                                     |
-| `cluster_label_updated`       | via curation sync                                | `cluster_uuid`, `label`                             |
-| `cluster_dismissed`           | via curation sync                                | `cluster_uuid`                                      |
-| `cluster_undismissed`         | via curation sync                                | `cluster_uuid`                                      |
-| `cluster_person_bound`        | via curation sync                                | `cluster_uuid`, `person_uuid`                       |
-| `cluster_person_unbound`      | via curation sync                                | `cluster_uuid`                                      |
+| Operation Type                 | HTTP                                             | Payload Fields                               |
+| ------------------------------ | ------------------------------------------------ | -------------------------------------------- |
+| `cluster_merged`               | `POST /recognition/clusters/{id}/merge`          | `target_cluster_id`, optional `target_label` |
+| `identity_reassigned`          | `POST /recognition/clusters/reassign`            | `identity_uuid`, `target_cluster_uuid`       |
+| `cluster_created_for_identity` | `POST /recognition/clusters/create-for-identity` | `identity_uuid`, `cluster_uuid`              |
+| `revert_merge_cluster`         | `POST /recognition/clusters/revert-merge`        | `source_cluster_uuid`, `target_cluster_uuid` |
+| `assign_outlier_to_cluster`    | `POST /recognition/clusters/{id}/assign`         | `identity_uuid`                              |
+| `cluster_label_updated`        | via curation sync                                | `cluster_uuid`, `label`                      |
+| `cluster_dismissed`            | via curation sync                                | `cluster_uuid`                               |
+| `cluster_undismissed`          | via curation sync                                | `cluster_uuid`                               |
+| `cluster_person_bound`         | via curation sync                                | `cluster_uuid`, `person_uuid`                |
+| `cluster_person_unbound`       | via curation sync                                | `cluster_uuid`                               |
 
 ### Topology Dispatch
 
@@ -242,34 +247,37 @@ Max attempts: 5 (configurable). No backoff delay between drain cycles.
 
 ### Dead-Letter Management Endpoints (WP REST)
 
-| Endpoint                                     | Method | Purpose                        |
-| -------------------------------------------- | ------ | ------------------------------ |
-| `GET /acx/v1/recognition/outbox/failed`      | GET    | Paginated list of failed ops   |
-| `POST /acx/v1/recognition/outbox/{id}/retry` | POST   | Reset to pending, reschedule   |
-| `POST /acx/v1/recognition/outbox/{id}/discard`| POST  | Mark discarded, refresh metrics|
+| Endpoint                                       | Method | Purpose                         |
+| ---------------------------------------------- | ------ | ------------------------------- |
+| `GET /acx/v1/recognition/outbox/failed`        | GET    | Paginated list of failed ops    |
+| `POST /acx/v1/recognition/outbox/{id}/retry`   | POST   | Reset to pending, reschedule    |
+| `POST /acx/v1/recognition/outbox/{id}/discard` | POST   | Mark discarded, refresh metrics |
 
 ## Conflict Resolution Endpoints (WP REST)
 
-| Endpoint                                              | Method | Purpose                            |
-| ----------------------------------------------------- | ------ | ---------------------------------- |
-| `GET /acx/v1/recognition/conflicts`                   | GET    | Paginated list with status filter  |
-| `GET /acx/v1/recognition/conflicts/{id}`              | GET    | Detail with decoded payloads       |
-| `POST /acx/v1/recognition/conflicts/{id}/resolve`     | POST   | Accept or dismiss conflict         |
+| Endpoint                                          | Method | Purpose                           |
+| ------------------------------------------------- | ------ | --------------------------------- |
+| `GET /acx/v1/recognition/conflicts`               | GET    | Paginated list with status filter |
+| `GET /acx/v1/recognition/conflicts/{id}`          | GET    | Detail with decoded payloads      |
+| `POST /acx/v1/recognition/conflicts/{id}/resolve` | POST   | Accept or dismiss conflict        |
 
 ### Conflict Resolution Semantics
 
 `ConflictResolutionService::resolve()` dispatches per source and `conflict_code`:
 
 **Outbox conflict accepted** (deterministic single-row operations only):
+
 - Clear curation flags on entity (`is_user_confirmed = 0` / `is_curated = 0`)
 - Discard outbox row
 - Next sync pull converges entity to machine state
 
 **Outbox conflict dismissed** (all operation types):
+
 - Re-enqueue outbox row with updated `expected_base_version`, reset attempts
 - Reschedule drain
 
 **Projection conflict accepted** per `conflict_code`:
+
 - `curated_cluster_deleted`: delete cluster row + all member rows (no FK cascade)
 - `curated_member_deleted`: delete member row
 - `member_cluster_reassignment`: update member's `cluster_uuid` to machine value, clear `is_curated`
@@ -278,11 +286,11 @@ Max attempts: 5 (configurable). No backoff delay between drain cycles.
 
 ### `allowed_resolutions` per conflict
 
-| Source      | Operation Category                                      | `allowed_resolutions`       |
-| ----------- | ------------------------------------------------------- | --------------------------- |
-| Projection  | any                                                     | `['accepted', 'dismissed']` |
-| Outbox      | deterministic single-row (`cluster_label_updated`, etc.) | `['accepted', 'dismissed']` |
-| Outbox      | person CRUD + compound topology (`cluster_merged`, etc.) | `['dismissed']`             |
+| Source     | Operation Category                                       | `allowed_resolutions`       |
+| ---------- | -------------------------------------------------------- | --------------------------- |
+| Projection | any                                                      | `['accepted', 'dismissed']` |
+| Outbox     | deterministic single-row (`cluster_label_updated`, etc.) | `['accepted', 'dismissed']` |
+| Outbox     | person CRUD + compound topology (`cluster_merged`, etc.) | `['dismissed']`             |
 
 ## Data Flow Invariants
 

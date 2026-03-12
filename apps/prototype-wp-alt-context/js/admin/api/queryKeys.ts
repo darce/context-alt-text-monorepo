@@ -42,6 +42,10 @@ export const queryKeys = {
     all: ['sync'] as const,
     status: () => [...queryKeys.sync.all, 'status'] as const,
   },
+  retention: {
+    all: ['retention'] as const,
+    status: () => [...queryKeys.retention.all, 'status'] as const,
+  },
   conflicts: {
     all: ['conflicts'] as const,
     lists: () => [...queryKeys.conflicts.all, 'list'] as const,

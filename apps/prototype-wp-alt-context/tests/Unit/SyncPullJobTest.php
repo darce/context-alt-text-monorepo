@@ -44,6 +44,7 @@ class SyncPullJobTest extends TestCase
         $this->assertSame(12, $projector->snapshotVersion);
         $this->assertSame('job-12', $client->acknowledgedJobId);
         $this->assertSame(12, $client->acknowledgedSnapshotVersion);
+        $this->assertNull($client->acknowledgedSnapshotGenerationId);
         $this->assertSame('ok', $syncRepo->get_last_sync_result('tenant-1'));
     }
 
@@ -221,6 +222,26 @@ class SyncPullJobTest extends TestCase
         $this->assertSame('projection_acknowledgement_failed', $received['context']);
     }
 
+    public function testSyncPullForwardsSnapshotGenerationIdWhenPresent(): void
+    {
+        $client = new SyncPullJobSnapshotClient([
+            'snapshot_version' => 23,
+            'snapshot_generation_id' => 'generation-23',
+            'source_job_id' => 'job-23',
+            'clusters' => [['cluster_uuid' => 'cluster-23']],
+            'members' => [],
+        ]);
+        $projector = new SyncPullJobProjectorSpy();
+
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
+
+        $result = $job->perform('tenant-generation');
+
+        $this->assertSame(SyncPullResult::OK, $result->status());
+        $this->assertSame('generation-23', $client->acknowledgedSnapshotGenerationId);
+    }
+
     public function testTriggerSyncEndToEndReturnsConflictCountAfterProjection(): void
     {
         global $wpdb;
@@ -347,6 +368,7 @@ class SyncPullJobSnapshotClient extends SnapshotClient
     private WP_Error|WP_REST_Response|null $acknowledgeResponse;
     public string $acknowledgedJobId = '';
     public int $acknowledgedSnapshotVersion = 0;
+    public ?string $acknowledgedSnapshotGenerationId = null;
 
     public function __construct(array|WP_Error $payload, WP_Error|WP_REST_Response|null $acknowledgeResponse = null)
     {
@@ -359,10 +381,15 @@ class SyncPullJobSnapshotClient extends SnapshotClient
         return $this->payload;
     }
 
-    public function acknowledge_projection(string $job_id, int $snapshot_version): WP_REST_Response|WP_Error
+    public function acknowledge_projection(
+        string $job_id,
+        int $snapshot_version,
+        ?string $snapshot_generation_id = null
+    ): WP_REST_Response|WP_Error
     {
         $this->acknowledgedJobId = $job_id;
         $this->acknowledgedSnapshotVersion = $snapshot_version;
+        $this->acknowledgedSnapshotGenerationId = $snapshot_generation_id;
         if ($this->acknowledgeResponse instanceof WP_Error || $this->acknowledgeResponse instanceof WP_REST_Response) {
             return $this->acknowledgeResponse;
         }

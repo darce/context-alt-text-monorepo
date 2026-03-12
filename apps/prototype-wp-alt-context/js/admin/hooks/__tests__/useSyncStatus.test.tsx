@@ -50,6 +50,8 @@ describe('useSyncStatus', () => {
         last_snapshot_version: 3,
         last_synced_at: '2026-02-14 00:00:00',
         is_stale: false,
+        sync_health: 'healthy',
+        last_sync_result: 'ok',
       });
       await statusDeferred.promise;
     });

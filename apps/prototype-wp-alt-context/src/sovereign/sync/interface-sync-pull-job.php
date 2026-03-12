@@ -4,8 +4,10 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
-interface SyncPullJobInterface {
-	public function perform( string $tenant_id ): bool;
+require_once __DIR__ . '/class-sync-pull-result.php';
 
-	public function perform_bypass_cooldown( string $tenant_id ): bool;
+interface SyncPullJobInterface {
+	public function perform( string $tenant_id ): SyncPullResult;
+
+	public function perform_bypass_cooldown( string $tenant_id ): SyncPullResult;
 }

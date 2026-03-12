@@ -12,6 +12,7 @@ use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SnapshotClient;
 use AltContext\Sovereign\Sync\SnapshotProjector;
 use AltContext\Sovereign\Sync\SnapshotProjectorInterface;
+use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
 use AltContext\Tests\TestCase;
 use WP_Error;
@@ -33,15 +34,17 @@ class SyncPullJobTest extends TestCase
         ]);
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
 
         $result = $job->perform('tenant-1');
 
-        $this->assertTrue($result);
+        $this->assertSame(SyncPullResult::OK, $result->status());
         $this->assertSame('tenant-1', $projector->tenantId);
         $this->assertSame(12, $projector->snapshotVersion);
         $this->assertSame('job-12', $client->acknowledgedJobId);
         $this->assertSame(12, $client->acknowledgedSnapshotVersion);
+        $this->assertSame('ok', $syncRepo->get_last_sync_result('tenant-1'));
     }
 
     public function testSyncPullReturnsFalseOnSnapshotError(): void
@@ -49,12 +52,14 @@ class SyncPullJobTest extends TestCase
         $client = new SyncPullJobSnapshotClient(new WP_Error('snapshot_failed', 'Failed.', ['status' => 400]));
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
 
         $result = $job->perform('tenant-2');
 
-        $this->assertFalse($result);
+        $this->assertSame(SyncPullResult::UNREACHABLE, $result->status());
         $this->assertSame('', $projector->tenantId);
+        $this->assertSame('unreachable', $syncRepo->get_last_sync_result('tenant-2'));
     }
 
     public function testSyncPullReturnsFalseWhenProjectorThrows(): void
@@ -66,11 +71,13 @@ class SyncPullJobTest extends TestCase
         ]);
         $projector = new SyncPullJobThrowingProjector();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
 
         $result = $job->perform('tenant-throw');
 
-        $this->assertFalse($result);
+        $this->assertSame(SyncPullResult::FAILED, $result->status());
+        $this->assertSame('failed', $syncRepo->get_last_sync_result('tenant-throw'));
     }
 
     public function testSyncPullReturnsFalseOnNonArrayPayload(): void
@@ -79,11 +86,12 @@ class SyncPullJobTest extends TestCase
         $client = new SyncPullJobNonArrayClient();
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
 
         $result = $job->perform('tenant-3');
 
-        $this->assertFalse($result);
+        $this->assertSame(SyncPullResult::UNREACHABLE, $result->status());
         $this->assertSame('', $projector->tenantId, 'Projector must NOT be called when payload is non-array');
     }
 
@@ -94,11 +102,12 @@ class SyncPullJobTest extends TestCase
         $client = new SyncPullJobSnapshotClient(new WP_Error('invalid_tenant_id', 'Tenant ID is required.'));
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
 
         $result = $job->perform('');
 
-        $this->assertFalse($result);
+        $this->assertSame(SyncPullResult::UNREACHABLE, $result->status());
         $this->assertSame('', $projector->tenantId, 'Projector must NOT be called on empty tenant_id failure');
     }
 
@@ -112,11 +121,14 @@ class SyncPullJobTest extends TestCase
         ]);
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $syncRepo->set_last_sync_result('tenant-cooldown', 'failed');
+        $job = new SyncPullJob($client, $projector, $syncRepo);
         $result = $job->perform('tenant-cooldown');
 
-        $this->assertFalse($result);
+        $this->assertSame(SyncPullResult::SKIPPED, $result->status());
         $this->assertSame('', $projector->tenantId);
+        $this->assertSame('failed', $syncRepo->get_last_sync_result('tenant-cooldown'));
     }
 
     public function testSyncPullRetriesAfterTransientDeletion(): void
@@ -132,10 +144,11 @@ class SyncPullJobTest extends TestCase
         ]);
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
         $result = $job->perform('tenant-retry');
 
-        $this->assertTrue($result);
+        $this->assertSame(SyncPullResult::OK, $result->status());
         $this->assertSame('tenant-retry', $projector->tenantId);
     }
 
@@ -149,10 +162,11 @@ class SyncPullJobTest extends TestCase
         ]);
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
         $result = $job->perform_bypass_cooldown('tenant-bypass');
 
-        $this->assertTrue($result);
+        $this->assertSame(SyncPullResult::OK, $result->status());
         $this->assertSame('tenant-bypass', $projector->tenantId);
     }
 
@@ -166,10 +180,11 @@ class SyncPullJobTest extends TestCase
         ]);
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
         $result = $job->perform('tenant-empty');
 
-        $this->assertTrue($result, 'Empty snapshot should be projected successfully');
+        $this->assertSame(SyncPullResult::OK, $result->status(), 'Empty snapshot should be projected successfully');
         $this->assertSame('tenant-empty', $projector->tenantId);
         $this->assertSame(0, $projector->snapshotVersion);
     }
@@ -192,11 +207,12 @@ class SyncPullJobTest extends TestCase
         );
         $projector = new SyncPullJobProjectorSpy();
 
-        $job = new SyncPullJob($client, $projector);
+        $syncRepo = new SyncPullJobSyncStateSpy();
+        $job = new SyncPullJob($client, $projector, $syncRepo);
 
         $result = $job->perform('tenant-ack');
 
-        $this->assertTrue($result);
+        $this->assertSame(SyncPullResult::OK, $result->status());
         $this->assertSame('tenant-ack', $projector->tenantId);
         $this->assertSame('job-22', $client->acknowledgedJobId);
         $this->assertSame(22, $client->acknowledgedSnapshotVersion);
@@ -260,7 +276,7 @@ class SyncPullJobTest extends TestCase
                 ],
             ],
         ]);
-        $syncJob = new SyncPullJob($client, $projector);
+        $syncJob = new SyncPullJob($client, $projector, $syncRepo);
         $controller = new SyncStatusController($syncRepo, $syncJob);
 
         $response = $controller->trigger_sync(new WP_REST_Request('POST', '/acx/v1/recognition/sync/trigger'));
@@ -283,6 +299,7 @@ class SyncPullJobSyncStateSpy extends NullSyncStateRepository implements SyncSta
     private int $snapshotVersion = 0;
     private ?string $lastUpdated = null;
     private int $conflictCount = 0;
+    private string $lastSyncResult = 'ok';
 
     public function upsert_snapshot_version(string $tenant_id, int $snapshot_version): void
     {
@@ -305,6 +322,16 @@ class SyncPullJobSyncStateSpy extends NullSyncStateRepository implements SyncSta
         global $wpdb;
         $sql = implode("\n", $wpdb->queries);
         $this->conflictCount = str_contains($sql, "'member_cluster_reassignment'") ? 1 : 0;
+    }
+
+    public function get_last_sync_result(string $tenant_id): string
+    {
+        return $this->lastSyncResult;
+    }
+
+    public function set_last_sync_result(string $tenant_id, string $result): void
+    {
+        $this->lastSyncResult = $result;
     }
 
     public function get_conflict_count(string $tenant_id): int

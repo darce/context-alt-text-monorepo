@@ -4,6 +4,11 @@ declare(strict_types=1);
 
 namespace AltContext\Sovereign\Sync;
 
+require_once __DIR__ . '/../repositories/interface-sync-state-repository.php';
+require_once __DIR__ . '/class-sync-pull-result.php';
+require_once __DIR__ . '/interface-snapshot-client.php';
+
+use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use RuntimeException;
 use Throwable;
 
@@ -21,23 +26,29 @@ class SyncPullJob implements SyncPullJobInterface {
 	/** Tenant-specific cooldown key prefix used by perform() and bypass path writes. */
 	private const COOLDOWN_TRANSIENT_PREFIX = 'acx_sync_cooldown_';
 
-	private SnapshotClient $client;
+	private SnapshotClientInterface $client;
 	private SnapshotProjectorInterface $projector;
+	private SyncStateRepositoryInterface $sync_state_repository;
 
-	public function __construct( SnapshotClient $client, SnapshotProjectorInterface $projector ) {
+	public function __construct(
+		SnapshotClientInterface $client,
+		SnapshotProjectorInterface $projector,
+		SyncStateRepositoryInterface $sync_state_repository
+	) {
 		$this->client = $client;
 		$this->projector = $projector;
+		$this->sync_state_repository = $sync_state_repository;
 	}
 
 	/**
 	 * Run sync with cooldown gate.
 	 *
-	 * Returns false immediately when a cooldown transient is active for the tenant.
+	 * Returns SyncPullResult::skipped() immediately when a cooldown transient is active for the tenant.
 	 */
-	public function perform( string $tenant_id ): bool {
+	public function perform( string $tenant_id ): SyncPullResult {
 		$transient_key = self::COOLDOWN_TRANSIENT_PREFIX . md5( $tenant_id );
 		if ( false !== get_transient( $transient_key ) ) {
-			return false;
+			return SyncPullResult::skipped();
 		}
 
 		return $this->do_sync( $tenant_id, $transient_key );
@@ -48,21 +59,23 @@ class SyncPullJob implements SyncPullJobInterface {
 	 *
 	 * Used by explicit user-triggered sync actions; failures still set cooldown.
 	 */
-	public function perform_bypass_cooldown( string $tenant_id ): bool {
+	public function perform_bypass_cooldown( string $tenant_id ): SyncPullResult {
 		$transient_key = self::COOLDOWN_TRANSIENT_PREFIX . md5( $tenant_id );
 		return $this->do_sync( $tenant_id, $transient_key );
 	}
 
-	private function do_sync( string $tenant_id, string $transient_key ): bool {
+	private function do_sync( string $tenant_id, string $transient_key ): SyncPullResult {
 		$snapshot = $this->client->fetch_snapshot( $tenant_id );
 		if ( is_wp_error( $snapshot ) ) {
+			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::UNREACHABLE );
 			set_transient( $transient_key, 1, self::SYNC_COOLDOWN_SECONDS );
-			return false;
+			return SyncPullResult::unreachable();
 		}
 
 		try {
 			$this->projector->project( $tenant_id, $snapshot );
 		} catch ( Throwable $throwable ) {
+			$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::FAILED );
 			set_transient( $transient_key, 1, self::SYNC_COOLDOWN_SECONDS );
 			do_action(
 				'acx_sync_pull_failed',
@@ -72,8 +85,10 @@ class SyncPullJob implements SyncPullJobInterface {
 					'message' => $throwable->getMessage(),
 				)
 			);
-			return false;
+			return SyncPullResult::failed();
 		}
+
+		$this->sync_state_repository->set_last_sync_result( $tenant_id, SyncPullResult::OK );
 
 		try {
 			$this->maybe_acknowledge_projection( $snapshot );
@@ -88,7 +103,7 @@ class SyncPullJob implements SyncPullJobInterface {
 			);
 		}
 
-		return true;
+		return SyncPullResult::ok();
 	}
 
 	/**

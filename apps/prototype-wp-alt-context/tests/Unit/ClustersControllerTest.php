@@ -11,6 +11,7 @@ use AltContext\Sovereign\Repositories\ClustersRepositoryInterface;
 use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
+use AltContext\Sovereign\Sync\SyncPullResult;
 use AltContext\Tests\Stubs\NullClustersRepository;
 use AltContext\Tests\Stubs\NullIdentityMembersRepository;
 use AltContext\Tests\Stubs\NullSyncStateRepository;
@@ -566,30 +567,30 @@ class ClustersControllerSyncPullSpy implements SyncPullJobInterface
     public bool $performedBypass = false;
     public string $tenantIdBypass = '';
 
-    public function perform(string $tenant_id): bool
+    public function perform(string $tenant_id): SyncPullResult
     {
         $this->performed = true;
         $this->tenantId = $tenant_id;
-        return true;
+        return SyncPullResult::ok();
     }
 
-    public function perform_bypass_cooldown(string $tenant_id): bool
+    public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
     {
         $this->performedBypass = true;
         $this->tenantIdBypass = $tenant_id;
-        return true;
+        return SyncPullResult::ok();
     }
 }
 
 class ClustersControllerFailingSyncPull implements SyncPullJobInterface
 {
-    public function perform(string $tenant_id): bool
+    public function perform(string $tenant_id): SyncPullResult
     {
-        return false;
+        return SyncPullResult::failed();
     }
 
-    public function perform_bypass_cooldown(string $tenant_id): bool
+    public function perform_bypass_cooldown(string $tenant_id): SyncPullResult
     {
-        return false;
+        return SyncPullResult::failed();
     }
 }

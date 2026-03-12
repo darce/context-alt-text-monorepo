@@ -102,6 +102,8 @@ class LifecycleManagerTest extends TestCase
 
         $this->assertStringContainsString('CREATE TABLE wp_acx_sync_state', $syncSql);
         $this->assertStringContainsString('last_snapshot_version', $syncSql);
+        $this->assertStringContainsString('last_sync_result', $syncSql);
+        $this->assertStringContainsString('last_sync_attempted_at', $syncSql);
         $this->assertStringContainsString('pending_curation_operations', $syncSql);
         $this->assertStringContainsString('failed_curation_operations', $syncSql);
         $this->assertStringContainsString('conflict_count', $syncSql);

@@ -29,6 +29,8 @@ const failedSyncResponse: recognitionApi.SyncTriggerResponse = {
   last_snapshot_version: 0,
   last_synced_at: null,
   is_stale: true,
+  sync_health: 'offline',
+  last_sync_result: 'unreachable',
 };
 
 const successfulSyncResponse: recognitionApi.SyncTriggerResponse = {
@@ -37,6 +39,8 @@ const successfulSyncResponse: recognitionApi.SyncTriggerResponse = {
   last_snapshot_version: 3,
   last_synced_at: '2026-02-19 12:00:00',
   is_stale: false,
+  sync_health: 'healthy',
+  last_sync_result: 'ok',
 };
 
 describe('useSyncTrigger', () => {

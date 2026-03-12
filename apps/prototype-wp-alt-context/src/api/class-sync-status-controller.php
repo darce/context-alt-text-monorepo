@@ -15,13 +15,15 @@ require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 
 use AltContext\Sovereign\Repositories\ClustersRepository;
 use AltContext\Sovereign\Repositories\IdentityMembersRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
-use AltContext\Sovereign\Sync\SnapshotClient;
-use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Sovereign\Sync\SyncPullResult;
+use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJob;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use Throwable;
@@ -36,15 +38,18 @@ use function trim;
 class SyncStatusController extends AbstractRecognitionProxyController {
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
+	private ?SyncPullJobFactory $sync_pull_job_factory;
 	private ?string $sync_pull_job_error;
 	private bool $sync_pull_job_resolution_failed;
 
 	public function __construct(
 		?SyncStateRepositoryInterface $sync_state_repository = null,
-		?SyncPullJobInterface $sync_pull_job = null
+		?SyncPullJobInterface $sync_pull_job = null,
+		?SyncPullJobFactory $sync_pull_job_factory = null
 	) {
 		$this->sync_state_repository = $sync_state_repository ?? new SyncStateRepository();
 		$this->sync_pull_job = $sync_pull_job;
+		$this->sync_pull_job_factory = $sync_pull_job_factory;
 		$this->sync_pull_job_error = null;
 		$this->sync_pull_job_resolution_failed = false;
 	}
@@ -76,20 +81,10 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		$version   = $this->sync_state_repository->get_snapshot_version( $tenant_id );
 		$updated   = $this->sync_state_repository->get_last_updated( $tenant_id );
 		$curation_state = $this->get_curation_sync_state( $tenant_id );
+		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
 
 		return new WP_REST_Response(
-			array(
-				'last_snapshot_version' => $version,
-				'last_synced_at' => $updated,
-				'is_stale' => $this->is_projection_stale( $updated ),
-				'pending_curation_operations' => $curation_state['pending_curation_operations'],
-				'failed_curation_operations' => $curation_state['failed_curation_operations'],
-				'conflict_count' => $curation_state['conflict_count'],
-				'last_curation_acknowledged_at' => $curation_state['last_curation_acknowledged_at'],
-				'last_curation_conflict_at' => $curation_state['last_curation_conflict_at'],
-				'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
-				'topology_commands' => $curation_state['topology_commands'],
-			),
+			$this->build_sync_status_payload( $version, $updated, $curation_state, $last_sync_result ),
 			200
 		);
 	}
@@ -102,7 +97,12 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		$curation_state = $this->get_curation_sync_state( $tenant_id );
 
 		if ( null === $sync_pull_job ) {
-			$payload = $this->build_sync_status_payload( $version, $updated, $curation_state );
+			$payload = $this->build_sync_status_payload(
+				$version,
+				$updated,
+				$curation_state,
+				$this->sync_state_repository->get_last_sync_result( $tenant_id )
+			);
 			$payload['synced'] = false;
 			$payload['reason'] = 'sync_unavailable';
 			$payload['error'] = $this->sync_pull_job_error;
@@ -111,23 +111,24 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 		}
 
 		try {
-			$success = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
+			$result = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
 		} catch ( Throwable $e ) {
-			$success = false;
+			$result = SyncPullResult::failed();
 		}
 
 		$version = $this->sync_state_repository->get_snapshot_version( $tenant_id );
 		$updated = $this->sync_state_repository->get_last_updated( $tenant_id );
 		$curation_state = $this->get_curation_sync_state( $tenant_id );
-		$payload = $this->build_sync_status_payload( $version, $updated, $curation_state );
-		$payload['synced'] = $success;
-		$payload['reason'] = $this->determine_sync_reason( $success, $version );
+		$last_sync_result = $this->sync_state_repository->get_last_sync_result( $tenant_id );
+		$payload = $this->build_sync_status_payload( $version, $updated, $curation_state, $last_sync_result );
+		$payload['synced'] = $result->is_success();
+		$payload['reason'] = $this->determine_sync_reason( $result, $version );
 
 		return new WP_REST_Response( $payload, 200 );
 	}
 
-	private function determine_sync_reason( bool $success, ?int $version ): string {
-		if ( ! $success ) {
+	private function determine_sync_reason( SyncPullResult $result, ?int $version ): string {
+		if ( ! $result->is_success() ) {
 			return 'sync_failed';
 		}
 		if ( 0 === $version || null === $version ) {
@@ -217,11 +218,15 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	 * } $curation_state
 	 * @return array<string,mixed>
 	 */
-	private function build_sync_status_payload( int $version, ?string $updated, array $curation_state ): array {
+	private function build_sync_status_payload( int $version, ?string $updated, array $curation_state, string $last_sync_result ): array {
+		$is_stale = $this->is_projection_stale( $updated );
+
 		return array(
 			'last_snapshot_version' => $version,
 			'last_synced_at' => $updated,
-			'is_stale' => $this->is_projection_stale( $updated ),
+			'is_stale' => $is_stale,
+			'sync_health' => $this->classify_sync_health( $curation_state, $is_stale, $last_sync_result ),
+			'last_sync_result' => $last_sync_result,
 			'pending_curation_operations' => $curation_state['pending_curation_operations'],
 			'failed_curation_operations' => $curation_state['failed_curation_operations'],
 			'conflict_count' => $curation_state['conflict_count'],
@@ -230,6 +235,54 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 			'last_curation_failed_at' => $curation_state['last_curation_failed_at'],
 			'topology_commands' => $curation_state['topology_commands'],
 		);
+	}
+
+	/**
+	 * @param array{
+	 *   pending_curation_operations:int,
+	 *   failed_curation_operations:int,
+	 *   conflict_count:int,
+	 *   last_curation_acknowledged_at:?string,
+	 *   last_curation_conflict_at:?string,
+	 *   last_curation_failed_at:?string,
+	 *   topology_commands:array{
+	 *     pending:int,
+	 *     applied:int,
+	 *     failed:int,
+	 *     conflict:int,
+	 *     last_reconciled_at:?string
+	 *   }
+	 * } $curation_state
+	 */
+	private function classify_sync_health( array $curation_state, bool $is_stale, string $last_sync_result ): string {
+		if ( SyncPullResult::UNREACHABLE === $last_sync_result ) {
+			return 'offline';
+		}
+
+		if ( SyncPullResult::FAILED === $last_sync_result ) {
+			return 'stale';
+		}
+
+		if ( ( $curation_state['failed_curation_operations'] ?? 0 ) > 0
+			|| ( $curation_state['topology_commands']['failed'] ?? 0 ) > 0 ) {
+			return 'failures';
+		}
+
+		if ( ( $curation_state['conflict_count'] ?? 0 ) > 0
+			|| ( $curation_state['topology_commands']['conflict'] ?? 0 ) > 0 ) {
+			return 'conflicts';
+		}
+
+		if ( $is_stale ) {
+			return 'stale';
+		}
+
+		if ( ( $curation_state['pending_curation_operations'] ?? 0 ) > 0
+			|| ( $curation_state['topology_commands']['pending'] ?? 0 ) > 0 ) {
+			return 'queued';
+		}
+
+		return 'healthy';
 	}
 
 	private function resolve_sync_pull_job(): ?SyncPullJobInterface {
@@ -260,13 +313,12 @@ class SyncStatusController extends AbstractRecognitionProxyController {
 	}
 
 	protected function build_sync_pull_job(): SyncPullJobInterface {
-		return new SyncPullJob(
-			new SnapshotClient(),
-			new SnapshotProjector(
+		$factory = $this->sync_pull_job_factory ?? new SyncPullJobFactory(
 				new ClustersRepository(),
 				new IdentityMembersRepository(),
 				$this->sync_state_repository
-			)
 		);
+
+		return $factory->create();
 	}
 }

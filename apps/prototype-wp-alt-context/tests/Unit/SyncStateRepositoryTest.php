@@ -52,6 +52,29 @@ class SyncStateRepositoryTest extends TestCase
         $this->assertSame('2026-02-14 01:02:03', $value);
     }
 
+    public function testGetLastSyncResultDefaultsToOkWhenMissing(): void
+    {
+        global $wpdb;
+        $wpdb->mockVar = '';
+
+        $value = $this->repository->get_last_sync_result('tenant-sync');
+
+        $this->assertSame('ok', $value);
+    }
+
+    public function testSetLastSyncResultPersistsAttemptMetadata(): void
+    {
+        $this->repository->set_last_sync_result('tenant-sync', 'unreachable');
+
+        global $wpdb;
+        $sql = implode("\n", $wpdb->queries);
+
+        $this->assertStringContainsString('INSERT INTO `wp_acx_sync_state` (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)', $sql);
+        $this->assertStringContainsString("'tenant:tenant-sync:clusters'", $sql);
+        $this->assertStringContainsString("'unreachable'", $sql);
+        $this->assertStringContainsString('last_sync_attempted_at = VALUES(last_sync_attempted_at)', $sql);
+    }
+
     public function testTouchLocalCurationMarkerBackdatesUpdatedAtToEpoch(): void
     {
         $this->repository->touch_local_curation_marker('tenant-sync');

@@ -5,11 +5,14 @@ declare(strict_types=1);
 namespace AltContext\Sovereign\Repositories;
 
 require_once __DIR__ . '/trait-prepares-sql-queries.php';
+require_once __DIR__ . '/../sync/class-sync-pull-result.php';
 
+use AltContext\Sovereign\Sync\SyncPullResult;
 use function gmdate;
 use function is_array;
 use function is_object;
 use function is_string;
+use function in_array;
 use function max;
 use function method_exists;
 use function sprintf;
@@ -141,6 +144,46 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 
 		$normalized = trim( $value );
 		return '' !== $normalized ? $normalized : null;
+	}
+
+	public function get_last_sync_result( string $tenant_id ): string {
+		$value = $this->get_string_state_value( $tenant_id, 'last_sync_result' );
+		return $this->normalize_sync_result( $value );
+	}
+
+	public function set_last_sync_result( string $tenant_id, string $result ): void {
+		global $wpdb;
+
+		$normalized_tenant_id = trim( $tenant_id );
+		if ( '' === $normalized_tenant_id ) {
+			$this->log_empty_tenant_id_guard( __METHOD__ );
+			return;
+		}
+
+		if ( ! isset( $wpdb ) || ! is_object( $wpdb ) || ! method_exists( $wpdb, 'prepare' ) || ! method_exists( $wpdb, 'query' ) ) {
+			return;
+		}
+
+		$normalized_result = $this->normalize_sync_result( $result );
+		$sql               = $this->prepare_query(
+			'INSERT INTO %i (stream_name, last_snapshot_version, last_sync_result, last_sync_attempted_at, updated_at)
+			VALUES (%s, 0, %s, %s, %s)
+			ON DUPLICATE KEY UPDATE
+				last_sync_result = VALUES(last_sync_result),
+				last_sync_attempted_at = VALUES(last_sync_attempted_at)',
+			array(
+				$this->table_name,
+				$this->stream_name_for_tenant( $normalized_tenant_id ),
+				$normalized_result,
+				gmdate( 'Y-m-d H:i:s' ),
+				'1970-01-01 00:00:00',
+			)
+		);
+
+		if ( is_string( $sql ) && '' !== $sql ) {
+			// phpcs:ignore WordPress.DB.PreparedSQL.NotPrepared -- Query is prepared above and executed as-is.
+			$wpdb->query( $sql );
+		}
 	}
 
 	public function touch_local_curation_marker( string $tenant_id ): void {
@@ -578,5 +621,14 @@ class SyncStateRepository implements SyncStateRepositoryInterface {
 
 		$normalized = trim( $value );
 		return '' !== $normalized ? $normalized : null;
+	}
+
+	private function normalize_sync_result( ?string $result ): string {
+		$normalized = is_string( $result ) ? trim( $result ) : '';
+		if ( in_array( $normalized, array( SyncPullResult::OK, SyncPullResult::FAILED, SyncPullResult::UNREACHABLE ), true ) ) {
+			return $normalized;
+		}
+
+		return SyncPullResult::OK;
 	}
 }

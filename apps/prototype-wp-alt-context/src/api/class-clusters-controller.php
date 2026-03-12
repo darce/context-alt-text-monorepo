@@ -17,6 +17,8 @@ require_once __DIR__ . '/../sovereign/sync/class-snapshot-client.php';
 require_once __DIR__ . '/../sovereign/sync/class-snapshot-projector.php';
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-result.php';
+require_once __DIR__ . '/../sovereign/sync/class-sync-pull-job-factory.php';
 require_once __DIR__ . '/../sovereign/class-cluster-facade.php';
 
 use AltContext\Sovereign\ClusterFacade;
@@ -29,7 +31,7 @@ use AltContext\Sovereign\Repositories\IdentityMembersRepositoryInterface;
 use AltContext\Sovereign\Repositories\SyncStateRepository;
 use AltContext\Sovereign\Repositories\SyncStateRepositoryInterface;
 use AltContext\Sovereign\Sync\SnapshotClient;
-use AltContext\Sovereign\Sync\SnapshotProjector;
+use AltContext\Sovereign\Sync\SyncPullJobFactory;
 use AltContext\Sovereign\Sync\SyncPullJob;
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
 use WP_Error;
@@ -58,6 +60,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 	private IdentityMembersRepositoryInterface $members_repository;
 	private SyncStateRepositoryInterface $sync_state_repository;
 	private ?SyncPullJobInterface $sync_pull_job;
+	private ?SyncPullJobFactory $sync_pull_job_factory;
 	private ClusterResponseMapper $cluster_mapper;
 	private MemberResponseMapper $member_mapper;
 	private ClusterFacade $cluster_facade;
@@ -69,7 +72,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 		?SyncPullJobInterface $sync_pull_job = null,
 		?ClusterResponseMapper $cluster_mapper = null,
 		?MemberResponseMapper $member_mapper = null,
-		?ClusterFacade $cluster_facade = null
+		?ClusterFacade $cluster_facade = null,
+		?SyncPullJobFactory $sync_pull_job_factory = null
 	) {
 		$this->clusters_repository = $clusters_repository ?? new ClustersRepository();
 		$this->members_repository = $members_repository ?? new IdentityMembersRepository();
@@ -78,6 +82,7 @@ class ClustersController extends AbstractRecognitionProxyController {
 		$this->cluster_mapper = $cluster_mapper ?? new ClusterResponseMapper();
 		$this->member_mapper = $member_mapper ?? new MemberResponseMapper();
 		$this->cluster_facade = $cluster_facade ?? new ClusterFacade( $this->clusters_repository, $this->members_repository );
+		$this->sync_pull_job_factory = $sync_pull_job_factory;
 		add_action( self::BOOTSTRAP_SYNC_HOOK, array( $this, 'perform_bootstrap_sync' ), 10, 1 );
 	}
 
@@ -359,8 +364,8 @@ class ClustersController extends AbstractRecognitionProxyController {
 			return $response;
 		}
 
-		$inline_ok = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
-		if ( ! $inline_ok ) {
+		$inline_result = $sync_pull_job->perform_bypass_cooldown( $tenant_id );
+		if ( ! $inline_result->is_success() ) {
 			$args = array( $tenant_id );
 			if ( false === wp_next_scheduled( self::BOOTSTRAP_SYNC_HOOK, $args ) ) {
 				wp_schedule_single_event( time(), self::BOOTSTRAP_SYNC_HOOK, $args );
@@ -376,14 +381,13 @@ class ClustersController extends AbstractRecognitionProxyController {
 		}
 
 		try {
-			$this->sync_pull_job = new SyncPullJob(
-				new SnapshotClient(),
-				new SnapshotProjector(
-					$this->clusters_repository,
-					$this->members_repository,
-					$this->sync_state_repository
-				)
+			$factory = $this->sync_pull_job_factory ?? new SyncPullJobFactory(
+				$this->clusters_repository,
+				$this->members_repository,
+				$this->sync_state_repository,
+				new SnapshotClient()
 			);
+			$this->sync_pull_job = $factory->create();
 		} catch ( \Throwable $e ) {
 			do_action(
 				'acx_recognition_composition_failed',

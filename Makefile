@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-handoff lane-reset lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -128,6 +128,8 @@ help:
 	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "    Optional overrides: SESSION=<name> SUMMARY=\"...\" MERGE_READY=0 MESSAGE=\"...\""
+	@echo "  make lane-handoff"
+	@echo "    Worker default: show lane status, then submit a merge-ready lane report using inferred TASK/LANE/SESSION."
 	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
 	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
@@ -363,6 +365,12 @@ lane-report: lane-guard
 	if [ "$(DRY_RUN)" = "1" ]; then set -- "$$@" --dry-run; fi; \
 	if [ -n "$(MESSAGE)" ]; then set -- "$$@" --message "$(MESSAGE)" --subject "$(LANE) lane update"; fi; \
 	"$$@"
+
+lane-handoff: lane-guard
+	@set -eu; \
+	$(MAKE) lane-status TASK="$(TASK)" LANE="$(LANE)"; \
+	echo ""; \
+	$(MAKE) lane-report TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" MESSAGE="$(MESSAGE)"
 
 lane-reset: lane-guard
 	@if [ -z "$(REF)" ]; then \

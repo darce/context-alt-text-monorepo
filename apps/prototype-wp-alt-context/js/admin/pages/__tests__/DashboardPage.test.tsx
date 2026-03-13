@@ -331,6 +331,74 @@ describe('DashboardPage', () => {
     expect(screen.queryByRole('link', { name: /Open Retention Controls/ })).not.toBeInTheDocument();
   });
 
+  it('shows the purge-on-demand retention label when configured', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          available: true,
+          policy: {
+            retention_mode: 'purge_on_demand',
+            last_export_at: '2026-03-08T10:00:00Z',
+            last_purge_at: null,
+            retention_updated_at: '2026-03-07T09:00:00Z',
+          },
+          recent_audit_events: [],
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText('Purge on demand')).toBeInTheDocument();
+  });
+
+  it('shows the retain-all retention label when configured', () => {
+    mockedUseRetentionStatus.mockReturnValue(
+      createMockQuery({
+        data: {
+          available: true,
+          policy: {
+            retention_mode: 'retain_all',
+            last_export_at: '2026-03-08T10:00:00Z',
+            last_purge_at: null,
+            retention_updated_at: '2026-03-07T09:00:00Z',
+          },
+          recent_audit_events: [],
+        },
+      }),
+    );
+    mockedUseIdentityStats.mockReturnValue(
+      createMockQuery<DashboardStats>({
+        data: {
+          people_count: 4,
+          assigned_clusters_count: 4,
+          pending_clusters_count: 0,
+          media_with_faces_count: 10,
+          unassigned_persons_count: 0,
+        },
+        refetch: vi.fn(),
+      }),
+    );
+
+    render(<DashboardPage />);
+
+    expect(screen.getByText('Retention posture')).toBeInTheDocument();
+    expect(screen.getByText('Retain all')).toBeInTheDocument();
+  });
+
   it('shows identity error state with retry action', () => {
     const refetch = vi.fn();
     mockedUseIdentityStats.mockReturnValue(

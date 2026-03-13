@@ -2,7 +2,7 @@ import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi, beforeEach } from 'vitest';
 
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
-import type { SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
+import type { RetentionStatusResponse, SyncStatusResponse, SyncTriggerResponse } from '../../../api/recognition';
 import { createMockQuery } from '../../../test-utils/mockHooks';
 
 const buildSyncStatus = (overrides: Partial<SyncStatusResponse> = {}): SyncStatusResponse => ({
@@ -31,6 +31,19 @@ const mockReturn = {
   data: null as SyncStatusResponse | null | undefined,
   isLoading: false,
   isError: false,
+};
+
+const retentionQueryState = {
+  data: {
+    available: true,
+    policy: {
+      retention_mode: 'dispose_after_ack',
+      last_export_at: null,
+      last_purge_at: null,
+      retention_updated_at: null,
+    },
+    recent_audit_events: [],
+  } as RetentionStatusResponse | null | undefined,
 };
 
 const mutateSpy = vi.fn();
@@ -65,16 +78,7 @@ vi.mock('../../../hooks/useSyncTrigger', () => ({
 vi.mock('../../../hooks/useRetentionStatus', () => ({
   useRetentionStatus: () =>
     createMockQuery({
-      data: {
-        available: true,
-        policy: {
-          retention_mode: 'dispose_after_ack',
-          last_export_at: null,
-          last_purge_at: null,
-          retention_updated_at: null,
-        },
-        recent_audit_events: [],
-      },
+      data: retentionQueryState.data,
     }),
 }));
 
@@ -85,6 +89,16 @@ describe('SyncStatusIndicator', () => {
     mockReturn.data = null;
     mockReturn.isLoading = false;
     mockReturn.isError = false;
+    retentionQueryState.data = {
+      available: true,
+      policy: {
+        retention_mode: 'dispose_after_ack',
+        last_export_at: null,
+        last_purge_at: null,
+        retention_updated_at: null,
+      },
+      recent_audit_events: [],
+    };
     mutateSpy.mockClear();
     (mockTrigger as Record<string, unknown>).isPending = false;
     (mockTrigger as Record<string, unknown>).isSuccess = false;
@@ -143,6 +157,55 @@ describe('SyncStatusIndicator', () => {
     render(<SyncStatusIndicator />);
 
     expect(screen.getByRole('link', { name: 'Retention: Dispose after ack' })).toHaveAttribute('href', '#/retention');
+  });
+
+  it('shows the purge-on-demand retention badge label when configured', () => {
+    mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
+    retentionQueryState.data = {
+      available: true,
+      policy: {
+        retention_mode: 'purge_on_demand',
+        last_export_at: null,
+        last_purge_at: null,
+        retention_updated_at: null,
+      },
+      recent_audit_events: [],
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.getByRole('link', { name: 'Retention: Purge on demand' })).toHaveAttribute('href', '#/retention');
+  });
+
+  it('does not show a retention badge when the policy is retain_all', () => {
+    mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
+    retentionQueryState.data = {
+      available: true,
+      policy: {
+        retention_mode: 'retain_all',
+        last_export_at: null,
+        last_purge_at: null,
+        retention_updated_at: null,
+      },
+      recent_audit_events: [],
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.queryByRole('link', { name: /Retention:/ })).not.toBeInTheDocument();
+  });
+
+  it('does not show a retention badge when retention status is unavailable', () => {
+    mockReturn.data = buildSyncStatus({ last_snapshot_version: 5, last_synced_at: '2026-02-14 12:00:00' });
+    retentionQueryState.data = {
+      available: false,
+      policy: null,
+      recent_audit_events: [],
+    };
+
+    render(<SyncStatusIndicator />);
+
+    expect(screen.queryByRole('link', { name: /Retention:/ })).not.toBeInTheDocument();
   });
 
   it('renders queued state when pending replay exists without failures or conflicts', () => {

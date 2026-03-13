@@ -46,6 +46,7 @@ Recommended commands:
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend ENTER_SHELL=1
 make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-commit
 make lane-handoff
 make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend SESSION=phase5-frontend SUMMARY="Frontend slice ready" MERGE_READY=1
 make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend REF=feature/6.0.2-retention-export
@@ -58,7 +59,9 @@ Notes:
 - `make lane-open` cannot mutate the parent shell's working directory.
 - `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
+- `make lane-commit` stages the lane-owned paths and creates a default commit whose message begins with the lane name, for example `frontend: update retention admin UI`.
 - `make lane-handoff` is the normal worker handoff path: it shows lane status and then submits a merge-ready report using inferred `TASK`, `LANE`, and default `SESSION`.
+- When the worktree is already clean, `lane-report` falls back to the unique lane commits relative to the orchestrator branch so the handoff still reports meaningful changed files after `lane-commit`.
 - `make lane-commits ...` shows the commits reachable from the lane branch that are not yet on the current orchestrator branch.
 - `make lane-intake ...` prints those lane-only commits first, then cherry-picks them in order. Run it from the orchestrator root, not from a worker worktree.
 

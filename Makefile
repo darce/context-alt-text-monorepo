@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-handoff lane-reset lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -42,6 +42,8 @@ LANE_TEST_ARGS :=
 LANE_TEST_CMD_1 :=
 LANE_TEST_CMD_2 :=
 LANE_NON_GOAL_ARGS :=
+LANE_COMMIT_PATHS :=
+LANE_COMMIT_SUBJECT :=
 LANE_DONE_DEFINITION := Ready for orchestrator branch review with lane-local verification complete.
 
 ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
@@ -56,6 +58,8 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
     LANE_TEST_CMD_2 := cd apps/prototype-description-service && mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py
     LANE_TEST_ARGS := --test-command "cd apps/prototype-description-service && pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py" --test-command "cd apps/prototype-description-service && mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
     LANE_NON_GOAL_ARGS := --non-goal "Do not edit HTTP router files." --non-goal "Do not edit WordPress or frontend files."
+    LANE_COMMIT_PATHS := apps/prototype-description-service/db apps/prototype-description-service/recognition/domain apps/prototype-description-service/recognition/infrastructure
+    LANE_COMMIT_SUBJECT := update retention domain services
   endif
   ifeq ($(LANE),backend-http)
     LANE_BRANCH := codex/p5-backend-http
@@ -68,6 +72,8 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
     LANE_TEST_CMD_2 := cd apps/prototype-description-service && mypy recognition/interface_adapters/http
     LANE_TEST_ARGS := --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py" --test-command "cd apps/prototype-description-service && mypy recognition/interface_adapters/http"
     LANE_NON_GOAL_ARGS := --non-goal "Do not edit backend domain/repository files outside the HTTP layer." --non-goal "Do not edit WordPress or frontend files."
+    LANE_COMMIT_PATHS := apps/prototype-description-service/recognition/interface_adapters/http
+    LANE_COMMIT_SUBJECT := update retention HTTP routes
   endif
   ifeq ($(LANE),wp-proxy)
     LANE_BRANCH := codex/p5-wp-proxy
@@ -79,6 +85,8 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
     LANE_TEST_CMD_1 := cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php
     LANE_TEST_ARGS := --test-command "cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php"
     LANE_NON_GOAL_ARGS := --non-goal "Do not edit frontend React/TypeScript files." --non-goal "Do not edit backend Python files."
+    LANE_COMMIT_PATHS := apps/prototype-wp-alt-context/src apps/prototype-wp-alt-context/tests/Unit
+    LANE_COMMIT_SUBJECT := update retention proxy
   endif
   ifeq ($(LANE),frontend)
     LANE_BRANCH := codex/p5-frontend
@@ -91,6 +99,8 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
     LANE_TEST_CMD_2 := cd apps/prototype-wp-alt-context && npm run typecheck
     LANE_TEST_ARGS := --test-command "cd apps/prototype-wp-alt-context && npm run test -- --run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/__tests__/RetentionPage.test.tsx js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/workbench/__tests__/SyncStatusIndicator.test.tsx js/admin/__tests__/routeHelpers.test.ts" --test-command "cd apps/prototype-wp-alt-context && npm run typecheck"
     LANE_NON_GOAL_ARGS := --non-goal "Do not edit PHP or Python files." --non-goal "Do not edit shared task docs unless explicitly assigned."
+    LANE_COMMIT_PATHS := apps/prototype-wp-alt-context/js
+    LANE_COMMIT_SUBJECT := update retention admin UI
   endif
 endif
 
@@ -128,8 +138,10 @@ help:
 	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "    Optional overrides: SESSION=<name> SUMMARY=\"...\" MERGE_READY=0 MESSAGE=\"...\""
+	@echo "  make lane-commit"
+	@echo "    Worker default commit step: stage lane-owned paths and create a commit like '<lane>: <subject>'."
 	@echo "  make lane-handoff"
-	@echo "    Worker default: show lane status, then submit a merge-ready lane report using inferred TASK/LANE/SESSION."
+	@echo "    Worker default: commit lane-owned changes, show lane status, then submit a merge-ready lane report using inferred TASK/LANE/SESSION."
 	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
 	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
@@ -366,8 +378,28 @@ lane-report: lane-guard
 	if [ -n "$(MESSAGE)" ]; then set -- "$$@" --message "$(MESSAGE)" --subject "$(LANE) lane update"; fi; \
 	"$$@"
 
+lane-commit: lane-guard
+	@set -eu; \
+	if [ -z "$(LANE_COMMIT_PATHS)" ]; then \
+		echo "No lane-owned commit paths configured for $(LANE)."; \
+		exit 1; \
+	fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] git add -A -- $(LANE_COMMIT_PATHS)"; \
+		echo "[dry-run] git commit -m \"$(LANE): $(LANE_COMMIT_SUBJECT)\""; \
+	else \
+		git add -A -- $(LANE_COMMIT_PATHS); \
+		if git diff --cached --quiet -- $(LANE_COMMIT_PATHS); then \
+			echo "No lane-owned changes to commit for $(LANE)."; \
+		else \
+			git commit -m "$(LANE): $(LANE_COMMIT_SUBJECT)"; \
+		fi; \
+	fi
+
 lane-handoff: lane-guard
 	@set -eu; \
+	$(MAKE) lane-commit TASK="$(TASK)" LANE="$(LANE)" DRY_RUN="$(DRY_RUN)"; \
+	echo ""; \
 	$(MAKE) lane-status TASK="$(TASK)" LANE="$(LANE)"; \
 	echo ""; \
 	$(MAKE) lane-report TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" MESSAGE="$(MESSAGE)"

@@ -343,6 +343,17 @@ EOF
         [ -n "$line" ] && changed_files+=("$line")
       done < <(git -C "$worktree_path" status --short | awk '{print $2}')
     fi
+    if [ "${#changed_files[@]}" -eq 0 ]; then
+      orchestrator_branch="$(git -C "$orchestrator_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+      if [ -n "$orchestrator_branch" ]; then
+        lane_commits="$(git -C "$worktree_path" rev-list --reverse "${orchestrator_branch}..HEAD" 2>/dev/null || true)"
+        if [ -n "$lane_commits" ]; then
+          while IFS= read -r line; do
+            [ -n "$line" ] && changed_files+=("$line")
+          done < <(git -C "$worktree_path" diff-tree --no-commit-id --name-only -r $lane_commits | sort -u)
+        fi
+      fi
+    fi
 
     if [ "$dry_run" -eq 1 ]; then
       if [ "${#changed_files[@]}" -gt 0 ]; then

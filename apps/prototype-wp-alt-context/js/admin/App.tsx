@@ -7,6 +7,7 @@ import { WorkbenchPage } from './pages/WorkbenchPage';
 import { RosterPage } from './pages/RosterPage';
 import { ErrorBoundary } from '../components/ErrorBoundary';
 import { ToastProvider } from './context/ToastContext';
+import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -17,7 +18,6 @@ const queryClient = new QueryClient({
     },
   },
 });
-import { extractRouteFromHash, ensureHashInitialized, type RoutePath, DEFAULT_ROUTE } from './utils/routeHelpers';
 
 export const App = (): React.JSX.Element => {
   const initialRoute = useMemo(() => determineInitialRoute(), []);
@@ -68,7 +68,7 @@ export const App = (): React.JSX.Element => {
   );
 };
 
-const determineInitialRoute = (): RoutePath => {
+export const determineInitialRoute = (): RoutePath => {
   const hashRoute = extractRouteFromHash();
   if (hashRoute) {
     return hashRoute;
@@ -83,6 +83,10 @@ const determineInitialRoute = (): RoutePath => {
 
   if (page === 'alt-context-roster') {
     return '/roster';
+  }
+
+  if (page === 'alt-context-retention') {
+    return '/retention';
   }
 
   return DEFAULT_ROUTE;

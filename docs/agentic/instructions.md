@@ -303,8 +303,9 @@ How workers communicate with the orchestrator:
    - assumptions made
    - blockers or follow-ups
    - whether the lane is merge-ready
-5. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and optionally send a `lane-message` to the orchestrator. Do **not** mark the whole task `done`.
-6. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
+5. Preferred worker command: run `make lane-handoff` from the worktree root (or the forwarded app Makefile) so the lane status and merge-ready report use inferred `TASK`, `LANE`, and default `SESSION` values.
+6. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and optionally send a `lane-message` to the orchestrator. Do **not** mark the whole task `done`.
+7. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
 
 How the orchestrator should monitor and delegate:
 

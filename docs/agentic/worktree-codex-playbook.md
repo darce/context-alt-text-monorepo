@@ -35,7 +35,7 @@ From the orchestrator root:
 
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo
-make lane-open TASK=<task-ref> LANE=<lane> ENTER_SHELL=1
+make lane-open TASK=<task-ref> LANE=<lane>
 ```
 
 What this does:
@@ -44,7 +44,7 @@ What this does:
 - prints the lane brief
 - proves the target worktree branch with `git status -sb`
 - polls the lane inbox immediately so the worker sees open orchestrator messages before coding
-- opens an interactive shell in the worker worktree
+- opens an interactive shell in the worker worktree by default
 - ensures later `make lane-refresh` runs will pull committed orchestrator branch updates into that lane cleanly
 
 After the subshell opens, verify:
@@ -61,13 +61,13 @@ Expected result for a frontend-style example:
 - `pwd` -> `/Users/daniel/Development/context-alt-text-monorepo-p5-frontend`
 - `git branch --show-current` -> `codex/p5-frontend`
 
-## If you do not want ENTER_SHELL=1
+## If you do not want the subshell
 
 Use a two-step flow:
 
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo
-make lane-open TASK=<task-ref> LANE=<lane>
+make lane-open TASK=<task-ref> LANE=<lane> ENTER_SHELL=0
 cd "$(make lane-path TASK=<task-ref> LANE=<lane>)"
 git branch --show-current
 make lane-inbox
@@ -76,8 +76,8 @@ make lane-inbox
 Important:
 
 - `make lane-open` cannot change the current shell's directory or branch.
-- It prepares the worktree and prints the next command.
-- You must either `cd` into the returned path or use `ENTER_SHELL=1`.
+- By default it opens a child shell in the lane worktree.
+- If you pass `ENTER_SHELL=0`, it prepares the worktree and prints the next command instead.
 
 ## Recommended fresh Codex startup sequence
 
@@ -162,7 +162,7 @@ cd /Users/daniel/Development/context-alt-text-monorepo
 make lane-refresh TASK=<task-ref> LANE=<lane>
 ```
 
-Then reopen the worker shell with `ENTER_SHELL=1`.
+Then reopen the worker shell with the default `make lane-open TASK=<task-ref> LANE=<lane>` behavior.
 If the issue was missing lane commands rather than the wrong branch, `make lane-refresh` is still the fix after the orchestrator has committed the tooling update on root.
 
 ## Minimal commands by role

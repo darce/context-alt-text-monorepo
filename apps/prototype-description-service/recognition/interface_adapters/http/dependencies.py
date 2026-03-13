@@ -46,9 +46,6 @@ from recognition.interface_adapters.http.deps.services import (
     get_scan_queue_service_optional,
     get_scan_service_builder,
     get_settings,
-    get_retention_export_service,
-    get_retention_policy_service,
-    get_retention_purge_service,
     get_shared_insightface_adapter,
     get_suggestion_refresh_service,
     get_suggestion_service,
@@ -59,9 +56,6 @@ from recognition.interface_adapters.http.deps.session import (
     get_observability_session,
     get_optional_session,
     get_session,
-)
-from recognition.interface_adapters.http.deps.tenant import (
-    get_authenticated_tenant_id,
 )
 
 # Re-export stores and lightweight services

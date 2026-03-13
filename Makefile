@@ -143,7 +143,7 @@ help:
 	@echo ""
 	@echo "Worktree Lanes (task-aware wrappers around scripts/worktree-lane):"
 	@echo "  make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "    Add ENTER_SHELL=1 to drop into a subshell in the worktree after setup."
+	@echo "    Adds the lane brief, worktree status, and an initial lane inbox poll. Add ENTER_SHELL=1 to drop into a subshell after setup."
 	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "    Worker default: poll open dispatch messages, latest handoff, and lane activity from shared MCP state."
@@ -411,6 +411,11 @@ lane-open: lane-guard
 	echo ""; \
 	echo "Prepared lane worktree state:"; \
 	git -C "$(LANE_WORKTREE)" status -sb; \
+	if [ "$(DRY_RUN)" != "1" ]; then \
+		echo ""; \
+		echo "Initial lane inbox:"; \
+		$(MAKE) -C "$(LANE_WORKTREE)" lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
+	fi; \
 	if [ "$(ENTER_SHELL)" = "1" ] && [ "$(DRY_RUN)" != "1" ]; then \
 		echo ""; \
 		echo "Opening interactive shell in $(LANE_WORKTREE)"; \

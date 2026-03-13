@@ -1,4 +1,4 @@
-.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset
+.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake
 
 help:
 	@echo "Available commands:"
@@ -13,6 +13,14 @@ help:
 	@echo "  make php-cs-fix - Auto-fix plugin PHP style violations (PHPCBF)"
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
+	@echo "  make lane-open  - Prepare + brief the current worker lane via the root Makefile"
+	@echo "  make lane-status - Show shared MCP + git status for the current worker lane"
+	@echo "  make lane-report - Submit a lane handback via the root Makefile"
+	@echo "  make lane-commit - Stage and commit lane-owned changes via the root Makefile"
+	@echo "  make lane-handoff - Verify scope, commit lane-owned changes, then submit the default worker handoff"
+	@echo "  make lane-reset - Reset the current worker lane to a ref via the root Makefile"
+	@echo "  make lane-refresh - Refresh the current worker lane from the orchestrator branch"
+	@echo "  make lane-clean - Remove copied tooling drift from the current worker lane"
 
 check:
 	@npm run check
@@ -62,6 +70,10 @@ phpstan:
 
 mcp:
 	@cd ../.. && make mcp-start
+
+lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake:
+	@ROOT_MAKE_DIR="$$(git rev-parse --show-toplevel)"; \
+	$(MAKE) -C "$$ROOT_MAKE_DIR" $@
 
 # Destructive helper for local sovereign split-brain recovery after backend reset.
 # Usage:

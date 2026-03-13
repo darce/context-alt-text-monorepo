@@ -97,7 +97,7 @@ make lane-inbox
 
 The worker should not start coding before `make lane-inbox` shows the open orchestrator dispatch.
 If root workflow tooling changed since the lane was opened, commit those root changes and then run `make lane-refresh` once before trusting the local lane commands.
-If you want a fresh non-interactive worker run from current MCP state, use `make lane-run` instead of trying to push a prompt into an already-running session.
+If you want a fresh non-interactive worker run from current MCP state, use `make lane-run` instead of trying to push a prompt into an already-running session. `lane-run` now captures a structured final result from Codex and auto-records the correct handoff back to MCP.
 
 ## Worker loop
 
@@ -187,7 +187,7 @@ make lane-handoff
 
 `make lane-handoff` now auto-initiates a worker-to-orchestrator handoff message when the lane is merge-ready. If the worker instead needs guidance, submit a blocked report and the same handoff message channel is used for the ask.
 
-For a blocked worker that could verify but could not write code, use:
+For a blocked worker that could verify but could not write code, `make lane-run` should auto-record the blocked handoff from the worker's final structured result. If you need to do it manually, use:
 
 ```bash
 make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="Blocked summary" MESSAGE="What was verified, what failed, and what guidance or access is needed."

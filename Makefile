@@ -546,14 +546,41 @@ lane-run: lane-guard
 		exit "$$status"; \
 	fi; \
 	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX")"; \
-	trap 'rm -f "$$PROMPT_FILE"' EXIT INT TERM; \
+	SCHEMA_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-schema-$(LANE)-XXXXXX.json")"; \
+	RESULT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-result-$(LANE)-XXXXXX.json")"; \
+	trap 'rm -f "$$PROMPT_FILE" "$$SCHEMA_FILE" "$$RESULT_FILE"' EXIT INT TERM; \
 	PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
 		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
 			--worktree-path "$(LANE_WORKTREE_TARGET)" > "$$PROMPT_FILE"; \
-	"$$CODEX_CMD" exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) - < "$$PROMPT_FILE"
+	cat <<'EOF' >> "$$PROMPT_FILE"; \
+
+When you finish, do not run `make lane-handoff` or `make lane-report` yourself.
+Return a single JSON object that matches the provided output schema.
+
+Set `handoff_action` to:
+- `merge_ready` only if you produced lane-owned code changes that are ready for orchestrator review
+- `needs_guidance` if you were blocked, verification was blocked, permissions/sandbox prevented progress, or the assigned issue already appears resolved and now needs orchestrator review instead of new lane code
+EOF
+	python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_result.py" schema > "$$SCHEMA_FILE"; \
+	if "$$CODEX_CMD" exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) --output-schema "$$SCHEMA_FILE" -o "$$RESULT_FILE" - < "$$PROMPT_FILE"; then \
+		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_result.py" handoff \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--session "$(SESSION)" \
+			--worktree-path "$(LANE_WORKTREE_TARGET)" \
+			--result-file "$$RESULT_FILE"; \
+	else \
+		status=$$?; \
+		echo "codex exec failed before automated handoff could be recorded."; \
+		if [ -s "$$RESULT_FILE" ]; then \
+			echo "Structured result was captured at $$RESULT_FILE"; \
+		fi; \
+		exit "$$status"; \
+	fi
 
 lane-dispatch: lane-orchestrator-guard
 	@if [ -z "$(MESSAGE)" ]; then \

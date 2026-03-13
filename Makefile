@@ -544,7 +544,7 @@ lane-run: lane-guard
 		fi; \
 		exit "$$status"; \
 	fi; \
-	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX.txt")"; \
+	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX")"; \
 	trap 'rm -f "$$PROMPT_FILE"' EXIT INT TERM; \
 	PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
 		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \

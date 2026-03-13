@@ -511,8 +511,8 @@ lane-inbox: lane-guard
 		--worktree-path "$$WORKTREE_PATH"
 
 lane-prompt: lane-guard
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
+	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -531,8 +531,8 @@ lane-run: lane-guard
 		echo "codex CLI is required for lane-run."; \
 		exit 1; \
 	fi; \
-	if ! PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
+	if ! PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
@@ -549,24 +549,24 @@ lane-run: lane-guard
 	SCHEMA_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-schema-$(LANE)-XXXXXX.json")"; \
 	RESULT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-result-$(LANE)-XXXXXX.json")"; \
 	trap 'rm -f "$$PROMPT_FILE" "$$SCHEMA_FILE" "$$RESULT_FILE"' EXIT INT TERM; \
-	PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
+	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
 			--worktree-path "$(LANE_WORKTREE_TARGET)" > "$$PROMPT_FILE"; \
-	cat <<'EOF' >> "$$PROMPT_FILE"; \
-
-When you finish, do not run `make lane-handoff` or `make lane-report` yourself.
-Return a single JSON object that matches the provided output schema.
-
-Set `handoff_action` to:
-- `merge_ready` only if you produced lane-owned code changes that are ready for orchestrator review
-- `needs_guidance` if you were blocked, verification was blocked, permissions/sandbox prevented progress, or the assigned issue already appears resolved and now needs orchestrator review instead of new lane code
-EOF
-	python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_result.py" schema > "$$SCHEMA_FILE"; \
+	printf '%s\n' \
+		'' \
+		'When you finish, do not run `make lane-handoff` or `make lane-report` yourself.' \
+		'Return a single JSON object that matches the provided output schema.' \
+		'' \
+		'Set `handoff_action` to:' \
+		'- `merge_ready` only if you produced lane-owned code changes that are ready for orchestrator review' \
+		'- `needs_guidance` if you were blocked, verification was blocked, permissions/sandbox prevented progress, or the assigned issue already appears resolved and now needs orchestrator review instead of new lane code' \
+		>> "$$PROMPT_FILE"; \
+	python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" schema > "$$SCHEMA_FILE"; \
 	if "$$CODEX_CMD" exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) --output-schema "$$SCHEMA_FILE" -o "$$RESULT_FILE" - < "$$PROMPT_FILE"; then \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_result.py" handoff \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" handoff \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \

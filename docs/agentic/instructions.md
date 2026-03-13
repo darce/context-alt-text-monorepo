@@ -323,6 +323,18 @@ git -C ../context-alt-text-monorepo-<lane> log --oneline --decorate -n 5
 git cherry-pick <worker-commit-sha>
 ```
 
+Preferred automated intake from the orchestrator root:
+
+```bash
+make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=backend-domain
+make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=backend-domain
+```
+
+- `make lane-commits` previews the commits on the lane branch that are not yet on the current orchestrator branch.
+- `make lane-intake` cherry-picks that unique commit set in order.
+- Use `DRY_RUN=1` on `make lane-intake` to preview the exact cherry-pick command before applying it.
+- Run these only from the orchestrator root, never from a worker worktree.
+
 Selective file intake when a worker branch contains extra churn:
 
 ```bash

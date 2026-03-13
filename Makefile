@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard lane-path
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -30,6 +30,7 @@ DRY_RUN ?= 0
 REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 0
 PHASE5_LANES := backend-domain backend-http wp-proxy frontend
+IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 
 LANE_BRANCH :=
 LANE_WORKTREE :=
@@ -129,6 +130,8 @@ help:
 	@echo "    Optional overrides: SESSION=<name> SUMMARY=\"...\" MERGE_READY=0 MESSAGE=\"...\""
 	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
 	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend [DRY_RUN=1]"
 	@echo "  Enumerated Phase 5 lanes: $(PHASE5_LANES)"
 
 # =============================================================================
@@ -287,6 +290,14 @@ lane-guard:
 		exit 1; \
 	fi
 
+lane-orchestrator-guard: lane-guard
+	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
+		echo "lane-commits and lane-intake must be run from the orchestrator root."; \
+		echo "Current worktree: $(WORKTREE_ROOT_REAL)"; \
+		echo "Expected orchestrator root: $(ORCHESTRATOR_ROOT)"; \
+		exit 1; \
+	fi
+
 lane-open: lane-guard
 	@set -eu; \
 	DRY_FLAG=""; \
@@ -369,6 +380,27 @@ lane-reset: lane-guard
 
 lane-path: lane-guard
 	@printf '%s\n' "$(LANE_WORKTREE)"
+
+lane-commits: lane-orchestrator-guard
+	@set -eu; \
+	COMMITS="$$(git rev-list --reverse HEAD..$(LANE_BRANCH))"; \
+	if [ -z "$$COMMITS" ]; then \
+		echo "No commits to intake from $(LANE_BRANCH)."; \
+	else \
+		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
+	fi
+
+lane-intake: lane-orchestrator-guard
+	@set -eu; \
+	COMMITS="$$(git rev-list --reverse HEAD..$(LANE_BRANCH))"; \
+	if [ -z "$$COMMITS" ]; then \
+		echo "No commits to intake from $(LANE_BRANCH)."; \
+	elif [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] git cherry-pick $$COMMITS"; \
+		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
+	else \
+		git cherry-pick $$COMMITS; \
+	fi
 
 # =============================================================================
 # Development Shortcuts

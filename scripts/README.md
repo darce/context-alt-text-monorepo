@@ -48,6 +48,8 @@ make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend EN
 make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend SESSION=phase5-frontend SUMMARY="Frontend slice ready" MERGE_READY=1
 make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend REF=feature/6.0.2-retention-export
+make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend DRY_RUN=1
 ```
 
 Notes:
@@ -55,6 +57,8 @@ Notes:
 - `make lane-open` cannot mutate the parent shell's working directory.
 - `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
+- `make lane-commits ...` shows the commits reachable from the lane branch that are not yet on the current orchestrator branch.
+- `make lane-intake ...` cherry-picks those lane-only commits in order. Run it from the orchestrator root, not from a worker worktree.
 
 It wraps:
 

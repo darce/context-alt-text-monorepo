@@ -1,4 +1,4 @@
-.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake
+.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake
 
 help:
 	@echo "Available commands:"
@@ -15,6 +15,8 @@ help:
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 	@echo "  make lane-open  - Prepare + brief the current worker lane via the root Makefile"
 	@echo "  make lane-status - Show shared MCP + git status for the current worker lane"
+	@echo "  make lane-inbox - Show open dispatch messages and latest handoff data for the current worker lane"
+	@echo "  make lane-dispatch - Send a lane assignment via the root Makefile (orchestrator use)"
 	@echo "  make lane-report - Submit a lane handback via the root Makefile"
 	@echo "  make lane-commit - Stage and commit lane-owned changes via the root Makefile"
 	@echo "  make lane-handoff - Verify scope, commit lane-owned changes, then submit the default worker handoff"
@@ -71,7 +73,7 @@ phpstan:
 mcp:
 	@cd ../.. && make mcp-start
 
-lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake:
+lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake:
 	@ROOT_MAKE_DIR="$$(git rev-parse --show-toplevel)"; \
 	$(MAKE) -C "$$ROOT_MAKE_DIR" $@
 

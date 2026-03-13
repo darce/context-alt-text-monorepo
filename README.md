@@ -1,4 +1,4 @@
-# Alt Context Monorepo
+# AltContext Monorepo
 
 AI-powered alternative text generation for WordPress media, with facial recognition and roster management.
 
@@ -85,18 +85,17 @@ make test              # pytest
 
 ## Documentation
 
-| Purpose | Location |
-|---------|----------|
-| Agent cold-start | [docs/agentic/instructions.md](docs/agentic/instructions.md) |
-| Agent setup/MCP | [docs/agentic/BOOTSTRAP.md](docs/agentic/BOOTSTRAP.md) |
-| API contracts | [docs/agentic/contracts/](docs/agentic/contracts/) |
-| Architecture diagrams | [docs/agentic/diagrams/](docs/agentic/diagrams/) |
-| Active roadmap (v0.1.0) | [docs/roadmaps/v0.1.0/](docs/roadmaps/v0.1.0/) |
-| Roadmap overview | [docs/roadmaps/](docs/roadmaps/) |
+| Purpose                 | Location                                                     |
+| ----------------------- | ------------------------------------------------------------ |
+| Agent cold-start        | [docs/agentic/instructions.md](docs/agentic/instructions.md) |
+| Agent setup/MCP         | [docs/agentic/BOOTSTRAP.md](docs/agentic/BOOTSTRAP.md)       |
+| API contracts           | [docs/agentic/contracts/](docs/agentic/contracts/)           |
+| Architecture diagrams   | [docs/agentic/diagrams/](docs/agentic/diagrams/)             |
+| Active roadmap (v0.1.0) | [docs/roadmaps/v0.1.0/](docs/roadmaps/v0.1.0/)               |
+| Roadmap overview        | [docs/roadmaps/](docs/roadmaps/)                             |
 
 ---
 
 ## License
 
 MIT -- see [LICENSE](LICENSE).
-

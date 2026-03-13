@@ -102,6 +102,20 @@ render_template() {
   ' "$template_path"
 }
 
+template_path() {
+  local orchestrator_root="$1"
+  local template_name="$2"
+  local candidate=""
+
+  if [ -n "$orchestrator_root" ] && [ -f "$orchestrator_root/docs/agentic/templates/$template_name" ]; then
+    candidate="$orchestrator_root/docs/agentic/templates/$template_name"
+  elif [ -f "$REPO_ROOT/docs/agentic/templates/$template_name" ]; then
+    candidate="$REPO_ROOT/docs/agentic/templates/$template_name"
+  fi
+
+  printf '%s\n' "$candidate"
+}
+
 subcommand="${1:-}"
 [ -n "$subcommand" ] || {
   usage
@@ -244,7 +258,9 @@ EOF
     export STATUS_COMMAND
     export REPORT_COMMAND
 
-    render_template "$REPO_ROOT/docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md"
+    brief_template="$(template_path "$orchestrator_root" "WORKTREE_LANE_BRIEF.template.md")"
+    [ -n "$brief_template" ] || die "brief template not found in orchestrator or local repo"
+    render_template "$brief_template"
     ;;
 
   status)
@@ -402,7 +418,10 @@ EOF
     export MESSAGE_SUBJECT="${subject:-none}"
     export MESSAGE_BODY="${message:-No lane message submitted.}"
 
-    render_template "$REPO_ROOT/docs/agentic/templates/WORKTREE_LANE_REPORT.template.md"
+    report_template="$(template_path "$orchestrator_root" "WORKTREE_LANE_REPORT.template.md")"
+    if [ -n "$report_template" ]; then
+      render_template "$report_template"
+    fi
     ;;
 
   help|-h|--help)

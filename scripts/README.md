@@ -44,7 +44,7 @@ Recommended commands:
 
 ```bash
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
-make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend ENTER_SHELL=1
+make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend ENTER_SHELL=0
 make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=frontend MESSAGE="Add the remaining Phase 6 retention Vitest coverage."
@@ -65,7 +65,8 @@ Notes:
 
 - `make lane-open` cannot mutate the parent shell's working directory.
 - It now polls the initial lane inbox as part of setup so the worker sees open orchestrator dispatches immediately.
-- `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
+- By default it opens an interactive subshell rooted in the lane worktree after setup and briefing.
+- Set `ENTER_SHELL=0` if you want setup only and prefer to `cd` manually afterward.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-inbox` is the worker polling command. It shows open orchestrator-to-worker lane messages, the latest worker report, recent lane activity, and git status.
 - `make handoff-inbox` is the orchestrator polling command. It shows open worker-to-orchestrator lane messages and the latest merge-ready or blocked worker reports across lanes.

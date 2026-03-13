@@ -30,7 +30,7 @@ STATUS ?= submitted
 MERGE_READY ?= 1
 DRY_RUN ?= 0
 REF ?= $(CURRENT_BRANCH)
-ENTER_SHELL ?= 0
+ENTER_SHELL ?= 1
 PHASE5_LANES := backend-domain backend-http wp-proxy frontend
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
@@ -145,7 +145,7 @@ help:
 	@echo ""
 	@echo "Worktree Lanes (task-aware wrappers around scripts/worktree-lane):"
 	@echo "  make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "    Adds the lane brief, worktree status, and an initial lane inbox poll. Add ENTER_SHELL=1 to drop into a subshell after setup."
+	@echo "    Adds the lane brief, worktree status, an initial lane inbox poll, and opens a subshell in the lane by default. Set ENTER_SHELL=0 to stay in root."
 	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "    Worker default: poll open dispatch messages, latest handoff, and lane activity from shared MCP state."
@@ -461,7 +461,7 @@ lane-open: lane-guard
 		echo ""; \
 		echo "Worktree ready at $(LANE_WORKTREE)"; \
 		echo "Your current shell is still at $(WORKTREE_ROOT_REAL)."; \
-		echo "Next step: cd \"$(LANE_WORKTREE)\" or rerun with ENTER_SHELL=1."; \
+		echo "Next step: cd \"$(LANE_WORKTREE)\" or rerun without ENTER_SHELL=0."; \
 	fi
 
 lane-status: lane-guard

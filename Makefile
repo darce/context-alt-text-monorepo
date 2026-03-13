@@ -451,7 +451,7 @@ lane-open: lane-guard
 	if [ "$(DRY_RUN)" != "1" ]; then \
 		echo ""; \
 		echo "Initial lane inbox:"; \
-		$(MAKE) -C "$(LANE_WORKTREE)" lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
+		$(MAKE) --no-print-directory lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
 	fi; \
 	if [ "$(ENTER_SHELL)" = "1" ] && [ "$(DRY_RUN)" != "1" ]; then \
 		echo ""; \

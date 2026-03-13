@@ -7,6 +7,7 @@ The system stores machine-derived biometric state (embeddings, clustering, detec
 ## Workflow Principles
 
 - **Minimized retention, not sovereignty.** Phase 5 delivers operator-visible retention controls and auditable lifecycle actions. Full sovereignty (customer-controlled embedding authority, ephemeral compute, region-pinning) is deferred post-v0.2.0.
+- **Greenfield schema policy.** This project is still greenfield. We do not preserve historical migration upgrade paths for local/dev environments; we squash schema changes into the baseline schema as needed and reset the database. Phase 5 should therefore update the baseline schema directly and verify local reset/bootstrap behavior, not add compatibility work for already-migrated environments.
 - **Disposal after projection acknowledgement (with provenance tracking).** Machine-derived working state that is no longer needed after WordPress has projected and acknowledged the snapshot should be eligible for disposal under explicit tenant policy. The disposal boundary is: once WordPress has acknowledged the projection, backend embeddings and intermediate clustering state become disposal-eligible. **Implementation requirement:** the `get_snapshot()` endpoint must stamp each exported row with a `snapshot_generation_id` (UUID generated per snapshot build), and the `acknowledge-projection` request must include that `snapshot_generation_id` in its payload so the backend can identify which rows to mark as disposed. The `disposed_at` marking service uses `snapshot_generation_id` to identify exactly which source rows (`media_identities`, `identity_clusters`, `identity_cluster_representatives`) belonged to the acknowledged snapshot, rather than relying on the derived `snapshot_version` timestamp. The migration adds a `last_exported_snapshot_id` column to each source table.
 - **Audit before action.** Every retention lifecycle action (retain, export, purge, dispose) must produce an audit event before or atomically with the action. Operators must be able to reconstruct what happened from the audit log alone.
 - **Backend is the authority for policy enforcement.** Retention policy, export, and purge logic live on the backend. WordPress does not own retention logic but proxies backend-authored read and write actions for operator UX. All policy decisions, export generation, and purge execution happen on the backend; the plugin relays requests and caches responses.
@@ -36,7 +37,7 @@ The system stores machine-derived biometric state (embeddings, clustering, detec
 
 Build Phase 5 as a retention/governance track:
 
-1. **Backend: Tenant policy model and migration.** Add `retention_mode`, `last_export_at`, `last_purge_at`, and `retention_updated_at` fields to the `tenants` table. Add an `audit_events` table for tenant-scoped lifecycle event logging. Create a new follow-on Alembic migration (`003_retention_audit.py`) since `001_identity_schema.py` will not rerun on already-migrated environments and `002_clustering_feedback.py` already exists.
+1. **Backend: Tenant policy model and schema update.** Add `retention_mode`, `last_export_at`, `last_purge_at`, and `retention_updated_at` fields to the `tenants` table. Add an `audit_events` table for tenant-scoped lifecycle event logging. Because this is a greenfield/reset-based project, squash these schema changes into the baseline schema and verify local DB reset/bootstrap instead of carrying forward compatibility migrations for already-migrated environments.
 
 2. **Backend: Audit event service.** A domain service that records structured audit events atomically with the actions they describe. Every retention lifecycle action (policy change, export, purge, disposal) emits an audit event in the same database transaction.
 
@@ -374,7 +375,7 @@ export interface PurgeResponse {
 
 - [x] Add `AuditEvent` model stub in `db/models/observability.py` with `__tablename__` and column definitions.
 - [x] Add retention policy columns to `Tenant` model in `db/models/tenant.py` with defaults.
-- [x] Create new Alembic migration `003_retention_audit.py` (depends on `002_clustering_feedback`). Add `audit_events` table and `tenants` column extensions. Do not modify `001_identity_schema.py`.
+- [x] Extend the baseline schema for retention/audit tables and columns (`audit_events`, tenant retention fields, disposal/provenance columns) in the greenfield reset flow. Do not carry forward already-migrated compatibility work; reset the local DB after schema changes.
 - [x] Add domain service stubs: `audit_service.py`, `export_service.py`, `purge_service.py`, `retention_policy_service.py` with `raise NotImplementedError("TODO")`.
 - [x] Add `audit_repository.py` stub with query method signatures.
 - [x] Add `retention.py` router stub with route registrations returning `501 Not Implemented`.
@@ -399,7 +400,7 @@ export interface PurgeResponse {
 
 - [x] Implement `AuditEvent` SQLAlchemy model with tenant FK, indexes on `(tenant_id, event_type)` and `(tenant_id, created_at DESC)`.
 - [x] Implement tenant policy columns with server defaults (`retention_mode='retain_all'`).
-- [ ] Verify `003_retention_audit.py` migration applies cleanly on top of `002_clustering_feedback`. Run `alembic upgrade head` against a fresh database and against an already-migrated database to confirm both paths work.
+- [ ] Verify the squashed baseline schema boots cleanly in the greenfield reset flow (`reset_dev_db.sh` / fresh local bootstrap). No already-migrated upgrade-path verification is required for this project.
 - [x] Add RLS policy on `audit_events` table matching existing tenant-scoped table pattern.
 - [x] Implement `AuditRepository.create_event()`: insert within caller's session (no separate commit -- the caller controls the transaction boundary).
 - [x] Implement `AuditRepository.list_events(tenant_id, limit, offset)`: paginated query ordered by `created_at DESC`.
@@ -412,8 +413,8 @@ export interface PurgeResponse {
 
 ## Phase 2: Backend -- Export and Purge Service Layer
 
-- [ ] Implement `TenantExportService.export_tenant_data(tenant_id, actor)`: query clusters (with representatives including `is_user_selected`), members (with identity metadata excluding raw embedding vectors), detection records (bbox, confidence, media refs, similarity), and scan job summaries. Build portable JSON payload. Record `export_started` and `export_completed` audit events. Update `tenant.last_export_at`. All within one transaction.
-- [ ] Define export payload schema: `{ tenant_id, exported_at, schema_version, clusters: [...], members: [...], identities: [...], representatives: [...], scan_jobs: [...] }`. Each entity includes its UUID, timestamps, and human-readable fields but NOT raw float32 embedding arrays.
+- [x] Implement `TenantExportService.export_tenant_data(tenant_id, actor)`: query clusters (with representatives including `is_user_selected`), members (with identity metadata excluding raw embedding vectors), detection records (bbox, confidence, media refs, similarity), and scan job summaries. Build portable JSON payload. Record `export_started` and `export_completed` audit events. Update `tenant.last_export_at`. All within one transaction.
+- [x] Define export payload schema: `{ tenant_id, exported_at, schema_version, clusters: [...], members: [...], identities: [...], representatives: [...], scan_jobs: [...] }`. Each entity includes its UUID, timestamps, and human-readable fields but NOT raw float32 embedding arrays.
 - [ ] Implement `TenantPurgeService.purge_tenant_data(tenant_id, actor, scope)`:
   - `scope='disposed'`: delete rows where a disposal marker is set (requires disposal marking to be implemented first -- see Phase 2 disposal marking below).
   - `scope='all'`: cascade-delete ALL machine-derived state in dependency order using the real table names from `db/models/`: `identity_suggestions` -> `cluster_merge_suggestions` -> `identity_cluster_blocks` -> `identity_constraints` -> `recognition_events` -> `recognition_runs` -> `clustering_feedback` -> `assignment_decisions` -> `clustering_job_reports` -> `identity_scan_job_items` -> `identity_scan_jobs` -> `identity_clustering_jobs` -> `identity_cluster_representatives` -> `identity_members` -> `identity_clusters` -> `curation_replay_records` -> `media_identities`. Batch deletions per table (e.g. 1000 rows per batch) with a transaction-per-batch pattern rather than one mega-transaction. Accumulate `deleted_counts` across batches. Preserve the `tenant` row itself, `api_keys`, and `audit_events` (the audit trail must survive purge).
@@ -427,14 +428,14 @@ export interface PurgeResponse {
 
 ## Phase 3: Backend -- Policy, Export, Purge, and Audit HTTP Endpoints
 
-- [ ] Implement `GET /retention/policy`: returns `RetentionPolicyResponse` with `retention_mode`, `last_export_at`, `last_purge_at`, `retention_updated_at`.
-- [ ] Implement `PATCH /retention/policy`: accepts `UpdateRetentionPolicyRequest(retention_mode)`, validates mode, calls `RetentionPolicyService.update_policy()`, returns updated policy.
-- [ ] Implement `POST /retention/export`: calls `TenantExportService.export_tenant_data()`, returns `ExportResponse` with inline JSON payload and summary counts. For MVP, the export is synchronous and returned inline. Async/file-based export is a stretch goal.
+- [x] Implement `GET /retention/policy`: returns `RetentionPolicyResponse` with `retention_mode`, `last_export_at`, `last_purge_at`, `retention_updated_at`.
+- [x] Implement `PATCH /retention/policy`: accepts `UpdateRetentionPolicyRequest(retention_mode)`, validates mode, calls `RetentionPolicyService.update_policy()`, returns updated policy.
+- [x] Implement `POST /retention/export`: calls `TenantExportService.export_tenant_data()`, returns `ExportResponse` with inline JSON payload and summary counts. For MVP, the export is synchronous and returned inline. Async/file-based export is a stretch goal.
 - [ ] Add export size guard: before building the full payload, query the count of exportable identities. If the count exceeds a configurable threshold (e.g. 50k), return HTTP 413 with an advisory message pointing to the async export stretch goal. This keeps the MVP export honest without requiring the full async pipeline.
-- [ ] Implement `POST /retention/purge`: accepts `PurgeRequest(scope, confirm)` where `confirm` must be `true` (prevents accidental purge). Calls `TenantPurgeService.purge_tenant_data()`, returns `PurgeResponse` with deleted counts. Returns `422` if `confirm` is not `true`. Returns `400` if `scope` is invalid.
-- [ ] Implement `GET /retention/audit`: returns `AuditEventListResponse` with paginated audit events (limit/offset query params), ordered newest first.
-- [ ] All endpoints derive tenant via `get_authenticated_tenant_id` (a new shared dependency that extracts tenant_id from the authenticated API key's `tenant_claim`, not from `get_tenant_id`). This eliminates the header-vs-query-param cross-check gap in `get_tenant_id` for high-sensitivity retention operations. Admin keys (no `tenant_claim`) fall back to `X-Tenant-ID` header only. Mutating endpoints (`PATCH /policy`, `POST /export`, `POST /purge`) additionally depend on `require_write_access`.
-- [ ] Add pytest tests: policy CRUD via HTTP, export endpoint returns valid payload, purge endpoint requires confirmation, audit endpoint returns paginated events, unauthorized requests are rejected, tenant isolation is enforced.
+- [x] Implement `POST /retention/purge`: accepts `PurgeRequest(scope, confirm)` where `confirm` must be `true` (prevents accidental purge). Calls `TenantPurgeService.purge_tenant_data()`, returns `PurgeResponse` with deleted counts. Returns `422` if `confirm` is not `true`. Returns `400` if `scope` is invalid.
+- [x] Implement `GET /retention/audit`: returns `AuditEventListResponse` with paginated audit events (limit/offset query params), ordered newest first.
+- [x] All endpoints derive tenant via `get_authenticated_tenant_id` (a new shared dependency that extracts tenant_id from the authenticated API key's `tenant_claim`, not from `get_tenant_id`). This eliminates the header-vs-query-param cross-check gap in `get_tenant_id` for high-sensitivity retention operations. Admin keys (no `tenant_claim`) fall back to `X-Tenant-ID` header only. Mutating endpoints (`PATCH /policy`, `POST /export`, `POST /purge`) additionally depend on `require_write_access`.
+- [x] Add pytest tests: policy CRUD via HTTP, export endpoint returns valid payload, purge endpoint requires confirmation, audit endpoint returns paginated events, unauthorized requests are rejected, tenant isolation is enforced.
 
 ## Moved Out: Representative Projection Extension and Pin Mutation Parity
 
@@ -506,11 +507,11 @@ Tracked in: [Sovereign Sync Expansion + Workbench UX Continuation](../../epics/v
 
 ## Success Criteria
 
-- [ ] Operators can read and update the tenant retention policy (`retain_all`, `dispose_after_ack`, `purge_on_demand`) from the admin UI without database access.
+- [x] Operators can read and update the tenant retention policy (`retain_all`, `dispose_after_ack`, `purge_on_demand`) from the admin UI without database access.
 - [ ] Operators can trigger a tenant data export that produces a portable JSON payload covering clusters, members, detection metadata, and representative info (no raw embeddings).
 - [ ] Operators can trigger a purge of machine-derived state with explicit confirmation, and the system records the action in the audit log.
 - [ ] Every retention lifecycle action (policy change, export, purge, disposal) produces an auditable event visible to the operator.
-- [ ] The retention mode is visible in the sync status area and dashboard so operators understand the data governance posture at a glance.
+- [x] The retention mode is visible in the sync status area and dashboard so operators understand the data governance posture at a glance.
 - [ ] The MVP can credibly claim privacy-minimized retention and auditable handling of machine-derived biometric state.
 - [ ] All backend pytest, PHP PHPUnit/PHPStan, TypeScript type checks, and Vitest/ESLint checks pass.
 

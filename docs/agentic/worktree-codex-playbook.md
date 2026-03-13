@@ -132,10 +132,11 @@ make lane-dispatch TASK=<task-ref> LANE=<lane> MESSAGE="Finish the assigned slic
 Review-driven work:
 
 ```bash
+make handoff-inbox TASK=<task-ref>
 make handoff-dispatch TASK=<task-ref>
 ```
 
-Use that after recording or updating MCP handoff state from the orchestrator root. It routes unassigned open review findings, blockers, and next actions to the owning lane and sends MCP lane messages so the worker sees the queue in `make lane-inbox`.
+Use `make handoff-inbox` to listen for worker-to-orchestrator handoffs such as merge-ready reports and guidance requests. Use `make handoff-dispatch` after recording or updating MCP handoff state from the orchestrator root. It routes unassigned open review findings, blockers, and next actions to the owning lane and sends MCP lane messages so the worker sees the queue in `make lane-inbox`.
 
 Review and intake:
 
@@ -180,3 +181,5 @@ Worker:
 make lane-inbox
 make lane-handoff
 ```
+
+`make lane-handoff` now auto-initiates a worker-to-orchestrator handoff message when the lane is merge-ready. If the worker instead needs guidance, submit a blocked report and the same handoff message channel is used for the ask.

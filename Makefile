@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-dispatch review-dispatch lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -138,6 +138,8 @@ help:
 	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
 	@echo "  make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls [DRY_RUN=1]"
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
+	@echo "  make handoff-inbox TASK=phase-5-retention-export-and-audit-controls [LANE=backend-domain]"
+	@echo "    Poll open worker-to-orchestrator handoff messages and the latest worker reports from root."
 	@echo "  make review-dispatch TASK=phase-5-retention-export-and-audit-controls [DRY_RUN=1]"
 	@echo "    Backward-compatible alias for handoff-dispatch."
 	@echo ""
@@ -311,6 +313,41 @@ handoff-close-check:
 # CI/local guard for parser + lifecycle + close-check integrity
 handoff-integrity-check:
 	@$(PYTHON) scripts/mcp/handoff_integrity_guard.py
+
+handoff-inbox:
+	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
+		echo "handoff-inbox must be run from the orchestrator root."; \
+		echo "Current worktree: $(WORKTREE_ROOT_REAL)"; \
+		echo "Expected orchestrator root: $(ORCHESTRATOR_ROOT)"; \
+		exit 1; \
+	fi
+	@if [ -z "$(TASK)" ]; then \
+		echo "TASK is required."; \
+		echo "No active task could be inferred from MCP state."; \
+		echo "Example: make handoff-inbox TASK=phase-5-retention-export-and-audit-controls"; \
+		exit 1; \
+	fi
+	@echo "Open worker handoff messages:"; \
+	agent-handoff-mcp \
+		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
+		--exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+		lane-message-list \
+		--task-ref "$(TASK)" \
+		$(if $(LANE),--lane-id "$(LANE)",) \
+		--status open | python3 -c 'import json,sys; data=json.load(sys.stdin); data["messages"]=[m for m in data.get("messages", []) if m.get("direction")=="worker_to_orchestrator"]; data["returned"]=len(data["messages"]); data["total_matching"]=len(data["messages"]); print(json.dumps(data, indent=2))'; \
+	echo ""; \
+	echo "Latest worker reports:"; \
+	agent-handoff-mcp \
+		--workspace-root "$(ORCHESTRATOR_ROOT)" \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
+		--exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+		lane-report-list \
+		--task-ref "$(TASK)" \
+		$(if $(LANE),--lane-id "$(LANE)",) \
+		--limit 20 | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=[r for r in data.get("reports", []) if r.get("merge_ready")==1 or r.get("status")=="blocked"]; data["reports"]=reports; data["returned"]=len(reports); data["total_matching"]=len(reports); print(json.dumps(data, indent=2))'
 
 handoff-dispatch:
 	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \

@@ -233,6 +233,96 @@ def test_get_handoff_state_compact_defaults_enforced(isolated_handoff: dict) -> 
     assert len(verbose["tests_recent"]) == 7
 
 
+def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_path: Path) -> None:
+    orchestrator_root = tmp_path / "orchestrator"
+    frontend_root = tmp_path / "orchestrator-p5-frontend"
+    backend_root = tmp_path / "orchestrator-p5-backend-http"
+    orchestrator_root.mkdir()
+    frontend_root.mkdir()
+    backend_root.mkdir()
+
+    shared_state_dir = orchestrator_root / ".task-state"
+    shared_current_task = orchestrator_root / "CURRENT_TASK.md"
+
+    mcp_server.configure_runtime(
+        RuntimeConfig.for_workspace(
+            orchestrator_root,
+            state_dir=shared_state_dir,
+            current_task_path=shared_current_task,
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="task-lane-inbox",
+            objective="Verify worker worktrees see their own lane dispatches",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            lane_id="frontend",
+            worktree_path=str(frontend_root),
+            branch="codex/p5-frontend",
+            status="active",
+        )
+    )
+    _parse(
+        mcp_server.upsert_worktree_lane(
+            lane_id="backend-http",
+            worktree_path=str(backend_root),
+            branch="codex/p5-backend-http",
+            status="active",
+        )
+    )
+    _parse(
+        mcp_server.record_lane_message(
+            lane_id="frontend",
+            session="dispatch-frontend",
+            direction="orchestrator_to_worker",
+            subject="Frontend dispatch",
+            message="Frontend lane should see this open dispatch.",
+        )
+    )
+    _parse(
+        mcp_server.record_lane_message(
+            lane_id="backend-http",
+            session="dispatch-backend",
+            direction="orchestrator_to_worker",
+            subject="Backend dispatch",
+            message="Backend lane should keep this dispatch scoped to itself.",
+        )
+    )
+
+    mcp_server.configure_runtime(
+        RuntimeConfig.for_workspace(
+            frontend_root,
+            state_dir=shared_state_dir,
+            current_task_path=shared_current_task,
+        )
+    )
+
+    worker_state = _parse(mcp_server.get_handoff_state())
+    assert worker_state["current_lane"]["lane_id"] == "frontend"
+    assert [message["lane_id"] for message in worker_state["lane_messages_open"]] == ["frontend"]
+    assert worker_state["lane_messages_open"][0]["subject"] == "Frontend dispatch"
+
+    worker_messages = _parse(mcp_server.list_lane_messages(status="open"))
+    assert worker_messages["lane_id"] == "frontend"
+    assert worker_messages["current_lane"]["lane_id"] == "frontend"
+    assert [message["lane_id"] for message in worker_messages["messages"]] == ["frontend"]
+
+    mcp_server.configure_runtime(
+        RuntimeConfig.for_workspace(
+            orchestrator_root,
+            state_dir=shared_state_dir,
+            current_task_path=shared_current_task,
+        )
+    )
+    orchestrator_state = _parse(mcp_server.get_handoff_state())
+    assert orchestrator_state["current_lane"] is None
+    assert {message["lane_id"] for message in orchestrator_state["lane_messages_open"]} == {"frontend", "backend-http"}
+
+
 def test_export_and_import_handoff_state_round_trip(isolated_handoff: dict) -> None:
     export_path = isolated_handoff["state_dir"] / "exports" / "roundtrip.json"
 

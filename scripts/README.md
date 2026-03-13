@@ -46,6 +46,10 @@ Recommended commands:
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend ENTER_SHELL=1
 make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=frontend MESSAGE="Add the remaining Phase 6 retention Vitest coverage."
+make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls
+make review-dispatch TASK=phase-5-retention-export-and-audit-controls
 make lane-commit
 make lane-handoff
 make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=frontend
@@ -61,11 +65,16 @@ Notes:
 - `make lane-open` cannot mutate the parent shell's working directory.
 - `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
+- `make lane-inbox` is the worker polling command. It shows open orchestrator-to-worker lane messages, the latest worker report, recent lane activity, and git status.
+- `make lane-dispatch ... MESSAGE="..."` is the orchestrator assignment command. It records a lane message in MCP and regenerates `CURRENT_TASK.md`.
+- `make handoff-dispatch` is the orchestrator handoff-fanout command. Run reviews or update handoff state from the orchestrator root, then route unassigned open review findings, blockers, and next actions to the correct lane so workers see them in `make lane-inbox`.
+- `make review-dispatch` remains available as a backward-compatible alias for `make handoff-dispatch`.
 - `make lane-commit` stages the lane-owned paths and creates a default commit whose message begins with the lane name, for example `frontend: update retention admin UI`.
 - `make lane-handoff` is the normal worker handoff path: it verifies scope, commits lane-owned changes, shows lane status, and then submits a merge-ready report using inferred `TASK`, `LANE`, and default `SESSION`.
 - `lane-report` now uses the unique lane commits relative to the orchestrator branch as the source of truth. Dirty worktrees are rejected unless explicitly allowed.
-- `make lane-refresh` refreshes a worker lane from the orchestrator branch. It auto-stashes dirty lane state first, then resets or rebases depending on whether the lane already has unique commits.
-- `make lane-clean` removes copied tooling drift from a lane without touching lane-owned product files.
+- `make lane-refresh` refreshes a worker lane from the orchestrator branch. It auto-stashes dirty lane state first, then resets or rebases depending on whether the lane already has unique commits. Workflow tooling is expected to arrive through committed orchestrator branch state, not by copying live root files into the lane.
+- If root workflow tooling is locally dirty, `make lane-refresh` refuses to run until those orchestrator changes are committed. That keeps worker branches clean.
+- `make lane-clean` removes legacy copied tooling drift from a lane without touching lane-owned product files.
 - `make lane-commits ...` shows the commits reachable from the lane branch that are not yet on the current orchestrator branch.
 - `make lane-intake ...` prints the latest merge-ready worker report, stages the intake in a scratch worktree, runs lane-local verification there, and only fast-forwards the orchestrator branch if the scratch intake succeeds. Run it from the orchestrator root, not from a worker worktree.
 - If `lane-intake` hits a conflict, root stays untouched. Refresh the lane and resolve the conflict there instead of hand-editing the orchestrator branch.

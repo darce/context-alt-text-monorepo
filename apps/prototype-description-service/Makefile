@@ -34,7 +34,8 @@ mcp:
 	@cd ../.. && make mcp-start
 
 lane-open lane-status lane-report lane-reset lane-path:
-	@cd ../.. && $(MAKE) $@ TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" MESSAGE="$(MESSAGE)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" REF="$(REF)" ENTER_SHELL="$(ENTER_SHELL)"
+	@ROOT_MAKE_DIR="$$(git rev-parse --show-toplevel)"; \
+	$(MAKE) -C "$$ROOT_MAKE_DIR" $@
 
 # Start local PostgreSQL service (native Homebrew install)
 postgres-start:

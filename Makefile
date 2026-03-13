@@ -13,8 +13,11 @@
 
 .PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard lane-path
 
-CURRENT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
-ACTIVE_TASK := $(shell agent-handoff-mcp --workspace-root $(CURDIR) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
+WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
+CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
+WORKTREE_ROOT_REAL := $(abspath $(WORKTREE_ROOT))
+ORCHESTRATOR_ROOT := $(patsubst %-p5-backend-domain,%,$(patsubst %-p5-backend-http,%,$(patsubst %-p5-wp-proxy,%,$(patsubst %-p5-frontend,%,$(WORKTREE_ROOT_REAL)))))
+ACTIVE_TASK := $(shell agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 INFERRED_LANE := $(if $(filter codex/p5-backend-domain,$(CURRENT_BRANCH)),backend-domain,$(if $(filter codex/p5-backend-http,$(CURRENT_BRANCH)),backend-http,$(if $(filter codex/p5-wp-proxy,$(CURRENT_BRANCH)),wp-proxy,$(if $(filter codex/p5-frontend,$(CURRENT_BRANCH)),frontend,))))
 TASK ?= $(ACTIVE_TASK)
 LANE ?= $(INFERRED_LANE)
@@ -43,7 +46,7 @@ LANE_DONE_DEFINITION := Ready for orchestrator branch review with lane-local ver
 ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
   ifeq ($(LANE),backend-domain)
     LANE_BRANCH := codex/p5-backend-domain
-    LANE_WORKTREE := $(CURDIR)-p5-backend-domain
+    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-backend-domain
     LANE_TITLE := Backend domain
     LANE_OBJECTIVE := Phase 5 backend-domain retention/export/audit slice.
     LANE_OWNED_ARGS := --owned-path "apps/prototype-description-service/db/**" --owned-path "apps/prototype-description-service/recognition/domain/**" --owned-path "apps/prototype-description-service/recognition/infrastructure/**"
@@ -55,7 +58,7 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
   endif
   ifeq ($(LANE),backend-http)
     LANE_BRANCH := codex/p5-backend-http
-    LANE_WORKTREE := $(CURDIR)-p5-backend-http
+    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-backend-http
     LANE_TITLE := Backend HTTP
     LANE_OBJECTIVE := Phase 5 backend-http retention router and schema slice.
     LANE_OWNED_ARGS := --owned-path "apps/prototype-description-service/recognition/interface_adapters/http/**"
@@ -67,7 +70,7 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
   endif
   ifeq ($(LANE),wp-proxy)
     LANE_BRANCH := codex/p5-wp-proxy
-    LANE_WORKTREE := $(CURDIR)-p5-wp-proxy
+    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-wp-proxy
     LANE_TITLE := WP proxy
     LANE_OBJECTIVE := Phase 5 WordPress retention proxy slice.
     LANE_OWNED_ARGS := --owned-path "apps/prototype-wp-alt-context/src/**" --owned-path "apps/prototype-wp-alt-context/tests/Unit/**"
@@ -78,7 +81,7 @@ ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
   endif
   ifeq ($(LANE),frontend)
     LANE_BRANCH := codex/p5-frontend
-    LANE_WORKTREE := $(CURDIR)-p5-frontend
+    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-frontend
     LANE_TITLE := Frontend
     LANE_OBJECTIVE := Phase 5 retention admin UI slice.
     LANE_OWNED_ARGS := --owned-path "apps/prototype-wp-alt-context/js/**"
@@ -289,7 +292,7 @@ lane-open: lane-guard
 	DRY_FLAG=""; \
 	if [ "$(DRY_RUN)" = "1" ]; then DRY_FLAG="--dry-run"; fi; \
 	scripts/worktree-lane create \
-		--orchestrator-root "$(CURDIR)" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
 		--branch "$(LANE_BRANCH)" \
 		--worktree-path "$(LANE_WORKTREE)" \
@@ -301,7 +304,7 @@ lane-open: lane-guard
 		$$DRY_FLAG; \
 	echo ""; \
 	scripts/worktree-lane brief \
-		--orchestrator-root "$(CURDIR)" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
 		--branch "$(LANE_BRANCH)" \
@@ -326,7 +329,7 @@ lane-open: lane-guard
 lane-status: lane-guard
 	@set -eu; \
 	scripts/worktree-lane status \
-		--orchestrator-root "$(CURDIR)" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE)"; \
 	echo ""; \
@@ -335,7 +338,7 @@ lane-status: lane-guard
 lane-report: lane-guard
 	@set -eu; \
 	set -- scripts/worktree-lane report \
-		--orchestrator-root "$(CURDIR)" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
 		--session "$(SESSION)" \

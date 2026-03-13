@@ -351,15 +351,21 @@ EOF
     if [ "$merge_ready" -eq 1 ]; then
       report_args+=(--merge-ready)
     fi
-    for file in "${changed_files[@]}"; do
-      [ -n "$file" ] && report_args+=(--changed-file "$file")
-    done
-    for cmd in "${test_commands[@]}"; do
-      report_args+=(--test-command "$cmd")
-    done
-    for blocker in "${blockers[@]}"; do
-      report_args+=(--blocker "$blocker")
-    done
+    if [ "${#changed_files[@]}" -gt 0 ]; then
+      for file in "${changed_files[@]}"; do
+        [ -n "$file" ] && report_args+=(--changed-file "$file")
+      done
+    fi
+    if [ "${#test_commands[@]}" -gt 0 ]; then
+      for cmd in "${test_commands[@]}"; do
+        report_args+=(--test-command "$cmd")
+      done
+    fi
+    if [ "${#blockers[@]}" -gt 0 ]; then
+      for blocker in "${blockers[@]}"; do
+        report_args+=(--blocker "$blocker")
+      done
+    fi
     run_mcp "$orchestrator_root" "$worktree_path" "${report_args[@]}"
 
     if [ -n "$message" ]; then

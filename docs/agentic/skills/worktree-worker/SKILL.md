@@ -70,6 +70,8 @@ scripts/worktree-lane report \
 
 This records the lane report in shared MCP state, captures changed files from the current worktree diff, and optionally sends a worker-to-orchestrator message.
 
+Merge-ready and blocked reports now auto-open a worker-to-orchestrator handoff message even if you do not pass `--message`. Use that path whenever the lane is done or needs more guidance from root.
+
 ## Guardrails
 
 - Do not mark the whole task complete.

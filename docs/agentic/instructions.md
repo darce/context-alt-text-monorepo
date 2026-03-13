@@ -312,21 +312,24 @@ How workers communicate with the orchestrator:
    - blockers or follow-ups
    - whether the lane is merge-ready
 8. Preferred worker command: run `make lane-handoff` from the worktree root (or the forwarded app Makefile). It verifies lane scope, stages the lane-owned paths, creates a default commit whose subject begins with the lane name, shows lane status, and then submits the merge-ready report using inferred `TASK`, `LANE`, and default `SESSION` values.
-9. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and optionally send a `lane-message` to the orchestrator. Do **not** mark the whole task `done`.
-10. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
-11. When a worker receives review work through MCP, the open lane message is the assignment and the lane-stamped open review findings are the actionable checklist. Fix or disposition those findings in-lane before handing work back.
+9. Worker handoff should be message-first. When a lane is merge-ready, `lane-handoff` now auto-sends an open `worker_to_orchestrator` lane message even if no explicit `MESSAGE` was passed.
+10. When a lane needs further guidance, submit a worker report with `STATUS=blocked` and a summary or blocker text that explains the ask. The worker report path auto-sends an open `worker_to_orchestrator` message for that guidance request.
+11. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and let the orchestrator intake it. Do **not** mark the whole task `done`.
+12. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
+13. When a worker receives review work through MCP, the open lane message is the assignment and the lane-stamped open review findings are the actionable checklist. Fix or disposition those findings in-lane before handing work back.
 
 How the orchestrator should monitor and delegate:
 
 1. Create or reuse the active MCP task before opening worker lanes.
 2. Record lane assignments in MCP decisions/next actions with the owning branch and worktree path.
 3. Dispatch worker instructions through lane messages with `make lane-dispatch ...`; do not rely on chat memory alone.
-4. Perform code reviews from the orchestrator root, log findings into MCP handoff, then run `make handoff-dispatch TASK=<task-ref>` so routeable open findings, blockers, and next actions are routed to the correct worker lanes.
-5. Review each worker branch against [rules/branch-review-guide.md](rules/branch-review-guide.md) before intake.
-6. Merge lanes in dependency order: schema/domain before HTTP, backend contract before WordPress proxy, proxy before frontend, then run cross-lane integration checks in the orchestrator root.
-7. After each accepted lane, regenerate `CURRENT_TASK.md` so the next worker sees current state without reading every branch diff.
-8. Keep the orchestrator root clean. If `git status` is dirty, do not intake. Stash or commit root-local work first.
-9. If a lane becomes stale, refresh the whole lane with `make lane-refresh` instead of manually copying individual files into the worktree.
+4. Poll worker handoff messages from the orchestrator root with `make handoff-inbox TASK=<task-ref>`. That inbox is the canonical place to see merge-ready handoffs and worker guidance requests across lanes.
+5. Perform code reviews from the orchestrator root, log findings into MCP handoff, then run `make handoff-dispatch TASK=<task-ref>` so routeable open findings, blockers, and next actions are routed to the correct worker lanes.
+6. Review each worker branch against [rules/branch-review-guide.md](rules/branch-review-guide.md) before intake.
+7. Merge lanes in dependency order: schema/domain before HTTP, backend contract before WordPress proxy, proxy before frontend, then run cross-lane integration checks in the orchestrator root.
+8. After each accepted lane, regenerate `CURRENT_TASK.md` so the next worker sees current state without reading every branch diff.
+9. Keep the orchestrator root clean. If `git status` is dirty, do not intake. Stash or commit root-local work first.
+10. If a lane becomes stale, refresh the whole lane with `make lane-refresh` instead of manually copying individual files into the worktree.
 
 How to merge worker worktree changes into the current branch:
 
@@ -363,6 +366,7 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make lane-clean` removes legacy copied tooling drift (Makefiles, templates, helper scripts) from a worker lane without touching lane-owned product files.
 - `make lane-commit` still ignores those tooling paths during its out-of-scope guard so older lane refreshes do not block product commits.
 - `make lane-inbox` is the worker polling command. It reads open `orchestrator_to_worker` lane messages from MCP, then shows the latest worker report, recent lane activity, and git status.
+- `make handoff-inbox` is the orchestrator polling command. It reads open `worker_to_orchestrator` lane messages from MCP and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch` is the orchestrator assignment command. It writes an open lane message for a specific worker lane and regenerates `CURRENT_TASK.md` so the dispatch is mirrored for humans.
 - `make handoff-dispatch` is the orchestrator handoff-routing command. It reads open handoff review findings, blockers, and next actions from the root, stamps any routeable unassigned items onto the owning lane, and sends lane messages so the correct worktree sees the queue in `make lane-inbox`.
 - `make review-dispatch` remains as a compatibility alias when older docs or sessions still refer to the review-only name.

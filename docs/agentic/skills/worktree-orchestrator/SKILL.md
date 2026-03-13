@@ -77,6 +77,7 @@ Use shared MCP state, not chat memory:
 
 ```bash
 make lane-dispatch TASK=<task-ref> LANE=backend-http MESSAGE="Implement the retention router and verify the lane-local checks."
+make handoff-inbox TASK=<task-ref>
 ```
 
 Then monitor the lane with:
@@ -88,7 +89,7 @@ scripts/worktree-lane status \
   --worktree-path /abs/path/to/worktree
 ```
 
-If the worker gets blocked on another domain, keep the lane in scope and reassign the blocker instead of letting the worker edit outside lane ownership.
+If the worker gets blocked on another domain, keep the lane in scope and reassign the blocker instead of letting the worker edit outside lane ownership. The root-side `make handoff-inbox` poller is where those worker handoff/guidance messages surface.
 
 When the orchestrator records review findings, blockers, or next actions in MCP from root, fan them back out with:
 
@@ -97,6 +98,12 @@ make handoff-dispatch TASK=<task-ref>
 ```
 
 That stamps routeable unassigned open handoff items onto the correct lane and creates or reuses lane messages so workers pick them up in `make lane-inbox`.
+
+Workers should also emit `worker_to_orchestrator` messages when they are merge-ready or blocked. Poll those from root with:
+
+```bash
+make handoff-inbox TASK=<task-ref>
+```
 
 ### 4. Intake the lane
 

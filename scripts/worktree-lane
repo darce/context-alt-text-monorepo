@@ -412,6 +412,33 @@ EOF
       die "no unique lane commits found relative to the orchestrator branch; commit the lane work before reporting"
     fi
 
+    auto_subject=""
+    auto_message=""
+    lane_state_status=""
+    lane_state_notes=""
+
+    if [ "$merge_ready" -eq 1 ]; then
+      auto_subject="$lane_id handoff ready"
+      auto_message="Lane $lane_id is ready for orchestrator review. Summary: $summary"
+      lane_state_status="review"
+      lane_state_notes="Worker submitted a merge-ready lane report."
+    elif [ "$status" = "blocked" ] || [ "${#blockers[@]}" -gt 0 ]; then
+      auto_subject="$lane_id needs guidance"
+      auto_message="Lane $lane_id needs orchestrator guidance. Summary: $summary"
+      lane_state_status="blocked"
+      lane_state_notes="Worker requested further guidance from the orchestrator."
+      if [ "${#blockers[@]}" -gt 0 ]; then
+        auto_message="$auto_message Blockers: $(printf '%s' "$(bullet_list "${blockers[@]}")" | tr '\n' ' ' | sed 's/  */ /g; s/ $//')"
+      fi
+    fi
+
+    if [ -z "$message" ] && [ -n "$auto_message" ]; then
+      message="$auto_message"
+    fi
+    if [ -z "$subject" ] && [ -n "$auto_subject" ]; then
+      subject="$auto_subject"
+    fi
+
     if [ "$dry_run" -eq 1 ]; then
       if [ "${#changed_files[@]}" -gt 0 ]; then
         changed_files_text="$(bullet_list "${changed_files[@]}")"
@@ -452,13 +479,13 @@ EOF
     fi
     run_mcp "$orchestrator_root" "$worktree_path" "${report_args[@]}"
 
-    if [ "$merge_ready" -eq 1 ]; then
+    if [ -n "$lane_state_status" ]; then
       run_mcp "$orchestrator_root" "$worktree_path" lane-upsert \
         --lane-id "$lane_id" \
         --worktree-path "$worktree_path" \
         --branch "$(git -C "$worktree_path" branch --show-current)" \
-        --status review \
-        --notes "Worker submitted a merge-ready lane report."
+        --status "$lane_state_status" \
+        --notes "$lane_state_notes"
     fi
 
     if [ -n "$message" ]; then

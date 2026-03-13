@@ -254,7 +254,7 @@ Preferred operator entrypoint:
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 ```
 
-That target creates or refreshes the worktree lane registration and prints the ready-to-paste worker brief in one step. Use `ENTER_SHELL=1` if you want it to open an interactive subshell in the worktree after setup. Use `make lane-status`, `make lane-report`, and `make lane-reset` for the common follow-on operations.
+That target creates or refreshes the worktree lane registration and prints the ready-to-paste worker brief in one step. Use `ENTER_SHELL=1` if you want it to open an interactive subshell in the worktree after setup. Use `make lane-status`, `make lane-refresh`, `make lane-handoff`, and `make lane-reset` for the common follow-on operations.
 
 - Create worktrees as siblings of the main repo, not nested inside it.
 - Use lane names that match ownership (`backend-domain`, `backend-http`, `wp-proxy`, `frontend`).
@@ -276,6 +276,8 @@ Domain guardrails for worker lanes:
 3. Workers must not "helpfully" patch sibling-lane files, shared contracts, or checklist truth unless explicitly assigned.
 4. Before handoff, workers should verify changed files with `git diff --name-only` from their worktree and confirm the list stays inside lane scope.
 5. Orchestrators should reject or selectively intake any out-of-scope file changes during merge review.
+6. Worker handoff must be commit-based. Dirty worktrees are not a valid handoff artifact; commit or stash lane work before reporting it.
+7. If a lane needs to catch up with orchestrator changes, use `make lane-refresh` instead of copying files across worktrees.
 
 How a worker self-queries its own lane and scope:
 
@@ -303,7 +305,7 @@ How workers communicate with the orchestrator:
    - assumptions made
    - blockers or follow-ups
    - whether the lane is merge-ready
-5. Preferred worker command: run `make lane-handoff` from the worktree root (or the forwarded app Makefile). It stages the lane-owned paths, creates a default commit whose subject begins with the lane name, shows lane status, and then submits the merge-ready report using inferred `TASK`, `LANE`, and default `SESSION` values.
+5. Preferred worker command: run `make lane-handoff` from the worktree root (or the forwarded app Makefile). It verifies lane scope, stages the lane-owned paths, creates a default commit whose subject begins with the lane name, shows lane status, and then submits the merge-ready report using inferred `TASK`, `LANE`, and default `SESSION` values.
 6. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and optionally send a `lane-message` to the orchestrator. Do **not** mark the whole task `done`.
 7. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
 
@@ -314,6 +316,8 @@ How the orchestrator should monitor and delegate:
 3. Review each worker branch against [rules/branch-review-guide.md](rules/branch-review-guide.md) before intake.
 4. Merge lanes in dependency order: schema/domain before HTTP, backend contract before WordPress proxy, proxy before frontend, then run cross-lane integration checks in the orchestrator root.
 5. After each accepted lane, regenerate `CURRENT_TASK.md` so the next worker sees current state without reading every branch diff.
+6. Keep the orchestrator root clean. If `git status` is dirty, do not intake. Stash or commit root-local work first.
+7. If a lane becomes stale, refresh the whole lane with `make lane-refresh` instead of manually copying individual files into the worktree.
 
 How to merge worker worktree changes into the current branch:
 
@@ -332,9 +336,20 @@ make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=backend-d
 ```
 
 - `make lane-commits` previews the commits on the lane branch that are not yet on the current orchestrator branch.
-- `make lane-intake` prints that unique commit set first, then cherry-picks it in order.
-- Use `DRY_RUN=1` on `make lane-intake` to preview the exact cherry-pick command before applying it.
+- `make lane-intake` prints the latest merge-ready worker report, stages the intake in a scratch worktree, runs lane-local verification there, and only fast-forwards the orchestrator branch if the scratch intake is clean.
+- Conflicts during `lane-intake` must leave the orchestrator root untouched. Resolve them in the lane after `make lane-refresh`, not by hand in the orchestrator branch.
+- Use `DRY_RUN=1` on `make lane-intake` to preview the exact scratch-intake flow before applying it.
 - Run these only from the orchestrator root, never from a worker worktree.
+
+Worktree maintenance helpers:
+
+```bash
+make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=backend-http
+make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-http
+```
+
+- `make lane-refresh` syncs a worker lane against the current orchestrator branch. If the lane has no unique commits, it hard-resets to orchestrator `HEAD`; otherwise it rebases the lane commits onto orchestrator `HEAD`. Dirty lane state is auto-stashed first.
+- `make lane-clean` removes copied tooling drift (Makefiles, templates, helper scripts) from a worker lane without touching lane-owned product files.
 
 Selective file intake when a worker branch contains extra churn:
 

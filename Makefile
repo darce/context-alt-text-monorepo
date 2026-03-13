@@ -11,12 +11,13 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
 WORKTREE_ROOT_REAL := $(abspath $(WORKTREE_ROOT))
 ORCHESTRATOR_ROOT := $(patsubst %-p5-backend-domain,%,$(patsubst %-p5-backend-http,%,$(patsubst %-p5-wp-proxy,%,$(patsubst %-p5-frontend,%,$(WORKTREE_ROOT_REAL)))))
+ORCHESTRATOR_BRANCH := $(shell git -C "$(ORCHESTRATOR_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
 ACTIVE_TASK := $(shell agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 INFERRED_LANE := $(if $(filter codex/p5-backend-domain,$(CURRENT_BRANCH)),backend-domain,$(if $(filter codex/p5-backend-http,$(CURRENT_BRANCH)),backend-http,$(if $(filter codex/p5-wp-proxy,$(CURRENT_BRANCH)),wp-proxy,$(if $(filter codex/p5-frontend,$(CURRENT_BRANCH)),frontend,))))
 TASK ?= $(ACTIVE_TASK)
@@ -31,6 +32,9 @@ REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 0
 PHASE5_LANES := backend-domain backend-http wp-proxy frontend
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
+LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
+LANE_TOOLING_PATHS := Makefile docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
+LANE_APP_TOOLING_PATHS := $(if $(filter backend-domain backend-http,$(LANE)),apps/prototype-description-service/Makefile,)
 
 LANE_BRANCH :=
 LANE_WORKTREE :=
@@ -141,12 +145,16 @@ help:
 	@echo "  make lane-commit"
 	@echo "    Worker default commit step: stage lane-owned paths and create a commit like '<lane>: <subject>'."
 	@echo "  make lane-handoff"
-	@echo "    Worker default: commit lane-owned changes, show lane status, then submit a merge-ready lane report using inferred TASK/LANE/SESSION."
+	@echo "    Worker default: verify scope, commit lane-owned changes, show lane status, then submit a merge-ready lane report from lane commits."
 	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
+	@echo "  make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "    Refresh a worker lane from the orchestrator branch using reset/rebase and optional auto-stash."
+	@echo "  make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "    Remove copied tooling drift from a worker lane without touching lane-owned product files."
 	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend [DRY_RUN=1]"
-	@echo "    Prints the unique lane commits first, then cherry-picks them in order."
+	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, and only fast-forwards root if clean."
 	@echo "  Enumerated Phase 5 lanes: $(PHASE5_LANES)"
 
 # =============================================================================
@@ -313,6 +321,16 @@ lane-orchestrator-guard: lane-guard
 		exit 1; \
 	fi
 
+lane-worker-guard: lane-guard
+	@if [ "$(IN_ORCHESTRATOR_ROOT)" = "1" ]; then \
+		echo "This command must run from the worker worktree for lane $(LANE), not the orchestrator root."; \
+		exit 1; \
+	fi
+	@if [ "$(CURRENT_BRANCH)" != "$(LANE_BRANCH)" ]; then \
+		echo "Current branch $(CURRENT_BRANCH) does not match lane branch $(LANE_BRANCH)."; \
+		exit 1; \
+	fi
+
 lane-open: lane-guard
 	@set -eu; \
 	DRY_FLAG=""; \
@@ -361,7 +379,7 @@ lane-status: lane-guard
 	echo ""; \
 	git -C "$(LANE_WORKTREE)" status -sb
 
-lane-report: lane-guard
+lane-report: lane-worker-guard
 	@set -eu; \
 	set -- scripts/worktree-lane report \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
@@ -378,10 +396,29 @@ lane-report: lane-guard
 	if [ -n "$(MESSAGE)" ]; then set -- "$$@" --message "$(MESSAGE)" --subject "$(LANE) lane update"; fi; \
 	"$$@"
 
-lane-commit: lane-guard
+lane-commit: lane-worker-guard
 	@set -eu; \
 	if [ -z "$(LANE_COMMIT_PATHS)" ]; then \
 		echo "No lane-owned commit paths configured for $(LANE)."; \
+		exit 1; \
+	fi; \
+	ALL_CHANGED="$$( { git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u )"; \
+	OUT_OF_SCOPE=""; \
+	for file in $$ALL_CHANGED; do \
+		[ -n "$$file" ] || continue; \
+		allowed=0; \
+		for prefix in $(LANE_COMMIT_PATHS); do \
+			case "$$file" in \
+				$$prefix|$$prefix/*) allowed=1; break ;; \
+			esac; \
+		done; \
+		if [ "$$allowed" -ne 1 ]; then \
+			OUT_OF_SCOPE="$$OUT_OF_SCOPE\n$$file"; \
+		fi; \
+	done; \
+	if [ -n "$$OUT_OF_SCOPE" ]; then \
+		echo "Refusing to commit lane $(LANE) with out-of-scope changes present:"; \
+		printf '%b\n' "$$OUT_OF_SCOPE"; \
 		exit 1; \
 	fi; \
 	if [ "$(DRY_RUN)" = "1" ]; then \
@@ -396,7 +433,7 @@ lane-commit: lane-guard
 		fi; \
 	fi
 
-lane-handoff: lane-guard
+lane-handoff: lane-worker-guard
 	@set -eu; \
 	$(MAKE) lane-commit TASK="$(TASK)" LANE="$(LANE)" DRY_RUN="$(DRY_RUN)"; \
 	echo ""; \
@@ -419,6 +456,59 @@ lane-reset: lane-guard
 		git -C "$(LANE_WORKTREE)" status -sb; \
 	fi
 
+lane-refresh: lane-guard
+	@set -eu; \
+	TARGET_WORKTREE="$(LANE_WORKTREE_TARGET)"; \
+	STASH_MSG="lane-refresh $(LANE) $$(date +%Y%m%d%H%M%S)"; \
+	if [ ! -d "$$TARGET_WORKTREE" ]; then \
+		echo "Lane worktree does not exist: $$TARGET_WORKTREE"; \
+		exit 1; \
+	fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] target worktree: $$TARGET_WORKTREE"; \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" fetch \"$(ORCHESTRATOR_ROOT)\" \"$(ORCHESTRATOR_BRANCH)\""; \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" stash push -u -m \"$$STASH_MSG\" (if dirty)"; \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" reset --hard FETCH_HEAD && git -C \"$$TARGET_WORKTREE\" clean -fd (if lane has no unique commits)"; \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" rebase FETCH_HEAD (if lane has unique commits)"; \
+	else \
+		DIRTY="$$(git -C "$$TARGET_WORKTREE" status --porcelain=v1 --untracked-files=all)"; \
+		if [ -n "$$DIRTY" ]; then \
+			echo "Stashing dirty lane state before refresh..."; \
+			git -C "$$TARGET_WORKTREE" stash push -u -m "$$STASH_MSG" >/dev/null; \
+		fi; \
+		git -C "$$TARGET_WORKTREE" fetch "$(ORCHESTRATOR_ROOT)" "$(ORCHESTRATOR_BRANCH)"; \
+		AHEAD_COUNT="$$(git -C "$$TARGET_WORKTREE" rev-list --count FETCH_HEAD..HEAD)"; \
+		if [ "$$AHEAD_COUNT" = "0" ]; then \
+			git -C "$$TARGET_WORKTREE" reset --hard FETCH_HEAD; \
+			git -C "$$TARGET_WORKTREE" clean -fd; \
+		else \
+			if ! git -C "$$TARGET_WORKTREE" rebase FETCH_HEAD; then \
+				git -C "$$TARGET_WORKTREE" rebase --abort >/dev/null 2>&1 || true; \
+				echo "Lane refresh failed during rebase. Root left untouched."; \
+				echo "Resolve conflicts in the lane, then rerun lane-refresh."; \
+				exit 1; \
+			fi; \
+		fi; \
+		echo "Lane refreshed against $(ORCHESTRATOR_BRANCH)."; \
+		echo "If dirty work was auto-stashed, inspect with: git -C \"$$TARGET_WORKTREE\" stash list"; \
+		git -C "$$TARGET_WORKTREE" status -sb; \
+	fi
+
+lane-clean: lane-guard
+	@set -eu; \
+	TARGET_WORKTREE="$(LANE_WORKTREE_TARGET)"; \
+	TOOLING_FILES="$(LANE_TOOLING_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" restore --source=HEAD --staged --worktree -- $$TOOLING_FILES"; \
+		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" clean -fd -- docs/agentic/templates scripts/worktree-lane"; \
+	else \
+		if [ -n "$$TOOLING_FILES" ]; then \
+			git -C "$$TARGET_WORKTREE" restore --source=HEAD --staged --worktree -- $$TOOLING_FILES 2>/dev/null || true; \
+		fi; \
+		git -C "$$TARGET_WORKTREE" clean -fd -- docs/agentic/templates scripts/worktree-lane 2>/dev/null || true; \
+		git -C "$$TARGET_WORKTREE" status -sb; \
+	fi
+
 lane-path: lane-guard
 	@printf '%s\n' "$(LANE_WORKTREE)"
 
@@ -433,19 +523,57 @@ lane-commits: lane-orchestrator-guard
 
 lane-intake: lane-orchestrator-guard
 	@set -eu; \
+	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
+		echo "Orchestrator root is dirty. Commit, stash, or clean it before lane intake."; \
+		exit 1; \
+	fi; \
+	REPORT_JSON="$$(agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" lane-report-list --task-ref "$(TASK)" --lane-id "$(LANE)" --limit 1)"; \
+	REPORT_SUMMARY="$$(printf '%s' "$$REPORT_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=data.get("reports", []); print(reports[0].get("summary","")) if reports else print("")')"; \
+	REPORT_MERGE_READY="$$(printf '%s' "$$REPORT_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=data.get("reports", []); print(reports[0].get("merge_ready",0)) if reports else print(0)')"; \
+	if [ "$$REPORT_MERGE_READY" != "1" ]; then \
+		echo "Latest lane report for $(LANE) is missing or not merge-ready. Submit a merge-ready handoff before intake."; \
+		exit 1; \
+	fi; \
 	COMMITS="$$(git rev-list --reverse HEAD..$(LANE_BRANCH))"; \
 	if [ -z "$$COMMITS" ]; then \
 		echo "No commits to intake from $(LANE_BRANCH)."; \
 	elif [ "$(DRY_RUN)" = "1" ]; then \
+		echo "Latest lane report summary: $$REPORT_SUMMARY"; \
+		echo ""; \
 		echo "Lane commits from $(LANE_BRANCH):"; \
 		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
 		echo ""; \
-		echo "[dry-run] git cherry-pick $$COMMITS"; \
+		echo "[dry-run] create scratch worktree, cherry-pick $$COMMITS there, run lane-local verification, then fast-forward merge into $(ORCHESTRATOR_BRANCH)"; \
 	else \
+		TMP_PARENT="$$(mktemp -d "$${TMPDIR:-/tmp}/lane-intake-$(LANE)-XXXXXX")"; \
+		SCRATCH_WORKTREE="$$TMP_PARENT/repo"; \
+		SCRATCH_BRANCH="codex/intake-$(LANE)-$$(date +%s)"; \
+		cleanup() { \
+			git worktree remove --force "$$SCRATCH_WORKTREE" >/dev/null 2>&1 || true; \
+			git branch -D "$$SCRATCH_BRANCH" >/dev/null 2>&1 || true; \
+			rmdir "$$TMP_PARENT" >/dev/null 2>&1 || true; \
+		}; \
+		trap cleanup EXIT INT TERM; \
+		echo "Latest lane report summary: $$REPORT_SUMMARY"; \
+		echo ""; \
 		echo "Lane commits from $(LANE_BRANCH):"; \
 		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
 		echo ""; \
-		git cherry-pick $$COMMITS; \
+		git worktree add -b "$$SCRATCH_BRANCH" "$$SCRATCH_WORKTREE" HEAD >/dev/null; \
+		if ! git -C "$$SCRATCH_WORKTREE" cherry-pick $$COMMITS; then \
+			git -C "$$SCRATCH_WORKTREE" cherry-pick --abort >/dev/null 2>&1 || true; \
+			echo "Lane intake hit a conflict in scratch worktree $$SCRATCH_WORKTREE. Orchestrator root was not modified."; \
+			exit 1; \
+		fi; \
+		if [ -n "$(LANE_TEST_CMD_1)" ]; then \
+			( cd "$$SCRATCH_WORKTREE" && sh -lc '$(LANE_TEST_CMD_1)' ); \
+		fi; \
+		if [ -n "$(LANE_TEST_CMD_2)" ]; then \
+			( cd "$$SCRATCH_WORKTREE" && sh -lc '$(LANE_TEST_CMD_2)' ); \
+		fi; \
+		git merge --ff-only "$$SCRATCH_BRANCH"; \
+		agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" lane-upsert --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
+		echo "Lane $(LANE) intake completed cleanly via scratch worktree."; \
 	fi
 
 # =============================================================================

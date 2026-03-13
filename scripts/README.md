@@ -48,6 +48,8 @@ make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend EN
 make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-commit
 make lane-handoff
+make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend SESSION=phase5-frontend SUMMARY="Frontend slice ready" MERGE_READY=1
 make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend REF=feature/6.0.2-retention-export
 make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend
@@ -60,10 +62,13 @@ Notes:
 - `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-commit` stages the lane-owned paths and creates a default commit whose message begins with the lane name, for example `frontend: update retention admin UI`.
-- `make lane-handoff` is the normal worker handoff path: it shows lane status and then submits a merge-ready report using inferred `TASK`, `LANE`, and default `SESSION`.
-- When the worktree is already clean, `lane-report` falls back to the unique lane commits relative to the orchestrator branch so the handoff still reports meaningful changed files after `lane-commit`.
+- `make lane-handoff` is the normal worker handoff path: it verifies scope, commits lane-owned changes, shows lane status, and then submits a merge-ready report using inferred `TASK`, `LANE`, and default `SESSION`.
+- `lane-report` now uses the unique lane commits relative to the orchestrator branch as the source of truth. Dirty worktrees are rejected unless explicitly allowed.
+- `make lane-refresh` refreshes a worker lane from the orchestrator branch. It auto-stashes dirty lane state first, then resets or rebases depending on whether the lane already has unique commits.
+- `make lane-clean` removes copied tooling drift from a lane without touching lane-owned product files.
 - `make lane-commits ...` shows the commits reachable from the lane branch that are not yet on the current orchestrator branch.
-- `make lane-intake ...` prints those lane-only commits first, then cherry-picks them in order. Run it from the orchestrator root, not from a worker worktree.
+- `make lane-intake ...` prints the latest merge-ready worker report, stages the intake in a scratch worktree, runs lane-local verification there, and only fast-forwards the orchestrator branch if the scratch intake succeeds. Run it from the orchestrator root, not from a worker worktree.
+- If `lane-intake` hits a conflict, root stays untouched. Refresh the lane and resolve the conflict there instead of hand-editing the orchestrator branch.
 
 It wraps:
 

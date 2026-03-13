@@ -11,12 +11,13 @@ Usage:
   scripts/worktree-lane create --orchestrator-root ROOT --lane-id LANE [--branch BRANCH] [--worktree-path PATH] [--title TITLE] [--objective TEXT] [--owner-agent AGENT] [--status STATUS] [--notes TEXT] [--dry-run]
   scripts/worktree-lane brief --orchestrator-root ROOT --task-ref TASK --lane-id LANE --branch BRANCH --worktree-path PATH [--title TITLE] [--objective TEXT] [--owned-path PATH]... [--required-doc DOC]... [--test-command CMD]... [--non-goal TEXT]... [--definition TEXT]
   scripts/worktree-lane status --orchestrator-root ROOT [--lane-id LANE] [--worktree-path PATH]
-  scripts/worktree-lane report --orchestrator-root ROOT --task-ref TASK --lane-id LANE --session SESSION --summary TEXT [--status STATUS] [--merge-ready] [--test-command CMD]... [--blocker TEXT]... [--subject TEXT] [--message TEXT] [--direction DIR] [--worktree-path PATH] [--dry-run]
+  scripts/worktree-lane report --orchestrator-root ROOT --task-ref TASK --lane-id LANE --session SESSION --summary TEXT [--status STATUS] [--merge-ready] [--test-command CMD]... [--blocker TEXT]... [--subject TEXT] [--message TEXT] [--direction DIR] [--worktree-path PATH] [--allow-dirty] [--dry-run]
 
 Notes:
   - create is intended to run from the orchestrator root
   - status and report are intended to run from the worker worktree
   - shared MCP state always lives under the orchestrator root
+  - report uses lane commits relative to the orchestrator branch as the source of truth
 EOF
 }
 
@@ -100,6 +101,40 @@ render_template() {
     s/\{\{MESSAGE_SUBJECT\}\}/$ENV{MESSAGE_SUBJECT}/g;
     s/\{\{MESSAGE_BODY\}\}/$ENV{MESSAGE_BODY}/g;
   ' "$template_path"
+}
+
+dirty_files() {
+  local worktree_path="$1"
+
+  {
+    git -C "$worktree_path" diff --name-only
+    git -C "$worktree_path" diff --cached --name-only
+    git -C "$worktree_path" ls-files --others --exclude-standard
+  } | awk 'NF' | sort -u
+}
+
+lane_commit_files() {
+  local orchestrator_root="$1"
+  local worktree_path="$2"
+  local orchestrator_branch lane_commits
+
+  orchestrator_branch="$(git -C "$orchestrator_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [ -n "$orchestrator_branch" ] || return 0
+
+  lane_commits="$(git -C "$worktree_path" rev-list --reverse "${orchestrator_branch}..HEAD" 2>/dev/null || true)"
+  [ -n "$lane_commits" ] || return 0
+
+  git -C "$worktree_path" diff-tree --no-commit-id --name-only -r $lane_commits | awk 'NF' | sort -u
+}
+
+lane_commit_range() {
+  local orchestrator_root="$1"
+  local worktree_path="$2"
+  local orchestrator_branch
+
+  orchestrator_branch="$(git -C "$orchestrator_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+  [ -n "$orchestrator_branch" ] || return 0
+  git -C "$worktree_path" rev-list --reverse "${orchestrator_branch}..HEAD" 2>/dev/null || true
 }
 
 template_path() {
@@ -303,6 +338,7 @@ EOF
     message=""
     direction="worker_to_orchestrator"
     worktree_path=""
+    allow_dirty=0
     dry_run=0
 
     while [ "$#" -gt 0 ]; do
@@ -320,6 +356,7 @@ EOF
         --message) message="$2"; shift 2 ;;
         --direction) direction="$2"; shift 2 ;;
         --worktree-path) worktree_path="$2"; shift 2 ;;
+        --allow-dirty) allow_dirty=1; shift ;;
         --dry-run) dry_run=1; shift ;;
         -h|--help) usage; exit 0 ;;
         *) die "unknown report argument: $1" ;;
@@ -334,25 +371,25 @@ EOF
     [ -n "$worktree_path" ] || worktree_path="$(git_root)"
     [ -n "$worktree_path" ] || die "could not determine current worktree path"
 
+    lane_commits="$(lane_commit_range "$orchestrator_root" "$worktree_path")"
     changed_files=()
     while IFS= read -r line; do
       [ -n "$line" ] && changed_files+=("$line")
-    done < <(git -C "$worktree_path" diff --name-only)
-    if [ "${#changed_files[@]}" -eq 0 ]; then
-      while IFS= read -r line; do
-        [ -n "$line" ] && changed_files+=("$line")
-      done < <(git -C "$worktree_path" status --short | awk '{print $2}')
+    done < <(lane_commit_files "$orchestrator_root" "$worktree_path")
+
+    dirty_state=()
+    while IFS= read -r line; do
+      [ -n "$line" ] && dirty_state+=("$line")
+    done < <(dirty_files "$worktree_path")
+
+    if [ "${#dirty_state[@]}" -gt 0 ] && [ "$allow_dirty" -ne 1 ]; then
+      printf 'worktree-lane: refusing to report from dirty worktree; commit or stash these files first:\n' >&2
+      bullet_list "${dirty_state[@]}" >&2
+      exit 1
     fi
-    if [ "${#changed_files[@]}" -eq 0 ]; then
-      orchestrator_branch="$(git -C "$orchestrator_root" rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
-      if [ -n "$orchestrator_branch" ]; then
-        lane_commits="$(git -C "$worktree_path" rev-list --reverse "${orchestrator_branch}..HEAD" 2>/dev/null || true)"
-        if [ -n "$lane_commits" ]; then
-          while IFS= read -r line; do
-            [ -n "$line" ] && changed_files+=("$line")
-          done < <(git -C "$worktree_path" diff-tree --no-commit-id --name-only -r $lane_commits | sort -u)
-        fi
-      fi
+
+    if [ -z "$lane_commits" ]; then
+      die "no unique lane commits found relative to the orchestrator branch; commit the lane work before reporting"
     fi
 
     if [ "$dry_run" -eq 1 ]; then
@@ -394,6 +431,15 @@ EOF
       done
     fi
     run_mcp "$orchestrator_root" "$worktree_path" "${report_args[@]}"
+
+    if [ "$merge_ready" -eq 1 ]; then
+      run_mcp "$orchestrator_root" "$worktree_path" lane-upsert \
+        --lane-id "$lane_id" \
+        --worktree-path "$worktree_path" \
+        --branch "$(git -C "$worktree_path" branch --show-current)" \
+        --status review \
+        --notes "Worker submitted a merge-ready lane report."
+    fi
 
     if [ -n "$message" ]; then
       msg_args=(lane-message --lane-id "$lane_id" --session "$session" --direction "$direction" --message "$message" --status open)

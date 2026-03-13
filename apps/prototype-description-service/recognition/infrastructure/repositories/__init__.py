@@ -1,6 +1,7 @@
 """Repository implementations for database persistence."""
 
 from recognition.infrastructure.repositories.api_key_repository import SqlAlchemyApiKeyRepository
+from recognition.infrastructure.repositories.audit_repository import AuditRepository
 from recognition.infrastructure.repositories.cluster_repository import SqlAlchemyClusterRepository
 from recognition.infrastructure.repositories.constraint_repository import SqlAlchemyConstraintRepository
 from recognition.infrastructure.repositories.identity_cluster_block_repository import (
@@ -21,5 +22,6 @@ __all__ = [
     "SqlAlchemyMergeSuggestionRepository",
     "SqlAlchemyJobRepository",
     "SqlAlchemyApiKeyRepository",
+    "AuditRepository",
     "SqlAlchemyScanQueueRepository",
 ]

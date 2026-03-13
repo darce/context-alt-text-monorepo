@@ -482,7 +482,19 @@ lane-refresh: lane-guard
 			git -C "$$TARGET_WORKTREE" reset --hard FETCH_HEAD; \
 			git -C "$$TARGET_WORKTREE" clean -fd; \
 		else \
-			if ! git -C "$$TARGET_WORKTREE" rebase FETCH_HEAD; then \
+			AHEAD_COMMITS="$$(git -C "$$TARGET_WORKTREE" rev-list --reverse FETCH_HEAD..HEAD)"; \
+			SUPERSEDED_COUNT=0; \
+			for commit in $$AHEAD_COMMITS; do \
+				subject="$$(git -C "$$TARGET_WORKTREE" log -1 --format=%s "$$commit")"; \
+				if git -C "$$TARGET_WORKTREE" log FETCH_HEAD --format=%s | grep -Fqx "$$subject"; then \
+					SUPERSEDED_COUNT=$$((SUPERSEDED_COUNT + 1)); \
+				fi; \
+			done; \
+			if [ "$$SUPERSEDED_COUNT" = "$$AHEAD_COUNT" ]; then \
+				echo "Lane commits already appear to be integrated upstream. Resetting lane to $(ORCHESTRATOR_BRANCH)."; \
+				git -C "$$TARGET_WORKTREE" reset --hard FETCH_HEAD; \
+				git -C "$$TARGET_WORKTREE" clean -fd; \
+			elif ! git -C "$$TARGET_WORKTREE" rebase FETCH_HEAD; then \
 				git -C "$$TARGET_WORKTREE" rebase --abort >/dev/null 2>&1 || true; \
 				echo "Lane refresh failed during rebase. Root left untouched."; \
 				echo "Resolve conflicts in the lane, then rerun lane-refresh."; \

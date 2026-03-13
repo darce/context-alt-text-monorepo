@@ -32,6 +32,11 @@ if TYPE_CHECKING:
     from db.models.tenant import Tenant
 
 
+def _postgres_only_check(sqltext: str, *, name: str) -> CheckConstraint:
+    """Keep PostgreSQL-only vector checks out of SQLite test metadata."""
+    return CheckConstraint(sqltext, name=name).ddl_if(dialect="postgresql")
+
+
 class MediaIdentity(Base):
     __tablename__ = "media_identities"
 
@@ -59,6 +64,8 @@ class MediaIdentity(Base):
     age: Mapped[int | None] = mapped_column(Integer, nullable=True)
     gender: Mapped[int | None] = mapped_column(Integer, nullable=True)  # 0=female, 1=male
     image_phash: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
 
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
@@ -74,6 +81,10 @@ class MediaIdentity(Base):
     __table_args__ = (
         UniqueConstraint("tenant_id", "media_id", "identity_type", "bbox_x", "bbox_y", name="unique_media_identity"),
         CheckConstraint("confidence >= 0 AND confidence <= 1", name="confidence_range"),
+        _postgres_only_check(
+            "abs(vector_norm(embedding) - 1.0) < 0.01",
+            name="media_identity_embedding_unit_norm",
+        ),
         CheckConstraint(
             "identity_type IN ('face', 'brand', 'pose', 'gait')",
             name="valid_identity_type",
@@ -117,6 +128,8 @@ class IdentityCluster(Base):
     user_confirmed: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     confirmation_count: Mapped[int] = mapped_column(Integer, nullable=False, server_default=text("0"))
     confirmation_source: Mapped[str | None] = mapped_column(String(20))  # label, merge, assignment, split, reject
+    last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now())
     updated_at: Mapped[datetime] = mapped_column(
         TIMESTAMP(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -147,6 +160,10 @@ class IdentityCluster(Base):
         CheckConstraint(
             "identity_type IN ('face', 'brand', 'pose', 'gait')",
             name="cluster_valid_identity_type",
+        ),
+        CheckConstraint(
+            "confirmation_source IS NULL OR confirmation_source IN ('label', 'merge', 'assignment', 'split', 'reject')",
+            name="valid_confirmation_source",
         ),
         Index("idx_identity_clusters_tenant", "tenant_id"),
         Index(
@@ -228,6 +245,8 @@ class IdentityClusterRepresentative(Base):
     diversity_score: Mapped[float | None] = mapped_column(Float)
     is_user_selected: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
     is_provisional: Mapped[bool] = mapped_column(Boolean, nullable=False, server_default=text("false"))
+    last_exported_snapshot_id: Mapped[uuid.UUID | None] = mapped_column(UUID(as_uuid=True), nullable=True)
+    disposed_at: Mapped[datetime | None] = mapped_column(TIMESTAMP(timezone=True), nullable=True)
     created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
 
     tenant: Mapped[Tenant] = relationship()
@@ -237,6 +256,10 @@ class IdentityClusterRepresentative(Base):
     __table_args__ = (
         UniqueConstraint("cluster_id", "identity_id", name="unique_cluster_representative"),
         CheckConstraint("quality_score >= 0 AND quality_score <= 1", name="quality_score_range"),
+        _postgres_only_check(
+            "abs(vector_norm(embedding) - 1.0) < 0.01",
+            name="cluster_rep_embedding_unit_norm",
+        ),
     )
 
 

@@ -29,6 +29,7 @@ from db.models.jobs import (
 )
 from db.models.observability import (
     AssignmentDecision,
+    AuditEvent,
     ClusteringFeedback,
     ClusteringJobReport,
     RecognitionEvent,
@@ -54,6 +55,7 @@ __all__ = [
     # Observability
     "RecognitionRun",
     "RecognitionEvent",
+    "AuditEvent",
     "ClusteringJobReport",
     "AssignmentDecision",
     "ClusteringFeedback",

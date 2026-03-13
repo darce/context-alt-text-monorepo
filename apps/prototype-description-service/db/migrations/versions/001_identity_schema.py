@@ -29,6 +29,8 @@ TENANT_TABLES = [
     "identity_constraints",
     "recognition_runs",
     "recognition_events",
+    "clustering_feedback",
+    "audit_events",
     "curation_replay_records",
 ]
 
@@ -44,6 +46,10 @@ def upgrade() -> None:
         sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
         sa.Column("site_url", sa.String(length=255), nullable=False, unique=True),
         sa.Column("next_person_number", sa.Integer(), nullable=False, server_default=sa.text("1")),
+        sa.Column("retention_mode", sa.String(length=30), nullable=False, server_default=sa.text("'retain_all'")),
+        sa.Column("last_export_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("last_purge_at", sa.TIMESTAMP(timezone=True), nullable=True),
+        sa.Column("retention_updated_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.Column(
             "updated_at",
@@ -85,6 +91,8 @@ def upgrade() -> None:
         sa.Column("gender", sa.Integer(), nullable=True),  # 0=female, 1=male
         sa.Column("quality_score", sa.Float(), nullable=True),
         sa.Column("image_phash", sa.String(length=64), nullable=True),
+        sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("disposed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "updated_at",
@@ -166,6 +174,8 @@ def upgrade() -> None:
         sa.Column("user_confirmed", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("confirmation_count", sa.Integer(), nullable=False, server_default=sa.text("0")),
         sa.Column("confirmation_source", sa.String(length=20)),  # label, merge, assignment, split, reject
+        sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("disposed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now()),
         sa.Column(
             "updated_at",
@@ -245,6 +255,8 @@ def upgrade() -> None:
         sa.Column("diversity_score", sa.Float(), nullable=True),
         sa.Column("is_user_selected", sa.Boolean(), nullable=False, server_default=sa.text("false")),
         sa.Column("is_provisional", sa.Boolean(), nullable=False, server_default=sa.text("false")),
+        sa.Column("last_exported_snapshot_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=True),
+        sa.Column("disposed_at", sa.TIMESTAMP(timezone=True), nullable=True),
         sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
         sa.CheckConstraint("quality_score >= 0 AND quality_score <= 1", name="quality_score_range"),
         sa.CheckConstraint("abs(vector_norm(embedding) - 1.0) < 0.01", name="cluster_rep_embedding_unit_norm"),
@@ -659,6 +671,47 @@ def upgrade() -> None:
         ),
     )
 
+    op.create_table(
+        "clustering_feedback",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("identity_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("cluster_id", sa.dialects.postgresql.UUID(as_uuid=True), nullable=False),
+        sa.Column("decision_type", sa.String(length=20)),
+        sa.Column("similarity_at_decision", sa.Float()),
+        sa.Column("user_action", sa.String(length=20)),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+        sa.Column("experiment_id", sa.String(length=64)),
+        sa.Column("variant", sa.String(length=64)),
+    )
+
+    op.create_table(
+        "audit_events",
+        sa.Column("id", sa.dialects.postgresql.UUID(as_uuid=True), primary_key=True),
+        sa.Column(
+            "tenant_id",
+            sa.dialects.postgresql.UUID(as_uuid=True),
+            sa.ForeignKey("tenants.id", ondelete="CASCADE"),
+            nullable=False,
+        ),
+        sa.Column("event_type", sa.String(length=50), nullable=False),
+        sa.Column("actor", sa.String(length=100), nullable=False),
+        sa.Column("scope", sa.String(length=50), nullable=False, server_default=sa.text("'tenant'")),
+        sa.Column(
+            "payload",
+            sa.dialects.postgresql.JSONB(),
+            nullable=False,
+            server_default=sa.text("'{}'::jsonb"),
+        ),
+        sa.Column("result_status", sa.String(length=20), nullable=False, server_default=sa.text("'success'")),
+        sa.Column("created_at", sa.TIMESTAMP(timezone=True), server_default=sa.func.now(), nullable=False),
+    )
+
     op.create_index(
         "idx_media_identities_tenant",
         "media_identities",
@@ -857,6 +910,12 @@ def upgrade() -> None:
     op.create_index("idx_recognition_events_type", "recognition_events", ["event_type"])
     op.create_index("idx_recognition_events_identity", "recognition_events", ["identity_id"])
     op.create_index("idx_recognition_events_cluster", "recognition_events", ["cluster_id"])
+    op.create_index("idx_clustering_feedback_tenant", "clustering_feedback", ["tenant_id"])
+    op.create_index("idx_clustering_feedback_identity", "clustering_feedback", ["identity_id"])
+    op.create_index("idx_clustering_feedback_cluster", "clustering_feedback", ["cluster_id"])
+    op.create_index("idx_clustering_feedback_action", "clustering_feedback", ["user_action"])
+    op.create_index("idx_audit_events_tenant_event", "audit_events", ["tenant_id", "event_type"])
+    op.create_index("idx_audit_events_tenant_created", "audit_events", ["tenant_id", "created_at"])
 
     for table in TENANT_TABLES:
         op.execute(f"ALTER TABLE {table} ENABLE ROW LEVEL SECURITY")
@@ -1093,6 +1152,12 @@ def downgrade() -> None:
     op.drop_index("idx_recognition_events_type", table_name="recognition_events")
     op.drop_index("idx_recognition_events_run_time", table_name="recognition_events")
     op.drop_index("idx_recognition_events_tenant", table_name="recognition_events")
+    op.drop_index("idx_clustering_feedback_action", table_name="clustering_feedback")
+    op.drop_index("idx_clustering_feedback_cluster", table_name="clustering_feedback")
+    op.drop_index("idx_clustering_feedback_identity", table_name="clustering_feedback")
+    op.drop_index("idx_clustering_feedback_tenant", table_name="clustering_feedback")
+    op.drop_index("idx_audit_events_tenant_created", table_name="audit_events")
+    op.drop_index("idx_audit_events_tenant_event", table_name="audit_events")
     op.drop_index("idx_recognition_runs_clustering_job", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_scan_job", table_name="recognition_runs")
     op.drop_index("idx_recognition_runs_status", table_name="recognition_runs")
@@ -1101,6 +1166,8 @@ def downgrade() -> None:
         op.execute(f"DROP POLICY IF EXISTS tenant_isolation_{table} ON {table}")
         op.execute(f"ALTER TABLE {table} NO FORCE ROW LEVEL SECURITY")
         op.execute(f"ALTER TABLE {table} DISABLE ROW LEVEL SECURITY")
+    op.drop_table("audit_events")
+    op.drop_table("clustering_feedback")
     op.drop_table("recognition_events")
     op.drop_table("recognition_runs")
     op.drop_table("identity_cluster_blocks")

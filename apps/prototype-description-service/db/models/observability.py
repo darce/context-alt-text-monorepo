@@ -192,10 +192,37 @@ class ClusteringFeedback(Base):
     )
 
 
+class AuditEvent(Base):
+    __tablename__ = "audit_events"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True, default=uuid.uuid4)
+    tenant_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("tenants.id", ondelete="CASCADE"), nullable=False
+    )
+    event_type: Mapped[str] = mapped_column(String(50), nullable=False)
+    actor: Mapped[str] = mapped_column(String(100), nullable=False)
+    scope: Mapped[str] = mapped_column(String(50), nullable=False, server_default=text("'tenant'"))
+    payload: Mapped[dict[str, object]] = mapped_column(
+        JSONB().with_variant(JSON(), "sqlite"),
+        nullable=False,
+        default=dict,
+    )
+    result_status: Mapped[str] = mapped_column(String(20), nullable=False, server_default=text("'success'"))
+    created_at: Mapped[datetime] = mapped_column(TIMESTAMP(timezone=True), server_default=func.now(), nullable=False)
+
+    tenant: Mapped[Tenant] = relationship()
+
+    __table_args__ = (
+        Index("idx_audit_events_tenant_event", "tenant_id", "event_type"),
+        Index("idx_audit_events_tenant_created", "tenant_id", "created_at"),
+    )
+
+
 __all__ = [
     "RecognitionRun",
     "RecognitionEvent",
     "ClusteringJobReport",
     "AssignmentDecision",
     "ClusteringFeedback",
+    "AuditEvent",
 ]

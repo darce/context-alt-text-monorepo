@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import os
 from pathlib import Path
+from typing import Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -60,6 +61,10 @@ class RecognitionSettings(BaseModel):
     retention_export_max_identities: int = Field(
         default=50000,
         description="Max identities allowed for synchronous retention export responses.",
+    )
+    default_retention_mode: Literal["retain_all", "dispose_after_ack", "purge_on_demand"] = Field(
+        default_factory=lambda: os.environ.get("RECOGNITION_DEFAULT_RETENTION_MODE", "retain_all"),
+        validate_default=True,
     )
 
     # Runtime mode: "production" uses real InsightFace, "test" uses stubs

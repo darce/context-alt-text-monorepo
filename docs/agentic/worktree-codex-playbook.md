@@ -1,6 +1,6 @@
 # Worktree Codex Playbook
 
-Use this playbook when opening a fresh Codex instance against a Phase 5 worker lane.
+Use this playbook when opening a fresh Codex instance against any worker lane in this repo.
 
 ## Goal
 
@@ -8,14 +8,21 @@ Start Codex in the correct worktree, on the correct branch, with the correct lan
 
 ## Terminology
 
-- orchestrator root: `/Users/daniel/Development/context-alt-text-monorepo`
-- worker worktree examples:
-  - `/Users/daniel/Development/context-alt-text-monorepo-p5-backend-domain`
-  - `/Users/daniel/Development/context-alt-text-monorepo-p5-backend-http`
-  - `/Users/daniel/Development/context-alt-text-monorepo-p5-wp-proxy`
-  - `/Users/daniel/Development/context-alt-text-monorepo-p5-frontend`
+- orchestrator root: the main repo checkout, usually `/Users/daniel/Development/context-alt-text-monorepo`
+- worker worktree: a sibling checkout created for one lane
+- task ref: the active MCP task, for example `phase-5-retention-export-and-audit-controls`
+- lane id: the worker slice name, for example `backend-domain`, `backend-http`, `wp-proxy`, or `frontend`
 
-## Phase 5 lane map
+## Current repo examples
+
+Current worker worktree examples:
+
+- `/Users/daniel/Development/context-alt-text-monorepo-p5-backend-domain`
+- `/Users/daniel/Development/context-alt-text-monorepo-p5-backend-http`
+- `/Users/daniel/Development/context-alt-text-monorepo-p5-wp-proxy`
+- `/Users/daniel/Development/context-alt-text-monorepo-p5-frontend`
+
+Current lane examples:
 
 - `backend-domain` -> branch `codex/p5-backend-domain`
 - `backend-http` -> branch `codex/p5-backend-http`
@@ -28,7 +35,7 @@ From the orchestrator root:
 
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo
-make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend ENTER_SHELL=1
+make lane-open TASK=<task-ref> LANE=<lane> ENTER_SHELL=1
 ```
 
 What this does:
@@ -36,6 +43,7 @@ What this does:
 - verifies or creates the lane registration in MCP
 - prints the lane brief
 - proves the target worktree branch with `git status -sb`
+- polls the lane inbox immediately so the worker sees open orchestrator messages before coding
 - opens an interactive shell in the worker worktree
 - ensures later `make lane-refresh` runs will pull committed orchestrator branch updates into that lane cleanly
 
@@ -48,7 +56,7 @@ git status -sb
 make lane-inbox
 ```
 
-Expected result for the frontend example:
+Expected result for a frontend-style example:
 
 - `pwd` -> `/Users/daniel/Development/context-alt-text-monorepo-p5-frontend`
 - `git branch --show-current` -> `codex/p5-frontend`
@@ -59,8 +67,8 @@ Use a two-step flow:
 
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo
-make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
-cd "$(make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend)"
+make lane-open TASK=<task-ref> LANE=<lane>
+cd "$(make lane-path TASK=<task-ref> LANE=<lane>)"
 git branch --show-current
 make lane-inbox
 ```
@@ -88,7 +96,7 @@ make lane-inbox
 ```
 
 The worker should not start coding before `make lane-inbox` shows the open orchestrator dispatch.
-If root workflow tooling changed since the lane was opened, run `make lane-refresh` once before trusting the local lane commands.
+If root workflow tooling changed since the lane was opened, commit those root changes and then run `make lane-refresh` once before trusting the local lane commands.
 
 ## Worker loop
 
@@ -118,13 +126,13 @@ From the orchestrator root:
 Send work:
 
 ```bash
-make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=frontend MESSAGE="Finish the assigned slice."
+make lane-dispatch TASK=<task-ref> LANE=<lane> MESSAGE="Finish the assigned slice."
 ```
 
 Review-driven work:
 
 ```bash
-make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls
+make handoff-dispatch TASK=<task-ref>
 ```
 
 Use that after recording or updating MCP handoff state from the orchestrator root. It routes unassigned open review findings, blockers, and next actions to the owning lane and sends MCP lane messages so the worker sees the queue in `make lane-inbox`.
@@ -132,8 +140,8 @@ Use that after recording or updating MCP handoff state from the orchestrator roo
 Review and intake:
 
 ```bash
-make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend
-make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-commits TASK=<task-ref> LANE=<lane>
+make lane-intake TASK=<task-ref> LANE=<lane>
 ```
 
 ## Recovery checks
@@ -150,7 +158,7 @@ If the branch is wrong, return to the orchestrator root and refresh the lane:
 
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo
-make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-refresh TASK=<task-ref> LANE=<lane>
 ```
 
 Then reopen the worker shell with `ENTER_SHELL=1`.
@@ -161,9 +169,9 @@ If the issue was missing lane commands rather than the wrong branch, `make lane-
 Orchestrator:
 
 ```bash
-make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=<lane> MESSAGE="..."
-make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls
-make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=<lane>
+make lane-dispatch TASK=<task-ref> LANE=<lane> MESSAGE="..."
+make handoff-dispatch TASK=<task-ref>
+make lane-intake TASK=<task-ref> LANE=<lane>
 ```
 
 Worker:

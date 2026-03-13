@@ -63,6 +63,7 @@ make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend 
 Notes:
 
 - `make lane-open` cannot mutate the parent shell's working directory.
+- It now polls the initial lane inbox as part of setup so the worker sees open orchestrator dispatches immediately.
 - `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-inbox` is the worker polling command. It shows open orchestrator-to-worker lane messages, the latest worker report, recent lane activity, and git status.

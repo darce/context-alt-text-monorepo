@@ -11,6 +11,27 @@ Use this skill when the user asks you to turn a dirty branch into a small set of
 
 Create one commit per completed sub-feature, not one commit per directory or per file type.
 
+## Worktree safety
+
+Treat the current checkout as authoritative.
+
+- Do not change to the orchestrator root or another sibling worktree just to make a commit.
+- Do not replace a worker-lane commit flow with a root-repo commit flow.
+- Do not run cleanup or refresh commands that would reset, replace, or abandon the current lane unless the user explicitly asked for that.
+- After committing, remain in the same worktree and branch context you started in.
+
+Before doing any staging, confirm where you are:
+
+```bash
+pwd
+git rev-parse --show-toplevel
+git branch --show-current
+git rev-parse --git-dir
+git rev-parse --git-common-dir
+```
+
+If the current branch is a lane branch such as `codex/p5-backend-domain`, treat that lane worktree as the only valid place to commit its changes.
+
 ## Inspect the current change set
 
 Start by reading the shape of the diff:
@@ -81,7 +102,7 @@ Avoid vague subjects such as:
 - `fix stuff`
 - `address feedback`
 
-## Worktree-aware prefix
+## Worktree-aware prefix and lane behavior
 
 Detect whether the current checkout is a linked worktree:
 
@@ -107,7 +128,15 @@ If the paths are the same, use the subject without a worktree prefix.
 
 ## Repo-specific note
 
-This repo's `make lane-commit` and `make lane-handoff` helpers already prefix commits with the lane name. If the user explicitly wants the worktree name instead, prefer a manual `git commit -m "<worktree-name>: <subject>"` and then run the reporting step separately if needed.
+This repo's `make lane-commit` and `make lane-handoff` helpers already prefix commits with the lane name and preserve lane ownership rules.
+
+When you are inside a worker lane worktree in this repo:
+
+- prefer `make lane-commit` over a manual root-level `git commit`
+- do not switch to `/Users/daniel/Development/context-alt-text-monorepo` just to perform the commit
+- do not leave the lane on the orchestrator branch after committing
+
+If the user explicitly wants the worktree name instead of the lane name, prefer a manual `git commit -m "<worktree-name>: <subject>"` in the current worker worktree and then run the reporting step separately if needed.
 
 ## Final check per commit
 

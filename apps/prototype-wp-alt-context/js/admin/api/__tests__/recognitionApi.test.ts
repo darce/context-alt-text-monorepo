@@ -6,12 +6,14 @@ import {
   fetchPendingSuggestions,
   fetchMediaIdentities,
   fetchIdentitySuggestions,
+  fetchRetentionStatus,
   fetchSyncStatus,
   fetchTopUnlabeledClusters,
   getRecognitionCluster,
   listRecognitionClusters,
   assignOutlierToCluster,
   mergeCluster,
+  purgeTenantData,
   revertMergeCluster,
   acknowledgeProjection,
   cancelScanJob,
@@ -23,16 +25,22 @@ import {
   updateClusterLabel,
 } from '../recognition';
 
+const mockConfig = {
+  nonce: 'nonce-123',
+  endpoints: {
+    retentionPolicy: 'https://example.com/retentionPolicy',
+    retentionExport: 'https://example.com/retentionExport',
+    retentionPurge: 'https://example.com/retentionPurge',
+  } as Record<string, string>,
+  devMode: false,
+};
+
 vi.mock('../config', () => ({
-  getEndpoint: vi.fn((...keys: string[]) => `https://example.com/${keys[0] ?? 'default'}`),
-  getConfig: vi.fn(() => ({
-    nonce: 'nonce-123',
-    endpoints: {
-      retentionPolicy: 'https://example.com/retentionPolicy',
-      retentionExport: 'https://example.com/retentionExport',
-    },
-    devMode: false,
-  })),
+  getEndpoint: vi.fn((...keys: string[]) => {
+    const configuredKey = keys.find((key) => mockConfig.endpoints[key]);
+    return configuredKey ? mockConfig.endpoints[configuredKey] : `https://example.com/${keys[0] ?? 'default'}`;
+  }),
+  getConfig: vi.fn(() => mockConfig),
   isDevMode: vi.fn(() => false),
 }));
 
@@ -51,6 +59,11 @@ describe('recognitionApi', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockConfig.endpoints = {
+      retentionPolicy: 'https://example.com/retentionPolicy',
+      retentionExport: 'https://example.com/retentionExport',
+      retentionPurge: 'https://example.com/retentionPurge',
+    };
   });
 
   it('passes media IDs to fetchMediaIdentities', async () => {
@@ -212,6 +225,67 @@ describe('recognitionApi', () => {
       expect.objectContaining({
         method: 'PATCH',
         body: { retention_mode: 'purge_on_demand' },
+        restNonce: 'nonce-123',
+      }),
+    );
+  });
+
+  it('fetches retention status from the configured endpoint with the admin nonce', async () => {
+    mockConfig.endpoints.retentionStatus = 'https://example.com/retentionStatus';
+    fetchApiMock.mockResolvedValue({
+      available: true,
+      policy: {
+        retention_mode: 'dispose_after_ack',
+        last_export_at: '2026-03-12T12:00:00Z',
+        last_purge_at: null,
+        retention_updated_at: '2026-03-12T12:30:00Z',
+      },
+      recent_audit_events: [],
+    });
+
+    const result = await fetchRetentionStatus();
+
+    expect(result).toEqual({
+      available: true,
+      policy: {
+        retention_mode: 'dispose_after_ack',
+        last_export_at: '2026-03-12T12:00:00Z',
+        last_purge_at: null,
+        retention_updated_at: '2026-03-12T12:30:00Z',
+      },
+      recent_audit_events: [],
+    });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionStatus'),
+      expect.objectContaining({
+        method: 'GET',
+        restNonce: 'nonce-123',
+      }),
+    );
+  });
+
+  it('returns an unavailable retention status when the endpoint is not configured', async () => {
+    const result = await fetchRetentionStatus();
+
+    expect(result).toEqual({
+      available: false,
+      policy: null,
+      recent_audit_events: [],
+    });
+    expect(fetchApiMock).not.toHaveBeenCalled();
+  });
+
+  it('posts purge requests to the retention purge endpoint', async () => {
+    fetchApiMock.mockResolvedValue({ deleted_counts: { media_identities: 2 } });
+
+    const result = await purgeTenantData({ scope: 'all', confirm: true });
+
+    expect(result).toEqual({ deleted_counts: { media_identities: 2 } });
+    expect(fetchApiMock).toHaveBeenCalledWith(
+      expect.stringContaining('/retentionPurge'),
+      expect.objectContaining({
+        method: 'POST',
+        body: { scope: 'all', confirm: true },
         restNonce: 'nonce-123',
       }),
     );

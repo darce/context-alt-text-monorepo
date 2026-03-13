@@ -248,6 +248,14 @@ cd ../context-alt-text-monorepo-<lane>
 git status -sb
 ```
 
+Preferred operator entrypoint:
+
+```bash
+make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+```
+
+That target creates or refreshes the worktree lane registration and prints the ready-to-paste worker brief in one step. Use `make lane-status`, `make lane-report`, and `make lane-reset` for the common follow-on operations.
+
 - Create worktrees as siblings of the main repo, not nested inside it.
 - Use lane names that match ownership (`backend-domain`, `backend-http`, `wp-proxy`, `frontend`).
 - The orchestrator may inspect any lane without switching shells by using `git -C /abs/path/to/worktree status -sb` and `git -C /abs/path/to/worktree diff --stat`.
@@ -345,6 +353,7 @@ Repo-owned skill sources and templates:
 - skill sources live under [docs/agentic/skills/](skills/)
 - brief/report templates live under [docs/agentic/templates/](templates/)
 - `scripts/worktree-lane` is the supported helper for creating lanes, rendering briefs, self-querying lane scope, and submitting worker reports/messages
+- the root [Makefile](../Makefile) provides task-aware wrappers that enumerate the supported lanes and their default scope/tests
 
 Operational note:
 

@@ -329,10 +329,15 @@ EOF
     fi
 
     if [ "$dry_run" -eq 1 ]; then
+      if [ "${#changed_files[@]}" -gt 0 ]; then
+        changed_files_text="$(bullet_list "${changed_files[@]}")"
+      else
+        changed_files_text="$(bullet_list)"
+      fi
       cat <<EOF
 [dry-run] agent-handoff-mcp lane-report for lane $lane_id in shared state at $orchestrator_root/.task-state
 [dry-run] changed files:
-$(bullet_list "${changed_files[@]}")
+$changed_files_text
 EOF
       if [ -n "$message" ]; then
         cat <<EOF

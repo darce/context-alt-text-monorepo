@@ -15,7 +15,7 @@ from typing import TYPE_CHECKING, Any
 
 import numpy as np
 from sqlalchemy import Select, delete, exists, func, or_, select, text, update
-from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy.ext.asyncio import AsyncConnection, AsyncSession
 from sqlalchemy.orm import selectinload
 from sqlalchemy.orm.attributes import instance_state
 
@@ -31,6 +31,7 @@ from recognition.domain.repositories import IdentityMember as DomainMember
 from recognition.domain.representative import ClusterRepresentative
 from recognition.infrastructure.repositories._helpers import coerce_uuid as _coerce_uuid
 from recognition.infrastructure.repositories._helpers import ensure_media_identity as _ensure_media_identity
+from recognition.shared.db.dialect import is_sqlite
 from recognition.shared.db.helpers import execute_dml, get_rowcount
 
 _DB_SETTINGS = get_database_settings()
@@ -374,6 +375,32 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         will silently skip this operation.
         """
         try:
+            if is_sqlite(self._session):
+                await self._session.execute(text("DELETE FROM mv_identity_cluster_centroids"))
+                await self._session.execute(
+                    text(
+                        """
+                        INSERT INTO mv_identity_cluster_centroids (
+                            cluster_id,
+                            tenant_id,
+                            identity_count,
+                            centroid,
+                            refreshed_at
+                        )
+                        SELECT
+                            im.cluster_id,
+                            ic.tenant_id,
+                            COUNT(im.identity_id) AS identity_count,
+                            NULL AS centroid,
+                            COALESCE(MAX(mi.updated_at), MAX(ic.updated_at), CURRENT_TIMESTAMP) AS refreshed_at
+                        FROM identity_members im
+                        JOIN identity_clusters ic ON ic.id = im.cluster_id
+                        JOIN media_identities mi ON mi.id = im.identity_id
+                        GROUP BY im.cluster_id, ic.tenant_id
+                        """
+                    )
+                )
+                return
             # Use CONCURRENTLY if possible, but it requires a unique index on the MV
             # For now, standard refresh.
             # SQLite and other databases don't support REFRESH MATERIALIZED VIEW
@@ -388,9 +415,21 @@ class SqlAlchemyClusterRepository(ClusterRepository):
         It requires a unique index on the MV, which is created in the migration.
         """
         try:
+            if is_sqlite(self._session):
+                await self.refresh_centroids_view()
+                return
+
             # Use CONCURRENTLY for background scheduled refreshes
             # This is critical to avoid locking the MV during updates
-            await self._session.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
+            bind = self._session.bind
+            if isinstance(bind, AsyncConnection):
+                conn = await bind.execution_options(isolation_level="AUTOCOMMIT")
+                await conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
+                return
+
+            async with bind.connect() as conn:
+                conn = await conn.execution_options(isolation_level="AUTOCOMMIT")
+                await conn.execute(text("REFRESH MATERIALIZED VIEW CONCURRENTLY mv_identity_cluster_centroids"))
         except Exception:
             logger.warning("Failed to refresh centroid materialized view concurrently", exc_info=True)
 

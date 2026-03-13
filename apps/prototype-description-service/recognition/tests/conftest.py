@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 import os
 import uuid
 from collections.abc import AsyncGenerator, Iterable, Sequence
@@ -38,6 +39,21 @@ os.environ["RECOGNITION_ASYNC_ANALYZE_INLINE"] = "1"
 os.environ["RECOGNITION_RUNTIME_MODE"] = "test"
 
 
+def _sqlite_vector_norm(value: object) -> float | None:
+    if value is None:
+        return None
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        value = bytes(value).decode()
+    if isinstance(value, str):
+        stripped = value.strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            stripped = stripped[1:-1]
+        parts = [part.strip() for part in stripped.split(",") if part.strip()]
+        coordinates = [float(part) for part in parts]
+        return math.sqrt(sum(component * component for component in coordinates))
+    raise TypeError(f"Unsupported vector value for SQLite norm emulation: {type(value)!r}")
+
+
 @pytest_asyncio.fixture
 async def db_session() -> AsyncGenerator[AsyncSession, None]:
     """Provide an isolated in-memory SQLite session with required tables."""
@@ -46,6 +62,10 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
         connect_args={"check_same_thread": False},
         poolclass=StaticPool,
     )
+
+    @event.listens_for(engine.sync_engine, "connect")
+    def _register_vector_functions(dbapi_connection, _connection_record) -> None:
+        dbapi_connection.create_function("vector_norm", 1, _sqlite_vector_norm)
 
     async with engine.begin() as conn:
         await conn.execute(text("PRAGMA foreign_keys=ON"))
@@ -62,9 +82,11 @@ async def db_session() -> AsyncGenerator[AsyncSession, None]:
             Table("identity_suggestions", Base.metadata),
             Table("recognition_runs", Base.metadata),
             Table("recognition_events", Base.metadata),
+            Table("audit_events", Base.metadata),
             Table("api_keys", Base.metadata),
             Table("clustering_job_reports", Base.metadata),
             Table("assignment_decisions", Base.metadata),
+            Table("clustering_feedback", Base.metadata),
             Table("media_identities", Base.metadata),
             Table("identity_constraints", Base.metadata),
             Table("tenants", Base.metadata),

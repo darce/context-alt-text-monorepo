@@ -32,9 +32,10 @@ def _clone_cluster(cluster: ClusterResponse, **updates: object) -> ClusterRespon
 class _FakeClusterRecord:
     """Minimal cluster record with confirmation state."""
 
-    def __init__(self, cluster: ClusterResponse) -> None:
+    def __init__(self, cluster: ClusterResponse | FakeClusterForRepo) -> None:
         self.id = cluster.id
         self.label = cluster.label
+        self.backend_version = int(getattr(cluster, "backend_version", 0) or 0)
         self.user_confirmed = bool(cluster.label)
 
 
@@ -48,7 +49,7 @@ class _FakeClusterRepository:
         if self._service.fake_cluster_repository is not None:
             seeded_cluster = await self._service.fake_cluster_repository.get_by_id(cluster_id)
             if seeded_cluster is not None:
-                return seeded_cluster
+                return _FakeClusterRecord(seeded_cluster)
 
         cluster = next((c for c in self._service.clusters if c.id == cluster_id), None)
         if not cluster:

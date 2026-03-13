@@ -331,7 +331,7 @@ make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=backend-d
 ```
 
 - `make lane-commits` previews the commits on the lane branch that are not yet on the current orchestrator branch.
-- `make lane-intake` cherry-picks that unique commit set in order.
+- `make lane-intake` prints that unique commit set first, then cherry-picks it in order.
 - Use `DRY_RUN=1` on `make lane-intake` to preview the exact cherry-pick command before applying it.
 - Run these only from the orchestrator root, never from a worker worktree.
 

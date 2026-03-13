@@ -35,6 +35,20 @@ The canonical MCP runtime for handoff state is now the packaged `agent-handoff-m
 
 Helper for the orchestrator/worker pattern described in [instructions.md](../docs/agentic/instructions.md).
 
+Preferred entrypoint:
+
+- use the root [Makefile](../Makefile) targets for normal lane orchestration
+- drop to `scripts/worktree-lane` only when you need the lower-level helper directly
+
+Recommended commands:
+
+```bash
+make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend SESSION=phase5-frontend SUMMARY="Frontend slice ready" MERGE_READY=1
+make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend REF=feature/6.0.2-retention-export
+```
+
 It wraps:
 
 - `git worktree add`

@@ -11,7 +11,81 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard
+
+CURRENT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
+TASK ?=
+LANE ?=
+SESSION ?=
+SUMMARY ?=
+MESSAGE ?=
+STATUS ?= submitted
+MERGE_READY ?= 0
+DRY_RUN ?= 0
+REF ?= $(CURRENT_BRANCH)
+PHASE5_LANES := backend-domain backend-http wp-proxy frontend
+
+LANE_BRANCH :=
+LANE_WORKTREE :=
+LANE_TITLE :=
+LANE_OBJECTIVE :=
+LANE_OWNED_ARGS :=
+LANE_DOC_ARGS :=
+LANE_TEST_ARGS :=
+LANE_TEST_CMD_1 :=
+LANE_TEST_CMD_2 :=
+LANE_NON_GOAL_ARGS :=
+LANE_DONE_DEFINITION := Ready for orchestrator branch review with lane-local verification complete.
+
+ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
+  ifeq ($(LANE),backend-domain)
+    LANE_BRANCH := codex/p5-backend-domain
+    LANE_WORKTREE := $(CURDIR)-p5-backend-domain
+    LANE_TITLE := Backend domain
+    LANE_OBJECTIVE := Phase 5 backend-domain retention/export/audit slice.
+    LANE_OWNED_ARGS := --owned-path "apps/prototype-description-service/db/**" --owned-path "apps/prototype-description-service/recognition/domain/**" --owned-path "apps/prototype-description-service/recognition/infrastructure/**"
+    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
+    LANE_TEST_CMD_1 := cd apps/prototype-description-service && pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py
+    LANE_TEST_CMD_2 := cd apps/prototype-description-service && mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py
+    LANE_TEST_ARGS := --test-command "cd apps/prototype-description-service && pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py" --test-command "cd apps/prototype-description-service && mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
+    LANE_NON_GOAL_ARGS := --non-goal "Do not edit HTTP router files." --non-goal "Do not edit WordPress or frontend files."
+  endif
+  ifeq ($(LANE),backend-http)
+    LANE_BRANCH := codex/p5-backend-http
+    LANE_WORKTREE := $(CURDIR)-p5-backend-http
+    LANE_TITLE := Backend HTTP
+    LANE_OBJECTIVE := Phase 5 backend-http retention router and schema slice.
+    LANE_OWNED_ARGS := --owned-path "apps/prototype-description-service/recognition/interface_adapters/http/**"
+    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
+    LANE_TEST_CMD_1 := cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py
+    LANE_TEST_CMD_2 := cd apps/prototype-description-service && mypy recognition/interface_adapters/http
+    LANE_TEST_ARGS := --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py" --test-command "cd apps/prototype-description-service && mypy recognition/interface_adapters/http"
+    LANE_NON_GOAL_ARGS := --non-goal "Do not edit backend domain/repository files outside the HTTP layer." --non-goal "Do not edit WordPress or frontend files."
+  endif
+  ifeq ($(LANE),wp-proxy)
+    LANE_BRANCH := codex/p5-wp-proxy
+    LANE_WORKTREE := $(CURDIR)-p5-wp-proxy
+    LANE_TITLE := WP proxy
+    LANE_OBJECTIVE := Phase 5 WordPress retention proxy slice.
+    LANE_OWNED_ARGS := --owned-path "apps/prototype-wp-alt-context/src/**" --owned-path "apps/prototype-wp-alt-context/tests/Unit/**"
+    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
+    LANE_TEST_CMD_1 := cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php
+    LANE_TEST_ARGS := --test-command "cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php"
+    LANE_NON_GOAL_ARGS := --non-goal "Do not edit frontend React/TypeScript files." --non-goal "Do not edit backend Python files."
+  endif
+  ifeq ($(LANE),frontend)
+    LANE_BRANCH := codex/p5-frontend
+    LANE_WORKTREE := $(CURDIR)-p5-frontend
+    LANE_TITLE := Frontend
+    LANE_OBJECTIVE := Phase 5 retention admin UI slice.
+    LANE_OWNED_ARGS := --owned-path "apps/prototype-wp-alt-context/js/**"
+    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
+    LANE_TEST_CMD_1 := cd apps/prototype-wp-alt-context && npm run test -- --run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/__tests__/RetentionPage.test.tsx js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/workbench/__tests__/SyncStatusIndicator.test.tsx js/admin/__tests__/routeHelpers.test.ts
+    LANE_TEST_CMD_2 := cd apps/prototype-wp-alt-context && npm run typecheck
+    LANE_TEST_ARGS := --test-command "cd apps/prototype-wp-alt-context && npm run test -- --run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/__tests__/RetentionPage.test.tsx js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/workbench/__tests__/SyncStatusIndicator.test.tsx js/admin/__tests__/routeHelpers.test.ts" --test-command "cd apps/prototype-wp-alt-context && npm run typecheck"
+    LANE_NON_GOAL_ARGS := --non-goal "Do not edit PHP or Python files." --non-goal "Do not edit shared task docs unless explicitly assigned."
+  endif
+endif
 
 # Default target
 help:
@@ -40,6 +114,13 @@ help:
 	@echo "Handoff Integrity:"
 	@echo "  make handoff-close-check    - Enforce close-readiness on active handoff task"
 	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
+	@echo ""
+	@echo "Worktree Lanes (task-aware wrappers around scripts/worktree-lane):"
+	@echo "  make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend SESSION=<name> SUMMARY=\"...\" [MERGE_READY=1]"
+	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
+	@echo "  Enumerated Phase 5 lanes: $(PHASE5_LANES)"
 
 # =============================================================================
 # Cross-Repo Checks
@@ -168,6 +249,113 @@ handoff-close-check:
 # CI/local guard for parser + lifecycle + close-check integrity
 handoff-integrity-check:
 	@$(PYTHON) scripts/mcp/handoff_integrity_guard.py
+
+# =============================================================================
+# Worktree Lane Orchestration
+# =============================================================================
+
+lane-guard:
+	@if [ -z "$(TASK)" ]; then \
+		echo "TASK is required."; \
+		echo "Example: make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"; \
+		exit 1; \
+	fi
+	@if [ -z "$(LANE)" ]; then \
+		echo "LANE is required."; \
+		echo "Allowed lanes for Phase 5: $(PHASE5_LANES)"; \
+		exit 1; \
+	fi
+	@if [ "$(TASK)" != "phase-5-retention-export-and-audit-controls" ]; then \
+		echo "Unsupported TASK: $(TASK)"; \
+		echo "This Makefile currently enumerates lanes only for phase-5-retention-export-and-audit-controls."; \
+		exit 1; \
+	fi
+	@if [ -z "$(LANE_BRANCH)" ]; then \
+		echo "Unsupported LANE: $(LANE)"; \
+		echo "Allowed lanes for $(TASK): $(PHASE5_LANES)"; \
+		exit 1; \
+	fi
+
+lane-open: lane-guard
+	@set -eu; \
+	DRY_FLAG=""; \
+	if [ "$(DRY_RUN)" = "1" ]; then DRY_FLAG="--dry-run"; fi; \
+	scripts/worktree-lane create \
+		--orchestrator-root "$(CURDIR)" \
+		--lane-id "$(LANE)" \
+		--branch "$(LANE_BRANCH)" \
+		--worktree-path "$(LANE_WORKTREE)" \
+		--title "$(LANE_TITLE)" \
+		--objective "$(LANE_OBJECTIVE)" \
+		--owner-agent codex \
+		--status active \
+		--notes "Makefile-managed worker lane for $(TASK)." \
+		$$DRY_FLAG; \
+	echo ""; \
+	scripts/worktree-lane brief \
+		--orchestrator-root "$(CURDIR)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--branch "$(LANE_BRANCH)" \
+		--worktree-path "$(LANE_WORKTREE)" \
+		--title "$(LANE_TITLE)" \
+		--objective "$(LANE_OBJECTIVE)" \
+		$(LANE_OWNED_ARGS) \
+		$(LANE_DOC_ARGS) \
+		$(LANE_TEST_ARGS) \
+		$(LANE_NON_GOAL_ARGS) \
+		--definition "$(LANE_DONE_DEFINITION)"
+
+lane-status: lane-guard
+	@set -eu; \
+	scripts/worktree-lane status \
+		--orchestrator-root "$(CURDIR)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$(LANE_WORKTREE)"; \
+	echo ""; \
+	git -C "$(LANE_WORKTREE)" status -sb
+
+lane-report: lane-guard
+	@if [ -z "$(SESSION)" ]; then \
+		echo "SESSION is required."; \
+		echo "Example: make lane-report TASK=$(TASK) LANE=$(LANE) SESSION=phase5-frontend SUMMARY=\"Frontend slice ready\" MERGE_READY=1"; \
+		exit 1; \
+	fi
+	@if [ -z "$(SUMMARY)" ]; then \
+		echo "SUMMARY is required."; \
+		echo "Example: make lane-report TASK=$(TASK) LANE=$(LANE) SESSION=phase5-frontend SUMMARY=\"Frontend slice ready\" MERGE_READY=1"; \
+		exit 1; \
+	fi
+	@set -eu; \
+	set -- scripts/worktree-lane report \
+		--orchestrator-root "$(CURDIR)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--session "$(SESSION)" \
+		--summary "$(SUMMARY)" \
+		--status "$(STATUS)" \
+		--worktree-path "$(LANE_WORKTREE)"; \
+	if [ -n "$(LANE_TEST_CMD_1)" ]; then set -- "$$@" --test-command "$(LANE_TEST_CMD_1)"; fi; \
+	if [ -n "$(LANE_TEST_CMD_2)" ]; then set -- "$$@" --test-command "$(LANE_TEST_CMD_2)"; fi; \
+	if [ "$(MERGE_READY)" = "1" ]; then set -- "$$@" --merge-ready; fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then set -- "$$@" --dry-run; fi; \
+	if [ -n "$(MESSAGE)" ]; then set -- "$$@" --message "$(MESSAGE)" --subject "$(LANE) lane update"; fi; \
+	"$$@"
+
+lane-reset: lane-guard
+	@if [ -z "$(REF)" ]; then \
+		echo "REF is required."; \
+		exit 1; \
+	fi
+	@set -eu; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		echo "[dry-run] git -C \"$(LANE_WORKTREE)\" reset --hard \"$(REF)\""; \
+		echo "[dry-run] git -C \"$(LANE_WORKTREE)\" clean -fd"; \
+	else \
+		git -C "$(LANE_WORKTREE)" reset --hard "$(REF)"; \
+		git -C "$(LANE_WORKTREE)" clean -fd; \
+		git -C "$(LANE_WORKTREE)" status -sb; \
+	fi
 
 # =============================================================================
 # Development Shortcuts

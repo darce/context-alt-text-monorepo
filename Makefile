@@ -484,14 +484,33 @@ lane-refresh: lane-guard
 		else \
 			AHEAD_COMMITS="$$(git -C "$$TARGET_WORKTREE" rev-list --reverse FETCH_HEAD..HEAD)"; \
 			SUPERSEDED_COUNT=0; \
+			IGNORED_COUNT=0; \
 			for commit in $$AHEAD_COMMITS; do \
 				subject="$$(git -C "$$TARGET_WORKTREE" log -1 --format=%s "$$commit")"; \
 				if git -C "$$TARGET_WORKTREE" log FETCH_HEAD --format=%s | grep -Fqx "$$subject"; then \
 					SUPERSEDED_COUNT=$$((SUPERSEDED_COUNT + 1)); \
+					continue; \
+				fi; \
+				if [ -n "$(LANE_COMMIT_PATHS)" ]; then \
+					COMMIT_FILES="$$(git -C "$$TARGET_WORKTREE" show --name-only --pretty='' "$$commit" | awk 'NF')"; \
+					HAS_OWNED_FILE=0; \
+					for file in $$COMMIT_FILES; do \
+						for prefix in $(LANE_COMMIT_PATHS); do \
+							case "$$file" in \
+								$$prefix|$$prefix/*) HAS_OWNED_FILE=1; break ;; \
+							esac; \
+						done; \
+						if [ "$$HAS_OWNED_FILE" = "1" ]; then \
+							break; \
+						fi; \
+					done; \
+					if [ "$$HAS_OWNED_FILE" = "0" ]; then \
+						IGNORED_COUNT=$$((IGNORED_COUNT + 1)); \
+					fi; \
 				fi; \
 			done; \
-			if [ "$$SUPERSEDED_COUNT" = "$$AHEAD_COUNT" ]; then \
-				echo "Lane commits already appear to be integrated upstream. Resetting lane to $(ORCHESTRATOR_BRANCH)."; \
+			if [ $$((SUPERSEDED_COUNT + IGNORED_COUNT)) = "$$AHEAD_COUNT" ]; then \
+				echo "Lane commits are already integrated upstream or out of lane scope. Resetting lane to $(ORCHESTRATOR_BRANCH)."; \
 				git -C "$$TARGET_WORKTREE" reset --hard FETCH_HEAD; \
 				git -C "$$TARGET_WORKTREE" clean -fd; \
 			elif ! git -C "$$TARGET_WORKTREE" rebase FETCH_HEAD; then \

@@ -352,19 +352,6 @@ class AcknowledgeProjectionRequest(BaseModel):
         return _validate_uuid(v)
 
 
-class UpdateRetentionPolicyRequest(BaseModel):
-    """Request to update tenant retention policy."""
-
-    retention_mode: str
-
-
-class PurgeRequest(BaseModel):
-    """Request to purge retained tenant state."""
-
-    scope: str = "disposed"
-    confirm: bool = False
-
-
 __all__ = [
     "AnalyzeRequest",
     "ClusteringJobRequest",

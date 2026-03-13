@@ -22,7 +22,7 @@ class FakeRetentionPolicyService:
     def __init__(self, tenant_id: str) -> None:
         self.tenant_id = tenant_id
         self.calls: list[tuple[str, str, str]] = []
-        self.policy = {
+        self.policy: dict[str, Any] = {
             "retention_mode": "retain_all",
             "last_export_at": None,
             "last_purge_at": None,
@@ -126,7 +126,9 @@ def _build_client(
     app = FastAPI()
 
     @app.get("/tenant-probe")
-    async def tenant_probe(resolved_tenant_id: str = Depends(dependencies.get_authenticated_tenant_id)) -> dict[str, str]:
+    async def tenant_probe(
+        resolved_tenant_id: str = Depends(dependencies.get_authenticated_tenant_id),
+    ) -> dict[str, str]:
         return {"tenant_id": resolved_tenant_id}
 
     app.include_router(recognition_router, prefix="/recognition")

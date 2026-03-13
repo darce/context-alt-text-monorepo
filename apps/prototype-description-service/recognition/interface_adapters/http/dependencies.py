@@ -37,6 +37,9 @@ from recognition.interface_adapters.http.deps.services import (
     get_observability_repository,
     get_persisted_cluster_job_service,
     get_persisted_job_service,
+    get_retention_export_service,
+    get_retention_policy_service,
+    get_retention_purge_service,
     get_scan_queue_repo,
     get_scan_queue_service,
     get_scan_queue_service_factory,
@@ -67,6 +70,9 @@ from recognition.interface_adapters.http.deps.stores import (
     InMemoryJobService,
     MediaIdentityService,
     get_decision_store,
+)
+from recognition.interface_adapters.http.deps.tenant import (
+    get_authenticated_tenant_id,
 )
 
 __all__ = [

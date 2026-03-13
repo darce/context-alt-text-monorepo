@@ -342,6 +342,27 @@ class AcknowledgeProjectionRequest(BaseModel):
     """Request to acknowledge that a snapshot version was projected locally."""
 
     snapshot_version: int = Field(..., gt=0)
+    snapshot_generation_id: str | None = None
+
+    @field_validator("snapshot_generation_id")
+    @classmethod
+    def validate_snapshot_generation_id(cls, v: str | None) -> str | None:
+        if v is None:
+            return None
+        return _validate_uuid(v)
+
+
+class UpdateRetentionPolicyRequest(BaseModel):
+    """Request to update tenant retention policy."""
+
+    retention_mode: str
+
+
+class PurgeRequest(BaseModel):
+    """Request to purge retained tenant state."""
+
+    scope: str = "disposed"
+    confirm: bool = False
 
 
 __all__ = [
@@ -355,9 +376,11 @@ __all__ = [
     "MergeClusterRequest",
     "PatchClusterRequest",
     "PinRepresentativeRequest",
+    "PurgeRequest",
     "ReassignIdentityRequest",
     "RevertMergeClusterRequest",
     "SplitClusterRequest",
     "SplitTopologyCommandRequest",
     "SuggestionActionRequest",
+    "UpdateRetentionPolicyRequest",
 ]

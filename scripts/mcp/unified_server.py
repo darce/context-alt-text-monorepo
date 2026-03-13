@@ -590,6 +590,28 @@ def _render_current_task_md(state: dict) -> str:
     else:
         lines.append("- None")
 
+    lines.extend(["", "## Lane Dispatches"])
+    lane_message_rows = state.get("lane_messages_open")
+    if lane_message_rows is None:
+        lane_message_rows = [
+            message
+            for message in state.get("lane_messages", [])
+            if message.get("status") == "open"
+        ]
+    lane_messages = [
+        message
+        for message in lane_message_rows
+        if message.get("direction") == "orchestrator_to_worker"
+    ]
+    if lane_messages:
+        for message in lane_messages:
+            lane_id = message.get("lane_id", "?")
+            subject = message.get("subject", "")
+            body = message.get("message", "")
+            lines.append(f"- `{lane_id}` [#{message.get('id')}] {subject} -- {body}")
+    else:
+        lines.append("- None")
+
     lines.extend(["", "## Open Review Findings"])
     findings = state.get("findings_open", [])
     if findings:

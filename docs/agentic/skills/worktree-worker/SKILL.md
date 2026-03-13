@@ -18,7 +18,13 @@ Use this skill when you are the worker agent assigned to a bounded worktree lane
 ## Start-up checklist
 
 1. Read [instructions.md](../../instructions.md), especially the multi-agent worktree section.
-2. Query the shared lane state before changing code:
+2. Poll the lane inbox before changing code:
+
+```bash
+make lane-inbox
+```
+
+If you are operating outside the Makefile wrapper, query the shared lane state directly:
 
 ```bash
 scripts/worktree-lane status \
@@ -29,6 +35,8 @@ scripts/worktree-lane status \
 
 3. Confirm your changed-file budget matches the lane's owned paths.
 4. If lane ownership is unclear or missing, stop and ask the orchestrator to create or update the lane instead of guessing.
+
+Treat lane-stamped open review findings, blockers, and pending next actions shown in lane activity as part of your actionable inbox. The orchestrator may have routed them from root with `make handoff-dispatch`.
 
 ## Implementation rules
 

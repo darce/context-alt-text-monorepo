@@ -24,6 +24,7 @@ Load only the guides relevant to files in the branch diff. Most branches touch o
 ### When
 
 Run this review on every feature branch **before merge to `main`**.
+For multi-worktree orchestration in this repo, perform the review from the orchestrator root and log findings into MCP there before routing them to worker lanes.
 
 ### Who
 
@@ -33,6 +34,7 @@ The reviewer can be human or agentic. When an agent performs the review:
 2. Classify findings using the severity guide and categories below
 3. Record each finding into MCP via `record_review_finding` (see MCP Handoff Integration)
 4. Do **not** produce a report file unless the user explicitly requests one
+5. If the task is split into worktrees, have the orchestrator run `make review-dispatch TASK=<task-ref>` after findings are logged so open issues are stamped to the correct lane and delivered through MCP lane messages.
 
 Hard rule for agent responses:
 - Do not present a finding in chat unless it has already been recorded in MCP with a stable `finding_id`.

@@ -640,6 +640,27 @@ def _render_current_task_md(state: dict) -> str:
             )
     else:
         lines.append("- None")
+    lines.extend(["", "## Lane Dispatches"])
+    lane_message_rows = state.get("lane_messages_open")
+    if lane_message_rows is None:
+        lane_message_rows = [
+            message
+            for message in state.get("lane_messages", [])
+            if message.get("status") == "open"
+        ]
+    lane_messages = [
+        message
+        for message in lane_message_rows
+        if message.get("direction") == "orchestrator_to_worker"
+    ]
+    if lane_messages:
+        for message in lane_messages:
+            lane_id = message.get("lane_id", "?")
+            subject = message.get("subject", "")
+            body = message.get("message", "")
+            lines.append(f"- `{lane_id}` [{message.get('id')}] {subject} -- {body}")
+    else:
+        lines.append("- None")
     lines.extend(["", "## Open Review Findings"])
     findings = state.get("findings_open", [])
     if findings:
@@ -685,6 +706,25 @@ def _normalize_optional_text(value: object) -> str | None:
         return None
     normalized = value.strip()
     return normalized if normalized != "" else None
+
+
+def _normalize_path_for_match(path_value: str | Path) -> str:
+    return os.path.normcase(str(Path(path_value).expanduser().resolve()))
+
+
+def _resolve_current_lane_row(conn: sqlite3.Connection, task_ref: str) -> sqlite3.Row | None:
+    workspace_path = _normalize_path_for_match(_workspace_root())
+    lane_rows = conn.execute(
+        "SELECT * FROM worktree_lanes WHERE task_ref = ? ORDER BY updated_at DESC, id DESC",
+        (task_ref,),
+    ).fetchall()
+    for row in lane_rows:
+        raw_path = _normalize_optional_text(row["worktree_path"])
+        if raw_path is None:
+            continue
+        if _normalize_path_for_match(raw_path) == workspace_path:
+            return row
+    return None
 
 
 def _first_non_empty_env(*keys: str) -> str | None:
@@ -845,13 +885,21 @@ def get_handoff_state(task_ref: str | None = None, top_n_blockers: int = DEFAULT
         active = _row_to_dict(active_row) if active_row is not None else None
         if active is not None and resolved_task_ref != active["task_ref"]:
             active = None
+        current_lane_row = _resolve_current_lane_row(conn, resolved_task_ref)
+        current_lane = _row_to_dict(current_lane_row)
         query_limit = (lambda size: size if not verbose else 10000)
+        lane_messages_where_sql = "task_ref = ? AND status = 'open'"
+        lane_messages_params: tuple[object, ...] = (resolved_task_ref,)
+        if current_lane_row is not None:
+            lane_messages_where_sql += " AND lane_id = ?"
+            lane_messages_params = (resolved_task_ref, str(current_lane_row["lane_id"]))
         return _json_response(
             {
                 "ok": True,
                 "limits": {"blockers": top_n_blockers, "actions": top_n_actions, "decisions": top_n_decisions, "tests": top_n_tests, "findings": top_n_findings},
                 "task_ref": resolved_task_ref,
                 "active": active,
+                "current_lane": current_lane,
                 "blockers_open": _fetch_handoff_rows(conn, table="blockers", where_sql="task_ref = ? AND status = 'open'", order_sql="created_at DESC", limit=query_limit(top_n_blockers), params=(resolved_task_ref,)),
                 "actions_pending": _fetch_handoff_rows(conn, table="next_actions", where_sql="task_ref = ? AND status = 'pending'", order_sql="priority ASC, created_at ASC", limit=query_limit(top_n_actions), params=(resolved_task_ref,)),
                 "decisions_recent": _fetch_handoff_rows(conn, table="decisions", where_sql="task_ref = ?", order_sql="created_at DESC", limit=query_limit(top_n_decisions), params=(resolved_task_ref,)),
@@ -859,7 +907,7 @@ def get_handoff_state(task_ref: str | None = None, top_n_blockers: int = DEFAULT
                 "findings_open": _fetch_handoff_rows(conn, table="review_findings", where_sql="task_ref = ? AND status = 'open'", order_sql="CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC", limit=query_limit(top_n_findings), params=(resolved_task_ref,)),
                 "worktree_lanes": _fetch_handoff_rows(conn, table="worktree_lanes", where_sql="task_ref = ?", order_sql="updated_at DESC, id DESC", limit=query_limit(top_n_actions), params=(resolved_task_ref,)),
                 "worker_reports_recent": _fetch_handoff_rows(conn, table="worker_reports", where_sql="task_ref = ?", order_sql="created_at DESC, id DESC", limit=query_limit(top_n_decisions), params=(resolved_task_ref,)),
-                "lane_messages_open": _fetch_handoff_rows(conn, table="lane_messages", where_sql="task_ref = ? AND status = 'open'", order_sql="updated_at DESC, id DESC", limit=query_limit(top_n_blockers), params=(resolved_task_ref,)),
+                "lane_messages_open": _fetch_handoff_rows(conn, table="lane_messages", where_sql=lane_messages_where_sql, order_sql="updated_at DESC, id DESC", limit=query_limit(top_n_blockers), params=lane_messages_params),
             }
         )
 
@@ -1111,6 +1159,12 @@ def list_lane_messages(task_ref: str | None = None, lane_id: str | None = None, 
     normalized_lane_id = _normalize_optional_text(lane_id)
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        inferred_lane = None
+        if normalized_lane_id is None:
+            inferred_lane_row = _resolve_current_lane_row(conn, resolved_task_ref)
+            if inferred_lane_row is not None:
+                normalized_lane_id = str(inferred_lane_row["lane_id"])
+                inferred_lane = _row_to_dict(inferred_lane_row)
         params: list[object] = [resolved_task_ref]
         where_sql = "task_ref = ?"
         if normalized_lane_id is not None:
@@ -1121,7 +1175,7 @@ def list_lane_messages(task_ref: str | None = None, lane_id: str | None = None, 
             params.append(status)
         total = int(conn.execute(f"SELECT COUNT(*) AS count FROM lane_messages WHERE {where_sql}", tuple(params)).fetchone()["count"])
         rows = [dict(row) for row in conn.execute(f"SELECT * FROM lane_messages WHERE {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()]
-        return _json_response({"ok": True, "task_ref": resolved_task_ref, "lane_id": normalized_lane_id, "status": status, "total_matching": total, "returned": len(rows), "has_more": offset + len(rows) < total, "messages": rows})
+        return _json_response({"ok": True, "task_ref": resolved_task_ref, "lane_id": normalized_lane_id, "current_lane": inferred_lane, "status": status, "total_matching": total, "returned": len(rows), "has_more": offset + len(rows) < total, "messages": rows})
 
 
 def record_decision(session: str, decision: str, rationale: str | None = None, actor: WriteActor | None = None) -> str:

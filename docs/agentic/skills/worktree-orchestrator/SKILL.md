@@ -71,9 +71,15 @@ scripts/worktree-lane brief \
 
 Paste that brief into the worker session.
 
-### 3. Monitor the lane
+### 3. Dispatch and monitor the lane
 
 Use shared MCP state, not chat memory:
+
+```bash
+make lane-dispatch TASK=<task-ref> LANE=backend-http MESSAGE="Implement the retention router and verify the lane-local checks."
+```
+
+Then monitor the lane with:
 
 ```bash
 scripts/worktree-lane status \
@@ -83,6 +89,14 @@ scripts/worktree-lane status \
 ```
 
 If the worker gets blocked on another domain, keep the lane in scope and reassign the blocker instead of letting the worker edit outside lane ownership.
+
+When the orchestrator records review findings, blockers, or next actions in MCP from root, fan them back out with:
+
+```bash
+make handoff-dispatch TASK=<task-ref>
+```
+
+That stamps routeable unassigned open handoff items onto the correct lane and creates or reuses lane messages so workers pick them up in `make lane-inbox`.
 
 ### 4. Intake the lane
 

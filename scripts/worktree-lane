@@ -30,6 +30,26 @@ require_command() {
   command -v "$1" >/dev/null 2>&1 || die "required command not found: $1"
 }
 
+resolve_mcp_command() {
+  if command -v agent-handoff-mcp >/dev/null 2>&1; then
+    MCP_CMD=(agent-handoff-mcp)
+    return
+  fi
+
+  if [ -x "$HOME/.local/bin/agent-handoff-mcp" ]; then
+    MCP_CMD=("$HOME/.local/bin/agent-handoff-mcp")
+    return
+  fi
+
+  require_command python3
+  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
+    MCP_CMD=(env "PYTHONPATH=$REPO_ROOT/packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp.cli)
+    return
+  fi
+
+  die "required command not found: agent-handoff-mcp"
+}
+
 git_root() {
   git rev-parse --show-toplevel 2>/dev/null
 }
@@ -60,7 +80,7 @@ run_mcp() {
     args+=("$item")
   done < <(shared_mcp_args "$orchestrator_root" "$workspace_root")
 
-  agent-handoff-mcp "${args[@]}" "$@"
+  "${MCP_CMD[@]}" "${args[@]}" "$@"
 }
 
 bullet_list() {
@@ -159,7 +179,7 @@ subcommand="${1:-}"
 shift || true
 
 require_command git
-require_command agent-handoff-mcp
+resolve_mcp_command
 
 case "$subcommand" in
   create)

@@ -254,7 +254,7 @@ Preferred operator entrypoint:
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 ```
 
-That target creates or refreshes the worktree lane registration and prints the ready-to-paste worker brief in one step. Use `make lane-status`, `make lane-report`, and `make lane-reset` for the common follow-on operations.
+That target creates or refreshes the worktree lane registration and prints the ready-to-paste worker brief in one step. Use `ENTER_SHELL=1` if you want it to open an interactive subshell in the worktree after setup. Use `make lane-status`, `make lane-report`, and `make lane-reset` for the common follow-on operations.
 
 - Create worktrees as siblings of the main repo, not nested inside it.
 - Use lane names that match ownership (`backend-domain`, `backend-http`, `wp-proxy`, `frontend`).

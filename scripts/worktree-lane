@@ -17,7 +17,8 @@ Notes:
   - create is intended to run from the orchestrator root
   - status and report are intended to run from the worker worktree
   - shared MCP state always lives under the orchestrator root
-  - report uses lane commits relative to the orchestrator branch as the source of truth
+  - merge-ready reports use lane commits relative to the orchestrator branch as the source of truth
+  - blocked guidance reports may be submitted without lane commits when no code could be produced
 EOF
 }
 
@@ -408,7 +409,12 @@ EOF
       exit 1
     fi
 
-    if [ -z "$lane_commits" ]; then
+    require_lane_commits=1
+    if [ "$merge_ready" -ne 1 ] && { [ "$status" = "blocked" ] || [ "${#blockers[@]}" -gt 0 ]; }; then
+      require_lane_commits=0
+    fi
+
+    if [ -z "$lane_commits" ] && [ "$require_lane_commits" -eq 1 ]; then
       die "no unique lane commits found relative to the orchestrator branch; commit the lane work before reporting"
     fi
 

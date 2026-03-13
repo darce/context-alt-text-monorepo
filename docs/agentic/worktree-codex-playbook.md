@@ -186,3 +186,11 @@ make lane-handoff
 ```
 
 `make lane-handoff` now auto-initiates a worker-to-orchestrator handoff message when the lane is merge-ready. If the worker instead needs guidance, submit a blocked report and the same handoff message channel is used for the ask.
+
+For a blocked worker that could verify but could not write code, use:
+
+```bash
+make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="Blocked summary" MESSAGE="What was verified, what failed, and what guidance or access is needed."
+```
+
+That blocked report path does not require a lane commit, so sandbox failures can still be handed back to the orchestrator cleanly.

@@ -80,7 +80,8 @@ Notes:
 - `make lane-commit` stages the lane-owned paths and creates a default commit whose message begins with the lane name, for example `frontend: update retention admin UI`.
 - `make lane-handoff` is the normal worker handoff path: it verifies scope, commits lane-owned changes, shows lane status, and then submits a merge-ready report using inferred `TASK`, `LANE`, and default `SESSION`.
 - Merge-ready and blocked worker reports now auto-open a `worker_to_orchestrator` lane message, so the orchestrator can pick them up through `make handoff-inbox` without requiring an extra manual `MESSAGE=...` step.
-- `lane-report` now uses the unique lane commits relative to the orchestrator branch as the source of truth. Dirty worktrees are rejected unless explicitly allowed.
+- `lane-report` keeps merge-ready handoffs commit-based, but blocked guidance reports can be submitted without lane commits when a sandbox or environment issue prevented code changes. Dirty worktrees are still rejected unless explicitly allowed.
+- `make lane-report ... STATUS=blocked MESSAGE="..."` is the right escape hatch when a worker verified the slice, could not safely edit, and needs the orchestrator to reassign or reopen the lane with different access.
 - `make lane-refresh` refreshes a worker lane from the orchestrator branch. It auto-stashes dirty lane state first, then resets or rebases depending on whether the lane already has unique commits. Workflow tooling is expected to arrive through committed orchestrator branch state, not by copying live root files into the lane.
 - If root workflow tooling is locally dirty, `make lane-refresh` refuses to run until those orchestrator changes are committed. That keeps worker branches clean.
 - `make lane-clean` removes legacy copied tooling drift from a lane without touching lane-owned product files.

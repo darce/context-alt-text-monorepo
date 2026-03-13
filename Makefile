@@ -38,6 +38,7 @@ IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
 LANE_TOOLING_PATHS := Makefile docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
 LANE_APP_TOOLING_PATHS := $(if $(filter backend-domain backend-http,$(LANE)),apps/prototype-description-service/Makefile,)
+export ORCHESTRATOR_ROOT TASK LANE SESSION SUMMARY MESSAGE SUBJECT STATUS MERGE_READY DRY_RUN LANE_WORKTREE LANE_TEST_CMD_1 LANE_TEST_CMD_2
 
 LANE_BRANCH :=
 LANE_WORKTREE :=
@@ -426,7 +427,7 @@ lane-open: lane-guard
 	@set -eu; \
 	DRY_FLAG=""; \
 	if [ "$(DRY_RUN)" = "1" ]; then DRY_FLAG="--dry-run"; fi; \
-	scripts/worktree-lane create \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" create \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
 		--branch "$(LANE_BRANCH)" \
@@ -438,7 +439,7 @@ lane-open: lane-guard
 		--notes "Makefile-managed worker lane for $(TASK)." \
 		$$DRY_FLAG; \
 	echo ""; \
-	scripts/worktree-lane brief \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" brief \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
@@ -472,7 +473,7 @@ lane-open: lane-guard
 
 lane-status: lane-guard
 	@set -eu; \
-	scripts/worktree-lane status \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE)"; \
@@ -504,7 +505,7 @@ lane-inbox: lane-guard
 		--lane-id "$(LANE)" \
 		--limit 1; \
 	echo ""; \
-	scripts/worktree-lane status \
+	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$$WORKTREE_PATH"
@@ -601,19 +602,26 @@ lane-dispatch: lane-orchestrator-guard
 
 lane-report: lane-worker-guard
 	@set -eu; \
-	set -- scripts/worktree-lane report \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		--session "$(SESSION)" \
-		--summary "$(SUMMARY)" \
-		--status "$(STATUS)" \
-		--worktree-path "$(LANE_WORKTREE)"; \
-	if [ -n "$(LANE_TEST_CMD_1)" ]; then set -- "$$@" --test-command "$(LANE_TEST_CMD_1)"; fi; \
-	if [ -n "$(LANE_TEST_CMD_2)" ]; then set -- "$$@" --test-command "$(LANE_TEST_CMD_2)"; fi; \
-	if [ "$(MERGE_READY)" = "1" ]; then set -- "$$@" --merge-ready; fi; \
-	if [ "$(DRY_RUN)" = "1" ]; then set -- "$$@" --dry-run; fi; \
-	if [ -n "$(MESSAGE)" ]; then set -- "$$@" --message "$(MESSAGE)" --subject "$(LANE) lane update"; fi; \
+	set -- "$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" report \
+		--orchestrator-root "$$ORCHESTRATOR_ROOT" \
+		--task-ref "$$TASK" \
+		--lane-id "$$LANE" \
+		--session "$$SESSION" \
+		--summary "$$SUMMARY" \
+		--status "$$STATUS" \
+		--worktree-path "$$LANE_WORKTREE"; \
+	if [ -n "$${LANE_TEST_CMD_1:-}" ]; then set -- "$$@" --test-command "$$LANE_TEST_CMD_1"; fi; \
+	if [ -n "$${LANE_TEST_CMD_2:-}" ]; then set -- "$$@" --test-command "$$LANE_TEST_CMD_2"; fi; \
+	if [ "$${MERGE_READY:-0}" = "1" ]; then set -- "$$@" --merge-ready; fi; \
+	if [ "$${DRY_RUN:-0}" = "1" ]; then set -- "$$@" --dry-run; fi; \
+	if [ -n "$${MESSAGE:-}" ]; then \
+		report_subject="$${SUBJECT:-}"; \
+		if [ -z "$$report_subject" ] || [ "$$report_subject" = "$$LANE next assignment" ]; then \
+			set -- "$$@" --message "$$MESSAGE"; \
+		else \
+			set -- "$$@" --message "$$MESSAGE" --subject "$$report_subject"; \
+		fi; \
+	fi; \
 	"$$@"
 
 lane-commit: lane-worker-guard

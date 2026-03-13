@@ -374,6 +374,7 @@ Recommended Codex skills for this workflow:
 
 - `worktree-orchestrator`: decompose a plan into lanes, create worker briefs, assign merge order, and prepare integration checks.
 - `worktree-worker`: self-query lane scope, implement only the delegated slice, and hand the lane back with a merge-ready report.
+- `subfeature-committer`: split the current dirty branch into completed sub-feature commits and prefix commit subjects with the worktree name when operating from a linked worktree.
 - Merge intake remains orchestrator-owned and is executed through the review/merge steps above plus `scripts/worktree-lane`.
 
 Repo-owned skill sources and templates:

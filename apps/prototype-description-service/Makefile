@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive lane-open lane-status lane-report lane-handoff lane-reset lane-path
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-path
 
 # Default target
 help:
@@ -21,6 +21,7 @@ help:
 	@echo "  make lane-open  - Prepare + brief the current worker lane via the root Makefile"
 	@echo "  make lane-status - Show shared MCP + git status for the current worker lane"
 	@echo "  make lane-report - Submit a lane handback via the root Makefile"
+	@echo "  make lane-commit - Stage and commit lane-owned changes via the root Makefile"
 	@echo "  make lane-handoff - Show lane status and submit the default worker handoff"
 	@echo "  make lane-reset - Reset the current worker lane to a ref via the root Makefile"
 	@echo ""
@@ -34,7 +35,7 @@ help:
 mcp:
 	@cd ../.. && make mcp-start
 
-lane-open lane-status lane-report lane-handoff lane-reset lane-path:
+lane-open lane-status lane-report lane-commit lane-handoff lane-reset lane-path:
 	@ROOT_MAKE_DIR="$$(git rev-parse --show-toplevel)"; \
 	$(MAKE) -C "$$ROOT_MAKE_DIR" $@
 

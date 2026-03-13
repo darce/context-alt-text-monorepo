@@ -72,7 +72,7 @@ Notes:
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-inbox` is the worker polling command. It shows open orchestrator-to-worker lane messages, the latest worker report, recent lane activity, and git status.
 - `make lane-prompt` turns the current lane inbox into a concise worker prompt. This is the most reliable handoff bridge from MCP state into a fresh agent run.
-- `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. It is better than trying to push text into an already-running interactive session.
+- `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt, requires a structured final handoff payload, and then auto-submits either `lane-handoff` or a blocked `lane-report` based on the result. It is better than trying to push text into an already-running interactive session.
 - `make handoff-inbox` is the orchestrator polling command. It shows open worker-to-orchestrator lane messages and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch ... MESSAGE="..."` is the orchestrator assignment command. It records a lane message in MCP and regenerates `CURRENT_TASK.md`.
 - `make handoff-dispatch` is the orchestrator handoff-fanout command. Run reviews or update handoff state from the orchestrator root, then route unassigned open review findings, blockers, and next actions to the correct lane so workers see them in `make lane-inbox`.
@@ -81,7 +81,7 @@ Notes:
 - `make lane-handoff` is the normal worker handoff path: it verifies scope, commits lane-owned changes, shows lane status, and then submits a merge-ready report using inferred `TASK`, `LANE`, and default `SESSION`.
 - Merge-ready and blocked worker reports now auto-open a `worker_to_orchestrator` lane message, so the orchestrator can pick them up through `make handoff-inbox` without requiring an extra manual `MESSAGE=...` step.
 - `lane-report` keeps merge-ready handoffs commit-based, but blocked guidance reports can be submitted without lane commits when a sandbox or environment issue prevented code changes. Dirty worktrees are still rejected unless explicitly allowed.
-- `make lane-report ... STATUS=blocked MESSAGE="..."` is the right escape hatch when a worker verified the slice, could not safely edit, and needs the orchestrator to reassign or reopen the lane with different access.
+- `make lane-report ... STATUS=blocked MESSAGE="..."` remains available as a manual escape hatch, but `make lane-run` should normally infer and submit that blocked handoff automatically from the worker's structured final result.
 - `make lane-refresh` refreshes a worker lane from the orchestrator branch. It auto-stashes dirty lane state first, then resets or rebases depending on whether the lane already has unique commits. Workflow tooling is expected to arrive through committed orchestrator branch state, not by copying live root files into the lane.
 - If root workflow tooling is locally dirty, `make lane-refresh` refuses to run until those orchestrator changes are committed. That keeps worker branches clean.
 - `make lane-clean` removes legacy copied tooling drift from a lane without touching lane-owned product files.

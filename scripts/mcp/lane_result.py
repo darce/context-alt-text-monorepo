@@ -1,0 +1,170 @@
+#!/usr/bin/env python3
+from __future__ import annotations
+
+import argparse
+import json
+import subprocess
+import sys
+from pathlib import Path
+from typing import Any
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(description="Handle structured lane run results.")
+    subparsers = parser.add_subparsers(dest="command", required=True)
+
+    subparsers.add_parser("schema", help="Print the JSON schema for codex exec lane results.")
+
+    handoff = subparsers.add_parser("handoff", help="Turn a structured codex result into a lane handoff.")
+    handoff.add_argument("--orchestrator-root", required=True)
+    handoff.add_argument("--task-ref", required=True)
+    handoff.add_argument("--lane-id", required=True)
+    handoff.add_argument("--session", required=True)
+    handoff.add_argument("--worktree-path", required=True)
+    handoff.add_argument("--result-file", required=True)
+    handoff.add_argument("--dry-run", action="store_true")
+
+    return parser.parse_args()
+
+
+def _schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "required": ["handoff_action", "summary", "details", "tests_run", "blockers"],
+        "properties": {
+            "handoff_action": {
+                "type": "string",
+                "enum": ["merge_ready", "needs_guidance"],
+                "description": "Use merge_ready only when lane-owned code changes were made and are ready for orchestrator review. Use needs_guidance for sandbox failures, verification blockers, already-resolved findings needing orchestrator review, or any case with no merge-ready commit.",
+            },
+            "summary": {
+                "type": "string",
+                "minLength": 1,
+                "description": "One short sentence the orchestrator can scan quickly.",
+            },
+            "details": {
+                "type": "string",
+                "minLength": 1,
+                "description": "Concise explanation of what changed or what was verified, plus why the lane is ready or blocked.",
+            },
+            "tests_run": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Only the commands actually run in this session.",
+            },
+            "blockers": {
+                "type": "array",
+                "items": {"type": "string"},
+                "description": "Concrete blockers or asks for the orchestrator. Use an empty array when none.",
+            },
+        },
+    }
+
+
+def _load_result(path: Path) -> dict[str, Any]:
+    payload = json.loads(path.read_text())
+    if not isinstance(payload, dict):
+        raise RuntimeError("Expected JSON object in result file.")
+    return payload
+
+
+def _normalize_text(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def _normalize_list(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return [_normalize_text(item) for item in value if _normalize_text(item)]
+
+
+def _compose_message(details: str, tests_run: list[str], blockers: list[str]) -> str:
+    parts = [details]
+    if tests_run:
+        parts.append("Tests run: " + "; ".join(tests_run))
+    if blockers:
+        parts.append("Blockers: " + "; ".join(blockers))
+    return " ".join(part for part in parts if part)
+
+
+def _build_make_command(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    worktree_path: Path,
+    result: dict[str, Any],
+) -> list[str]:
+    action = _normalize_text(result.get("handoff_action"))
+    summary = _normalize_text(result.get("summary"))
+    details = _normalize_text(result.get("details"))
+    tests_run = _normalize_list(result.get("tests_run"))
+    blockers = _normalize_list(result.get("blockers"))
+    message = _compose_message(details, tests_run, blockers)
+
+    if not action:
+        raise RuntimeError("Missing handoff_action in result payload.")
+    if not summary:
+        raise RuntimeError("Missing summary in result payload.")
+    if not details:
+        raise RuntimeError("Missing details in result payload.")
+
+    base = [
+        "make",
+        "-f",
+        str(orchestrator_root / "Makefile"),
+        "-C",
+        str(worktree_path),
+    ]
+    if action == "merge_ready":
+        return base + [
+            "lane-handoff",
+            f"TASK={task_ref}",
+            f"LANE={lane_id}",
+            f"SESSION={session}",
+            f"SUMMARY={summary}",
+            f"MESSAGE={message}",
+        ]
+    if action == "needs_guidance":
+        return base + [
+            "lane-report",
+            f"TASK={task_ref}",
+            f"LANE={lane_id}",
+            f"SESSION={session}",
+            "STATUS=blocked",
+            "MERGE_READY=0",
+            f"SUMMARY={summary}",
+            f"MESSAGE={message}",
+        ]
+    raise RuntimeError(f"Unsupported handoff_action: {action}")
+
+
+def main() -> int:
+    args = _parse_args()
+    if args.command == "schema":
+        print(json.dumps(_schema(), indent=2))
+        return 0
+
+    result_path = Path(args.result_file).expanduser().resolve()
+    result = _load_result(result_path)
+    cmd = _build_make_command(
+        orchestrator_root=Path(args.orchestrator_root).expanduser().resolve(),
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        session=args.session,
+        worktree_path=Path(args.worktree_path).expanduser().resolve(),
+        result=result,
+    )
+
+    if args.dry_run:
+        print(json.dumps({"command": cmd}, indent=2))
+        return 0
+
+    completed = subprocess.run(cmd, check=False)
+    return completed.returncode
+
+
+if __name__ == "__main__":
+    sys.exit(main())

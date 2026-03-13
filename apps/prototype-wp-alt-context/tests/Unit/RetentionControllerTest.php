@@ -148,6 +148,26 @@ class RetentionControllerTest extends TestCase
         $this->assertSame('{"retention_mode":"purge_on_demand"}', $calls[0]['args']['body']);
     }
 
+    public function testUpdatePolicySanitizesRetentionModeBeforeProxying(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['retention_mode' => 'purge_on_demand']),
+        ]);
+
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('PATCH', '/acx/v1/retention/policy');
+        $request->set_body_params(['retention_mode' => '  PURGE_ON_DEMAND  ']);
+
+        $response = $controller->update_policy($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame(
+            '{"retention_mode":"purge_on_demand"}',
+            $this->getHttpCalls()[0]['args']['body']
+        );
+    }
+
     public function testTriggerExportInvalidatesCacheAfterSuccessfulProxy(): void
     {
         $tenantId = md5((string) \get_site_url());
@@ -207,6 +227,43 @@ class RetentionControllerTest extends TestCase
         $this->assertCount(1, $calls);
         $this->assertStringContainsString('/retention/purge', $calls[0]['url']);
         $this->assertSame('{"confirm":true,"scope":"all"}', $calls[0]['args']['body']);
+    }
+
+    public function testTriggerPurgeSanitizesScopeAndBooleanConfirmationBeforeProxying(): void
+    {
+        $this->queueHttpResponse([
+            'response' => ['code' => 200, 'message' => 'OK'],
+            'body' => json_encode(['deleted_counts' => ['clusters' => 1], 'scope' => 'all']),
+        ]);
+
+        $syncJob = new RetentionControllerSyncPullJobSpy();
+        $controller = new RetentionController($syncJob);
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/purge');
+        $request->set_body_params([
+            'confirm' => ' TRUE ',
+            'scope' => ' ALL ',
+        ]);
+
+        $response = $controller->trigger_purge($request);
+
+        $this->assertInstanceOf(\WP_REST_Response::class, $response);
+        $this->assertSame('{"confirm":true,"scope":"all"}', $this->getHttpCalls()[0]['args']['body']);
+    }
+
+    public function testTriggerPurgeRejectsFalseStringConfirmation(): void
+    {
+        $controller = new RetentionController();
+        $request = new WP_REST_Request('POST', '/acx/v1/retention/purge');
+        $request->set_body_params([
+            'confirm' => ' FALSE ',
+            'scope' => ' all ',
+        ]);
+
+        $response = $controller->trigger_purge($request);
+
+        $this->assertTrue(is_wp_error($response));
+        $this->assertSame('retention_purge_confirmation_required', $response->get_error_code());
+        $this->assertSame([], $this->getHttpCalls());
     }
 
     public function testTriggerPurgeReturnsErrorWhenSyncRefreshIsUnavailable(): void

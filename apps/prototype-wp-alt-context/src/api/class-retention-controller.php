@@ -7,7 +7,6 @@ namespace AltContext\Api;
 require_once __DIR__ . '/../sovereign/sync/interface-sync-pull-job.php';
 
 use AltContext\Sovereign\Sync\SyncPullJobInterface;
-use AltContext\Sovereign\Sync\SyncPullResult;
 use WP_Error;
 use WP_REST_Request;
 use WP_REST_Response;
@@ -17,6 +16,8 @@ use function in_array;
 use function is_array;
 use function is_string;
 use function register_rest_route;
+use function rest_sanitize_boolean;
+use function sanitize_key;
 use function set_transient;
 use function trim;
 
@@ -249,19 +250,10 @@ class RetentionController extends AbstractRecognitionProxyController {
 			return '';
 		}
 
-		return trim( $value );
+		return sanitize_key( trim( $value ) );
 	}
 
 	private function is_confirmed( mixed $value ): bool {
-		if ( true === $value || 1 === $value || '1' === $value ) {
-			return true;
-		}
-
-		if ( is_string( $value ) ) {
-			$normalized = trim( $value );
-			return in_array( $normalized, array( 'true', 'yes', 'on' ), true );
-		}
-
-		return false;
+		return true === rest_sanitize_boolean( $value );
 	}
 }

@@ -32,6 +32,7 @@ DRY_RUN ?= 0
 REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 1
 CODEX_ARGS ?=
+CODEX_BIN ?= $(shell command -v codex 2>/dev/null || true)
 PHASE5_LANES := backend-domain backend-http wp-proxy frontend
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
@@ -518,7 +519,14 @@ lane-prompt: lane-guard
 
 lane-run: lane-guard
 	@set -eu; \
-	if ! command -v codex >/dev/null 2>&1; then \
+	CODEX_CMD="$(CODEX_BIN)"; \
+	if [ -z "$$CODEX_CMD" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex" ]; then \
+		CODEX_CMD="/Applications/Codex.app/Contents/Resources/codex"; \
+	fi; \
+	if [ -z "$$CODEX_CMD" ] && [ -x "$$HOME/.local/bin/codex" ]; then \
+		CODEX_CMD="$$HOME/.local/bin/codex"; \
+	fi; \
+	if [ -z "$$CODEX_CMD" ]; then \
 		echo "codex CLI is required for lane-run."; \
 		exit 1; \
 	fi; \
@@ -544,7 +552,7 @@ lane-run: lane-guard
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
 			--worktree-path "$(LANE_WORKTREE_TARGET)" > "$$PROMPT_FILE"; \
-	codex exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) - < "$$PROMPT_FILE"
+	"$$CODEX_CMD" exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) - < "$$PROMPT_FILE"
 
 lane-dispatch: lane-orchestrator-guard
 	@if [ -z "$(MESSAGE)" ]; then \

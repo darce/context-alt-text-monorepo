@@ -11,18 +11,21 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style lane-open lane-status lane-report lane-reset lane-guard lane-path
 
 CURRENT_BRANCH := $(shell git rev-parse --abbrev-ref HEAD 2>/dev/null)
-TASK ?=
-LANE ?=
-SESSION ?=
-SUMMARY ?=
+ACTIVE_TASK := $(shell agent-handoff-mcp --workspace-root $(CURDIR) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
+INFERRED_LANE := $(if $(filter codex/p5-backend-domain,$(CURRENT_BRANCH)),backend-domain,$(if $(filter codex/p5-backend-http,$(CURRENT_BRANCH)),backend-http,$(if $(filter codex/p5-wp-proxy,$(CURRENT_BRANCH)),wp-proxy,$(if $(filter codex/p5-frontend,$(CURRENT_BRANCH)),frontend,))))
+TASK ?= $(ACTIVE_TASK)
+LANE ?= $(INFERRED_LANE)
+SESSION ?= $(TASK)-$(LANE)
+SUMMARY ?= $(LANE) lane ready for orchestrator review.
 MESSAGE ?=
 STATUS ?= submitted
-MERGE_READY ?= 0
+MERGE_READY ?= 1
 DRY_RUN ?= 0
 REF ?= $(CURRENT_BRANCH)
+ENTER_SHELL ?= 0
 PHASE5_LANES := backend-domain backend-http wp-proxy frontend
 
 LANE_BRANCH :=
@@ -117,9 +120,12 @@ help:
 	@echo ""
 	@echo "Worktree Lanes (task-aware wrappers around scripts/worktree-lane):"
 	@echo "  make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "    Add ENTER_SHELL=1 to drop into a subshell in the worktree after setup."
 	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend SESSION=<name> SUMMARY=\"...\" [MERGE_READY=1]"
+	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "    Optional overrides: SESSION=<name> SUMMARY=\"...\" MERGE_READY=0 MESSAGE=\"...\""
 	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
+	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  Enumerated Phase 5 lanes: $(PHASE5_LANES)"
 
 # =============================================================================
@@ -257,11 +263,13 @@ handoff-integrity-check:
 lane-guard:
 	@if [ -z "$(TASK)" ]; then \
 		echo "TASK is required."; \
+		echo "No active task could be inferred from MCP state."; \
 		echo "Example: make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"; \
 		exit 1; \
 	fi
 	@if [ -z "$(LANE)" ]; then \
 		echo "LANE is required."; \
+		echo "No lane could be inferred from branch $(CURRENT_BRANCH)."; \
 		echo "Allowed lanes for Phase 5: $(PHASE5_LANES)"; \
 		exit 1; \
 	fi
@@ -304,7 +312,16 @@ lane-open: lane-guard
 		$(LANE_DOC_ARGS) \
 		$(LANE_TEST_ARGS) \
 		$(LANE_NON_GOAL_ARGS) \
-		--definition "$(LANE_DONE_DEFINITION)"
+		--definition "$(LANE_DONE_DEFINITION)"; \
+	if [ "$(ENTER_SHELL)" = "1" ] && [ "$(DRY_RUN)" != "1" ]; then \
+		echo ""; \
+		echo "Opening interactive shell in $(LANE_WORKTREE)"; \
+		cd "$(LANE_WORKTREE)" && exec "$${SHELL:-/bin/zsh}" -l; \
+	else \
+		echo ""; \
+		echo "Worktree ready at $(LANE_WORKTREE)"; \
+		echo "Next step: cd \"$(LANE_WORKTREE)\""; \
+	fi
 
 lane-status: lane-guard
 	@set -eu; \
@@ -316,16 +333,6 @@ lane-status: lane-guard
 	git -C "$(LANE_WORKTREE)" status -sb
 
 lane-report: lane-guard
-	@if [ -z "$(SESSION)" ]; then \
-		echo "SESSION is required."; \
-		echo "Example: make lane-report TASK=$(TASK) LANE=$(LANE) SESSION=phase5-frontend SUMMARY=\"Frontend slice ready\" MERGE_READY=1"; \
-		exit 1; \
-	fi
-	@if [ -z "$(SUMMARY)" ]; then \
-		echo "SUMMARY is required."; \
-		echo "Example: make lane-report TASK=$(TASK) LANE=$(LANE) SESSION=phase5-frontend SUMMARY=\"Frontend slice ready\" MERGE_READY=1"; \
-		exit 1; \
-	fi
 	@set -eu; \
 	set -- scripts/worktree-lane report \
 		--orchestrator-root "$(CURDIR)" \
@@ -356,6 +363,9 @@ lane-reset: lane-guard
 		git -C "$(LANE_WORKTREE)" clean -fd; \
 		git -C "$(LANE_WORKTREE)" status -sb; \
 	fi
+
+lane-path: lane-guard
+	@printf '%s\n' "$(LANE_WORKTREE)"
 
 # =============================================================================
 # Development Shortcuts

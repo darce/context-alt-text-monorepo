@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive lane-open lane-status lane-report lane-reset lane-path
 
 # Default target
 help:
@@ -18,6 +18,10 @@ help:
 	@echo "  make clean      - Remove cache and build files"
 	@echo "  make reset      - Drop and recreate the local database"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
+	@echo "  make lane-open  - Prepare + brief the current worker lane via the root Makefile"
+	@echo "  make lane-status - Show shared MCP + git status for the current worker lane"
+	@echo "  make lane-report - Submit a lane handback via the root Makefile"
+	@echo "  make lane-reset - Reset the current worker lane to a ref via the root Makefile"
 	@echo ""
 	@echo "Log Management:"
 	@echo "  make logs-tail    - Tail the main recognition log"
@@ -28,6 +32,9 @@ help:
 # Start MCP server (delegates to root Makefile)
 mcp:
 	@cd ../.. && make mcp-start
+
+lane-open lane-status lane-report lane-reset lane-path:
+	@cd ../.. && $(MAKE) $@ TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" MESSAGE="$(MESSAGE)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" REF="$(REF)" ENTER_SHELL="$(ENTER_SHELL)"
 
 # Start local PostgreSQL service (native Homebrew install)
 postgres-start:

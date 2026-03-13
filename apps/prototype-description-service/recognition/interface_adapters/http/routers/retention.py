@@ -140,10 +140,7 @@ async def trigger_export(
         if exportable_identities > settings.retention_export_max_identities:
             raise HTTPException(
                 status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
-                detail=(
-                    "tenant export exceeds synchronous response limit; "
-                    "use the async export flow once available"
-                ),
+                detail=("tenant export exceeds synchronous response limit; use the async export flow once available"),
             )
         payload = await service.export_tenant_data(tenant_id, _actor_from_auth(auth))
     except HTTPException:

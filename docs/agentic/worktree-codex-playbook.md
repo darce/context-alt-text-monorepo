@@ -97,6 +97,7 @@ make lane-inbox
 
 The worker should not start coding before `make lane-inbox` shows the open orchestrator dispatch.
 If root workflow tooling changed since the lane was opened, commit those root changes and then run `make lane-refresh` once before trusting the local lane commands.
+If you want a fresh non-interactive worker run from current MCP state, use `make lane-run` instead of trying to push a prompt into an already-running session.
 
 ## Worker loop
 
@@ -104,6 +105,7 @@ Once inside the worker worktree:
 
 ```bash
 make lane-inbox
+make lane-prompt
 make lane-refresh
 ```
 
@@ -179,6 +181,7 @@ Worker:
 
 ```bash
 make lane-inbox
+make lane-prompt
 make lane-handoff
 ```
 

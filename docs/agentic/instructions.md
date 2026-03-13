@@ -294,8 +294,9 @@ agent-handoff-mcp --workspace-root <current-worktree> --state-dir <orchestrator>
 
 3. Use the returned `lane_id`, `branch`, `worktree_path`, notes, messages, and recent reports as the worker's source of truth for the current slice.
 4. Preferred polling command: run `make lane-inbox` from the worker worktree. It shows open orchestrator-to-worker dispatch messages first, then the latest worker report, then lane activity and git status.
-5. If no lane exists for the current worktree, the orchestrator should create one with `lane-upsert` before implementation continues.
-6. Workers should include `actor.lane_id` on MCP writes whenever possible so decisions, tests, blockers, actions, and findings remain attributable to the lane.
+5. Preferred prompt bridge: run `make lane-prompt` to turn the current lane inbox into a concise actionable worker prompt. This is the stable interface for launching fresh worker sessions from MCP state.
+6. If no lane exists for the current worktree, the orchestrator should create one with `lane-upsert` before implementation continues.
+7. Workers should include `actor.lane_id` on MCP writes whenever possible so decisions, tests, blockers, actions, and findings remain attributable to the lane.
 
 How workers communicate with the orchestrator:
 
@@ -366,6 +367,8 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make lane-clean` removes legacy copied tooling drift (Makefiles, templates, helper scripts) from a worker lane without touching lane-owned product files.
 - `make lane-commit` still ignores those tooling paths during its out-of-scope guard so older lane refreshes do not block product commits.
 - `make lane-inbox` is the worker polling command. It reads open `orchestrator_to_worker` lane messages from MCP, then shows the latest worker report, recent lane activity, and git status.
+- `make lane-prompt` renders the actionable lane inbox as a deterministic worker prompt. Use it when starting or re-starting a worker session from current MCP state.
+- `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. This is the robust automation path because it avoids trying to inject text into an already-running interactive session.
 - `make handoff-inbox` is the orchestrator polling command. It reads open `worker_to_orchestrator` lane messages from MCP and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch` is the orchestrator assignment command. It writes an open lane message for a specific worker lane and regenerates `CURRENT_TASK.md` so the dispatch is mirrored for humans.
 - `make handoff-dispatch` is the orchestrator handoff-routing command. It reads open handoff review findings, blockers, and next actions from the root, stamps any routeable unassigned items onto the owning lane, and sends lane messages so the correct worktree sees the queue in `make lane-inbox`.

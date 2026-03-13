@@ -47,6 +47,8 @@ make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend ENTER_SHELL=0
 make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-prompt TASK=phase-5-retention-export-and-audit-controls LANE=frontend
+make lane-run TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=frontend MESSAGE="Add the remaining Phase 6 retention Vitest coverage."
 make handoff-inbox TASK=phase-5-retention-export-and-audit-controls
 make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls
@@ -69,6 +71,8 @@ Notes:
 - Set `ENTER_SHELL=0` if you want setup only and prefer to `cd` manually afterward.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-inbox` is the worker polling command. It shows open orchestrator-to-worker lane messages, the latest worker report, recent lane activity, and git status.
+- `make lane-prompt` turns the current lane inbox into a concise worker prompt. This is the most reliable handoff bridge from MCP state into a fresh agent run.
+- `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. It is better than trying to push text into an already-running interactive session.
 - `make handoff-inbox` is the orchestrator polling command. It shows open worker-to-orchestrator lane messages and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch ... MESSAGE="..."` is the orchestrator assignment command. It records a lane message in MCP and regenerates `CURRENT_TASK.md`.
 - `make handoff-dispatch` is the orchestrator handoff-fanout command. Run reviews or update handoff state from the orchestrator root, then route unassigned open review findings, blockers, and next actions to the correct lane so workers see them in `make lane-inbox`.

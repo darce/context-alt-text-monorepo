@@ -11,7 +11,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch lane-open lane-status lane-inbox lane-prompt lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -31,6 +31,7 @@ MERGE_READY ?= 1
 DRY_RUN ?= 0
 REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 1
+CODEX_ARGS ?=
 PHASE5_LANES := backend-domain backend-http wp-proxy frontend
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
@@ -149,6 +150,10 @@ help:
 	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "    Worker default: poll open dispatch messages, latest handoff, and lane activity from shared MCP state."
+	@echo "  make lane-prompt TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "    Render a concise worker prompt from the current lane inbox."
+	@echo "  make lane-run TASK=phase-5-retention-export-and-audit-controls LANE=frontend [CODEX_ARGS='...']"
+	@echo "    Launch a fresh codex exec in the lane worktree using the generated lane prompt."
 	@echo "  make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=frontend MESSAGE=\"...\""
 	@echo "    Orchestrator default: set/update the lane to active and send an open orchestrator->worker assignment message."
 	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
@@ -502,6 +507,44 @@ lane-inbox: lane-guard
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$$WORKTREE_PATH"
+
+lane-prompt: lane-guard
+	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--worktree-path "$(LANE_WORKTREE_TARGET)"
+
+lane-run: lane-guard
+	@set -eu; \
+	if ! command -v codex >/dev/null 2>&1; then \
+		echo "codex CLI is required for lane-run."; \
+		exit 1; \
+	fi; \
+	if ! PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--worktree-path "$(LANE_WORKTREE_TARGET)" \
+			--check >/dev/null 2>&1; then \
+		status=$$?; \
+		if [ "$$status" -eq 3 ]; then \
+			echo "No actionable lane inbox items for $(LANE)."; \
+			exit 0; \
+		fi; \
+		exit "$$status"; \
+	fi; \
+	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX.txt")"; \
+	trap 'rm -f "$$PROMPT_FILE"' EXIT INT TERM; \
+	PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/lane_prompt.py" \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--worktree-path "$(LANE_WORKTREE_TARGET)" > "$$PROMPT_FILE"; \
+	codex exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) - < "$$PROMPT_FILE"
 
 lane-dispatch: lane-orchestrator-guard
 	@if [ -z "$(MESSAGE)" ]; then \

@@ -674,6 +674,14 @@ lane-commit: lane-worker-guard
 lane-handoff: lane-worker-guard
 	@set -eu; \
 	$(MAKE) lane-commit TASK="$(TASK)" LANE="$(LANE)" DRY_RUN="$(DRY_RUN)"; \
+	if [ "$(DRY_RUN)" != "1" ]; then \
+		AHEAD_COUNT="$$(git -C "$(LANE_WORKTREE_TARGET)" rev-list --count "$(ORCHESTRATOR_BRANCH)..HEAD" 2>/dev/null || printf '0')"; \
+		if [ "$$AHEAD_COUNT" = "0" ] && [ "$(STATUS)" != "blocked" ]; then \
+			echo "No unique lane commits exist for $(LANE), so there is nothing merge-ready to hand off."; \
+			echo "If the lane is blocked without code changes, use: make lane-report STATUS=blocked MERGE_READY=0 SUMMARY=\"...\" MESSAGE=\"...\""; \
+			exit 1; \
+		fi; \
+	fi; \
 	echo ""; \
 	$(MAKE) lane-status TASK="$(TASK)" LANE="$(LANE)"; \
 	echo ""; \

@@ -69,6 +69,7 @@ composer.lock
 **/public/assets/dist/
 /dist/
 /build/
+packages/agent-handoff-mcp/build/
 
 # Python virtual environments (should only exist in apps/recognition-service)
 .venv/

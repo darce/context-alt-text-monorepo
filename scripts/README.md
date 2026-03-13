@@ -58,7 +58,7 @@ Notes:
 - `ENTER_SHELL=1` is the closest equivalent: it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-commits ...` shows the commits reachable from the lane branch that are not yet on the current orchestrator branch.
-- `make lane-intake ...` cherry-picks those lane-only commits in order. Run it from the orchestrator root, not from a worker worktree.
+- `make lane-intake ...` prints those lane-only commits first, then cherry-picks them in order. Run it from the orchestrator root, not from a worker worktree.
 
 It wraps:
 

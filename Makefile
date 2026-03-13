@@ -132,6 +132,7 @@ help:
 	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
 	@echo "  make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend [DRY_RUN=1]"
+	@echo "    Prints the unique lane commits first, then cherry-picks them in order."
 	@echo "  Enumerated Phase 5 lanes: $(PHASE5_LANES)"
 
 # =============================================================================
@@ -396,9 +397,14 @@ lane-intake: lane-orchestrator-guard
 	if [ -z "$$COMMITS" ]; then \
 		echo "No commits to intake from $(LANE_BRANCH)."; \
 	elif [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] git cherry-pick $$COMMITS"; \
+		echo "Lane commits from $(LANE_BRANCH):"; \
 		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
+		echo ""; \
+		echo "[dry-run] git cherry-pick $$COMMITS"; \
 	else \
+		echo "Lane commits from $(LANE_BRANCH):"; \
+		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
+		echo ""; \
 		git cherry-pick $$COMMITS; \
 	fi
 

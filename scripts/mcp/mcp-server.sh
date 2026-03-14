@@ -56,11 +56,14 @@ if [ ${#PYTHON_CMD[@]} -eq 0 ]; then
 fi
 
 SERVER_CMD=()
-if command -v agent-handoff-mcp >/dev/null 2>&1; then
-    SERVER_CMD=(agent-handoff-mcp)
-else
+if [ -f "$PACKAGE_SRC/agent_handoff_mcp/cli.py" ]; then
     export PYTHONPATH="$PACKAGE_SRC${PYTHONPATH:+:$PYTHONPATH}"
     SERVER_CMD=("${PYTHON_CMD[@]}" -m agent_handoff_mcp)
+elif command -v agent-handoff-mcp >/dev/null 2>&1; then
+    SERVER_CMD=(agent-handoff-mcp)
+else
+    echo "❌ agent-handoff-mcp runtime not found."
+    exit 1
 fi
 
 case "${1:-run}" in
@@ -77,7 +80,7 @@ case "${1:-run}" in
         echo ""
         echo "Usage: $0 run|doctor"
         echo ""
-        echo "Prefers installed 'agent-handoff-mcp'; falls back to the repo-local package."
+        echo "Prefers the repo-local agent-handoff-mcp package; falls back to an installed binary."
         echo "VS Code calls 'run' automatically via .vscode/mcp.json."
         ;;
 esac

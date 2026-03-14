@@ -32,6 +32,13 @@ require_command() {
 }
 
 resolve_mcp_command() {
+  require_command python3
+
+  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
+    MCP_CMD=(env "PYTHONPATH=$REPO_ROOT/packages/agent-handoff-mcp/src${PYTHONPATH:+:$PYTHONPATH}" python3 -m agent_handoff_mcp)
+    return
+  fi
+
   if command -v agent-handoff-mcp >/dev/null 2>&1; then
     MCP_CMD=(agent-handoff-mcp)
     return
@@ -39,12 +46,6 @@ resolve_mcp_command() {
 
   if [ -x "$HOME/.local/bin/agent-handoff-mcp" ]; then
     MCP_CMD=("$HOME/.local/bin/agent-handoff-mcp")
-    return
-  fi
-
-  require_command python3
-  if [ -f "$REPO_ROOT/packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py" ]; then
-    MCP_CMD=(env "PYTHONPATH=$REPO_ROOT/packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp.cli)
     return
   fi
 

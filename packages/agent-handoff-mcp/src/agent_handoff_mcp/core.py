@@ -242,11 +242,15 @@ def _get_db_connection() -> sqlite3.Connection:
     config = get_runtime_config()
     config.state_dir.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(config.db_path)
-    conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL;")
-    conn.execute("PRAGMA busy_timeout=5000;")
-    conn.executescript(HANDOFF_SCHEMA_SQL)
-    _apply_handoff_migrations(conn)
+    try:
+        conn.row_factory = sqlite3.Row
+        conn.execute("PRAGMA journal_mode=WAL;")
+        conn.execute("PRAGMA busy_timeout=5000;")
+        conn.executescript(HANDOFF_SCHEMA_SQL)
+        _apply_handoff_migrations(conn)
+    except Exception:
+        conn.close()
+        raise
     return conn
 
 
@@ -430,32 +434,19 @@ def _write_current_task_md_for_task(conn: sqlite3.Connection, task_ref: str) -> 
 def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
     try:
         needs_backfill = False
+        # lane_id migration -- add to all per-task tables once
+        for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings"):
+            if not _has_column(conn, table, "lane_id"):
+                conn.execute(f"ALTER TABLE {table} ADD COLUMN lane_id TEXT")
+        # review_findings extra columns
         for column, sql in [
-            ("lane_id", "ALTER TABLE decisions ADD COLUMN lane_id TEXT"),
-            ("lane_id", "ALTER TABLE blockers ADD COLUMN lane_id TEXT"),
-            ("lane_id", "ALTER TABLE next_actions ADD COLUMN lane_id TEXT"),
-            ("lane_id", "ALTER TABLE verified_tests ADD COLUMN lane_id TEXT"),
-            ("lane_id", "ALTER TABLE review_findings ADD COLUMN lane_id TEXT"),
             ("resolution_notes", "ALTER TABLE review_findings ADD COLUMN resolution_notes TEXT"),
             ("reopen_count", "ALTER TABLE review_findings ADD COLUMN reopen_count INTEGER NOT NULL DEFAULT 0"),
             ("last_reopen_reason", "ALTER TABLE review_findings ADD COLUMN last_reopen_reason TEXT"),
             ("last_reopened_at", "ALTER TABLE review_findings ADD COLUMN last_reopened_at TEXT"),
             ("updated_at", "ALTER TABLE review_findings ADD COLUMN updated_at TEXT"),
         ]:
-            table_name = "review_findings"
-            if column == "lane_id":
-                if not _has_column(conn, "decisions", column):
-                    conn.execute("ALTER TABLE decisions ADD COLUMN lane_id TEXT")
-                if not _has_column(conn, "blockers", column):
-                    conn.execute("ALTER TABLE blockers ADD COLUMN lane_id TEXT")
-                if not _has_column(conn, "next_actions", column):
-                    conn.execute("ALTER TABLE next_actions ADD COLUMN lane_id TEXT")
-                if not _has_column(conn, "verified_tests", column):
-                    conn.execute("ALTER TABLE verified_tests ADD COLUMN lane_id TEXT")
-                if not _has_column(conn, "review_findings", column):
-                    conn.execute("ALTER TABLE review_findings ADD COLUMN lane_id TEXT")
-                continue
-            if not _has_column(conn, table_name, column):
+            if not _has_column(conn, "review_findings", column):
                 conn.execute(sql)
                 needs_backfill = True
         if not needs_backfill:
@@ -479,12 +470,16 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             )
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
+            import logging
+            logging.getLogger("agent_handoff_mcp").warning("DB locked during migration -- skipping (PRAGMA busy_timeout should prevent this)")
             return
         raise
     try:
         _ensure_review_findings_unique_index(conn)
     except sqlite3.OperationalError as exc:
         if "locked" in str(exc).lower():
+            import logging
+            logging.getLogger("agent_handoff_mcp").warning("DB locked during unique index creation -- skipping")
             return
         raise
 
@@ -817,12 +812,6 @@ def _resolve_import_lane_id(row: dict) -> str | None:
     return _normalize_optional_text(row.get("lane_id"))
 
 
-def _insert_import_rows(conn: sqlite3.Connection, task_ref: str, table: str, sql: str, rows: list[dict], now: str, *, fallback_agent: str, fallback_branch: str, fallback_commit: str | None) -> None:
-    for row in rows:
-        agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
-        conn.execute(sql(row, task_ref, now, agent, branch, commit_sha))
-
-
 def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
     counts: dict[str, int] = {}
     for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages"):
@@ -832,9 +821,17 @@ def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
 
 
 def _resolve_output_path(output_path: str | None, task_ref: str) -> Path:
-    path = Path(output_path) if output_path else _exports_dir() / f"handoff-{task_ref}.json"
-    if not path.is_absolute():
-        path = _workspace_root() / path
+    if output_path:
+        path = Path(output_path)
+        if not path.is_absolute():
+            path = _workspace_root() / path
+    else:
+        safe_task_ref = task_ref.replace("/", "_").replace("..", "_")
+        path = _exports_dir() / f"handoff-{safe_task_ref}.json"
+        resolved = path.resolve()
+        allowed_root = _workspace_root().resolve()
+        if not str(resolved).startswith(str(allowed_root) + "/") and resolved != allowed_root:
+            raise ValueError(f"Output path escapes workspace root: {resolved}")
     path.parent.mkdir(parents=True, exist_ok=True)
     return path
 
@@ -906,9 +903,9 @@ def get_handoff_state(task_ref: str | None = None, top_n_blockers: int = DEFAULT
                 "decisions_recent": _fetch_handoff_rows(conn, table="decisions", where_sql="task_ref = ?", order_sql="created_at DESC", limit=query_limit(top_n_decisions), params=(resolved_task_ref,)),
                 "tests_recent": _fetch_handoff_rows(conn, table="verified_tests", where_sql="task_ref = ?", order_sql="verified_at DESC", limit=query_limit(top_n_tests), params=(resolved_task_ref,)),
                 "findings_open": _fetch_handoff_rows(conn, table="review_findings", where_sql="task_ref = ? AND status = 'open'", order_sql="CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC", limit=query_limit(top_n_findings), params=(resolved_task_ref,)),
-                "worktree_lanes": _fetch_handoff_rows(conn, table="worktree_lanes", where_sql="task_ref = ?", order_sql="updated_at DESC, id DESC", limit=query_limit(top_n_actions), params=(resolved_task_ref,)),
-                "worker_reports_recent": _fetch_handoff_rows(conn, table="worker_reports", where_sql="task_ref = ?", order_sql="created_at DESC, id DESC", limit=query_limit(top_n_decisions), params=(resolved_task_ref,)),
-                "lane_messages_open": _fetch_handoff_rows(conn, table="lane_messages", where_sql=lane_messages_where_sql, order_sql="updated_at DESC, id DESC", limit=query_limit(top_n_blockers), params=lane_messages_params),
+                "worktree_lanes": _fetch_handoff_rows(conn, table="worktree_lanes", where_sql="task_ref = ?", order_sql="updated_at DESC, id DESC", limit=50, params=(resolved_task_ref,)),
+                "worker_reports_recent": _fetch_handoff_rows(conn, table="worker_reports", where_sql="task_ref = ?", order_sql="created_at DESC, id DESC", limit=query_limit(top_n_tests), params=(resolved_task_ref,)),
+                "lane_messages_open": _fetch_handoff_rows(conn, table="lane_messages", where_sql=lane_messages_where_sql, order_sql="updated_at DESC, id DESC", limit=50, params=lane_messages_params),
             }
         )
 

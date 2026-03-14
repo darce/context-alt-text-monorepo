@@ -27,41 +27,48 @@ if [ -z "${PYENV_VERSION:-}" ]; then
     fi
 fi
 
-# Python interpreter — prefer pyenv exec, fallback to system python3
-PYENV_CMD=""
-if command -v pyenv >/dev/null 2>&1; then
-    PYENV_CMD="$(command -v pyenv)"
-elif [ -n "${PYENV_ROOT:-}" ] && [ -x "${PYENV_ROOT}/bin/pyenv" ]; then
-    PYENV_CMD="${PYENV_ROOT}/bin/pyenv"
-fi
+SERVER_CMD=()
+if [ -f "$PACKAGE_SRC/agent_handoff_mcp/cli.py" ]; then
+    # Python interpreter — prefer pyenv exec, fallback to system python3.
+    PYENV_CMD=""
+    if command -v pyenv >/dev/null 2>&1; then
+        PYENV_CMD="$(command -v pyenv)"
+    elif [ -n "${PYENV_ROOT:-}" ] && [ -x "${PYENV_ROOT}/bin/pyenv" ]; then
+        PYENV_CMD="${PYENV_ROOT}/bin/pyenv"
+    fi
 
-PYTHON_CMD=()
-if [ -n "$PYENV_CMD" ]; then
-    if "$PYENV_CMD" exec python3 -c "import sys" >/dev/null 2>&1; then
-        PYTHON_CMD=("$PYENV_CMD" exec python3)
-    elif "$PYENV_CMD" exec python -c "import sys" >/dev/null 2>&1; then
-        PYTHON_CMD=("$PYENV_CMD" exec python)
+    PYTHON_CMD=()
+    if [ -n "$PYENV_CMD" ]; then
+        if "$PYENV_CMD" exec python3 -c "import sys" >/dev/null 2>&1; then
+            PYTHON_CMD=("$PYENV_CMD" exec python3)
+        elif "$PYENV_CMD" exec python -c "import sys" >/dev/null 2>&1; then
+            PYTHON_CMD=("$PYENV_CMD" exec python)
+        fi
+    fi
+
+    if [ ${#PYTHON_CMD[@]} -eq 0 ]; then
+        if command -v python3 >/dev/null 2>&1; then
+            PYTHON_CMD=(python3)
+        elif command -v python >/dev/null 2>&1; then
+            PYTHON_CMD=(python)
+        fi
+    fi
+
+    if [ ${#PYTHON_CMD[@]} -gt 0 ]; then
+        export PYTHONPATH="$PACKAGE_SRC${PYTHONPATH:+:$PYTHONPATH}"
+        SERVER_CMD=("${PYTHON_CMD[@]}" -m agent_handoff_mcp)
     fi
 fi
 
-if [ ${#PYTHON_CMD[@]} -eq 0 ]; then
-    if command -v python3 >/dev/null 2>&1; then
-        PYTHON_CMD=(python3)
-    elif command -v python >/dev/null 2>&1; then
-        PYTHON_CMD=(python)
-    else
+if [ ${#SERVER_CMD[@]} -eq 0 ] && command -v agent-handoff-mcp >/dev/null 2>&1; then
+    SERVER_CMD=(agent-handoff-mcp)
+fi
+
+if [ ${#SERVER_CMD[@]} -eq 0 ]; then
+    if [ -f "$PACKAGE_SRC/agent_handoff_mcp/cli.py" ]; then
         echo "❌ Python not found. Install Python 3.11+ or configure pyenv."
         exit 1
     fi
-fi
-
-SERVER_CMD=()
-if [ -f "$PACKAGE_SRC/agent_handoff_mcp/cli.py" ]; then
-    export PYTHONPATH="$PACKAGE_SRC${PYTHONPATH:+:$PYTHONPATH}"
-    SERVER_CMD=("${PYTHON_CMD[@]}" -m agent_handoff_mcp)
-elif command -v agent-handoff-mcp >/dev/null 2>&1; then
-    SERVER_CMD=(agent-handoff-mcp)
-else
     echo "❌ agent-handoff-mcp runtime not found."
     exit 1
 fi

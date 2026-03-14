@@ -40,6 +40,8 @@ Preferred entrypoint:
 - use the root [Makefile](../Makefile) targets for normal lane orchestration
 - drop to `scripts/worktree-lane` only when you need the lower-level helper directly
 
+App-level Makefiles (`apps/prototype-description-service/Makefile`, `apps/prototype-wp-alt-context/Makefile`) use a `lane-%:` pattern rule that auto-forwards any `lane-*` target to the root Makefile. New lane targets added to root are available in app directories immediately with no app Makefile changes.
+
 Recommended commands:
 
 ```bash

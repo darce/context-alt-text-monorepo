@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake lane-list lane-prompt lane-check lane-run
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive FORCE
 
 # Default target
 help:
@@ -18,22 +18,7 @@ help:
 	@echo "  make clean      - Remove cache and build files"
 	@echo "  make reset      - Drop and recreate the local database"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
-	@echo "  make lane-open  - Prepare + brief the current worker lane via the root Makefile"
-	@echo "  make lane-status - Show shared MCP + git status for the current worker lane"
-	@echo "  make lane-inbox - Show open dispatch messages and latest handoff data for the current worker lane"
-	@echo "  make lane-dispatch - Send a lane assignment via the root Makefile (orchestrator use)"
-	@echo "  make lane-report - Submit a lane handback via the root Makefile"
-	@echo "  make lane-commit - Stage and commit lane-owned changes via the root Makefile"
-	@echo "  make lane-handoff - Verify scope, commit lane-owned changes, then submit the default worker handoff"
-	@echo "  make lane-reset - Reset the current worker lane to a ref via the root Makefile"
-	@echo "  make lane-refresh - Refresh the current worker lane from the orchestrator branch"
-	@echo "  make lane-clean - Remove copied tooling drift from the current worker lane"
-	@echo "  make lane-commits - Show lane commits waiting for orchestrator intake"
-	@echo "  make lane-intake - Intake the current lane from the orchestrator root using a scratch worktree"
-	@echo "  make lane-list - List registered worktree lanes from shared MCP state"
-	@echo "  make lane-prompt - Render the actionable worker prompt from current MCP state"
-	@echo "  make lane-check - Run the lane's configured verification commands"
-	@echo "  make lane-run   - Launch codex exec in the lane worktree with the generated prompt"
+	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
 	@echo ""
 	@echo "Log Management:"
 	@echo "  make logs-tail    - Tail the main recognition log"
@@ -45,9 +30,11 @@ help:
 mcp:
 	@cd ../.. && make mcp-start
 
-lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake lane-list lane-prompt lane-check lane-run:
-	@ROOT_MAKE_DIR="$$(git rev-parse --show-toplevel)"; \
-	$(MAKE) -C "$$ROOT_MAKE_DIR" $@
+# Forward all lane-* targets to root Makefile (single rule, never goes stale)
+FORCE:
+
+lane-%: FORCE
+	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
 
 # Start local PostgreSQL service (native Homebrew install)
 postgres-start:

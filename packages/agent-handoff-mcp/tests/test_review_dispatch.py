@@ -32,6 +32,21 @@ def test_routes_review_findings_by_owned_path() -> None:
     assert lane_id == "backend-http"
 
 
+def test_routes_backend_domain_unit_test_findings_by_owned_path() -> None:
+    module = _load_review_dispatch_module()
+
+    lane_id = module._route_issue(
+        "phase-5-retention-export-and-audit-controls",
+        "review_findings",
+        {
+            "finding_id": "P5-DOM-UT-01",
+            "file_path": "apps/prototype-description-service/recognition/tests/unit/test_purge_service.py",
+        },
+    )
+
+    assert lane_id == "backend-domain"
+
+
 def test_routes_blockers_by_lane_hint_text() -> None:
     module = _load_review_dispatch_module()
 

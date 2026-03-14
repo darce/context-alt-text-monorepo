@@ -26,6 +26,7 @@ TASK_LANE_PATTERNS: dict[str, list[tuple[str, str]]] = {
         ("apps/prototype-description-service/db/", "backend-domain"),
         ("apps/prototype-description-service/recognition/domain/", "backend-domain"),
         ("apps/prototype-description-service/recognition/infrastructure/", "backend-domain"),
+        ("apps/prototype-description-service/recognition/tests/unit/", "backend-domain"),
         ("apps/prototype-description-service/scripts/reset_dev_db.sh", "backend-domain"),
         ("docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md", "backend-domain"),
         ("apps/prototype-description-service/recognition/interface_adapters/http/", "backend-http"),
@@ -135,6 +136,13 @@ def _route_issue(task_ref: str, issue_kind: str, issue: dict[str, Any]) -> str |
     candidates = _collect_text_lane_candidates(task_ref, text)
     if len(candidates) == 1:
         return next(iter(candidates))
+    if len(candidates) > 1:
+        issue_id = issue.get("finding_id") or issue.get("id") or "unknown"
+        print(
+            f"review-dispatch: ambiguous routing for {issue_kind} {issue_id}: "
+            f"matched {sorted(candidates)}, skipping",
+            file=sys.stderr,
+        )
     return None
 
 
@@ -277,6 +285,19 @@ def main() -> int:
         exports_dir=orchestrator_root / ".task-state" / "exports",
     )
     configure_runtime(runtime)
+
+    if args.task_ref not in TASK_LANE_PATTERNS:
+        print(
+            json.dumps(
+                {
+                    "ok": False,
+                    "message": f"No lane routing patterns configured for task '{args.task_ref}'. "
+                    "Add entries to TASK_LANE_PATTERNS in scripts/mcp/review_dispatch.py.",
+                },
+                indent=2,
+            )
+        )
+        return 1
 
     open_items = _load_open_handoff_items(args.task_ref)
     pending_by_kind_and_lane: dict[str, dict[str, list[dict[str, Any]]]] = {

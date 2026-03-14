@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake lane-list lane-prompt lane-check lane-run
 
 # Default target
 help:
@@ -30,6 +30,10 @@ help:
 	@echo "  make lane-clean - Remove copied tooling drift from the current worker lane"
 	@echo "  make lane-commits - Show lane commits waiting for orchestrator intake"
 	@echo "  make lane-intake - Intake the current lane from the orchestrator root using a scratch worktree"
+	@echo "  make lane-list - List registered worktree lanes from shared MCP state"
+	@echo "  make lane-prompt - Render the actionable worker prompt from current MCP state"
+	@echo "  make lane-check - Run the lane's configured verification commands"
+	@echo "  make lane-run   - Launch codex exec in the lane worktree with the generated prompt"
 	@echo ""
 	@echo "Log Management:"
 	@echo "  make logs-tail    - Tail the main recognition log"
@@ -41,7 +45,7 @@ help:
 mcp:
 	@cd ../.. && make mcp-start
 
-lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake:
+lane-open lane-status lane-inbox lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-path lane-commits lane-intake lane-list lane-prompt lane-check lane-run:
 	@ROOT_MAKE_DIR="$$(git rev-parse --show-toplevel)"; \
 	$(MAKE) -C "$$ROOT_MAKE_DIR" $@
 

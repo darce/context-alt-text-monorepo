@@ -27,7 +27,7 @@ Supports `LOCALWP_SOCKET`, `LOCALWP_DB_NAME`, `LOCALWP_DB_USER`, `LOCALWP_DB_PAS
 
 ## mcp/
 
-The canonical MCP runtime for handoff state is now the packaged `agent-handoff-mcp` server under [`packages/agent-handoff-mcp/`](../packages/agent-handoff-mcp/). Clients should launch the installed `agent-handoff-mcp` binary directly. `mcp/mcp-server.sh` remains a local fallback shim for development and diagnostics.
+The canonical MCP runtime for handoff state is now the packaged `agent-handoff-mcp` server under [`packages/agent-handoff-mcp/`](../packages/agent-handoff-mcp/). Repo-owned orchestration tools prefer the checked-out package source so local branch fixes take effect immediately; an installed `agent-handoff-mcp` binary is the fallback outside repo-managed flows. `mcp/mcp-server.sh` remains a local fallback shim for development and diagnostics.
 
 `unified_server.py` is no longer the handoff runtime. It remains only as legacy/reference code for any future extraction of non-handoff repo-intel workflows.
 

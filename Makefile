@@ -18,7 +18,9 @@ CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 
 WORKTREE_ROOT_REAL := $(abspath $(WORKTREE_ROOT))
 ORCHESTRATOR_ROOT := $(patsubst %-p5-backend-domain,%,$(patsubst %-p5-backend-http,%,$(patsubst %-p5-wp-proxy,%,$(patsubst %-p5-frontend,%,$(WORKTREE_ROOT_REAL)))))
 ORCHESTRATOR_BRANCH := $(shell git -C "$(ORCHESTRATOR_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
-ACTIVE_TASK := $(shell agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
+MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
+MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" python3 -m agent_handoff_mcp
+ACTIVE_TASK := $(shell $(MCP_CMD) --workspace-root "$(ORCHESTRATOR_ROOT)" state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 INFERRED_LANE := $(if $(filter codex/p5-backend-domain,$(CURRENT_BRANCH)),backend-domain,$(if $(filter codex/p5-backend-http,$(CURRENT_BRANCH)),backend-http,$(if $(filter codex/p5-wp-proxy,$(CURRENT_BRANCH)),wp-proxy,$(if $(filter codex/p5-frontend,$(CURRENT_BRANCH)),frontend,))))
 TASK ?= $(ACTIVE_TASK)
 LANE ?= $(INFERRED_LANE)
@@ -283,7 +285,7 @@ gemini-cli-setup:
 
 # Generate CURRENT_TASK.md from handoff DB
 task:
-	@agent-handoff-mcp \
+	@$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -292,7 +294,7 @@ task:
 
 # Print handoff dashboard
 dashboard:
-	@agent-handoff-mcp \
+	@$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -301,7 +303,7 @@ dashboard:
 
 # Print full handoff state
 state:
-	@agent-handoff-mcp \
+	@$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -310,7 +312,7 @@ state:
 
 # Validate that active handoff state is ready to close
 handoff-close-check:
-	@agent-handoff-mcp \
+	@$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -335,7 +337,7 @@ handoff-inbox:
 		exit 1; \
 	fi
 	@echo "Open worker handoff messages:"; \
-	agent-handoff-mcp \
+	$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -346,7 +348,7 @@ handoff-inbox:
 		--status open | python3 -c 'import json,sys; data=json.load(sys.stdin); data["messages"]=[m for m in data.get("messages", []) if m.get("direction")=="worker_to_orchestrator"]; data["returned"]=len(data["messages"]); data["total_matching"]=len(data["messages"]); print(json.dumps(data, indent=2))'; \
 	echo ""; \
 	echo "Latest worker reports:"; \
-	agent-handoff-mcp \
+	$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -484,7 +486,7 @@ lane-inbox: lane-guard
 	@set -eu; \
 	WORKTREE_PATH="$(LANE_WORKTREE_TARGET)"; \
 	echo "Open dispatch messages for lane $(LANE):"; \
-	agent-handoff-mcp \
+	$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -495,7 +497,7 @@ lane-inbox: lane-guard
 		--status open | python3 -c 'import json,sys; data=json.load(sys.stdin); data["messages"]=[m for m in data.get("messages", []) if m.get("direction")=="orchestrator_to_worker"]; data["returned"]=len(data["messages"]); data["total_matching"]=len(data["messages"]); print(json.dumps(data, indent=2))'; \
 	echo ""; \
 	echo "Latest worker report for lane $(LANE):"; \
-	agent-handoff-mcp \
+	$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -601,7 +603,7 @@ lane-dispatch: lane-orchestrator-guard
 		echo "Dispatch preview ready for $(LANE)."; \
 		exit 0; \
 	fi; \
-	agent-handoff-mcp \
+	$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -615,7 +617,7 @@ lane-dispatch: lane-orchestrator-guard
 		--owner-agent codex \
 		--status active \
 		--notes "Makefile-managed worker lane for $(TASK)."; \
-	agent-handoff-mcp \
+	$(MCP_CMD) \
 		--workspace-root "$(ORCHESTRATOR_ROOT)" \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" \
@@ -846,7 +848,7 @@ lane-intake: lane-orchestrator-guard
 		echo "Orchestrator root is dirty. Commit, stash, or clean it before lane intake."; \
 		exit 1; \
 	fi; \
-	REPORT_JSON="$$(agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" lane-report-list --task-ref "$(TASK)" --lane-id "$(LANE)" --limit 1)"; \
+	REPORT_JSON="$$($(MCP_CMD) --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" lane-report-list --task-ref "$(TASK)" --lane-id "$(LANE)" --limit 1)"; \
 	REPORT_SUMMARY="$$(printf '%s' "$$REPORT_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=data.get("reports", []); print(reports[0].get("summary","")) if reports else print("")')"; \
 	REPORT_MERGE_READY="$$(printf '%s' "$$REPORT_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=data.get("reports", []); print(reports[0].get("merge_ready",0)) if reports else print(0)')"; \
 	if [ "$$REPORT_MERGE_READY" != "1" ]; then \
@@ -891,7 +893,7 @@ lane-intake: lane-orchestrator-guard
 			( cd "$$SCRATCH_WORKTREE" && sh -lc '$(LANE_TEST_CMD_2)' ); \
 		fi; \
 		git merge --ff-only "$$SCRATCH_BRANCH"; \
-		agent-handoff-mcp --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" lane-upsert --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
+		$(MCP_CMD) --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" lane-upsert --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
 		echo "Lane $(LANE) intake completed cleanly via scratch worktree."; \
 	fi
 

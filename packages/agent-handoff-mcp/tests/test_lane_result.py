@@ -18,7 +18,7 @@ def _load_lane_result_module():
 def test_build_make_command_for_merge_ready() -> None:
     lane_result = _load_lane_result_module()
 
-    cmd = lane_result._build_make_command(
+    commands = lane_result._build_command_plan(
         orchestrator_root=Path("/repo"),
         task_ref="task-1",
         lane_id="frontend",
@@ -33,18 +33,23 @@ def test_build_make_command_for_merge_ready() -> None:
         },
     )
 
-    assert cmd[:5] == ["make", "-f", "/repo/Makefile", "-C", "/repo-frontend"]
-    assert "lane-handoff" in cmd
-    assert "TASK=task-1" in cmd
-    assert "LANE=frontend" in cmd
-    assert "SUMMARY=frontend slice ready" in cmd
-    assert any(item.startswith("MESSAGE=Implemented the assigned test coverage. Tests run: npm run test; npm run typecheck") for item in cmd)
+    assert commands[0] == ["make", "-f", "/repo/Makefile", "-C", "/repo-frontend", "lane-commit", "TASK=task-1", "LANE=frontend"]
+    assert commands[1] == ["make", "-f", "/repo/Makefile", "-C", "/repo-frontend", "lane-status", "TASK=task-1", "LANE=frontend"]
+    report_cmd = commands[2]
+    assert report_cmd[:2] == ["/repo/scripts/worktree-lane", "report"]
+    assert "--merge-ready" in report_cmd
+    assert "--summary" in report_cmd
+    assert "frontend slice ready" in report_cmd
+    assert report_cmd.count("--test-command") == 2
+    assert "npm run test" in report_cmd
+    assert "npm run typecheck" in report_cmd
+    assert "Implemented the assigned test coverage." in report_cmd
 
 
 def test_build_make_command_for_guidance_without_commits() -> None:
     lane_result = _load_lane_result_module()
 
-    cmd = lane_result._build_make_command(
+    commands = lane_result._build_command_plan(
         orchestrator_root=Path("/repo"),
         task_ref="task-1",
         lane_id="backend-domain",
@@ -59,7 +64,13 @@ def test_build_make_command_for_guidance_without_commits() -> None:
         },
     )
 
-    assert "lane-report" in cmd
-    assert "STATUS=blocked" in cmd
-    assert "MERGE_READY=0" in cmd
-    assert any(item.startswith("MESSAGE=The fixes appear present already, but verification could not complete. Tests run: pg_isready -h localhost -p 5432 Blockers: pytest could not create temp files") for item in cmd)
+    assert len(commands) == 1
+    report_cmd = commands[0]
+    assert report_cmd[:2] == ["/repo/scripts/worktree-lane", "report"]
+    assert "--status" in report_cmd
+    assert "blocked" in report_cmd
+    assert report_cmd.count("--test-command") == 1
+    assert "pg_isready -h localhost -p 5432" in report_cmd
+    assert report_cmd.count("--blocker") == 1
+    assert "pytest could not create temp files" in report_cmd
+    assert "The fixes appear present already, but verification could not complete." in report_cmd

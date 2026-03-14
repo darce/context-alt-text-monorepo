@@ -790,10 +790,11 @@ def _resolve_write_actor(conn: sqlite3.Connection, actor: WriteActor | None) -> 
     active_branch = _normalize_optional_text(active["updated_branch"]) if active is not None else None
     active_commit = _normalize_optional_text(active["updated_commit_sha"]) if active is not None else None
     git_branch, git_commit = _detect_git_write_context()
+    preferred_git_branch = git_branch if git_branch not in (None, "unknown-branch") else None
     return (
         explicit_agent or active_agent or default_agent,
-        explicit_branch or active_branch or git_branch,
-        explicit_commit or active_commit or git_commit,
+        explicit_branch or preferred_git_branch or active_branch or git_branch,
+        explicit_commit or git_commit or active_commit,
         explicit_lane,
     )
 

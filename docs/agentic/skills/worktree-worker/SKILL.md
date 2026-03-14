@@ -54,7 +54,23 @@ git diff --name-only
 ```
 
 2. Commit on the worktree branch itself.
-3. Submit the lane handback:
+3. Preferred merge-ready handback:
+
+```bash
+make lane-handoff
+```
+
+This verifies lane scope, commits lane-owned changes if needed, records the lane report in shared MCP state, and opens the worker-to-orchestrator handoff message automatically.
+
+If you are using the non-interactive automation path, prefer:
+
+```bash
+make lane-run
+```
+
+That command renders the worker prompt from MCP state, runs `codex exec`, and auto-submits the final structured handoff for you.
+
+Keep the low-level helper only as a fallback when you need direct control:
 
 ```bash
 scripts/worktree-lane report \
@@ -64,13 +80,10 @@ scripts/worktree-lane report \
   --session <session-name> \
   --summary "Slice implemented and ready for orchestrator review." \
   --test-command "cd ... && pytest ..." \
-  --merge-ready \
-  --message "This slice is ready for review."
+  --merge-ready
 ```
 
-This records the lane report in shared MCP state, captures changed files from the current worktree diff, and optionally sends a worker-to-orchestrator message.
-
-Merge-ready and blocked reports now auto-open a worker-to-orchestrator handoff message even if you do not pass `--message`. Use that path whenever the lane is done or needs more guidance from root.
+Merge-ready and blocked reports auto-open a worker-to-orchestrator handoff message even if you do not pass `--message`. Use that path whenever the lane is done or needs more guidance from root.
 
 ## Guardrails
 

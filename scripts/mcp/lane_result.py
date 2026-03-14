@@ -79,16 +79,7 @@ def _normalize_list(value: Any) -> list[str]:
     return [_normalize_text(item) for item in value if _normalize_text(item)]
 
 
-def _compose_message(details: str, tests_run: list[str], blockers: list[str]) -> str:
-    parts = [details]
-    if tests_run:
-        parts.append("Tests run: " + "; ".join(tests_run))
-    if blockers:
-        parts.append("Blockers: " + "; ".join(blockers))
-    return " ".join(part for part in parts if part)
-
-
-def _build_make_command(
+def _build_report_command(
     *,
     orchestrator_root: Path,
     task_ref: str,
@@ -102,7 +93,6 @@ def _build_make_command(
     details = _normalize_text(result.get("details"))
     tests_run = _normalize_list(result.get("tests_run"))
     blockers = _normalize_list(result.get("blockers"))
-    message = _compose_message(details, tests_run, blockers)
 
     if not action:
         raise RuntimeError("Missing handoff_action in result payload.")
@@ -111,33 +101,70 @@ def _build_make_command(
     if not details:
         raise RuntimeError("Missing details in result payload.")
 
-    base = [
+    report_cmd = [
+        str(orchestrator_root / "scripts" / "worktree-lane"),
+        "report",
+        "--orchestrator-root",
+        str(orchestrator_root),
+        "--task-ref",
+        task_ref,
+        "--lane-id",
+        lane_id,
+        "--session",
+        session,
+        "--summary",
+        summary,
+        "--worktree-path",
+        str(worktree_path),
+    ]
+    for test_command in tests_run:
+        report_cmd.extend(["--test-command", test_command])
+    if details:
+        report_cmd.extend(["--message", details])
+    if action == "merge_ready":
+        report_cmd.append("--merge-ready")
+        return report_cmd
+    if action == "needs_guidance":
+        report_cmd.extend(["--status", "blocked"])
+        for blocker in blockers:
+            report_cmd.extend(["--blocker", blocker])
+        return report_cmd
+    raise RuntimeError(f"Unsupported handoff_action: {action}")
+
+
+def _build_command_plan(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    worktree_path: Path,
+    result: dict[str, Any],
+) -> list[list[str]]:
+    action = _normalize_text(result.get("handoff_action"))
+    base_make = [
         "make",
         "-f",
         str(orchestrator_root / "Makefile"),
         "-C",
         str(worktree_path),
     ]
+    report_cmd = _build_report_command(
+        orchestrator_root=orchestrator_root,
+        task_ref=task_ref,
+        lane_id=lane_id,
+        session=session,
+        worktree_path=worktree_path,
+        result=result,
+    )
     if action == "merge_ready":
-        return base + [
-            "lane-handoff",
-            f"TASK={task_ref}",
-            f"LANE={lane_id}",
-            f"SESSION={session}",
-            f"SUMMARY={summary}",
-            f"MESSAGE={message}",
+        return [
+            base_make + ["lane-commit", f"TASK={task_ref}", f"LANE={lane_id}"],
+            base_make + ["lane-status", f"TASK={task_ref}", f"LANE={lane_id}"],
+            report_cmd,
         ]
     if action == "needs_guidance":
-        return base + [
-            "lane-report",
-            f"TASK={task_ref}",
-            f"LANE={lane_id}",
-            f"SESSION={session}",
-            "STATUS=blocked",
-            "MERGE_READY=0",
-            f"SUMMARY={summary}",
-            f"MESSAGE={message}",
-        ]
+        return [report_cmd]
     raise RuntimeError(f"Unsupported handoff_action: {action}")
 
 
@@ -149,7 +176,7 @@ def main() -> int:
 
     result_path = Path(args.result_file).expanduser().resolve()
     result = _load_result(result_path)
-    cmd = _build_make_command(
+    commands = _build_command_plan(
         orchestrator_root=Path(args.orchestrator_root).expanduser().resolve(),
         task_ref=args.task_ref,
         lane_id=args.lane_id,
@@ -159,11 +186,14 @@ def main() -> int:
     )
 
     if args.dry_run:
-        print(json.dumps({"command": cmd}, indent=2))
+        print(json.dumps({"commands": commands}, indent=2))
         return 0
 
-    completed = subprocess.run(cmd, check=False)
-    return completed.returncode
+    for command in commands:
+        completed = subprocess.run(command, check=False)
+        if completed.returncode != 0:
+            return completed.returncode
+    return 0
 
 
 if __name__ == "__main__":

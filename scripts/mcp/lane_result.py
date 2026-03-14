@@ -140,7 +140,8 @@ def _build_command_plan(
     session: str,
     worktree_path: Path,
     result: dict[str, Any],
-) -> list[list[str]]:
+) -> list[tuple[list[str], bool]]:
+    """Return a list of (command, critical) tuples."""
     action = _normalize_text(result.get("handoff_action"))
     base_make = [
         "make",
@@ -158,13 +159,14 @@ def _build_command_plan(
         result=result,
     )
     if action == "merge_ready":
+        summary = _normalize_text(result.get("summary"))
         return [
-            base_make + ["lane-commit", f"TASK={task_ref}", f"LANE={lane_id}"],
-            base_make + ["lane-status", f"TASK={task_ref}", f"LANE={lane_id}"],
-            report_cmd,
+            (base_make + ["lane-commit", f"TASK={task_ref}", f"LANE={lane_id}", f"COMMIT_MSG={summary}"], True),
+            (report_cmd, True),
+            (base_make + ["lane-status", f"TASK={task_ref}", f"LANE={lane_id}"], False),
         ]
     if action == "needs_guidance":
-        return [report_cmd]
+        return [(report_cmd, True)]
     raise RuntimeError(f"Unsupported handoff_action: {action}")
 
 
@@ -186,13 +188,15 @@ def main() -> int:
     )
 
     if args.dry_run:
-        print(json.dumps({"commands": commands}, indent=2))
+        print(json.dumps({"commands": [cmd for cmd, _ in commands]}, indent=2))
         return 0
 
-    for command in commands:
+    for command, critical in commands:
         completed = subprocess.run(command, check=False)
         if completed.returncode != 0:
-            return completed.returncode
+            if critical:
+                return completed.returncode
+            print(f"lane-result: non-critical step failed (exit {completed.returncode}), continuing")
     return 0
 
 

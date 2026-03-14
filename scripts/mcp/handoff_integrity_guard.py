@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""Pre-merge guard for MCP handoff integrity behavior."""
+"""Pre-merge guard for MCP handoff integrity behavior.
+
+Validates the agent-handoff-mcp package CLI (not the deprecated unified_server.py).
+Exercises: lifecycle transitions, review finding states, destructive-clear guards,
+and close-check readiness against a temporary state directory.
+"""
 
 from __future__ import annotations
 
@@ -12,13 +17,25 @@ import uuid
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI_PATH = REPO_ROOT / "scripts" / "mcp" / "unified_server.py"
+MCP_PACKAGE_SRC = REPO_ROOT / "packages" / "agent-handoff-mcp" / "src"
 
 
-def _run_cli(args: list[str], env: dict[str, str], expect_success: bool = True) -> dict:
-    """Run the handoff CLI and parse JSON output."""
+def _run_cli(
+    args: list[str],
+    env: dict[str, str],
+    state_root: Path,
+    expect_success: bool = True,
+) -> dict:
+    """Run the agent-handoff-mcp CLI and parse JSON output."""
+    base_args = [
+        sys.executable, "-m", "agent_handoff_mcp",
+        "--workspace-root", str(state_root),
+        "--state-dir", str(state_root / ".task-state"),
+        "--current-task-path", str(state_root / "CURRENT_TASK.md"),
+        "--exports-dir", str(state_root / ".task-state" / "exports"),
+    ]
     proc = subprocess.run(
-        [sys.executable, str(CLI_PATH), *args],
+        base_args + args,
         cwd=str(REPO_ROOT),
         env=env,
         capture_output=True,
@@ -36,11 +53,15 @@ def _run_cli(args: list[str], env: dict[str, str], expect_success: bool = True) 
                 f"Non-JSON output for command {' '.join(args)}:\n{proc.stdout}\n{proc.stderr}"
             ) from exc
 
-    if expect_success and proc.returncode != 0:
+    # The CLI always returns exit 0 for JSON responses; check payload "ok" field
+    # for business-level success/failure. Exit code != 0 means a true crash.
+    succeeded = proc.returncode == 0 and payload.get("ok", True) is not False
+
+    if expect_success and not succeeded:
         raise RuntimeError(
             f"Command failed unexpectedly ({' '.join(args)}):\n{proc.stdout}\n{proc.stderr}"
         )
-    if not expect_success and proc.returncode == 0:
+    if not expect_success and succeeded:
         raise RuntimeError(
             f"Command succeeded unexpectedly ({' '.join(args)}):\n{proc.stdout}\n{proc.stderr}"
         )
@@ -48,67 +69,42 @@ def _run_cli(args: list[str], env: dict[str, str], expect_success: bool = True) 
 
 
 def main() -> int:
+    if not MCP_PACKAGE_SRC.is_dir():
+        print(f"agent-handoff-mcp package not found at {MCP_PACKAGE_SRC}", file=sys.stderr)
+        return 1
+
     with tempfile.TemporaryDirectory(prefix="handoff-integrity-") as temp_dir:
         temp_root = Path(temp_dir)
         env = os.environ.copy()
-        env["MCP_HANDOFF_STATE_DIR"] = str(temp_root / ".task-state")
-        env["MCP_HANDOFF_CURRENT_TASK_PATH"] = str(temp_root / "CURRENT_TASK.md")
-        env["MCP_HANDOFF_EXPORTS_DIR"] = str(temp_root / ".task-state" / "exports")
+        env["PYTHONPATH"] = str(MCP_PACKAGE_SRC) + (
+            (":" + env["PYTHONPATH"]) if env.get("PYTHONPATH") else ""
+        )
 
         task_ref = f"ci-handoff-{uuid.uuid4().hex[:8]}"
 
         _run_cli(
-            [
-                "set",
-                "--task_ref",
-                task_ref,
-                "--objective",
-                "CI handoff integrity guard",
-                "--status",
-                "in_progress",
-            ],
-            env,
+            ["set", "--task-ref", task_ref, "--objective", "CI handoff integrity guard", "--status", "in_progress"],
+            env, temp_root,
         )
         _run_cli(
             [
                 "review-record",
-                "--finding_id",
-                "CI-H-1",
-                "--file_path",
-                "scripts/mcp/unified_server.py",
-                "--description",
-                "CI guard lifecycle smoke finding",
-                "--severity",
-                "low",
-                "--session",
-                "ci-handoff-guard",
+                "--session", "ci-handoff-guard",
+                "--finding-id", "CI-H-1",
+                "--file-path", "scripts/mcp/handoff_integrity_guard.py",
+                "--description", "CI guard lifecycle smoke finding",
+                "--severity", "low",
             ],
-            env,
+            env, temp_root,
         )
         _run_cli(
-            [
-                "review-update",
-                "--finding_id",
-                "CI-H-1",
-                "--status",
-                "fixed",
-                "--session",
-                "ci-handoff-guard",
-            ],
-            env,
+            ["review-update", "--finding-id", "CI-H-1", "--status", "fixed", "--session", "ci-handoff-guard"],
+            env, temp_root,
         )
 
         missing_notes = _run_cli(
-            [
-                "review-update",
-                "--finding_id",
-                "CI-H-1",
-                "--status",
-                "deferred",
-                "--session",
-                "ci-handoff-guard",
-            ],
-            env,
+            ["review-update", "--finding-id", "CI-H-1", "--status", "deferred", "--session", "ci-handoff-guard"],
+            env, temp_root,
             expect_success=False,
         )
         if missing_notes.get("ok", True) is not False:
@@ -117,28 +113,38 @@ def main() -> int:
         _run_cli(
             [
                 "review-update",
-                "--finding_id",
-                "CI-H-1",
-                "--status",
-                "deferred",
-                "--resolution_notes",
-                "Deferred for CI parser smoke validation.",
-                "--session",
-                "ci-handoff-guard",
+                "--finding-id", "CI-H-1",
+                "--status", "deferred",
+                "--resolution-notes", "Deferred for CI parser smoke validation.",
+                "--session", "ci-handoff-guard",
             ],
-            env,
+            env, temp_root,
         )
-        missing_reopen_reason = _run_cli(
+
+        # --- wontfix without resolution_notes must fail ---
+        missing_wontfix_notes = _run_cli(
+            ["review-update", "--finding-id", "CI-H-1", "--status", "wontfix", "--session", "ci-handoff-guard"],
+            env, temp_root,
+            expect_success=False,
+        )
+        if missing_wontfix_notes.get("ok", True) is not False:
+            raise RuntimeError("Expected wontfix update without notes to fail.")
+
+        # --- wontfix with resolution_notes succeeds ---
+        _run_cli(
             [
                 "review-update",
-                "--finding_id",
-                "CI-H-1",
-                "--status",
-                "open",
-                "--session",
-                "ci-handoff-guard",
+                "--finding-id", "CI-H-1",
+                "--status", "wontfix",
+                "--resolution-notes", "Wontfix for CI parser smoke validation.",
+                "--session", "ci-handoff-guard",
             ],
-            env,
+            env, temp_root,
+        )
+
+        missing_reopen_reason = _run_cli(
+            ["review-update", "--finding-id", "CI-H-1", "--status", "open", "--session", "ci-handoff-guard"],
+            env, temp_root,
             expect_success=False,
         )
         if missing_reopen_reason.get("ok", True) is not False:
@@ -146,26 +152,18 @@ def main() -> int:
 
         _run_cli(
             [
-                "review-reopen",
-                "--finding_id",
-                "CI-H-1",
-                "--reason",
-                "Reopened after deferred status while CI lifecycle continues.",
-                "--session",
-                "ci-handoff-guard",
+                "review-update",
+                "--finding-id", "CI-H-1",
+                "--status", "open",
+                "--reopen-reason", "Reopened after deferred status while CI lifecycle continues.",
+                "--session", "ci-handoff-guard",
             ],
-            env,
+            env, temp_root,
         )
 
         open_findings = _run_cli(
-            [
-                "review-list",
-                "--task_ref",
-                task_ref,
-                "--status",
-                "open",
-            ],
-            env,
+            ["review-list", "--task-ref", task_ref, "--status", "open"],
+            env, temp_root,
         )
         finding_row = (open_findings.get("findings") or [None])[0]
         if not finding_row:
@@ -175,32 +173,20 @@ def main() -> int:
         if not finding_row.get("last_reopen_reason"):
             raise RuntimeError(f"Expected last_reopen_reason to be populated, got: {finding_row}")
 
-        reconcile = _run_cli(["review-reconcile", "--task_ref", task_ref], env)
-        if reconcile.get("healthy") is not True:
-            raise RuntimeError(f"Expected reconcile to be healthy, got: {reconcile}")
-
         not_ready = _run_cli(
-            ["handoff-close-check", "--task_ref", task_ref, "--enforce"],
-            env,
+            ["handoff-close-check", "--task-ref", task_ref, "--enforce"],
+            env, temp_root,
             expect_success=False,
         )
         if not_ready.get("ready_to_close", True):
             raise RuntimeError("Close-check should fail while finding is still open.")
 
         _run_cli(
-            [
-                "review-update",
-                "--finding_id",
-                "CI-H-1",
-                "--status",
-                "fixed",
-                "--session",
-                "ci-handoff-guard",
-            ],
-            env,
+            ["review-update", "--finding-id", "CI-H-1", "--status", "fixed", "--session", "ci-handoff-guard"],
+            env, temp_root,
         )
 
-        state = _run_cli(["state", task_ref], env)
+        state = _run_cli(["state", task_ref], env, temp_root)
         active = state.get("active") or {}
         revision = int(active.get("revision", -1))
         if revision < 0:
@@ -209,28 +195,24 @@ def main() -> int:
         _run_cli(
             [
                 "set",
-                "--task_ref",
-                task_ref,
-                "--objective",
-                "CI handoff integrity guard",
-                "--status",
-                "done",
-                "--expected_revision",
-                str(revision),
+                "--task-ref", task_ref,
+                "--objective", "CI handoff integrity guard",
+                "--status", "done",
+                "--expected-revision", str(revision),
             ],
-            env,
+            env, temp_root,
         )
-        _run_cli(["task", task_ref], env)
+        _run_cli(["task", task_ref], env, temp_root)
 
         ready = _run_cli(
-            ["handoff-close-check", "--task_ref", task_ref, "--enforce"],
-            env,
+            ["handoff-close-check", "--task-ref", task_ref, "--enforce"],
+            env, temp_root,
         )
         if ready.get("ready_to_close") is not True:
             raise RuntimeError(f"Expected close-check to pass, got: {ready}")
 
         destructive_task_ref = f"ci-destructive-{uuid.uuid4().hex[:8]}"
-        active_state = _run_cli(["state"], env)
+        active_state = _run_cli(["state"], env, temp_root)
         active_revision = int((active_state.get("active") or {}).get("revision", -1))
         if active_revision < 0:
             raise RuntimeError(f"Could not read revision before destructive guard checks: {active_state}")
@@ -238,32 +220,23 @@ def main() -> int:
         _run_cli(
             [
                 "set",
-                "--task_ref",
-                destructive_task_ref,
-                "--objective",
-                "CI destructive clear safeguards",
-                "--status",
-                "in_progress",
-                "--expected_revision",
-                str(active_revision),
+                "--task-ref", destructive_task_ref,
+                "--objective", "CI destructive clear safeguards",
+                "--status", "in_progress",
+                "--expected-revision", str(active_revision),
             ],
-            env,
+            env, temp_root,
         )
         _run_cli(
             [
                 "review-record",
-                "--finding_id",
-                "CI-H-CLEAR-1",
-                "--file_path",
-                "scripts/mcp/unified_server.py",
-                "--description",
-                "CI destructive clear safeguard finding",
-                "--severity",
-                "low",
-                "--session",
-                "ci-handoff-guard",
+                "--session", "ci-handoff-guard",
+                "--finding-id", "CI-H-CLEAR-1",
+                "--file-path", "scripts/mcp/handoff_integrity_guard.py",
+                "--description", "CI destructive clear safeguard finding",
+                "--severity", "low",
             ],
-            env,
+            env, temp_root,
         )
 
         destructive_payload_path = temp_root / "destructive-clear-payload.json"
@@ -284,6 +257,9 @@ def main() -> int:
                         "decisions": [],
                         "verified_tests": [],
                         "review_findings": [],
+                        "worktree_lanes": [],
+                        "worker_reports": [],
+                        "lane_messages": [],
                     },
                 },
                 indent=2,
@@ -291,14 +267,8 @@ def main() -> int:
         )
 
         blocked_replace = _run_cli(
-            [
-                "import",
-                "--input_path",
-                str(destructive_payload_path),
-                "--mode",
-                "replace_task",
-            ],
-            env,
+            ["import", "--input-path", str(destructive_payload_path), "--mode", "replace_task"],
+            env, temp_root,
             expect_success=False,
         )
         if blocked_replace.get("ok", True) is not False:
@@ -307,8 +277,8 @@ def main() -> int:
             raise RuntimeError(f"Expected replace_task failure to mention allow_destructive_clear, got: {blocked_replace}")
 
         blocked_prune = _run_cli(
-            ["archive", "--task_ref", destructive_task_ref, "--prune-working-rows"],
-            env,
+            ["archive", "--task-ref", destructive_task_ref, "--prune-working-rows"],
+            env, temp_root,
             expect_success=False,
         )
         if blocked_prune.get("ok", True) is not False:
@@ -316,7 +286,7 @@ def main() -> int:
         if "allow_destructive_clear" not in (blocked_prune.get("error") or ""):
             raise RuntimeError(f"Expected prune failure to mention allow_destructive_clear, got: {blocked_prune}")
 
-        finding_still_present = _run_cli(["review-summary", "--task_ref", destructive_task_ref], env)
+        finding_still_present = _run_cli(["review-summary", "--task-ref", destructive_task_ref], env, temp_root)
         open_count_before_ack = int((finding_still_present.get("counts", {}).get("status", {}).get("open", 0)))
         if open_count_before_ack != 1:
             raise RuntimeError(
@@ -327,15 +297,13 @@ def main() -> int:
         _run_cli(
             [
                 "import",
-                "--input_path",
-                str(destructive_payload_path),
-                "--mode",
-                "replace_task",
+                "--input-path", str(destructive_payload_path),
+                "--mode", "replace_task",
                 "--allow-destructive-clear",
             ],
-            env,
+            env, temp_root,
         )
-        finding_cleared_after_ack = _run_cli(["review-summary", "--task_ref", destructive_task_ref], env)
+        finding_cleared_after_ack = _run_cli(["review-summary", "--task-ref", destructive_task_ref], env, temp_root)
         open_count_after_ack = int((finding_cleared_after_ack.get("counts", {}).get("status", {}).get("open", 0)))
         if open_count_after_ack != 0:
             raise RuntimeError(

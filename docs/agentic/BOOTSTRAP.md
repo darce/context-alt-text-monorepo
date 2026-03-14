@@ -119,4 +119,28 @@ Handoff guard commands:
 - `CURRENT_TASK.md` is a generated view only; if drift is detected, regenerate from DB state.
 - For finding verification/history, use `get_review_findings_summary` or `list_review_findings` instead of direct SQLite queries.
 
+### Lane Run Pipeline
+
+`make lane-run` automates worker execution via `codex exec`. The pipeline:
+
+1. `scripts/mcp/lane_prompt.py` renders an actionable worker prompt from MCP state (open lane messages, pending actions, open blockers, open findings).
+2. `codex exec` runs in the lane worktree with that prompt.
+3. The worker outputs a structured JSON result matching the schema from `scripts/mcp/lane_result.py schema`.
+4. `scripts/mcp/lane_result.py handoff` converts the result into a `scripts/worktree-lane report` call.
+
+Required JSON output schema from the worker:
+
+```json
+{
+  "handoff_action": "merge_ready | needs_guidance",
+  "summary": "One short sentence for the orchestrator.",
+  "details": "What changed or was verified, and why the lane is ready or blocked.",
+  "tests_run": ["make test"],
+  "blockers": []
+}
+```
+
+- `merge_ready`: lane-result runs `make lane-commit` then submits a merge-ready worker report.
+- `needs_guidance`: lane-result submits a blocked worker report with the listed blockers.
+
 ---

@@ -312,7 +312,7 @@ How workers communicate with the orchestrator:
    - assumptions made
    - blockers or follow-ups
    - whether the lane is merge-ready
-8. Preferred worker command: run `make lane-handoff` from the worktree root (or the forwarded app Makefile). It verifies lane scope, stages the lane-owned paths, creates a default commit whose subject begins with the lane name, shows lane status, and then submits the merge-ready report using inferred `TASK`, `LANE`, and default `SESSION` values.
+8. Preferred worker command: run `make lane-handoff` from the worktree root (or any app Makefile -- they auto-forward all `lane-*` targets to root via a pattern rule). It verifies lane scope, stages the lane-owned paths, creates a default commit whose subject begins with the lane name, shows lane status, and then submits the merge-ready report using inferred `TASK`, `LANE`, and default `SESSION` values.
 9. Worker handoff should be message-first. When a lane is merge-ready, `lane-handoff` now auto-sends an open `worker_to_orchestrator` lane message even if no explicit `MESSAGE` was passed.
 10. When a lane needs further guidance, submit a worker report with `STATUS=blocked` and a summary or blocker text that explains the ask. This blocked guidance path is allowed even when no lane commits exist yet, which is the correct behavior for read-only sandboxes or environment failures. The worker report path auto-sends an open `worker_to_orchestrator` message for that guidance request.
 11. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and let the orchestrator intake it. Do **not** mark the whole task `done`.

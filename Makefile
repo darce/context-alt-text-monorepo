@@ -577,7 +577,11 @@ lane-run: lane-guard
 		status=$$?; \
 		echo "codex exec failed before automated handoff could be recorded."; \
 		if [ -s "$$RESULT_FILE" ]; then \
-			echo "Structured result was captured at $$RESULT_FILE"; \
+			FAILURE_DIR="$(ORCHESTRATOR_ROOT)/.task-state/exports/lane-run-failures"; \
+			mkdir -p "$$FAILURE_DIR"; \
+			PRESERVED_RESULT="$$FAILURE_DIR/$(TASK)-$(LANE)-$$(date +%Y%m%d%H%M%S).json"; \
+			cp "$$RESULT_FILE" "$$PRESERVED_RESULT"; \
+			echo "Structured result was captured at $$PRESERVED_RESULT"; \
 		fi; \
 		exit "$$status"; \
 	fi

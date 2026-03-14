@@ -2,6 +2,7 @@
 
 import json
 import sqlite3
+import subprocess
 from pathlib import Path
 
 import pytest
@@ -231,6 +232,44 @@ def test_get_handoff_state_compact_defaults_enforced(isolated_handoff: dict) -> 
     assert len(verbose["actions_pending"]) == 9
     assert len(verbose["decisions_recent"]) == 6
     assert len(verbose["tests_recent"]) == 7
+
+
+def test_new_writes_prefer_current_git_context_over_stale_handoff_state(tmp_path: Path) -> None:
+    subprocess.run(["git", "init", "-b", "review-branch"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.name", "Codex"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "config", "user.email", "codex@example.com"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    (tmp_path / "README.md").write_text("hello\n")
+    subprocess.run(["git", "add", "README.md"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=tmp_path, check=True, capture_output=True, text=True)
+    head_sha = subprocess.run(["git", "rev-parse", "HEAD"], cwd=tmp_path, check=True, capture_output=True, text=True).stdout.strip()
+
+    runtime = RuntimeConfig.for_workspace(
+        tmp_path,
+        state_dir=tmp_path / ".task-state",
+        current_task_path=tmp_path / "CURRENT_TASK.md",
+    )
+    mcp_server.configure_runtime(runtime)
+
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="review-task",
+            objective="review objective",
+            actor={"agent": "worker-agent", "branch": "stale-worker-branch", "commit_sha": "deadbeef"},
+        )
+    )
+
+    finding = _parse(
+        mcp_server.record_review_finding(
+            session="review-session",
+            finding_id="PROV-1",
+            severity="medium",
+            file_path="Makefile",
+            description="provenance check",
+        )
+    )["finding"]
+
+    assert finding["branch"] == "review-branch"
+    assert finding["commit_sha"] == head_sha
 
 
 def test_worker_worktree_scopes_open_lane_messages_to_its_registered_lane(tmp_path: Path) -> None:

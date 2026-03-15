@@ -279,6 +279,7 @@ What this does:
 4. If the lane has no unique commits: hard-reset to orchestrator HEAD.
 5. If the lane has unique commits: rebase onto orchestrator HEAD.
 6. If all lane commits are superseded (already integrated upstream): reset instead of rebase.
+7. Auto-pops the stash to restore uncommitted work. If the pop conflicts, the stash is preserved and a warning is printed.
 
 If rebase conflicts, the rebase is auto-aborted and the lane is left untouched. Resolve in the lane manually.
 

@@ -752,10 +752,12 @@ lane-refresh: lane-guard
 				exit 1; \
 			fi; \
 		fi; \
+		DID_STASH=0; \
 		DIRTY="$$(git -C "$$TARGET_WORKTREE" status --porcelain=v1 --untracked-files=all)"; \
 		if [ -n "$$DIRTY" ]; then \
 			echo "Stashing dirty lane state before refresh..."; \
 			git -C "$$TARGET_WORKTREE" stash push -u -m "$$STASH_MSG" >/dev/null; \
+			DID_STASH=1; \
 		fi; \
 		git -C "$$TARGET_WORKTREE" fetch "$(ORCHESTRATOR_ROOT)" "$(ORCHESTRATOR_BRANCH)"; \
 		AHEAD_COUNT="$$(git -C "$$TARGET_WORKTREE" rev-list --count FETCH_HEAD..HEAD)"; \
@@ -798,12 +800,31 @@ lane-refresh: lane-guard
 				git -C "$$TARGET_WORKTREE" rebase --abort >/dev/null 2>&1 || true; \
 				echo "Lane refresh failed during rebase. Root left untouched."; \
 				echo "Resolve conflicts in the lane, then rerun lane-refresh."; \
+				if [ "$$DID_STASH" = "1" ]; then \
+					echo "Restoring stashed work..."; \
+					if git -C "$$TARGET_WORKTREE" stash pop >/dev/null 2>&1; then \
+						echo "Stashed changes restored."; \
+					else \
+						echo "WARNING: Stash pop had conflicts. Inspect with: git -C \"$$TARGET_WORKTREE\" stash list"; \
+					fi; \
+				fi; \
 				exit 1; \
 			fi; \
 		fi; \
 		echo "Lane refreshed against $(ORCHESTRATOR_BRANCH)."; \
 		echo "Worker tooling now reflects committed orchestrator branch state only."; \
-		echo "If dirty work was auto-stashed, inspect with: git -C \"$$TARGET_WORKTREE\" stash list"; \
+		if [ "$$DID_STASH" = "1" ]; then \
+			echo "Restoring stashed work..."; \
+			if git -C "$$TARGET_WORKTREE" stash pop >/dev/null 2>&1; then \
+				echo "Stashed changes restored cleanly."; \
+			else \
+				echo "WARNING: Stash pop had conflicts. Resolve them manually:"; \
+				echo "  cd \"$$TARGET_WORKTREE\""; \
+				echo "  git diff   # inspect conflict markers"; \
+				echo "  git checkout --theirs/--ours <file>   # or edit manually"; \
+				echo "  git stash drop   # after resolving"; \
+			fi; \
+		fi; \
 		git -C "$$TARGET_WORKTREE" status -sb; \
 	fi
 

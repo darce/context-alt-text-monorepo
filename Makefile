@@ -9,20 +9,34 @@
 #   make mcp-start    # Start the MCP server for AI agents
 #   make check-all    # Run all linters and tests across the monorepo
 #
+# Structure:
+#   mk/handoff.mk          - Handoff state, task commands, daemons
+#   mk/lane-guards.mk      - Lane prerequisite guards, manifest init
+#   mk/lane-lifecycle.mk   - Lane open, status, inbox, prompt, dispatch
+#   mk/lane-worker.mk      - Lane check, run, report, commit, handoff
+#   mk/lane-maintenance.mk - Lane reset, refresh, clean, path, commits, intake
+#
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status lane-manifest-init lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
+ROOT_MAKEFILE := $(abspath $(lastword $(MAKEFILE_LIST)))
+ROOT_MAKEFILE_DIR := $(patsubst %/,%,$(dir $(ROOT_MAKEFILE)))
 
+# --- Git / Orchestrator detection ---
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
 WORKTREE_ROOT_REAL := $(abspath $(WORKTREE_ROOT))
 _GIT_COMMON_DIR := $(shell git rev-parse --git-common-dir 2>/dev/null)
 ORCHESTRATOR_ROOT := $(if $(filter .git,$(_GIT_COMMON_DIR)),$(WORKTREE_ROOT_REAL),$(patsubst %/.git,%,$(_GIT_COMMON_DIR)))
 ORCHESTRATOR_BRANCH := $(shell git -C "$(ORCHESTRATOR_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
+IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
+
+# --- MCP runtime ---
 LANE_CONFIG_CMD = python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_config.py"
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" python3 -m agent_handoff_mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= python3
+
+# --- Task / lane inference ---
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 ACTIVE_TASK = $(eval ACTIVE_TASK := $(_ACTIVE_TASK_CMD))$(ACTIVE_TASK)
 SUPPORTED_TASKS := $(shell $(LANE_CONFIG_CMD) list-tasks 2>/dev/null)
@@ -31,6 +45,8 @@ TASK ?= $(ACTIVE_TASK)
 LANE ?= $(INFERRED_LANE)
 TASK_LANES := $(shell $(if $(TASK),$(LANE_CONFIG_CMD) list-lanes --task-ref "$(TASK)" 2>/dev/null,))
 lane_field = $(shell $(if $(and $(TASK),$(LANE)),$(LANE_CONFIG_CMD) field --task-ref "$(TASK)" --lane-id "$(LANE)" --field $(1) $(if $(2),--orchestrator-root "$(ORCHESTRATOR_ROOT)",) 2>/dev/null,))
+
+# --- Override defaults ---
 SESSION ?= $(TASK)-$(LANE)
 SUMMARY ?= $(LANE) lane ready for orchestrator review.
 MESSAGE ?=
@@ -47,13 +63,16 @@ CODEX_ARGS ?=
 CODEX_BIN ?= $(shell command -v codex 2>/dev/null || true)
 TASK_PLAN ?=
 LANE_IDS ?=
-IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
+
+# --- Tooling paths (used by lane-commit, lane-clean, lane-refresh) ---
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
-LANE_TOOLING_PATHS := Makefile docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
+LANE_TOOLING_PATHS := Makefile mk docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
 ROOT_REFRESH_PATHS := $(LANE_TOOLING_PATHS) config/lane-orchestration
 LANE_APP_TOOLING_PATHS :=
+
 export ORCHESTRATOR_ROOT TASK LANE SESSION SUMMARY MESSAGE SUBJECT STATUS MERGE_READY DRY_RUN LANE_WORKTREE LANE_TEST_CMD_1 LANE_TEST_CMD_2
 
+# --- Lane config (resolved from manifest) ---
 LANE_BRANCH :=
 LANE_WORKTREE :=
 LANE_TITLE :=
@@ -81,6 +100,22 @@ LANE_COMMIT_PATHS := $(call lane_field,commit_paths)
 LANE_COMMIT_SUBJECT := $(call lane_field,commit_subject)
 LANE_DONE_DEFINITION := $(or $(call lane_field,done_definition),$(LANE_DONE_DEFINITION))
 LANE_APP_TOOLING_PATHS := $(call lane_field,tooling_paths)
+
+# =============================================================================
+# Included modules
+# =============================================================================
+
+include $(ROOT_MAKEFILE_DIR)/mk/handoff.mk
+include $(ROOT_MAKEFILE_DIR)/mk/lane-guards.mk
+include $(ROOT_MAKEFILE_DIR)/mk/lane-lifecycle.mk
+include $(ROOT_MAKEFILE_DIR)/mk/lane-worker.mk
+include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
+
+# =============================================================================
+# Root targets
+# =============================================================================
+
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop
 
 # Default target
 help:
@@ -262,800 +297,6 @@ gemini-cli-setup:
 	@gemini mcp add context-alt-text-handoff "$(shell pwd)/scripts/mcp/mcp-server.sh" run
 	@echo "✓ MCP server 'context-alt-text-handoff' registered with gemini-cli"
 	@echo "💡 Tip: Store your API key in a .env file at the monorepo root to keep it out of your .zshrc."
-
-# =============================================================================
-# Handoff / Task State
-# =============================================================================
-
-# Generate CURRENT_TASK.md from handoff DB
-task:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) task
-
-# Print handoff dashboard
-dashboard:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) dashboard
-
-# Print full handoff state
-state:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) state
-
-# List all registered worktree lanes and their status
-lane-list:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) lane-list --status all
-
-# Validate that active handoff state is ready to close
-handoff-close-check:
-	@$(MCP_CMD) $(MCP_STATE_ARGS) handoff-close-check --enforce
-
-# CI/local guard for parser + lifecycle + close-check integrity
-handoff-integrity-check:
-	@$(PYTHON) scripts/mcp/handoff_integrity_guard.py
-
-handoff-inbox:
-	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
-		echo "handoff-inbox must be run from the orchestrator root."; \
-		echo "Current worktree: $(WORKTREE_ROOT_REAL)"; \
-		echo "Expected orchestrator root: $(ORCHESTRATOR_ROOT)"; \
-		exit 1; \
-	fi
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make handoff-inbox TASK=phase-5-retention-export-and-audit-controls"; \
-		echo "Inspect current state: make state"; \
-		exit 1; \
-	fi
-	@echo "Open worker handoff messages:"; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) \
-		lane-message-list \
-		--task-ref "$(TASK)" \
-		$(if $(LANE),--lane-id "$(LANE)",) \
-		--status open | python3 -c 'import json,sys; data=json.load(sys.stdin); data["messages"]=[m for m in data.get("messages", []) if m.get("direction")=="worker_to_orchestrator"]; data["returned"]=len(data["messages"]); data["total_matching"]=len(data["messages"]); print(json.dumps(data, indent=2))'; \
-	echo ""; \
-	echo "Latest worker reports:"; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) \
-		lane-report-list \
-		--task-ref "$(TASK)" \
-		$(if $(LANE),--lane-id "$(LANE)",) \
-		--limit 20 | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=[r for r in data.get("reports", []) if r.get("merge_ready")==1 or r.get("status")=="blocked"]; data["reports"]=reports; data["returned"]=len(reports); data["total_matching"]=len(reports); print(json.dumps(data, indent=2))'
-
-handoff-dispatch:
-	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
-		echo "handoff-dispatch must be run from the orchestrator root."; \
-		echo "Current worktree: $(WORKTREE_ROOT_REAL)"; \
-		echo "Expected orchestrator root: $(ORCHESTRATOR_ROOT)"; \
-		exit 1; \
-	fi
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make handoff-dispatch TASK=<task-ref>"; \
-		echo "Inspect current state: make state"; \
-		exit 1; \
-	fi
-	@if [ -z "$(TASK_LANES)" ]; then \
-		echo "Unsupported TASK: $(TASK)"; \
-		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
-		exit 1; \
-	fi
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_dispatch.py" \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
-		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
-
-review-run:
-	@if [ -z "$(LANE_WORKTREE_TARGET)" ] && [ -z "$(WORKTREE_PATH)" ]; then \
-		echo "review-run requires a lane worktree. Set WORKTREE_PATH or run from a lane."; \
-		exit 1; \
-	fi
-	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_runner.py" run \
-		--worktree-path "$(or $(WORKTREE_PATH),$(LANE_WORKTREE_TARGET))" \
-		$(if $(LANE),--lane-id "$(LANE)",) \
-		$(if $(TASK),--task-ref "$(TASK)",) \
-		$(if $(SESSION),--session "$(SESSION)",) \
-		$(if $(filter 1,$(RECORD_FINDINGS)),--record-findings,) \
-		$(if $(ORCHESTRATOR_ROOT),--orchestrator-root "$(ORCHESTRATOR_ROOT)",$(if $(filter 1,$(RECORD_FINDINGS)),--orchestrator-root "$(WORKTREE_ROOT_REAL)",)) \
-		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
-
-review-dispatch: handoff-dispatch
-
-worker-daemon: lane-guard
-	@set -eu; \
-	SESSION="$(or $(SESSION),$(TASK)-$(LANE))"; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon.py" \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		--session "$$SESSION" \
-		--worktree-path "$(LANE_WORKTREE_TARGET)" \
-		$(if $(MAX_REVIEW_CYCLES),--max-review-cycles "$(MAX_REVIEW_CYCLES)",) \
-		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
-		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
-		$(if $(CODEX_BIN),--codex-bin "$(CODEX_BIN)",) \
-		$(if $(CODEX_ARGS),--codex-args "$(CODEX_ARGS)",) \
-		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
-
-worker-daemon-status: lane-guard
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" status \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
-		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)"
-
-worker-daemon-stop: lane-guard
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" stop \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
-		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		$(if $(filter 1,$(FORCE)),--force,)
-
-worker-daemon-resume: lane-guard
-	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" resume \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
-		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)"
-
-worker-daemon-tail: lane-guard
-	@tail -f "$(ORCHESTRATOR_ROOT)/logs/worker-daemon/worker-$(LANE).jsonl"
-
-orchestrator-daemon: lane-orchestrator-guard
-	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" run \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
-		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
-		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
-		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
-
-daemon-pause:
-	@python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" pause \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
-
-daemon-resume:
-	@python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" resume \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
-
-daemon-status:
-	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" status \
-		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
-		--log-dir "$(ORCHESTRATOR_ROOT)/logs/daemon"
-
-# =============================================================================
-# Worktree Lane Orchestration
-# =============================================================================
-
-lane-guard:
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make lane-open TASK=<task-ref> LANE=<lane>"; \
-		echo "Inspect current state: make state"; \
-		exit 1; \
-	fi
-	@if [ -z "$(LANE)" ]; then \
-		echo "LANE is required."; \
-		echo "No lane could be inferred from branch $(CURRENT_BRANCH)."; \
-		echo "Allowed lanes for $(TASK): $(TASK_LANES)"; \
-		echo "List lane status: make lane-list"; \
-		exit 1; \
-	fi
-	@if [ -z "$(TASK_LANES)" ]; then \
-		echo "Unsupported TASK: $(TASK)"; \
-		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
-		exit 1; \
-	fi
-	@if [ -z "$(LANE_BRANCH)" ]; then \
-		echo "Unsupported LANE: $(LANE)"; \
-		echo "Allowed lanes for $(TASK): $(TASK_LANES)"; \
-		exit 1; \
-	fi
-
-lane-orchestrator-guard: lane-guard
-	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
-		echo "lane-commits and lane-intake must be run from the orchestrator root."; \
-		echo "Current worktree: $(WORKTREE_ROOT_REAL)"; \
-		echo "Expected orchestrator root: $(ORCHESTRATOR_ROOT)"; \
-		exit 1; \
-	fi
-
-lane-worker-guard: lane-guard
-	@if [ "$(IN_ORCHESTRATOR_ROOT)" = "1" ]; then \
-		echo "This command must run from the worker worktree for lane $(LANE), not the orchestrator root."; \
-		exit 1; \
-	fi
-	@if [ "$(CURRENT_BRANCH)" != "$(LANE_BRANCH)" ]; then \
-		echo "Current branch $(CURRENT_BRANCH) does not match lane branch $(LANE_BRANCH)."; \
-		exit 1; \
-	fi
-
-lane-manifest-init:
-	@if [ -z "$(TASK)" ]; then \
-		echo "TASK is required."; \
-		exit 1; \
-	fi
-	@if [ -z "$(LANE_IDS)" ]; then \
-		echo "LANE_IDS is required."; \
-		echo "Example: make lane-manifest-init TASK=my-task LANE_IDS='backend frontend' TASK_PLAN=docs/tasks/x.md"; \
-		exit 1; \
-	fi
-	@set -eu; \
-	set -- python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/generate_lane_manifest.py" --task-ref "$(TASK)"; \
-	for lane in $(LANE_IDS); do set -- "$$@" --lane "$$lane"; done; \
-	if [ -n "$(TASK_PLAN)" ]; then set -- "$$@" --task-plan "$(TASK_PLAN)"; fi; \
-	if [ "$(DRY_RUN)" = "1" ]; then \
-		set -- "$$@" --stdout; \
-	elif [ "$(OVERWRITE)" = "1" ]; then \
-		set -- "$$@" --force; \
-	fi; \
-	"$$@"
-
-lane-open: lane-guard
-	@set -eu; \
-	DRY_FLAG=""; \
-	if [ "$(DRY_RUN)" = "1" ]; then DRY_FLAG="--dry-run"; fi; \
-	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" create \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--lane-id "$(LANE)" \
-		--branch "$(LANE_BRANCH)" \
-		--worktree-path "$(LANE_WORKTREE)" \
-		--title "$(LANE_TITLE)" \
-		--objective "$(LANE_OBJECTIVE)" \
-		--owner-agent codex \
-		--status active \
-		--notes "Makefile-managed worker lane for $(TASK)." \
-		$$DRY_FLAG; \
-	echo ""; \
-	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" brief \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		--branch "$(LANE_BRANCH)" \
-		--worktree-path "$(LANE_WORKTREE)" \
-		--title "$(LANE_TITLE)" \
-		--objective "$(LANE_OBJECTIVE)" \
-		$(LANE_OWNED_ARGS) \
-		$(LANE_DOC_ARGS) \
-		$(LANE_TEST_ARGS) \
-		$(LANE_NON_GOAL_ARGS) \
-		--definition "$(LANE_DONE_DEFINITION)"; \
-	echo ""; \
-	echo "Prepared lane worktree state:"; \
-	git -C "$(LANE_WORKTREE)" status -sb; \
-	if [ "$(DRY_RUN)" != "1" ]; then \
-		echo ""; \
-		echo "Initial lane inbox:"; \
-		$(MAKE) --no-print-directory lane-inbox TASK="$(TASK)" LANE="$(LANE)"; \
-	fi; \
-	if [ "$(ENTER_SHELL)" = "1" ] && [ "$(DRY_RUN)" != "1" ]; then \
-		echo ""; \
-		echo "Opening interactive shell in $(LANE_WORKTREE)"; \
-		cd "$(LANE_WORKTREE)" && exec "$${SHELL:-/bin/zsh}" -l; \
-	else \
-		echo ""; \
-		echo "Worktree ready at $(LANE_WORKTREE)"; \
-		echo "Your current shell is still at $(WORKTREE_ROOT_REAL)."; \
-		echo "Next step: cd \"$(LANE_WORKTREE)\" or rerun without ENTER_SHELL=0."; \
-	fi
-
-lane-status: lane-guard
-	@set -eu; \
-	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--lane-id "$(LANE)" \
-		--worktree-path "$(LANE_WORKTREE)"; \
-	echo ""; \
-	git -C "$(LANE_WORKTREE)" status -sb
-
-lane-inbox: lane-guard
-	@set -eu; \
-	WORKTREE_PATH="$(LANE_WORKTREE_TARGET)"; \
-	echo "Open dispatch messages for lane $(LANE):"; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) \
-		lane-message-list \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		--status open | python3 -c 'import json,sys; data=json.load(sys.stdin); data["messages"]=[m for m in data.get("messages", []) if m.get("direction")=="orchestrator_to_worker"]; data["returned"]=len(data["messages"]); data["total_matching"]=len(data["messages"]); print(json.dumps(data, indent=2))'; \
-	echo ""; \
-	echo "Latest worker report for lane $(LANE):"; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) \
-		lane-report-list \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		--limit 1; \
-	echo ""; \
-	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--lane-id "$(LANE)" \
-		--worktree-path "$$WORKTREE_PATH"; \
-	echo ""; \
-	echo "Worker action summary:"; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
-			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-			--task-ref "$(TASK)" \
-			--lane-id "$(LANE)" \
-			--worktree-path "$$WORKTREE_PATH" \
-			--summary
-
-lane-prompt: lane-guard
-	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
-		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
-		--lane-id "$(LANE)" \
-		--worktree-path "$(LANE_WORKTREE_TARGET)"
-
-lane-check: lane-worker-guard
-	@set -eu; \
-	record_test_result() { \
-		command_text="$$1"; \
-		step_label="$$2"; \
-		output_file="$$(mktemp "$${TMPDIR:-/tmp}/lane-check-$(LANE)-XXXXXX")"; \
-		if sh -lc "$$command_text" >"$$output_file" 2>&1; then \
-			cat "$$output_file"; \
-			result_text="$$(python3 -c 'from pathlib import Path; import sys; lines=[line.strip() for line in Path(sys.argv[1]).read_text(errors="replace").splitlines() if line.strip()]; tail=" | ".join(lines[-10:]) if lines else "command passed"; print(tail[:500])' "$$output_file")"; \
-			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
-				test --session "$(SESSION)" --command "$$command_text" --passed --result "$$result_text" --exit-code 0 >/dev/null; \
-		else \
-			status="$$?"; \
-			cat "$$output_file"; \
-			result_text="$$(python3 -c 'from pathlib import Path; import sys; lines=[line.strip() for line in Path(sys.argv[1]).read_text(errors="replace").splitlines() if line.strip()]; tail=" | ".join(lines[-10:]) if lines else "command failed"; print(tail[:500])' "$$output_file")"; \
-			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
-				test --session "$(SESSION)" --command "$$command_text" --result "$$result_text" --exit-code "$$status" >/dev/null; \
-			rm -f "$$output_file"; \
-			return "$$status"; \
-		fi; \
-		rm -f "$$output_file"; \
-		echo ""; \
-		echo "$$step_label passed."; \
-		echo ""; \
-	}; \
-	if [ -z "$(LANE_TEST_CMD_1)" ] && [ -z "$(LANE_TEST_CMD_2)" ]; then \
-		echo "No test commands configured for lane $(LANE)."; \
-		exit 0; \
-	fi; \
-	if [ -n "$(LANE_TEST_CMD_1)" ]; then \
-		echo "Running lane verification step 1..."; \
-		record_test_result '$(LANE_TEST_CMD_1)' "Lane verification step 1"; \
-	fi; \
-	if [ -n "$(LANE_TEST_CMD_2)" ]; then \
-		echo "Running lane verification step 2..."; \
-		record_test_result '$(LANE_TEST_CMD_2)' "Lane verification step 2"; \
-	fi; \
-	echo "Lane $(LANE) verification passed."
-
-lane-run: lane-guard
-	@set -eu; \
-	CODEX_CMD="$(CODEX_BIN)"; \
-	if [ -z "$$CODEX_CMD" ] && [ -x "/Applications/Codex.app/Contents/Resources/codex" ]; then \
-		CODEX_CMD="/Applications/Codex.app/Contents/Resources/codex"; \
-	fi; \
-	if [ -z "$$CODEX_CMD" ] && [ -x "$$HOME/.local/bin/codex" ]; then \
-		CODEX_CMD="$$HOME/.local/bin/codex"; \
-	fi; \
-	if [ -z "$$CODEX_CMD" ]; then \
-		echo "codex CLI is required for lane-run."; \
-		exit 1; \
-	fi; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
-			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-			--task-ref "$(TASK)" \
-			--lane-id "$(LANE)" \
-			--worktree-path "$(LANE_WORKTREE_TARGET)" \
-			--check >/dev/null 2>&1 && _check_rc=0 || _check_rc=$$?; \
-	if [ "$$_check_rc" -ne 0 ]; then \
-		if [ "$$_check_rc" -eq 3 ]; then \
-			echo "No actionable lane inbox items for $(LANE)."; \
-			exit 0; \
-		fi; \
-		exit "$$_check_rc"; \
-	fi; \
-	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX")"; \
-	SCHEMA_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-schema-$(LANE)-XXXXXX.json")"; \
-	RESULT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-result-$(LANE)-XXXXXX.json")"; \
-	trap 'rm -f "$$PROMPT_FILE" "$$SCHEMA_FILE" "$$RESULT_FILE"' EXIT INT TERM; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
-			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-			--task-ref "$(TASK)" \
-			--lane-id "$(LANE)" \
-			--worktree-path "$(LANE_WORKTREE_TARGET)" > "$$PROMPT_FILE"; \
-	printf '%s\n' \
-		'' \
-		'When you finish, do not run `make lane-handoff` or `make lane-report` yourself.' \
-		'Return a single JSON object that matches the provided output schema.' \
-		'' \
-		'Set `handoff_action` to:' \
-		'- `merge_ready` only if you produced lane-owned code changes that are ready for orchestrator review' \
-		'- `needs_guidance` if you were blocked, verification was blocked, permissions/sandbox prevented progress, or the assigned issue already appears resolved and now needs orchestrator review instead of new lane code' \
-		>> "$$PROMPT_FILE"; \
-	python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" schema > "$$SCHEMA_FILE"; \
-	if "$$CODEX_CMD" exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) --output-schema "$$SCHEMA_FILE" -o "$$RESULT_FILE" - < "$$PROMPT_FILE"; then \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" handoff \
-			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-			--task-ref "$(TASK)" \
-			--lane-id "$(LANE)" \
-			--session "$(SESSION)" \
-			--worktree-path "$(LANE_WORKTREE_TARGET)" \
-			--result-file "$$RESULT_FILE"; \
-	else \
-		status=$$?; \
-		echo "codex exec failed before automated handoff could be recorded."; \
-		if [ -s "$$RESULT_FILE" ]; then \
-			FAILURE_DIR="$(ORCHESTRATOR_ROOT)/.task-state/exports/lane-run-failures"; \
-			mkdir -p "$$FAILURE_DIR"; \
-			PRESERVED_RESULT="$$FAILURE_DIR/$(TASK)-$(LANE)-$$(date +%Y%m%d%H%M%S).json"; \
-			cp "$$RESULT_FILE" "$$PRESERVED_RESULT"; \
-			echo "Structured result was captured at $$PRESERVED_RESULT"; \
-		fi; \
-		exit "$$status"; \
-	fi
-
-lane-dispatch: lane-orchestrator-guard
-	@if [ -z "$(MESSAGE)" ]; then \
-		echo "MESSAGE is required."; \
-		echo "Example: make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=backend-http MESSAGE=\"Wire the retention router to the real services and verify pytest + mypy.\""; \
-		exit 1; \
-	fi
-	@set -eu; \
-	DISPATCH_SESSION="$(TASK)-dispatch-$(LANE)-$$(date +%Y%m%d%H%M%S)"; \
-	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] agent-handoff-mcp lane-upsert --lane-id \"$(LANE)\" --worktree-path \"$(LANE_WORKTREE)\" --branch \"$(LANE_BRANCH)\" --status active"; \
-		echo "[dry-run] agent-handoff-mcp lane-message --lane-id \"$(LANE)\" --session \"$$DISPATCH_SESSION\" --direction orchestrator_to_worker --subject \"$(SUBJECT)\" --message \"$(MESSAGE)\" --status open"; \
-		echo "[dry-run] $(MAKE) task"; \
-		echo "Dispatch preview ready for $(LANE)."; \
-		exit 0; \
-	fi; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) \
-		lane-upsert \
-		--lane-id "$(LANE)" \
-		--worktree-path "$(LANE_WORKTREE)" \
-		--branch "$(LANE_BRANCH)" \
-		--title "$(LANE_TITLE)" \
-		--objective "$(LANE_OBJECTIVE)" \
-		--owner-agent codex \
-		--status active \
-		--notes "Makefile-managed worker lane for $(TASK)."; \
-	$(MCP_CMD) $(MCP_STATE_ARGS) \
-		lane-message \
-		--lane-id "$(LANE)" \
-		--session "$$DISPATCH_SESSION" \
-		--direction orchestrator_to_worker \
-		--subject "$(SUBJECT)" \
-		--message "$(MESSAGE)" \
-		--status open; \
-	$(MAKE) task; \
-	echo ""; \
-	echo "Dispatch recorded for $(LANE). Workers can poll it with: make lane-inbox TASK=$(TASK) LANE=$(LANE)"
-
-lane-report: lane-worker-guard
-	@set -eu; \
-	set -- "$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" report \
-		--orchestrator-root "$$ORCHESTRATOR_ROOT" \
-		--task-ref "$$TASK" \
-		--lane-id "$$LANE" \
-		--session "$$SESSION" \
-		--summary "$$SUMMARY" \
-		--status "$$STATUS" \
-		--worktree-path "$(LANE_WORKTREE_TARGET)"; \
-	if [ -n "$${LANE_TEST_CMD_1:-}" ]; then set -- "$$@" --test-command "$$LANE_TEST_CMD_1"; fi; \
-	if [ -n "$${LANE_TEST_CMD_2:-}" ]; then set -- "$$@" --test-command "$$LANE_TEST_CMD_2"; fi; \
-	if [ "$${MERGE_READY:-0}" = "1" ]; then set -- "$$@" --merge-ready; fi; \
-	if [ "$${DRY_RUN:-0}" = "1" ]; then set -- "$$@" --dry-run; fi; \
-	if [ -n "$${MESSAGE:-}" ]; then \
-		report_subject="$${SUBJECT:-}"; \
-		if [ -z "$$report_subject" ] || [ "$$report_subject" = "$$LANE next assignment" ]; then \
-			set -- "$$@" --message "$$MESSAGE"; \
-		else \
-			set -- "$$@" --message "$$MESSAGE" --subject "$$report_subject"; \
-		fi; \
-	fi; \
-	"$$@"
-
-lane-commit: lane-worker-guard
-	@set -eu; \
-	if [ -z "$(LANE_COMMIT_PATHS)" ]; then \
-		echo "No lane-owned commit paths configured for $(LANE)."; \
-		exit 1; \
-	fi; \
-	TOOLING_FILES="$(LANE_TOOLING_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
-	ALL_CHANGED="$$( { git diff --name-only; git diff --cached --name-only; git ls-files --others --exclude-standard; } | sort -u )"; \
-	OUT_OF_SCOPE=""; \
-	for file in $$ALL_CHANGED; do \
-		[ -n "$$file" ] || continue; \
-		tooling=0; \
-		for tooling_file in $$TOOLING_FILES; do \
-			case "$$file" in \
-				$$tooling_file) tooling=1; break ;; \
-			esac; \
-		done; \
-		if [ "$$tooling" -eq 1 ]; then \
-			continue; \
-		fi; \
-		allowed=0; \
-		for prefix in $(LANE_COMMIT_PATHS); do \
-			case "$$file" in \
-				$$prefix|$$prefix/*) allowed=1; break ;; \
-			esac; \
-		done; \
-		if [ "$$allowed" -ne 1 ]; then \
-			OUT_OF_SCOPE="$$OUT_OF_SCOPE\n$$file"; \
-		fi; \
-	done; \
-	if [ -n "$$OUT_OF_SCOPE" ]; then \
-		echo "Refusing to commit lane $(LANE) with out-of-scope changes present:"; \
-		printf '%b\n' "$$OUT_OF_SCOPE"; \
-		exit 1; \
-	fi; \
-	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] git add -A -- $(LANE_COMMIT_PATHS)"; \
-		echo "[dry-run] git commit -m \"$(LANE): $(if $(COMMIT_MSG),$(COMMIT_MSG),$(LANE_COMMIT_SUBJECT))\""; \
-	else \
-		git add -A -- $(LANE_COMMIT_PATHS); \
-		if git diff --cached --quiet -- $(LANE_COMMIT_PATHS); then \
-			echo "No lane-owned changes to commit for $(LANE)."; \
-		else \
-			git commit -m "$(LANE): $(if $(COMMIT_MSG),$(COMMIT_MSG),$(LANE_COMMIT_SUBJECT))"; \
-		fi; \
-	fi
-
-lane-handoff: lane-worker-guard
-	@set -eu; \
-	$(MAKE) lane-commit TASK="$(TASK)" LANE="$(LANE)" DRY_RUN="$(DRY_RUN)" COMMIT_MSG="$(COMMIT_MSG)"; \
-	if [ "$(DRY_RUN)" != "1" ]; then \
-		AHEAD_COUNT="$$(git -C "$(LANE_WORKTREE_TARGET)" rev-list --count "$(ORCHESTRATOR_BRANCH)..HEAD" 2>/dev/null || printf '0')"; \
-		if [ "$$AHEAD_COUNT" = "0" ] && [ "$(STATUS)" != "blocked" ]; then \
-			echo "No unique lane commits exist for $(LANE), so there is nothing merge-ready to hand off."; \
-			echo "If the lane is blocked without code changes, use: make lane-report STATUS=blocked MERGE_READY=0 SUMMARY=\"...\" MESSAGE=\"...\""; \
-			exit 1; \
-		fi; \
-	fi; \
-	echo ""; \
-	$(MAKE) lane-status TASK="$(TASK)" LANE="$(LANE)"; \
-	echo ""; \
-	$(MAKE) lane-report TASK="$(TASK)" LANE="$(LANE)" SESSION="$(SESSION)" SUMMARY="$(SUMMARY)" STATUS="$(STATUS)" MERGE_READY="$(MERGE_READY)" DRY_RUN="$(DRY_RUN)" MESSAGE="$(MESSAGE)"
-
-lane-reset: lane-guard
-	@if [ -z "$(REF)" ]; then \
-		echo "REF is required."; \
-		exit 1; \
-	fi
-	@set -eu; \
-	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] git -C \"$(LANE_WORKTREE)\" reset --hard \"$(REF)\""; \
-		echo "[dry-run] git -C \"$(LANE_WORKTREE)\" clean -fd"; \
-	else \
-		git -C "$(LANE_WORKTREE)" reset --hard "$(REF)"; \
-		git -C "$(LANE_WORKTREE)" clean -fd; \
-		git -C "$(LANE_WORKTREE)" status -sb; \
-	fi
-
-lane-refresh: lane-guard
-	@set -eu; \
-	TARGET_WORKTREE="$(LANE_WORKTREE_TARGET)"; \
-	STASH_MSG="lane-refresh $(LANE) $$(date +%Y%m%d%H%M%S)"; \
-	TOOLING_FILES="$(ROOT_REFRESH_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
-	if [ ! -d "$$TARGET_WORKTREE" ]; then \
-		echo "Lane worktree does not exist: $$TARGET_WORKTREE"; \
-		exit 1; \
-	fi; \
-	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] target worktree: $$TARGET_WORKTREE"; \
-		echo "[dry-run] verify orchestrator workflow tooling is committed on $(ORCHESTRATOR_BRANCH) before refresh"; \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" fetch \"$(ORCHESTRATOR_ROOT)\" \"$(ORCHESTRATOR_BRANCH)\""; \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" stash push -u -m \"$$STASH_MSG\" (if dirty)"; \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" reset --hard FETCH_HEAD && git -C \"$$TARGET_WORKTREE\" clean -fd (if lane has no unique commits)"; \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" rebase FETCH_HEAD (if lane has unique commits)"; \
-	else \
-		if [ -n "$$TOOLING_FILES" ]; then \
-			ROOT_TOOLING_DIRTY="$$(git -C "$(ORCHESTRATOR_ROOT)" status --porcelain=v1 --untracked-files=all -- $$TOOLING_FILES 2>/dev/null || true)"; \
-			if [ -n "$$ROOT_TOOLING_DIRTY" ]; then \
-				echo "Orchestrator workflow tooling has uncommitted changes. Commit them on root before refreshing worker lanes."; \
-				printf '%s\n' "$$ROOT_TOOLING_DIRTY"; \
-				exit 1; \
-			fi; \
-		fi; \
-		DID_STASH=0; \
-		DIRTY="$$(git -C "$$TARGET_WORKTREE" status --porcelain=v1 --untracked-files=all)"; \
-		if [ -n "$$DIRTY" ]; then \
-			echo "Stashing dirty lane state before refresh..."; \
-			git -C "$$TARGET_WORKTREE" stash push -u -m "$$STASH_MSG" >/dev/null; \
-			DID_STASH=1; \
-		fi; \
-		git -C "$$TARGET_WORKTREE" fetch "$(ORCHESTRATOR_ROOT)" "$(ORCHESTRATOR_BRANCH)"; \
-		AHEAD_COUNT="$$(git -C "$$TARGET_WORKTREE" rev-list --count FETCH_HEAD..HEAD)"; \
-		if [ "$$AHEAD_COUNT" = "0" ]; then \
-			git -C "$$TARGET_WORKTREE" reset --hard FETCH_HEAD; \
-			git -C "$$TARGET_WORKTREE" clean -fd; \
-		else \
-			AHEAD_COMMITS="$$(git -C "$$TARGET_WORKTREE" rev-list --reverse FETCH_HEAD..HEAD)"; \
-			SUPERSEDED_COUNT=0; \
-			IGNORED_COUNT=0; \
-			for commit in $$AHEAD_COMMITS; do \
-				subject="$$(git -C "$$TARGET_WORKTREE" log -1 --format=%s "$$commit")"; \
-				if git -C "$$TARGET_WORKTREE" log FETCH_HEAD --format=%s | grep -Fqx "$$subject"; then \
-					SUPERSEDED_COUNT=$$((SUPERSEDED_COUNT + 1)); \
-					continue; \
-				fi; \
-				if [ -n "$(LANE_COMMIT_PATHS)" ]; then \
-					COMMIT_FILES="$$(git -C "$$TARGET_WORKTREE" show --name-only --pretty='' "$$commit" | awk 'NF')"; \
-					HAS_OWNED_FILE=0; \
-					for file in $$COMMIT_FILES; do \
-						for prefix in $(LANE_COMMIT_PATHS); do \
-							case "$$file" in \
-								$$prefix|$$prefix/*) HAS_OWNED_FILE=1; break ;; \
-							esac; \
-						done; \
-						if [ "$$HAS_OWNED_FILE" = "1" ]; then \
-							break; \
-						fi; \
-					done; \
-					if [ "$$HAS_OWNED_FILE" = "0" ]; then \
-						IGNORED_COUNT=$$((IGNORED_COUNT + 1)); \
-					fi; \
-				fi; \
-			done; \
-			if [ $$((SUPERSEDED_COUNT + IGNORED_COUNT)) = "$$AHEAD_COUNT" ]; then \
-				echo "Lane commits are already integrated upstream or out of lane scope. Resetting lane to $(ORCHESTRATOR_BRANCH)."; \
-				git -C "$$TARGET_WORKTREE" reset --hard FETCH_HEAD; \
-				git -C "$$TARGET_WORKTREE" clean -fd; \
-			elif ! git -C "$$TARGET_WORKTREE" rebase FETCH_HEAD; then \
-				git -C "$$TARGET_WORKTREE" rebase --abort >/dev/null 2>&1 || true; \
-				echo "Lane refresh failed during rebase. Root left untouched."; \
-				echo "Resolve conflicts in the lane, then rerun lane-refresh."; \
-				if [ "$$DID_STASH" = "1" ]; then \
-					echo "Restoring stashed work..."; \
-					if git -C "$$TARGET_WORKTREE" stash pop >/dev/null 2>&1; then \
-						echo "Stashed changes restored."; \
-					else \
-						echo "WARNING: Stash pop had conflicts. Inspect with: git -C \"$$TARGET_WORKTREE\" stash list"; \
-					fi; \
-				fi; \
-				exit 1; \
-			fi; \
-		fi; \
-		echo "Lane refreshed against $(ORCHESTRATOR_BRANCH)."; \
-		echo "Worker tooling now reflects committed orchestrator branch state only."; \
-		if [ "$$DID_STASH" = "1" ]; then \
-			echo "Restoring stashed work..."; \
-			if git -C "$$TARGET_WORKTREE" stash pop >/dev/null 2>&1; then \
-				echo "Stashed changes restored cleanly."; \
-			else \
-				echo "WARNING: Stash pop had conflicts. Resolve them manually:"; \
-				echo "  cd \"$$TARGET_WORKTREE\""; \
-				echo "  git diff   # inspect conflict markers"; \
-				echo "  git checkout --theirs/--ours <file>   # or edit manually"; \
-				echo "  git stash drop   # after resolving"; \
-			fi; \
-		fi; \
-		git -C "$$TARGET_WORKTREE" status -sb; \
-	fi
-
-lane-clean: lane-guard
-	@set -eu; \
-	TARGET_WORKTREE="$(LANE_WORKTREE_TARGET)"; \
-	TOOLING_FILES="$(LANE_TOOLING_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
-	if [ "$(DRY_RUN)" = "1" ]; then \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" restore --source=HEAD --staged --worktree -- $$TOOLING_FILES"; \
-		echo "[dry-run] git -C \"$$TARGET_WORKTREE\" clean -fd -- docs/agentic/templates scripts/worktree-lane"; \
-	else \
-		if [ -n "$$TOOLING_FILES" ]; then \
-			git -C "$$TARGET_WORKTREE" restore --source=HEAD --staged --worktree -- $$TOOLING_FILES 2>/dev/null || true; \
-		fi; \
-		git -C "$$TARGET_WORKTREE" clean -fd -- docs/agentic/templates scripts/worktree-lane 2>/dev/null || true; \
-		git -C "$$TARGET_WORKTREE" status -sb; \
-	fi
-
-lane-path: lane-guard
-	@printf '%s\n' "$(LANE_WORKTREE)"
-
-lane-commits: lane-orchestrator-guard
-	@set -eu; \
-	COMMITS="$$(git rev-list --reverse HEAD..$(LANE_BRANCH))"; \
-	if [ -z "$$COMMITS" ]; then \
-		echo "No commits to intake from $(LANE_BRANCH)."; \
-	else \
-		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
-	fi
-
-lane-intake: lane-orchestrator-guard
-	@set -eu; \
-	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
-		echo "Orchestrator root is dirty. Commit, stash, or clean it before lane intake."; \
-		exit 1; \
-	fi; \
-	REPORT_JSON="$$($(MCP_CMD) $(MCP_STATE_ARGS) lane-report-list --task-ref "$(TASK)" --lane-id "$(LANE)" --limit 1)"; \
-	REPORT_SUMMARY="$$(printf '%s' "$$REPORT_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=data.get("reports", []); print(reports[0].get("summary","")) if reports else print("")')"; \
-	REPORT_MERGE_READY="$$(printf '%s' "$$REPORT_JSON" | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=data.get("reports", []); print(reports[0].get("merge_ready",0)) if reports else print(0)')"; \
-	if [ "$$REPORT_MERGE_READY" != "1" ]; then \
-		echo "Latest lane report for $(LANE) is missing or not merge-ready. Submit a merge-ready handoff before intake."; \
-		exit 1; \
-	fi; \
-	COMMITS="$$(git rev-list --reverse HEAD..$(LANE_BRANCH))"; \
-	if [ -z "$$COMMITS" ]; then \
-		echo "No commits to intake from $(LANE_BRANCH)."; \
-	elif [ "$(DRY_RUN)" = "1" ]; then \
-		echo "Latest lane report summary: $$REPORT_SUMMARY"; \
-		echo ""; \
-		echo "Lane commits from $(LANE_BRANCH):"; \
-		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
-		echo ""; \
-		echo "[dry-run] create scratch worktree, cherry-pick $$COMMITS there, verify file scope against lane-owned paths, run lane-local verification, then fast-forward merge into $(ORCHESTRATOR_BRANCH)"; \
-	else \
-		TMP_PARENT="$$(mktemp -d "$${TMPDIR:-/tmp}/lane-intake-$(LANE)-XXXXXX")"; \
-		SCRATCH_WORKTREE="$$TMP_PARENT/repo"; \
-		SCRATCH_BRANCH="codex/intake-$(LANE)-$$(date +%s)"; \
-		cleanup() { \
-			git worktree remove --force "$$SCRATCH_WORKTREE" >/dev/null 2>&1 || true; \
-			git branch -D "$$SCRATCH_BRANCH" >/dev/null 2>&1 || true; \
-			rmdir "$$TMP_PARENT" >/dev/null 2>&1 || true; \
-		}; \
-		trap cleanup EXIT INT TERM; \
-		echo "Latest lane report summary: $$REPORT_SUMMARY"; \
-		echo ""; \
-		echo "Lane commits from $(LANE_BRANCH):"; \
-		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
-		echo ""; \
-		git worktree add -b "$$SCRATCH_BRANCH" "$$SCRATCH_WORKTREE" HEAD >/dev/null; \
-		if ! git -C "$$SCRATCH_WORKTREE" cherry-pick $$COMMITS; then \
-			git -C "$$SCRATCH_WORKTREE" cherry-pick --abort >/dev/null 2>&1 || true; \
-			echo "Lane intake hit a conflict in scratch worktree $$SCRATCH_WORKTREE. Orchestrator root was not modified."; \
-			exit 1; \
-		fi; \
-		INTAKE_FILES="$$(git -C "$$SCRATCH_WORKTREE" diff --name-only HEAD~$$(echo $$COMMITS | wc -w | tr -d ' ')..HEAD)"; \
-		ALLOWED_PATHS="$(LANE_COMMIT_PATHS)"; \
-		SCOPE_VIOLATIONS=""; \
-		for file in $$INTAKE_FILES; do \
-			[ -n "$$file" ] || continue; \
-			in_scope=0; \
-			for prefix in $$ALLOWED_PATHS; do \
-				case "$$file" in \
-					$$prefix|$$prefix/*) in_scope=1; break ;; \
-				esac; \
-			done; \
-			if [ "$$in_scope" -ne 1 ]; then \
-				SCOPE_VIOLATIONS="$$SCOPE_VIOLATIONS\n  $$file"; \
-			fi; \
-		done; \
-		if [ -n "$$SCOPE_VIOLATIONS" ]; then \
-			echo "BLOCKED: Lane intake for $(LANE) contains out-of-scope files:"; \
-			printf '%b\n' "$$SCOPE_VIOLATIONS"; \
-			echo ""; \
-			echo "The worker committed files outside the lane's allowed paths."; \
-			echo "Fix in the worker worktree, then submit a new lane-handoff."; \
-			exit 1; \
-		fi; \
-		if [ "$(SKIP_TESTS)" = "1" ]; then \
-			echo "WARNING: SKIP_TESTS=1 — skipping scratch-worktree verification. Lane tests were NOT run before merge."; \
-		else \
-			if [ -n "$(LANE_TEST_CMD_1)" ]; then \
-				if ! ( cd "$$SCRATCH_WORKTREE" && sh -lc '$(LANE_TEST_CMD_1)' ); then \
-					echo ""; \
-					echo "Lane intake ABORTED: verification step 1 failed in scratch worktree."; \
-					echo "Fix the issue in the worker lane and submit a new lane-handoff."; \
-					exit 1; \
-				fi; \
-			fi; \
-			if [ -n "$(LANE_TEST_CMD_2)" ]; then \
-				if ! ( cd "$$SCRATCH_WORKTREE" && sh -lc '$(LANE_TEST_CMD_2)' ); then \
-					echo ""; \
-					echo "Lane intake ABORTED: verification step 2 failed in scratch worktree."; \
-					echo "Fix the issue in the worker lane and submit a new lane-handoff."; \
-					exit 1; \
-				fi; \
-			fi; \
-		fi; \
-		git merge --ff-only "$$SCRATCH_BRANCH"; \
-		$(MCP_CMD) $(MCP_STATE_ARGS) lane-upsert --lane-id "$(LANE)" --worktree-path "$(LANE_WORKTREE)" --branch "$(LANE_BRANCH)" --status merged --notes "Merged into $(ORCHESTRATOR_BRANCH) via scratch intake."; \
-		echo "Lane $(LANE) intake completed cleanly via scratch worktree."; \
-	fi
 
 # =============================================================================
 # Development Shortcuts

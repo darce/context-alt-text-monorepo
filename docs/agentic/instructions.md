@@ -361,7 +361,7 @@ make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=backend-
 make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-http
 ```
 
-- `make lane-refresh` syncs a worker lane against the current orchestrator branch. If the lane has no unique commits, it hard-resets to orchestrator `HEAD`; otherwise it rebases the lane commits onto orchestrator `HEAD`. Dirty lane state is auto-stashed first. It does not copy live files from the orchestrator working tree into the lane.
+- `make lane-refresh` syncs a worker lane against the current orchestrator branch. If the lane has no unique commits, it hard-resets to orchestrator `HEAD`; otherwise it rebases the lane commits onto orchestrator `HEAD`. Dirty lane state is auto-stashed before refresh and auto-popped afterward; if the pop conflicts, the stash is preserved and a warning is printed. It does not copy live files from the orchestrator working tree into the lane.
 - If you change lane workflow docs or helper tooling in the orchestrator root, commit those changes on the orchestrator branch first, then run `make lane-refresh TASK=<task> LANE=<lane>` so workers pick them up cleanly through git.
 - `make lane-refresh` refuses to run when orchestrator workflow tooling is locally dirty. That is intentional: worker lanes should stay clean and should not inherit uncommitted root tooling edits.
 - `make lane-clean` removes legacy copied tooling drift (Makefiles, templates, helper scripts) from a worker lane without touching lane-owned product files.

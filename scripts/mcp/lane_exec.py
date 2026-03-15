@@ -254,6 +254,11 @@ def run_lane_exec(
     if dry_run:
         result: dict[str, Any] = {
             "dry_run": True,
+            "handoff_action": "merge_ready",
+            "summary": f"Dry-run lane execution for {lane_id}.",
+            "details": "No codex exec was run; this is a simulated structured result.",
+            "tests_run": [],
+            "blockers": [],
             "prompt": prompt_text,
             "schema": json.loads(schema_text),
             "codex_bin": codex,

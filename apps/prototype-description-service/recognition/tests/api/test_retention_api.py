@@ -12,6 +12,12 @@ from fastapi.testclient import TestClient
 
 from recognition.interface_adapters.http import dependencies
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.deps.services import (
+    get_audit_repository,
+    get_retention_export_service,
+    get_retention_policy_service,
+    get_retention_purge_service,
+)
 from recognition.interface_adapters.http.routers import retention as retention_router
 from recognition.tests.api.conftest import FakeSession
 
@@ -294,6 +300,34 @@ def test_export_returns_inline_payload(monkeypatch) -> None:
     assert export_service.calls == [(tenant_id, "api_key:api-key-id")]
 
 
+def test_coerce_export_response_preserves_real_service_shape() -> None:
+    tenant_id = str(uuid.uuid4())
+
+    response = retention_router._coerce_export_response(
+        {
+            "tenant_id": tenant_id,
+            "exported_at": datetime.now(tz=UTC).isoformat(),
+            "schema_version": 1,
+            "clusters": [{"id": "cluster-1"}],
+            "media_identities": [{"id": "identity-1"}],
+            "identity_suggestions": [],
+            "cluster_merge_suggestions": [],
+            "scan_jobs": [{"id": "job-1"}],
+        },
+        tenant_id,
+    )
+
+    assert response.data["clusters"] == [{"id": "cluster-1"}]
+    assert response.data["media_identities"] == [{"id": "identity-1"}]
+    assert response.counts == {
+        "clusters": 1,
+        "media_identities": 1,
+        "identity_suggestions": 0,
+        "cluster_merge_suggestions": 0,
+        "scan_jobs": 1,
+    }
+
+
 def test_export_enforces_size_guard(monkeypatch) -> None:
     tenant_id = str(uuid.uuid4())
     client, _, _, _ = _build_client(monkeypatch, tenant_id=tenant_id, export_count=3)
@@ -358,6 +392,24 @@ def test_purge_returns_deleted_counts(monkeypatch) -> None:
     assert purge_service.calls == [(tenant_id, "api_key:api-key-id", "all")]
 
 
+def test_coerce_purge_response_accepts_purged_at_timestamp() -> None:
+    tenant_id = str(uuid.uuid4())
+    timestamp = datetime.now(tz=UTC).isoformat()
+
+    response = retention_router._coerce_purge_response(
+        {
+            "tenant_id": tenant_id,
+            "scope": "disposed",
+            "deleted_counts": {"media_identities": 4},
+            "purged_at": timestamp,
+        },
+        tenant_id,
+        "disposed",
+    )
+
+    assert response.last_purge_at == datetime.fromisoformat(timestamp)
+
+
 def test_purge_invalid_scope_returns_400(monkeypatch) -> None:
     tenant_id = str(uuid.uuid4())
     client, _, _, purge_service = _build_client(monkeypatch, tenant_id=tenant_id)
@@ -404,3 +456,17 @@ def test_audit_endpoint_returns_paginated_events(monkeypatch) -> None:
     assert body["offset"] == 1
     assert len(body["items"]) == 1
     assert body["items"][0]["event_type"] == "export_completed"
+
+
+async def test_retention_dependency_factories_return_real_implementations() -> None:
+    session = FakeSession()
+
+    policy_service = await get_retention_policy_service(session)
+    export_service = await get_retention_export_service(session)
+    purge_service = await get_retention_purge_service(session)
+    audit_repository = await get_audit_repository(session)
+
+    assert policy_service.__class__.__name__ == "RetentionPolicyService"
+    assert export_service.__class__.__name__ == "TenantExportService"
+    assert purge_service.__class__.__name__ == "TenantPurgeService"
+    assert audit_repository.__class__.__name__ == "AuditRepository"

@@ -59,10 +59,14 @@ def _coerce_export_response(result: dict[str, Any], tenant_id: str) -> ExportRes
     if not isinstance(data, dict):
         data = result.get("payload")
     if not isinstance(data, dict):
-        data = {}
+        data = {
+            str(key): value
+            for key, value in result.items()
+            if key not in {"tenant_id", "exported_at", "schema_version", "counts"}
+        }
     counts = result.get("counts")
     if not isinstance(counts, dict):
-        counts = {}
+        counts = {str(key): len(value) for key, value in data.items() if isinstance(value, list)}
     schema_version = result.get("schema_version", 1)
     return ExportResponse(
         tenant_id=str(result.get("tenant_id", tenant_id)),
@@ -79,11 +83,14 @@ def _coerce_purge_response(result: dict[str, Any], tenant_id: str, scope: str) -
         deleted_counts = result.get("counts")
     if not isinstance(deleted_counts, dict):
         deleted_counts = {}
+    last_purge_at = result.get("last_purge_at")
+    if last_purge_at is None:
+        last_purge_at = result.get("purged_at")
     return PurgeResponse(
         tenant_id=str(result.get("tenant_id", tenant_id)),
         scope=str(result.get("scope", scope)),
         deleted_counts={str(key): int(value) for key, value in deleted_counts.items()},
-        last_purge_at=result.get("last_purge_at"),
+        last_purge_at=last_purge_at,
     )
 
 

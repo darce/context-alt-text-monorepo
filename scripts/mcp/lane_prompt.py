@@ -14,6 +14,8 @@ from agent_handoff_mcp import get_lane_activity
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
 WAITING_MESSAGE = "Open worker handoff already sent; waiting for orchestrator response."
+NO_WORK_EXIT = 3
+WAITING_EXIT = 4
 ANSI = {
     "reset": "\033[0m",
     "red": "\033[31m",
@@ -30,7 +32,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--task-ref", required=True)
     parser.add_argument("--lane-id", required=True)
     parser.add_argument("--worktree-path", required=True)
-    parser.add_argument("--check", action="store_true", help="Exit 0 if actionable work exists, 3 if not.")
+    parser.add_argument("--check", action="store_true", help="Exit 0 if actionable work exists, 3 if idle, 4 if waiting for orchestrator.")
     parser.add_argument("--summary", action="store_true", help="Print a color-coded one-line-per-item summary.")
     return parser.parse_args()
 
@@ -280,7 +282,11 @@ def main() -> int:
     state = _actionable_state(activity)
     prompt = _build_prompt(activity, task_ref=args.task_ref, lane_id=args.lane_id, worktree_path=args.worktree_path)
     if args.check:
-        return 0 if state["actionable"] else 3
+        if state["actionable"]:
+            return 0
+        if state["awaiting_orchestrator"]:
+            return WAITING_EXIT
+        return NO_WORK_EXIT
     if args.summary:
         print("\n".join(_build_summary_lines(activity)))
         return 0

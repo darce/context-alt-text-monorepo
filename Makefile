@@ -45,6 +45,7 @@ TASK ?= $(ACTIVE_TASK)
 LANE ?= $(INFERRED_LANE)
 TASK_LANES := $(shell $(if $(TASK),$(LANE_CONFIG_CMD) list-lanes --task-ref "$(TASK)" 2>/dev/null,))
 lane_field = $(shell $(if $(and $(TASK),$(LANE)),$(LANE_CONFIG_CMD) field --task-ref "$(TASK)" --lane-id "$(LANE)" --field $(1) $(if $(2),--orchestrator-root "$(ORCHESTRATOR_ROOT)",) 2>/dev/null,))
+IN_LANE_WORKTREE := $(if $(and $(filter 0,$(IN_ORCHESTRATOR_ROOT)),$(LANE)),1,0)
 
 # --- Override defaults ---
 SESSION ?= $(TASK)-$(LANE)
@@ -200,39 +201,68 @@ help:
 # Cross-Repo Checks
 # =============================================================================
 
-# Run all checks across the monorepo
-check-all: lint-all test-all
-	@echo ""
-	@echo "✅ All monorepo checks passed!"
+# Run all checks across the monorepo, or lane-scoped verification inside a lane worktree.
+check-all:
+	@if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+		echo "Lane worktree detected ($(LANE)); running only the checks configured for this lane."; \
+		$(MAKE) lane-check TASK="$(TASK)" LANE="$(LANE)"; \
+		echo ""; \
+		echo "✅ Lane-scoped checks passed for $(LANE)!"; \
+	else \
+		$(MAKE) lint-all; \
+		$(MAKE) test-all; \
+		echo ""; \
+		echo "✅ All monorepo checks passed!"; \
+	fi
 
 check-frontend:
+	@if [ "$(IN_LANE_WORKTREE)" = "1" ] && [ "$(LANE)" != "frontend" ]; then \
+		echo "Lane $(LANE) does not own frontend checks; nothing to run."; \
+		exit 0; \
+	fi
 	@echo "=== Frontend checks (WordPress plugin) ==="
 	@cd apps/prototype-wp-alt-context && make check
 	@echo ""
 	@echo "✅ Frontend checks passed!"
 
-# Lint all apps
+# Lint all apps, or lane-scoped verification inside a lane worktree.
 lint-all:
-	@echo "=== Linting Python (backend) ==="
-	@cd apps/prototype-description-service && make lint
-	@echo ""
-	@echo "=== Linting TypeScript (frontend) ==="
-	@cd apps/prototype-wp-alt-context && make lint
-	@echo ""
-	@echo "=== Linting PHP (plugin) ==="
-	@cd apps/prototype-wp-alt-context && composer cs-check
-	@echo ""
-	@echo "✅ Linting complete"
+	@if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+		echo "Lane worktree detected ($(LANE)); suppressing monorepo-wide lint targets."; \
+		echo "Running lane-scoped verification commands instead."; \
+		$(MAKE) lane-check TASK="$(TASK)" LANE="$(LANE)"; \
+		echo ""; \
+		echo "✅ Lane-scoped verification passed for $(LANE)!"; \
+	else \
+		echo "=== Linting Python (backend) ==="; \
+		cd apps/prototype-description-service && make lint; \
+		echo ""; \
+		echo "=== Linting TypeScript (frontend) ==="; \
+		cd apps/prototype-wp-alt-context && make lint; \
+		echo ""; \
+		echo "=== Linting PHP (plugin) ==="; \
+		cd apps/prototype-wp-alt-context && composer cs-check; \
+		echo ""; \
+		echo "✅ Linting complete"; \
+	fi
 
-# Test all apps
+# Test all apps, or lane-scoped verification inside a lane worktree.
 test-all:
-	@echo "=== Testing Python (backend) ==="
-	@cd apps/prototype-description-service && make test
-	@echo ""
-	@echo "=== Testing TypeScript (frontend) ==="
-	@cd apps/prototype-wp-alt-context && make test
-	@echo ""
-	@echo "✅ Tests complete"
+	@if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+		echo "Lane worktree detected ($(LANE)); suppressing monorepo-wide test targets."; \
+		echo "Running lane-scoped verification commands instead."; \
+		$(MAKE) lane-check TASK="$(TASK)" LANE="$(LANE)"; \
+		echo ""; \
+		echo "✅ Lane-scoped verification passed for $(LANE)!"; \
+	else \
+		echo "=== Testing Python (backend) ==="; \
+		cd apps/prototype-description-service && make test; \
+		echo ""; \
+		echo "=== Testing TypeScript (frontend) ==="; \
+		cd apps/prototype-wp-alt-context && make test; \
+		echo ""; \
+		echo "✅ Tests complete"; \
+	fi
 
 # Clean all cache files
 clean-all:

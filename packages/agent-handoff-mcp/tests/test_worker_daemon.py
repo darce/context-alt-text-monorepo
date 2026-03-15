@@ -139,6 +139,34 @@ def test_has_actionable_work_false_when_exit_3(tmp_path: Path) -> None:
         ) is False
 
 
+def test_has_actionable_work_false_when_exit_4(tmp_path: Path) -> None:
+    mod = _load_module()
+    fake = mock.Mock()
+    fake.returncode = 4
+
+    with mock.patch("subprocess.run", return_value=fake):
+        assert mod.has_actionable_work(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="lane",
+            worktree_path=tmp_path,
+        ) is False
+
+
+def test_poll_lane_state_waiting_when_exit_4(tmp_path: Path) -> None:
+    mod = _load_module()
+    fake = mock.Mock()
+    fake.returncode = 4
+
+    with mock.patch("subprocess.run", return_value=fake):
+        assert mod.poll_lane_state(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="lane",
+            worktree_path=tmp_path,
+        ) == "waiting"
+
+
 def test_has_actionable_work_raises_on_error(tmp_path: Path) -> None:
     mod = _load_module()
     fake = mock.Mock()
@@ -252,7 +280,7 @@ def test_worker_loop_single_pass_no_work(tmp_path: Path) -> None:
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))
 
-    with mock.patch.object(mod, "has_actionable_work", return_value=False):
+    with mock.patch.object(mod, "poll_lane_state", return_value="idle"):
         rc = mod.worker_loop(
             orchestrator_root=REPO_ROOT,
             task_ref="task",
@@ -264,6 +292,69 @@ def test_worker_loop_single_pass_no_work(tmp_path: Path) -> None:
         )
 
     assert rc == 0
+
+
+def test_worker_loop_logs_dormant_transition_once(tmp_path: Path) -> None:
+    mod = _load_module()
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    with (
+        mock.patch.object(mod, "poll_lane_state", side_effect=["idle", "idle", KeyboardInterrupt()]),
+        mock.patch.object(mod, "_log") as mock_log,
+        mock.patch("time.sleep", return_value=None),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            mod.worker_loop(
+                orchestrator_root=REPO_ROOT,
+                task_ref="task",
+                lane_id="test-lane",
+                session="task-test-lane",
+                worktree_path=tmp_path,
+                single_pass=False,
+                dry_run=True,
+            )
+
+    dormant_calls = [call for call in mock_log.call_args_list if call.args[3] == "dormant_entered"]
+    assert len(dormant_calls) == 1
+
+
+def test_worker_loop_logs_wake_transition_before_work(tmp_path: Path) -> None:
+    mod = _load_module()
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps({
+        "handoff_action": "needs_guidance",
+        "summary": "Blocked on permissions.",
+        "details": "Cannot access resource.",
+        "tests_run": [],
+        "blockers": ["No access."],
+    }))
+
+    with (
+        mock.patch.object(mod, "poll_lane_state", side_effect=["waiting", "actionable", KeyboardInterrupt()]),
+        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
+        mock.patch("lane_exec.run_lane_exec", return_value=result_file),
+        mock.patch.object(mod, "_run_final_handoff", return_value=0),
+        mock.patch.object(mod, "_log") as mock_log,
+        mock.patch("time.sleep", return_value=None),
+    ):
+        with pytest.raises(KeyboardInterrupt):
+            mod.worker_loop(
+                orchestrator_root=REPO_ROOT,
+                task_ref="task",
+                lane_id="test-lane",
+                session="task-test-lane",
+                worktree_path=tmp_path,
+                single_pass=False,
+                dry_run=True,
+            )
+
+    events = [call.args[3] for call in mock_log.call_args_list]
+    assert "dormant_entered" in events
+    assert "dormant_exited" in events
 
 
 # ---------------------------------------------------------------------------
@@ -278,7 +369,7 @@ def test_worker_loop_single_pass_poll_error(tmp_path: Path) -> None:
 
     with mock.patch.object(
         mod,
-        "has_actionable_work",
+        "poll_lane_state",
         side_effect=RuntimeError("poll failure"),
     ):
         rc = mod.worker_loop(
@@ -316,7 +407,7 @@ def test_worker_loop_single_pass_needs_guidance(tmp_path: Path) -> None:
     }))
 
     with (
-        mock.patch.object(mod, "has_actionable_work", return_value=True),
+        mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
         mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", return_value=result_file),
         mock.patch.object(mod, "_run_final_handoff", return_value=0) as mock_handoff,
@@ -365,7 +456,7 @@ def test_worker_loop_single_pass_converged(tmp_path: Path) -> None:
     }
 
     with (
-        mock.patch.object(mod, "has_actionable_work", return_value=True),
+        mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
         mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", return_value=result_file),
         mock.patch("review_runner.run_review", return_value=review_result),
@@ -422,7 +513,7 @@ def test_worker_loop_review_exhausted(tmp_path: Path) -> None:
     }
 
     with (
-        mock.patch.object(mod, "has_actionable_work", return_value=True),
+        mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
         mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", side_effect=reset_result),
         mock.patch("lane_exec.build_fix_prompt", return_value="fix prompt"),
@@ -481,7 +572,7 @@ def test_worker_loop_logs_fix_prompt_failure(tmp_path: Path) -> None:
     }
 
     with (
-        mock.patch.object(mod, "has_actionable_work", return_value=True),
+        mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
         mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
         mock.patch("lane_exec.run_lane_exec", side_effect=reset_result),
         mock.patch("review_runner.run_review", return_value=non_converged_review),

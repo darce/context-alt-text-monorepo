@@ -196,3 +196,9 @@ def test_build_summary_lines_waiting_when_worker_handoff_is_open_and_newer() -> 
 
     assert len(lines) == 1
     assert "[WAITING]" in lines[0]
+
+
+def test_lane_prompt_check_exit_codes_distinguish_idle_and_waiting() -> None:
+    module = _load_lane_prompt_module()
+    assert module.NO_WORK_EXIT == 3
+    assert module.WAITING_EXIT == 4

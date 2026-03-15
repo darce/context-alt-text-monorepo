@@ -37,6 +37,10 @@
       "lane": "backend-http"
     },
     {
+      "prefix": "apps/prototype-description-service/recognition/tests/fakes.py",
+      "lane": "backend-http"
+    },
+    {
       "prefix": "apps/prototype-description-service/recognition/tests/api/test_retention_api.py",
       "lane": "backend-http"
     },
@@ -104,6 +108,7 @@
       "objective": "Phase 5 backend-http retention router and schema slice.",
       "owned_paths": [
         "apps/prototype-description-service/recognition/interface_adapters/http/**",
+        "apps/prototype-description-service/recognition/tests/fakes.py",
         "apps/prototype-description-service/recognition/tests/api/test_retention_api.py"
       ],
       "required_docs": [
@@ -120,6 +125,7 @@
       ],
       "commit_paths": [
         "apps/prototype-description-service/recognition/interface_adapters/http",
+        "apps/prototype-description-service/recognition/tests/fakes.py",
         "apps/prototype-description-service/recognition/tests/api/test_retention_api.py"
       ],
       "commit_subject": "update retention HTTP routes",

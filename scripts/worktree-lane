@@ -11,7 +11,7 @@ Usage:
   scripts/worktree-lane create --orchestrator-root ROOT --lane-id LANE [--branch BRANCH] [--worktree-path PATH] [--title TITLE] [--objective TEXT] [--owner-agent AGENT] [--status STATUS] [--notes TEXT] [--dry-run]
   scripts/worktree-lane brief --orchestrator-root ROOT --task-ref TASK --lane-id LANE --branch BRANCH --worktree-path PATH [--title TITLE] [--objective TEXT] [--owned-path PATH]... [--required-doc DOC]... [--test-command CMD]... [--non-goal TEXT]... [--definition TEXT]
   scripts/worktree-lane status --orchestrator-root ROOT [--lane-id LANE] [--worktree-path PATH]
-  scripts/worktree-lane report --orchestrator-root ROOT --task-ref TASK --lane-id LANE --session SESSION --summary TEXT [--status STATUS] [--merge-ready] [--test-command CMD]... [--blocker TEXT]... [--subject TEXT] [--message TEXT] [--direction DIR] [--worktree-path PATH] [--allow-dirty] [--dry-run]
+  scripts/worktree-lane report --orchestrator-root ROOT --task-ref TASK --lane-id LANE --session SESSION --summary TEXT [--status STATUS] [--merge-ready] [--guidance-request] [--test-command CMD]... [--blocker TEXT]... [--subject TEXT] [--message TEXT] [--direction DIR] [--worktree-path PATH] [--allow-dirty] [--dry-run]
 
 Notes:
   - create is intended to run from the orchestrator root
@@ -19,6 +19,7 @@ Notes:
   - shared MCP state always lives under the orchestrator root
   - merge-ready reports use lane commits relative to the orchestrator branch as the source of truth
   - blocked guidance reports may be submitted without lane commits when no code could be produced
+  - use --guidance-request for "needs orchestrator input" reports that have no lane commits, even if blockers is empty
 EOF
 }
 
@@ -84,7 +85,27 @@ run_mcp() {
     args+=("$item")
   done < <(shared_mcp_args "$orchestrator_root" "$workspace_root")
 
-  "${MCP_CMD[@]}" "${args[@]}" "$@"
+  local output
+  if ! output="$("${MCP_CMD[@]}" "${args[@]}" "$@" 2>&1)"; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+
+  if ! printf '%s' "$output" | python3 -c 'import json,sys
+text=sys.stdin.read()
+try:
+    payload=json.loads(text)
+except Exception:
+    sys.exit(0)
+if isinstance(payload, dict) and payload.get("ok") is False:
+    sys.exit(1)
+sys.exit(0)
+'; then
+    printf '%s\n' "$output" >&2
+    return 1
+  fi
+
+  printf '%s\n' "$output"
 }
 
 bullet_list() {
@@ -361,6 +382,7 @@ EOF
     summary=""
     status="submitted"
     merge_ready=0
+    guidance_request=0
     test_commands=()
     blockers=()
     subject=""
@@ -379,6 +401,7 @@ EOF
         --summary) summary="$2"; shift 2 ;;
         --status) status="$2"; shift 2 ;;
         --merge-ready) merge_ready=1; shift ;;
+        --guidance-request) guidance_request=1; shift ;;
         --test-command) test_commands+=("$2"); shift 2 ;;
         --blocker) blockers+=("$2"); shift 2 ;;
         --subject) subject="$2"; shift 2 ;;
@@ -418,7 +441,7 @@ EOF
     fi
 
     require_lane_commits=1
-    if [ "$merge_ready" -ne 1 ] && { [ "$status" = "blocked" ] || [ "${#blockers[@]}" -gt 0 ]; }; then
+    if [ "$merge_ready" -ne 1 ] && { [ "$guidance_request" -eq 1 ] || [ "$status" = "blocked" ] || [ "${#blockers[@]}" -gt 0 ]; }; then
       require_lane_commits=0
     fi
 
@@ -436,7 +459,7 @@ EOF
       auto_message="Lane $lane_id is ready for orchestrator review. Summary: $summary"
       lane_state_status="review"
       lane_state_notes="Worker submitted a merge-ready lane report."
-    elif [ "$status" = "blocked" ] || [ "${#blockers[@]}" -gt 0 ]; then
+    elif [ "$guidance_request" -eq 1 ] || [ "$status" = "blocked" ] || [ "${#blockers[@]}" -gt 0 ]; then
       auto_subject="$lane_id needs guidance"
       auto_message="Lane $lane_id needs orchestrator guidance. Summary: $summary"
       lane_state_status="blocked"
@@ -508,6 +531,24 @@ EOF
         msg_args+=(--subject "$subject")
       fi
       run_mcp "$orchestrator_root" "$worktree_path" "${msg_args[@]}"
+    fi
+
+    if [ "$direction" = "worker_to_orchestrator" ]; then
+      if ! open_messages_json="$(run_mcp "$orchestrator_root" "$worktree_path" lane-message-list --task-ref "$task_ref" --lane-id "$lane_id" --status open)"; then
+        echo "worktree-lane: warning: auto-acknowledge lookup failed; leaving orchestrator messages open" >&2
+      else
+        while IFS= read -r message_id; do
+          [ -n "$message_id" ] || continue
+          if ! run_mcp "$orchestrator_root" "$worktree_path" lane-message-update --message-id "$message_id" --status acknowledged >/dev/null; then
+            echo "worktree-lane: warning: failed to acknowledge orchestrator message $message_id" >&2
+          fi
+        done < <(printf '%s' "$open_messages_json" | python3 -c 'import json,sys
+payload=json.load(sys.stdin)
+for message in payload.get("messages", []):
+    if message.get("direction") == "orchestrator_to_worker" and message.get("status") == "open":
+        print(message.get("id"))
+')
+      fi
     fi
 
     export TASK_REF="$task_ref"

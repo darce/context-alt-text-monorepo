@@ -125,7 +125,7 @@ def _build_report_command(
         report_cmd.append("--merge-ready")
         return report_cmd
     if action == "needs_guidance":
-        report_cmd.extend(["--status", "blocked"])
+        report_cmd.append("--guidance-request")
         for blocker in blockers:
             report_cmd.extend(["--blocker", blocker])
         return report_cmd

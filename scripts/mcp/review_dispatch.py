@@ -11,62 +11,21 @@ from collections import defaultdict
 from pathlib import Path
 from typing import Any
 
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
 from agent_handoff_mcp import RuntimeConfig
 from agent_handoff_mcp import configure_runtime
 from agent_handoff_mcp import get_handoff_state
 from agent_handoff_mcp import list_lane_messages
+from lane_manifest import lane_route_hints
+from lane_manifest import list_task_refs
+from lane_manifest import route_patterns
 from agent_handoff_mcp import record_decision
 from agent_handoff_mcp import report_blocker
 from agent_handoff_mcp import update_next_actions
 from agent_handoff_mcp import update_review_finding
-
-
-TASK_LANE_PATTERNS: dict[str, list[tuple[str, str]]] = {
-    "phase-5-retention-export-and-audit-controls": [
-        ("apps/prototype-description-service/db/", "backend-domain"),
-        ("apps/prototype-description-service/recognition/domain/", "backend-domain"),
-        ("apps/prototype-description-service/recognition/infrastructure/", "backend-domain"),
-        ("apps/prototype-description-service/recognition/tests/unit/", "backend-domain"),
-        ("apps/prototype-description-service/scripts/reset_dev_db.sh", "backend-domain"),
-        ("docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md", "backend-domain"),
-        ("apps/prototype-description-service/recognition/interface_adapters/http/", "backend-http"),
-        ("apps/prototype-wp-alt-context/src/", "wp-proxy"),
-        ("apps/prototype-wp-alt-context/tests/Unit/", "wp-proxy"),
-        ("apps/prototype-wp-alt-context/js/", "frontend"),
-    ]
-}
-
-LANE_ROUTE_HINTS: dict[str, tuple[str, ...]] = {
-    "backend-domain": (
-        "backend-domain",
-        "backend domain",
-        "domain/schema lane",
-        "codex/p5-backend-domain",
-        "context-alt-text-monorepo-p5-backend-domain",
-    ),
-    "backend-http": (
-        "backend-http",
-        "backend http",
-        "http lane",
-        "codex/p5-backend-http",
-        "context-alt-text-monorepo-p5-backend-http",
-    ),
-    "wp-proxy": (
-        "wp-proxy",
-        "wp proxy",
-        "wordpress proxy",
-        "proxy lane",
-        "codex/p5-wp-proxy",
-        "context-alt-text-monorepo-p5-wp-proxy",
-    ),
-    "frontend": (
-        "frontend",
-        "frontend lane",
-        "ui lane",
-        "codex/p5-frontend",
-        "context-alt-text-monorepo-p5-frontend",
-    ),
-}
 
 ISSUE_KIND_LABELS: dict[str, dict[str, str]] = {
     "review_findings": {
@@ -103,7 +62,7 @@ def _json_load(payload: str) -> dict[str, Any]:
 
 
 def _route_lane(task_ref: str, file_path: str) -> str | None:
-    patterns = TASK_LANE_PATTERNS.get(task_ref, [])
+    patterns = route_patterns(task_ref)
     normalized_path = file_path.strip()
     for pattern, lane_id in patterns:
         if normalized_path == pattern or normalized_path.startswith(pattern):
@@ -114,13 +73,13 @@ def _route_lane(task_ref: str, file_path: str) -> str | None:
 def _collect_text_lane_candidates(task_ref: str, text: str) -> set[str]:
     normalized_text = " ".join(text.lower().split())
     candidates: set[str] = set()
-    for lane_id, hints in LANE_ROUTE_HINTS.items():
+    for lane_id, hints in lane_route_hints(task_ref).items():
         for hint in hints:
             escaped = re.escape(hint.lower())
             if re.search(rf"(?<![a-z0-9]){escaped}(?![a-z0-9])", normalized_text):
                 candidates.add(lane_id)
                 break
-    for pattern, lane_id in TASK_LANE_PATTERNS.get(task_ref, []):
+    for pattern, lane_id in route_patterns(task_ref):
         if pattern in text:
             candidates.add(lane_id)
     return candidates
@@ -286,13 +245,13 @@ def main() -> int:
     )
     configure_runtime(runtime)
 
-    if args.task_ref not in TASK_LANE_PATTERNS:
+    if args.task_ref not in list_task_refs():
         print(
             json.dumps(
                 {
                     "ok": False,
-                    "message": f"No lane routing patterns configured for task '{args.task_ref}'. "
-                    "Add entries to TASK_LANE_PATTERNS in scripts/mcp/review_dispatch.py.",
+                    "message": f"No lane manifest found for task '{args.task_ref}'. "
+                    "Add config/lane-orchestration/<task-ref>.json before dispatching handoff items.",
                 },
                 indent=2,
             )

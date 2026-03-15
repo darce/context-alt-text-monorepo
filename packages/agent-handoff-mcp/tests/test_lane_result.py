@@ -33,9 +33,25 @@ def test_build_make_command_for_merge_ready() -> None:
         },
     )
 
-    assert commands[0] == ["make", "-f", "/repo/Makefile", "-C", "/repo-frontend", "lane-commit", "TASK=task-1", "LANE=frontend"]
-    assert commands[1] == ["make", "-f", "/repo/Makefile", "-C", "/repo-frontend", "lane-status", "TASK=task-1", "LANE=frontend"]
-    report_cmd = commands[2]
+    assert commands[0] == (
+        [
+            "make",
+            "-f",
+            "/repo/Makefile",
+            "-C",
+            "/repo-frontend",
+            "lane-commit",
+            "TASK=task-1",
+            "LANE=frontend",
+            "COMMIT_MSG=frontend slice ready",
+        ],
+        True,
+    )
+    report_cmd, report_critical = commands[1]
+    assert report_critical is True
+    lane_status_cmd, lane_status_critical = commands[2]
+    assert lane_status_cmd == ["make", "-f", "/repo/Makefile", "-C", "/repo-frontend", "lane-status", "TASK=task-1", "LANE=frontend"]
+    assert lane_status_critical is False
     assert report_cmd[:2] == ["/repo/scripts/worktree-lane", "report"]
     assert "--merge-ready" in report_cmd
     assert "--summary" in report_cmd
@@ -65,7 +81,8 @@ def test_build_make_command_for_guidance_without_commits() -> None:
     )
 
     assert len(commands) == 1
-    report_cmd = commands[0]
+    report_cmd, report_critical = commands[0]
+    assert report_critical is True
     assert report_cmd[:2] == ["/repo/scripts/worktree-lane", "report"]
     assert "--status" in report_cmd
     assert "blocked" in report_cmd

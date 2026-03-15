@@ -146,14 +146,17 @@ Operational notes:
 
 Use the new lane tools when a task is intentionally split across Git worktrees or parallel agent sessions.
 
+- Task-aware worktree automation should be driven by a checked-in manifest at `config/lane-orchestration/<task-ref>.json`. That manifest is the source of truth for lane ids, branch names, worktree paths, owned paths, test commands, merge order, and dispatch routing hints.
 - The orchestrator should register one `worktree_lane` per worker branch/worktree.
 - Workers should write with `actor.lane_id` so decisions, tests, blockers, actions, and findings can be queried by lane.
 - Workers should hand back one or more `worker_reports` as merge checkpoints instead of relying on free-form chat only.
 - `lane_messages` provide an explicit mailbox for orchestrator briefs, worker questions, and acknowledgements when clients cannot directly message one another.
 - Export/import and archive flows now include lane records, worker reports, and lane messages so delegated task history survives workspace migration.
+- Lane verification should be recorded into MCP with `record_test_result`, not left as terminal-only output, so `get_lane_activity` remains the durable verification ledger for each lane.
 
 Shared-state rule for sibling worktrees:
 
 - Keep `workspace-root` pointed at the current worktree so branch/worktree provenance stays accurate.
 - Point `state-dir`, `current-task-path`, and `exports-dir` at the orchestrator root so all lanes share one handoff database and generated `CURRENT_TASK.md`.
 - The helper script [`scripts/worktree-lane`](../../scripts/worktree-lane) encodes this pattern and should be preferred over ad-hoc CLI invocation.
+- Orchestrator entrypoints such as `make lane-open` should fail fast if an existing worktree has drifted onto the wrong branch; silently reusing the wrong checkout risks misdirected commits and violates the lane-safety contract.

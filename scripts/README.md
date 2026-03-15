@@ -42,6 +42,8 @@ Preferred entrypoint:
 
 App-level Makefiles (`apps/prototype-description-service/Makefile`, `apps/prototype-wp-alt-context/Makefile`) use a `lane-%:` pattern rule that auto-forwards any `lane-*` target to the root Makefile. New lane targets added to root are available in app directories immediately with no app Makefile changes.
 
+Task-aware lane orchestration is driven by checked-in manifests under `config/lane-orchestration/<task-ref>.json`. Add a manifest there when a new task needs reusable lane automation; the root `Makefile` and dispatch helpers read from that manifest instead of from task-specific hardcoded tables.
+
 Recommended commands:
 
 ```bash
@@ -69,11 +71,13 @@ Notes:
 
 - `make lane-open` cannot mutate the parent shell's working directory.
 - It now polls the initial lane inbox as part of setup so the worker sees open orchestrator dispatches immediately.
+- It refuses to reuse an existing lane worktree if that checkout is on the wrong branch, which protects against misdirected commits.
 - By default it opens an interactive subshell rooted in the lane worktree after setup and briefing.
 - Set `ENTER_SHELL=0` if you want setup only and prefer to `cd` manually afterward.
 - `make lane-path ...` prints the exact worktree path if you prefer `cd "$(make lane-path ...)"`.
 - `make lane-inbox` is the worker polling command. It shows open orchestrator-to-worker lane messages, the latest worker report, recent lane activity, and git status.
 - `make lane-prompt` turns the current lane inbox into a concise worker prompt. This is the most reliable handoff bridge from MCP state into a fresh agent run.
+- `make lane-check` runs the lane's configured verification commands and records each result into MCP, so `lane-activity` carries a durable test trail instead of terminal-only output.
 - `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt, requires a structured final handoff payload, and then auto-submits either `lane-handoff` or a blocked `lane-report` based on the result. It is better than trying to push text into an already-running interactive session.
 - `make handoff-inbox` is the orchestrator polling command. It shows open worker-to-orchestrator lane messages and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch ... MESSAGE="..."` is the orchestrator assignment command. It records a lane message in MCP and regenerates `CURRENT_TASK.md`.

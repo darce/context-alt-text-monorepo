@@ -6,6 +6,20 @@ Use this playbook when operating multi-agent worktree lanes in this repo. Covers
 
 Start workers in the correct worktree, on the correct branch, with the correct lane inbox and handoff commands available. Complete the full lifecycle from task decomposition through lane merge and close.
 
+## Task Manifests
+
+Each task that uses lane automation should define its orchestration config in `config/lane-orchestration/<task-ref>.json`.
+
+That manifest is the source of truth for:
+
+- lane ids and branch names
+- worktree path templates
+- owned paths and commit scope
+- required docs and verification commands
+- merge order and dispatch routing hints
+
+To add lane automation for a new task, add a new manifest first. The root `Makefile`, `review_dispatch.py`, and the worker helpers read from that manifest instead of from task-specific hardcoded tables.
+
 ## Terminology
 
 - orchestrator root: the main repo checkout, usually `/Users/daniel/Development/context-alt-text-monorepo`
@@ -76,6 +90,7 @@ make lane-open TASK=<task-ref> LANE=<lane>
 What this does:
 
 - verifies or creates the lane registration in MCP
+- hard-fails if an existing worktree is on the wrong branch for that lane
 - prints the lane brief (owned paths, test commands, non-goals)
 - proves the target worktree branch with `git status -sb`
 - polls the lane inbox immediately so the worker sees open orchestrator messages before coding
@@ -143,7 +158,7 @@ make lane-handoff
 
 Notes:
 
-- `make lane-check` runs the lane's configured test commands (`LANE_TEST_CMD_1`, `LANE_TEST_CMD_2`) in the current worktree. Run it before `make lane-handoff` to catch failures early.
+- `make lane-check` runs the lane's configured test commands (`LANE_TEST_CMD_1`, `LANE_TEST_CMD_2`) in the current worktree and records each result into MCP, so lane activity keeps a durable verification trail. Run it before `make lane-handoff` to catch failures early.
 - `make lane-handoff` will refuse to proceed if there are no unique lane commits or if out-of-scope files are present.
 - If you need a custom commit message: `make lane-handoff COMMIT_MSG="implement retention policy service"`.
 
@@ -380,6 +395,8 @@ cd /Users/daniel/Development/context-alt-text-monorepo
 make lane-refresh TASK=<task-ref> LANE=<lane>
 make lane-open TASK=<task-ref> LANE=<lane>
 ```
+
+`make lane-open` now refuses to reuse an existing worktree if it is checked out on the wrong branch. Fix the branch drift first instead of letting work continue in the wrong lane.
 
 ### Lane-handoff refuses: "no unique lane commits"
 

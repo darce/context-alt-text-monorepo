@@ -231,6 +231,11 @@ EOF
 
     if [ ! -d "$worktree_path/.git" ] && [ ! -f "$worktree_path/.git" ]; then
       git -C "$orchestrator_root" worktree add "$worktree_path" -b "$branch"
+    else
+      existing_branch="$(git -C "$worktree_path" branch --show-current 2>/dev/null || true)"
+      if [ -n "$existing_branch" ] && [ "$existing_branch" != "$branch" ]; then
+        die "existing worktree at $worktree_path is on branch $existing_branch, expected $branch; switch it back before lane-open"
+      fi
     fi
 
     create_args=(lane-upsert --lane-id "$lane_id" --worktree-path "$worktree_path" --branch "$branch" --owner-agent "$owner_agent" --status "$status")

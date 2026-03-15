@@ -127,3 +127,72 @@ def test_build_summary_lines_idle_message() -> None:
     lines = module._build_summary_lines({"messages": [], "actions": [], "blockers": [], "findings": []})
     assert len(lines) == 1
     assert "[IDLE]" in lines[0]
+
+
+def test_build_prompt_waits_when_worker_handoff_is_newer_than_open_work() -> None:
+    module = _load_lane_prompt_module()
+
+    prompt = module._build_prompt(
+        {
+            "lane": {"branch": "codex/p5-backend-domain", "objective": "Objective"},
+            "messages": [
+                {
+                    "id": 8,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "backend-domain pending next actions",
+                    "message": "Pick up action #72.",
+                    "updated_at": "2026-03-15 16:00:00",
+                },
+                {
+                    "id": 26,
+                    "direction": "worker_to_orchestrator",
+                    "status": "open",
+                    "subject": "backend-domain needs guidance",
+                    "message": "Already reported back to orchestrator.",
+                    "updated_at": "2026-03-15 17:42:46",
+                },
+            ],
+            "actions": [{"id": 72, "status": "pending", "priority": 1, "action": "Implement the backend-domain slice.", "updated_at": "2026-03-15 16:00:00"}],
+            "blockers": [],
+            "findings": [],
+            "reports": [],
+        },
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+        worktree_path="/tmp/backend-domain",
+    )
+
+    assert prompt == module.WAITING_MESSAGE
+
+
+def test_build_summary_lines_waiting_when_worker_handoff_is_open_and_newer() -> None:
+    module = _load_lane_prompt_module()
+    lines = module._build_summary_lines(
+        {
+            "messages": [
+                {
+                    "id": 8,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "backend-domain pending next actions",
+                    "message": "Pick up action #72.",
+                    "updated_at": "2026-03-15 16:00:00",
+                },
+                {
+                    "id": 26,
+                    "direction": "worker_to_orchestrator",
+                    "status": "open",
+                    "subject": "backend-domain needs guidance",
+                    "message": "Already reported back to orchestrator.",
+                    "updated_at": "2026-03-15 17:42:46",
+                },
+            ],
+            "actions": [{"id": 72, "status": "pending", "priority": 1, "action": "Implement the backend-domain slice.", "updated_at": "2026-03-15 16:00:00"}],
+            "blockers": [],
+            "findings": [],
+        }
+    )
+
+    assert len(lines) == 1
+    assert "[WAITING]" in lines[0]

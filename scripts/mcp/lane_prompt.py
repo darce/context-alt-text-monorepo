@@ -13,6 +13,7 @@ from agent_handoff_mcp import get_lane_activity
 
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
+WAITING_MESSAGE = "Open worker handoff already sent; waiting for orchestrator response."
 ANSI = {
     "reset": "\033[0m",
     "red": "\033[31m",
@@ -100,17 +101,16 @@ def _summary_color(kind: str, *, severity: str = "", priority: int | None = None
 
 
 def _build_summary_lines(activity: dict[str, Any]) -> list[str]:
-    messages = [
-        message
-        for message in _as_dicts(activity.get("messages"))
-        if message.get("direction") == "orchestrator_to_worker" and message.get("status") == "open"
-    ]
-    actions = sorted(
-        [action for action in _as_dicts(activity.get("actions")) if action.get("status") == "pending"],
-        key=lambda action: action.get("priority", 99),
-    )
-    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == "open"]
-    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == "open"]
+    state = _actionable_state(activity)
+    if state["awaiting_orchestrator"]:
+        return [f"{ANSI['yellow']}[WAITING]{ANSI['reset']} {WAITING_MESSAGE}"]
+    if not state["actionable"]:
+        return [f"{ANSI['green']}[IDLE]{ANSI['reset']} {NO_WORK_MESSAGE}"]
+
+    messages = state["messages"]
+    actions = state["actions"]
+    blockers = state["blockers"]
+    findings = state["findings"]
 
     lines: list[str] = []
     for blocker in blockers:
@@ -135,28 +135,75 @@ def _build_summary_lines(activity: dict[str, Any]) -> list[str]:
         body = _line(str(message.get("message") or ""))
         compact = f"{subject}: {body}" if body else subject
         lines.append(f"{color}[MESSAGE]{ANSI['reset']} {compact}")
-    if not lines:
-        return [f"{ANSI['green']}[IDLE]{ANSI['reset']} {NO_WORK_MESSAGE}"]
     return lines
+
+
+def _timestamp_text(row: dict[str, Any]) -> str:
+    for key in ("updated_at", "created_at"):
+        value = row.get(key)
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _latest_timestamp(rows: list[dict[str, Any]]) -> str:
+    values = [_timestamp_text(row) for row in rows]
+    values = [value for value in values if value]
+    return max(values) if values else ""
+
+
+def _actionable_state(activity: dict[str, Any]) -> dict[str, Any]:
+    messages = [
+        message
+        for message in _as_dicts(activity.get("messages"))
+        if message.get("direction") == "orchestrator_to_worker" and message.get("status") == "open"
+    ]
+    actions = sorted(
+        [action for action in _as_dicts(activity.get("actions")) if action.get("status") == "pending"],
+        key=lambda action: action.get("priority", 99),
+    )
+    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == "open"]
+    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == "open"]
+    worker_messages = [
+        message
+        for message in _as_dicts(activity.get("messages"))
+        if message.get("direction") == "worker_to_orchestrator" and message.get("status") == "open"
+    ]
+
+    actionable_rows: list[dict[str, Any]] = [*messages, *actions, *blockers, *findings]
+    actionable = bool(actionable_rows)
+    latest_worker_ts = _latest_timestamp(worker_messages)
+    latest_action_ts = _latest_timestamp(actionable_rows)
+    awaiting_orchestrator = bool(
+        actionable
+        and latest_worker_ts
+        and latest_action_ts
+        and latest_worker_ts >= latest_action_ts
+    )
+    return {
+        "messages": messages,
+        "actions": actions,
+        "blockers": blockers,
+        "findings": findings,
+        "worker_messages": worker_messages,
+        "actionable": actionable and not awaiting_orchestrator,
+        "awaiting_orchestrator": awaiting_orchestrator,
+    }
 
 
 def _build_prompt(activity: dict[str, Any], task_ref: str, lane_id: str, worktree_path: str) -> str:
     lane = activity.get("lane") if isinstance(activity.get("lane"), dict) else {}
     branch = str(lane.get("branch") or "")
     objective = str(lane.get("objective") or "").strip()
-
-    messages = [
-        message
-        for message in _as_dicts(activity.get("messages"))
-        if message.get("direction") == "orchestrator_to_worker" and message.get("status") == "open"
-    ]
-    actions = [action for action in _as_dicts(activity.get("actions")) if action.get("status") == "pending"]
-    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == "open"]
-    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == "open"]
+    state = _actionable_state(activity)
+    messages = state["messages"]
+    actions = state["actions"]
+    blockers = state["blockers"]
+    findings = state["findings"]
     latest_report = _as_dicts(activity.get("reports"))[:1]
-
-    actionable = bool(messages or actions or blockers or findings)
-    if not actionable:
+    if state["awaiting_orchestrator"]:
+        return WAITING_MESSAGE
+    if not state["actionable"]:
         return NO_WORK_MESSAGE
 
     lines = [
@@ -230,9 +277,10 @@ def main() -> int:
     if activity.get("ok") is not True:
         raise RuntimeError(f"Unable to load lane activity: {activity}")
 
+    state = _actionable_state(activity)
     prompt = _build_prompt(activity, task_ref=args.task_ref, lane_id=args.lane_id, worktree_path=args.worktree_path)
     if args.check:
-        return 0 if prompt != NO_WORK_MESSAGE else 3
+        return 0 if state["actionable"] else 3
     if args.summary:
         print("\n".join(_build_summary_lines(activity)))
         return 0

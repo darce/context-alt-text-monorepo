@@ -84,8 +84,8 @@ def test_build_make_command_for_guidance_without_commits() -> None:
     report_cmd, report_critical = commands[0]
     assert report_critical is True
     assert report_cmd[:2] == ["/repo/scripts/worktree-lane", "report"]
-    assert "--status" in report_cmd
-    assert "blocked" in report_cmd
+    assert "--guidance-request" in report_cmd
+    assert "--status" not in report_cmd
     assert report_cmd.count("--test-command") == 1
     assert "pg_isready -h localhost -p 5432" in report_cmd
     assert report_cmd.count("--blocker") == 1

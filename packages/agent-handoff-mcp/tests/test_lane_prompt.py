@@ -82,3 +82,48 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
     assert "Pending lane actions:" in prompt
     assert "Open lane review findings:" in prompt
     assert "make lane-handoff" in prompt
+
+
+def test_build_summary_lines_color_codes_actionable_items() -> None:
+    module = _load_lane_prompt_module()
+    lines = module._build_summary_lines(
+        {
+            "messages": [
+                {
+                    "id": 8,
+                    "direction": "orchestrator_to_worker",
+                    "status": "open",
+                    "subject": "backend-domain pending next actions",
+                    "message": "Pick up action #72.",
+                }
+            ],
+            "actions": [
+                {"id": 72, "status": "pending", "priority": 1, "action": "Implement the backend-domain slice."}
+            ],
+            "blockers": [
+                {"id": 5, "status": "open", "description": "Database not reachable."}
+            ],
+            "findings": [
+                {
+                    "finding_id": "P5-IMPL-01",
+                    "status": "open",
+                    "severity": "medium",
+                    "file_path": "docs/tasks/phase5.md",
+                    "line_start": 411,
+                    "description": "Checklist item is still unchecked.",
+                }
+            ],
+        }
+    )
+
+    assert any("[BLOCKER]" in line and "\x1b[" in line for line in lines)
+    assert any("[ACTION P1]" in line and "\x1b[" in line for line in lines)
+    assert any("[REVIEW MEDIUM]" in line and "\x1b[" in line for line in lines)
+    assert any("[MESSAGE]" in line and "\x1b[" in line for line in lines)
+
+
+def test_build_summary_lines_idle_message() -> None:
+    module = _load_lane_prompt_module()
+    lines = module._build_summary_lines({"messages": [], "actions": [], "blockers": [], "findings": []})
+    assert len(lines) == 1
+    assert "[IDLE]" in lines[0]

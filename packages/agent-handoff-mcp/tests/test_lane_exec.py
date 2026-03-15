@@ -126,6 +126,11 @@ def test_build_fix_prompt_includes_fix_hint() -> None:
     assert "Fix: Replace with 'with' block." in result
 
 
+def test_tail_text_accepts_bytes() -> None:
+    mod = _load_module()
+    assert mod._tail_text(b"one\ntwo\n") == "one two"
+
+
 # ---------------------------------------------------------------------------
 # PYTHONPATH env
 # ---------------------------------------------------------------------------

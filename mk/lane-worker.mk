@@ -68,6 +68,10 @@ lane-run: lane-guard
 			echo "No actionable lane inbox items for $(LANE)."; \
 			exit 0; \
 		fi; \
+		if [ "$$_check_rc" -eq 4 ]; then \
+			echo "Lane $(LANE) is waiting for orchestrator response before more work is assigned."; \
+			exit 0; \
+		fi; \
 		exit "$$_check_rc"; \
 	fi; \
 	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX")"; \

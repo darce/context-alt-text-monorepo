@@ -104,18 +104,21 @@ class WorkerLock:
 
 
 _NO_WORK_EXIT = 3
+_WAITING_EXIT = 4
 
 
-def has_actionable_work(
+def poll_lane_state(
     *,
     orchestrator_root: Path,
     task_ref: str,
     lane_id: str,
     worktree_path: Path,
-) -> bool:
-    """Return True when ``lane_prompt.py --check`` exits 0 (has work).
+) -> str:
+    """Return one of ``actionable``, ``idle``, or ``waiting``.
 
-    Exit code 3 means 'no actionable work'.  Any other non-zero exit
+    Exit code 3 means the lane is idle. Exit code 4 means the worker
+    already handed control back to the orchestrator and should remain
+    dormant until a new dispatch arrives. Any other non-zero exit
     indicates a runtime/config error and raises ``RuntimeError`` so the
     caller can surface it instead of silently sleeping.
     """
@@ -131,13 +134,31 @@ def has_actionable_work(
     env = pythonpath_env(orchestrator_root)
     result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode == 0:
-        return True
+        return "actionable"
     if result.returncode == _NO_WORK_EXIT:
-        return False
+        return "idle"
+    if result.returncode == _WAITING_EXIT:
+        return "waiting"
     raise RuntimeError(
         f"lane_prompt.py --check failed (exit {result.returncode}):\n"
         f"{result.stderr.strip()}"
     )
+
+
+def has_actionable_work(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    worktree_path: Path,
+) -> bool:
+    """Backwards-compatible bool wrapper used by older callers/tests."""
+    return poll_lane_state(
+        orchestrator_root=orchestrator_root,
+        task_ref=task_ref,
+        lane_id=lane_id,
+        worktree_path=worktree_path,
+    ) == "actionable"
 
 
 # ---------------------------------------------------------------------------
@@ -249,10 +270,11 @@ def worker_loop(
     # Validate codex binary early
     codex = find_codex(codex_bin)
     log("INFO", "codex_found", codex_bin=codex)
+    dormant_state: str | None = None
 
     while True:
         try:
-            actionable = has_actionable_work(
+            lane_state = poll_lane_state(
                 orchestrator_root=orchestrator_root,
                 task_ref=task_ref,
                 lane_id=lane_id,
@@ -265,12 +287,22 @@ def worker_loop(
             time.sleep(poll_interval)
             continue
 
-        if not actionable:
-            log("INFO", "no_work")
+        if lane_state != "actionable":
+            if dormant_state != lane_state:
+                if lane_state == "waiting":
+                    log("INFO", "dormant_entered", state="waiting_for_orchestrator", interval=poll_interval)
+                else:
+                    log("INFO", "dormant_entered", state="idle", interval=poll_interval)
+                dormant_state = lane_state
             if single_pass:
                 return 0
             time.sleep(poll_interval)
             continue
+
+        if dormant_state is not None:
+            wake_reason = "orchestrator_dispatch" if dormant_state == "waiting" else "new_lane_work"
+            log("INFO", "dormant_exited", previous_state=dormant_state, reason=wake_reason)
+            dormant_state = None
 
         log("INFO", "work_detected")
 

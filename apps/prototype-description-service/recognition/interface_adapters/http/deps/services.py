@@ -205,15 +205,9 @@ async def get_retention_policy_service(
 ) -> RetentionPolicyServiceProtocol:
     """Return the real retention policy service when available."""
     try:
-        from recognition.application.retention.retention_policy_service import RetentionPolicyService
-        from recognition.infrastructure.repositories.audit_repository import SqlAlchemyAuditRepository
-        from recognition.infrastructure.repositories.tenant_repository import SqlAlchemyTenantRepository
+        from recognition.domain.services.retention_policy_service import RetentionPolicyService
 
-        return RetentionPolicyService(
-            session=session,
-            tenant_repository=SqlAlchemyTenantRepository(session),
-            audit_repository=SqlAlchemyAuditRepository(session),
-        )
+        return RetentionPolicyService(session=session)
     except ModuleNotFoundError:
         return _NotImplementedRetentionPolicyService()
 
@@ -223,7 +217,7 @@ async def get_retention_export_service(
 ) -> RetentionExportServiceProtocol:
     """Return the real tenant export service when available."""
     try:
-        from recognition.application.retention.export_service import TenantExportService
+        from recognition.domain.services.export_service import TenantExportService
 
         return TenantExportService(session=session)
     except ModuleNotFoundError:
@@ -235,7 +229,7 @@ async def get_retention_purge_service(
 ) -> RetentionPurgeServiceProtocol:
     """Return the real tenant purge service when available."""
     try:
-        from recognition.application.retention.purge_service import TenantPurgeService
+        from recognition.domain.services.purge_service import TenantPurgeService
 
         return TenantPurgeService(session=session)
     except ModuleNotFoundError:
@@ -247,9 +241,9 @@ async def get_audit_repository(
 ) -> AuditRepositoryProtocol:
     """Return the real audit repository when available."""
     try:
-        from recognition.infrastructure.repositories.audit_repository import SqlAlchemyAuditRepository
+        from recognition.infrastructure.repositories.audit_repository import AuditRepository
 
-        return SqlAlchemyAuditRepository(session)
+        return AuditRepository(session)
     except ModuleNotFoundError:
         return _NotImplementedAuditRepository()
 

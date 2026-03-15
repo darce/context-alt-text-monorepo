@@ -1271,12 +1271,12 @@ def report_blocker(operation: str, description: str | None = None, blocker_id: i
         return _json_response({"ok": True, "operation": operation, "blocker": _row_to_dict(conn.execute("SELECT * FROM blockers WHERE id = ?", (blocker_id,)).fetchone())})
 
 
-def record_review_finding(session: str, finding_id: str, severity: str, file_path: str, description: str, details: ReviewFindingDetails | None = None, actor: WriteActor | None = None) -> str:
+def record_review_finding(session: str, finding_id: str, severity: str, file_path: str, description: str, details: ReviewFindingDetails | None = None, actor: WriteActor | None = None, task_ref: str | None = None) -> str:
     if severity not in REVIEW_FINDING_SEVERITIES:
         return _json_response({"ok": False, "error": f"Invalid severity. Valid: {', '.join(sorted(REVIEW_FINDING_SEVERITIES))}"})
     line_start, line_end, fix = _parse_review_finding_details(details)
     with _get_db_connection() as conn:
-        resolved_task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
         existing = conn.execute("SELECT status FROM review_findings WHERE task_ref = ? AND finding_id = ?", (resolved_task_ref, finding_id)).fetchone()
         conn.execute(

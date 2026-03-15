@@ -1,0 +1,484 @@
+#!/usr/bin/env python3
+"""Worker daemon: poll for lane work, run implementation/review/fix cycles, emit one final handoff.
+
+Usage:
+    python3 scripts/mcp/worker_daemon.py \
+        --orchestrator-root . --task-ref <task> --lane-id <lane> \
+        --worktree-path ../context-alt-text-monorepo-<lane> \
+        [--single-pass] [--max-review-cycles 3] [--poll-interval 30] [--dry-run]
+"""
+from __future__ import annotations
+
+import argparse
+import datetime
+import fcntl
+import json
+import subprocess
+import sys
+import time
+from pathlib import Path
+from typing import Any
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from _env import pythonpath_env
+
+
+# ---------------------------------------------------------------------------
+# JSONL logger
+# ---------------------------------------------------------------------------
+
+
+def _log(lane_id: str, log_dir: Path, level: str, event: str, **extra: Any) -> None:
+    """Append one JSONL record to ``<log_dir>/worker-<lane_id>.jsonl``."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    entry: dict[str, Any] = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "lane": lane_id,
+        "level": level,
+        "event": event,
+        **extra,
+    }
+    path = log_dir / f"worker-{lane_id}.jsonl"
+    with path.open("a") as fh:
+        fh.write(json.dumps(entry, default=str) + "\n")
+    # Also print for interactive visibility
+    print(f"[{level}] {event}", flush=True)
+
+
+# ---------------------------------------------------------------------------
+# Exclusive per-lane lock
+# ---------------------------------------------------------------------------
+
+
+class WorkerLock:
+    """flock-based exclusive lock so only one daemon runs per lane."""
+
+    def __init__(self, lane_id: str, state_dir: Path) -> None:
+        self._lock_path = state_dir / f"worker-{lane_id}.lock"
+        self._fh: Any = None
+
+    def acquire(self) -> bool:
+        """Try to acquire the lock.  Returns True on success."""
+        self._lock_path.parent.mkdir(parents=True, exist_ok=True)
+        self._fh = self._lock_path.open("w")
+        try:
+            fcntl.flock(self._fh, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            self._fh.write(str(json.dumps({"pid": __import__("os").getpid()})))
+            self._fh.flush()
+            return True
+        except OSError:
+            self._fh.close()
+            self._fh = None
+            return False
+
+    def release(self) -> None:
+        if self._fh is None:
+            return
+        try:
+            fcntl.flock(self._fh, fcntl.LOCK_UN)
+            self._fh.close()
+        except Exception:
+            pass
+        self._fh = None
+
+
+# ---------------------------------------------------------------------------
+# Actionable-work detection
+# ---------------------------------------------------------------------------
+
+
+_NO_WORK_EXIT = 3
+
+
+def has_actionable_work(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    worktree_path: Path,
+) -> bool:
+    """Return True when ``lane_prompt.py --check`` exits 0 (has work).
+
+    Exit code 3 means 'no actionable work'.  Any other non-zero exit
+    indicates a runtime/config error and raises ``RuntimeError`` so the
+    caller can surface it instead of silently sleeping.
+    """
+    cmd = [
+        sys.executable,
+        str(SCRIPT_DIR / "lane_prompt.py"),
+        "--orchestrator-root", str(orchestrator_root),
+        "--task-ref", task_ref,
+        "--lane-id", lane_id,
+        "--worktree-path", str(worktree_path),
+        "--check",
+    ]
+    env = pythonpath_env(orchestrator_root)
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
+    if result.returncode == 0:
+        return True
+    if result.returncode == _NO_WORK_EXIT:
+        return False
+    raise RuntimeError(
+        f"lane_prompt.py --check failed (exit {result.returncode}):\n"
+        f"{result.stderr.strip()}"
+    )
+
+
+# ---------------------------------------------------------------------------
+# Verification (make lane-check)
+# ---------------------------------------------------------------------------
+
+
+def _run_lane_check(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    worktree_path: Path,
+) -> bool:
+    """Run ``make lane-check`` and return True on success."""
+    cmd = [
+        "make",
+        "-f", str(orchestrator_root / "Makefile"),
+        "-C", str(worktree_path),
+        "lane-check",
+        f"TASK={task_ref}",
+        f"LANE={lane_id}",
+    ]
+    result = subprocess.run(cmd, capture_output=True, text=True, check=False)
+    return result.returncode == 0
+
+
+# ---------------------------------------------------------------------------
+# Final handoff (lane_result.py handoff)
+# ---------------------------------------------------------------------------
+
+
+def _run_final_handoff(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    worktree_path: Path,
+    result_path: Path,
+    dry_run: bool = False,
+) -> int:
+    """Call ``lane_result.py handoff`` for the one final report."""
+    cmd = [
+        sys.executable,
+        str(SCRIPT_DIR / "lane_result.py"),
+        "handoff",
+        "--orchestrator-root", str(orchestrator_root),
+        "--task-ref", task_ref,
+        "--lane-id", lane_id,
+        "--session", session,
+        "--worktree-path", str(worktree_path),
+        "--result-file", str(result_path),
+    ]
+    if dry_run:
+        cmd.append("--dry-run")
+    result = subprocess.run(cmd, check=False)
+    return result.returncode
+
+
+# ---------------------------------------------------------------------------
+# Result file helpers
+# ---------------------------------------------------------------------------
+
+
+def _load_result(path: Path) -> dict[str, Any]:
+    raw = path.read_text()
+    return json.loads(raw)
+
+
+def _patch_result(path: Path, overrides: dict[str, Any]) -> None:
+    """Merge overrides into the result file on disk."""
+    data = _load_result(path)
+    data.update(overrides)
+    path.write_text(json.dumps(data, indent=2))
+
+
+# ---------------------------------------------------------------------------
+# Worker loop
+# ---------------------------------------------------------------------------
+
+
+def worker_loop(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+    session: str,
+    worktree_path: Path,
+    max_review_cycles: int = 3,
+    poll_interval: int = 30,
+    single_pass: bool = False,
+    codex_bin: str | None = None,
+    codex_args: list[str] | None = None,
+    dry_run: bool = False,
+) -> int:
+    """Main daemon loop.  Returns 0 on clean handoff, 1 on failure."""
+    # Lazy-import lane_exec and review_runner to keep module importable
+    # without heavy deps at test time.
+    from lane_exec import build_fix_prompt, find_codex, run_lane_exec
+    from review_runner import findings_converged, run_review
+
+    log_dir = orchestrator_root / "logs" / "worker-daemon"
+    log = lambda level, event, **kw: _log(lane_id, log_dir, level, event, **kw)
+
+    log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
+        max_review_cycles=max_review_cycles)
+
+    # Validate codex binary early
+    codex = find_codex(codex_bin)
+    log("INFO", "codex_found", codex_bin=codex)
+
+    while True:
+        try:
+            actionable = has_actionable_work(
+                orchestrator_root=orchestrator_root,
+                task_ref=task_ref,
+                lane_id=lane_id,
+                worktree_path=worktree_path,
+            )
+        except RuntimeError as exc:
+            log("ERROR", "poll_error", error=str(exc))
+            if single_pass:
+                return 1
+            time.sleep(poll_interval)
+            continue
+
+        if not actionable:
+            log("INFO", "no_work")
+            if single_pass:
+                return 0
+            time.sleep(poll_interval)
+            continue
+
+        log("INFO", "work_detected")
+
+        final_result_path = None
+        handoff_exit = 1
+        last_findings: list[dict[str, Any]] = []
+
+        for cycle in range(max_review_cycles):
+            log("INFO", "cycle_start", cycle=cycle)
+
+            # --- Implementation pass ---
+            prompt_override = None
+            if cycle > 0 and final_result_path and last_findings:
+                base_prompt_cmd = [
+                    sys.executable,
+                    str(SCRIPT_DIR / "lane_prompt.py"),
+                    "--orchestrator-root", str(orchestrator_root),
+                    "--task-ref", task_ref,
+                    "--lane-id", lane_id,
+                    "--worktree-path", str(worktree_path),
+                ]
+                env = pythonpath_env(orchestrator_root)
+                base_result = subprocess.run(
+                    base_prompt_cmd, capture_output=True, text=True, check=False, env=env
+                )
+                if base_result.returncode == 0:
+                    prompt_override = build_fix_prompt(
+                        base_result.stdout, last_findings
+                    )
+
+            try:
+                final_result_path = run_lane_exec(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    worktree_path=worktree_path,
+                    codex_bin=codex,
+                    codex_args=codex_args,
+                    prompt_override=prompt_override,
+                    dry_run=dry_run,
+                )
+            except RuntimeError as exc:
+                log("ERROR", "exec_failed", error=str(exc), cycle=cycle)
+                break
+
+            log("INFO", "exec_complete", result_path=str(final_result_path), cycle=cycle)
+
+            # Check for needs_guidance
+            result = _load_result(final_result_path)
+            if result.get("handoff_action") == "needs_guidance":
+                log("INFO", "needs_guidance", cycle=cycle)
+                handoff_exit = _run_final_handoff(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    worktree_path=worktree_path,
+                    result_path=final_result_path,
+                    dry_run=dry_run,
+                )
+                if single_pass:
+                    return handoff_exit
+                break
+
+            # --- Self-review pass ---
+            log("INFO", "review_start", cycle=cycle)
+            try:
+                review_output = run_review(
+                    worktree_path=worktree_path,
+                    lane_id=lane_id,
+                    task_ref=task_ref,
+                    session=session,
+                    orchestrator_root=orchestrator_root,
+                    record_findings=True,
+                    dry_run=dry_run,
+                )
+            except RuntimeError as exc:
+                log("ERROR", "review_failed", error=str(exc), cycle=cycle)
+                break
+
+            findings = review_output.get("findings", [])
+            converged = review_output.get("converged", False)
+            log("INFO", "review_complete", cycle=cycle, converged=converged,
+                finding_count=len(findings))
+
+            # Stash findings for next fix cycle
+            last_findings = findings
+
+            if converged:
+                # --- Verification ---
+                log("INFO", "verification_start")
+                if dry_run:
+                    check_ok = True
+                else:
+                    check_ok = _run_lane_check(
+                        orchestrator_root=orchestrator_root,
+                        task_ref=task_ref,
+                        lane_id=lane_id,
+                        worktree_path=worktree_path,
+                    )
+                log("INFO", "verification_complete", passed=check_ok)
+
+                if not check_ok:
+                    _patch_result(final_result_path, {
+                        "handoff_action": "needs_guidance",
+                        "blockers": ["Lane verification failed after review convergence."],
+                    })
+
+                handoff_exit = _run_final_handoff(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    worktree_path=worktree_path,
+                    result_path=final_result_path,
+                    dry_run=dry_run,
+                )
+                if single_pass:
+                    return handoff_exit
+                break
+
+            log("INFO", "fix_cycle_needed", cycle=cycle)
+            # Loop continues with next cycle
+        else:
+            # Exhausted review cycles
+            log("WARNING", "review_exhausted", max_cycles=max_review_cycles)
+            if final_result_path:
+                _patch_result(final_result_path, {
+                    "handoff_action": "needs_guidance",
+                    "blockers": [
+                        f"Review did not converge after {max_review_cycles} cycles."
+                    ],
+                })
+                handoff_exit = _run_final_handoff(
+                    orchestrator_root=orchestrator_root,
+                    task_ref=task_ref,
+                    lane_id=lane_id,
+                    session=session,
+                    worktree_path=worktree_path,
+                    result_path=final_result_path,
+                    dry_run=dry_run,
+                )
+
+        if single_pass:
+            return handoff_exit
+
+        log("INFO", "poll_sleep", interval=poll_interval)
+        time.sleep(poll_interval)
+
+
+# ---------------------------------------------------------------------------
+# CLI
+# ---------------------------------------------------------------------------
+
+
+def _parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Worker daemon: poll, implement, review, verify, handoff."
+    )
+    parser.add_argument("--orchestrator-root", required=True,
+                        help="Absolute path to the monorepo root.")
+    parser.add_argument("--task-ref", required=True,
+                        help="MCP task reference (e.g. phase-5-retention-export-and-audit-controls).")
+    parser.add_argument("--lane-id", required=True,
+                        help="Lane identifier (e.g. backend-domain).")
+    parser.add_argument("--session", default=None,
+                        help="MCP session. Defaults to <task>-<lane>.")
+    parser.add_argument("--worktree-path", required=True,
+                        help="Absolute path to the lane worktree.")
+    parser.add_argument("--max-review-cycles", type=int, default=3,
+                        help="Max review/fix cycles before declaring blocked (default: 3).")
+    parser.add_argument("--poll-interval", type=int, default=30,
+                        help="Seconds between poll cycles (default: 30).")
+    parser.add_argument("--single-pass", action="store_true",
+                        help="Run one cycle and exit instead of looping.")
+    parser.add_argument("--codex-bin", default=None,
+                        help="Explicit path to the codex binary.")
+    parser.add_argument("--codex-args", default=None,
+                        help="Extra args for codex exec (space-separated).")
+    parser.add_argument("--dry-run", action="store_true",
+                        help="Skip Codex execution and simulate results.")
+    return parser.parse_args()
+
+
+def main() -> int:
+    args = _parse_args()
+
+    orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
+    worktree_path = Path(args.worktree_path).expanduser().resolve()
+    session = args.session or f"{args.task_ref}-{args.lane_id}"
+    state_dir = orchestrator_root / ".task-state"
+    codex_args = args.codex_args.split() if args.codex_args else None
+
+    # Ensure SCRIPT_DIR is on sys.path so lazy imports work
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    # Per-lane exclusive lock
+    lock = WorkerLock(args.lane_id, state_dir)
+    if not lock.acquire():
+        print(f"Another worker daemon is already running for lane '{args.lane_id}'.", file=sys.stderr)
+        return 1
+
+    try:
+        return worker_loop(
+            orchestrator_root=orchestrator_root,
+            task_ref=args.task_ref,
+            lane_id=args.lane_id,
+            session=session,
+            worktree_path=worktree_path,
+            max_review_cycles=args.max_review_cycles,
+            poll_interval=args.poll_interval,
+            single_pass=args.single_pass,
+            codex_bin=args.codex_bin,
+            codex_args=codex_args,
+            dry_run=args.dry_run,
+        )
+    finally:
+        lock.release()
+
+
+if __name__ == "__main__":
+    sys.exit(main())

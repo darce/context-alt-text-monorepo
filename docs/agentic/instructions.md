@@ -239,6 +239,7 @@ Decomposition rules for the orchestrating agent:
 4. Keep shared plan/checklist truth centralized. The orchestrator owns final checklist updates, MCP review triage, cross-lane decisions, and merge order unless a worker is explicitly assigned one documentation block.
 5. Prefer lanes that can be verified independently. Good seams in this repo are backend domain/schema, backend HTTP, WordPress proxy, frontend UI, and orchestrator-root review dispatch.
 6. Treat workflow tooling as orchestrator-owned. When the root `Makefile`, lane helper scripts, or worker playbook changes, propagate them into worker lanes with `make lane-refresh` instead of hand-copying files.
+7. Define task-aware lane orchestration in `config/lane-orchestration/<task-ref>.json`. Do not hardcode new task routing tables into the Makefile or dispatch scripts.
 
 Worktree setup and switching:
 
@@ -255,7 +256,7 @@ Preferred operator entrypoint:
 make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend
 ```
 
-That target creates or refreshes the worktree lane registration, prints the ready-to-paste worker brief, polls the lane inbox, and opens an interactive subshell in the worktree by default. Use `ENTER_SHELL=0` if you want setup without switching into the worker shell. Use `make lane-inbox`, `make lane-refresh`, `make lane-handoff`, and `make lane-reset` for the common follow-on operations.
+That target creates or refreshes the worktree lane registration, hard-fails if the existing worktree is on the wrong branch, prints the ready-to-paste worker brief, polls the lane inbox, and opens an interactive subshell in the worktree by default. Use `ENTER_SHELL=0` if you want setup without switching into the worker shell. Use `make lane-inbox`, `make lane-refresh`, `make lane-handoff`, and `make lane-reset` for the common follow-on operations.
 
 - Create worktrees as siblings of the main repo, not nested inside it.
 - Use lane names that match ownership (`backend-domain`, `backend-http`, `wp-proxy`, `frontend`).
@@ -318,6 +319,7 @@ How workers communicate with the orchestrator:
 11. When a slice is done but the overall task is not, update the lane status to `review`, submit a `lane-report --merge-ready`, and let the orchestrator intake it. Do **not** mark the whole task `done`.
 12. Workers do not close the overall implementation task unless they are explicitly acting as the orchestrator. They close only their assigned actions/findings.
 13. When a worker receives review work through MCP, the open lane message is the assignment and the lane-stamped open review findings are the actionable checklist. Fix or disposition those findings in-lane before handing work back.
+14. `make lane-check` is the preferred verification command because it records each configured test command into MCP with lane attribution, not just into terminal scrollback.
 
 How the orchestrator should monitor and delegate:
 

@@ -159,6 +159,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_record_parser.add_argument("--line-start", type=int)
     review_record_parser.add_argument("--line-end", type=int)
     review_record_parser.add_argument("--fix")
+    review_record_parser.add_argument("--task-ref")
 
     review_update_parser = subparsers.add_parser("review-update")
     review_update_parser.add_argument("--status", required=True)
@@ -378,6 +379,7 @@ def main() -> None:
                 file_path=args.file_path,
                 description=args.description,
                 details=details or None,
+                task_ref=getattr(args, "task_ref", None),
             )
         )
         return

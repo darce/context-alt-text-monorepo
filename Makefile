@@ -10,7 +10,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon orchestrator-daemon daemon-pause daemon-resume daemon-status lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -18,15 +18,19 @@ WORKTREE_ROOT_REAL := $(abspath $(WORKTREE_ROOT))
 _GIT_COMMON_DIR := $(shell git rev-parse --git-common-dir 2>/dev/null)
 ORCHESTRATOR_ROOT := $(if $(filter .git,$(_GIT_COMMON_DIR)),$(WORKTREE_ROOT_REAL),$(patsubst %/.git,%,$(_GIT_COMMON_DIR)))
 ORCHESTRATOR_BRANCH := $(shell git -C "$(ORCHESTRATOR_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
+LANE_CONFIG_CMD = python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_config.py"
 MCP_PYTHONPATH := $(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$(if $(PYTHONPATH),:$(PYTHONPATH),)
 MCP_CMD = PYTHONPATH="$(MCP_PYTHONPATH)" python3 -m agent_handoff_mcp
 MCP_STATE_ARGS = --workspace-root "$(ORCHESTRATOR_ROOT)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports"
 PYTHON ?= python3
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 ACTIVE_TASK = $(eval ACTIVE_TASK := $(_ACTIVE_TASK_CMD))$(ACTIVE_TASK)
-INFERRED_LANE := $(if $(filter codex/p5-backend-domain,$(CURRENT_BRANCH)),backend-domain,$(if $(filter codex/p5-backend-http,$(CURRENT_BRANCH)),backend-http,$(if $(filter codex/p5-wp-proxy,$(CURRENT_BRANCH)),wp-proxy,$(if $(filter codex/p5-frontend,$(CURRENT_BRANCH)),frontend,))))
+SUPPORTED_TASKS := $(shell $(LANE_CONFIG_CMD) list-tasks 2>/dev/null)
+INFERRED_LANE := $(shell $(LANE_CONFIG_CMD) infer-lane --branch "$(CURRENT_BRANCH)" $(if $(ACTIVE_TASK),--task-ref "$(ACTIVE_TASK)",) 2>/dev/null)
 TASK ?= $(ACTIVE_TASK)
 LANE ?= $(INFERRED_LANE)
+TASK_LANES := $(shell $(if $(TASK),$(LANE_CONFIG_CMD) list-lanes --task-ref "$(TASK)" 2>/dev/null,))
+lane_field = $(shell $(if $(and $(TASK),$(LANE)),$(LANE_CONFIG_CMD) field --task-ref "$(TASK)" --lane-id "$(LANE)" --field $(1) $(if $(2),--orchestrator-root "$(ORCHESTRATOR_ROOT)",) 2>/dev/null,))
 SESSION ?= $(TASK)-$(LANE)
 SUMMARY ?= $(LANE) lane ready for orchestrator review.
 MESSAGE ?=
@@ -40,11 +44,10 @@ REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 1
 CODEX_ARGS ?=
 CODEX_BIN ?= $(shell command -v codex 2>/dev/null || true)
-PHASE5_LANES := backend-domain backend-http wp-proxy frontend
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
 LANE_TOOLING_PATHS := Makefile docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
-LANE_APP_TOOLING_PATHS := $(if $(filter backend-domain backend-http,$(LANE)),apps/prototype-description-service/Makefile,)
+LANE_APP_TOOLING_PATHS :=
 export ORCHESTRATOR_ROOT TASK LANE SESSION SUMMARY MESSAGE SUBJECT STATUS MERGE_READY DRY_RUN LANE_WORKTREE LANE_TEST_CMD_1 LANE_TEST_CMD_2
 
 LANE_BRANCH :=
@@ -60,64 +63,20 @@ LANE_NON_GOAL_ARGS :=
 LANE_COMMIT_PATHS :=
 LANE_COMMIT_SUBJECT :=
 LANE_DONE_DEFINITION := Ready for orchestrator branch review with lane-local verification complete.
-
-ifeq ($(TASK),phase-5-retention-export-and-audit-controls)
-  ifeq ($(LANE),backend-domain)
-    LANE_BRANCH := codex/p5-backend-domain
-    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-backend-domain
-    LANE_TITLE := Backend domain
-    LANE_OBJECTIVE := Phase 5 backend-domain retention/export/audit slice.
-    LANE_OWNED_ARGS := --owned-path "apps/prototype-description-service/db/**" --owned-path "apps/prototype-description-service/recognition/domain/**" --owned-path "apps/prototype-description-service/recognition/infrastructure/**" --owned-path "apps/prototype-description-service/recognition/tests/unit/**" --owned-path "apps/prototype-description-service/scripts/reset_dev_db.sh" --owned-path "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
-    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
-    LANE_TEST_CMD_1 := cd apps/prototype-description-service && pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py
-    LANE_TEST_CMD_2 := cd apps/prototype-description-service && mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py
-    LANE_TEST_ARGS := --test-command "cd apps/prototype-description-service && pytest recognition/tests/unit/test_retention_policy.py recognition/tests/unit/test_audit_events.py recognition/tests/unit/test_export_service.py recognition/tests/unit/test_purge_service.py" --test-command "cd apps/prototype-description-service && mypy recognition/domain/services recognition/infrastructure/repositories recognition/config/settings.py"
-    LANE_NON_GOAL_ARGS := --non-goal "Do not edit HTTP router files." --non-goal "Do not edit WordPress or frontend files."
-    LANE_COMMIT_PATHS := apps/prototype-description-service/db apps/prototype-description-service/recognition/domain apps/prototype-description-service/recognition/infrastructure apps/prototype-description-service/recognition/tests/unit apps/prototype-description-service/scripts/reset_dev_db.sh docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md
-    LANE_COMMIT_SUBJECT := update retention domain services
-  endif
-  ifeq ($(LANE),backend-http)
-    LANE_BRANCH := codex/p5-backend-http
-    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-backend-http
-    LANE_TITLE := Backend HTTP
-    LANE_OBJECTIVE := Phase 5 backend-http retention router and schema slice.
-    LANE_OWNED_ARGS := --owned-path "apps/prototype-description-service/recognition/interface_adapters/http/**"
-    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
-    LANE_TEST_CMD_1 := cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py
-    LANE_TEST_CMD_2 := cd apps/prototype-description-service && mypy recognition/interface_adapters/http
-    LANE_TEST_ARGS := --test-command "cd apps/prototype-description-service && pytest recognition/tests/api/test_retention_api.py" --test-command "cd apps/prototype-description-service && mypy recognition/interface_adapters/http"
-    LANE_NON_GOAL_ARGS := --non-goal "Do not edit backend domain/repository files outside the HTTP layer." --non-goal "Do not edit WordPress or frontend files."
-    LANE_COMMIT_PATHS := apps/prototype-description-service/recognition/interface_adapters/http
-    LANE_COMMIT_SUBJECT := update retention HTTP routes
-  endif
-  ifeq ($(LANE),wp-proxy)
-    LANE_BRANCH := codex/p5-wp-proxy
-    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-wp-proxy
-    LANE_TITLE := WP proxy
-    LANE_OBJECTIVE := Phase 5 WordPress retention proxy slice.
-    LANE_OWNED_ARGS := --owned-path "apps/prototype-wp-alt-context/src/**" --owned-path "apps/prototype-wp-alt-context/tests/Unit/**"
-    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
-    LANE_TEST_CMD_1 := cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php
-    LANE_TEST_ARGS := --test-command "cd apps/prototype-wp-alt-context && ./vendor/bin/phpunit tests/Unit/RetentionControllerTest.php tests/Unit/RecognitionControllerTest.php tests/Unit/SnapshotClientTest.php tests/Unit/SyncPullJobTest.php tests/Unit/AdminTest.php"
-    LANE_NON_GOAL_ARGS := --non-goal "Do not edit frontend React/TypeScript files." --non-goal "Do not edit backend Python files."
-    LANE_COMMIT_PATHS := apps/prototype-wp-alt-context/src apps/prototype-wp-alt-context/tests/Unit
-    LANE_COMMIT_SUBJECT := update retention proxy
-  endif
-  ifeq ($(LANE),frontend)
-    LANE_BRANCH := codex/p5-frontend
-    LANE_WORKTREE := $(ORCHESTRATOR_ROOT)-p5-frontend
-    LANE_TITLE := Frontend
-    LANE_OBJECTIVE := Phase 5 retention admin UI slice.
-    LANE_OWNED_ARGS := --owned-path "apps/prototype-wp-alt-context/js/**"
-    LANE_DOC_ARGS := --required-doc "docs/agentic/instructions.md" --required-doc "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md"
-    LANE_TEST_CMD_1 := cd apps/prototype-wp-alt-context && npm run test -- --run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/__tests__/RetentionPage.test.tsx js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/workbench/__tests__/SyncStatusIndicator.test.tsx js/admin/__tests__/routeHelpers.test.ts
-    LANE_TEST_CMD_2 := cd apps/prototype-wp-alt-context && npm run typecheck
-    LANE_TEST_ARGS := --test-command "cd apps/prototype-wp-alt-context && npm run test -- --run js/admin/api/__tests__/recognitionApi.test.ts js/admin/pages/__tests__/RetentionPage.test.tsx js/admin/pages/__tests__/DashboardPage.test.tsx js/admin/pages/workbench/__tests__/SyncStatusIndicator.test.tsx js/admin/__tests__/routeHelpers.test.ts" --test-command "cd apps/prototype-wp-alt-context && npm run typecheck"
-    LANE_NON_GOAL_ARGS := --non-goal "Do not edit PHP or Python files." --non-goal "Do not edit shared task docs unless explicitly assigned."
-    LANE_COMMIT_PATHS := apps/prototype-wp-alt-context/js
-    LANE_COMMIT_SUBJECT := update retention admin UI
-  endif
-endif
+LANE_BRANCH := $(call lane_field,branch)
+LANE_WORKTREE := $(call lane_field,worktree_path,1)
+LANE_TITLE := $(call lane_field,title)
+LANE_OBJECTIVE := $(call lane_field,objective)
+LANE_OWNED_ARGS := $(call lane_field,owned_args)
+LANE_DOC_ARGS := $(call lane_field,doc_args)
+LANE_TEST_ARGS := $(call lane_field,test_args)
+LANE_TEST_CMD_1 := $(call lane_field,test_command_1)
+LANE_TEST_CMD_2 := $(call lane_field,test_command_2)
+LANE_NON_GOAL_ARGS := $(call lane_field,non_goal_args)
+LANE_COMMIT_PATHS := $(call lane_field,commit_paths)
+LANE_COMMIT_SUBJECT := $(call lane_field,commit_subject)
+LANE_DONE_DEFINITION := $(or $(call lane_field,done_definition),$(LANE_DONE_DEFINITION))
+LANE_APP_TOOLING_PATHS := $(call lane_field,tooling_paths)
 
 # Default target
 help:
@@ -146,46 +105,47 @@ help:
 	@echo "Handoff Integrity:"
 	@echo "  make handoff-close-check    - Enforce close-readiness on active handoff task"
 	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
-	@echo "  make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls [DRY_RUN=1]"
+	@echo "  make handoff-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Route open handoff review findings, blockers, and next actions from the orchestrator root to the correct worker lanes."
-	@echo "  make handoff-inbox TASK=phase-5-retention-export-and-audit-controls [LANE=backend-domain]"
+	@echo "  make handoff-inbox TASK=<task-ref> [LANE=<lane>]"
 	@echo "    Poll open worker-to-orchestrator handoff messages and the latest worker reports from root."
-	@echo "  make review-dispatch TASK=phase-5-retention-export-and-audit-controls [DRY_RUN=1]"
+	@echo "  make review-dispatch TASK=<task-ref> [DRY_RUN=1]"
 	@echo "    Backward-compatible alias for handoff-dispatch."
 	@echo ""
 	@echo "Worktree Lanes (task-aware wrappers around scripts/worktree-lane):"
 	@echo "  make lane-list"
 	@echo "    List all registered worktree lanes and their status."
-	@echo "  make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "    Adds the lane brief, worktree status, an initial lane inbox poll, and opens a subshell in the lane by default. Set ENTER_SHELL=0 to stay in root."
-	@echo "  make lane-status TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "  make lane-inbox TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-open TASK=<task-ref> LANE=<lane>"
+	@echo "    Adds the lane brief, fails fast if an existing worktree is on the wrong branch, polls the inbox, and opens a subshell in the lane by default. Set ENTER_SHELL=0 to stay in root."
+	@echo "  make lane-status TASK=<task-ref> LANE=<lane>"
+	@echo "  make lane-inbox TASK=<task-ref> LANE=<lane>"
 	@echo "    Worker default: poll open dispatch messages, latest handoff, and lane activity from shared MCP state."
-	@echo "  make lane-prompt TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-prompt TASK=<task-ref> LANE=<lane>"
 	@echo "    Render a concise worker prompt from the current lane inbox."
 	@echo "  make lane-check"
-	@echo "    Worker default: run the lane's configured test commands in the current worktree. Use before lane-handoff."
-	@echo "  make lane-run TASK=phase-5-retention-export-and-audit-controls LANE=frontend [CODEX_ARGS='...']"
+	@echo "    Worker default: run the lane's configured test commands in the current worktree and record results into MCP. Use before lane-handoff."
+	@echo "  make lane-run TASK=<task-ref> LANE=<lane> [CODEX_ARGS='...']"
 	@echo "    Launch a fresh codex exec in the lane worktree using the generated lane prompt."
-	@echo "  make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=frontend MESSAGE=\"...\""
+	@echo "  make lane-dispatch TASK=<task-ref> LANE=<lane> MESSAGE=\"...\""
 	@echo "    Orchestrator default: set/update the lane to active and send an open orchestrator->worker assignment message."
-	@echo "  make lane-report TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-report TASK=<task-ref> LANE=<lane>"
 	@echo "    Optional overrides: SESSION=<name> SUMMARY=\"...\" MERGE_READY=0 MESSAGE=\"...\""
 	@echo "  make lane-commit [COMMIT_MSG='describe this change']"
 	@echo "    Worker default commit step: stage lane-owned paths and create a commit like '<lane>: <subject>'. Override subject with COMMIT_MSG."
 	@echo "  make lane-handoff"
 	@echo "    Worker default: verify scope, commit lane-owned changes, show lane status, then submit a merge-ready lane report from lane commits."
-	@echo "  make lane-reset TASK=phase-5-retention-export-and-audit-controls LANE=frontend [REF=$(CURRENT_BRANCH)]"
-	@echo "  make lane-refresh TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-reset TASK=<task-ref> LANE=<lane> [REF=$(CURRENT_BRANCH)]"
+	@echo "  make lane-refresh TASK=<task-ref> LANE=<lane>"
 	@echo "    Refresh a worker lane from the orchestrator branch using reset/rebase and optional auto-stash."
-	@echo "  make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
+	@echo "  make lane-clean TASK=<task-ref> LANE=<lane>"
 	@echo "    Remove copied tooling drift from a worker lane without touching lane-owned product files."
-	@echo "  make lane-path TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "  make lane-commits TASK=phase-5-retention-export-and-audit-controls LANE=frontend"
-	@echo "  make lane-intake TASK=phase-5-retention-export-and-audit-controls LANE=frontend [DRY_RUN=1] [SKIP_TESTS=1]"
+	@echo "  make lane-path TASK=<task-ref> LANE=<lane>"
+	@echo "  make lane-commits TASK=<task-ref> LANE=<lane>"
+	@echo "  make lane-intake TASK=<task-ref> LANE=<lane> [DRY_RUN=1] [SKIP_TESTS=1]"
 	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, and only fast-forwards root if clean."
 	@echo "    Use SKIP_TESTS=1 to bypass scratch-worktree test commands (e.g. when deps are not installable in the scratch checkout)."
-	@echo "  Enumerated Phase 5 lanes: $(PHASE5_LANES)"
+	@echo "  Supported task manifests: $(SUPPORTED_TASKS)"
+	@echo "  Enumerated lanes for $(if $(TASK),$(TASK),the active task): $(TASK_LANES)"
 
 # =============================================================================
 # Cross-Repo Checks
@@ -355,8 +315,13 @@ handoff-dispatch:
 	@if [ -z "$(TASK)" ]; then \
 		echo "TASK is required."; \
 		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make handoff-dispatch TASK=phase-5-retention-export-and-audit-controls"; \
+		echo "Example: make handoff-dispatch TASK=<task-ref>"; \
 		echo "Inspect current state: make state"; \
+		exit 1; \
+	fi
+	@if [ -z "$(TASK_LANES)" ]; then \
+		echo "Unsupported TASK: $(TASK)"; \
+		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
 		exit 1; \
 	fi
 	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
@@ -365,7 +330,62 @@ handoff-dispatch:
 		--task-ref "$(TASK)" \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
+review-run:
+	@if [ -z "$(LANE_WORKTREE_TARGET)" ] && [ -z "$(WORKTREE_PATH)" ]; then \
+		echo "review-run requires a lane worktree. Set WORKTREE_PATH or run from a lane."; \
+		exit 1; \
+	fi
+	@PYTHONPATH="$(WORKTREE_ROOT_REAL)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/review_runner.py" run \
+		--worktree-path "$(or $(WORKTREE_PATH),$(LANE_WORKTREE_TARGET))" \
+		$(if $(LANE),--lane-id "$(LANE)",) \
+		$(if $(TASK),--task-ref "$(TASK)",) \
+		$(if $(SESSION),--session "$(SESSION)",) \
+		$(if $(filter 1,$(RECORD_FINDINGS)),--record-findings,) \
+		$(if $(ORCHESTRATOR_ROOT),--orchestrator-root "$(ORCHESTRATOR_ROOT)",$(if $(filter 1,$(RECORD_FINDINGS)),--orchestrator-root "$(WORKTREE_ROOT_REAL)",)) \
+		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
+
 review-dispatch: handoff-dispatch
+
+worker-daemon: lane-guard
+	@set -eu; \
+	SESSION="$(or $(SESSION),$(TASK)-$(LANE))"; \
+	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		--session "$$SESSION" \
+		--worktree-path "$(LANE_WORKTREE_TARGET)" \
+		$(if $(MAX_REVIEW_CYCLES),--max-review-cycles "$(MAX_REVIEW_CYCLES)",) \
+		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
+		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
+		$(if $(CODEX_BIN),--codex-bin "$(CODEX_BIN)",) \
+		$(if $(CODEX_ARGS),--codex-args "$(CODEX_ARGS)",) \
+		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
+
+orchestrator-daemon: lane-orchestrator-guard
+	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" run \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
+		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
+		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
+
+daemon-pause:
+	@python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" pause \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
+
+daemon-resume:
+	@python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" resume \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
+
+daemon-status:
+	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" status \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--log-dir "$(ORCHESTRATOR_ROOT)/logs/daemon"
 
 # =============================================================================
 # Worktree Lane Orchestration
@@ -375,25 +395,25 @@ lane-guard:
 	@if [ -z "$(TASK)" ]; then \
 		echo "TASK is required."; \
 		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make lane-open TASK=phase-5-retention-export-and-audit-controls LANE=frontend"; \
+		echo "Example: make lane-open TASK=<task-ref> LANE=<lane>"; \
 		echo "Inspect current state: make state"; \
 		exit 1; \
 	fi
 	@if [ -z "$(LANE)" ]; then \
 		echo "LANE is required."; \
 		echo "No lane could be inferred from branch $(CURRENT_BRANCH)."; \
-		echo "Allowed lanes for Phase 5: $(PHASE5_LANES)"; \
+		echo "Allowed lanes for $(TASK): $(TASK_LANES)"; \
 		echo "List lane status: make lane-list"; \
 		exit 1; \
 	fi
-	@if [ "$(TASK)" != "phase-5-retention-export-and-audit-controls" ]; then \
+	@if [ -z "$(TASK_LANES)" ]; then \
 		echo "Unsupported TASK: $(TASK)"; \
-		echo "This Makefile currently enumerates lanes only for phase-5-retention-export-and-audit-controls."; \
+		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
 		exit 1; \
 	fi
 	@if [ -z "$(LANE_BRANCH)" ]; then \
 		echo "Unsupported LANE: $(LANE)"; \
-		echo "Allowed lanes for $(TASK): $(PHASE5_LANES)"; \
+		echo "Allowed lanes for $(TASK): $(TASK_LANES)"; \
 		exit 1; \
 	fi
 
@@ -504,19 +524,40 @@ lane-prompt: lane-guard
 
 lane-check: lane-worker-guard
 	@set -eu; \
+	record_test_result() { \
+		command_text="$$1"; \
+		step_label="$$2"; \
+		output_file="$$(mktemp "$${TMPDIR:-/tmp}/lane-check-$(LANE)-XXXXXX")"; \
+		if sh -lc "$$command_text" >"$$output_file" 2>&1; then \
+			cat "$$output_file"; \
+			result_text="$$(python3 -c 'from pathlib import Path; import sys; lines=[line.strip() for line in Path(sys.argv[1]).read_text(errors="replace").splitlines() if line.strip()]; tail=" | ".join(lines[-10:]) if lines else "command passed"; print(tail[:500])' "$$output_file")"; \
+			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+				test --session "$(SESSION)" --command "$$command_text" --passed --result "$$result_text" --exit-code 0 >/dev/null; \
+		else \
+			status="$$?"; \
+			cat "$$output_file"; \
+			result_text="$$(python3 -c 'from pathlib import Path; import sys; lines=[line.strip() for line in Path(sys.argv[1]).read_text(errors="replace").splitlines() if line.strip()]; tail=" | ".join(lines[-10:]) if lines else "command failed"; print(tail[:500])' "$$output_file")"; \
+			$(MCP_CMD) --workspace-root "$(LANE_WORKTREE_TARGET)" --state-dir "$(ORCHESTRATOR_ROOT)/.task-state" --current-task-path "$(ORCHESTRATOR_ROOT)/CURRENT_TASK.md" --exports-dir "$(ORCHESTRATOR_ROOT)/.task-state/exports" \
+				test --session "$(SESSION)" --command "$$command_text" --result "$$result_text" --exit-code "$$status" >/dev/null; \
+			rm -f "$$output_file"; \
+			return "$$status"; \
+		fi; \
+		rm -f "$$output_file"; \
+		echo ""; \
+		echo "$$step_label passed."; \
+		echo ""; \
+	}; \
 	if [ -z "$(LANE_TEST_CMD_1)" ] && [ -z "$(LANE_TEST_CMD_2)" ]; then \
 		echo "No test commands configured for lane $(LANE)."; \
 		exit 0; \
 	fi; \
 	if [ -n "$(LANE_TEST_CMD_1)" ]; then \
 		echo "Running lane verification step 1..."; \
-		sh -lc '$(LANE_TEST_CMD_1)'; \
-		echo ""; \
+		record_test_result '$(LANE_TEST_CMD_1)' "Lane verification step 1"; \
 	fi; \
 	if [ -n "$(LANE_TEST_CMD_2)" ]; then \
 		echo "Running lane verification step 2..."; \
-		sh -lc '$(LANE_TEST_CMD_2)'; \
-		echo ""; \
+		record_test_result '$(LANE_TEST_CMD_2)' "Lane verification step 2"; \
 	fi; \
 	echo "Lane $(LANE) verification passed."
 

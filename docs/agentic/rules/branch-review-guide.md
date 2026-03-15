@@ -32,9 +32,9 @@ The reviewer can be human or agentic. When an agent performs the review:
 
 1. Walk through each checklist section, citing specific files and line numbers
 2. Classify findings using the severity guide and categories below
-3. Record each finding into MCP via `record_review_finding` (see MCP Handoff Integration)
+3. Record each finding into MCP handoff via the repo-local handoff server/CLI flow (see MCP Handoff Integration)
 4. Do **not** produce a report file unless the user explicitly requests one
-5. If the task is split into worktrees, have the orchestrator run `make review-dispatch TASK=<task-ref>` after findings are logged so open issues are stamped to the correct lane and delivered through MCP lane messages.
+5. If the task is split into worktrees, have the orchestrator run `make handoff-dispatch TASK=<task-ref>` after findings are logged so open issues are stamped to the correct lane and delivered through MCP lane messages.
 
 Hard rule for agent responses:
 - Do not present a finding in chat unless it has already been recorded in MCP with a stable `finding_id`.
@@ -46,6 +46,10 @@ Review only **uncommitted working-directory changes** (`git status` / `git diff 
 
 For a full branch audit before merge, use `git diff --name-only main...HEAD` instead.
 
+### Automated Review
+
+This guide is also consumed as prompt input by `review_runner.py` (`make review-run TASK=<task> LANE=<lane>`), which feeds the checklist text to an LLM reviewer. Because the guide serves this dual role (human-readable checklist and machine-readable prompt), structural or wording changes here directly affect automated review fidelity. The orchestrator daemon (`make orchestrator-daemon`) dispatches findings produced by automated reviews to the correct worker lanes via `make handoff-dispatch`.
+
 ### Dev Tooling (Lightweight Review)
 
 Files under `scripts/mcp/`, MCP test files, and other dev tooling do **not** require the full checklist treatment. Apply a lightweight review:
@@ -54,7 +58,7 @@ Files under `scripts/mcp/`, MCP test files, and other dev tooling do **not** req
 - Obvious bugs: off-by-one, missing error handling, SQL injection
 - Skip: metric thresholds, architecture boundary checks, Protocol typing
 
-Dev tooling findings should still be recorded via `record_review_finding` but are never HIGH severity unless they corrupt production data or state.
+Dev tooling findings should still be recorded through the handoff MCP server before they are mentioned in chat, but are never HIGH severity unless they corrupt production data or state.
 
 ---
 
@@ -151,9 +155,45 @@ These items apply regardless of language. Stack-specific items are in the langua
 
 After completing the review, every finding **must** be recorded into the MCP handoff database for cross-agent visibility. Do not rely solely on the markdown report.
 
+### Required Execution Surface
+
+For this repo, agents must log review findings through the handoff MCP server from the orchestrator root, not by keeping findings only in chat or a markdown file.
+
+Preferred pattern:
+
+1. Run the review from the orchestrator root worktree.
+2. Use the repo-local MCP runtime (`python3 -m agent_handoff_mcp ...`) with explicit runtime args:
+   - `--workspace-root <orchestrator-root>`
+   - `--state-dir <orchestrator-root>/.task-state`
+   - `--current-task-path <orchestrator-root>/CURRENT_TASK.md`
+   - `--exports-dir <orchestrator-root>/.task-state/exports`
+3. Record each finding with `review-record` before mentioning it in chat.
+4. Verify the write with `review-list` or `review-summary`.
+5. Record the final review decision with `decision`.
+6. If the review creates worker-lane work, dispatch it with `make handoff-dispatch TASK=<task-ref>` or `make review-dispatch TASK=<task-ref>` from root.
+
+Example:
+
+```bash
+PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
+  --workspace-root /abs/path/to/repo \
+  --state-dir /abs/path/to/repo/.task-state \
+  --current-task-path /abs/path/to/repo/CURRENT_TASK.md \
+  --exports-dir /abs/path/to/repo/.task-state/exports \
+  review-record \
+  --session <review-session> \
+  --finding-id <finding-id> \
+  --severity medium \
+  --file-path path/to/file.py \
+  --line-start 10 \
+  --line-end 20 \
+  --description "Concrete bug description." \
+  --fix "Suggested remediation."
+```
+
 ### After Each Finding
 
-Call `record_review_finding` with:
+Call `review-record` / `record_review_finding` with:
 
 | Parameter      | Value                                                           |
 | -------------- | --------------------------------------------------------------- |
@@ -167,14 +207,16 @@ Call `record_review_finding` with:
 
 ### After All Findings Recorded
 
-1. Call `get_review_findings_summary` to confirm severity/status counts for the task.
-2. Use `list_review_findings(status="all")` if you need full finding-by-finding verification.
-3. Call `record_decision` summarizing the review (finding count by severity, session ID).
-4. Call `generate_current_task_md` to regenerate `CURRENT_TASK.md` with findings visible.
-5. If this review concludes the task, run `handoff_close_check(enforce=True)` before final handoff.
-6. Include `Handoff updated: yes` in the response.
+1. Call `review-summary` / `get_review_findings_summary` to confirm severity/status counts for the task.
+2. Use `review-list --status all` / `list_review_findings(status="all")` if you need full finding-by-finding verification.
+3. Call `decision` / `record_decision` summarizing the review (finding count by severity, session ID).
+4. Regenerate `CURRENT_TASK.md` if your workflow depends on it.
+5. If this review creates actionable lane work, run `make handoff-dispatch TASK=<task-ref>` from the orchestrator root after logging findings.
+6. If this review concludes the task, run `handoff_close_check(enforce=True)` before final handoff.
+7. Include `Handoff updated: yes` in the response.
 
 Do not use direct `sqlite3` shell queries for MCP handoff verification when these tools are available.
+Do not mention a finding in chat before it exists in MCP handoff with a stable `finding_id`.
 
 ### Severity Mapping
 

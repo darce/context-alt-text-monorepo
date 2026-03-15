@@ -76,6 +76,10 @@ make lane-inbox                                                # Poll assignment
 make lane-prompt                                               # Render actionable prompt
 make lane-check                                                # Run lane tests
 make worker-daemon TASK=<task> LANE=<lane>                     # Continuous worker polling loop
+make worker-daemon-status                                      # Inspect lock/PID/log state
+make worker-daemon-stop                                        # Stop the lane daemon
+make worker-daemon-resume                                      # Resume a stopped lane daemon
+make worker-daemon-tail                                        # Tail the lane daemon log
 make lane-handoff                                              # Commit + report + hand off
 make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="..." MESSAGE="..."  # Blocked report
 ```
@@ -192,6 +196,7 @@ Notes:
 - The foreground terminal now shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` markers while `codex exec` is still running.
 - Detailed JSONL progress is still written to `logs/worker-daemon/worker-<lane>.jsonl`.
 - If a second worker daemon is started for the same lane, the per-lane lock will reject it with `Another worker daemon is already running for lane '<lane>'`.
+- Use `make worker-daemon-status` to see the shared-root lock path, current PID/state, and the latest JSONL event. Use `make worker-daemon-stop` or `make worker-daemon-resume` instead of sending manual signals when possible.
 
 ### Recipe: Worker is blocked
 

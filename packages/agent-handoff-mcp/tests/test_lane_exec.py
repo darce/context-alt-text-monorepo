@@ -166,6 +166,7 @@ def test_run_lane_exec_dry_run(tmp_path: Path) -> None:
     assert result_path == output
     data = json.loads(output.read_text())
     assert data["dry_run"] is True
+    assert data["handoff_action"] == "merge_ready"
     assert "Test prompt" in data["prompt"]
     assert "handoff_action" in data["prompt"]  # appended instructions
 

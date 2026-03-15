@@ -10,7 +10,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon orchestrator-daemon daemon-pause daemon-resume daemon-status lane-manifest-init lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status lane-manifest-init lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -132,6 +132,14 @@ help:
 	@echo "    Worker default: run the lane's configured test commands in the current worktree and record results into MCP. Use before lane-handoff."
 	@echo "  make lane-run TASK=<task-ref> LANE=<lane> [CODEX_ARGS='...']"
 	@echo "    Launch a fresh codex exec in the lane worktree using the generated lane prompt."
+	@echo "  make worker-daemon-status"
+	@echo "    Show the shared-root lock path, PID/process state, and latest worker log event for the current lane."
+	@echo "  make worker-daemon-stop [FORCE=1]"
+	@echo "    Stop the current lane worker daemon without manually finding PIDs."
+	@echo "  make worker-daemon-resume"
+	@echo "    Resume a stopped/suspended lane worker daemon with SIGCONT."
+	@echo "  make worker-daemon-tail"
+	@echo "    Tail the current lane worker daemon JSONL log."
 	@echo "  make lane-dispatch TASK=<task-ref> LANE=<lane> MESSAGE=\"...\""
 	@echo "    Orchestrator default: set/update the lane to active and send an open orchestrator->worker assignment message."
 	@echo "  make lane-report TASK=<task-ref> LANE=<lane>"
@@ -369,6 +377,31 @@ worker-daemon: lane-guard
 		$(if $(CODEX_BIN),--codex-bin "$(CODEX_BIN)",) \
 		$(if $(CODEX_ARGS),--codex-args "$(CODEX_ARGS)",) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
+
+worker-daemon-status: lane-guard
+	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" status \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)"
+
+worker-daemon-stop: lane-guard
+	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" stop \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)" \
+		$(if $(filter 1,$(FORCE)),--force,)
+
+worker-daemon-resume: lane-guard
+	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/worker_daemon_ctl.py" resume \
+		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
+		--log-dir "$(ORCHESTRATOR_ROOT)/logs/worker-daemon" \
+		--task-ref "$(TASK)" \
+		--lane-id "$(LANE)"
+
+worker-daemon-tail: lane-guard
+	@tail -f "$(ORCHESTRATOR_ROOT)/logs/worker-daemon/worker-$(LANE).jsonl"
 
 orchestrator-daemon: lane-orchestrator-guard
 	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \

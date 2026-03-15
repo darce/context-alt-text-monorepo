@@ -14,7 +14,7 @@ help:
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
-	@echo "  make worker-daemon - Start the lane worker daemon from this app directory via the root Makefile"
+	@echo "  make worker-daemon* - Worker daemon controls (run/status/stop/resume/tail) forwarded to root Makefile"
 
 check:
 	@npm run check
@@ -72,6 +72,9 @@ lane-%: FORCE
 	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
 
 worker-daemon: FORCE
+	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
+
+worker-daemon-%: FORCE
 	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
 
 # Destructive helper for local sovereign split-brain recovery after backend reset.

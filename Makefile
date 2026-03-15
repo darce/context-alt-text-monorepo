@@ -10,7 +10,7 @@
 #   make check-all    # Run all linters and tests across the monorepo
 #
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon orchestrator-daemon daemon-pause daemon-resume daemon-status lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
+.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local mcp mcp-start handoff-close-check handoff-integrity-check fix-php-style handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon orchestrator-daemon daemon-pause daemon-resume daemon-status lane-manifest-init lane-open lane-status lane-inbox lane-prompt lane-check lane-run lane-dispatch lane-report lane-commit lane-handoff lane-reset lane-refresh lane-clean lane-guard lane-path lane-commits lane-intake lane-orchestrator-guard lane-worker-guard task dashboard state lane-list gemini-cli-setup dev dev-stop
 
 WORKTREE_ROOT := $(shell git rev-parse --show-toplevel 2>/dev/null)
 CURRENT_BRANCH := $(shell git -C "$(WORKTREE_ROOT)" rev-parse --abbrev-ref HEAD 2>/dev/null)
@@ -38,15 +38,19 @@ SUBJECT ?= $(LANE) next assignment
 STATUS ?= submitted
 MERGE_READY ?= 1
 DRY_RUN ?= 0
+OVERWRITE ?= 0
 SKIP_TESTS ?= 0
 COMMIT_MSG ?=
 REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 1
 CODEX_ARGS ?=
 CODEX_BIN ?= $(shell command -v codex 2>/dev/null || true)
+TASK_PLAN ?=
+LANE_IDS ?=
 IN_ORCHESTRATOR_ROOT := $(if $(filter $(WORKTREE_ROOT_REAL),$(ORCHESTRATOR_ROOT)),1,0)
 LANE_WORKTREE_TARGET = $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(LANE_WORKTREE),$(WORKTREE_ROOT_REAL))
 LANE_TOOLING_PATHS := Makefile docs/agentic/instructions.md docs/agentic/templates/WORKTREE_LANE_BRIEF.template.md docs/agentic/templates/WORKTREE_LANE_REPORT.template.md scripts/README.md scripts/worktree-lane
+ROOT_REFRESH_PATHS := $(LANE_TOOLING_PATHS) config/lane-orchestration
 LANE_APP_TOOLING_PATHS :=
 export ORCHESTRATOR_ROOT TASK LANE SESSION SUMMARY MESSAGE SUBJECT STATUS MERGE_READY DRY_RUN LANE_WORKTREE LANE_TEST_CMD_1 LANE_TEST_CMD_2
 
@@ -115,6 +119,8 @@ help:
 	@echo "Worktree Lanes (task-aware wrappers around scripts/worktree-lane):"
 	@echo "  make lane-list"
 	@echo "    List all registered worktree lanes and their status."
+	@echo "  make lane-manifest-init TASK=<task-ref> LANE_IDS='lane-a lane-b' [TASK_PLAN=docs/tasks/...md]"
+	@echo "    Generate a reusable config/lane-orchestration/<task-ref>.json scaffold for any task, then fill in owned paths/tests."
 	@echo "  make lane-open TASK=<task-ref> LANE=<lane>"
 	@echo "    Adds the lane brief, fails fast if an existing worktree is on the wrong branch, polls the inbox, and opens a subshell in the lane by default. Set ENTER_SHELL=0 to stay in root."
 	@echo "  make lane-status TASK=<task-ref> LANE=<lane>"
@@ -434,6 +440,27 @@ lane-worker-guard: lane-guard
 		echo "Current branch $(CURRENT_BRANCH) does not match lane branch $(LANE_BRANCH)."; \
 		exit 1; \
 	fi
+
+lane-manifest-init:
+	@if [ -z "$(TASK)" ]; then \
+		echo "TASK is required."; \
+		exit 1; \
+	fi
+	@if [ -z "$(LANE_IDS)" ]; then \
+		echo "LANE_IDS is required."; \
+		echo "Example: make lane-manifest-init TASK=my-task LANE_IDS='backend frontend' TASK_PLAN=docs/tasks/x.md"; \
+		exit 1; \
+	fi
+	@set -eu; \
+	set -- python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/generate_lane_manifest.py" --task-ref "$(TASK)"; \
+	for lane in $(LANE_IDS); do set -- "$$@" --lane "$$lane"; done; \
+	if [ -n "$(TASK_PLAN)" ]; then set -- "$$@" --task-plan "$(TASK_PLAN)"; fi; \
+	if [ "$(DRY_RUN)" = "1" ]; then \
+		set -- "$$@" --stdout; \
+	elif [ "$(OVERWRITE)" = "1" ]; then \
+		set -- "$$@" --force; \
+	fi; \
+	"$$@"
 
 lane-open: lane-guard
 	@set -eu; \
@@ -772,7 +799,7 @@ lane-refresh: lane-guard
 	@set -eu; \
 	TARGET_WORKTREE="$(LANE_WORKTREE_TARGET)"; \
 	STASH_MSG="lane-refresh $(LANE) $$(date +%Y%m%d%H%M%S)"; \
-	TOOLING_FILES="$(LANE_TOOLING_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
+	TOOLING_FILES="$(ROOT_REFRESH_PATHS) $(LANE_APP_TOOLING_PATHS)"; \
 	if [ ! -d "$$TARGET_WORKTREE" ]; then \
 		echo "Lane worktree does not exist: $$TARGET_WORKTREE"; \
 		exit 1; \

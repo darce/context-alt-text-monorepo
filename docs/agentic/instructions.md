@@ -238,8 +238,8 @@ Decomposition rules for the orchestrating agent:
 3. Give each worker lane a bounded brief: objective, owned paths, required contracts/docs, required tests, explicit non-goals, and merge readiness criteria.
 4. Keep shared plan/checklist truth centralized. The orchestrator owns final checklist updates, MCP review triage, cross-lane decisions, and merge order unless a worker is explicitly assigned one documentation block.
 5. Prefer lanes that can be verified independently. Good seams in this repo are backend domain/schema, backend HTTP, WordPress proxy, frontend UI, and orchestrator-root review dispatch.
-6. Treat workflow tooling as orchestrator-owned. When the root `Makefile`, lane helper scripts, or worker playbook changes, propagate them into worker lanes with `make lane-refresh` instead of hand-copying files.
-7. Define task-aware lane orchestration in `config/lane-orchestration/<task-ref>.json`. Do not hardcode new task routing tables into the Makefile or dispatch scripts.
+6. Treat workflow tooling as orchestrator-owned. When the root `Makefile`, lane helper scripts, worker playbook, or task lane manifest changes, propagate them into worker lanes with `make lane-refresh` instead of hand-copying files.
+7. Define task-aware lane orchestration in `config/lane-orchestration/<task-ref>.json`. Do not hardcode new task routing tables into the Makefile or dispatch scripts. Start from `make lane-manifest-init TASK=<task-ref> LANE_IDS='lane-a lane-b' [TASK_PLAN=docs/tasks/...md]` so the manifest creation path stays generic across tasks.
 
 Worktree setup and switching:
 
@@ -371,10 +371,14 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make lane-inbox` is the worker polling command. It reads open `orchestrator_to_worker` lane messages from MCP, then shows the latest worker report, recent lane activity, and git status.
 - `make lane-prompt` renders the actionable lane inbox as a deterministic worker prompt. Use it when starting or re-starting a worker session from current MCP state.
 - `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. It now expects a structured final handoff payload from the worker and auto-submits either `make lane-handoff` or a blocked `make lane-report` based on that result. This is the robust automation path because it avoids trying to inject text into an already-running interactive session and avoids hand-copying blocked-report text.
+- `make worker-daemon` is the continuous worker-side polling loop. Run it from the worker worktree root with `make worker-daemon TASK=<task-ref> LANE=<lane>`. If you are inside an app subdirectory and that checkout has not yet refreshed a forwarding `worker-daemon` target, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon TASK=<task-ref> LANE=<lane>` instead.
+- `make orchestrator-daemon` is the continuous root-side loop. It does more than polling: it dispatches open handoff items, polls merge-ready reports, intakes eligible lanes, refreshes downstream lanes, and runs verification. Use `make handoff-dispatch` when you only want to fan out open work without triggering intake behavior.
+- Worker daemon progress after `cycle_start` is written to `logs/worker-daemon/worker-<lane>.jsonl`. The foreground terminal now also shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` lines so operators can tell a long-running worker is still alive without tailing logs.
 - `make handoff-inbox` is the orchestrator polling command. It reads open `worker_to_orchestrator` lane messages from MCP and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch` is the orchestrator assignment command. It writes an open lane message for a specific worker lane and regenerates `CURRENT_TASK.md` so the dispatch is mirrored for humans.
 - `make handoff-dispatch` is the orchestrator handoff-routing command. It reads open handoff review findings, blockers, and next actions from the root, stamps any routeable unassigned items onto the owning lane, and sends lane messages so the correct worktree sees the queue in `make lane-inbox`.
 - `make review-dispatch` remains as a compatibility alias when older docs or sessions still refer to the review-only name.
+- Backend Python lanes should prefer `PYENV_VERSION=description-service <command>` for non-interactive verification commands. `pyenv activate description-service` only works when `pyenv init` and `pyenv virtualenv-init` have been loaded into the current shell first.
 
 Selective file intake when a worker branch contains extra churn:
 

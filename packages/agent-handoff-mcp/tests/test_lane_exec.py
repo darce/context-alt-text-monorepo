@@ -4,6 +4,7 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import subprocess
 import textwrap
 from pathlib import Path
 from typing import Any
@@ -267,3 +268,39 @@ def test_render_schema_raises_on_failure() -> None:
     with mock.patch("subprocess.run", return_value=fake_result):
         with pytest.raises(RuntimeError, match="lane_result.py schema failed"):
             mod._render_schema(REPO_ROOT)
+
+
+def test_run_codex_process_emits_heartbeat() -> None:
+    mod = _load_module()
+    progress: list[tuple[str, dict[str, Any]]] = []
+
+    class FakeProc:
+        def __init__(self) -> None:
+            self.pid = 4242
+            self.returncode = 0
+            self.calls = 0
+
+        def communicate(self, timeout: int | None = None) -> tuple[str, str]:
+            self.calls += 1
+            if self.calls == 1:
+                raise subprocess.TimeoutExpired(
+                    cmd=["codex", "exec"],
+                    timeout=timeout or 20,
+                    output="still working",
+                    stderr="waiting on tests",
+                )
+            return ('{"handoff_action":"needs_guidance"}', "")
+
+    with mock.patch("subprocess.Popen", return_value=FakeProc()):
+        completed = mod._run_codex_process(
+            cmd=["codex", "exec"],
+            stdin_fh=mock.Mock(),
+            env={},
+            heartbeat_interval=1,
+            progress_callback=lambda event, **kw: progress.append((event, kw)),
+        )
+
+    assert completed.returncode == 0
+    assert [event for event, _ in progress] == ["exec_spawned", "exec_heartbeat"]
+    assert progress[1][1]["pid"] == 4242
+    assert "stderr_tail" in progress[1][1]

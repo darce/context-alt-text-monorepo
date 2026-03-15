@@ -147,6 +147,7 @@ Operational notes:
 Use the new lane tools when a task is intentionally split across Git worktrees or parallel agent sessions.
 
 - Task-aware worktree automation should be driven by a checked-in manifest at `config/lane-orchestration/<task-ref>.json`. That manifest is the source of truth for lane ids, branch names, worktree paths, owned paths, test commands, merge order, and dispatch routing hints.
+- Manifest creation must be generic, not task-specific. Use `make lane-manifest-init TASK=<task-ref> LANE_IDS='lane-a lane-b' [TASK_PLAN=docs/tasks/...md]` to scaffold a new manifest for any task, then fill in lane ownership and verification details.
 - The orchestrator should register one `worktree_lane` per worker branch/worktree.
 - Workers should write with `actor.lane_id` so decisions, tests, blockers, actions, and findings can be queried by lane.
 - Workers should hand back one or more `worker_reports` as merge checkpoints instead of relying on free-form chat only.
@@ -160,3 +161,7 @@ Shared-state rule for sibling worktrees:
 - Point `state-dir`, `current-task-path`, and `exports-dir` at the orchestrator root so all lanes share one handoff database and generated `CURRENT_TASK.md`.
 - The helper script [`scripts/worktree-lane`](../../scripts/worktree-lane) encodes this pattern and should be preferred over ad-hoc CLI invocation.
 - Orchestrator entrypoints such as `make lane-open` should fail fast if an existing worktree has drifted onto the wrong branch; silently reusing the wrong checkout risks misdirected commits and violates the lane-safety contract.
+- Worker daemons should be started from the worker worktree root against the shared orchestrator state, for example `make worker-daemon TASK=<task-ref> LANE=<lane>` from the lane checkout. If launched from an app subdirectory, callers should either use a forwarding app Makefile that supports `worker-daemon` or invoke the top-level Makefile explicitly with `make -C "$(git rev-parse --show-toplevel)" worker-daemon ...`.
+- Worker daemon execution should expose live progress. Operators should expect terminal lifecycle markers plus periodic `exec_heartbeat` output while `codex exec` is still running, with the full JSONL trail under `logs/worker-daemon/worker-<lane>.jsonl`.
+- Continuous orchestrator polling is a separate concern from dispatch-only routing. `make orchestrator-daemon` is allowed to intake merge-ready lanes, while `make handoff-dispatch` is the safe root command when the operator wants to fan out open work without starting merge automation.
+- Backend Python lane verification should not depend on interactive shell activation. Prefer `PYENV_VERSION=description-service ...` in lane test commands over `pyenv activate description-service`, because `pyenv activate` requires shell init hooks that may not exist in daemon subprocesses.

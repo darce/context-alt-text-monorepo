@@ -10,6 +10,12 @@ Start workers in the correct worktree, on the correct branch, with the correct l
 
 Each task that uses lane automation should define its orchestration config in `config/lane-orchestration/<task-ref>.json`.
 
+Start from the generic scaffold command:
+
+```bash
+make lane-manifest-init TASK=<task-ref> LANE_IDS='backend frontend' TASK_PLAN=docs/tasks/...md
+```
+
 That manifest is the source of truth for:
 
 - lane ids and branch names
@@ -51,6 +57,7 @@ Current lane examples:
 
 ```bash
 make lane-open TASK=<task> LANE=<lane>                         # Create/open a lane
+make lane-manifest-init TASK=<task> LANE_IDS='lane-a lane-b'   # Scaffold a task manifest
 make lane-dispatch TASK=<task> LANE=<lane> MESSAGE="..."       # Assign work
 make handoff-inbox TASK=<task>                                 # Poll worker handoffs
 make handoff-dispatch TASK=<task>                              # Route findings to lanes
@@ -68,11 +75,12 @@ make dashboard                                                 # MCP dashboard
 make lane-inbox                                                # Poll assignments
 make lane-prompt                                               # Render actionable prompt
 make lane-check                                                # Run lane tests
+make worker-daemon TASK=<task> LANE=<lane>                     # Continuous worker polling loop
 make lane-handoff                                              # Commit + report + hand off
 make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="..." MESSAGE="..."  # Blocked report
 ```
 
-All `lane-*` commands work from the repo root and from the app directories that ship forwarding Makefiles. The app-level Makefiles use a `lane-%:` pattern rule that auto-forwards any `lane-*` target to the root Makefile, so new lane targets never need to be registered in the app Makefiles.
+All `lane-*` commands work from the repo root and from the app directories that ship forwarding Makefiles. The app-level Makefiles use a `lane-%:` pattern rule that auto-forwards any `lane-*` target to the root Makefile, so new lane targets never need to be registered in the app Makefiles. `worker-daemon` should be launched from the worker worktree root. If you are already in an app subdirectory and that checkout does not yet forward `worker-daemon`, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon ...`.
 
 ---
 
@@ -161,6 +169,29 @@ Notes:
 - `make lane-check` runs the lane's configured test commands (`LANE_TEST_CMD_1`, `LANE_TEST_CMD_2`) in the current worktree and records each result into MCP, so lane activity keeps a durable verification trail. Run it before `make lane-handoff` to catch failures early.
 - `make lane-handoff` will refuse to proceed if there are no unique lane commits or if out-of-scope files are present.
 - If you need a custom commit message: `make lane-handoff COMMIT_MSG="implement retention policy service"`.
+- For backend Python lanes, prefer commands that embed `PYENV_VERSION=description-service` instead of relying on `pyenv activate description-service` in subprocesses. If you need an interactive shell activation, load pyenv first with `eval "$$(pyenv init -)"` and `eval "$$(pyenv virtualenv-init -)"`.
+
+### Recipe: Run a continuous worker daemon
+
+**Who:** Worker (agent or human). **When:** You want the lane to keep polling MCP and execute work automatically.
+
+```bash
+cd /Users/daniel/Development/context-alt-text-monorepo-p5-backend-domain
+make worker-daemon TASK=<task-ref> LANE=<lane>
+```
+
+What this does:
+
+1. Polls the lane inbox for actionable work.
+2. Runs `codex exec` with the rendered lane prompt.
+3. Submits the final handoff automatically.
+4. Repeats until stopped.
+
+Notes:
+
+- The foreground terminal now shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` markers while `codex exec` is still running.
+- Detailed JSONL progress is still written to `logs/worker-daemon/worker-<lane>.jsonl`.
+- If a second worker daemon is started for the same lane, the per-lane lock will reject it with `Another worker daemon is already running for lane '<lane>'`.
 
 ### Recipe: Worker is blocked
 
@@ -224,6 +255,17 @@ make handoff-dispatch TASK=<task-ref> DRY_RUN=1
 ```
 
 Items that cannot be auto-routed (ambiguous or no file path) are listed as `unmatched` in the output. Route those manually with `make lane-dispatch`.
+
+### Recipe: Start the root-side daemon
+
+**Who:** Orchestrator. **When:** You want root to keep polling, dispatching, intaking, refreshing, and verifying automatically.
+
+```bash
+cd /Users/daniel/Development/context-alt-text-monorepo
+make orchestrator-daemon TASK=<task-ref>
+```
+
+Use `make handoff-dispatch TASK=<task-ref>` instead when you only want to route open work to lanes without starting automated intake.
 
 ### Recipe: Preview lane commits before intake
 

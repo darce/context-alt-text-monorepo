@@ -453,6 +453,57 @@ def test_worker_loop_review_exhausted(tmp_path: Path) -> None:
     assert any("converge" in b.lower() for b in data.get("blockers", []))
 
 
+def test_worker_loop_logs_fix_prompt_failure(tmp_path: Path) -> None:
+    mod = _load_module()
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    result_file = tmp_path / "result.json"
+
+    def reset_result(*args: Any, **kwargs: Any) -> Path:
+        result_file.write_text(json.dumps({
+            "handoff_action": "merge_ready",
+            "summary": "Attempt.",
+            "details": "Still has issues.",
+            "tests_run": [],
+            "blockers": [],
+        }))
+        return result_file
+
+    non_converged_review: dict[str, Any] = {
+        "findings": [
+            {"severity": "high", "category": "GAP", "file_path": "x.py", "description": "Missing."}
+        ],
+        "summary": "Issues remain.",
+        "converged": False,
+        "changed_files": ["x.py"],
+        "stack_guides": [],
+    }
+
+    with (
+        mock.patch.object(mod, "has_actionable_work", return_value=True),
+        mock.patch("lane_exec.find_codex", return_value="/usr/bin/codex"),
+        mock.patch("lane_exec.run_lane_exec", side_effect=reset_result),
+        mock.patch("review_runner.run_review", return_value=non_converged_review),
+        mock.patch("review_runner.findings_converged", return_value=False),
+        mock.patch.object(mod, "_run_final_handoff", return_value=0),
+        mock.patch.object(mod, "_log") as mock_log,
+        mock.patch("subprocess.run", return_value=mock.Mock(returncode=1, stderr="prompt render failed")),
+    ):
+        mod.worker_loop(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="test-lane",
+            session="task-test-lane",
+            worktree_path=tmp_path,
+            max_review_cycles=2,
+            single_pass=True,
+            dry_run=True,
+        )
+
+    assert any(call.args[3] == "fix_prompt_failed" for call in mock_log.call_args_list)
+
+
 # ---------------------------------------------------------------------------
 # _pythonpath_env
 # ---------------------------------------------------------------------------

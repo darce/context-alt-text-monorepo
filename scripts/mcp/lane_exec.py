@@ -9,10 +9,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
+from typing import Callable
 from typing import Any
 
 SCRIPT_DIR = Path(__file__).resolve().parent
@@ -143,6 +146,69 @@ def build_fix_prompt(base_prompt: str, findings: list[dict[str, Any]]) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Subprocess execution with heartbeats
+# ---------------------------------------------------------------------------
+
+
+def _tail_text(text: str, *, limit: int = 240) -> str:
+    value = " ".join(line.strip() for line in text.splitlines() if line.strip())
+    if len(value) <= limit:
+        return value
+    return value[: limit - 3] + "..."
+
+
+def _run_codex_process(
+    *,
+    cmd: list[str],
+    stdin_fh: Any,
+    env: dict[str, str],
+    heartbeat_interval: int = 20,
+    progress_callback: Callable[..., None] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    """Run ``codex exec`` and emit periodic heartbeat callbacks while it works."""
+    proc = subprocess.Popen(
+        cmd,
+        stdin=stdin_fh,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        env=env,
+    )
+    started = time.monotonic()
+    if progress_callback:
+        progress_callback("exec_spawned", pid=proc.pid)
+
+    while True:
+        try:
+            stdout, stderr = proc.communicate(timeout=heartbeat_interval)
+            return subprocess.CompletedProcess(cmd, proc.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired as exc:
+            if progress_callback:
+                payload: dict[str, Any] = {
+                    "pid": proc.pid,
+                    "elapsed_seconds": int(time.monotonic() - started),
+                }
+                stderr_tail = _tail_text(getattr(exc, "stderr", "") or "")
+                stdout_tail = _tail_text(getattr(exc, "stdout", "") or getattr(exc, "output", "") or "")
+                if stderr_tail:
+                    payload["stderr_tail"] = stderr_tail
+                elif stdout_tail:
+                    payload["stdout_tail"] = stdout_tail
+                progress_callback("exec_heartbeat", **payload)
+
+
+# ---------------------------------------------------------------------------
+# Temp-file helpers
+# ---------------------------------------------------------------------------
+
+
+def _temp_output_path(*, lane_id: str) -> Path:
+    fd, name = tempfile.mkstemp(suffix=".json", prefix=f"lane-exec-{lane_id}-")
+    os.close(fd)
+    return Path(name)
+
+
+# ---------------------------------------------------------------------------
 # Core execution
 # ---------------------------------------------------------------------------
 
@@ -158,6 +224,8 @@ def run_lane_exec(
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     prompt_override: str | None = None,
+    heartbeat_interval: int = 20,
+    progress_callback: Callable[..., None] | None = None,
     dry_run: bool = False,
 ) -> Path:
     """Run Codex for a lane and write a structured result file.
@@ -190,7 +258,7 @@ def run_lane_exec(
             "schema": json.loads(schema_text),
             "codex_bin": codex,
         }
-        out = output_path or Path(tempfile.mktemp(suffix=".json", prefix=f"lane-exec-{lane_id}-"))
+        out = output_path or _temp_output_path(lane_id=lane_id)
         out.write_text(json.dumps(result, indent=2))
         return out
 
@@ -214,18 +282,17 @@ def run_lane_exec(
         ]
 
         with prompt_file.open("r") as stdin_fh:
-            completed = subprocess.run(
-                cmd,
-                stdin=stdin_fh,
-                capture_output=True,
-                text=True,
-                check=False,
+            completed = _run_codex_process(
+                cmd=cmd,
+                stdin_fh=stdin_fh,
                 env=env,
+                heartbeat_interval=heartbeat_interval,
+                progress_callback=progress_callback,
             )
 
         if completed.returncode != 0:
             # Preserve partial result if any
-            out = output_path or Path(tempfile.mktemp(suffix=".json", prefix=f"lane-exec-{lane_id}-"))
+            out = output_path or _temp_output_path(lane_id=lane_id)
             if result_file.is_file():
                 import shutil
                 shutil.copy2(result_file, out)
@@ -239,7 +306,7 @@ def run_lane_exec(
             raise RuntimeError("codex exec completed but did not produce a result file.")
 
         # Copy to persistent location
-        out = output_path or Path(tempfile.mktemp(suffix=".json", prefix=f"lane-exec-{lane_id}-"))
+        out = output_path or _temp_output_path(lane_id=lane_id)
         import shutil
         shutil.copy2(result_file, out)
         return out

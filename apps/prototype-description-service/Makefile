@@ -1,4 +1,4 @@
-.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive FORCE
+.PHONY: help test lint format check clean install setup typecheck serve stop mcp postgres-start dev-ready logs-tail logs-rotate logs-clean logs-archive worker-daemon FORCE
 
 # Default target
 help:
@@ -19,6 +19,7 @@ help:
 	@echo "  make reset      - Drop and recreate the local database"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
+	@echo "  make worker-daemon - Start the lane worker daemon from this app directory via the root Makefile"
 	@echo ""
 	@echo "Log Management:"
 	@echo "  make logs-tail    - Tail the main recognition log"
@@ -34,6 +35,9 @@ mcp:
 FORCE:
 
 lane-%: FORCE
+	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
+
+worker-daemon: FORCE
 	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
 
 # Start local PostgreSQL service (native Homebrew install)

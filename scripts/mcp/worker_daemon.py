@@ -44,8 +44,21 @@ def _log(lane_id: str, log_dir: Path, level: str, event: str, **extra: Any) -> N
     path = log_dir / f"worker-{lane_id}.jsonl"
     with path.open("a") as fh:
         fh.write(json.dumps(entry, default=str) + "\n")
-    # Also print for interactive visibility
-    print(f"[{level}] {event}", flush=True)
+    # Also print for interactive visibility.
+    preview_parts: list[str] = []
+    for key in ("cycle", "elapsed_seconds", "finding_count", "passed", "interval", "pid"):
+        if key in extra:
+            preview_parts.append(f"{key}={extra[key]}")
+    for key in ("result_path", "error", "stderr_tail", "stdout_tail"):
+        value = extra.get(key)
+        if not value:
+            continue
+        text = str(value).replace("\n", " ")
+        if len(text) > 160:
+            text = text[:157] + "..."
+        preview_parts.append(f"{key}={text}")
+    suffix = f" {' '.join(preview_parts)}" if preview_parts else ""
+    print(f"[{level}] {event}{suffix}", flush=True)
 
 
 # ---------------------------------------------------------------------------
@@ -287,8 +300,16 @@ def worker_loop(
                     prompt_override = build_fix_prompt(
                         base_result.stdout, last_findings
                     )
+                else:
+                    log(
+                        "WARNING",
+                        "fix_prompt_failed",
+                        cycle=cycle,
+                        error=(base_result.stderr or base_result.stdout or "").strip()[:200],
+                    )
 
             try:
+                log("INFO", "exec_start", cycle=cycle, worktree_path=str(worktree_path))
                 final_result_path = run_lane_exec(
                     orchestrator_root=orchestrator_root,
                     task_ref=task_ref,
@@ -298,6 +319,7 @@ def worker_loop(
                     codex_bin=codex,
                     codex_args=codex_args,
                     prompt_override=prompt_override,
+                    progress_callback=lambda event, **kw: log("INFO", event, cycle=cycle, **kw),
                     dry_run=dry_run,
                 )
             except RuntimeError as exc:

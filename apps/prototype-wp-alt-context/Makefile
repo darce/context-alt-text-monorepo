@@ -1,4 +1,4 @@
-.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset FORCE
+.PHONY: help check fix lint typecheck arch test test-watch check-php php-cs php-cs-fix php-test phpstan mcp projection-reset worker-daemon FORCE
 
 help:
 	@echo "Available commands:"
@@ -14,6 +14,7 @@ help:
 	@echo "  make projection-reset - Truncate ACX projection tables (guarded; requires WP_PATH + confirmation)"
 	@echo "  make mcp        - Start the MCP server for AI agents (monorepo-wide)"
 	@echo "  make lane-*     - Worktree lane commands (forwarded to root Makefile; run 'make help' from repo root for full list)"
+	@echo "  make worker-daemon - Start the lane worker daemon from this app directory via the root Makefile"
 
 check:
 	@npm run check
@@ -68,6 +69,9 @@ mcp:
 FORCE:
 
 lane-%: FORCE
+	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
+
+worker-daemon: FORCE
 	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
 
 # Destructive helper for local sovereign split-brain recovery after backend reset.

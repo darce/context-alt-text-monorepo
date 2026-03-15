@@ -150,7 +150,9 @@ def build_fix_prompt(base_prompt: str, findings: list[dict[str, Any]]) -> str:
 # ---------------------------------------------------------------------------
 
 
-def _tail_text(text: str, *, limit: int = 240) -> str:
+def _tail_text(text: str | bytes, *, limit: int = 240) -> str:
+    if isinstance(text, bytes):
+        text = text.decode("utf-8", errors="replace")
     value = " ".join(line.strip() for line in text.splitlines() if line.strip())
     if len(value) <= limit:
         return value

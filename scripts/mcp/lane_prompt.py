@@ -13,6 +13,14 @@ from agent_handoff_mcp import get_lane_activity
 
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
+ANSI = {
+    "reset": "\033[0m",
+    "red": "\033[31m",
+    "yellow": "\033[33m",
+    "blue": "\033[34m",
+    "cyan": "\033[36m",
+    "green": "\033[32m",
+}
 
 
 def _parse_args() -> argparse.Namespace:
@@ -22,6 +30,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--lane-id", required=True)
     parser.add_argument("--worktree-path", required=True)
     parser.add_argument("--check", action="store_true", help="Exit 0 if actionable work exists, 3 if not.")
+    parser.add_argument("--summary", action="store_true", help="Print a color-coded one-line-per-item summary.")
     return parser.parse_args()
 
 
@@ -70,6 +79,65 @@ def _format_finding(finding: dict[str, Any]) -> str:
     severity = str(finding.get("severity") or "unknown")
     description = _line(str(finding.get("description") or ""))
     return f"[{finding.get('finding_id')}] [{severity}] {location} - {description}"
+
+
+def _summary_color(kind: str, *, severity: str = "", priority: int | None = None) -> str:
+    if kind == "blocker":
+        return ANSI["red"]
+    if kind == "action":
+        if priority == 1:
+            return ANSI["red"]
+        return ANSI["yellow"]
+    if kind == "finding":
+        if severity == "high":
+            return ANSI["red"]
+        if severity == "medium":
+            return ANSI["yellow"]
+        return ANSI["blue"]
+    if kind == "message":
+        return ANSI["cyan"]
+    return ANSI["green"]
+
+
+def _build_summary_lines(activity: dict[str, Any]) -> list[str]:
+    messages = [
+        message
+        for message in _as_dicts(activity.get("messages"))
+        if message.get("direction") == "orchestrator_to_worker" and message.get("status") == "open"
+    ]
+    actions = sorted(
+        [action for action in _as_dicts(activity.get("actions")) if action.get("status") == "pending"],
+        key=lambda action: action.get("priority", 99),
+    )
+    blockers = [blocker for blocker in _as_dicts(activity.get("blockers")) if blocker.get("status") == "open"]
+    findings = [finding for finding in _as_dicts(activity.get("findings")) if finding.get("status") == "open"]
+
+    lines: list[str] = []
+    for blocker in blockers:
+        color = _summary_color("blocker")
+        lines.append(f"{color}[BLOCKER]{ANSI['reset']} {_line(str(blocker.get('description') or ''))}")
+    for action in actions:
+        priority = action.get("priority")
+        color = _summary_color("action", priority=priority if isinstance(priority, int) else None)
+        label = f"[ACTION P{priority}]" if isinstance(priority, int) else "[ACTION]"
+        lines.append(f"{color}{label}{ANSI['reset']} {_line(str(action.get('action') or ''))}")
+    for finding in findings:
+        severity = str(finding.get("severity") or "unknown")
+        color = _summary_color("finding", severity=severity)
+        location = str(finding.get("file_path") or "").strip()
+        if isinstance(finding.get("line_start"), int):
+            location = f"{location}:{finding['line_start']}"
+        suffix = f" ({location})" if location else ""
+        lines.append(f"{color}[REVIEW {severity.upper()}]{ANSI['reset']} {_line(str(finding.get('description') or ''))}{suffix}")
+    for message in messages:
+        color = _summary_color("message")
+        subject = _line(str(message.get("subject") or "lane message"))
+        body = _line(str(message.get("message") or ""))
+        compact = f"{subject}: {body}" if body else subject
+        lines.append(f"{color}[MESSAGE]{ANSI['reset']} {compact}")
+    if not lines:
+        return [f"{ANSI['green']}[IDLE]{ANSI['reset']} {NO_WORK_MESSAGE}"]
+    return lines
 
 
 def _build_prompt(activity: dict[str, Any], task_ref: str, lane_id: str, worktree_path: str) -> str:
@@ -165,6 +233,9 @@ def main() -> int:
     prompt = _build_prompt(activity, task_ref=args.task_ref, lane_id=args.lane_id, worktree_path=args.worktree_path)
     if args.check:
         return 0 if prompt != NO_WORK_MESSAGE else 3
+    if args.summary:
+        print("\n".join(_build_summary_lines(activity)))
+        return 0
     print(prompt)
     return 0
 

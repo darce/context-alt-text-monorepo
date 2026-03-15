@@ -572,7 +572,16 @@ lane-inbox: lane-guard
 	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 		--lane-id "$(LANE)" \
-		--worktree-path "$$WORKTREE_PATH"
+		--worktree-path "$$WORKTREE_PATH"; \
+	echo ""; \
+	echo "Worker action summary:"; \
+	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+			--task-ref "$(TASK)" \
+			--lane-id "$(LANE)" \
+			--worktree-path "$$WORKTREE_PATH" \
+			--summary
 
 lane-prompt: lane-guard
 	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \

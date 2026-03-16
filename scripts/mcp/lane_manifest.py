@@ -184,6 +184,41 @@ def infer_lane_from_branch(branch: str, task_ref: str | None = None, *, orchestr
     return ""
 
 
+def infer_task_from_branch_or_worktree(
+    branch: str,
+    *,
+    worktree_path: str | None = None,
+    orchestrator_root: str | None = None,
+) -> str:
+    candidates: list[str] = []
+    normalized_worktree = str(Path(worktree_path).expanduser().resolve()) if worktree_path else ""
+
+    for candidate_task in list_task_refs():
+        manifest = load_manifest(candidate_task)
+        lanes = manifest.get("lanes", {})
+        if not isinstance(lanes, dict):
+            continue
+        for _lane_id, lane in lanes.items():
+            if not isinstance(lane, dict):
+                continue
+            lane_branch = str(lane.get("branch", "")).strip()
+            lane_worktree = str(lane.get("worktree_path", "")).strip()
+            if orchestrator_root and lane_worktree:
+                lane_worktree = expand_path_template(lane_worktree, orchestrator_root=orchestrator_root)
+            lane_worktree_resolved = (
+                str(Path(lane_worktree).expanduser().resolve()) if lane_worktree else ""
+            )
+            if branch and lane_branch == branch:
+                candidates.append(candidate_task)
+            elif normalized_worktree and lane_worktree_resolved == normalized_worktree:
+                candidates.append(candidate_task)
+
+    unique = sorted(set(candidates))
+    if len(unique) == 1:
+        return unique[0]
+    return ""
+
+
 def route_patterns(task_ref: str) -> list[tuple[str, str]]:
     manifest = load_manifest(task_ref)
     routes = manifest.get("routing", [])

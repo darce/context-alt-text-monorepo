@@ -11,6 +11,7 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from lane_manifest import get_lane_config
+from lane_manifest import infer_task_from_branch_or_worktree
 from lane_manifest import infer_lane_from_branch
 from lane_manifest import list_lanes
 from lane_manifest import list_task_refs
@@ -29,6 +30,13 @@ def _parse_args() -> argparse.Namespace:
     infer_parser = subparsers.add_parser("infer-lane")
     infer_parser.add_argument("--branch", required=True)
     infer_parser.add_argument("--task-ref")
+    infer_parser.add_argument("--worktree-path")
+    infer_parser.add_argument("--orchestrator-root")
+
+    infer_task_parser = subparsers.add_parser("infer-task")
+    infer_task_parser.add_argument("--branch", required=True)
+    infer_task_parser.add_argument("--worktree-path")
+    infer_task_parser.add_argument("--orchestrator-root")
 
     field_parser = subparsers.add_parser("field")
     field_parser.add_argument("--task-ref", required=True)
@@ -95,6 +103,15 @@ def main() -> int:
         return 0
     if args.command == "infer-lane":
         print(infer_lane_from_branch(args.branch, args.task_ref))
+        return 0
+    if args.command == "infer-task":
+        print(
+            infer_task_from_branch_or_worktree(
+                args.branch,
+                worktree_path=args.worktree_path,
+                orchestrator_root=args.orchestrator_root,
+            )
+        )
         return 0
     if args.command == "field":
         print(_field_value(args.task_ref, args.lane_id, args.field, args.orchestrator_root))

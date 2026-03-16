@@ -88,3 +88,32 @@ def test_map_plan_item_to_lane_uses_heading_then_routing_hints() -> None:
     )
     assert module.map_plan_item_to_lane(backend, manifest=manifest) == "backend-domain"
     assert module.map_plan_item_to_lane(php, manifest=manifest) == "wp-proxy"
+
+
+def test_derive_plan_item_id_auto_generates_from_heading_and_ordinal(tmp_path: Path) -> None:
+    module = _load_parser_module()
+    plan = tmp_path / "plan.md"
+    plan.write_text(
+        "## Phase 2: Frontend polish\n"
+        "- [ ] Wire up status badge\n"
+        "- [ ] Add error boundary\n"
+        "## Unrelated section\n"
+        "- [x] Already done item\n"
+    )
+    items = module.parse_task_plan(plan)
+    assert len(items) == 3
+    id_0 = module.derive_plan_item_id(items[0])
+    id_1 = module.derive_plan_item_id(items[1])
+    id_2 = module.derive_plan_item_id(items[2])
+    # Phase-based prefix
+    assert id_0.startswith("phase-2::")
+    assert id_1.startswith("phase-2::")
+    # Non-phase heading falls back to phase-x
+    assert id_2.startswith("phase-x::")
+    # Ordinals differ within the same heading
+    assert id_0.endswith("::checklist_1")
+    assert id_1.endswith("::checklist_2")
+    # Ordinal resets under a new heading
+    assert id_2.endswith("::checklist_1")
+    # All three IDs are unique
+    assert len({id_0, id_1, id_2}) == 3

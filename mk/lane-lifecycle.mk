@@ -56,6 +56,7 @@ lane-status: lane-guard
 	@set -eu; \
 	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE)"; \
 	echo ""; \
@@ -80,6 +81,7 @@ lane-inbox: lane-guard
 	echo ""; \
 	"$(ORCHESTRATOR_ROOT)/scripts/worktree-lane" status \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
 		--lane-id "$(LANE)" \
 		--worktree-path "$$WORKTREE_PATH"; \
 	echo ""; \

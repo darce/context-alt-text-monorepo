@@ -1,11 +1,36 @@
 {
   "task_ref": "phase-5-retention-export-and-audit-controls",
+  "task_plan_path": "docs/tasks/6.0/phase-5-retention-export-and-audit-controls-task-plan.md",
   "default_done_definition": "Ready for orchestrator branch review with lane-local verification complete.",
   "merge_order": [
     "backend-domain",
     "backend-http",
     "wp-proxy",
     "frontend"
+  ],
+  "heading_to_lane": {
+    "Phase 1: Backend -- Tenant Policy Model and Audit Event Storage": "backend-domain",
+    "Phase 2: Backend -- Export and Purge Service Layer": "backend-domain",
+    "Phase 3: Backend -- Policy, Export, Purge, and Audit HTTP Endpoints": "backend-http",
+    "Phase 4: Plugin -- Retention Status Proxy and Admin Surface": "wp-proxy",
+    "Phase 5: Frontend -- Retention and Audit Admin Surface": "frontend"
+  },
+  "plan_routing_hints": [
+    {
+      "heading": "Phase 6: Integration Tests",
+      "text_prefix": "Backend integration test:",
+      "lane": "backend-domain"
+    },
+    {
+      "heading": "Phase 6: Integration Tests",
+      "text_prefix": "PHP integration test:",
+      "lane": "wp-proxy"
+    },
+    {
+      "heading": "Phase 6: Integration Tests",
+      "text_prefix": "Vitest integration test:",
+      "lane": "frontend"
+    }
   ],
   "routing": [
     {

@@ -1,0 +1,59 @@
+"""Shared helpers for orchestrator modules: logging, JSON parsing, text normalization."""
+from __future__ import annotations
+
+import datetime
+import json
+from pathlib import Path
+from typing import Any
+
+
+def _log(log_dir: Path, level: str, event: str, **extra: Any) -> None:
+    """Append one JSONL record to ``<log_dir>/orchestrator.jsonl``."""
+    log_dir.mkdir(parents=True, exist_ok=True)
+    entry: dict[str, Any] = {
+        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+        "level": level,
+        "event": event,
+        **extra,
+    }
+    path = log_dir / "orchestrator.jsonl"
+    with path.open("a") as fh:
+        fh.write(json.dumps(entry, default=str) + "\n")
+    print(f"[{level}] {event}", flush=True)
+
+
+def _json_load(payload: str) -> dict[str, Any]:
+    data = json.loads(payload)
+    if not isinstance(data, dict):
+        raise RuntimeError("Expected JSON object payload from handoff tool.")
+    return data
+
+
+def _normalize_text(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _combined_text(*parts: Any) -> str:
+    return " ".join(_normalize_text(part) for part in parts if _normalize_text(part)).lower()
+
+
+def _json_list_text(raw_value: Any) -> str:
+    if isinstance(raw_value, list):
+        return " ".join(str(item) for item in raw_value)
+    if not isinstance(raw_value, str) or not raw_value.strip():
+        return ""
+    try:
+        data = json.loads(raw_value)
+    except json.JSONDecodeError:
+        return raw_value
+    if isinstance(data, list):
+        return " ".join(str(item) for item in data)
+    return raw_value
+
+
+def _message_timestamp(message: dict[str, Any]) -> str:
+    return str(message.get("updated_at") or message.get("created_at") or "")
+
+
+def _report_timestamp(report: dict[str, Any]) -> str:
+    return str(report.get("created_at") or "")

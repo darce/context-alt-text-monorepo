@@ -483,6 +483,76 @@ def test_single_pass_no_ready_lanes(tmp_path: Path) -> None:
     assert result == 0
 
 
+def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text("## Phase 1: Backend\n- [ ] Implement backend slice\n")
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path=str(tmp_path / "backend-domain"),
+            branch="codex/p5-backend-domain",
+            status="active",
+            objective="domain work",
+        )
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain"]
+    mock_manifest.downstream_lanes.return_value = []
+    mock_manifest.task_plan_path.return_value = str(plan_path)
+    mock_manifest.load_manifest.return_value = {
+        "task_ref": "phase-5-retention-export-and-audit-controls",
+        "lanes": {"backend-domain": {}},
+        "heading_to_lane": {"Phase 1: Backend": "backend-domain"},
+        "plan_routing_hints": [],
+    }
+
+    dispatch_output = json.dumps({"ok": True})
+
+    with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stdout=dispatch_output, stderr="")
+            result = mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            )
+
+    assert result == 0
+    messages = json.loads(
+        mcp_api.list_lane_messages(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            lane_id="backend-domain",
+            status="open",
+        )
+    )["messages"]
+    assert len(messages) == 1
+    assert messages[0]["direction"] == "orchestrator_to_worker"
+    assert "[plan:phase-1::phase-1-backend::checklist_1]" in messages[0]["message"]
+
+    state = json.loads(
+        mcp_api.get_handoff_state(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            verbose=True,
+        )
+    )
+    assert any(
+        "[plan:phase-1::phase-1-backend::checklist_1]" in row["action"]
+        for row in state["actions_pending"]
+    )
+    cursors = json.loads(
+        mcp_api.list_plan_cursors(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            state="dispatched",
+        )
+    )["cursors"]
+    assert len(cursors) == 1
+    assert cursors[0]["lane_id"] == "backend-domain"
+
+
 def test_single_pass_intakes_ready_lane(tmp_path: Path) -> None:
     mod = _load_module()
     state_dir = tmp_path / ".task-state"
@@ -681,6 +751,21 @@ def test_list_open_worker_guidance_filters_client_side() -> None:
     assert [row["id"] for row in rows] == [1]
 
 
+def test_dedupe_worker_guidance_messages_keeps_newest_per_lane() -> None:
+    mod = _load_module()
+    rows = mod._dedupe_worker_guidance_messages(
+        [
+            {"id": 1, "lane_id": "frontend", "created_at": "2026-03-16 10:00:00"},
+            {"id": 2, "lane_id": "frontend", "created_at": "2026-03-16 11:00:00"},
+            {"id": 3, "lane_id": "backend", "created_at": "2026-03-16 09:00:00"},
+        ]
+    )
+    assert sorted((row["lane_id"], row["id"]) for row in rows) == [
+        ("backend", 3),
+        ("frontend", 2),
+    ]
+
+
 def test_list_open_dispatch_messages_filters_client_side() -> None:
     mod = _load_module()
     mock_ahm = mock.MagicMock()
@@ -845,7 +930,7 @@ def test_apply_guidance_resolution_closes_messages_and_records_dispatch(tmp_path
     mock_ahm.record_decision.assert_called_once()
 
 
-def test_apply_guidance_resolution_review_completes_stale_pending_actions(tmp_path: Path) -> None:
+def test_apply_guidance_resolution_review_does_not_complete_all_pending_actions(tmp_path: Path) -> None:
     mod = _load_module()
     resolution = mod.GuidanceResolution(
         kind="review",
@@ -883,7 +968,6 @@ def test_apply_guidance_resolution_review_completes_stale_pending_actions(tmp_pa
     mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
     mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
     mock_ahm.record_decision.return_value = json.dumps({"ok": True})
-    mock_ahm.update_next_actions.return_value = json.dumps({"ok": True})
     with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
         mod._apply_guidance_resolution(
             task_ref="phase-5-retention-export-and-audit-controls",
@@ -891,7 +975,7 @@ def test_apply_guidance_resolution_review_completes_stale_pending_actions(tmp_pa
             resolution=resolution,
             dry_run=False,
         )
-    mock_ahm.update_next_actions.assert_called_once_with(operation="complete", action_id=7)
+    mock_ahm.update_next_actions.assert_not_called()
 
 
 def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
@@ -993,6 +1077,62 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
     lanes = json.loads(mcp_api.list_worktree_lanes(task_ref="phase-5-retention-export-and-audit-controls", status="all"))["lanes"]
     lane_row = next(row for row in lanes if row["lane_id"] == "backend-http")
     assert lane_row["status"] == "review"
+
+
+def test_resolve_guidance_cycle_dedupes_duplicate_lane_messages(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path=str(tmp_path / "backend-domain"),
+            branch="codex/p5-backend-domain",
+            status="active",
+            objective="domain work",
+        )
+    )
+    json.loads(
+        mcp_api.record_lane_message(
+            lane_id="backend-domain",
+            session="lane-session-old",
+            direction="worker_to_orchestrator",
+            subject="backend-domain needs guidance",
+            message="Old duplicate guidance",
+            status="open",
+        )
+    )
+    json.loads(
+        mcp_api.record_lane_message(
+            lane_id="backend-domain",
+            session="lane-session-new",
+            direction="worker_to_orchestrator",
+            subject="backend-domain needs guidance",
+            message="The remaining backend-domain implementation target is snapshot_generation_id stamping in cluster_repository.py.",
+            status="open",
+        )
+    )
+    json.loads(
+        mcp_api.record_worker_report(
+            lane_id="backend-domain",
+            session="lane-session-new",
+            summary="remaining backend-domain implementation target",
+            status="blocked",
+        )
+    )
+
+    results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
+
+    assert [row.kind for row in results] == ["redispatch"]
+    messages = json.loads(
+        mcp_api.list_lane_messages(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            lane_id="backend-domain",
+            status="open",
+        )
+    )["messages"]
+    assert len(messages) == 2
+    directions = sorted(row["direction"] for row in messages)
+    assert directions == ["orchestrator_to_worker", "worker_to_orchestrator"]
 
 
 def test_single_pass_guidance_review_closes_message(tmp_path: Path) -> None:

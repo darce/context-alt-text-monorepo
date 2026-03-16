@@ -178,6 +178,25 @@ CREATE TABLE IF NOT EXISTS lane_messages (
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE IF NOT EXISTS plan_cursors (
+    id            INTEGER PRIMARY KEY AUTOINCREMENT,
+    task_ref      TEXT NOT NULL,
+    plan_item_id  TEXT NOT NULL,
+    state         TEXT NOT NULL
+                  CHECK (state IN ('dispatched', 'completed', 'skipped', 'escalated')),
+    lane_id       TEXT,
+    mcp_action_id INTEGER,
+    worker_message_id INTEGER,
+    source_heading TEXT,
+    summary       TEXT NOT NULL,
+    dispatch_count INTEGER NOT NULL DEFAULT 0,
+    dispatched_at TEXT,
+    completed_at  TEXT,
+    created_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at    TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE(task_ref, plan_item_id)
+);
+
 CREATE INDEX IF NOT EXISTS idx_decisions_task_created
     ON decisions(task_ref, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_blockers_task_status
@@ -196,6 +215,8 @@ CREATE INDEX IF NOT EXISTS idx_worker_reports_task_lane
     ON worker_reports(task_ref, lane_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS idx_lane_messages_task_lane
     ON lane_messages(task_ref, lane_id, updated_at DESC);
+CREATE INDEX IF NOT EXISTS idx_plan_cursors_task_state_lane
+    ON plan_cursors(task_ref, state, lane_id, updated_at DESC);
 """
 
 DEFAULT_HANDOFF_LIMITS = {
@@ -699,6 +720,7 @@ def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
         "worktree_lanes": _rows("SELECT * FROM worktree_lanes WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
         "worker_reports": _rows("SELECT * FROM worker_reports WHERE task_ref = ? ORDER BY created_at DESC, id DESC"),
         "lane_messages": _rows("SELECT * FROM lane_messages WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
+        "plan_cursors": _rows("SELECT * FROM plan_cursors WHERE task_ref = ? ORDER BY updated_at DESC, id DESC"),
     }
 
 
@@ -843,7 +865,7 @@ def _resolve_import_lane_id(row: dict) -> str | None:
 
 def _count_task_rows(conn: sqlite3.Connection, task_ref: str) -> dict[str, int]:
     counts: dict[str, int] = {}
-    for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages"):
+    for key in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
         row = conn.execute(f"SELECT COUNT(*) AS count FROM {key} WHERE task_ref = ?", (task_ref,)).fetchone()
         counts[key] = int(row["count"]) if row else 0
     return counts
@@ -1205,6 +1227,167 @@ def list_lane_messages(task_ref: str | None = None, lane_id: str | None = None, 
         return _json_response({"ok": True, "task_ref": resolved_task_ref, "lane_id": normalized_lane_id, "current_lane": inferred_lane, "status": status, "total_matching": total, "returned": len(rows), "has_more": offset + len(rows) < total, "messages": rows})
 
 
+def upsert_plan_cursor(
+    plan_item_id: str,
+    state: str,
+    lane_id: str | None = None,
+    mcp_action_id: int | None = None,
+    worker_message_id: int | None = None,
+    source_heading: str | None = None,
+    summary: str | None = None,
+    task_ref: str | None = None,
+) -> str:
+    valid_states = {"dispatched", "completed", "skipped", "escalated"}
+    normalized_plan_item_id = _normalize_optional_text(plan_item_id)
+    normalized_lane_id = _normalize_optional_text(lane_id)
+    normalized_heading = _normalize_optional_text(source_heading)
+    normalized_summary = _normalize_optional_text(summary)
+    if normalized_plan_item_id is None:
+        return _json_response({"ok": False, "error": "plan_item_id is required."})
+    if state not in valid_states:
+        return _json_response({"ok": False, "error": f"Invalid state. Valid: {', '.join(sorted(valid_states))}"})
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        existing = conn.execute(
+            "SELECT * FROM plan_cursors WHERE task_ref = ? AND plan_item_id = ?",
+            (resolved_task_ref, normalized_plan_item_id),
+        ).fetchone()
+        if existing is None and normalized_summary is None:
+            return _json_response({"ok": False, "error": "summary is required when creating a new plan cursor."})
+
+        if existing is None:
+            cur = conn.execute(
+                """
+                INSERT INTO plan_cursors (
+                    task_ref, plan_item_id, state, lane_id, mcp_action_id, worker_message_id,
+                    source_heading, summary, dispatch_count, dispatched_at, completed_at, created_at, updated_at
+                ) VALUES (
+                    ?, ?, ?, ?, ?, ?, ?, ?,
+                    CASE WHEN ? = 'dispatched' THEN 1 ELSE 0 END,
+                    CASE WHEN ? = 'dispatched' THEN datetime('now') ELSE NULL END,
+                    CASE WHEN ? = 'completed' THEN datetime('now') ELSE NULL END,
+                    datetime('now'), datetime('now')
+                )
+                """,
+                (
+                    resolved_task_ref,
+                    normalized_plan_item_id,
+                    state,
+                    normalized_lane_id,
+                    mcp_action_id,
+                    worker_message_id,
+                    normalized_heading,
+                    normalized_summary,
+                    state,
+                    state,
+                    state,
+                ),
+            )
+            row = _row_to_dict(conn.execute("SELECT * FROM plan_cursors WHERE id = ?", (cur.lastrowid,)).fetchone())
+            return _json_response({"ok": True, "cursor": row})
+
+        next_summary = normalized_summary or str(existing["summary"])
+        next_lane_id = normalized_lane_id or _normalize_optional_text(existing["lane_id"])
+        next_heading = normalized_heading or _normalize_optional_text(existing["source_heading"])
+        next_action_id = mcp_action_id if mcp_action_id is not None else existing["mcp_action_id"]
+        next_worker_message_id = worker_message_id if worker_message_id is not None else existing["worker_message_id"]
+        dispatch_count = int(existing["dispatch_count"] or 0) + (1 if state == "dispatched" else 0)
+        conn.execute(
+            """
+            UPDATE plan_cursors
+            SET state = ?,
+                lane_id = ?,
+                mcp_action_id = ?,
+                worker_message_id = ?,
+                source_heading = ?,
+                summary = ?,
+                dispatch_count = ?,
+                dispatched_at = CASE WHEN ? = 'dispatched' THEN datetime('now') ELSE dispatched_at END,
+                completed_at = CASE WHEN ? = 'completed' THEN datetime('now') ELSE completed_at END,
+                updated_at = datetime('now')
+            WHERE task_ref = ? AND plan_item_id = ?
+            """,
+            (
+                state,
+                next_lane_id,
+                next_action_id,
+                next_worker_message_id,
+                next_heading,
+                next_summary,
+                dispatch_count,
+                state,
+                state,
+                resolved_task_ref,
+                normalized_plan_item_id,
+            ),
+        )
+        row = _row_to_dict(
+            conn.execute(
+                "SELECT * FROM plan_cursors WHERE task_ref = ? AND plan_item_id = ?",
+                (resolved_task_ref, normalized_plan_item_id),
+            ).fetchone()
+        )
+        return _json_response({"ok": True, "cursor": row})
+
+
+def get_plan_cursor(plan_item_id: str, task_ref: str | None = None) -> str:
+    normalized_plan_item_id = _normalize_optional_text(plan_item_id)
+    if normalized_plan_item_id is None:
+        return _json_response({"ok": False, "error": "plan_item_id is required."})
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        row = conn.execute(
+            "SELECT * FROM plan_cursors WHERE task_ref = ? AND plan_item_id = ?",
+            (resolved_task_ref, normalized_plan_item_id),
+        ).fetchone()
+        return _json_response({"ok": True, "task_ref": resolved_task_ref, "cursor": _row_to_dict(row)})
+
+
+def list_plan_cursors(
+    task_ref: str | None = None,
+    state: str = "all",
+    lane_id: str | None = None,
+    limit: int = 50,
+    offset: int = 0,
+) -> str:
+    valid_states = {"all", "dispatched", "completed", "skipped", "escalated"}
+    if state not in valid_states:
+        return _json_response({"ok": False, "error": f"Invalid state. Valid: {', '.join(sorted(valid_states))}"})
+    limit = max(1, limit)
+    offset = max(0, offset)
+    normalized_lane_id = _normalize_optional_text(lane_id)
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        params: list[object] = [resolved_task_ref]
+        where_sql = "task_ref = ?"
+        if state != "all":
+            where_sql += " AND state = ?"
+            params.append(state)
+        if normalized_lane_id is not None:
+            where_sql += " AND lane_id = ?"
+            params.append(normalized_lane_id)
+        total = int(conn.execute(f"SELECT COUNT(*) AS count FROM plan_cursors WHERE {where_sql}", tuple(params)).fetchone()["count"])
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"SELECT * FROM plan_cursors WHERE {where_sql} ORDER BY updated_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+        ]
+        return _json_response(
+            {
+                "ok": True,
+                "task_ref": resolved_task_ref,
+                "lane_id": normalized_lane_id,
+                "state": state,
+                "total_matching": total,
+                "returned": len(rows),
+                "has_more": offset + len(rows) < total,
+                "cursors": rows,
+            }
+        )
+
+
 def record_decision(session: str, decision: str, rationale: str | None = None, actor: WriteActor | None = None) -> str:
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, None)
@@ -1254,6 +1437,45 @@ def update_next_actions(operation: str, action_id: int | None = None, action: st
         else:
             conn.execute("UPDATE next_actions SET status = 'skipped', agent = ?, branch = ?, commit_sha = ?, lane_id = COALESCE(lane_id, ?), updated_at = datetime('now') WHERE id = ? AND task_ref = ?", (agent, branch, commit_sha, lane_id, action_id, resolved_task_ref))
         return _json_response({"ok": True, "operation": operation, "action": _row_to_dict(conn.execute("SELECT * FROM next_actions WHERE id = ?", (action_id,)).fetchone())})
+
+
+def list_next_actions(task_ref: str | None = None, lane_id: str | None = None, status: str = "all", limit: int = 100, offset: int = 0) -> str:
+    valid_statuses = {"all", "pending", "done", "skipped"}
+    if status not in valid_statuses:
+        return _json_response({"ok": False, "error": f"Invalid status. Valid: {', '.join(sorted(valid_statuses))}"})
+    limit = max(1, limit)
+    offset = max(0, offset)
+    normalized_lane_id = _normalize_optional_text(lane_id)
+    with _get_db_connection() as conn:
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
+        params: list[object] = [resolved_task_ref]
+        where_sql = "task_ref = ?"
+        if normalized_lane_id is not None:
+            where_sql += " AND lane_id = ?"
+            params.append(normalized_lane_id)
+        if status != "all":
+            where_sql += " AND status = ?"
+            params.append(status)
+        total = int(conn.execute(f"SELECT COUNT(*) AS count FROM next_actions WHERE {where_sql}", tuple(params)).fetchone()["count"])
+        rows = [
+            dict(row)
+            for row in conn.execute(
+                f"SELECT * FROM next_actions WHERE {where_sql} ORDER BY priority ASC, updated_at DESC, id DESC LIMIT ? OFFSET ?",
+                (*params, limit, offset),
+            ).fetchall()
+        ]
+        return _json_response(
+            {
+                "ok": True,
+                "task_ref": resolved_task_ref,
+                "lane_id": normalized_lane_id,
+                "status": status,
+                "total_matching": total,
+                "returned": len(rows),
+                "has_more": offset + len(rows) < total,
+                "actions": rows,
+            }
+        )
 
 
 def record_test_result(session: str, command: str, passed: bool, result: str | None = None, exit_code: int | None = None, actor: WriteActor | None = None) -> str:
@@ -1615,7 +1837,7 @@ def export_handoff_state(task_ref: str | None = None, output_path: str | None = 
         payload["current_task_markdown"] = _render_current_task_md(_build_current_task_state_from_snapshot(snapshot))
     destination = _resolve_output_path(output_path, resolved_task_ref)
     destination.write_text(json.dumps(payload, indent=2, sort_keys=True))
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "path": str(destination), "counts": {"blockers": len(snapshot["blockers"]), "next_actions": len(snapshot["next_actions"]), "decisions": len(snapshot["decisions"]), "verified_tests": len(snapshot["verified_tests"]), "review_findings": len(snapshot["review_findings"]), "worktree_lanes": len(snapshot["worktree_lanes"]), "worker_reports": len(snapshot["worker_reports"]), "lane_messages": len(snapshot["lane_messages"])}})
+    return _json_response({"ok": True, "task_ref": resolved_task_ref, "path": str(destination), "counts": {"blockers": len(snapshot["blockers"]), "next_actions": len(snapshot["next_actions"]), "decisions": len(snapshot["decisions"]), "verified_tests": len(snapshot["verified_tests"]), "review_findings": len(snapshot["review_findings"]), "worktree_lanes": len(snapshot["worktree_lanes"]), "worker_reports": len(snapshot["worker_reports"]), "lane_messages": len(snapshot["lane_messages"]), "plan_cursors": len(snapshot.get("plan_cursors", []))}})
 
 
 def _set_import_active_state(conn: sqlite3.Connection, task_ref: str, active: dict) -> None:
@@ -1646,6 +1868,7 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
     lanes = snapshot.get("worktree_lanes", [])
     reports = snapshot.get("worker_reports", [])
     messages = snapshot.get("lane_messages", [])
+    plan_cursors = snapshot.get("plan_cursors", [])
     active = snapshot.get("active")
     now = _utcnow_iso().replace("T", " ").replace("Z", "")
     git_branch, git_commit = _detect_git_write_context()
@@ -1657,7 +1880,7 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
         fallback_branch = _normalize_optional_text(active.get("updated_branch")) or fallback_branch
         fallback_commit = _normalize_optional_text(active.get("updated_commit_sha")) or fallback_commit
     if mode == "replace_task":
-        for table in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages"):
+        for table in ("blockers", "next_actions", "decisions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
             conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (task_ref,))
     for row in blockers:
         agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
@@ -1682,9 +1905,33 @@ def _import_snapshot(conn: sqlite3.Connection, task_ref: str, snapshot: dict, mo
     for row in messages:
         agent, branch, commit_sha = _resolve_import_row_actor(row, fallback_agent=fallback_agent, fallback_branch=fallback_branch, fallback_commit=fallback_commit)
         conn.execute("INSERT INTO lane_messages (task_ref, lane_id, session, direction, subject, message, status, agent, branch, commit_sha, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)", (task_ref, row.get("lane_id", ""), row.get("session", "import"), row.get("direction", "worker_to_orchestrator"), row.get("subject"), row.get("message", ""), row.get("status", "open"), agent, branch, commit_sha, row.get("created_at") or now, row.get("updated_at") or row.get("created_at") or now))
+    for row in plan_cursors:
+        conn.execute(
+            """
+            INSERT INTO plan_cursors (
+                task_ref, plan_item_id, state, lane_id, mcp_action_id, worker_message_id,
+                source_heading, summary, dispatch_count, dispatched_at, completed_at, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_ref,
+                row.get("plan_item_id", ""),
+                row.get("state", "dispatched"),
+                row.get("lane_id"),
+                row.get("mcp_action_id"),
+                row.get("worker_message_id"),
+                row.get("source_heading"),
+                row.get("summary", ""),
+                int(row.get("dispatch_count") or 0),
+                row.get("dispatched_at"),
+                row.get("completed_at"),
+                row.get("created_at") or now,
+                row.get("updated_at") or row.get("created_at") or now,
+            ),
+        )
     if set_active and isinstance(active, dict):
         _set_import_active_state(conn, task_ref, active)
-    return {"blockers": len(blockers), "next_actions": len(actions), "decisions": len(decisions), "verified_tests": len(tests), "review_findings": len(findings), "worktree_lanes": len(lanes), "worker_reports": len(reports), "lane_messages": len(messages)}
+    return {"blockers": len(blockers), "next_actions": len(actions), "decisions": len(decisions), "verified_tests": len(tests), "review_findings": len(findings), "worktree_lanes": len(lanes), "worker_reports": len(reports), "lane_messages": len(messages), "plan_cursors": len(plan_cursors)}
 
 
 def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool = False, allow_destructive_clear: bool = False) -> str:
@@ -1707,7 +1954,7 @@ def import_handoff_state(input_path: str, mode: str = "merge", set_active: bool 
         missing_sections = [key for key in required_sections if key not in snapshot]
         if missing_sections:
             return _json_response({"ok": False, "error": f"Invalid replace_task payload: missing required snapshot sections {', '.join(missing_sections)}."})
-    for key in required_sections:
+    for key in (*required_sections, "plan_cursors"):
         items = snapshot.get(key, [])
         if not isinstance(items, list):
             return _json_response({"ok": False, "error": f"Invalid import payload: snapshot.{key} must be an array."})
@@ -1758,7 +2005,7 @@ def archive_task_state(task_ref: str | None = None, notes: str | None = None, ar
                 active_cleared = True
         pruned = False
         if prune_working_rows:
-            for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages"):
+            for table in ("decisions", "blockers", "next_actions", "verified_tests", "review_findings", "worktree_lanes", "worker_reports", "lane_messages", "plan_cursors"):
                 conn.execute(f"DELETE FROM {table} WHERE task_ref = ?", (resolved_task_ref,))
             pruned = True
     return _json_response({"ok": True, "task_ref": resolved_task_ref, "active_cleared": active_cleared, "pruned_working_rows": pruned, "allow_destructive_clear": allow_destructive_clear})

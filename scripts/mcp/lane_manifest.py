@@ -72,6 +72,15 @@ def validate_manifest(data: dict[str, Any], path: Path) -> dict[str, Any]:
         raise RuntimeError(f"lane manifest lanes must be an object: {path}")
     if not isinstance(downstream, dict):
         raise RuntimeError(f"lane manifest downstream must be an object: {path}")
+    task_plan_path = data.get("task_plan_path")
+    heading_to_lane = data.get("heading_to_lane")
+    plan_routing_hints = data.get("plan_routing_hints")
+    if task_plan_path is not None and (not isinstance(task_plan_path, str) or not task_plan_path.strip()):
+        raise RuntimeError(f"lane manifest task_plan_path must be a non-empty string when present: {path}")
+    if heading_to_lane is not None and not isinstance(heading_to_lane, dict):
+        raise RuntimeError(f"lane manifest heading_to_lane must be an object when present: {path}")
+    if plan_routing_hints is not None and not isinstance(plan_routing_hints, list):
+        raise RuntimeError(f"lane manifest plan_routing_hints must be a list when present: {path}")
 
     lane_ids = set(lane_id for lane_id in lanes.keys() if isinstance(lane_id, str))
     unknown_merge_order = [lane_id for lane_id in merge_order if isinstance(lane_id, str) and lane_id not in lane_ids]
@@ -110,6 +119,42 @@ def validate_manifest(data: dict[str, Any], path: Path) -> dict[str, Any]:
             raise RuntimeError(
                 f"lane manifest downstream for lane '{lane_id}' references unknown lane(s) {unknown_dependents}: {path}"
             )
+
+    if isinstance(heading_to_lane, dict):
+        for heading, lane_id in heading_to_lane.items():
+            if not isinstance(heading, str) or not heading.strip():
+                raise RuntimeError(f"lane manifest heading_to_lane keys must be non-empty strings: {path}")
+            if not isinstance(lane_id, str) or lane_id not in lane_ids:
+                raise RuntimeError(f"lane manifest heading_to_lane references unknown lane '{lane_id}': {path}")
+
+    if isinstance(plan_routing_hints, list):
+        for index, hint in enumerate(plan_routing_hints):
+            if not isinstance(hint, dict):
+                raise RuntimeError(f"lane manifest plan_routing_hints entries must be objects: {path}")
+            lane_id = hint.get("lane")
+            if not isinstance(lane_id, str) or lane_id not in lane_ids:
+                raise RuntimeError(
+                    f"lane manifest plan_routing_hints[{index}] references unknown lane '{lane_id}': {path}"
+                )
+            heading = hint.get("heading")
+            text_prefix = hint.get("text_prefix")
+            contains = hint.get("contains")
+            if heading is not None and (not isinstance(heading, str) or not heading.strip()):
+                raise RuntimeError(
+                    f"lane manifest plan_routing_hints[{index}].heading must be a non-empty string when present: {path}"
+                )
+            if text_prefix is not None and (not isinstance(text_prefix, str) or not text_prefix.strip()):
+                raise RuntimeError(
+                    f"lane manifest plan_routing_hints[{index}].text_prefix must be a non-empty string when present: {path}"
+                )
+            if contains is not None and (not isinstance(contains, str) or not contains.strip()):
+                raise RuntimeError(
+                    f"lane manifest plan_routing_hints[{index}].contains must be a non-empty string when present: {path}"
+                )
+            if heading is None and text_prefix is None and contains is None:
+                raise RuntimeError(
+                    f"lane manifest plan_routing_hints[{index}] must define at least one matcher field: {path}"
+                )
 
     return data
 
@@ -294,3 +339,46 @@ def guidance_fallbacks(task_ref: str, lane_id: str) -> list[dict[str, Any]]:
     if not isinstance(fallbacks, list):
         return []
     return [row for row in fallbacks if isinstance(row, dict)]
+
+
+def task_plan_path(task_ref: str, *, orchestrator_root: str | None = None) -> str:
+    manifest = load_manifest(task_ref)
+    raw = manifest.get("task_plan_path")
+    if not isinstance(raw, str) or not raw.strip():
+        return ""
+    path = Path(raw)
+    if path.is_absolute():
+        return str(path)
+    base = Path(orchestrator_root) if orchestrator_root else REPO_ROOT
+    return str((base / path).expanduser())
+
+
+def heading_to_lane(task_ref: str) -> dict[str, str]:
+    manifest = load_manifest(task_ref)
+    value = manifest.get("heading_to_lane")
+    if not isinstance(value, dict):
+        return {}
+    result: dict[str, str] = {}
+    for heading, lane_id in value.items():
+        if isinstance(heading, str) and heading.strip() and isinstance(lane_id, str) and lane_id.strip():
+            result[heading] = lane_id
+    return result
+
+
+def plan_routing_hints(task_ref: str) -> list[dict[str, str]]:
+    manifest = load_manifest(task_ref)
+    value = manifest.get("plan_routing_hints")
+    if not isinstance(value, list):
+        return []
+    rows: list[dict[str, str]] = []
+    for hint in value:
+        if not isinstance(hint, dict):
+            continue
+        row: dict[str, str] = {}
+        for key in ("heading", "text_prefix", "contains", "lane"):
+            cell = hint.get(key)
+            if isinstance(cell, str) and cell.strip():
+                row[key] = cell
+        if "lane" in row:
+            rows.append(row)
+    return rows

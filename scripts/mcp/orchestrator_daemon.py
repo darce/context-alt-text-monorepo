@@ -9,7 +9,6 @@ Usage:
 from __future__ import annotations
 
 import argparse
-import datetime
 import fcntl
 import json
 import os
@@ -23,26 +22,291 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
-from _env import pythonpath_env
+# ---------------------------------------------------------------------------
+# Re-export submodule symbols for backward compatibility (tests load this
+# module via importlib and access everything through ``mod.X``).
+# ---------------------------------------------------------------------------
+from orchestrator_helpers import (  # noqa: F401
+    _combined_text,
+    _json_list_text,
+    _json_load,
+    _log,
+    _message_timestamp,
+    _normalize_text,
+    _report_timestamp,
+)
+from orchestrator_guidance import (  # noqa: F401
+    GUIDANCE_STALL_THRESHOLD,
+    GuidanceResolution,
+    _apply_guidance_resolution,
+    _classify_guidance,
+    _dedupe_worker_guidance_messages,
+    _lane_activity,
+    _lane_row,
+    _latest_lane_report,
+    _list_open_dispatch_messages,
+    _list_open_worker_guidance,
+    _pending_lane_actions,
+    _resolve_guidance_cycle,
+    _resolve_next_assignment,
+)
+from orchestrator_guidance import (
+    _ENV_BLOCKER_MARKERS,
+    _REMAINING_WORK_MARKERS,
+    _RESOLVED_MARKERS,
+)
+from orchestrator_lanes import (  # noqa: F401
+    _complete_lane_plan_cursor,
+    _intake_lane,
+    _lane_has_capacity,
+    _lane_has_unmerged_commits,
+    _refresh_downstream,
+    _resolve_lane_worktree,
+    _run_handoff_dispatch,
+    _sort_by_manifest_merge_order,
+)
+
 
 # ---------------------------------------------------------------------------
-# JSONL logger
+# Orchestration-level lane queries (stay here so tests can patch siblings)
 # ---------------------------------------------------------------------------
 
 
-def _log(log_dir: Path, level: str, event: str, **extra: Any) -> None:
-    """Append one JSONL record to ``<log_dir>/orchestrator.jsonl``."""
-    log_dir.mkdir(parents=True, exist_ok=True)
-    entry: dict[str, Any] = {
-        "ts": datetime.datetime.now(datetime.timezone.utc).isoformat(),
-        "level": level,
-        "event": event,
-        **extra,
+def _poll_merge_ready_lanes(
+    orchestrator_root: Path, task_ref: str, lane_ids: list[str],
+) -> list[str]:
+    """Return lane IDs that have a merge-ready worker report and unmerged commits."""
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    from agent_handoff_mcp import list_worker_reports
+
+    ready: list[str] = []
+    for lane_id in lane_ids:
+        payload = _json_load(
+            list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=1)
+        )
+        if payload.get("ok") is not True:
+            continue
+        reports = payload.get("reports", [])
+        if reports and isinstance(reports[0], dict) and reports[0].get("merge_ready"):
+            if _lane_has_unmerged_commits(orchestrator_root, task_ref, lane_id):
+                ready.append(lane_id)
+    return ready
+
+
+def _run_cross_lane_verify(
+    orchestrator_root: Path, task_ref: str, lane_id: str, *, dry_run: bool = False,
+) -> bool:
+    """Run ``make lane-check`` from the lane worktree for the intaken lane."""
+    if dry_run:
+        return True
+    lane_worktree = _resolve_lane_worktree(orchestrator_root, task_ref, lane_id)
+    if lane_worktree is None or not lane_worktree.is_dir():
+        return False
+    cmd = [
+        "make", "lane-check",
+        f"TASK={task_ref}",
+        f"LANE={lane_id}",
+    ]
+    result = subprocess.run(
+        cmd, cwd=lane_worktree, capture_output=True, text=True, check=False,
+    )
+    return result.returncode == 0
+
+
+def _has_open_plan_action(task_ref: str, plan_item_id: str) -> bool:
+    from agent_handoff_mcp import list_next_actions
+
+    marker = f"[plan:{plan_item_id}]"
+    payload = _json_load(list_next_actions(task_ref=task_ref, status="pending", limit=200))
+    if payload.get("ok") is not True:
+        raise RuntimeError(f"Failed to list next actions for {task_ref}.")
+    for row in payload.get("actions", []):
+        if isinstance(row, dict) and marker in str(row.get("action") or ""):
+            return True
+    return False
+
+
+def _has_open_plan_message(task_ref: str, plan_item_id: str) -> bool:
+    from agent_handoff_mcp import list_lane_messages
+
+    marker = f"[plan:{plan_item_id}]"
+    payload = _json_load(list_lane_messages(task_ref=task_ref, status="open", limit=200))
+    if payload.get("ok") is not True:
+        raise RuntimeError(f"Failed to list lane messages for {task_ref}.")
+    for row in payload.get("messages", []):
+        if not isinstance(row, dict):
+            continue
+        haystack = f"{row.get('subject') or ''} {row.get('message') or ''}"
+        if marker in haystack:
+            return True
+    return False
+
+
+def _escalate_plan_item(
+    task_ref: str,
+    *,
+    plan_item_id: str,
+    summary: str,
+    heading: str,
+    dry_run: bool = False,
+    log: Any | None = None,
+) -> None:
+    from agent_handoff_mcp import record_decision, upsert_plan_cursor
+
+    if dry_run:
+        return
+    _json_load(
+        upsert_plan_cursor(
+            task_ref=task_ref,
+            plan_item_id=plan_item_id,
+            state="escalated",
+            summary=summary,
+            source_heading=heading or None,
+        )
+    )
+    record_decision(
+        session=f"{task_ref}-orchestrator-daemon",
+        decision=f"Escalated plan item {plan_item_id} for human review.",
+        rationale="Task plan item could not be mapped to a single lane from explicit annotations or manifest routing metadata.",
+    )
+    if callable(log):
+        log("WARN", "task_plan_item_escalated", plan_item_id=plan_item_id, heading=heading)
+
+
+def _dispatch_plan_item(
+    task_ref: str,
+    *,
+    lane_id: str,
+    plan_item_id: str,
+    summary: str,
+    heading: str,
+    resolved_plan: Path,
+    dry_run: bool = False,
+) -> dict[str, Any]:
+    from agent_handoff_mcp import record_decision, record_lane_message, update_next_actions, upsert_plan_cursor
+
+    marker = f"[plan:{plan_item_id}]"
+    result = {
+        "plan_item_id": plan_item_id,
+        "lane_id": lane_id,
+        "summary": summary,
+        "heading": heading,
     }
-    path = log_dir / "orchestrator.jsonl"
-    with path.open("a") as fh:
-        fh.write(json.dumps(entry, default=str) + "\n")
-    print(f"[{level}] {event}", flush=True)
+    if dry_run:
+        return result
+
+    action_payload = _json_load(
+        update_next_actions(
+            operation="add",
+            action=f"{marker} {summary}",
+            priority=100,
+            actor={"lane_id": lane_id},
+        )
+    )
+    if action_payload.get("ok") is not True:
+        raise RuntimeError(f"Failed to create next action for {plan_item_id}.")
+    action = action_payload.get("action", {})
+    action_id = int(action.get("id")) if isinstance(action, dict) and action.get("id") is not None else None
+
+    message_payload = _json_load(
+        record_lane_message(
+            lane_id=lane_id,
+            session=f"{task_ref}-orchestrator-plan",
+            direction="orchestrator_to_worker",
+            subject=f"{lane_id} plan assignment",
+            message=f"{marker} {summary}",
+            status="open",
+        )
+    )
+    if message_payload.get("ok") is not True:
+        raise RuntimeError(f"Failed to create lane message for {plan_item_id}.")
+
+    cursor_update = _json_load(
+        upsert_plan_cursor(
+            task_ref=task_ref,
+            plan_item_id=plan_item_id,
+            state="dispatched",
+            lane_id=lane_id,
+            mcp_action_id=action_id,
+            summary=summary,
+            source_heading=heading or None,
+        )
+    )
+    if cursor_update.get("ok") is not True:
+        raise RuntimeError(f"Failed to persist plan cursor for {plan_item_id}.")
+
+    record_decision(
+        session=f"{task_ref}-orchestrator-daemon",
+        decision=f"Dispatched plan item {plan_item_id} to {lane_id}.",
+        rationale=f"Selected the next unchecked task-plan item from {resolved_plan.name} and routed it via manifest-owned lane metadata.",
+    )
+    return result
+
+
+def _dispatch_from_task_plan(
+    orchestrator_root: Path,
+    task_ref: str,
+    *,
+    dry_run: bool = False,
+    log: Any | None = None,
+) -> dict[str, Any] | None:
+    from agent_handoff_mcp import get_plan_cursor
+    from lane_manifest import load_manifest, task_plan_path
+    from task_plan_parser import map_plan_item_to_lane, normalize_plan_item, parse_task_plan
+
+    plan_path = task_plan_path(task_ref, orchestrator_root=str(orchestrator_root))
+    if not isinstance(plan_path, str) or not plan_path.strip():
+        return None
+    resolved_plan = Path(plan_path)
+    if not resolved_plan.exists():
+        raise RuntimeError(f"Task plan path does not exist for {task_ref}: {resolved_plan}")
+
+    manifest = load_manifest(task_ref)
+    if not isinstance(manifest, dict):
+        return None
+    items = parse_task_plan(resolved_plan)
+    for item in items:
+        if item.checked:
+            continue
+        normalized = normalize_plan_item(item)
+        cursor_payload = _json_load(get_plan_cursor(task_ref=task_ref, plan_item_id=normalized.plan_item_id))
+        if cursor_payload.get("ok") is not True:
+            raise RuntimeError(f"Failed to read plan cursor for {normalized.plan_item_id}.")
+        cursor = cursor_payload.get("cursor")
+        if isinstance(cursor, dict) and str(cursor.get("state") or "") in {"dispatched", "completed", "skipped", "escalated"}:
+            continue
+
+        lane_id = map_plan_item_to_lane(normalized, manifest=manifest)
+        if lane_id is None:
+            _escalate_plan_item(
+                task_ref,
+                plan_item_id=normalized.plan_item_id,
+                summary=normalized.summary,
+                heading=normalized.heading,
+                dry_run=dry_run,
+                log=log,
+            )
+            continue
+
+        if _has_open_plan_action(task_ref, normalized.plan_item_id) or _has_open_plan_message(task_ref, normalized.plan_item_id):
+            continue
+        if not _lane_has_capacity(task_ref, lane_id):
+            continue
+
+        result = _dispatch_plan_item(
+            task_ref,
+            lane_id=lane_id,
+            plan_item_id=normalized.plan_item_id,
+            summary=normalized.summary,
+            heading=normalized.heading,
+            resolved_plan=resolved_plan,
+            dry_run=dry_run,
+        )
+        result["line_start"] = normalized.line_start
+        return result
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -97,6 +361,8 @@ def _is_paused(state_dir: Path) -> bool:
 
 def daemon_pause(state_dir: Path) -> None:
     """Create the pause sentinel."""
+    import datetime
+
     state_dir.mkdir(parents=True, exist_ok=True)
     _pause_path(state_dir).write_text(
         json.dumps({"paused_at": datetime.datetime.now(datetime.timezone.utc).isoformat()})
@@ -108,574 +374,6 @@ def daemon_resume(state_dir: Path) -> None:
     p = _pause_path(state_dir)
     if p.exists():
         p.unlink()
-
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
-
-
-def _json_load(payload: str) -> dict[str, Any]:
-    data = json.loads(payload)
-    if not isinstance(data, dict):
-        raise RuntimeError("Expected JSON object payload from handoff tool.")
-    return data
-
-
-def _normalize_text(value: Any) -> str:
-    return str(value or "").strip()
-
-
-def _combined_text(*parts: Any) -> str:
-    return " ".join(_normalize_text(part) for part in parts if _normalize_text(part)).lower()
-
-
-def _json_list_text(raw_value: Any) -> str:
-    if isinstance(raw_value, list):
-        return " ".join(str(item) for item in raw_value)
-    if not isinstance(raw_value, str) or not raw_value.strip():
-        return ""
-    try:
-        data = json.loads(raw_value)
-    except json.JSONDecodeError:
-        return raw_value
-    if isinstance(data, list):
-        return " ".join(str(item) for item in data)
-    return raw_value
-
-
-def _message_timestamp(message: dict[str, Any]) -> str:
-    return str(message.get("updated_at") or message.get("created_at") or "")
-
-
-def _report_timestamp(report: dict[str, Any]) -> str:
-    return str(report.get("created_at") or "")
-
-
-_RESOLVED_MARKERS = (
-    "already resolved",
-    "already covered",
-    "already present",
-    "already correct",
-    "already appears",
-    "already wired",
-    "no code changes were warranted",
-    "no lane-owned code changes were warranted",
-    "no stale fallback wiring was found",
-    "appears already resolved",
-    "work appears present already",
-    "existing coverage",
-    "substantially covered",
-)
-
-_REMAINING_WORK_MARKERS = (
-    "remaining backend-domain implementation target",
-    "highest-priority open lane-owned gap",
-    "open backend-domain work still appears",
-    "remaining open frontend slice",
-    "remaining slice",
-    "next slice",
-    "still appears to be",
-)
-
-_ENV_BLOCKER_MARKERS = (
-    "read-only",
-    "sandbox",
-    "writable temp directory",
-    "no usable temporary directory",
-    "mypy is not available",
-    "mypy was unavailable",
-    "postgresql is not running",
-    "permissionerror",
-    "vendor is a symlink",
-    "duplicate altcontext",
-)
-
-GUIDANCE_STALL_THRESHOLD = 3
-
-
-class GuidanceResolution:
-    def __init__(
-        self,
-        *,
-        kind: str,
-        lane_id: str,
-        worker_message_id: int,
-        latest_report_id: int | None = None,
-        decision: str = "",
-        rationale: str | None = None,
-        lane_status: str = "review",
-        lane_notes: str | None = None,
-        dispatch_subject: str | None = None,
-        dispatch_message: str | None = None,
-        close_dispatch_ids: tuple[int, ...] = (),
-        error: str | None = None,
-    ) -> None:
-        self.kind = kind
-        self.lane_id = lane_id
-        self.worker_message_id = worker_message_id
-        self.latest_report_id = latest_report_id
-        self.decision = decision
-        self.rationale = rationale
-        self.lane_status = lane_status
-        self.lane_notes = lane_notes
-        self.dispatch_subject = dispatch_subject
-        self.dispatch_message = dispatch_message
-        self.close_dispatch_ids = close_dispatch_ids
-        self.error = error
-
-
-def _list_open_worker_guidance(task_ref: str) -> list[dict[str, Any]]:
-    from agent_handoff_mcp import list_lane_messages
-
-    payload = _json_load(list_lane_messages(task_ref=task_ref, status="open", limit=200))
-    if payload.get("ok") is not True:
-        raise RuntimeError("Failed to list lane messages.")
-    rows = payload.get("messages", [])
-    if not isinstance(rows, list):
-        return []
-    return [
-        row for row in rows
-        if isinstance(row, dict) and row.get("direction") == "worker_to_orchestrator"
-    ]
-
-
-def _list_open_dispatch_messages(task_ref: str, lane_id: str) -> list[dict[str, Any]]:
-    from agent_handoff_mcp import list_lane_messages
-
-    payload = _json_load(list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=200))
-    if payload.get("ok") is not True:
-        raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
-    rows = payload.get("messages", [])
-    if not isinstance(rows, list):
-        return []
-    return [
-        row for row in rows
-        if isinstance(row, dict) and row.get("direction") == "orchestrator_to_worker"
-    ]
-
-
-def _latest_lane_report(task_ref: str, lane_id: str, *, session: str | None = None) -> dict[str, Any] | None:
-    from agent_handoff_mcp import list_worker_reports
-
-    payload = _json_load(list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=20))
-    if payload.get("ok") is not True:
-        raise RuntimeError(f"Failed to list worker reports for {lane_id}.")
-    reports = payload.get("reports", [])
-    if not isinstance(reports, list):
-        return None
-    if session:
-        for report in reports:
-            if isinstance(report, dict) and report.get("session") == session:
-                return report
-    for report in reports:
-        if isinstance(report, dict):
-            return report
-    return None
-
-
-def _lane_row(task_ref: str, lane_id: str) -> dict[str, Any]:
-    from agent_handoff_mcp import list_worktree_lanes
-
-    payload = _json_load(list_worktree_lanes(task_ref=task_ref, status="all", limit=200))
-    if payload.get("ok") is not True:
-        raise RuntimeError(f"Failed to list lanes for {task_ref}.")
-    for lane in payload.get("lanes", []):
-        if isinstance(lane, dict) and lane.get("lane_id") == lane_id:
-            return lane
-    raise RuntimeError(f"Lane {lane_id} not found for task {task_ref}.")
-
-
-def _lane_activity(task_ref: str, lane_id: str) -> dict[str, Any]:
-    from agent_handoff_mcp import get_lane_activity
-
-    payload = _json_load(get_lane_activity(lane_id=lane_id, task_ref=task_ref, limit_actions=50))
-    if payload.get("ok") is not True:
-        raise RuntimeError(f"Failed to fetch lane activity for {lane_id}.")
-    return payload
-
-
-def _pending_lane_actions(activity: dict[str, Any]) -> list[dict[str, Any]]:
-    rows = activity.get("actions", [])
-    if not isinstance(rows, list):
-        return []
-    pending = [
-        row for row in rows
-        if isinstance(row, dict) and row.get("status") == "pending"
-    ]
-    return sorted(pending, key=lambda row: (int(row.get("priority", 100)), int(row.get("id", 0))))
-
-
-def _resolve_next_assignment(task_ref: str, lane_id: str, activity: dict[str, Any], text: str) -> tuple[str, str] | None:
-    pending_actions = _pending_lane_actions(activity)
-    if pending_actions:
-        action = pending_actions[0]
-        return (
-            f"{lane_id} next assignment",
-            _normalize_text(action.get("action")),
-        )
-
-    if str(SCRIPT_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPT_DIR))
-    from orchestrator_guidance_policy import resolve_assignment as resolve_policy_assignment
-
-    policy_assignment = resolve_policy_assignment(task_ref, lane_id, text, activity)
-    if policy_assignment is not None:
-        return policy_assignment
-
-    lane = activity.get("lane", {})
-    if any(marker in text for marker in _REMAINING_WORK_MARKERS):
-        objective = _normalize_text(lane.get("objective"))
-        if objective:
-            return (f"{lane_id} next assignment", objective)
-    return None
-
-
-def _classify_guidance(
-    *,
-    task_ref: str,
-    worker_message: dict[str, Any],
-    latest_report: dict[str, Any] | None,
-    activity: dict[str, Any],
-    open_dispatches: list[dict[str, Any]],
-) -> GuidanceResolution:
-    lane_id = _normalize_text(worker_message.get("lane_id"))
-    worker_message_id = int(worker_message.get("id"))
-    latest_report_id = int(latest_report["id"]) if isinstance(latest_report, dict) and latest_report.get("id") is not None else None
-    combined = _combined_text(
-        worker_message.get("subject"),
-        worker_message.get("message"),
-        latest_report.get("summary") if isinstance(latest_report, dict) else "",
-        _json_list_text(latest_report.get("blockers_json")) if isinstance(latest_report, dict) else "",
-    )
-    close_dispatch_ids = tuple(
-        int(row["id"])
-        for row in open_dispatches
-        if isinstance(row, dict) and row.get("id") is not None
-    )
-
-    pending_actions = _pending_lane_actions(activity)
-    has_resolved_marker = any(marker in combined for marker in _RESOLVED_MARKERS)
-    has_env_blocker = any(marker in combined for marker in _ENV_BLOCKER_MARKERS)
-
-    if has_resolved_marker and not pending_actions:
-        return GuidanceResolution(
-            kind="review",
-            lane_id=lane_id,
-            worker_message_id=worker_message_id,
-            latest_report_id=latest_report_id,
-            decision=f"Resolved worker guidance for {lane_id} by closing stale work and marking the lane ready for review.",
-            rationale="Worker report indicates the assigned lane slice is already satisfied in the current branch state.",
-            lane_status="review",
-            lane_notes="Orchestrator confirmed the worker guidance reflected already-satisfied lane work.",
-            close_dispatch_ids=close_dispatch_ids,
-        )
-
-    next_assignment = _resolve_next_assignment(task_ref, lane_id, activity, combined)
-
-    if next_assignment is not None:
-        subject, message = next_assignment
-        return GuidanceResolution(
-            kind="redispatch",
-            lane_id=lane_id,
-            worker_message_id=worker_message_id,
-            latest_report_id=latest_report_id,
-            decision=f"Resolved worker guidance for {lane_id} by dispatching the next lane assignment.",
-            rationale="Worker reported the prior slice as satisfied or blocked and identified a concrete remaining lane-owned target.",
-            lane_status="active",
-            lane_notes="Orchestrator resolved worker guidance and dispatched the next lane-owned slice.",
-            dispatch_subject=subject,
-            dispatch_message=message,
-            close_dispatch_ids=close_dispatch_ids,
-        )
-
-    if has_env_blocker:
-        return GuidanceResolution(
-            kind="blocked",
-            lane_id=lane_id,
-            worker_message_id=worker_message_id,
-            latest_report_id=latest_report_id,
-            decision=f"Resolved worker guidance for {lane_id} by marking the lane blocked for operator/environment follow-up.",
-            rationale="Worker report indicates an environment or sandbox blocker without a safe automatic redispatch target.",
-            lane_status="blocked",
-            lane_notes="Worker needs a writable or better-provisioned environment before the next lane step can continue.",
-            close_dispatch_ids=close_dispatch_ids,
-        )
-
-    return GuidanceResolution(
-        kind="fatal_error",
-        lane_id=lane_id,
-        worker_message_id=worker_message_id,
-        latest_report_id=latest_report_id,
-        error=f"Unable to classify worker guidance for lane {lane_id}.",
-        decision=f"Failed to resolve worker guidance for {lane_id}.",
-        rationale="Guidance message did not match a known resolved, redispatchable, or environment-blocked pattern.",
-        close_dispatch_ids=close_dispatch_ids,
-    )
-
-
-def _apply_guidance_resolution(
-    *,
-    task_ref: str,
-    orchestrator_root: Path,
-    resolution: GuidanceResolution,
-    dry_run: bool = False,
-) -> GuidanceResolution:
-    from agent_handoff_mcp import (
-        get_lane_activity,
-        record_decision,
-        record_lane_message,
-        update_lane_message,
-        update_next_actions,
-        upsert_worktree_lane,
-    )
-
-    lane = _lane_row(task_ref, resolution.lane_id)
-    if dry_run:
-        return resolution
-
-    update_lane_message(resolution.worker_message_id, "closed")
-    for message_id in resolution.close_dispatch_ids:
-        update_lane_message(message_id, "closed")
-
-    upsert_worktree_lane(
-        lane_id=resolution.lane_id,
-        worktree_path=str(lane.get("worktree_path") or ""),
-        branch=str(lane.get("branch") or ""),
-        title=_normalize_text(lane.get("title")) or None,
-        objective=_normalize_text(lane.get("objective")) or None,
-        owner_agent=_normalize_text(lane.get("owner_agent")) or "codex",
-        status=resolution.lane_status,
-        notes=resolution.lane_notes,
-    )
-
-    if resolution.kind == "redispatch" and resolution.dispatch_message:
-        record_lane_message(
-            lane_id=resolution.lane_id,
-            session=f"{task_ref}-orchestrator-guidance",
-            direction="orchestrator_to_worker",
-            subject=resolution.dispatch_subject,
-            message=resolution.dispatch_message,
-            status="open",
-        )
-    elif resolution.kind == "review":
-        activity = _json_load(get_lane_activity(lane_id=resolution.lane_id, task_ref=task_ref, limit_actions=50))
-        for action in _pending_lane_actions(activity):
-            action_id = action.get("id")
-            if action_id is None:
-                continue
-            update_next_actions(operation="complete", action_id=int(action_id))
-
-    record_decision(
-        session=f"{task_ref}-orchestrator-daemon",
-        decision=resolution.decision,
-        rationale=resolution.rationale,
-    )
-    return resolution
-
-
-def _resolve_guidance_cycle(
-    orchestrator_root: Path,
-    task_ref: str,
-    *,
-    dry_run: bool = False,
-    log: Any | None = None,
-) -> list[GuidanceResolution]:
-    from agent_handoff_mcp import record_decision
-
-    results: list[GuidanceResolution] = []
-    for worker_message in _list_open_worker_guidance(task_ref):
-        lane_id = _normalize_text(worker_message.get("lane_id"))
-        if not lane_id:
-            continue
-        if callable(log):
-            log(
-                "INFO",
-                "guidance_detected",
-                lane=lane_id,
-                worker_message_id=int(worker_message.get("id") or 0),
-            )
-        latest_report = _latest_lane_report(
-            task_ref,
-            lane_id,
-            session=_normalize_text(worker_message.get("session")) or None,
-        )
-        activity = _lane_activity(task_ref, lane_id)
-        open_dispatches = _list_open_dispatch_messages(task_ref, lane_id)
-        resolution = _classify_guidance(
-            task_ref=task_ref,
-            worker_message=worker_message,
-            latest_report=latest_report,
-            activity=activity,
-            open_dispatches=open_dispatches,
-        )
-        if resolution.kind == "fatal_error":
-            if not dry_run:
-                record_decision(
-                    session=f"{task_ref}-orchestrator-daemon",
-                    decision=resolution.decision,
-                    rationale=resolution.rationale,
-                )
-            results.append(resolution)
-            continue
-        results.append(
-            _apply_guidance_resolution(
-                task_ref=task_ref,
-                orchestrator_root=orchestrator_root,
-                resolution=resolution,
-                dry_run=dry_run,
-            )
-        )
-    return results
-
-
-# ---------------------------------------------------------------------------
-# Phase 2: Dispatch, poll, intake
-# ---------------------------------------------------------------------------
-
-
-def _run_handoff_dispatch(
-    orchestrator_root: Path, task_ref: str, *, dry_run: bool = False,
-) -> dict[str, Any]:
-    """Run ``review_dispatch.py`` and return its JSON output."""
-    cmd = [
-        sys.executable,
-        str(SCRIPT_DIR / "review_dispatch.py"),
-        "--orchestrator-root", str(orchestrator_root),
-        "--task-ref", task_ref,
-    ]
-    if dry_run:
-        cmd.append("--dry-run")
-    env = pythonpath_env(orchestrator_root)
-    result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
-    if result.returncode != 0:
-        raise RuntimeError(
-            f"review_dispatch.py failed (exit {result.returncode}):\n{result.stderr.strip()}"
-        )
-    return _json_load(result.stdout)
-
-
-def _lane_has_unmerged_commits(
-    orchestrator_root: Path, task_ref: str, lane_id: str,
-) -> bool:
-    """Return True if the lane branch has commits not yet on the current branch."""
-    if str(SCRIPT_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPT_DIR))
-    from lane_manifest import get_lane_config
-
-    config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root))
-    if not config or not config.get("branch"):
-        return False
-    branch = config["branch"]
-    result = subprocess.run(
-        ["git", "log", "--oneline", f"HEAD..{branch}"],
-        cwd=orchestrator_root, capture_output=True, text=True, check=False,
-    )
-    return bool(result.returncode == 0 and result.stdout.strip())
-
-
-def _poll_merge_ready_lanes(
-    orchestrator_root: Path, task_ref: str, lane_ids: list[str],
-) -> list[str]:
-    """Return lane IDs that have a merge-ready worker report and unmerged commits."""
-    if str(SCRIPT_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPT_DIR))
-
-    from agent_handoff_mcp import list_worker_reports
-
-    ready: list[str] = []
-    for lane_id in lane_ids:
-        payload = _json_load(
-            list_worker_reports(task_ref=task_ref, lane_id=lane_id, limit=1)
-        )
-        if payload.get("ok") is not True:
-            continue
-        reports = payload.get("reports", [])
-        if reports and isinstance(reports[0], dict) and reports[0].get("merge_ready"):
-            if _lane_has_unmerged_commits(orchestrator_root, task_ref, lane_id):
-                ready.append(lane_id)
-    return ready
-
-
-def _sort_by_manifest_merge_order(ready: list[str], manifest_order: list[str]) -> list[str]:
-    """Sort *ready* lanes by the manifest merge order, unknown lanes last."""
-    order_map = {lane: i for i, lane in enumerate(manifest_order)}
-    return sorted(ready, key=lambda lane: order_map.get(lane, len(manifest_order)))
-
-
-def _intake_lane(
-    orchestrator_root: Path, task_ref: str, lane_id: str, *, dry_run: bool = False,
-) -> bool:
-    """Run ``make lane-intake`` for a single lane.  Returns True on success."""
-    cmd = [
-        "make", "lane-intake",
-        f"TASK={task_ref}",
-        f"LANE={lane_id}",
-    ]
-    if dry_run:
-        cmd.append("DRY_RUN=1")
-    result = subprocess.run(
-        cmd, cwd=orchestrator_root, capture_output=True, text=True, check=False,
-    )
-    return result.returncode == 0
-
-
-# ---------------------------------------------------------------------------
-# Phase 3: Downstream refresh and cross-lane verification
-# ---------------------------------------------------------------------------
-
-
-def _refresh_downstream(
-    orchestrator_root: Path, task_ref: str, lane_id: str, downstream: list[str],
-    *, dry_run: bool = False,
-) -> list[tuple[str, bool]]:
-    """Refresh each downstream lane.  Returns list of (lane, success) pairs."""
-    results: list[tuple[str, bool]] = []
-    for dep in downstream:
-        cmd = [
-            "make", "lane-refresh",
-            f"TASK={task_ref}",
-            f"LANE={dep}",
-        ]
-        if dry_run:
-            cmd.append("DRY_RUN=1")
-        r = subprocess.run(
-            cmd, cwd=orchestrator_root, capture_output=True, text=True, check=False,
-        )
-        results.append((dep, r.returncode == 0))
-    return results
-
-
-def _resolve_lane_worktree(orchestrator_root: Path, task_ref: str, lane_id: str) -> Path | None:
-    """Resolve the worktree path for a lane from the manifest."""
-    if str(SCRIPT_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPT_DIR))
-    from lane_manifest import get_lane_config
-
-    config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root))
-    if config and config.get("worktree_path"):
-        return Path(config["worktree_path"])
-    return None
-
-
-def _run_cross_lane_verify(
-    orchestrator_root: Path, task_ref: str, lane_id: str, *, dry_run: bool = False,
-) -> bool:
-    """Run ``make lane-check`` from the lane worktree for the intaken lane."""
-    if dry_run:
-        return True
-    lane_worktree = _resolve_lane_worktree(orchestrator_root, task_ref, lane_id)
-    if lane_worktree is None or not lane_worktree.is_dir():
-        return False
-    cmd = [
-        "make", "lane-check",
-        f"TASK={task_ref}",
-        f"LANE={lane_id}",
-    ]
-    result = subprocess.run(
-        cmd, cwd=lane_worktree, capture_output=True, text=True, check=False,
-    )
-    return result.returncode == 0
 
 
 # ---------------------------------------------------------------------------
@@ -735,9 +433,6 @@ def orchestrator_loop(
     dry_run: bool = False,
 ) -> int:
     """Main daemon loop.  Returns 0 on clean exit, 1 on failure."""
-    if str(SCRIPT_DIR) not in sys.path:
-        sys.path.insert(0, str(SCRIPT_DIR))
-
     from agent_handoff_mcp import (
         RuntimeConfig,
         configure_runtime,
@@ -826,12 +521,22 @@ def orchestrator_loop(
                     event_name = "guidance_escalated"
                 log("INFO", event_name, lane=resolution.lane_id, kind=resolution.kind, latest_report_id=resolution.latest_report_id)
 
-            # Step 3: Poll for merge-ready lanes
+            # Step 3: Derive new work from the task plan when backlog is otherwise empty
+            plan_dispatch = _dispatch_from_task_plan(
+                orchestrator_root,
+                task_ref,
+                dry_run=dry_run,
+                log=log,
+            )
+            if plan_dispatch is not None:
+                log("INFO", "task_plan_dispatch", **plan_dispatch)
+
+            # Step 4: Poll for merge-ready lanes
             ready_lanes = _poll_merge_ready_lanes(orchestrator_root, task_ref, m_order)
             ordered_ready = _sort_by_manifest_merge_order(ready_lanes, m_order)
             log("INFO", "poll_complete", ready_lanes=ordered_ready)
 
-            # Step 4: Intake and refresh
+            # Step 5: Intake and refresh
             for lane_id in ordered_ready:
                 log("INFO", "intake_start", lane=lane_id)
                 intake_ok = _intake_lane(
@@ -852,6 +557,10 @@ def orchestrator_loop(
 
                 if not intake_ok:
                     continue
+                if not dry_run:
+                    cursor = _complete_lane_plan_cursor(task_ref, lane_id)
+                    if cursor is not None:
+                        log("INFO", "plan_cursor_completed", lane=lane_id, plan_item_id=cursor.get("plan_item_id"))
 
                 deps = downstream_lanes(task_ref, lane_id)
                 if deps:
@@ -966,10 +675,6 @@ def main() -> int:
     if args.command == "run":
         orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
         state_dir = orchestrator_root / ".task-state"
-
-        # Ensure SCRIPT_DIR is on sys.path
-        if str(SCRIPT_DIR) not in sys.path:
-            sys.path.insert(0, str(SCRIPT_DIR))
 
         lock = OrchestratorLock(state_dir)
         if not lock.acquire():

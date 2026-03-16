@@ -26,12 +26,13 @@ def test_build_manifest_is_generic_to_any_task() -> None:
         task_ref="example-task",
         lane_ids=["backend", "frontend"],
         task_plan="docs/tasks/example-task-plan.md",
+        prefix="ex",
     )
 
     assert manifest["task_ref"] == "example-task"
     assert manifest["merge_order"] == ["backend", "frontend"]
-    assert manifest["lanes"]["backend"]["branch"] == "codex/example-task-backend"
-    assert manifest["lanes"]["frontend"]["worktree_path"] == "{orchestrator_root}-example-task-frontend"
+    assert manifest["lanes"]["backend"]["branch"] == "codex/ex-backend"
+    assert manifest["lanes"]["frontend"]["worktree_path"] == "{orchestrator_root}-ex-frontend"
     assert "docs/tasks/example-task-plan.md" in manifest["lanes"]["backend"]["required_docs"]
     assert manifest["downstream"]["backend"] == ["frontend"]
     assert manifest["downstream"]["frontend"] == []
@@ -48,6 +49,8 @@ def test_build_manifest_defaults_route_hints_and_empty_scope() -> None:
     assert lane["owned_paths"] == []
     assert lane["test_commands"] == []
     assert lane["commit_paths"] == []
+    assert lane["guidance_fallbacks"] == []
+    assert lane["tooling_paths"] == []
     assert "wp-proxy" in lane["route_hints"]
     assert "wp proxy" in lane["route_hints"]
 
@@ -78,6 +81,24 @@ def test_main_stdout_renders_json(tmp_path: Path, capsys) -> None:
     rendered = json.loads(capsys.readouterr().out)
     assert rendered["task_ref"] == "demo-task"
     assert rendered["lanes"]["backend"]["branch"] == "codex/demo-task-backend"
+
+
+def test_main_prefix_changes_default_branch_and_worktree(tmp_path: Path) -> None:
+    mod = _load_module()
+    output = tmp_path / "manifest.json"
+    argv = [
+        str(SCRIPT_PATH),
+        "--task-ref", "demo-task",
+        "--lane", "backend",
+        "--prefix", "p5",
+        "--output", str(output),
+    ]
+    with mock.patch.object(sys, "argv", argv):
+        assert mod.main() == 0
+
+    rendered = json.loads(output.read_text())
+    assert rendered["lanes"]["backend"]["branch"] == "codex/p5-backend"
+    assert rendered["lanes"]["backend"]["worktree_path"] == "{orchestrator_root}-p5-backend"
 
 
 def test_main_force_overwrites_existing_file(tmp_path: Path) -> None:

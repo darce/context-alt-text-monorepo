@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -305,3 +306,49 @@ def test_run_review_dry_run_returns_full_shape(tmp_path: Path) -> None:
     assert "prompt" in result
     assert result["changed_files"] == ["a.py"]
     assert result["stack_guides"] == ["rules/testing-python.md"]
+
+
+def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm.record_review_finding.return_value = json.dumps({"ok": True})
+
+    raw_result = {
+        "findings": [
+            {
+                "severity": "medium",
+                "category": "GAP",
+                "file_path": "src/main.py",
+                "description": "Missing validation.",
+                "line_start": 10,
+                "line_end": 12,
+                "fix": "Validate the payload before use.",
+            }
+        ],
+        "summary": "One medium finding.",
+    }
+
+    with mock.patch.object(module, "_changed_files", return_value=["src/main.py"]), \
+         mock.patch.object(module, "_diff_stat", return_value="1 file changed"), \
+         mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]), \
+         mock.patch.object(module, "_codex_exec", return_value=raw_result), \
+         mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            lane_id="backend-domain",
+            task_ref="daemon-1-review-runner",
+            session="record-review-test",
+            orchestrator_root=tmp_path,
+            record_findings=True,
+        )
+
+    assert result["recorded_finding_ids"] == ["BACKEN-M-01"]
+    kwargs = mock_ahm.record_review_finding.call_args.kwargs
+    assert kwargs["task_ref"] == "daemon-1-review-runner"
+    assert kwargs["details"]["line_start"] == 10
+    assert kwargs["details"]["line_end"] == 12
+    assert kwargs["details"]["fix"] == "Validate the payload before use."

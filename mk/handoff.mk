@@ -55,6 +55,13 @@ handoff-inbox:
 		--task-ref "$(TASK)" \
 		$(if $(LANE),--lane-id "$(LANE)",) \
 		--limit 20 | python3 -c 'import json,sys; data=json.load(sys.stdin); reports=[r for r in data.get("reports", []) if r.get("merge_ready")==1 or r.get("status")=="blocked"]; data["reports"]=reports; data["returned"]=len(reports); data["total_matching"]=len(reports); print(json.dumps(data, indent=2))'
+	@echo ""; \
+	echo "Guidance summary:"; \
+	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/handoff_guidance_summary.py" \
+		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
+		--task-ref "$(TASK)" \
+		$(if $(LANE),--lane-id "$(LANE)",)
 
 handoff-dispatch:
 	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \

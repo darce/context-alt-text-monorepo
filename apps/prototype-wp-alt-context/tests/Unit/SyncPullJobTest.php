@@ -385,8 +385,7 @@ class SyncPullJobSnapshotClient extends SnapshotClient
         string $job_id,
         int $snapshot_version,
         ?string $snapshot_generation_id = null
-    ): WP_REST_Response|WP_Error
-    {
+    ): WP_REST_Response|WP_Error {
         $this->acknowledgedJobId = $job_id;
         $this->acknowledgedSnapshotVersion = $snapshot_version;
         $this->acknowledgedSnapshotGenerationId = $snapshot_generation_id;

@@ -97,6 +97,17 @@
         "backend domain",
         "domain/schema lane"
       ],
+      "guidance_fallbacks": [
+        {
+          "match_any": [
+            "snapshot_generation_id",
+            "cluster_repository.py",
+            "disposed-row filtering"
+          ],
+          "subject": "backend-domain snapshot provenance and disposal",
+          "message": "Implement the backend-domain snapshot provenance/disposal slice in apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py and related backend-domain-owned tests/services. Add snapshot_generation_id stamping/return for get_snapshot(), exclude disposed rows from snapshot reads, and keep HTTP analyze.py changes out of this lane."
+        }
+      ],
       "tooling_paths": [
         "apps/prototype-description-service/Makefile"
       ]
@@ -134,6 +145,7 @@
         "backend http",
         "http lane"
       ],
+      "guidance_fallbacks": [],
       "tooling_paths": [
         "apps/prototype-description-service/Makefile"
       ]
@@ -168,7 +180,9 @@
         "wp proxy",
         "wordpress proxy",
         "proxy lane"
-      ]
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": []
     },
     "frontend": {
       "branch": "codex/p5-frontend",
@@ -198,7 +212,9 @@
         "frontend",
         "frontend lane",
         "ui lane"
-      ]
+      ],
+      "guidance_fallbacks": [],
+      "tooling_paths": []
     }
   },
   "downstream": {

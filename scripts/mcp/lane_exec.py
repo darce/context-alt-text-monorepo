@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -301,7 +302,6 @@ def run_lane_exec(
             # Preserve partial result if any
             out = output_path or _temp_output_path(lane_id=lane_id)
             if result_file.is_file():
-                import shutil
                 shutil.copy2(result_file, out)
             raise RuntimeError(
                 f"codex exec failed (exit {completed.returncode}):\n"
@@ -314,7 +314,6 @@ def run_lane_exec(
 
         # Copy to persistent location
         out = output_path or _temp_output_path(lane_id=lane_id)
-        import shutil
         shutil.copy2(result_file, out)
         return out
 

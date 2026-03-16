@@ -137,12 +137,19 @@ Hard guardrails from real failures in this project:
 4. **Role semantics match behavior.** Controlled dialogs must wire `onOpenChange`.
 5. **Schema/contract parity.** Validate SQL column names against real schema before merge.
 6. **Documented commands must run as written.** Broken copy-paste syntax is a bug.
+7. **Long-running loops: bounded stall detection.** Daemon/loop code that processes multiple independent units must track per-unit no-progress cycles and exit non-zero after a bounded threshold. A single unit's failure must not halt processing of other units in the same cycle.
+8. **Config files: validate at load time.** JSON/YAML config consumed by multiple modules must be structurally validated at load time. Fail fast on missing or malformed required keys instead of silently returning empty defaults.
+9. **No task-specific logic in generic modules.** If a generic utility contains `if task_ref == "some-task"` or hardcoded domain strings for a specific task, extract that logic to a config-driven policy module or the task's manifest. It becomes dead code once the task is done.
 
 ### Task Document Rules
 
 - Consolidate all checklists at the **bottom** of task documents. No scattered `- [ ]` items. No time estimates.
 - Planning docs must stay internally consistent (current state vs checklist vs success criteria vs ADR terms).
 - When reviewing task plans, epics, roadmaps, ADRs, or other planning documents for gaps, bugs, obsolete assumptions, or unnecessary complexity, record every finding in MCP handoff before presenting it in chat.
+- Reference code locations by **function/target name**, not line numbers. Line numbers go stale; names survive refactors.
+- Every pseudocode function or CLI command in a plan must map to an existing API/import or be explicitly marked as "new, to be created." Unresolved pseudocode references cause implementation ambiguity.
+- Validate enum values, status strings, and filter parameters used in plans against the actual API or schema. Using a status value that the API rejects (e.g., `done` when valid values are `planned/active/blocked/review/merged/closed`) is a plan bug.
+- Do not list a file in "Functions to Change" unless it actually requires modification. If a file only needs verification (no code changes), mark it as verification-only.
 
 ### Naming Convention: acx\_\* / ACX\_\* Prefix
 
@@ -240,6 +247,8 @@ Decomposition rules for the orchestrating agent:
 5. Prefer lanes that can be verified independently. Good seams in this repo are backend domain/schema, backend HTTP, WordPress proxy, frontend UI, and orchestrator-root review dispatch.
 6. Treat workflow tooling as orchestrator-owned. When the root `Makefile`, lane helper scripts, worker playbook, or task lane manifest changes, propagate them into worker lanes with `make lane-refresh` instead of hand-copying files.
 7. Define task-aware lane orchestration in `config/lane-orchestration/<task-ref>.json`. Do not hardcode new task routing tables into the Makefile or dispatch scripts. Start from `make lane-manifest-init TASK=<task-ref> LANE_IDS='lane-a lane-b' [TASK_PLAN=docs/tasks/...md]` so the manifest creation path stays generic across tasks.
+8. Manifest scaffolds must emit every field the runtime reads, even if initially empty (e.g., `guidance_fallbacks`, `tooling_paths`). An omitted field is invisible to operators and silently breaks runtime consumers.
+9. Derive computable manifest fields at load time instead of requiring manual duplication. `commit_paths` is derived from `owned_paths` (strip `/**` suffixes); `routing` is derived from `owned_paths` (strip `**`, ensure trailing `/`). Maintaining both independently invites drift.
 
 Worktree setup and switching:
 

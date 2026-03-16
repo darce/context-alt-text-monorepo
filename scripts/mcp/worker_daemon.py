@@ -259,7 +259,7 @@ def worker_loop(
     # Lazy-import lane_exec and review_runner to keep module importable
     # without heavy deps at test time.
     from lane_exec import build_fix_prompt, find_codex, run_lane_exec
-    from review_runner import findings_converged, run_review
+    from review_runner import run_review
 
     log_dir = orchestrator_root / "logs" / "worker-daemon"
     log = lambda level, event, **kw: _log(lane_id, log_dir, level, event, **kw)

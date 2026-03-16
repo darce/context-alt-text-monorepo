@@ -1015,3 +1015,195 @@ def test_handoff_close_check_enforce_fails_then_passes(isolated_handoff: dict) -
     assert ready["ok"] is True
     assert ready["ready_to_close"] is True
     assert ready["checks"]["current_task_sync"]["is_in_sync"] is True
+
+
+# ---------------------------------------------------------------------------
+# generate_current_task_md -- related_task_refs
+# ---------------------------------------------------------------------------
+
+
+def test_generate_current_task_md_includes_related_findings(isolated_handoff: dict) -> None:
+    """Open findings from related tasks appear under a grouped section."""
+    # Set up the active task
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-3",
+            objective="Active task",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="daemon-3",
+            session="s1",
+            finding_id="D3-01",
+            file_path="file_c.py",
+            description="Daemon 3 finding",
+            severity="low",
+        )
+    )
+
+    # Set up two related tasks with findings
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-1",
+            objective="Related task 1",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="daemon-1",
+            session="s1",
+            finding_id="D1-01",
+            file_path="file_a.py",
+            description="Daemon 1 finding",
+            severity="medium",
+        )
+    )
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-2",
+            objective="Related task 2",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="daemon-2",
+            session="s1",
+            finding_id="D2-01",
+            file_path="file_b.py",
+            description="Daemon 2 finding",
+            severity="high",
+        )
+    )
+
+    # Switch back to daemon-3 as active
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-3",
+            objective="Active task",
+            status="in_progress",
+        )
+    )
+
+    payload = _parse(
+        mcp_server.generate_current_task_md(
+            task_ref="daemon-3",
+            write_file=False,
+            related_task_refs="daemon-1,daemon-2",
+        )
+    )
+    assert payload["ok"] is True
+    md = payload["markdown"]
+    assert "## Open Review Findings" in md
+    assert "D3-01" in md
+    assert "## Related Open Review Findings" in md
+    assert "### daemon-1" in md
+    assert "D1-01" in md
+    assert "### daemon-2" in md
+    assert "D2-01" in md
+
+
+def test_generate_current_task_md_related_excludes_active_task(isolated_handoff: dict) -> None:
+    """If the active task_ref appears in related_task_refs, it is deduplicated."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-3",
+            objective="Active",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="daemon-3",
+            session="s1",
+            finding_id="D3-01",
+            file_path="f.py",
+            description="Finding",
+            severity="low",
+        )
+    )
+
+    payload = _parse(
+        mcp_server.generate_current_task_md(
+            task_ref="daemon-3",
+            write_file=False,
+            related_task_refs="daemon-3",
+        )
+    )
+    md = payload["markdown"]
+    # D3-01 should appear only once (in the main section), not duplicated
+    assert md.count("D3-01") == 1
+    assert "## Related Open Review Findings" not in md
+
+
+def test_generate_current_task_md_related_skips_resolved(isolated_handoff: dict) -> None:
+    """Resolved findings from related tasks should not appear."""
+    # Create daemon-1 task first and resolve a finding while it is active
+    init1 = _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-1",
+            objective="Related",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            task_ref="daemon-1",
+            session="s1",
+            finding_id="D1-FIXED",
+            file_path="f.py",
+            description="Fixed finding",
+            severity="medium",
+        )
+    )
+    update_result = _parse(
+        mcp_server.update_review_finding(
+            finding_id="D1-FIXED",
+            status="fixed",
+            resolution_notes="Done",
+        )
+    )
+    assert update_result["ok"] is True
+    # Now switch to daemon-3 as the active task
+    rev = init1["active"]["revision"]
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-3",
+            objective="Active",
+            status="in_progress",
+            expected_revision=rev,
+        )
+    )
+
+    payload = _parse(
+        mcp_server.generate_current_task_md(
+            task_ref="daemon-3",
+            write_file=False,
+            related_task_refs="daemon-1",
+        )
+    )
+    md = payload["markdown"]
+    assert "D1-FIXED" not in md
+    assert "## Related Open Review Findings" not in md
+
+
+def test_generate_current_task_md_no_related_param(isolated_handoff: dict) -> None:
+    """When related_task_refs is not provided, no related section appears."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-3",
+            objective="Active",
+            status="in_progress",
+        )
+    )
+    payload = _parse(
+        mcp_server.generate_current_task_md(
+            task_ref="daemon-3",
+            write_file=False,
+        )
+    )
+    md = payload["markdown"]
+    assert "## Related Open Review Findings" not in md

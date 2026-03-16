@@ -22,7 +22,9 @@ Use typed builders/factories (for example `createMockQuery<T>()`) so missing fie
 
 ```tsx
 // BAD
-mockedHook.mockReturnValue({ data: value } as unknown as ReturnType<typeof useSomething>);
+mockedHook.mockReturnValue({ data: value } as unknown as ReturnType<
+  typeof useSomething
+>);
 
 // GOOD
 mockedHook.mockReturnValue(createMockQuery<MyType>({ data: value }));
@@ -40,10 +42,10 @@ Use hoisted `vi.mock` with a mutable ref object instead:
 
 ```tsx
 // BAD: vi.doMock with static import — mock never takes effect
-import { MyComponent } from '../MyComponent';
+import { MyComponent } from "../MyComponent";
 
-it('shows loading', () => {
-  vi.doMock('../hooks/useData', () => ({
+it("shows loading", () => {
+  vi.doMock("../hooks/useData", () => ({
     useData: () => ({ data: null, isLoading: true }),
   }));
   render(<MyComponent />); // Still uses real useData!
@@ -52,11 +54,11 @@ it('shows loading', () => {
 // GOOD: Hoisted vi.mock + mutable ref — mock is wired at module load
 const mockReturn = { data: null, isLoading: false, isError: false };
 
-vi.mock('../hooks/useData', () => ({
+vi.mock("../hooks/useData", () => ({
   useData: () => mockReturn,
 }));
 
-import { MyComponent } from '../MyComponent';
+import { MyComponent } from "../MyComponent";
 
 beforeEach(() => {
   mockReturn.data = null;
@@ -64,7 +66,7 @@ beforeEach(() => {
   mockReturn.isError = false;
 });
 
-it('shows loading', () => {
+it("shows loading", () => {
   mockReturn.isLoading = true;
   render(<MyComponent />); // Correctly sees mocked state
 });
@@ -149,7 +151,7 @@ Use RFC 2606 domains for test URLs:
 
 ```tsx
 // GOOD: RFC 2606 reserved domain
-http.get('http://example.test/api/clusters', () => {
+http.get("http://example.test/api/clusters", () => {
   return HttpResponse.json({ clusters: [] });
 });
 ```
@@ -164,9 +166,9 @@ Overlay panels read their visibility from the `panel` query param. Tests must re
 
 ```tsx
 render(
-  <MemoryRouter initialEntries={['/workbench?tab=scan&panel=conflicts']}>
+  <MemoryRouter initialEntries={["/workbench?tab=scan&panel=conflicts"]}>
     <WorkbenchPage />
-  </MemoryRouter>
+  </MemoryRouter>,
 );
 ```
 

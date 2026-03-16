@@ -75,6 +75,14 @@ Hard rule for agent responses:
 - [ ] Multi-entity operations define which entity/version drives conflict detection.
 - [ ] Schema changes are sufficient for the reporting/metrics the plan promises.
 
+### Interface and API Realism
+
+- [ ] Pseudocode functions and helper references map to actual existing APIs/imports or are explicitly marked as new code to create.
+- [ ] Enum values, status strings, and filter parameters used in the plan exist in the actual API/schema (not invented names that the API will reject).
+- [ ] API capabilities assumed by the plan (e.g., server-side filtering by a specific field) actually exist; client-side workarounds are noted if not.
+- [ ] Files listed for modification actually require code changes; verification-only files are flagged as such.
+- [ ] Code location references use function/target names, not brittle line numbers.
+
 ### Rollout and Testability
 
 - [ ] The plan can be implemented incrementally without leaving impossible intermediate states.

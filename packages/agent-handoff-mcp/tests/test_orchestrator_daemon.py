@@ -11,6 +11,8 @@ from typing import Any
 from unittest import mock
 
 import pytest
+from agent_handoff_mcp import api as mcp_api
+from agent_handoff_mcp.config import RuntimeConfig
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "orchestrator_daemon.py"
@@ -214,27 +216,6 @@ def test_run_handoff_dispatch_dry_run(tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 # _poll_merge_ready_lanes
 # ---------------------------------------------------------------------------
-
-
-def test_poll_merge_ready_lanes(tmp_path: Path) -> None:
-    mod = _load_module()
-    responses = {
-        "lane-a": json.dumps({"ok": True, "reports": [{"merge_ready": 1}]}),
-        "lane-b": json.dumps({"ok": True, "reports": [{"merge_ready": 0}]}),
-        "lane-c": json.dumps({"ok": True, "reports": []}),
-    }
-
-    def fake_list_worker_reports(task_ref=None, lane_id=None, limit=1):
-        return responses.get(lane_id, json.dumps({"ok": True, "reports": []}))
-
-    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock.MagicMock()}):
-        # Patch at the module level after import
-        with mock.patch.object(mod, "_poll_merge_ready_lanes") as mock_poll:
-            mock_poll.return_value = ["lane-a"]
-            result = mod._poll_merge_ready_lanes(tmp_path, "test-task", ["lane-a", "lane-b", "lane-c"])
-    assert result == ["lane-a"]
-
-
 def test_poll_merge_ready_lanes_direct(tmp_path: Path) -> None:
     """Test the actual logic with a patched import."""
     mod = _load_module()
@@ -443,16 +424,43 @@ def _make_mock_runtime():
     return mock_config
 
 
-def test_single_pass_no_ready_lanes(tmp_path: Path) -> None:
-    mod = _load_module()
-    state_dir = tmp_path / ".task-state"
-    state_dir.mkdir()
-
+def _make_mock_ahm(*, ready_to_close: bool = False) -> mock.MagicMock:
     mock_ahm = mock.MagicMock()
     mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
     mock_ahm.configure_runtime = mock.MagicMock()
     mock_ahm.record_decision.return_value = json.dumps({"ok": True})
     mock_ahm.record_test_result.return_value = json.dumps({"ok": True})
+    mock_ahm.handoff_close_check.return_value = json.dumps(
+        {"ok": True, "ready_to_close": ready_to_close}
+    )
+    mock_ahm.list_lane_messages.return_value = json.dumps({"ok": True, "messages": []})
+    mock_ahm.list_worktree_lanes.return_value = json.dumps({"ok": True, "lanes": []})
+    mock_ahm.get_lane_activity.return_value = json.dumps({"ok": True, "lane": {}, "actions": []})
+    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
+    mock_ahm.record_lane_message.return_value = json.dumps({"ok": True})
+    mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
+    mock_ahm.update_next_actions.return_value = json.dumps({"ok": True})
+    return mock_ahm
+
+
+def _configure_real_runtime(tmp_path: Path, task_ref: str) -> RuntimeConfig:
+    runtime = RuntimeConfig.for_workspace(
+        tmp_path,
+        state_dir=tmp_path / ".task-state",
+        current_task_path=tmp_path / "CURRENT_TASK.md",
+        exports_dir=tmp_path / ".task-state" / "exports",
+    )
+    mcp_api.configure_runtime(runtime)
+    json.loads(mcp_api.set_handoff_state(task_ref=task_ref, objective="daemon integration", status="in_progress"))
+    return runtime
+
+
+def test_single_pass_no_ready_lanes(tmp_path: Path) -> None:
+    mod = _load_module()
+    state_dir = tmp_path / ".task-state"
+    state_dir.mkdir()
+
+    mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
 
     mock_manifest = mock.MagicMock()
@@ -480,11 +488,7 @@ def test_single_pass_intakes_ready_lane(tmp_path: Path) -> None:
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir()
 
-    mock_ahm = mock.MagicMock()
-    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
-    mock_ahm.configure_runtime = mock.MagicMock()
-    mock_ahm.record_decision.return_value = json.dumps({"ok": True})
-    mock_ahm.record_test_result.return_value = json.dumps({"ok": True})
+    mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.side_effect = [
         json.dumps({"ok": True, "reports": [{"merge_ready": 1}]}),
         json.dumps({"ok": True, "reports": []}),
@@ -535,9 +539,7 @@ def test_single_pass_paused_exits_cleanly(tmp_path: Path) -> None:
     state_dir.mkdir()
     mod.daemon_pause(state_dir)
 
-    mock_ahm = mock.MagicMock()
-    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
-    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm = _make_mock_ahm()
 
     mock_manifest = mock.MagicMock()
     mock_manifest.merge_order.return_value = []
@@ -560,9 +562,7 @@ def test_single_pass_dry_run_skips_recording(tmp_path: Path) -> None:
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir()
 
-    mock_ahm = mock.MagicMock()
-    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
-    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps(
         {"ok": True, "reports": [{"merge_ready": 1}]}
     )
@@ -592,14 +592,12 @@ def test_single_pass_dry_run_skips_recording(tmp_path: Path) -> None:
 
 
 def test_single_pass_dispatch_failure_continues(tmp_path: Path) -> None:
-    """Dispatch failure should not abort the cycle."""
+    """Repeated dispatch failure should fail the single pass."""
     mod = _load_module()
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir()
 
-    mock_ahm = mock.MagicMock()
-    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
-    mock_ahm.configure_runtime = mock.MagicMock()
+    mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
 
     mock_manifest = mock.MagicMock()
@@ -618,8 +616,7 @@ def test_single_pass_dispatch_failure_continues(tmp_path: Path) -> None:
                 task_ref="test-task",
                 single_pass=True,
             )
-    # Should still return 0 because single-pass completed
-    assert result == 0
+    assert result == 1
 
 
 def test_intake_failure_skips_refresh_and_verify(tmp_path: Path) -> None:
@@ -627,10 +624,7 @@ def test_intake_failure_skips_refresh_and_verify(tmp_path: Path) -> None:
     state_dir = tmp_path / ".task-state"
     state_dir.mkdir()
 
-    mock_ahm = mock.MagicMock()
-    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
-    mock_ahm.configure_runtime = mock.MagicMock()
-    mock_ahm.record_decision.return_value = json.dumps({"ok": True})
+    mock_ahm = _make_mock_ahm()
     mock_ahm.list_worker_reports.return_value = json.dumps(
         {"ok": True, "reports": [{"merge_ready": 1}]}
     )
@@ -668,6 +662,505 @@ def test_intake_failure_skips_refresh_and_verify(tmp_path: Path) -> None:
     assert "lane-intake" in make_targets
     assert "lane-refresh" not in make_targets
     assert "lane-check" not in make_targets
+
+
+def test_list_open_worker_guidance_filters_client_side() -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_lane_messages.return_value = json.dumps(
+        {
+            "ok": True,
+            "messages": [
+                {"id": 1, "direction": "worker_to_orchestrator", "lane_id": "frontend"},
+                {"id": 2, "direction": "orchestrator_to_worker", "lane_id": "frontend"},
+            ],
+        }
+    )
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        rows = mod._list_open_worker_guidance("task")
+    assert [row["id"] for row in rows] == [1]
+
+
+def test_list_open_dispatch_messages_filters_client_side() -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_lane_messages.return_value = json.dumps(
+        {
+            "ok": True,
+            "messages": [
+                {"id": 1, "direction": "worker_to_orchestrator", "lane_id": "frontend"},
+                {"id": 2, "direction": "orchestrator_to_worker", "lane_id": "frontend"},
+            ],
+        }
+    )
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        rows = mod._list_open_dispatch_messages("task", "frontend")
+    assert [row["id"] for row in rows] == [2]
+
+
+def test_latest_lane_report_prefers_matching_session() -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_worker_reports.return_value = json.dumps(
+        {
+            "ok": True,
+            "reports": [
+                {"id": 1, "session": "other"},
+                {"id": 2, "session": "wanted"},
+            ],
+        }
+    )
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        report = mod._latest_lane_report("task", "lane", session="wanted")
+    assert report["id"] == 2
+
+
+def test_resolve_next_assignment_prefers_pending_action() -> None:
+    mod = _load_module()
+    activity = {
+        "lane": {"objective": "fallback objective"},
+        "actions": [
+            {"id": 2, "status": "pending", "priority": 5, "action": "Later action"},
+            {"id": 1, "status": "pending", "priority": 1, "action": "First action"},
+        ],
+    }
+    assignment = mod._resolve_next_assignment(
+        "phase-5-retention-export-and-audit-controls",
+        "backend-domain",
+        activity,
+        "remaining backend-domain implementation target",
+    )
+    assert assignment == ("backend-domain next assignment", "First action")
+
+
+def test_classify_guidance_review_for_already_resolved_lane() -> None:
+    mod = _load_module()
+    resolution = mod._classify_guidance(
+        task_ref="phase-5-retention-export-and-audit-controls",
+        worker_message={
+            "id": 10,
+            "lane_id": "backend-http",
+            "message": "No code changes were warranted because the assigned retention wiring appears already resolved and now needs orchestrator review.",
+        },
+        latest_report={"id": 20, "summary": "already resolved"},
+        activity={"lane": {"objective": "http work"}, "actions": []},
+        open_dispatches=[{"id": 30}],
+    )
+    assert resolution.kind == "review"
+    assert resolution.close_dispatch_ids == (30,)
+
+
+def test_classify_guidance_env_blocker() -> None:
+    mod = _load_module()
+    resolution = mod._classify_guidance(
+        task_ref="phase-5-retention-export-and-audit-controls",
+        worker_message={
+            "id": 12,
+            "lane_id": "frontend",
+            "message": "Filesystem sandbox is read-only and there is no writable temp directory.",
+        },
+        latest_report={"id": 22, "summary": "blocked by read-only sandbox"},
+        activity={"lane": {"objective": "frontend work"}, "actions": []},
+        open_dispatches=[],
+    )
+    assert resolution.kind == "blocked"
+
+
+def test_classify_guidance_phase5_backend_domain_redispatch() -> None:
+    mod = _load_module()
+    resolution = mod._classify_guidance(
+        task_ref="phase-5-retention-export-and-audit-controls",
+        worker_message={
+            "id": 11,
+            "lane_id": "backend-domain",
+            "message": "The remaining backend-domain implementation target is snapshot provenance/disposed-row filtering in cluster_repository.py.",
+        },
+        latest_report={"id": 21, "summary": "remaining backend-domain implementation target"},
+        activity={"lane": {"objective": "domain work"}, "actions": []},
+        open_dispatches=[],
+    )
+    assert resolution.kind == "redispatch"
+    assert resolution.dispatch_subject == "backend-domain snapshot provenance and disposal"
+
+
+def test_resolve_next_assignment_uses_manifest_guidance_fallbacks() -> None:
+    mod = _load_module()
+    assignment = mod._resolve_next_assignment(
+        "phase-5-retention-export-and-audit-controls",
+        "backend-domain",
+        {"lane": {"objective": "domain work"}, "actions": []},
+        "The remaining backend-domain implementation target is snapshot_generation_id stamping in cluster_repository.py.",
+    )
+    assert assignment == (
+        "backend-domain snapshot provenance and disposal",
+        "Implement the backend-domain snapshot provenance/disposal slice in apps/prototype-description-service/recognition/infrastructure/repositories/cluster_repository.py and related backend-domain-owned tests/services. Add snapshot_generation_id stamping/return for get_snapshot(), exclude disposed rows from snapshot reads, and keep HTTP analyze.py changes out of this lane.",
+    )
+
+
+def test_apply_guidance_resolution_closes_messages_and_records_dispatch(tmp_path: Path) -> None:
+    mod = _load_module()
+    resolution = mod.GuidanceResolution(
+        kind="redispatch",
+        lane_id="backend-domain",
+        worker_message_id=10,
+        decision="d",
+        rationale="r",
+        lane_status="active",
+        lane_notes="n",
+        dispatch_subject="subject",
+        dispatch_message="message",
+        close_dispatch_ids=(20, 21),
+    )
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_worktree_lanes.return_value = json.dumps(
+        {
+            "ok": True,
+            "lanes": [
+                {
+                    "lane_id": "backend-domain",
+                    "worktree_path": str(tmp_path / "wt"),
+                    "branch": "codex/p5-backend-domain",
+                    "title": "Backend Domain",
+                    "objective": "domain",
+                    "owner_agent": "codex",
+                }
+            ],
+        }
+    )
+    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
+    mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
+    mock_ahm.record_lane_message.return_value = json.dumps({"ok": True})
+    mock_ahm.record_decision.return_value = json.dumps({"ok": True})
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        mod._apply_guidance_resolution(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            orchestrator_root=tmp_path,
+            resolution=resolution,
+            dry_run=False,
+        )
+    assert mock_ahm.update_lane_message.call_args_list[0].args == (10, "closed")
+    assert mock_ahm.update_lane_message.call_args_list[1].args == (20, "closed")
+    assert mock_ahm.update_lane_message.call_args_list[2].args == (21, "closed")
+    mock_ahm.record_lane_message.assert_called_once()
+    mock_ahm.record_decision.assert_called_once()
+
+
+def test_apply_guidance_resolution_review_completes_stale_pending_actions(tmp_path: Path) -> None:
+    mod = _load_module()
+    resolution = mod.GuidanceResolution(
+        kind="review",
+        lane_id="backend-http",
+        worker_message_id=10,
+        decision="d",
+        rationale="r",
+        lane_status="review",
+        lane_notes="n",
+        close_dispatch_ids=(20,),
+    )
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_worktree_lanes.return_value = json.dumps(
+        {
+            "ok": True,
+            "lanes": [
+                {
+                    "lane_id": "backend-http",
+                    "worktree_path": str(tmp_path / "wt"),
+                    "branch": "codex/p5-backend-http",
+                    "title": "Backend HTTP",
+                    "objective": "http",
+                    "owner_agent": "codex",
+                }
+            ],
+        }
+    )
+    mock_ahm.get_lane_activity.return_value = json.dumps(
+        {
+            "ok": True,
+            "lane": {"objective": "http"},
+            "actions": [{"id": 7, "status": "pending", "priority": 1, "action": "Fix already-resolved wiring"}],
+        }
+    )
+    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
+    mock_ahm.upsert_worktree_lane.return_value = json.dumps({"ok": True})
+    mock_ahm.record_decision.return_value = json.dumps({"ok": True})
+    mock_ahm.update_next_actions.return_value = json.dumps({"ok": True})
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        mod._apply_guidance_resolution(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            orchestrator_root=tmp_path,
+            resolution=resolution,
+            dry_run=False,
+        )
+    mock_ahm.update_next_actions.assert_called_once_with(operation="complete", action_id=7)
+
+
+def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path=str(tmp_path / "backend-domain"),
+            branch="codex/p5-backend-domain",
+            status="active",
+            objective="domain work",
+        )
+    )
+    json.loads(
+        mcp_api.record_lane_message(
+            lane_id="backend-domain",
+            session="lane-session",
+            direction="orchestrator_to_worker",
+            subject="old assignment",
+            message="stale work",
+            status="open",
+        )
+    )
+    json.loads(
+        mcp_api.record_lane_message(
+            lane_id="backend-domain",
+            session="lane-session",
+            direction="worker_to_orchestrator",
+            subject="backend-domain needs guidance",
+            message="The remaining backend-domain implementation target is snapshot_generation_id stamping in cluster_repository.py.",
+            status="open",
+        )
+    )
+    json.loads(
+        mcp_api.record_worker_report(
+            lane_id="backend-domain",
+            session="lane-session",
+            summary="remaining backend-domain implementation target",
+            status="blocked",
+        )
+    )
+
+    results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
+
+    assert [row.kind for row in results] == ["redispatch"]
+    messages = json.loads(mcp_api.list_lane_messages(task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-domain", status="open"))["messages"]
+    assert len(messages) == 1
+    assert messages[0]["direction"] == "orchestrator_to_worker"
+    assert messages[0]["subject"] == "backend-domain snapshot provenance and disposal"
+
+
+def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-http",
+            worktree_path=str(tmp_path / "backend-http"),
+            branch="codex/p5-backend-http",
+            status="active",
+            objective="http work",
+        )
+    )
+    json.loads(
+        mcp_api.record_lane_message(
+            lane_id="backend-http",
+            session="lane-session",
+            direction="orchestrator_to_worker",
+            subject="old assignment",
+            message="stale work",
+            status="open",
+        )
+    )
+    json.loads(
+        mcp_api.record_lane_message(
+            lane_id="backend-http",
+            session="lane-session",
+            direction="worker_to_orchestrator",
+            subject="backend-http needs guidance",
+            message="No code changes were warranted because the assigned retention wiring appears already resolved.",
+            status="open",
+        )
+    )
+    json.loads(
+        mcp_api.record_worker_report(
+            lane_id="backend-http",
+            session="lane-session",
+            summary="already resolved",
+            status="blocked",
+        )
+    )
+
+    results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
+
+    assert [row.kind for row in results] == ["review"]
+    messages = json.loads(mcp_api.list_lane_messages(task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-http", status="open"))["messages"]
+    assert messages == []
+    lanes = json.loads(mcp_api.list_worktree_lanes(task_ref="phase-5-retention-export-and-audit-controls", status="all"))["lanes"]
+    lane_row = next(row for row in lanes if row["lane_id"] == "backend-http")
+    assert lane_row["status"] == "review"
+
+
+def test_single_pass_guidance_review_closes_message(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+    mock_ahm.list_lane_messages.side_effect = [
+        json.dumps({
+            "ok": True,
+            "messages": [
+                {
+                    "id": 10,
+                    "lane_id": "backend-http",
+                    "direction": "worker_to_orchestrator",
+                    "session": "s",
+                    "message": "No code changes were warranted because the assigned retention wiring appears already resolved.",
+                }
+            ],
+        }),
+        json.dumps({
+            "ok": True,
+            "messages": [
+                {
+                    "id": 30,
+                    "lane_id": "backend-http",
+                    "direction": "orchestrator_to_worker",
+                }
+            ],
+        }),
+    ]
+    mock_ahm.list_worktree_lanes.return_value = json.dumps(
+        {"ok": True, "lanes": [{"lane_id": "backend-http", "worktree_path": str(tmp_path / "wt"), "branch": "codex/x"}]}
+    )
+    mock_ahm.get_lane_activity.return_value = json.dumps(
+        {"ok": True, "lane": {"objective": "http"}, "actions": []}
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")
+            result = mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            )
+    assert result == 0
+    mock_ahm.update_lane_message.assert_any_call(10, "closed")
+    mock_ahm.upsert_worktree_lane.assert_called()
+
+
+def test_single_pass_guidance_fatal_returns_error(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_lane_messages.return_value = json.dumps(
+        {
+            "ok": True,
+            "messages": [
+                {
+                    "id": 10,
+                    "lane_id": "frontend",
+                    "direction": "worker_to_orchestrator",
+                    "session": "s",
+                    "message": "Need a decision.",
+                }
+            ],
+        }
+    )
+    mock_ahm.list_worktree_lanes.return_value = json.dumps(
+        {"ok": True, "lanes": [{"lane_id": "frontend", "worktree_path": str(tmp_path / "wt"), "branch": "codex/x"}]}
+    )
+    mock_ahm.get_lane_activity.return_value = json.dumps(
+        {"ok": True, "lane": {"objective": ""}, "actions": []}
+    )
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")
+            result = mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            )
+    assert result == 1
+
+
+def test_long_running_guidance_stall_exits_after_threshold(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    fatal = mod.GuidanceResolution(
+        kind="fatal_error",
+        lane_id="frontend",
+        worker_message_id=10,
+        error="cannot classify",
+    )
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_run_handoff_dispatch", return_value={"ok": True}):
+            with mock.patch.object(mod, "_resolve_guidance_cycle", side_effect=[[fatal], [fatal], [fatal]]):
+                with mock.patch.object(mod, "_poll_merge_ready_lanes", return_value=[]):
+                    with mock.patch.object(mod.time, "sleep", return_value=None):
+                        result = mod.orchestrator_loop(
+                            orchestrator_root=tmp_path,
+                            task_ref="phase-5-retention-export-and-audit-controls",
+                            single_pass=False,
+                            poll_interval=0,
+                        )
+    assert result == 1
+
+
+def test_long_running_runtime_failure_exits_after_threshold(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_run_handoff_dispatch", return_value={"ok": True}):
+            with mock.patch.object(mod, "_resolve_guidance_cycle", side_effect=RuntimeError("transient MCP error")):
+                with mock.patch.object(mod.time, "sleep", return_value=None):
+                    result = mod.orchestrator_loop(
+                        orchestrator_root=tmp_path,
+                        task_ref="phase-5-retention-export-and-audit-controls",
+                        single_pass=False,
+                        poll_interval=0,
+                    )
+    assert result == 1
+
+
+def test_single_pass_ready_to_close_exits_success(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm(ready_to_close=True)
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")
+            result = mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            )
+    assert result == 0
 
 
 # ---------------------------------------------------------------------------

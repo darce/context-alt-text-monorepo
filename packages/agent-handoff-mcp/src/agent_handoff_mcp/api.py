@@ -37,6 +37,10 @@ set_handoff_state = core.set_handoff_state
 get_handoff_state = core.get_handoff_state
 get_lane_activity = core.get_lane_activity
 list_lane_messages = core.list_lane_messages
+get_plan_cursor = core.get_plan_cursor
+list_next_actions = core.list_next_actions
+list_plan_cursors = core.list_plan_cursors
+upsert_plan_cursor = core.upsert_plan_cursor
 list_worker_reports = core.list_worker_reports
 list_worktree_lanes = core.list_worktree_lanes
 record_lane_message = core.record_lane_message
@@ -51,6 +55,7 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "upsert_worktree_lane": "Create or update worktree lane metadata for a task, including branch, status, and worktree path.",
     "list_worktree_lanes": "List registered worktree lanes for the active or requested task.",
     "get_lane_activity": "Read the current activity summary for a lane, including blockers, actions, findings, messages, and tests.",
+    "list_next_actions": "List next-action rows for the active or requested task, optionally filtered by lane or status.",
     "record_decision": "Record an orchestrator or worker decision in the handoff ledger for the active task.",
     "update_next_actions": "Add, update, complete, or skip next-action items for the active task.",
     "record_test_result": "Record the result of a verification command for the active task.",
@@ -60,6 +65,9 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "record_lane_message": "Create a lane message between orchestrator and worker for the active or requested task.",
     "update_lane_message": "Update the status of a lane message, such as closing or acknowledging it.",
     "list_lane_messages": "List lane messages for the active or requested task, optionally filtered by lane, direction, or status.",
+    "get_plan_cursor": "Fetch the durable plan-dispatch cursor for a specific task-plan item.",
+    "list_plan_cursors": "List durable plan-dispatch cursor rows for the active or requested task, optionally filtered by state or lane.",
+    "upsert_plan_cursor": "Create or update a durable task-plan cursor row recording dispatch, completion, skip, or escalation state.",
     "record_review_finding": "Record or reopen a review finding for a task with stable finding IDs and optional line metadata.",
     "update_review_finding": "Mark a review finding fixed, deferred, wontfix, or reopen it with notes.",
     "reopen_review_finding": "Reopen a previously closed review finding with a reopen reason.",
@@ -155,6 +163,7 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         upsert_worktree_lane,
         list_worktree_lanes,
         get_lane_activity,
+        list_next_actions,
         record_decision,
         update_next_actions,
         record_test_result,
@@ -164,6 +173,9 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         record_lane_message,
         update_lane_message,
         list_lane_messages,
+        get_plan_cursor,
+        list_plan_cursors,
+        upsert_plan_cursor,
         record_review_finding,
         update_review_finding,
         reopen_review_finding,

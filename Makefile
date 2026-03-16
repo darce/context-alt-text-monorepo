@@ -117,7 +117,7 @@ include $(ROOT_MAKEFILE_DIR)/mk/lane-maintenance.mk
 # Root targets
 # =============================================================================
 
-.PHONY: help check-all check-frontend lint-all test-all clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop
+.PHONY: help check-all check-frontend lint-all test-all test-handoff clean-all reset-local fix-php-style mcp mcp-start gemini-cli-setup dev dev-stop
 
 # Default target
 help:
@@ -130,6 +130,7 @@ help:
 	@echo "  make lint-all     - Run linters for all apps"
 	@echo "  make fix-php-style - Auto-fix WordPress plugin PHPCS violations (manual)"
 	@echo "  make test-all     - Run tests for all apps"
+	@echo "  make test-handoff - Run agent-handoff-mcp tests"
 	@echo "  make clean-all    - Clean cache files in all apps"
 	@echo "  make reset-local  - Reset local backend DB + WordPress projection data (destructive, dev-only)"
 	@echo ""
@@ -266,8 +267,21 @@ test-all:
 		echo "=== Testing TypeScript (frontend) ==="; \
 		( cd apps/prototype-wp-alt-context && make test ); \
 		echo ""; \
+		echo "=== Testing Agent Handoff MCP ==="; \
+		$(MAKE) test-handoff; \
+		echo ""; \
 		echo "✅ Tests complete"; \
 	fi
+
+# Test the handoff/MCP package from the monorepo root.
+test-handoff:
+	@set -eu; \
+	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+		echo "Lane worktree detected ($(LANE)); agent-handoff-mcp tests are orchestrator-root tooling tests, so they are skipped here."; \
+		exit 0; \
+	fi; \
+	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
+	$(PYTHON) -m pytest packages/agent-handoff-mcp/tests -q
 
 # Clean all cache files
 clean-all:

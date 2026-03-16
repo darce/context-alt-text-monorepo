@@ -59,6 +59,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         "worktree_lanes",
         "worker_reports",
         "lane_messages",
+        "plan_cursors",
     }
 
     # First bootstrap
@@ -67,7 +68,7 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages')"
+                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors')"
             )
         }
 
@@ -77,11 +78,12 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
             row[0]
             for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name IN "
-                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages')"
+                "('handoff_state','decisions','blockers','next_actions','verified_tests','review_findings','task_archives','worktree_lanes','worker_reports','lane_messages','plan_cursors')"
             )
         }
         review_finding_columns = {row[1] for row in conn.execute("PRAGMA table_info(review_findings)").fetchall()}
         decision_columns = {row[1] for row in conn.execute("PRAGMA table_info(decisions)").fetchall()}
+        plan_cursor_columns = {row[1] for row in conn.execute("PRAGMA table_info(plan_cursors)").fetchall()}
 
     assert first_tables == expected_tables
     assert second_tables == expected_tables
@@ -93,6 +95,58 @@ def test_schema_bootstrap_is_idempotent(isolated_handoff: dict) -> None:
         "last_reopened_at",
         "updated_at",
     }.issubset(review_finding_columns)
+    assert {"plan_item_id", "state", "dispatch_count", "summary"}.issubset(plan_cursor_columns)
+
+
+def test_plan_cursor_crud_round_trip(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="daemon-5-task-plan-driven-orchestrator",
+            objective="Drive work from a task plan",
+            status="in_progress",
+        )
+    )
+
+    created = _parse(
+        mcp_server.upsert_plan_cursor(
+            task_ref="daemon-5-task-plan-driven-orchestrator",
+            plan_item_id="phase-1::phase-1-backend::checklist_1",
+            state="dispatched",
+            lane_id="backend-domain",
+            summary="Implement backend slice",
+            source_heading="Phase 1: Backend",
+        )
+    )
+    assert created["ok"] is True
+    assert created["cursor"]["dispatch_count"] == 1
+
+    fetched = _parse(
+        mcp_server.get_plan_cursor(
+            task_ref="daemon-5-task-plan-driven-orchestrator",
+            plan_item_id="phase-1::phase-1-backend::checklist_1",
+        )
+    )
+    assert fetched["cursor"]["state"] == "dispatched"
+
+    updated = _parse(
+        mcp_server.upsert_plan_cursor(
+            task_ref="daemon-5-task-plan-driven-orchestrator",
+            plan_item_id="phase-1::phase-1-backend::checklist_1",
+            state="completed",
+            lane_id="backend-domain",
+            summary="Implement backend slice",
+        )
+    )
+    assert updated["cursor"]["state"] == "completed"
+    assert updated["cursor"]["completed_at"] is not None
+
+    listed = _parse(
+        mcp_server.list_plan_cursors(
+            task_ref="daemon-5-task-plan-driven-orchestrator",
+            state="completed",
+        )
+    )
+    assert listed["returned"] == 1
 
 
 def test_set_handoff_state_revision_conflict(isolated_handoff: dict) -> None:

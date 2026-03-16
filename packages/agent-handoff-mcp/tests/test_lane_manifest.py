@@ -27,8 +27,20 @@ def manifest_module(tmp_path: Path):
     manifest_dir.mkdir()
     manifest = {
         "task_ref": "demo-task",
+        "task_plan_path": "docs/tasks/demo-task-plan.md",
         "default_done_definition": "done",
         "merge_order": ["backend", "frontend"],
+        "heading_to_lane": {
+            "Phase 1: Backend": "backend",
+            "Phase 2: Frontend": "frontend",
+        },
+        "plan_routing_hints": [
+            {
+                "heading": "Phase 3: Integration",
+                "text_prefix": "Backend integration test:",
+                "lane": "backend",
+            }
+        ],
         "routing": [],
         "lanes": {
             "backend": {
@@ -131,6 +143,21 @@ def test_merge_order_reads_fixture_manifest(manifest_module) -> None:
 def test_guidance_fallbacks_read_manifest_policy(manifest_module) -> None:
     fallbacks = manifest_module.guidance_fallbacks("demo-task", "backend")
     assert fallbacks[0]["subject"] == "backend next slice"
+
+
+def test_task_plan_path_resolves_relative_to_repo_root(manifest_module) -> None:
+    path = manifest_module.task_plan_path("demo-task", orchestrator_root="/tmp/context-alt-text-monorepo")
+    assert path == "/tmp/context-alt-text-monorepo/docs/tasks/demo-task-plan.md"
+
+
+def test_heading_to_lane_reads_manifest_mapping(manifest_module) -> None:
+    mapping = manifest_module.heading_to_lane("demo-task")
+    assert mapping["Phase 1: Backend"] == "backend"
+
+
+def test_plan_routing_hints_reads_manifest_hints(manifest_module) -> None:
+    hints = manifest_module.plan_routing_hints("demo-task")
+    assert hints[0]["text_prefix"] == "Backend integration test:"
 
 
 def test_expand_path_template_replaces_root_placeholder(manifest_module) -> None:

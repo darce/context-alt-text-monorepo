@@ -85,6 +85,20 @@ def test_infer_lane_from_branch_uses_fixture_manifest(manifest_module) -> None:
     assert lane_id == "frontend"
 
 
+def test_infer_task_from_branch_or_worktree_uses_branch_match(manifest_module) -> None:
+    task_ref = manifest_module.infer_task_from_branch_or_worktree("codex/demo-frontend")
+    assert task_ref == "demo-task"
+
+
+def test_infer_task_from_branch_or_worktree_uses_worktree_match(manifest_module) -> None:
+    task_ref = manifest_module.infer_task_from_branch_or_worktree(
+        "feature/unknown",
+        worktree_path="/tmp/context-alt-text-monorepo-demo-backend",
+        orchestrator_root="/tmp/context-alt-text-monorepo",
+    )
+    assert task_ref == "demo-task"
+
+
 def test_get_lane_config_expands_worktree_template_and_derives_commit_paths(manifest_module) -> None:
     lane = manifest_module.get_lane_config(
         "demo-task",

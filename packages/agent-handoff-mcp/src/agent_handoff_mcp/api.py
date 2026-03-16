@@ -45,7 +45,65 @@ update_lane_message = core.update_lane_message
 upsert_worktree_lane = core.upsert_worktree_lane
 
 
-def generate_current_task_md(task_ref: str | None = None, write_file: bool = True) -> str:
+TOOL_DESCRIPTIONS: dict[str, str] = {
+    "set_handoff_state": "Set or update the active handoff task state with optimistic revision protection.",
+    "get_handoff_state": "Read the active or requested task handoff summary, including blockers, actions, tests, and findings.",
+    "upsert_worktree_lane": "Create or update worktree lane metadata for a task, including branch, status, and worktree path.",
+    "list_worktree_lanes": "List registered worktree lanes for the active or requested task.",
+    "get_lane_activity": "Read the current activity summary for a lane, including blockers, actions, findings, messages, and tests.",
+    "record_decision": "Record an orchestrator or worker decision in the handoff ledger for the active task.",
+    "update_next_actions": "Add, update, complete, or skip next-action items for the active task.",
+    "record_test_result": "Record the result of a verification command for the active task.",
+    "report_blocker": "Add, resolve, or reopen a blocker for the active task.",
+    "record_worker_report": "Record a structured worker report for a lane, including summary, changed files, blockers, and merge readiness.",
+    "list_worker_reports": "List recent worker reports for the active or requested task, optionally scoped to a lane.",
+    "record_lane_message": "Create a lane message between orchestrator and worker for the active or requested task.",
+    "update_lane_message": "Update the status of a lane message, such as closing or acknowledging it.",
+    "list_lane_messages": "List lane messages for the active or requested task, optionally filtered by lane, direction, or status.",
+    "record_review_finding": "Record or reopen a review finding for a task with stable finding IDs and optional line metadata.",
+    "update_review_finding": "Mark a review finding fixed, deferred, wontfix, or reopen it with notes.",
+    "reopen_review_finding": "Reopen a previously closed review finding with a reopen reason.",
+    "list_review_findings": "List review findings for the active or requested task, optionally filtered by status or severity.",
+    "get_review_finding": "Fetch a single review finding by stable finding ID or database ID.",
+    "get_review_findings_summary": "Return aggregate counts of review findings by status and severity for the active or requested task.",
+    "reconcile_review_findings": "Compare open findings against current files and return a reconciliation summary for review workflows.",
+    "handoff_close_check": "Evaluate whether a task is ready to close based on open blockers, pending actions, open findings, and lane state.",
+    "generate_current_task_md": "Generate CURRENT_TASK.md from handoff state for the active or requested task.",
+    "export_handoff_state": "Export the task handoff state to a portable JSON snapshot.",
+    "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
+    "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
+    "get_handoff_dashboard": "Return a broader handoff dashboard view across task state, lanes, findings, blockers, and reports.",
+}
+
+
+def _apply_tool_descriptions() -> None:
+    for name, description in TOOL_DESCRIPTIONS.items():
+        tool = globals().get(name)
+        if tool is None:
+            continue
+        existing = getattr(tool, "__doc__", None)
+        if existing and existing.strip():
+            continue
+        tool.__doc__ = description
+
+
+_apply_tool_descriptions()
+
+
+def generate_current_task_md(
+    task_ref: str | None = None,
+    write_file: bool = True,
+    related_task_refs: str | None = None,
+) -> str:
+    """Generate CURRENT_TASK.md for the active task.
+
+    Args:
+        task_ref: The task to render. Defaults to the active task.
+        write_file: Write the markdown to disk.
+        related_task_refs: Comma-separated task_ref values whose open review
+            findings should also appear in the output, grouped under
+            "Related Open Review Findings".
+    """
     raw_state = core._invoke_tool(
         get_handoff_state,
         task_ref=task_ref,
@@ -57,6 +115,14 @@ def generate_current_task_md(task_ref: str | None = None, write_file: bool = Tru
         verbose=True,
     )
     state = json.loads(raw_state)
+
+    if related_task_refs:
+        refs = [r.strip() for r in related_task_refs.split(",") if r.strip()]
+        active_ref = state.get("task_ref", "")
+        refs = [r for r in refs if r != active_ref]
+        if refs:
+            state["related_findings_open"] = core._fetch_related_open_findings(refs)
+
     markdown = core._render_current_task_md(state)
     current_task_path = get_runtime_config().current_task_path
 

@@ -1,15 +1,23 @@
 {
   "servers": {
     "context-alt-text": {
-      "command": "agent-handoff-mcp",
+      "command": "python3",
       "args": [
+        "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
         "--workspace-root",
         "${workspaceFolder}",
+        "--state-dir",
+        "${workspaceFolder}/.task-state",
+        "--current-task-path",
+        "${workspaceFolder}/CURRENT_TASK.md",
+        "--exports-dir",
+        "${workspaceFolder}/.task-state/exports",
         "serve-stdio"
       ],
       "env": {
         "PATH": "${env:PYENV_ROOT}/bin:${env:PYENV_ROOT}/shims:/usr/local/bin:${env:PATH}",
-        "PYENV_ROOT": "${env:PYENV_ROOT}"
+        "PYENV_ROOT": "${env:PYENV_ROOT}",
+        "PYTHONPATH": "${workspaceFolder}/packages/agent-handoff-mcp/src"
       }
     }
   }

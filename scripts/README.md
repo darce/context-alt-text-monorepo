@@ -130,6 +130,7 @@ scripts/worktree-lane brief \
 ```bash
 scripts/worktree-lane status \
   --orchestrator-root /path/to/context-alt-text-monorepo \
+  --task-ref phase-5-retention-export-and-audit-controls \
   --lane-id backend-http \
   --worktree-path /path/to/context-alt-text-monorepo-backend-http
 ```

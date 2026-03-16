@@ -10,7 +10,7 @@ usage() {
 Usage:
   scripts/worktree-lane create --orchestrator-root ROOT --lane-id LANE [--branch BRANCH] [--worktree-path PATH] [--title TITLE] [--objective TEXT] [--owner-agent AGENT] [--status STATUS] [--notes TEXT] [--dry-run]
   scripts/worktree-lane brief --orchestrator-root ROOT --task-ref TASK --lane-id LANE --branch BRANCH --worktree-path PATH [--title TITLE] [--objective TEXT] [--owned-path PATH]... [--required-doc DOC]... [--test-command CMD]... [--non-goal TEXT]... [--definition TEXT]
-  scripts/worktree-lane status --orchestrator-root ROOT [--lane-id LANE] [--worktree-path PATH]
+  scripts/worktree-lane status --orchestrator-root ROOT [--task-ref TASK] [--lane-id LANE] [--worktree-path PATH]
   scripts/worktree-lane report --orchestrator-root ROOT --task-ref TASK --lane-id LANE --session SESSION --summary TEXT [--status STATUS] [--merge-ready] [--guidance-request] [--test-command CMD]... [--blocker TEXT]... [--subject TEXT] [--message TEXT] [--direction DIR] [--worktree-path PATH] [--allow-dirty] [--dry-run]
 
 Notes:
@@ -311,7 +311,7 @@ EOF
     [ -n "$branch" ] || die "--branch is required"
     [ -n "$worktree_path" ] || die "--worktree-path is required"
 
-    STATUS_COMMAND="scripts/worktree-lane status --orchestrator-root $orchestrator_root --lane-id $lane_id --worktree-path $worktree_path"
+    STATUS_COMMAND="scripts/worktree-lane status --orchestrator-root $orchestrator_root --task-ref $task_ref --lane-id $lane_id --worktree-path $worktree_path"
     REPORT_COMMAND="scripts/worktree-lane report --orchestrator-root $orchestrator_root --task-ref $task_ref --lane-id $lane_id --session <session> --summary \"<summary>\" --worktree-path $worktree_path --test-command \"<test command>\" --merge-ready --message \"<optional worker message>\""
 
     export TASK_REF="$task_ref"
@@ -350,12 +350,14 @@ EOF
 
   status)
     orchestrator_root=""
+    task_ref=""
     lane_id=""
     worktree_path=""
 
     while [ "$#" -gt 0 ]; do
       case "$1" in
         --orchestrator-root) orchestrator_root="$2"; shift 2 ;;
+        --task-ref) task_ref="$2"; shift 2 ;;
         --lane-id) lane_id="$2"; shift 2 ;;
         --worktree-path) worktree_path="$2"; shift 2 ;;
         -h|--help) usage; exit 0 ;;
@@ -367,10 +369,10 @@ EOF
     [ -n "$worktree_path" ] || worktree_path="$(git_root)"
     [ -n "$worktree_path" ] || die "could not determine current worktree path"
 
-    run_mcp "$orchestrator_root" "$worktree_path" state
-    run_mcp "$orchestrator_root" "$worktree_path" lane-list --status all
+    run_mcp "$orchestrator_root" "$worktree_path" state ${task_ref:+"$task_ref"}
+    run_mcp "$orchestrator_root" "$worktree_path" lane-list ${task_ref:+--task-ref "$task_ref"} --status all
     if [ -n "$lane_id" ]; then
-      run_mcp "$orchestrator_root" "$worktree_path" lane-activity --lane-id "$lane_id"
+      run_mcp "$orchestrator_root" "$worktree_path" lane-activity --lane-id "$lane_id" ${task_ref:+--task-ref "$task_ref"}
     fi
     ;;
 

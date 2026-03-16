@@ -29,6 +29,7 @@ If you are operating outside the Makefile wrapper, query the shared lane state d
 ```bash
 scripts/worktree-lane status \
   --orchestrator-root /abs/path/to/orchestrator \
+  --task-ref <task-ref> \
   --lane-id <lane-id> \
   --worktree-path /abs/path/to/current-worktree
 ```

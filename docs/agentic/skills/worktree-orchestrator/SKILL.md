@@ -85,6 +85,7 @@ Then monitor the lane with:
 ```bash
 scripts/worktree-lane status \
   --orchestrator-root /abs/path/to/orchestrator \
+  --task-ref <task-ref> \
   --lane-id backend-http \
   --worktree-path /abs/path/to/worktree
 ```

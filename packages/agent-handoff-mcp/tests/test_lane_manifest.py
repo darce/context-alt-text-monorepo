@@ -4,6 +4,8 @@ import importlib.util
 import json
 from pathlib import Path
 
+import pytest
+
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
 SCRIPT_PATH = REPO_ROOT / "scripts" / "mcp" / "lane_manifest.py"
@@ -18,84 +20,116 @@ def _load_lane_manifest_module():
     return module
 
 
-def test_list_task_refs_includes_phase5_manifest() -> None:
+@pytest.fixture()
+def manifest_module(tmp_path: Path):
     module = _load_lane_manifest_module()
+    manifest_dir = tmp_path / "lane-orchestration"
+    manifest_dir.mkdir()
+    manifest = {
+        "task_ref": "demo-task",
+        "default_done_definition": "done",
+        "merge_order": ["backend", "frontend"],
+        "routing": [],
+        "lanes": {
+            "backend": {
+                "branch": "codex/demo-backend",
+                "worktree_path": "{orchestrator_root}-demo-backend",
+                "title": "Backend",
+                "objective": "Backend work",
+                "owned_paths": ["apps/backend/**", "docs/demo.md"],
+                "required_docs": ["docs/agentic/instructions.md"],
+                "test_commands": ["pytest apps/backend/tests -q"],
+                "non_goals": [],
+                "route_hints": ["backend lane"],
+                "guidance_fallbacks": [
+                    {
+                        "match_any": ["remaining backend slice"],
+                        "subject": "backend next slice",
+                        "message": "Finish the backend slice.",
+                    }
+                ],
+                "tooling_paths": ["apps/backend/Makefile"],
+            },
+            "frontend": {
+                "branch": "codex/demo-frontend",
+                "worktree_path": "{orchestrator_root}-demo-frontend",
+                "title": "Frontend",
+                "objective": "Frontend work",
+                "owned_paths": ["apps/frontend/**"],
+                "required_docs": ["docs/agentic/instructions.md"],
+                "test_commands": ["npm test"],
+                "non_goals": [],
+                "commit_paths": ["apps/frontend"],
+                "route_hints": ["frontend lane"],
+                "guidance_fallbacks": [],
+                "tooling_paths": [],
+            },
+        },
+        "downstream": {"backend": ["frontend"], "frontend": []},
+    }
+    (manifest_dir / "demo-task.json").write_text(json.dumps(manifest))
+    original_dir = module.MANIFEST_DIR
+    module.MANIFEST_DIR = manifest_dir
+    try:
+        yield module
+    finally:
+        module.MANIFEST_DIR = original_dir
 
-    task_refs = module.list_task_refs()
 
-    assert "phase-5-retention-export-and-audit-controls" in task_refs
-
-
-def test_infer_lane_from_branch_uses_manifest_branch_mapping() -> None:
-    module = _load_lane_manifest_module()
-
-    lane_id = module.infer_lane_from_branch(
-        "codex/p5-backend-http",
-        "phase-5-retention-export-and-audit-controls",
-    )
-
-    assert lane_id == "backend-http"
+def test_list_task_refs_reads_fixture_manifest(manifest_module) -> None:
+    assert manifest_module.list_task_refs() == ["demo-task"]
 
 
-def test_get_lane_config_expands_worktree_template() -> None:
-    module = _load_lane_manifest_module()
+def test_infer_lane_from_branch_uses_fixture_manifest(manifest_module) -> None:
+    lane_id = manifest_module.infer_lane_from_branch("codex/demo-frontend", "demo-task")
+    assert lane_id == "frontend"
 
-    lane = module.get_lane_config(
-        "phase-5-retention-export-and-audit-controls",
-        "frontend",
+
+def test_get_lane_config_expands_worktree_template_and_derives_commit_paths(manifest_module) -> None:
+    lane = manifest_module.get_lane_config(
+        "demo-task",
+        "backend",
         orchestrator_root="/tmp/context-alt-text-monorepo",
     )
-
     assert lane is not None
-    assert lane["worktree_path"] == "/tmp/context-alt-text-monorepo-p5-frontend"
-    assert lane["branch"] == "codex/p5-frontend"
+    assert lane["worktree_path"] == "/tmp/context-alt-text-monorepo-demo-backend"
+    assert lane["commit_paths"] == ["apps/backend", "docs/demo.md"]
 
 
-def test_route_patterns_reads_manifest_routes() -> None:
-    module = _load_lane_manifest_module()
-
-    patterns = module.route_patterns("phase-5-retention-export-and-audit-controls")
-
-    assert ("apps/prototype-description-service/recognition/interface_adapters/http/", "backend-http") in patterns
+def test_route_patterns_derives_from_owned_paths_when_routing_empty(manifest_module) -> None:
+    patterns = manifest_module.route_patterns("demo-task")
+    assert ("apps/backend/", "backend") in patterns
+    assert ("docs/demo.md", "backend") in patterns
 
 
-def test_lane_route_hints_include_branch_and_path_tokens() -> None:
-    module = _load_lane_manifest_module()
-
-    hints = module.lane_route_hints("phase-5-retention-export-and-audit-controls")
-
-    backend_http = hints["backend-http"]
-    assert "backend-http" in backend_http
-    assert "codex/p5-backend-http" in backend_http
-    assert "{orchestrator_root}-p5-backend-http" in backend_http
+def test_lane_route_hints_include_branch_and_path_tokens(manifest_module) -> None:
+    hints = manifest_module.lane_route_hints("demo-task")
+    backend = hints["backend"]
+    assert "backend" in backend
+    assert "codex/demo-backend" in backend
+    assert "{orchestrator_root}-demo-backend" in backend
 
 
-def test_merge_order_reads_manifest_order() -> None:
-    module = _load_lane_manifest_module()
-
-    order = module.merge_order("phase-5-retention-export-and-audit-controls")
-
-    assert order == ["backend-domain", "backend-http", "wp-proxy", "frontend"]
+def test_merge_order_reads_fixture_manifest(manifest_module) -> None:
+    assert manifest_module.merge_order("demo-task") == ["backend", "frontend"]
 
 
-def test_expand_path_template_replaces_root_placeholder() -> None:
-    module = _load_lane_manifest_module()
+def test_guidance_fallbacks_read_manifest_policy(manifest_module) -> None:
+    fallbacks = manifest_module.guidance_fallbacks("demo-task", "backend")
+    assert fallbacks[0]["subject"] == "backend next slice"
 
-    expanded = module.expand_path_template(
-        "{orchestrator_root}-p5-backend-http",
+
+def test_expand_path_template_replaces_root_placeholder(manifest_module) -> None:
+    expanded = manifest_module.expand_path_template(
+        "{orchestrator_root}-demo-backend",
         orchestrator_root="/tmp/context-alt-text-monorepo",
     )
+    assert expanded == "/tmp/context-alt-text-monorepo-demo-backend"
 
-    assert expanded == "/tmp/context-alt-text-monorepo-p5-backend-http"
 
-
-def test_load_manifest_raises_for_unknown_task() -> None:
-    module = _load_lane_manifest_module()
-
-    import pytest
-
+def test_load_manifest_raises_for_unknown_task(manifest_module) -> None:
     with pytest.raises(FileNotFoundError, match="lane manifest not found"):
-        module.load_manifest("not-a-real-task")
+        manifest_module.load_manifest("not-a-real-task")
 
 
 def test_load_manifest_rejects_non_dict_json(tmp_path: Path) -> None:
@@ -108,9 +142,57 @@ def test_load_manifest_rejects_non_dict_json(tmp_path: Path) -> None:
     original_dir = module.MANIFEST_DIR
     module.MANIFEST_DIR = manifest_dir
     try:
-        import pytest
-
         with pytest.raises(RuntimeError, match="must be a JSON object"):
             module.load_manifest("bad-task")
     finally:
         module.MANIFEST_DIR = original_dir
+
+
+def test_validate_manifest_rejects_missing_required_keys(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    with pytest.raises(RuntimeError, match="missing required top-level key 'merge_order'"):
+        module.validate_manifest({"task_ref": "demo-task"}, tmp_path / "demo-task.json")
+
+
+def test_validate_manifest_rejects_unknown_merge_order_lane(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    manifest = {
+        "task_ref": "demo-task",
+        "merge_order": ["backend", "frontned"],
+        "lanes": {
+            "backend": {
+                "branch": "codex/demo-backend",
+                "worktree_path": "{orchestrator_root}-demo-backend",
+                "owned_paths": [],
+                "test_commands": [],
+            }
+        },
+        "downstream": {"backend": []},
+    }
+    with pytest.raises(RuntimeError, match="merge_order references unknown lane"):
+        module.validate_manifest(manifest, tmp_path / "demo-task.json")
+
+
+def test_validate_manifest_rejects_unknown_downstream_lane(tmp_path: Path) -> None:
+    module = _load_lane_manifest_module()
+    manifest = {
+        "task_ref": "demo-task",
+        "merge_order": ["backend"],
+        "lanes": {
+            "backend": {
+                "branch": "codex/demo-backend",
+                "worktree_path": "{orchestrator_root}-demo-backend",
+                "owned_paths": [],
+                "test_commands": [],
+            }
+        },
+        "downstream": {"backend": ["frontned"]},
+    }
+    with pytest.raises(RuntimeError, match="downstream for lane 'backend' references unknown lane"):
+        module.validate_manifest(manifest, tmp_path / "demo-task.json")
+
+
+def test_phase5_manifest_smoke_loads_without_error() -> None:
+    module = _load_lane_manifest_module()
+    manifest = module.load_manifest("phase-5-retention-export-and-audit-controls")
+    assert manifest["task_ref"] == "phase-5-retention-export-and-audit-controls"

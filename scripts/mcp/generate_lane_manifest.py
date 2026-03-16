@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from pathlib import Path
 from typing import Any
 
@@ -44,17 +45,19 @@ def build_manifest(
     task_ref: str,
     lane_ids: list[str],
     task_plan: str | None = None,
+    prefix: str | None = None,
 ) -> dict[str, Any]:
     required_docs = ["docs/agentic/instructions.md"]
     if task_plan:
         required_docs.append(task_plan)
 
+    name_prefix = prefix.strip() if prefix else task_ref
     lanes: dict[str, Any] = {}
     for lane_id in lane_ids:
         title = _humanize_lane(lane_id)
         lanes[lane_id] = {
-            "branch": _default_branch(task_ref, lane_id),
-            "worktree_path": _default_worktree(task_ref, lane_id),
+            "branch": _default_branch(name_prefix, lane_id),
+            "worktree_path": _default_worktree(name_prefix, lane_id),
             "title": title,
             "objective": f"{title} slice for task {task_ref}.",
             "owned_paths": [],
@@ -64,6 +67,8 @@ def build_manifest(
             "commit_paths": [],
             "commit_subject": f"update {lane_id}",
             "route_hints": _route_hints(lane_id, title),
+            "guidance_fallbacks": [],
+            "tooling_paths": [],
         }
 
     downstream: dict[str, list[str]] = {}
@@ -84,6 +89,7 @@ def _parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Generate a reusable lane manifest scaffold for a task.")
     parser.add_argument("--task-ref", required=True, help="Task ref, used for filename and default branch/worktree names.")
     parser.add_argument("--lane", dest="lanes", action="append", required=True, help="Lane id to include. Repeat for each lane.")
+    parser.add_argument("--prefix", help="Optional short prefix used for default branch/worktree names instead of the full task ref.")
     parser.add_argument("--task-plan", help="Optional task plan path to include in required_docs.")
     parser.add_argument("--output", help="Optional output path. Defaults to config/lane-orchestration/<task-ref>.json.")
     parser.add_argument("--stdout", action="store_true", help="Print the generated manifest instead of writing it.")
@@ -101,7 +107,13 @@ def main() -> int:
         task_ref=args.task_ref,
         lane_ids=lane_ids,
         task_plan=args.task_plan,
+        prefix=args.prefix,
     )
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+    from lane_manifest import validate_manifest
+
+    validate_manifest(manifest, Path("<generated-manifest>"))
     rendered = json.dumps(manifest, indent=2) + "\n"
     if args.stdout:
         print(rendered, end="")

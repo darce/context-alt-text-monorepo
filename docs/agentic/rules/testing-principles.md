@@ -136,6 +136,26 @@ class NullClusterRepository:
 
 Do not maintain multiple divergent fake implementations of the same Protocol across test files. Use a single configurable fake.
 
+### 7. Fixture Data Over Live Config
+
+Tests for generic infrastructure (manifest loaders, config readers, serializers) must use temporary fixture data created by the test, not hardcoded references to a specific live task config. If the live config is renamed or restructured, generic tests should not break.
+
+```python
+# BAD: Coupled to a specific live config file
+def test_load_manifest():
+    data = load_manifest("phase-5-retention-export-and-audit-controls")
+    assert data["merge_order"] == ["backend-domain", ...]
+
+# GOOD: Fixture manifest in tmp_path
+def test_load_manifest(tmp_path):
+    manifest = {"task_ref": "test-task", "merge_order": ["a", "b"], ...}
+    (tmp_path / "test-task.json").write_text(json.dumps(manifest))
+    data = load_manifest("test-task", manifest_dir=tmp_path)
+    assert data["merge_order"] == ["a", "b"]
+```
+
+Keep at most one smoke test asserting the real config file loads without error.
+
 ---
 
 ## Performance Targets

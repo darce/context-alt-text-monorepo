@@ -74,27 +74,19 @@ lane-run: lane-guard
 		fi; \
 		exit "$$_check_rc"; \
 	fi; \
-	PROMPT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-prompt-$(LANE)-XXXXXX")"; \
-	SCHEMA_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-schema-$(LANE)-XXXXXX.json")"; \
 	RESULT_FILE="$$(mktemp "$${TMPDIR:-/tmp}/lane-result-$(LANE)-XXXXXX.json")"; \
-	trap 'rm -f "$$PROMPT_FILE" "$$SCHEMA_FILE" "$$RESULT_FILE"' EXIT INT TERM; \
-	PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_prompt.py" \
+	trap 'rm -f "$$RESULT_FILE"' EXIT INT TERM; \
+	if PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src${PYTHONPATH:+:$$PYTHONPATH}" \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_exec.py" \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
 			--lane-id "$(LANE)" \
-			--worktree-path "$(LANE_WORKTREE_TARGET)" > "$$PROMPT_FILE"; \
-	printf '%s\n' \
-		'' \
-		'When you finish, do not run `make lane-handoff` or `make lane-report` yourself.' \
-		'Return a single JSON object that matches the provided output schema.' \
-		'' \
-		'Set `handoff_action` to:' \
-		'- `merge_ready` only if you produced lane-owned code changes that are ready for orchestrator review' \
-		'- `needs_guidance` if you were blocked, verification was blocked, permissions/sandbox prevented progress, or the assigned issue already appears resolved and now needs orchestrator review instead of new lane code' \
-		>> "$$PROMPT_FILE"; \
-	python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" schema > "$$SCHEMA_FILE"; \
-	if "$$CODEX_CMD" exec -C "$(LANE_WORKTREE_TARGET)" $(CODEX_ARGS) --output-schema "$$SCHEMA_FILE" -o "$$RESULT_FILE" - < "$$PROMPT_FILE"; then \
+			--session "$(SESSION)" \
+			--worktree-path "$(LANE_WORKTREE_TARGET)" \
+			--output-path "$$RESULT_FILE" \
+			--codex-bin "$$CODEX_CMD" \
+			$(if $(CODEX_ARGS),--codex-args "$(CODEX_ARGS)",) \
+			$(if $(filter 1,$(DRY_RUN)),--dry-run,); then \
 		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/lane_result.py" handoff \
 			--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
 			--task-ref "$(TASK)" \
@@ -104,7 +96,7 @@ lane-run: lane-guard
 			--result-file "$$RESULT_FILE"; \
 	else \
 		status=$$?; \
-		echo "codex exec failed before automated handoff could be recorded."; \
+		echo "lane_exec.py failed before automated handoff could be recorded."; \
 		if [ -s "$$RESULT_FILE" ]; then \
 			FAILURE_DIR="$(ORCHESTRATOR_ROOT)/.task-state/exports/lane-run-failures"; \
 			mkdir -p "$$FAILURE_DIR"; \

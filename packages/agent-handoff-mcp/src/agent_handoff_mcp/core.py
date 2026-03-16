@@ -664,6 +664,17 @@ def _render_current_task_md(state: dict) -> str:
             lines.append(f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}")
     else:
         lines.append("- None")
+
+    related = state.get("related_findings_open", {})
+    if related:
+        lines.extend(["", "## Related Open Review Findings"])
+        for ref, ref_findings in related.items():
+            lines.append(f"")
+            lines.append(f"### {ref}")
+            for finding in ref_findings:
+                location = f"{finding.get('file_path')}:{finding.get('line_start')}" if finding.get("line_start") else finding.get("file_path")
+                lines.append(f"- [{finding.get('severity', '').upper()}] {finding.get('finding_id')}: {location} -- {finding.get('description')}")
+
     lines.append("")
     return "\n".join(lines)
 
@@ -694,6 +705,24 @@ def _collect_task_snapshot(conn: sqlite3.Connection, task_ref: str) -> dict:
 def _fetch_handoff_rows(conn: sqlite3.Connection, *, table: str, where_sql: str, order_sql: str, limit: int, params: tuple[object, ...]) -> list[dict]:
     rows = conn.execute(f"SELECT * FROM {table} WHERE {where_sql} ORDER BY {order_sql} LIMIT ?", (*params, limit)).fetchall()
     return [dict(row) for row in rows]
+
+
+def _fetch_related_open_findings(task_refs: list[str]) -> dict[str, list[dict]]:
+    """Query open review findings for multiple task_refs, grouped by task_ref."""
+    if not task_refs:
+        return {}
+    with _get_db_connection() as conn:
+        placeholders = ",".join("?" for _ in task_refs)
+        rows = conn.execute(
+            f"SELECT * FROM review_findings WHERE task_ref IN ({placeholders}) AND status = 'open' "
+            "ORDER BY task_ref, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, created_at DESC",
+            tuple(task_refs),
+        ).fetchall()
+    grouped: dict[str, list[dict]] = {}
+    for row in rows:
+        d = dict(row)
+        grouped.setdefault(d["task_ref"], []).append(d)
+    return grouped
 
 
 def _normalize_optional_text(value: object) -> str | None:

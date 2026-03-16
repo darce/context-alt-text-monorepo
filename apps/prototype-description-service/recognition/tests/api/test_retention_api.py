@@ -7,6 +7,7 @@ from datetime import UTC, datetime
 from types import SimpleNamespace
 from typing import Any
 
+import pytest
 from fastapi import Depends, FastAPI
 from fastapi.testclient import TestClient
 
@@ -458,6 +459,7 @@ def test_audit_endpoint_returns_paginated_events(monkeypatch) -> None:
     assert body["items"][0]["event_type"] == "export_completed"
 
 
+@pytest.mark.asyncio
 async def test_retention_dependency_factories_return_real_implementations() -> None:
     session = FakeSession()
 

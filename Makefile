@@ -203,7 +203,8 @@ help:
 
 # Run all checks across the monorepo, or lane-scoped verification inside a lane worktree.
 check-all:
-	@if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+	@set -eu; \
+	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
 		echo "Lane worktree detected ($(LANE)); running only the checks configured for this lane."; \
 		$(MAKE) lane-check TASK="$(TASK)" LANE="$(LANE)"; \
 		echo ""; \
@@ -216,7 +217,8 @@ check-all:
 	fi
 
 check-frontend:
-	@if [ "$(IN_LANE_WORKTREE)" = "1" ] && [ "$(LANE)" != "frontend" ]; then \
+	@set -eu; \
+	if [ "$(IN_LANE_WORKTREE)" = "1" ] && [ "$(LANE)" != "frontend" ]; then \
 		echo "Lane $(LANE) does not own frontend checks; nothing to run."; \
 		exit 0; \
 	fi
@@ -227,7 +229,8 @@ check-frontend:
 
 # Lint all apps, or lane-scoped verification inside a lane worktree.
 lint-all:
-	@if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+	@set -eu; \
+	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
 		echo "Lane worktree detected ($(LANE)); suppressing monorepo-wide lint targets."; \
 		echo "Running lane-scoped verification commands instead."; \
 		$(MAKE) lane-check TASK="$(TASK)" LANE="$(LANE)"; \
@@ -235,20 +238,21 @@ lint-all:
 		echo "✅ Lane-scoped verification passed for $(LANE)!"; \
 	else \
 		echo "=== Linting Python (backend) ==="; \
-		cd apps/prototype-description-service && make lint; \
+		( cd apps/prototype-description-service && make lint ); \
 		echo ""; \
 		echo "=== Linting TypeScript (frontend) ==="; \
-		cd apps/prototype-wp-alt-context && make lint; \
+		( cd apps/prototype-wp-alt-context && make lint ); \
 		echo ""; \
 		echo "=== Linting PHP (plugin) ==="; \
-		cd apps/prototype-wp-alt-context && composer cs-check; \
+		( cd apps/prototype-wp-alt-context && composer cs-check ); \
 		echo ""; \
 		echo "✅ Linting complete"; \
 	fi
 
 # Test all apps, or lane-scoped verification inside a lane worktree.
 test-all:
-	@if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
+	@set -eu; \
+	if [ "$(IN_LANE_WORKTREE)" = "1" ]; then \
 		echo "Lane worktree detected ($(LANE)); suppressing monorepo-wide test targets."; \
 		echo "Running lane-scoped verification commands instead."; \
 		$(MAKE) lane-check TASK="$(TASK)" LANE="$(LANE)"; \
@@ -256,10 +260,10 @@ test-all:
 		echo "✅ Lane-scoped verification passed for $(LANE)!"; \
 	else \
 		echo "=== Testing Python (backend) ==="; \
-		cd apps/prototype-description-service && make test; \
+		( cd apps/prototype-description-service && make test ); \
 		echo ""; \
 		echo "=== Testing TypeScript (frontend) ==="; \
-		cd apps/prototype-wp-alt-context && make test; \
+		( cd apps/prototype-wp-alt-context && make test ); \
 		echo ""; \
 		echo "✅ Tests complete"; \
 	fi

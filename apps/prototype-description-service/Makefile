@@ -34,14 +34,18 @@ mcp:
 # Forward all lane-* targets to root Makefile (single rule, never goes stale)
 FORCE:
 
+ORCHESTRATOR_ROOT_CMD = git rev-parse --path-format=absolute --git-common-dir | sed 's,/.git$$,,'
+ROOT_MAKEFILE_CMD = "$$($(ORCHESTRATOR_ROOT_CMD))/Makefile"
+LANE_WORKTREE_CMD = "$$(git rev-parse --show-toplevel)"
+
 lane-%: FORCE
-	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
+	@$(MAKE) -f $(ROOT_MAKEFILE_CMD) -C $(LANE_WORKTREE_CMD) $@
 
 worker-daemon: FORCE
-	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
+	@$(MAKE) -f $(ROOT_MAKEFILE_CMD) -C $(LANE_WORKTREE_CMD) $@
 
 worker-daemon-%: FORCE
-	@$(MAKE) -C "$$(git rev-parse --show-toplevel)" $@
+	@$(MAKE) -f $(ROOT_MAKEFILE_CMD) -C $(LANE_WORKTREE_CMD) $@
 
 # Start local PostgreSQL service (native Homebrew install)
 postgres-start:

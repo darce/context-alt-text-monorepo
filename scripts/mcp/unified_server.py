@@ -1896,6 +1896,7 @@ def update_review_finding(
     finding_db_id: int | None = None,
     resolution_notes: str | None = None,
     reopen_reason: str | None = None,
+    task_ref: str | None = None,
     session: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
@@ -1907,6 +1908,7 @@ def update_review_finding(
     reopen_reason: Required when transitioning from a non-open status back to open.
     finding_id: Logical finding key from record_review_finding, e.g. "M-3" (preferred).
     finding_db_id: Legacy integer primary key for backward compatibility.
+    task_ref: Optional task reference. Defaults to active task when omitted.
     """
     if (finding_id is None and finding_db_id is None) or (finding_id is not None and finding_db_id is not None):
         return _json_response(
@@ -1951,7 +1953,7 @@ def update_review_finding(
         )
 
     with _get_db_connection() as conn:
-        resolved_task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         agent, branch, commit_sha = _resolve_write_actor(conn, actor)
         if normalized_finding_id is not None:
             existing = conn.execute(
@@ -2046,6 +2048,7 @@ def reopen_review_finding(
     reason: str,
     finding_id: str | None = None,
     finding_db_id: int | None = None,
+    task_ref: str | None = None,
     session: str | None = None,
     actor: WriteActor | None = None,
 ) -> str:
@@ -2053,12 +2056,14 @@ def reopen_review_finding(
     Reopen a review finding with a required rationale note.
 
     reason: Required short rationale explaining why the finding is reopened.
+    task_ref: Optional task reference. Defaults to active task when omitted.
     """
     return update_review_finding(
         status="open",
         finding_id=finding_id,
         finding_db_id=finding_db_id,
         reopen_reason=reason,
+        task_ref=task_ref,
         session=session,
         actor=actor,
     )

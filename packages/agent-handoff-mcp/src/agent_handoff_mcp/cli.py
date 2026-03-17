@@ -167,6 +167,8 @@ def _build_parser() -> argparse.ArgumentParser:
     review_update_parser.add_argument("--finding-db-id", type=int)
     review_update_parser.add_argument("--resolution-notes")
     review_update_parser.add_argument("--reopen-reason")
+    review_update_parser.add_argument("--verified-commit-sha")
+    review_update_parser.add_argument("--verification-evidence")
     review_update_parser.add_argument("--task-ref")
     review_update_parser.add_argument("--session")
 
@@ -392,6 +394,8 @@ def main() -> None:
                 finding_db_id=args.finding_db_id,
                 resolution_notes=args.resolution_notes,
                 reopen_reason=args.reopen_reason,
+                verified_commit_sha=args.verified_commit_sha,
+                verification_evidence=args.verification_evidence,
                 task_ref=args.task_ref,
                 session=args.session,
             )

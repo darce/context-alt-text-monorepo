@@ -171,3 +171,51 @@ def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> 
     assert payload["ok"] is True
     assert payload["finding"]["task_ref"] == "task-a"
     assert payload["finding"]["status"] == "fixed"
+
+
+def test_review_update_cli_accepts_verified_commit_sha(tmp_path: Path, capsys, monkeypatch) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))
+    json.loads(
+        api.record_review_finding(
+            session="cli",
+            finding_id="M-10",
+            severity="medium",
+            file_path="README.md",
+            description="descendant verification",
+            actor={"agent": "reviewer", "branch": "feature/review", "commit_sha": "abc123"},
+        )
+    )
+
+    from agent_handoff_mcp import core as handoff_core
+
+    monkeypatch.setattr(handoff_core, "_detect_git_write_context", lambda: ("feature/review", "def456"))
+    monkeypatch.setattr(
+        handoff_core,
+        "_classify_commit_relation",
+        lambda reference_sha, candidate_sha: "descendant" if (reference_sha, candidate_sha) == ("abc123", "def456") else "same",
+    )
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "review-update",
+            "--finding-id",
+            "M-10",
+            "--status",
+            "fixed",
+            "--resolution-notes",
+            "Verified on descendant commit def456.",
+            "--verified-commit-sha",
+            "def456",
+            "--task-ref",
+            "task-a",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["finding"]["status"] == "fixed"
+    assert payload["commit_guard"]["verified_commit_sha"] == "def456"

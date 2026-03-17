@@ -167,6 +167,7 @@ def _build_parser() -> argparse.ArgumentParser:
     review_update_parser.add_argument("--finding-db-id", type=int)
     review_update_parser.add_argument("--resolution-notes")
     review_update_parser.add_argument("--reopen-reason")
+    review_update_parser.add_argument("--task-ref")
     review_update_parser.add_argument("--session")
 
     review_list_parser = subparsers.add_parser("review-list")
@@ -391,6 +392,7 @@ def main() -> None:
                 finding_db_id=args.finding_db_id,
                 resolution_notes=args.resolution_notes,
                 reopen_reason=args.reopen_reason,
+                task_ref=args.task_ref,
                 session=args.session,
             )
         )

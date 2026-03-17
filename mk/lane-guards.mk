@@ -2,26 +2,28 @@
 # Lane Guards and Manifest Init
 # =============================================================================
 
-.PHONY: lane-guard lane-orchestrator-guard lane-worker-guard lane-manifest-init
+.PHONY: task-guard lane-guard lane-orchestrator-guard lane-worker-guard lane-manifest-init
 
-lane-guard:
+task-guard:
 	@if [ -z "$(TASK)" ]; then \
 		echo "TASK is required."; \
 		echo "No active task could be inferred from MCP state."; \
-		echo "Example: make lane-open TASK=<task-ref> LANE=<lane>"; \
-		echo "Inspect current state: make state"; \
-		exit 1; \
-	fi
-	@if [ -z "$(LANE)" ]; then \
-		echo "LANE is required."; \
-		echo "No lane could be inferred from branch $(CURRENT_BRANCH)."; \
-		echo "Allowed lanes for $(TASK): $(TASK_LANES)"; \
-		echo "List lane status: make lane-list"; \
+		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
+		echo "Example: make orchestrator-daemon TASK=<task-ref>"; \
 		exit 1; \
 	fi
 	@if [ -z "$(TASK_LANES)" ]; then \
 		echo "Unsupported TASK: $(TASK)"; \
 		echo "Supported task manifests: $(SUPPORTED_TASKS)"; \
+		exit 1; \
+	fi
+
+lane-guard: task-guard
+	@if [ -z "$(LANE)" ]; then \
+		echo "LANE is required."; \
+		echo "No lane could be inferred from branch $(CURRENT_BRANCH)."; \
+		echo "Allowed lanes for $(TASK): $(TASK_LANES)"; \
+		echo "List lane status: make lane-list"; \
 		exit 1; \
 	fi
 	@if [ -z "$(LANE_BRANCH)" ]; then \
@@ -30,7 +32,7 @@ lane-guard:
 		exit 1; \
 	fi
 
-lane-orchestrator-guard: lane-guard
+lane-orchestrator-guard: task-guard
 	@if [ "$(IN_ORCHESTRATOR_ROOT)" != "1" ]; then \
 		echo "lane-commits and lane-intake must be run from the orchestrator root."; \
 		echo "Current worktree: $(WORKTREE_ROOT_REAL)"; \

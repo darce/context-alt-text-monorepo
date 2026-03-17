@@ -201,8 +201,9 @@ During work:
 
 Write-tool targeting rule:
 
-- Write tools target the **active task only**.
+- Write tools target the **active task only** by default.
 - To write against a different task, switch active state first via `set_handoff_state(...)`.
+- **Exception — review finding tools**: `update_review_finding`, `reopen_review_finding`, `get_review_finding`, `list_review_findings`, and `get_review_findings_summary` accept an optional `task_ref` parameter. Pass it explicitly to read or write findings on a non-active task without switching active state. This avoids the disruptive active-task switching that multi-task verification workflows otherwise require.
 
 Before final response:
 
@@ -216,6 +217,7 @@ Read discipline:
 - Do not query `.task-state/handoff.db` directly when MCP tools are available.
 - Use `get_handoff_state` for active-task snapshot, `get_review_findings_summary` for counts, and `list_review_findings`/`get_review_finding` for detailed review verification.
 - `get_review_finding` accepts either `finding_db_id` (integer PK) or `finding_id` (human-readable string like `"H-OCI-28"`). Prefer `finding_id` when referencing findings from review output.
+- `get_review_finding`, `list_review_findings`, and `get_review_findings_summary` accept an optional `task_ref` to query findings on a non-active task. Use this instead of switching active state when verifying findings across multiple tasks.
 - Do **not** use legacy `scripts/mcp/unified_server.py` handoff tools or CLI subcommands. The only supported handoff surface is the packaged `agent-handoff-mcp` binary described in [contracts/agent-handoff-mcp.md](contracts/agent-handoff-mcp.md).
 
 State integrity invariants:
@@ -380,9 +382,10 @@ make lane-clean TASK=phase-5-retention-export-and-audit-controls LANE=backend-ht
 - `make lane-inbox` is the worker polling command. It reads open `orchestrator_to_worker` lane messages from MCP, then shows the latest worker report, recent lane activity, and git status.
 - `make lane-prompt` renders the actionable lane inbox as a deterministic worker prompt. Use it when starting or re-starting a worker session from current MCP state.
 - `make lane-run` launches a fresh `codex exec` in the lane worktree using that generated prompt. It now expects a structured final handoff payload from the worker and auto-submits either `make lane-handoff` or a blocked `make lane-report` based on that result. This is the robust automation path because it avoids trying to inject text into an already-running interactive session and avoids hand-copying blocked-report text.
-- `make worker-daemon` is the continuous worker-side polling loop. Run it from the worker worktree root with `make worker-daemon TASK=<task-ref> LANE=<lane>`. If you are inside an app subdirectory and that checkout has not yet refreshed a forwarding `worker-daemon` target, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon TASK=<task-ref> LANE=<lane>` instead.
+- `make worker-daemon` is the continuous worker-side polling loop. Run it from the worker worktree root with `make worker-daemon TASK=<task-ref> LANE=<lane>`. Set `BACKEND=codex-subagent` to switch execution transport without changing the handoff/worktree model. If you are inside an app subdirectory and that checkout has not yet refreshed a forwarding `worker-daemon` target, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon TASK=<task-ref> LANE=<lane>` instead.
 - `make worker-daemon-status`, `make worker-daemon-stop [FORCE=1]`, `make worker-daemon-resume`, and `make worker-daemon-tail` are the lane-local management commands. They look in the shared orchestrator root for the lock and JSONL log, so you do not need to guess the correct `.task-state` path from inside a worktree.
-- `make orchestrator-daemon` is the continuous root-side loop. It does more than polling: it dispatches open handoff items, polls merge-ready reports, intakes eligible lanes, refreshes downstream lanes, and runs verification. Use `make handoff-dispatch` when you only want to fan out open work without triggering intake behavior.
+- `make orchestrator-daemon` is the shared singleton root-side loop. It does more than polling: it dispatches open handoff items, polls merge-ready reports, intakes eligible lanes, refreshes downstream lanes, and runs verification. Start it from any worktree and it still resolves the same shared orchestrator root state. Use `make handoff-dispatch` when you only want to fan out open work without triggering intake behavior. Set `BACKEND=codex-subagent` to change only the execution backend seam.
+- `make daemon-pause`, `make daemon-resume`, and `make daemon-status` all operate on that same singleton orchestrator state under `$(git rev-parse --git-common-dir)/..`. `make daemon-status` reports the shared state/log paths so you can see exactly which orchestrator root owns the daemon.
 - Worker daemon progress after `cycle_start` is written to `logs/worker-daemon/worker-<lane>.jsonl`. The foreground terminal now also shows `exec_start`, `exec_spawned`, and periodic `exec_heartbeat` lines so operators can tell a long-running worker is still alive without tailing logs.
 - `make handoff-inbox` is the orchestrator polling command. It reads open `worker_to_orchestrator` lane messages from MCP and the latest merge-ready or blocked worker reports across lanes.
 - `make lane-dispatch` is the orchestrator assignment command. It writes an open lane message for a specific worker lane and regenerates `CURRENT_TASK.md` so the dispatch is mirrored for humans.

@@ -717,7 +717,7 @@ def test_update_review_finding_rejects_invalid_status_and_task_mismatch(isolated
     )
     mismatch = _parse(mcp_server.update_review_finding(finding_db_id=finding_id, status="fixed"))
     assert mismatch["ok"] is False
-    assert mismatch["error"] == "Finding not found for active task."
+    assert mismatch["error"] == "Finding not found for task."
 
 
 def test_record_review_finding_accepts_structured_details_and_actor_fallback(isolated_handoff: dict) -> None:
@@ -874,6 +874,68 @@ def test_get_review_finding_respects_task_scope(isolated_handoff: dict) -> None:
     explicit = _parse(mcp_server.get_review_finding(finding_db_id=finding_db_id, task_ref="4.12.0"))
     assert explicit["ok"] is True
     assert explicit["finding"]["finding_id"] == "M-8"
+
+
+def test_update_review_finding_cross_task(isolated_handoff: dict) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cross-update-a",
+            objective="Task A",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-cross",
+            finding_id="CU-1",
+            severity="medium",
+            file_path="core.py",
+            description="Cross-task finding",
+        )
+    )
+    assert created["ok"] is True
+
+    # Switch to a different active task
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="cross-update-b",
+            objective="Task B",
+            status="in_progress",
+            expected_revision=0,
+        )
+    )
+
+    # Without task_ref, finding is invisible to the new active task
+    hidden = _parse(
+        mcp_server.update_review_finding(
+            finding_id="CU-1",
+            status="fixed",
+        )
+    )
+    assert hidden["ok"] is False
+
+    # With explicit task_ref, update succeeds against the original task
+    fixed = _parse(
+        mcp_server.update_review_finding(
+            finding_id="CU-1",
+            status="fixed",
+            task_ref="cross-update-a",
+        )
+    )
+    assert fixed["ok"] is True
+    assert fixed["finding"]["status"] == "fixed"
+
+    # Reopen also works cross-task
+    reopened = _parse(
+        mcp_server.reopen_review_finding(
+            finding_id="CU-1",
+            reason="Needs re-check",
+            task_ref="cross-update-a",
+        )
+    )
+    assert reopened["ok"] is True
+    assert reopened["reopened"] is True
+    assert reopened["finding"]["status"] == "open"
 
 
 def test_get_review_findings_summary_counts_and_limits(isolated_handoff: dict) -> None:

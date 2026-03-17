@@ -191,6 +191,7 @@ def _dispatch_plan_item(
     result = {
         "plan_item_id": plan_item_id,
         "lane_id": lane_id,
+        "lane": lane_id,
         "summary": summary,
         "heading": heading,
     }
@@ -267,6 +268,7 @@ def _dispatch_from_task_plan(
     if not isinstance(manifest, dict):
         return None
     items = parse_task_plan(resolved_plan)
+    unchecked: list[dict[str, Any]] = []
     for item in items:
         if item.checked:
             continue
@@ -275,10 +277,24 @@ def _dispatch_from_task_plan(
         if cursor_payload.get("ok") is not True:
             raise RuntimeError(f"Failed to read plan cursor for {normalized.plan_item_id}.")
         cursor = cursor_payload.get("cursor")
-        if isinstance(cursor, dict) and str(cursor.get("state") or "") in {"dispatched", "completed", "skipped", "escalated"}:
+        cursor_state = str(cursor.get("state") or "") if isinstance(cursor, dict) else ""
+        unchecked.append(
+            {
+                "normalized": normalized,
+                "lane_id": map_plan_item_to_lane(normalized, manifest=manifest),
+                "cursor_state": cursor_state,
+            }
+        )
+
+    merge_order = [lane for lane in manifest.get("merge_order", []) if isinstance(lane, str)]
+    terminal_states = {"completed", "skipped", "escalated"}
+    for entry in unchecked:
+        normalized = entry["normalized"]
+        cursor_state = entry["cursor_state"]
+        if cursor_state in {"dispatched", *terminal_states}:
             continue
 
-        lane_id = map_plan_item_to_lane(normalized, manifest=manifest)
+        lane_id = entry["lane_id"]
         if lane_id is None:
             _escalate_plan_item(
                 task_ref,
@@ -289,6 +305,17 @@ def _dispatch_from_task_plan(
                 log=log,
             )
             continue
+
+        if lane_id in merge_order:
+            lane_index = merge_order.index(lane_id)
+            upstream_lanes = set(merge_order[:lane_index])
+            blocked_by_upstream = any(
+                candidate["lane_id"] in upstream_lanes
+                and candidate["cursor_state"] not in terminal_states
+                for candidate in unchecked
+            )
+            if blocked_by_upstream:
+                continue
 
         if _has_open_plan_action(task_ref, normalized.plan_item_id) or _has_open_plan_message(task_ref, normalized.plan_item_id):
             continue
@@ -307,6 +334,82 @@ def _dispatch_from_task_plan(
         result["line_start"] = normalized.line_start
         return result
     return None
+
+
+def _remaining_plan_work(
+    orchestrator_root: Path,
+    task_ref: str,
+) -> list[dict[str, Any]]:
+    from agent_handoff_mcp import get_plan_cursor
+    from lane_manifest import load_manifest, task_plan_path
+    from task_plan_parser import map_plan_item_to_lane, normalize_plan_item, parse_task_plan
+
+    plan_path = task_plan_path(task_ref, orchestrator_root=str(orchestrator_root))
+    if not isinstance(plan_path, str) or not plan_path.strip():
+        return []
+    resolved_plan = Path(plan_path)
+    if not resolved_plan.exists():
+        raise RuntimeError(f"Task plan path does not exist for {task_ref}: {resolved_plan}")
+
+    manifest = load_manifest(task_ref)
+    if not isinstance(manifest, dict):
+        return []
+
+    remaining: list[dict[str, Any]] = []
+    for item in parse_task_plan(resolved_plan):
+        if item.checked:
+            continue
+        normalized = normalize_plan_item(item)
+        cursor_payload = _json_load(get_plan_cursor(task_ref=task_ref, plan_item_id=normalized.plan_item_id))
+        if cursor_payload.get("ok") is not True:
+            raise RuntimeError(f"Failed to read plan cursor for {normalized.plan_item_id}.")
+        cursor = cursor_payload.get("cursor")
+        cursor_state = str(cursor.get("state") or "") if isinstance(cursor, dict) else ""
+        if cursor_state in {"completed", "skipped", "escalated"}:
+            continue
+        remaining.append(
+            {
+                "plan_item_id": normalized.plan_item_id,
+                "lane_id": map_plan_item_to_lane(normalized, manifest=manifest),
+                "cursor_state": cursor_state,
+            }
+        )
+    return remaining
+
+
+def _resolve_task_ref(orchestrator_root: Path, explicit_task_ref: str | None) -> str:
+    """Resolve the orchestrator task from CLI, MCP state, or a sole manifest."""
+    if explicit_task_ref and explicit_task_ref.strip():
+        return explicit_task_ref.strip()
+
+    from agent_handoff_mcp import RuntimeConfig, configure_runtime, get_handoff_state
+    from lane_manifest import list_task_refs
+
+    state_dir = orchestrator_root / ".task-state"
+    runtime = RuntimeConfig.for_workspace(
+        orchestrator_root,
+        state_dir=state_dir,
+        current_task_path=orchestrator_root / "CURRENT_TASK.md",
+        exports_dir=state_dir / "exports",
+    )
+    configure_runtime(runtime)
+
+    payload = _json_load(get_handoff_state())
+    active_task = str(payload.get("task_ref") or "").strip()
+    if active_task:
+        return active_task
+
+    task_refs = list_task_refs()
+    if len(task_refs) == 1:
+        return task_refs[0]
+    if task_refs:
+        raise RuntimeError(
+            "Unable to infer orchestrator task. Set --task-ref or activate a handoff task. "
+            f"Available manifests: {', '.join(task_refs)}"
+        )
+    raise RuntimeError(
+        "Unable to infer orchestrator task. Set --task-ref or add a lane manifest under config/lane-orchestration/."
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -412,6 +515,9 @@ def daemon_status(state_dir: Path, log_dir: Path) -> dict[str, Any]:
                 break
 
     return {
+        "mode": "singleton",
+        "state_dir": str(state_dir),
+        "log_dir": str(log_dir),
         "lock": lock_info,
         "paused": paused,
         "last_cycle": last_cycle,
@@ -430,9 +536,12 @@ def orchestrator_loop(
     task_ref: str,
     poll_interval: int = 60,
     single_pass: bool = False,
+    backend: str = "codex-cli",
     dry_run: bool = False,
 ) -> int:
     """Main daemon loop.  Returns 0 on clean exit, 1 on failure."""
+    # Backend is currently surfaced for future orchestrator-invoked execution.
+    # The loop itself still coordinates via MCP + Make targets only.
     from agent_handoff_mcp import (
         RuntimeConfig,
         configure_runtime,
@@ -455,12 +564,14 @@ def orchestrator_loop(
     )
     configure_runtime(runtime)
 
-    log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass)
+    log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass, backend=backend)
 
     m_order = manifest_merge_order(task_ref)
     log("INFO", "manifest_loaded", merge_order=m_order)
+    log("INFO", "lanes_discovered", lanes=m_order)
     dispatch_failure_count = 0
     runtime_failure_count = 0
+    plan_stall_count = 0
     guidance_stalls: dict[str, tuple[int, int]] = {}
 
     while True:
@@ -585,8 +696,35 @@ def orchestrator_loop(
 
             close_check = _json_load(handoff_close_check(task_ref=task_ref))
             ready_to_close = bool(close_check.get("ready_to_close"))
+            remaining_plan_items = _remaining_plan_work(orchestrator_root, task_ref)
+            active_plan_dispatches = any(
+                str(row.get("cursor_state") or "") == "dispatched"
+                for row in remaining_plan_items
+            )
+            if remaining_plan_items:
+                log(
+                    "INFO",
+                    "task_plan_remaining",
+                    remaining=len(remaining_plan_items),
+                    dispatched=sum(1 for row in remaining_plan_items if str(row.get("cursor_state") or "") == "dispatched"),
+                )
+            plan_stalled = (
+                bool(remaining_plan_items)
+                and plan_dispatch is None
+                and not active_plan_dispatches
+                and not ordered_ready
+                and not guidance_results
+            )
+            if plan_stalled:
+                plan_stall_count += 1
+                log("ERROR", "task_plan_stalled", remaining=len(remaining_plan_items), stall_count=plan_stall_count)
+                if single_pass or plan_stall_count >= 3:
+                    log("ERROR", "terminal_error", reason="task_plan_stall")
+                    return 1
+            else:
+                plan_stall_count = 0
             runtime_failure_count = 0
-            log("INFO", "close_check_complete", ready_to_close=ready_to_close)
+            log("INFO", "close_check_complete", ready_to_close=ready_to_close, remaining_plan_items=len(remaining_plan_items))
             log("INFO", "cycle_end", intaked=ordered_ready, guidance=len(guidance_results))
         except RuntimeError as exc:
             runtime_failure_count += 1
@@ -598,9 +736,11 @@ def orchestrator_loop(
             time.sleep(poll_interval)
             continue
 
-        if ready_to_close:
+        if ready_to_close and not remaining_plan_items:
             log("INFO", "task_complete", task_ref=task_ref)
             return 0
+        if ready_to_close and remaining_plan_items:
+            log("INFO", "task_close_blocked_by_plan", remaining=len(remaining_plan_items))
 
         if single_pass:
             return 0
@@ -623,12 +763,15 @@ def _parse_args() -> argparse.Namespace:
     run_parser = sub.add_parser("run", help="Run the orchestrator loop.")
     run_parser.add_argument("--orchestrator-root", required=True,
                             help="Absolute path to the monorepo root.")
-    run_parser.add_argument("--task-ref", required=True,
+    run_parser.add_argument("--task-ref",
                             help="MCP task reference.")
     run_parser.add_argument("--poll-interval", type=int, default=60,
                             help="Seconds between poll cycles (default: 60).")
     run_parser.add_argument("--single-pass", action="store_true",
                             help="Run one cycle and exit.")
+    run_parser.add_argument("--backend", default="codex-cli",
+                            choices=("codex-cli", "codex-subagent"),
+                            help="Execution backend to use for orchestrator-invoked operations (default: codex-cli).")
     run_parser.add_argument("--dry-run", action="store_true",
                             help="Skip mutating operations.")
 
@@ -675,6 +818,11 @@ def main() -> int:
     if args.command == "run":
         orchestrator_root = Path(args.orchestrator_root).expanduser().resolve()
         state_dir = orchestrator_root / ".task-state"
+        try:
+            task_ref = _resolve_task_ref(orchestrator_root, args.task_ref)
+        except RuntimeError as exc:
+            print(str(exc), file=sys.stderr)
+            return 1
 
         lock = OrchestratorLock(state_dir)
         if not lock.acquire():
@@ -684,9 +832,10 @@ def main() -> int:
         try:
             return orchestrator_loop(
                 orchestrator_root=orchestrator_root,
-                task_ref=args.task_ref,
+                task_ref=task_ref,
                 poll_interval=args.poll_interval,
                 single_pass=args.single_pass,
+                backend=args.backend,
                 dry_run=args.dry_run,
             )
         finally:

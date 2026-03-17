@@ -107,7 +107,7 @@ def findings_converged(findings: list[dict[str, Any]]) -> bool:
 | File                                | Change                                                                                             |
 | ----------------------------------- | -------------------------------------------------------------------------------------------------- |
 | `scripts/mcp/review_runner.py`      | New CLI/module for prompt building, Codex execution, result validation, and optional MCP recording |
-| `Makefile`                          | Add `review-run` target as a human/operator wrapper around `review_runner.py run`                  |
+| `mk/handoff.mk`                     | Add `review-run` target as a human/operator wrapper around `review_runner.py run`                  |
 | `packages/agent-handoff-mcp/tests/` | Add tests for schema validation, prompt rendering, stack detection, and MCP recording behavior     |
 
 ## Related Files

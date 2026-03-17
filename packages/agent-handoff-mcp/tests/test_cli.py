@@ -136,3 +136,38 @@ def test_lane_cli_smoke(tmp_path: Path, capsys) -> None:
     assert activity_payload["ok"] is True
     assert activity_payload["lane"]["lane_id"] == "frontend"
     assert len(activity_payload["reports"]) == 1
+
+
+def test_review_update_cli_accepts_explicit_task_ref(tmp_path: Path, capsys) -> None:
+    api.configure_runtime(api.RuntimeConfig.for_workspace(tmp_path))
+    json.loads(api.set_handoff_state(task_ref="task-a", objective="task a"))
+    json.loads(
+        api.record_review_finding(
+            session="cli",
+            finding_id="M-9",
+            severity="medium",
+            file_path="README.md",
+            description="cross-task cli update",
+        )
+    )
+    json.loads(api.set_handoff_state(task_ref="task-b", objective="task b", expected_revision=0))
+
+    payload = _run_cli(
+        [
+            "agent-handoff-mcp",
+            "--workspace-root",
+            str(tmp_path),
+            "review-update",
+            "--finding-id",
+            "M-9",
+            "--status",
+            "fixed",
+            "--task-ref",
+            "task-a",
+        ],
+        capsys,
+    )
+
+    assert payload["ok"] is True
+    assert payload["finding"]["task_ref"] == "task-a"
+    assert payload["finding"]["status"] == "fixed"

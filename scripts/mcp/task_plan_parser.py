@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Parse markdown task plans into stable, lane-routable work items."""
-from __future__ import annotations
 
 import re
 from dataclasses import dataclass

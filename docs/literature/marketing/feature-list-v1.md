@@ -80,14 +80,14 @@ Alt Context is a WordPress plugin backed by a dedicated recognition service that
 
 #### Plain-Language Glossary
 
-| Term | What it means |
-|---|---|
-| **Recognition service** | A separate server (hosted by Alt Context) that does the heavy computation -- detecting faces in your photos and figuring out which faces belong to the same person. Your WordPress site talks to it over the internet. |
-| **Curation decisions** | Any choice you make: naming a person, merging two groups of faces, dismissing a suggestion, or rejecting a match. These are stored in your own WordPress database. |
-| **Outbox** | A queue inside your WordPress site that holds changes waiting to be sent to the recognition service. If the service is temporarily unavailable, your edits are saved locally and sent automatically when the connection comes back -- nothing is lost. |
-| **Cluster** | A group of faces the system believes belong to the same person. You review these groups and confirm or correct them. |
-| **Purge** | Permanently deleting recognition data (face detections, clusters, embeddings) from the hosted service on your command. |
-| **Embeddings** | A compact numeric summary of a face that the AI uses to compare faces. These are generated and used by the recognition service; they are never exposed to you or included in data exports. |
+| Term                    | What it means                                                                                                                                                                                                                                          |
+| ----------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Recognition service** | A separate server (hosted by Alt Context) that does the heavy computation -- detecting faces in your photos and figuring out which faces belong to the same person. Your WordPress site talks to it over the internet.                                 |
+| **Curation decisions**  | Any choice you make: naming a person, merging two groups of faces, dismissing a suggestion, or rejecting a match. These are stored in your own WordPress database.                                                                                     |
+| **Outbox**              | A queue inside your WordPress site that holds changes waiting to be sent to the recognition service. If the service is temporarily unavailable, your edits are saved locally and sent automatically when the connection comes back -- nothing is lost. |
+| **Cluster**             | A group of faces the system believes belong to the same person. You review these groups and confirm or correct them.                                                                                                                                   |
+| **Purge**               | Permanently deleting recognition data (face detections, clusters, embeddings) from the hosted service on your command.                                                                                                                                 |
+| **Embeddings**          | A compact numeric summary of a face that the AI uses to compare faces. These are generated and used by the recognition service; they are never exposed to you or included in data exports.                                                             |
 
 ---
 
@@ -157,13 +157,13 @@ Alt Context is a WordPress plugin backed by a dedicated recognition service that
 
 ## Technical Requirements
 
-| Requirement | Detail |
-|---|---|
-| WordPress | 6.0+ |
-| PHP | 8.1+ |
-| Recognition service | Self-hosted FastAPI (Python 3.12+, PostgreSQL + pgvector) |
-| Supported platforms | Linux x86_64 (CPU or CUDA GPU), macOS Apple Silicon |
-| Browser support | Modern browsers (Chrome, Firefox, Safari, Edge -- latest two versions) |
+| Requirement         | Detail                                                                 |
+| ------------------- | ---------------------------------------------------------------------- |
+| WordPress           | 6.0+                                                                   |
+| PHP                 | 8.1+                                                                   |
+| Recognition service | Self-hosted FastAPI (Python 3.12+, PostgreSQL + pgvector)              |
+| Supported platforms | Linux x86_64 (CPU or CUDA GPU), macOS Apple Silicon                    |
+| Browser support     | Modern browsers (Chrome, Firefox, Safari, Edge -- latest two versions) |
 
 ---
 
@@ -177,4 +177,4 @@ Alt Context is a WordPress plugin backed by a dedicated recognition service that
 
 ---
 
-*Alt Context is a commercial WordPress plugin with a free tier for trying it out. Image analysis runs on the Alt Context hosted service and requires purchased tokens. Pricing details are coming soon. Alt Context is under active development. Features described as "next" are planned but not yet shipped.*
+_Alt Context is a commercial WordPress plugin with a free tier for trying it out. Image analysis runs on the Alt Context hosted service and requires purchased tokens. Pricing details are coming soon. Alt Context is under active development. Features described as "next" are planned but not yet shipped._

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import importlib
 import json
 import subprocess
 import sys
@@ -17,6 +18,7 @@ if str(SCRIPT_DIR) not in sys.path:
 
 REPO_ROOT = SCRIPT_DIR.parents[1]
 RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
+BACKEND_CHOICES = ("codex-cli", "codex-subagent")
 
 # Stack guide selection by file extension
 STACK_GUIDES: dict[str, str] = {
@@ -275,12 +277,62 @@ def _codex_exec(prompt: str, worktree_path: Path) -> dict[str, Any]:
         return payload
 
 
+def _subagent_exec(prompt: str, worktree_path: Path, *, env: dict[str, str] | None = None) -> dict[str, Any]:
+    """Execute the optional host-provided Codex subagent bridge for review."""
+    try:
+        bridge = importlib.import_module("codex_subagent_bridge")
+    except ImportError as exc:
+        raise RuntimeError(
+            "codex-subagent backend is unavailable in this runtime. "
+            "Provide a host bridge module named 'codex_subagent_bridge'."
+        ) from exc
+
+    runner = getattr(bridge, "run_subagent", None)
+    if not callable(runner):
+        raise RuntimeError(
+            "codex_subagent_bridge.run_subagent is required for the codex-subagent backend."
+        )
+
+    runner_kwargs: dict[str, Any] = {
+        "prompt": prompt,
+        "schema": REVIEW_OUTPUT_SCHEMA,
+        "cwd": str(worktree_path),
+    }
+    if env is not None:
+        runner_kwargs["env"] = env
+    try:
+        payload = runner(**runner_kwargs)
+    except TypeError as exc:
+        if env is None or "env" not in str(exc):
+            raise
+        payload = runner(prompt=prompt, schema=REVIEW_OUTPUT_SCHEMA, cwd=str(worktree_path))
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"codex-subagent backend returned invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            f"codex-subagent backend returned non-object payload: {type(payload).__name__}"
+        )
+    return payload
+
+
 def _find_codex_path() -> str:
     """Locate the codex binary via the canonical :func:`lane_exec.find_codex`."""
     if str(SCRIPT_DIR) not in sys.path:
         sys.path.insert(0, str(SCRIPT_DIR))
     from lane_exec import find_codex
     return find_codex()
+
+
+def _validate_backend(backend: str) -> str:
+    normalized = backend.strip()
+    if normalized not in BACKEND_CHOICES:
+        raise RuntimeError(
+            f"Unsupported review backend '{backend}'. Valid values: {', '.join(BACKEND_CHOICES)}"
+        )
+    return normalized
 
 
 # ---------------------------------------------------------------------------
@@ -391,10 +443,17 @@ def run_review(
     task_ref: str | None = None,
     session: str | None = None,
     orchestrator_root: Path | None = None,
+    backend: str = "codex-cli",
     record_findings: bool = False,
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run a full review cycle: discover changes, build prompt, execute Codex, validate, optionally record."""
+    backend_name = _validate_backend(backend)
+    env = None
+    if orchestrator_root is not None:
+        from _env import pythonpath_env
+
+        env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
     changed = _changed_files(worktree_path)
     stat = _diff_stat(worktree_path)
     guides = _detect_stack_guides(changed)
@@ -408,6 +467,7 @@ def run_review(
     if dry_run:
         return {
             "dry_run": True,
+            "backend": backend_name,
             "prompt": prompt,
             "findings": [],
             "summary": "Dry-run mode: no review executed.",
@@ -416,7 +476,10 @@ def run_review(
             "stack_guides": guides,
         }
 
-    raw_result = _codex_exec(prompt, worktree_path)
+    if backend_name == "codex-subagent":
+        raw_result = _subagent_exec(prompt, worktree_path, env=env)
+    else:
+        raw_result = _codex_exec(prompt, worktree_path)
     validated = _validate_review_result(raw_result)
 
     output: dict[str, Any] = {
@@ -466,6 +529,12 @@ def _parse_args() -> argparse.Namespace:
     run_parser.add_argument("--session", help="Session identifier (required with --record-findings).")
     run_parser.add_argument("--orchestrator-root", help="Orchestrator root path (required with --record-findings).")
     run_parser.add_argument(
+        "--backend",
+        default="codex-cli",
+        choices=BACKEND_CHOICES,
+        help="Execution backend to use (default: codex-cli).",
+    )
+    run_parser.add_argument(
         "--record-findings",
         action="store_true",
         help="Record findings into MCP before returning.",
@@ -499,6 +568,7 @@ def main() -> int:
         task_ref=args.task_ref,
         session=args.session,
         orchestrator_root=orchestrator_root,
+        backend=args.backend,
         record_findings=args.record_findings,
         dry_run=args.dry_run,
     )

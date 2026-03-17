@@ -77,31 +77,37 @@ def lane_run(...) -> None:
 
 ```python
 def worker_loop(...) -> None:
-    while not _is_paused(...):
-        if not _has_actionable_work(...):
-            _sleep(...)
+    while True:
+        lane_state = poll_lane_state(...)
+        if lane_state != "actionable":
+            _log_dormant_state(...)
+            if single_pass:
+                return
+            time.sleep(poll_interval)
             continue
 
         final_result_path = None
         for cycle in range(max_review_cycles):
-            final_result_path = _run_lane_exec(...)
+            final_result_path = run_lane_exec(...)
             result = _load_result(final_result_path)
             if result["handoff_action"] == "needs_guidance":
-                _record_blocked_handoff(final_result_path)
+                _run_final_handoff(...)
                 break
 
-            findings = _run_self_review(record_findings=True, ...)
+            review_output = run_review(record_findings=True, ...)
+            findings = review_output["findings"]
             if findings_converged(findings):
                 if _run_lane_check(...):
-                    _record_merge_ready_handoff(final_result_path)
+                    _run_final_handoff(...)
                 else:
-                    _record_verification_block(...)
+                    _patch_result(final_result_path, {"handoff_action": "needs_guidance", ...})
+                    _run_final_handoff(...)
                 break
 
-            next_prompt = _build_fix_prompt_from_findings(findings)
-            _persist_cycle_context(next_prompt)
+            prompt_override = build_fix_prompt(...)
         else:
-            _record_review_exhausted_block(...)
+            _patch_result(final_result_path, {"handoff_action": "needs_guidance", ...})
+            _run_final_handoff(...)
 ```
 
 ## Functions to Change
@@ -110,7 +116,8 @@ def worker_loop(...) -> None:
 | ----------------------------------- | ------------------------------------------------------------------------------------------------- |
 | `scripts/mcp/lane_exec.py`          | New non-reporting worker execution primitive                                                      |
 | `scripts/mcp/worker_daemon.py`      | New poll/execute/review/verify/report loop                                                        |
-| `Makefile`                          | Refactor `lane-run` to call `lane_exec.py` + `lane_result.py handoff`; add `worker-daemon` target |
+| `mk/lane-worker.mk`                 | Refactor `lane-run` to call `lane_exec.py` + `lane_result.py handoff`                            |
+| `mk/handoff.mk`                     | Add `worker-daemon` target and related daemon control targets                                     |
 | `packages/agent-handoff-mcp/tests/` | Add daemon tests and result-pipeline coverage                                                     |
 
 ## Related Files
@@ -136,9 +143,9 @@ def worker_loop(...) -> None:
 ## Phase 1: Execution Primitive Refactor
 
 - [x] Move the non-reporting prompt/schema/Codex execution steps out of `make lane-run` into `lane_exec.py`
-- [ ] Keep `make lane-run` as the human wrapper that runs `lane_exec.py` and then `lane_result.py handoff`
+- [x] Keep `make lane-run` as the human wrapper that runs `lane_exec.py` and then `lane_result.py handoff`
 - [x] Ensure result files can be reused by the daemon after review/verification
-- [ ] Test: `make lane-run` still behaves exactly as it does today for human operators
+- [x] Test: `make lane-run` still behaves exactly as it does today for human operators
 
 ## Phase 2: Polling and Locking
 
@@ -169,5 +176,5 @@ def worker_loop(...) -> None:
 
 - [x] `make worker-daemon TASK=<task> LANE=<lane> SINGLE_PASS=1` can pick up work, iterate locally, and emit exactly one final handoff
 - [x] No worker self-fix loop depends on `lane-dispatch`
-- [ ] `make lane-run` remains a stable human-facing command after the refactor
+- [x] `make lane-run` remains a stable human-facing command after the refactor
 - [x] Review findings are recorded before they influence worker retry behavior

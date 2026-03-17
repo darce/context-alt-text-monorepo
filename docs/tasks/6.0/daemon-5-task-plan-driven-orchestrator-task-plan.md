@@ -28,7 +28,7 @@ The orchestrator daemon can now dispatch MCP-stamped work, consume worker guidan
   - `scripts/mcp/orchestrator_helpers.py` for shared logging/JSON/text helpers
   - `scripts/mcp/orchestrator_guidance.py` for worker-guidance classification and response
   - `scripts/mcp/orchestrator_lanes.py` for dispatch/intake/refresh/lane worktree helpers
-- `scripts/mcp/orchestrator_guidance_policy.py` is currently a thin fallback assignment policy layer, not a full planning/parser surface.
+- `scripts/mcp/orchestrator_guidance_policy.py` is currently a thin fallback assignment policy layer, not a full planning/parser surface, and is not modified by daemon-5 plan parsing work.
 - Task plans under `docs/tasks/6.0/` are still treated as human-only planning artifacts.
 - The orchestrator does not continuously scan unchecked checklist items to create the next actionable lane slice.
 - This means work can stall once explicit MCP backlog is exhausted, even when the task plan still has clearly sequenced unchecked items.
@@ -187,6 +187,22 @@ if not dispatchable_items:
     return []
 ```
 
+### Dependency-Aware Dispatch
+
+```python
+lane_order = manifest["merge_order"]
+upstream_lanes = set(lane_order[: lane_order.index(candidate_lane)])
+blocked_by_upstream = any(
+    item.lane_id in upstream_lanes
+    and item.cursor_state not in {"completed", "skipped", "escalated"}
+    for item in unchecked_plan_items
+)
+if blocked_by_upstream:
+    continue
+```
+
+For daemon-5, "upstream dependencies are satisfied" means: every unchecked plan item that maps to a lane earlier in `merge_order` is already in a terminal cursor state (`completed`, `skipped`, or `escalated`). Dispatched or undispatched upstream work blocks downstream lane dispatch.
+
 ### Module Ownership
 
 - `task_plan_parser.parse_task_plan()` -> `scripts/mcp/task_plan_parser.py`
@@ -260,18 +276,18 @@ if not dispatchable_items:
 ## Phase 3: Continuous Dispatch Loop
 
 - [x] Insert task-plan-derived dispatching into the orchestrator daemon cycle after existing MCP backlog handling.
-- [ ] Respect manifest `merge_order` and `downstream` dependencies when choosing the next dispatchable unchecked slice.
+- [x] Respect manifest `merge_order` and `downstream` dependencies when choosing the next dispatchable unchecked slice.
 - [x] Define and enforce the lane-capacity predicate before dispatching a new plan-derived slice.
 - [x] Dispatch the next best unchecked slice to the correct lane when the lane has capacity and no newer assignment.
-- [ ] Continue looping until no unchecked dispatchable plan items remain and MCP close-check passes.
-- [ ] Exit non-zero if the daemon repeatedly cannot classify or dispatch remaining unchecked plan items.
+- [x] Continue looping until no unchecked dispatchable plan items remain and MCP close-check passes.
+- [x] Exit non-zero if the daemon repeatedly cannot classify or dispatch remaining unchecked plan items.
 
 ## Phase 4: Tests
 
 - [x] Unit tests in `packages/agent-handoff-mcp/tests/test_task_plan_parser.py` for markdown parsing, normalization, and stable ID generation.
 - [x] Unit tests for plan-item-to-lane mapping, dependency ordering, and ambiguity handling.
 - [x] Orchestrator-daemon tests that verify plan-derived dispatch is suppressed when equivalent MCP work already exists.
-- [ ] Integration-style test proving the daemon can advance from one unchecked task-plan item to the next across multiple cycles.
+- [x] Integration-style test proving the daemon can advance from one unchecked task-plan item to the next across multiple cycles.
 
 ## Stretch Goals
 
@@ -284,3 +300,4 @@ if not dispatchable_items:
 - [ ] When MCP backlog is empty but the task plan still has unchecked lane-owned work, the orchestrator daemon dispatches the next slice automatically.
 - [ ] The daemon never assigns the same task-plan item twice unless it was explicitly reopened.
 - [ ] Workers can make forward progress from the task plan without requiring manual orchestrator decomposition for every remaining slice.
+- [ ] Task-plan-derived dispatch remains execution-backend-agnostic: daemon-5 emits MCP state, and worker execution transport is chosen independently by daemon-6 (`codex-cli` or `codex-subagent`).

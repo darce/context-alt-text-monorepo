@@ -1566,7 +1566,7 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
         return _json_response(payload)
 
 
-def update_review_finding(status: str, finding_id: str | None = None, finding_db_id: int | None = None, resolution_notes: str | None = None, reopen_reason: str | None = None, session: str | None = None, actor: WriteActor | None = None) -> str:
+def update_review_finding(status: str, finding_id: str | None = None, finding_db_id: int | None = None, resolution_notes: str | None = None, reopen_reason: str | None = None, task_ref: str | None = None, session: str | None = None, actor: WriteActor | None = None) -> str:
     if (finding_id is None and finding_db_id is None) or (finding_id is not None and finding_db_id is not None):
         return _json_response({"ok": False, "error": "Pass exactly one of finding_id (preferred) or finding_db_id."})
     if status not in REVIEW_FINDING_STATUSES:
@@ -1585,14 +1585,14 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
     if normalized_reopen_reason is not None and len(normalized_reopen_reason) > MAX_REOPEN_REASON_LENGTH:
         return _json_response({"ok": False, "error": f"reopen_reason must be <= {MAX_REOPEN_REASON_LENGTH} characters."})
     with _get_db_connection() as conn:
-        resolved_task_ref = _resolve_task_ref(conn, None)
+        resolved_task_ref = _resolve_task_ref(conn, task_ref)
         agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
         existing = conn.execute(
             "SELECT * FROM review_findings WHERE finding_id = ? AND task_ref = ?" if normalized_finding_id is not None else "SELECT * FROM review_findings WHERE id = ? AND task_ref = ?",
             (normalized_finding_id, resolved_task_ref) if normalized_finding_id is not None else (finding_db_id, resolved_task_ref),
         ).fetchone()
         if existing is None:
-            return _json_response({"ok": False, "error": "Finding not found for active task."})
+            return _json_response({"ok": False, "error": "Finding not found for task."})
         existing_status = str(existing["status"])
         is_reopen_transition = existing_status != "open" and status == "open"
         if is_reopen_transition and normalized_reopen_reason is None:
@@ -1626,8 +1626,8 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
         return _json_response(payload)
 
 
-def reopen_review_finding(reason: str, finding_id: str | None = None, finding_db_id: int | None = None, session: str | None = None, actor: WriteActor | None = None) -> str:
-    return update_review_finding(status="open", finding_id=finding_id, finding_db_id=finding_db_id, reopen_reason=reason, session=session, actor=actor)
+def reopen_review_finding(reason: str, finding_id: str | None = None, finding_db_id: int | None = None, task_ref: str | None = None, session: str | None = None, actor: WriteActor | None = None) -> str:
+    return update_review_finding(status="open", finding_id=finding_id, finding_db_id=finding_db_id, reopen_reason=reason, task_ref=task_ref, session=session, actor=actor)
 
 
 def list_review_findings(task_ref: str | None = None, status: str = "all", severity: str = "all", limit: int = 100, offset: int = 0) -> str:

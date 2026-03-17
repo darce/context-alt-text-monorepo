@@ -102,7 +102,7 @@ lane-prompt: lane-guard
 		--lane-id "$(LANE)" \
 		--worktree-path "$(LANE_WORKTREE_TARGET)"
 
-lane-dispatch: lane-orchestrator-guard
+lane-dispatch: lane-guard lane-orchestrator-guard
 	@if [ -z "$(MESSAGE)" ]; then \
 		echo "MESSAGE is required."; \
 		echo "Example: make lane-dispatch TASK=phase-5-retention-export-and-audit-controls LANE=backend-http MESSAGE=\"Wire the retention router to the real services and verify pytest + mypy.\""; \

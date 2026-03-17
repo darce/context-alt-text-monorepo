@@ -2,7 +2,7 @@
 # Handoff / Task State / Daemons
 # =============================================================================
 
-.PHONY: task dashboard state lane-list handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
+.PHONY: task dashboard state list-tasks lane-list handoff-close-check handoff-integrity-check handoff-inbox handoff-dispatch review-dispatch review-run worker-daemon worker-daemon-status worker-daemon-stop worker-daemon-resume worker-daemon-tail orchestrator-daemon daemon-pause daemon-resume daemon-status
 
 # Generate CURRENT_TASK.md from handoff DB
 task:
@@ -19,6 +19,10 @@ state:
 # List all registered worktree lanes and their status
 lane-list:
 	@$(MCP_CMD) $(MCP_STATE_ARGS) lane-list --status all
+
+# List available task manifests
+list-tasks:
+	@printf '%s\n' $(SUPPORTED_TASKS)
 
 # Validate that active handoff state is ready to close
 handoff-close-check:
@@ -99,6 +103,7 @@ review-run:
 		$(if $(LANE),--lane-id "$(LANE)",) \
 		$(if $(TASK),--task-ref "$(TASK)",) \
 		$(if $(SESSION),--session "$(SESSION)",) \
+		$(if $(BACKEND),--backend "$(BACKEND)",) \
 		$(if $(filter 1,$(RECORD_FINDINGS)),--record-findings,) \
 		$(if $(ORCHESTRATOR_ROOT),--orchestrator-root "$(ORCHESTRATOR_ROOT)",$(if $(filter 1,$(RECORD_FINDINGS)),--orchestrator-root "$(WORKTREE_ROOT_REAL)",)) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
@@ -115,6 +120,7 @@ worker-daemon: lane-guard
 		--lane-id "$(LANE)" \
 		--session "$$SESSION" \
 		--worktree-path "$(LANE_WORKTREE_TARGET)" \
+		$(if $(BACKEND),--backend "$(BACKEND)",) \
 		$(if $(MAX_REVIEW_CYCLES),--max-review-cycles "$(MAX_REVIEW_CYCLES)",) \
 		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
 		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
@@ -151,21 +157,22 @@ orchestrator-daemon: lane-orchestrator-guard
 	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
 		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" run \
 		--orchestrator-root "$(ORCHESTRATOR_ROOT)" \
-		--task-ref "$(TASK)" \
+		$(if $(TASK),--task-ref "$(TASK)",) \
+		$(if $(BACKEND),--backend "$(BACKEND)",) \
 		$(if $(POLL_INTERVAL),--poll-interval "$(POLL_INTERVAL)",) \
 		$(if $(filter 1,$(SINGLE_PASS)),--single-pass,) \
 		$(if $(filter 1,$(DRY_RUN)),--dry-run,)
 
 daemon-pause:
-	@python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" pause \
+	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" pause \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
 
 daemon-resume:
-	@python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" resume \
+	@python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" resume \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state"
 
 daemon-status:
 	@PYTHONPATH="$(ORCHESTRATOR_ROOT)/packages/agent-handoff-mcp/src$${PYTHONPATH:+:$$PYTHONPATH}" \
-		python3 "$(WORKTREE_ROOT_REAL)/scripts/mcp/orchestrator_daemon.py" status \
+		python3 "$(ORCHESTRATOR_ROOT)/scripts/mcp/orchestrator_daemon.py" status \
 		--state-dir "$(ORCHESTRATOR_ROOT)/.task-state" \
 		--log-dir "$(ORCHESTRATOR_ROOT)/logs/daemon"

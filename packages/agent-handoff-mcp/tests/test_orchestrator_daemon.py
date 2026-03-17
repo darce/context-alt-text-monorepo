@@ -156,6 +156,9 @@ def test_sort_unknown_lanes_last() -> None:
 def test_daemon_status_empty(tmp_path: Path) -> None:
     mod = _load_module()
     status = mod.daemon_status(tmp_path, tmp_path)
+    assert status["mode"] == "singleton"
+    assert status["state_dir"] == str(tmp_path)
+    assert status["log_dir"] == str(tmp_path)
     assert status["lock"]["held"] is False
     assert status["paused"] is False
     assert status["last_cycle"] is None
@@ -317,9 +320,12 @@ def test_resolve_lane_worktree_none(tmp_path: Path) -> None:
 
 def test_intake_lane_success(tmp_path: Path) -> None:
     mod = _load_module()
-    with mock.patch.object(mod.subprocess, "run") as mock_run:
-        mock_run.return_value = mock.Mock(returncode=0)
-        assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_lane_messages.return_value = json.dumps({"ok": True, "messages": []})
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0)
+            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
     call_args = mock_run.call_args[0][0]
     assert "lane-intake" in call_args
     assert "TASK=test-task" in call_args
@@ -328,18 +334,70 @@ def test_intake_lane_success(tmp_path: Path) -> None:
 
 def test_intake_lane_failure(tmp_path: Path) -> None:
     mod = _load_module()
-    with mock.patch.object(mod.subprocess, "run") as mock_run:
-        mock_run.return_value = mock.Mock(returncode=1)
-        assert mod._intake_lane(tmp_path, "test-task", "lane-a") is False
+    mock_ahm = mock.MagicMock()
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=1)
+            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is False
+    mock_ahm.list_lane_messages.assert_not_called()
+    mock_ahm.update_lane_message.assert_not_called()
 
 
 def test_intake_lane_dry_run(tmp_path: Path) -> None:
     mod = _load_module()
-    with mock.patch.object(mod.subprocess, "run") as mock_run:
-        mock_run.return_value = mock.Mock(returncode=0)
-        mod._intake_lane(tmp_path, "test-task", "lane-a", dry_run=True)
+    mock_ahm = mock.MagicMock()
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0)
+            mod._intake_lane(tmp_path, "test-task", "lane-a", dry_run=True)
     call_args = mock_run.call_args[0][0]
     assert "DRY_RUN=1" in call_args
+    mock_ahm.list_lane_messages.assert_not_called()
+    mock_ahm.update_lane_message.assert_not_called()
+
+
+def test_intake_lane_closes_open_dispatch_messages(tmp_path: Path) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_lane_messages.return_value = json.dumps(
+        {
+            "ok": True,
+            "messages": [
+                {"id": 10, "direction": "orchestrator_to_worker"},
+                {"id": 11, "direction": "worker_to_orchestrator"},
+                {"id": 12, "direction": "orchestrator_to_worker"},
+            ],
+        }
+    )
+    mock_ahm.update_lane_message.return_value = json.dumps({"ok": True})
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0)
+            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
+    assert [call.args for call in mock_ahm.update_lane_message.call_args_list] == [
+        (10, "closed"),
+        (12, "closed"),
+    ]
+
+
+def test_intake_lane_ignores_dispatch_cleanup_failure(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.list_lane_messages.return_value = json.dumps(
+        {
+            "ok": True,
+            "messages": [
+                {"id": 10, "direction": "orchestrator_to_worker"},
+            ],
+        }
+    )
+    mock_ahm.update_lane_message.return_value = json.dumps({"ok": False, "error": "db locked"})
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm}):
+        with mock.patch.object(mod.subprocess, "run") as mock_run:
+            mock_run.return_value = mock.Mock(returncode=0)
+            assert mod._intake_lane(tmp_path, "test-task", "lane-a") is True
+    captured = capsys.readouterr()
+    assert "dispatch-message cleanup failed" in captured.err
 
 
 # ---------------------------------------------------------------------------
@@ -551,6 +609,326 @@ def test_single_pass_dispatches_from_task_plan(tmp_path: Path) -> None:
     )["cursors"]
     assert len(cursors) == 1
     assert cursors[0]["lane_id"] == "backend-domain"
+
+
+def test_single_pass_dispatches_next_eligible_task_plan_item(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text(
+        "## Phase 1: Backend\n"
+        "- [ ] Implement backend slice\n"
+        "- [ ] Verify backend slice\n"
+    )
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path=str(tmp_path / "backend-domain"),
+            branch="codex/p5-backend-domain",
+            status="active",
+            objective="domain work",
+        )
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain"]
+    mock_manifest.downstream_lanes.return_value = []
+    mock_manifest.task_plan_path.return_value = str(plan_path)
+    mock_manifest.load_manifest.return_value = {
+        "task_ref": "phase-5-retention-export-and-audit-controls",
+        "lanes": {"backend-domain": {}},
+        "heading_to_lane": {"Phase 1: Backend": "backend-domain"},
+        "plan_routing_hints": [],
+    }
+
+    dispatch_output = json.dumps({"ok": True})
+    with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr="")):
+            assert mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            ) == 0
+
+            first_cursor = json.loads(
+                mcp_api.list_plan_cursors(
+                    task_ref="phase-5-retention-export-and-audit-controls",
+                    state="dispatched",
+                )
+            )["cursors"]
+            assert len(first_cursor) == 1
+            assert first_cursor[0]["plan_item_id"] == "phase-1::phase-1-backend::checklist_1"
+
+            first_actions = json.loads(
+                mcp_api.list_next_actions(
+                    task_ref="phase-5-retention-export-and-audit-controls",
+                    status="pending",
+                    limit=20,
+                )
+            )["actions"]
+            assert len(first_actions) == 1
+            json.loads(
+                mcp_api.update_next_actions(
+                    operation="update",
+                    action_id=int(first_actions[0]["id"]),
+                    status="done",
+                )
+            )
+
+            first_messages = json.loads(
+                mcp_api.list_lane_messages(
+                    task_ref="phase-5-retention-export-and-audit-controls",
+                    lane_id="backend-domain",
+                    status="open",
+                )
+            )["messages"]
+            assert len(first_messages) == 1
+            json.loads(mcp_api.update_lane_message(int(first_messages[0]["id"]), "closed"))
+
+            json.loads(
+                mcp_api.upsert_plan_cursor(
+                    task_ref="phase-5-retention-export-and-audit-controls",
+                    plan_item_id="phase-1::phase-1-backend::checklist_1",
+                    state="completed",
+                    lane_id="backend-domain",
+                )
+            )
+
+            assert mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            ) == 0
+
+    cursors = json.loads(
+        mcp_api.list_plan_cursors(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            state="dispatched",
+        )
+    )["cursors"]
+    dispatched_ids = {row["plan_item_id"] for row in cursors}
+    assert "phase-1::phase-1-backend::checklist_2" in dispatched_ids
+
+
+def test_single_pass_dispatches_only_one_plan_item_per_cycle(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    plan_path = tmp_path / "docs" / "tasks" / "demo-task-plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text(
+        "## Phase 1: Backend\n"
+        "- [ ] Implement backend slice\n"
+        "- [ ] Verify backend slice\n"
+    )
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path=str(tmp_path / "backend-domain"),
+            branch="codex/p5-backend-domain",
+            status="active",
+            objective="domain work",
+        )
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain"]
+    mock_manifest.downstream_lanes.return_value = []
+    mock_manifest.task_plan_path.return_value = str(plan_path)
+    mock_manifest.load_manifest.return_value = {
+        "task_ref": "phase-5-retention-export-and-audit-controls",
+        "lanes": {"backend-domain": {}},
+        "heading_to_lane": {"Phase 1: Backend": "backend-domain"},
+        "plan_routing_hints": [],
+    }
+
+    dispatch_output = json.dumps({"ok": True})
+    with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr="")):
+            assert mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            ) == 0
+
+    cursors = json.loads(
+        mcp_api.list_plan_cursors(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            state="dispatched",
+        )
+    )["cursors"]
+    assert len(cursors) == 1
+    assert cursors[0]["plan_item_id"] == "phase-1::phase-1-backend::checklist_1"
+
+
+def test_single_pass_prefers_upstream_lane_over_document_order(tmp_path: Path) -> None:
+    mod = _load_module()
+    _configure_real_runtime(tmp_path, "phase-5-retention-export-and-audit-controls")
+    plan_path = tmp_path / "docs" / "tasks" / "dependency-plan.md"
+    plan_path.parent.mkdir(parents=True)
+    plan_path.write_text(
+        "## Phase 3: Backend HTTP\n"
+        "- [ ] Implement HTTP slice\n"
+        "## Phase 1: Backend Domain\n"
+        "- [ ] Implement domain slice\n"
+    )
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-domain",
+            worktree_path=str(tmp_path / "backend-domain"),
+            branch="codex/p5-backend-domain",
+            status="active",
+            objective="domain work",
+        )
+    )
+    json.loads(
+        mcp_api.upsert_worktree_lane(
+            lane_id="backend-http",
+            worktree_path=str(tmp_path / "backend-http"),
+            branch="codex/p5-backend-http",
+            status="active",
+            objective="http work",
+        )
+    )
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain", "backend-http"]
+    mock_manifest.downstream_lanes.return_value = []
+    mock_manifest.task_plan_path.return_value = str(plan_path)
+    mock_manifest.load_manifest.return_value = {
+        "task_ref": "phase-5-retention-export-and-audit-controls",
+        "merge_order": ["backend-domain", "backend-http"],
+        "lanes": {"backend-domain": {}, "backend-http": {}},
+        "heading_to_lane": {
+            "Phase 1: Backend Domain": "backend-domain",
+            "Phase 3: Backend HTTP": "backend-http",
+        },
+        "plan_routing_hints": [],
+    }
+
+    dispatch_output = json.dumps({"ok": True})
+    with mock.patch.dict(sys.modules, {"lane_manifest": mock_manifest}):
+        with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=dispatch_output, stderr="")):
+            assert mod.orchestrator_loop(
+                orchestrator_root=tmp_path,
+                task_ref="phase-5-retention-export-and-audit-controls",
+                single_pass=True,
+            ) == 0
+
+    cursors = json.loads(
+        mcp_api.list_plan_cursors(
+            task_ref="phase-5-retention-export-and-audit-controls",
+            state="dispatched",
+        )
+    )["cursors"]
+    assert len(cursors) == 1
+    assert cursors[0]["lane_id"] == "backend-domain"
+    assert cursors[0]["plan_item_id"] == "phase-1::phase-1-backend-domain::checklist_1"
+
+
+def test_dispatch_plan_item_result_exposes_lane_field(tmp_path: Path) -> None:
+    mod = _load_module()
+    result = mod._dispatch_plan_item(
+        "test-task",
+        lane_id="backend-domain",
+        plan_item_id="phase-1::backend::checklist_1",
+        summary="Implement backend slice",
+        heading="Phase 1: Backend",
+        resolved_plan=tmp_path / "task-plan.md",
+        dry_run=True,
+    )
+    assert result["lane"] == "backend-domain"
+    assert result["lane_id"] == "backend-domain"
+
+
+def test_resolve_task_ref_prefers_explicit_value(tmp_path: Path) -> None:
+    mod = _load_module()
+    assert mod._resolve_task_ref(tmp_path, "explicit-task") == "explicit-task"
+
+
+def test_resolve_task_ref_falls_back_to_active_task(tmp_path: Path) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime.return_value = None
+    mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": "active-task"})
+    mock_manifest = mock.MagicMock()
+    mock_manifest.list_task_refs.return_value = ["active-task", "other-task"]
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        assert mod._resolve_task_ref(tmp_path, None) == "active-task"
+
+
+def test_resolve_task_ref_falls_back_to_sole_manifest(tmp_path: Path) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime.return_value = None
+    mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": ""})
+    mock_manifest = mock.MagicMock()
+    mock_manifest.list_task_refs.return_value = ["only-task"]
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        assert mod._resolve_task_ref(tmp_path, None) == "only-task"
+
+
+def test_resolve_task_ref_errors_when_ambiguous(tmp_path: Path) -> None:
+    mod = _load_module()
+    mock_ahm = mock.MagicMock()
+    mock_ahm.RuntimeConfig.for_workspace.return_value = mock.MagicMock()
+    mock_ahm.configure_runtime.return_value = None
+    mock_ahm.get_handoff_state.return_value = json.dumps({"ok": True, "task_ref": ""})
+    mock_manifest = mock.MagicMock()
+    mock_manifest.list_task_refs.return_value = ["task-a", "task-b"]
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with pytest.raises(RuntimeError, match="Available manifests: task-a, task-b"):
+            mod._resolve_task_ref(tmp_path, None)
+
+
+def test_main_run_errors_clearly_when_task_inference_is_ambiguous(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
+    mod = _load_module()
+    args = mock.Mock(
+        command="run",
+        orchestrator_root=str(tmp_path),
+        task_ref=None,
+        poll_interval=60,
+        single_pass=True,
+        backend="codex-cli",
+        dry_run=True,
+    )
+    with mock.patch.object(mod, "_parse_args", return_value=args):
+        with mock.patch.object(mod, "_resolve_task_ref", side_effect=RuntimeError("Available manifests: task-a, task-b")):
+            assert mod.main() == 1
+    captured = capsys.readouterr()
+    assert "Available manifests: task-a, task-b" in captured.err
+
+
+def test_single_pass_logs_lanes_discovered(tmp_path: Path) -> None:
+    mod = _load_module()
+    state_dir = tmp_path / ".task-state"
+    state_dir.mkdir()
+
+    mock_ahm = _make_mock_ahm()
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = ["backend-domain", "backend-http"]
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {
+        "agent_handoff_mcp": mock_ahm,
+        "lane_manifest": mock_manifest,
+    }):
+        with mock.patch.object(mod, "_log") as mock_log:
+            with mock.patch.object(mod.subprocess, "run", return_value=mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")):
+                result = mod.orchestrator_loop(
+                    orchestrator_root=tmp_path,
+                    task_ref="test-task",
+                    single_pass=True,
+                )
+    assert result == 0
+    assert any(
+        call.args[2] == "lanes_discovered" and call.kwargs.get("lanes") == ["backend-domain", "backend-http"]
+        for call in mock_log.call_args_list
+    )
 
 
 def test_single_pass_intakes_ready_lane(tmp_path: Path) -> None:
@@ -930,7 +1308,7 @@ def test_apply_guidance_resolution_closes_messages_and_records_dispatch(tmp_path
     mock_ahm.record_decision.assert_called_once()
 
 
-def test_apply_guidance_resolution_review_does_not_complete_all_pending_actions(tmp_path: Path) -> None:
+def test_apply_guidance_resolution_review_completes_pending_actions(tmp_path: Path) -> None:
     mod = _load_module()
     resolution = mod.GuidanceResolution(
         kind="review",
@@ -975,7 +1353,7 @@ def test_apply_guidance_resolution_review_does_not_complete_all_pending_actions(
             resolution=resolution,
             dry_run=False,
         )
-    mock_ahm.update_next_actions.assert_not_called()
+    mock_ahm.update_next_actions.assert_called_once_with(operation="update", action_id=7, status="done")
 
 
 def test_resolve_guidance_cycle_integration_redispatch(tmp_path: Path) -> None:
@@ -1068,7 +1446,6 @@ def test_resolve_guidance_cycle_integration_review_closes_dispatch(tmp_path: Pat
             status="blocked",
         )
     )
-
     results = mod._resolve_guidance_cycle(tmp_path, "phase-5-retention-export-and-audit-controls")
 
     assert [row.kind for row in results] == ["review"]
@@ -1301,6 +1678,54 @@ def test_single_pass_ready_to_close_exits_success(tmp_path: Path) -> None:
                 single_pass=True,
             )
     assert result == 0
+
+
+def test_single_pass_ready_to_close_with_remaining_plan_work_returns_error(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm(ready_to_close=True)
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_remaining_plan_work", return_value=[{"plan_item_id": "p1", "cursor_state": "", "lane_id": "backend-domain"}]):
+            with mock.patch.object(mod.subprocess, "run") as mock_run:
+                mock_run.return_value = mock.Mock(returncode=0, stdout=json.dumps({"ok": True}), stderr="")
+                result = mod.orchestrator_loop(
+                    orchestrator_root=tmp_path,
+                    task_ref="phase-5-retention-export-and-audit-controls",
+                    single_pass=True,
+                )
+    assert result == 1
+
+
+def test_long_running_plan_stall_exits_after_threshold(tmp_path: Path) -> None:
+    mod = _load_module()
+    (tmp_path / ".task-state").mkdir()
+    mock_ahm = _make_mock_ahm(ready_to_close=False)
+    mock_ahm.list_worker_reports.return_value = json.dumps({"ok": True, "reports": []})
+
+    mock_manifest = mock.MagicMock()
+    mock_manifest.merge_order.return_value = []
+    mock_manifest.downstream_lanes.return_value = []
+
+    with mock.patch.dict(sys.modules, {"agent_handoff_mcp": mock_ahm, "lane_manifest": mock_manifest}):
+        with mock.patch.object(mod, "_run_handoff_dispatch", return_value={"ok": True}):
+            with mock.patch.object(mod, "_resolve_guidance_cycle", return_value=[]):
+                with mock.patch.object(mod, "_dispatch_from_task_plan", return_value=None):
+                    with mock.patch.object(mod, "_poll_merge_ready_lanes", return_value=[]):
+                        with mock.patch.object(mod, "_remaining_plan_work", return_value=[{"plan_item_id": "p1", "cursor_state": "", "lane_id": "backend-domain"}]):
+                            with mock.patch.object(mod.time, "sleep", return_value=None):
+                                result = mod.orchestrator_loop(
+                                    orchestrator_root=tmp_path,
+                                    task_ref="phase-5-retention-export-and-audit-controls",
+                                    single_pass=False,
+                                    poll_interval=0,
+                                )
+    assert result == 1
 
 
 # ---------------------------------------------------------------------------

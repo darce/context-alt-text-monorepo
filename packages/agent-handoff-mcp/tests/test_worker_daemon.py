@@ -106,6 +106,20 @@ def test_log_appends_multiple_entries(tmp_path: Path) -> None:
     assert len(lines) == 2
 
 
+def test_log_rotates_when_file_exceeds_limit(tmp_path: Path) -> None:
+    mod = _load_module()
+    log_file = tmp_path / "worker-test-lane.jsonl"
+    log_file.write_text("x" * mod._MAX_LOG_BYTES)
+
+    mod._log("test-lane", tmp_path, "INFO", "rotated")
+
+    rotated = tmp_path / "worker-test-lane.jsonl.1"
+    assert rotated.exists()
+    assert rotated.read_text() == "x" * mod._MAX_LOG_BYTES
+    entry = json.loads(log_file.read_text().strip())
+    assert entry["event"] == "rotated"
+
+
 def test_pythonpath_env_sets_lane_tempdir_and_backend_pyenv() -> None:
     mod = _load_module()
     env = mod.pythonpath_env(
@@ -437,6 +451,7 @@ def test_worker_loop_single_pass_needs_guidance(tmp_path: Path) -> None:
 
     assert rc == 0
     mock_handoff.assert_called_once()
+    assert not result_file.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -488,6 +503,7 @@ def test_worker_loop_single_pass_converged(tmp_path: Path) -> None:
 
     assert rc == 0
     mock_handoff.assert_called_once()
+    assert not result_file.exists()
 
 
 # ---------------------------------------------------------------------------
@@ -533,6 +549,8 @@ def test_worker_loop_review_exhausted(tmp_path: Path) -> None:
         mock.patch("review_runner.run_review", return_value=non_converged_review),
         mock.patch("review_runner.findings_converged", return_value=False),
         mock.patch.object(mod, "_run_final_handoff", return_value=0) as mock_handoff,
+        mock.patch.object(mod, "_patch_result") as mock_patch_result,
+        mock.patch.object(mod, "_cleanup_result_file") as mock_cleanup,
         mock.patch("subprocess.run") as mock_subprocess,
     ):
         # Mock subprocess for the base prompt re-render in fix cycles
@@ -549,12 +567,15 @@ def test_worker_loop_review_exhausted(tmp_path: Path) -> None:
             dry_run=True,
         )
 
+    assert rc == 0
     # Should have called handoff (blocked due to exhaustion)
     mock_handoff.assert_called_once()
-    # The result should be patched to needs_guidance
-    data = json.loads(result_file.read_text())
-    assert data["handoff_action"] == "needs_guidance"
-    assert any("converge" in b.lower() for b in data.get("blockers", []))
+    mock_patch_result.assert_called_once()
+    patched_path, patched_overrides = mock_patch_result.call_args.args
+    assert patched_path == result_file
+    assert patched_overrides["handoff_action"] == "needs_guidance"
+    assert any("converge" in b.lower() for b in patched_overrides.get("blockers", []))
+    mock_cleanup.assert_called_once_with(result_file)
 
 
 def test_worker_loop_logs_fix_prompt_failure(tmp_path: Path) -> None:
@@ -606,6 +627,54 @@ def test_worker_loop_logs_fix_prompt_failure(tmp_path: Path) -> None:
         )
 
     assert any(call.args[3] == "fix_prompt_failed" for call in mock_log.call_args_list)
+
+
+def test_worker_loop_subagent_backend_skips_find_codex_and_threads_backend(tmp_path: Path) -> None:
+    mod = _load_module()
+    if str(SCRIPT_DIR) not in sys.path:
+        sys.path.insert(0, str(SCRIPT_DIR))
+
+    result_file = tmp_path / "result.json"
+    result_file.write_text(json.dumps({
+        "handoff_action": "merge_ready",
+        "summary": "Feature implemented.",
+        "details": "Implemented the router.",
+        "tests_run": ["make test"],
+        "blockers": [],
+    }))
+
+    review_result: dict[str, Any] = {
+        "findings": [],
+        "summary": "No serious issues.",
+        "converged": True,
+        "changed_files": ["src/foo.py"],
+        "stack_guides": [],
+    }
+
+    with (
+        mock.patch.object(mod, "poll_lane_state", return_value="actionable"),
+        mock.patch("lane_exec.find_codex") as mock_find_codex,
+        mock.patch("lane_exec.run_lane_exec", return_value=result_file) as mock_run_lane_exec,
+        mock.patch("review_runner.run_review", return_value=review_result) as mock_run_review,
+        mock.patch("review_runner.findings_converged", return_value=True),
+        mock.patch.object(mod, "_run_final_handoff", return_value=0) as mock_handoff,
+    ):
+        rc = mod.worker_loop(
+            orchestrator_root=REPO_ROOT,
+            task_ref="task",
+            lane_id="test-lane",
+            session="task-test-lane",
+            worktree_path=tmp_path,
+            single_pass=True,
+            backend="codex-subagent",
+            dry_run=True,
+        )
+
+    assert rc == 0
+    mock_find_codex.assert_not_called()
+    assert mock_run_lane_exec.call_args.kwargs["backend"] == "codex-subagent"
+    assert mock_run_review.call_args.kwargs["backend"] == "codex-subagent"
+    mock_handoff.assert_called_once()
 
 
 # ---------------------------------------------------------------------------

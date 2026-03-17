@@ -138,7 +138,7 @@ lane-clean: lane-guard
 lane-path: lane-guard
 	@printf '%s\n' "$(LANE_WORKTREE)"
 
-lane-commits: lane-orchestrator-guard
+lane-commits: lane-guard lane-orchestrator-guard
 	@set -eu; \
 	COMMITS="$$(git rev-list --reverse HEAD..$(LANE_BRANCH))"; \
 	if [ -z "$$COMMITS" ]; then \
@@ -147,7 +147,7 @@ lane-commits: lane-orchestrator-guard
 		git log --oneline --reverse HEAD..$(LANE_BRANCH); \
 	fi
 
-lane-intake: lane-orchestrator-guard
+lane-intake: lane-guard lane-orchestrator-guard
 	@set -eu; \
 	if ! git diff --quiet || ! git diff --cached --quiet || [ -n "$$(git ls-files --others --exclude-standard)" ]; then \
 		echo "Orchestrator root is dirty. Commit, stash, or clean it before lane intake."; \

@@ -9,13 +9,24 @@ from pathlib import Path
 from fastmcp.client import Client, PythonStdioTransport
 
 
-def test_vscode_adapter_points_to_installed_binary_and_fallback_doctor_runs() -> None:
+def test_vscode_adapter_points_to_repo_local_launcher_and_doctor_runs() -> None:
     repo_root = Path(__file__).resolve().parents[3]
     config = json.loads((repo_root / ".vscode" / "mcp.json").read_text())
 
     server = config["servers"]["context-alt-text"]
-    assert server["command"] == "agent-handoff-mcp"
-    assert server["args"] == ["--workspace-root", "${workspaceFolder}", "serve-stdio"]
+    assert server["command"] == "python3"
+    assert server["args"] == [
+        "${workspaceFolder}/packages/agent-handoff-mcp/src/agent_handoff_mcp_launcher.py",
+        "--workspace-root",
+        "${workspaceFolder}",
+        "--state-dir",
+        "${workspaceFolder}/.task-state",
+        "--current-task-path",
+        "${workspaceFolder}/CURRENT_TASK.md",
+        "--exports-dir",
+        "${workspaceFolder}/.task-state/exports",
+        "serve-stdio",
+    ]
 
     result = subprocess.run(
         ["./scripts/mcp/mcp-server.sh", "doctor"],

@@ -69,6 +69,8 @@ def _intake_lane(
     orchestrator_root: Path, task_ref: str, lane_id: str, *, dry_run: bool = False,
 ) -> bool:
     """Run ``make lane-intake`` for a single lane.  Returns True on success."""
+    from agent_handoff_mcp import list_lane_messages, update_lane_message
+
     cmd = [
         "make", "lane-intake",
         f"TASK={task_ref}",
@@ -79,7 +81,32 @@ def _intake_lane(
     result = subprocess.run(
         cmd, cwd=orchestrator_root, capture_output=True, text=True, check=False,
     )
-    return result.returncode == 0
+    if result.returncode != 0:
+        return False
+    if dry_run:
+        return True
+
+    try:
+        payload = _json_load(
+            list_lane_messages(task_ref=task_ref, lane_id=lane_id, status="open", limit=200)
+        )
+        if payload.get("ok") is not True:
+            raise RuntimeError(f"Failed to list lane messages for {lane_id}.")
+        for row in payload.get("messages", []):
+            if not isinstance(row, dict) or row.get("direction") != "orchestrator_to_worker":
+                continue
+            message_id = row.get("id")
+            if message_id is None:
+                continue
+            update = _json_load(update_lane_message(int(message_id), "closed"))
+            if update.get("ok") is not True:
+                raise RuntimeError(f"Failed to close dispatch message {message_id} for {lane_id}.")
+    except RuntimeError as exc:
+        print(
+            f"warning: lane intake succeeded but dispatch-message cleanup failed for {lane_id}: {exc}",
+            file=sys.stderr,
+        )
+    return True
 
 
 # ---------------------------------------------------------------------------

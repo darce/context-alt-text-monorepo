@@ -883,6 +883,25 @@ def test_resolve_task_ref_errors_when_ambiguous(tmp_path: Path) -> None:
             mod._resolve_task_ref(tmp_path, None)
 
 
+def test_parse_args_run_accepts_optional_task_ref_and_backend() -> None:
+    mod = _load_module()
+    argv = [
+        "orchestrator_daemon.py",
+        "run",
+        "--orchestrator-root",
+        "/tmp/orchestrator-root",
+        "--backend",
+        "codex-subagent",
+        "--single-pass",
+    ]
+    with mock.patch.object(sys, "argv", argv):
+        args = mod._parse_args()
+    assert args.command == "run"
+    assert args.task_ref is None
+    assert args.backend == "codex-subagent"
+    assert args.single_pass is True
+
+
 def test_main_run_errors_clearly_when_task_inference_is_ambiguous(tmp_path: Path, capsys: pytest.CaptureFixture[str]) -> None:
     mod = _load_module()
     args = mock.Mock(
@@ -899,6 +918,35 @@ def test_main_run_errors_clearly_when_task_inference_is_ambiguous(tmp_path: Path
             assert mod.main() == 1
     captured = capsys.readouterr()
     assert "Available manifests: task-a, task-b" in captured.err
+
+
+def test_main_run_threads_backend_to_orchestrator_loop(tmp_path: Path) -> None:
+    mod = _load_module()
+    args = mock.Mock(
+        command="run",
+        orchestrator_root=str(tmp_path),
+        task_ref=None,
+        poll_interval=15,
+        single_pass=True,
+        backend="codex-subagent",
+        dry_run=True,
+    )
+    mock_lock = mock.Mock()
+    mock_lock.acquire.return_value = True
+    with mock.patch.object(mod, "_parse_args", return_value=args):
+        with mock.patch.object(mod, "_resolve_task_ref", return_value="resolved-task"):
+            with mock.patch.object(mod, "OrchestratorLock", return_value=mock_lock):
+                with mock.patch.object(mod, "orchestrator_loop", return_value=0) as mock_loop:
+                    assert mod.main() == 0
+    mock_loop.assert_called_once_with(
+        orchestrator_root=tmp_path.resolve(),
+        task_ref="resolved-task",
+        poll_interval=15,
+        single_pass=True,
+        backend="codex-subagent",
+        dry_run=True,
+    )
+    mock_lock.release.assert_called_once()
 
 
 def test_single_pass_logs_lanes_discovered(tmp_path: Path) -> None:

@@ -128,6 +128,22 @@ These items apply regardless of language. Stack-specific items are in the langua
 
 **Mutable-record provenance:** For lifecycle/status updates, confirm updater context does not erase original creator metadata (`agent`, `branch`, `commit_sha`).
 
+**IDE stale-file guard:** Editor-integrated file-reading tools (`read_file`, `grep_search`) may return cached content after git operations or external writes. Before recording a finding that claims a function/feature is missing, run `grep -n '<function_name>' <file>` in the terminal to confirm. File-length mismatches (terminal `wc -l` vs tool output) are a strong signal of stale cache.
+
+**False-fix detection (review finding closures):** When an agent (or operator) marks review findings as `fixed`, verify each closure individually:
+
+- [ ] The claimed code change actually exists in the current working tree (grep for the function/variable/log-event by name).
+- [ ] Resolution notes reference real file paths and real function names that can be verified with a single `grep` command.
+- [ ] Findings closed in rapid succession (3+ in under 60 seconds) are suspect -- each must show independent evidence of the fix.
+- [ ] Previously-reopened findings (reopen_count >= 2) require `verification_evidence` containing concrete proof (grep output, diff snippet, or code excerpt).
+- [ ] Plan documents updated alongside bulk closures are cross-checked against the actual code to prevent circular false claims.
+
+The `update_review_finding` MCP tool enforces two structural guards automatically:
+1. **Reopen escalation:** Findings reopened >= 2 times cannot be marked `fixed` without a `verification_evidence` parameter containing proof the fix exists.
+2. **Batch-close detection:** When 2+ findings for the same task have been fixed within the last 60 seconds, subsequent closures require `verification_evidence`.
+
+Both guards can be satisfied by providing `--verification-evidence` (CLI) or `verification_evidence` (MCP tool) with grep output, diff excerpts, or code snippets proving the fix.
+
 ---
 
 ## Finding Categories
@@ -217,6 +233,17 @@ Call `review-record` / `record_review_finding` with:
 
 Do not use direct `sqlite3` shell queries for MCP handoff verification when these tools are available.
 Do not mention a finding in chat before it exists in MCP handoff with a stable `finding_id`.
+
+### Closing Findings (verification_evidence)
+
+When marking a finding as `fixed`, the `update_review_finding` / `review-update` tool accepts an optional `verification_evidence` parameter (string, max 2000 chars). This field is **required** when:
+
+- The finding has been reopened 2+ times (reopen escalation guard)
+- 2+ findings for the same task were already fixed in the last 60 seconds (batch-close guard)
+
+Good evidence: `grep -n 'function_name' path/to/file.py` output, `git diff` excerpts, or inline code snippets proving the fix exists. Bad evidence: restating the resolution notes or referencing the commit SHA alone (the commit guard already covers that).
+
+When either guard rejects the closure, the response includes a `false_fix_guard` object identifying which guard fired and current thresholds.
 
 ### Severity Mapping
 

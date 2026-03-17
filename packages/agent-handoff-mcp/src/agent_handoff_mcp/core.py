@@ -121,6 +121,7 @@ CREATE TABLE IF NOT EXISTS review_findings (
     last_reopen_reason TEXT,
     last_reopened_at TEXT,
     resolved_at   TEXT,
+    verification_evidence TEXT,
     created_at    TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at    TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -231,6 +232,10 @@ REVIEW_FINDING_STATUSES = {"open", "fixed", "wontfix", "deferred"}
 REVIEW_FINDING_SEVERITIES = {"high", "medium", "low"}
 MAX_RESOLUTION_NOTES_LENGTH = 500
 MAX_REOPEN_REASON_LENGTH = 500
+MAX_VERIFICATION_EVIDENCE_LENGTH = 2000
+BATCH_CLOSE_WINDOW_SECONDS = 60
+BATCH_CLOSE_THRESHOLD = 2
+REOPEN_ESCALATION_THRESHOLD = 2
 SUBPROCESS_TIMEOUT = 10
 
 
@@ -466,6 +471,7 @@ def _apply_handoff_migrations(conn: sqlite3.Connection) -> None:
             ("last_reopen_reason", "ALTER TABLE review_findings ADD COLUMN last_reopen_reason TEXT"),
             ("last_reopened_at", "ALTER TABLE review_findings ADD COLUMN last_reopened_at TEXT"),
             ("updated_at", "ALTER TABLE review_findings ADD COLUMN updated_at TEXT"),
+            ("verification_evidence", "ALTER TABLE review_findings ADD COLUMN verification_evidence TEXT"),
         ]:
             if not _has_column(conn, "review_findings", column):
                 conn.execute(sql)
@@ -823,6 +829,62 @@ def _detect_git_write_context() -> tuple[str | None, str | None]:
     if branch is None:
         branch = "unknown-branch"
     return branch, commit_sha
+
+
+def _git_is_ancestor(ancestor_sha: str | None, descendant_sha: str | None) -> bool | None:
+    normalized_ancestor = _normalize_optional_text(ancestor_sha)
+    normalized_descendant = _normalize_optional_text(descendant_sha)
+    if normalized_ancestor is None or normalized_descendant is None:
+        return None
+    if normalized_ancestor == normalized_descendant:
+        return True
+    try:
+        proc = _run_cmd(["git", "merge-base", "--is-ancestor", normalized_ancestor, normalized_descendant])
+    except Exception:
+        return None
+    if proc.returncode == 0:
+        return True
+    if proc.returncode == 1:
+        return False
+    return None
+
+
+def _classify_commit_relation(reference_sha: str | None, candidate_sha: str | None) -> str:
+    normalized_reference = _normalize_optional_text(reference_sha)
+    normalized_candidate = _normalize_optional_text(candidate_sha)
+    if normalized_reference is None or normalized_candidate is None:
+        return "unknown"
+    if normalized_reference == normalized_candidate:
+        return "same"
+    if _git_is_ancestor(normalized_reference, normalized_candidate) is True:
+        return "descendant"
+    if _git_is_ancestor(normalized_candidate, normalized_reference) is True:
+        return "ancestor"
+    if _git_is_ancestor(normalized_reference, normalized_candidate) is False:
+        return "diverged"
+    return "unknown"
+
+
+def _workspace_git_context() -> dict[str, str | None]:
+    branch, commit_sha = _detect_git_write_context()
+    return {
+        "branch": branch,
+        "commit_sha": commit_sha,
+    }
+
+
+def _annotate_review_finding(row: dict[str, object], *, workspace_branch: str | None, workspace_commit_sha: str | None) -> dict[str, object]:
+    finding = dict(row)
+    finding_branch = _normalize_optional_text(finding.get("branch"))
+    finding_commit_sha = _normalize_optional_text(finding.get("commit_sha"))
+    branch_matches = None
+    if finding_branch is not None and workspace_branch is not None:
+        branch_matches = finding_branch == workspace_branch
+    finding["workspace_branch"] = workspace_branch
+    finding["workspace_commit_sha"] = workspace_commit_sha
+    finding["workspace_branch_matches"] = branch_matches
+    finding["workspace_commit_relation"] = _classify_commit_relation(finding_commit_sha, workspace_commit_sha)
+    return finding
 
 
 def _resolve_write_actor(conn: sqlite3.Connection, actor: WriteActor | None) -> tuple[str | None, str | None, str | None, str | None]:
@@ -1566,7 +1628,7 @@ def record_review_finding(session: str, finding_id: str, severity: str, file_pat
         return _json_response(payload)
 
 
-def update_review_finding(status: str, finding_id: str | None = None, finding_db_id: int | None = None, resolution_notes: str | None = None, reopen_reason: str | None = None, task_ref: str | None = None, session: str | None = None, actor: WriteActor | None = None) -> str:
+def update_review_finding(status: str, finding_id: str | None = None, finding_db_id: int | None = None, resolution_notes: str | None = None, reopen_reason: str | None = None, task_ref: str | None = None, session: str | None = None, actor: WriteActor | None = None, verified_commit_sha: str | None = None, verification_evidence: str | None = None) -> str:
     if (finding_id is None and finding_db_id is None) or (finding_id is not None and finding_db_id is not None):
         return _json_response({"ok": False, "error": "Pass exactly one of finding_id (preferred) or finding_db_id."})
     if status not in REVIEW_FINDING_STATUSES:
@@ -1576,6 +1638,12 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
         return _json_response({"ok": False, "error": "finding_id must not be empty."})
     normalized_resolution_notes = _normalize_optional_text(resolution_notes)
     normalized_reopen_reason = _normalize_optional_text(reopen_reason)
+    normalized_verified_commit_sha = _normalize_optional_text(verified_commit_sha)
+    normalized_verification_evidence = _normalize_optional_text(verification_evidence)
+    if normalized_verification_evidence is not None and len(normalized_verification_evidence) > MAX_VERIFICATION_EVIDENCE_LENGTH:
+        return _json_response({"ok": False, "error": f"verification_evidence must be <= {MAX_VERIFICATION_EVIDENCE_LENGTH} characters."})
+    if status != "fixed" and normalized_verification_evidence is not None:
+        return _json_response({"ok": False, "error": "verification_evidence is only supported when status='fixed'."})
     if status in {"wontfix", "deferred"} and normalized_resolution_notes is None:
         return _json_response({"ok": False, "error": f"resolution_notes is required when status is '{status}'."})
     if status == "open" and normalized_resolution_notes is not None:
@@ -1584,6 +1652,8 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
         return _json_response({"ok": False, "error": f"resolution_notes must be <= {MAX_RESOLUTION_NOTES_LENGTH} characters."})
     if normalized_reopen_reason is not None and len(normalized_reopen_reason) > MAX_REOPEN_REASON_LENGTH:
         return _json_response({"ok": False, "error": f"reopen_reason must be <= {MAX_REOPEN_REASON_LENGTH} characters."})
+    if status != "fixed" and normalized_verified_commit_sha is not None:
+        return _json_response({"ok": False, "error": "verified_commit_sha is only supported when status='fixed'."})
     with _get_db_connection() as conn:
         resolved_task_ref = _resolve_task_ref(conn, task_ref)
         agent, branch, commit_sha, lane_id = _resolve_write_actor(conn, actor)
@@ -1599,6 +1669,135 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
             return _json_response({"ok": False, "error": "reopen_reason is required when reopening a finding."})
         if not is_reopen_transition and normalized_reopen_reason is not None:
             return _json_response({"ok": False, "error": "reopen_reason is only valid when transitioning a finding back to open."})
+
+        # --- Structural guards against false-fix closures ---
+        existing_reopen_count = int(existing["reopen_count"] or 0)
+
+        # Guard 1: Reopen escalation -- previously-reopened findings require evidence
+        if status == "fixed" and existing_reopen_count >= REOPEN_ESCALATION_THRESHOLD and normalized_verification_evidence is None:
+            return _json_response({
+                "ok": False,
+                "error": (
+                    f"verification_evidence is required when fixing a finding that has been reopened "
+                    f"{existing_reopen_count} times (threshold: {REOPEN_ESCALATION_THRESHOLD}). "
+                    f"Provide code snippets, grep output, or diff output proving the fix exists."
+                ),
+                "false_fix_guard": {
+                    "finding_id": str(existing["finding_id"]),
+                    "reopen_count": existing_reopen_count,
+                    "threshold": REOPEN_ESCALATION_THRESHOLD,
+                    "guard": "reopen_escalation",
+                },
+            })
+
+        # Guard 2: Batch-close detection -- reject rapid-fire closures without evidence
+        if status == "fixed" and normalized_verification_evidence is None:
+            recent_fixes = conn.execute(
+                """
+                SELECT COUNT(*) AS cnt FROM review_findings
+                WHERE task_ref = ? AND status = 'fixed'
+                  AND resolved_at >= datetime('now', ?)
+                  AND id != ?
+                """,
+                (resolved_task_ref, f"-{BATCH_CLOSE_WINDOW_SECONDS} seconds", int(existing["id"])),
+            ).fetchone()
+            recent_count = int(recent_fixes["cnt"]) if recent_fixes else 0
+            if recent_count >= BATCH_CLOSE_THRESHOLD:
+                return _json_response({
+                    "ok": False,
+                    "error": (
+                        f"Batch-close guard: {recent_count} other findings were marked fixed in the "
+                        f"last {BATCH_CLOSE_WINDOW_SECONDS}s for this task. Provide verification_evidence "
+                        f"(code snippets, grep output, or diff proving the fix exists) to confirm each "
+                        f"closure is individually verified."
+                    ),
+                    "false_fix_guard": {
+                        "finding_id": str(existing["finding_id"]),
+                        "recent_fixes_in_window": recent_count,
+                        "window_seconds": BATCH_CLOSE_WINDOW_SECONDS,
+                        "threshold": BATCH_CLOSE_THRESHOLD,
+                        "guard": "batch_close",
+                    },
+                })
+
+        finding_commit_sha = _normalize_optional_text(existing["commit_sha"])
+        current_commit_sha = _normalize_optional_text(commit_sha)
+        commit_relation = _classify_commit_relation(finding_commit_sha, current_commit_sha)
+        needs_descendant_ack = status == "fixed" and commit_relation == "descendant"
+        invalid_fix_relation = status == "fixed" and commit_relation in {"ancestor", "diverged"}
+        if invalid_fix_relation:
+            return _json_response(
+                {
+                    "ok": False,
+                    "error": "A finding can only be marked fixed from the same commit or a newer descendant commit.",
+                    "commit_guard": {
+                        "finding_commit_sha": finding_commit_sha,
+                        "current_commit_sha": current_commit_sha,
+                        "current_branch": branch,
+                        "verified_commit_sha": normalized_verified_commit_sha,
+                        "relation": commit_relation,
+                    },
+                }
+            )
+        if needs_descendant_ack:
+            if normalized_resolution_notes is None:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "resolution_notes is required when fixing a finding from a newer descendant commit.",
+                        "commit_guard": {
+                            "finding_commit_sha": finding_commit_sha,
+                            "current_commit_sha": current_commit_sha,
+                            "current_branch": branch,
+                            "relation": commit_relation,
+                            "requires_verified_commit_sha": True,
+                        },
+                    }
+                )
+            if normalized_verified_commit_sha is None:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "verified_commit_sha is required when fixing a finding from a newer descendant commit.",
+                        "commit_guard": {
+                            "finding_commit_sha": finding_commit_sha,
+                            "current_commit_sha": current_commit_sha,
+                            "current_branch": branch,
+                            "relation": commit_relation,
+                            "requires_verified_commit_sha": True,
+                        },
+                    }
+                )
+            if current_commit_sha is not None and normalized_verified_commit_sha != current_commit_sha:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "verified_commit_sha must match the current workspace/actor commit when resolving from a newer descendant commit.",
+                        "commit_guard": {
+                            "finding_commit_sha": finding_commit_sha,
+                            "current_commit_sha": current_commit_sha,
+                            "current_branch": branch,
+                            "verified_commit_sha": normalized_verified_commit_sha,
+                            "relation": commit_relation,
+                        },
+                    }
+                )
+            verified_relation = _classify_commit_relation(finding_commit_sha, normalized_verified_commit_sha)
+            if verified_relation not in {"same", "descendant"}:
+                return _json_response(
+                    {
+                        "ok": False,
+                        "error": "verified_commit_sha must be the finding commit or a descendant of it.",
+                        "commit_guard": {
+                            "finding_commit_sha": finding_commit_sha,
+                            "current_commit_sha": current_commit_sha,
+                            "current_branch": branch,
+                            "verified_commit_sha": normalized_verified_commit_sha,
+                            "relation": commit_relation,
+                            "verified_relation": verified_relation,
+                        },
+                    }
+                )
         target_db_id = int(existing["id"])
         reopen_transition_int = 1 if is_reopen_transition else 0
         conn.execute(
@@ -1612,17 +1811,31 @@ def update_review_finding(status: str, finding_id: str | None = None, finding_db
                 reopen_count = CASE WHEN ? = 1 THEN COALESCE(reopen_count, 0) + 1 ELSE COALESCE(reopen_count, 0) END,
                 last_reopen_reason = CASE WHEN ? = 1 THEN ? ELSE last_reopen_reason END,
                 last_reopened_at = CASE WHEN ? = 1 THEN datetime('now') ELSE last_reopened_at END,
+                verification_evidence = CASE WHEN ? = 'open' THEN NULL WHEN ? IS NOT NULL THEN ? ELSE verification_evidence END,
                 updated_at = datetime('now')
             WHERE id = ? AND task_ref = ?
             """,
-            (status, status, agent, branch, commit_sha, lane_id, session, status, normalized_resolution_notes, normalized_resolution_notes, status, reopen_transition_int, reopen_transition_int, normalized_reopen_reason, reopen_transition_int, target_db_id, resolved_task_ref),
+            (status, status, agent, branch, commit_sha, lane_id, session, status, normalized_resolution_notes, normalized_resolution_notes, status, reopen_transition_int, reopen_transition_int, normalized_reopen_reason, reopen_transition_int, status, normalized_verification_evidence, normalized_verification_evidence, target_db_id, resolved_task_ref),
         )
         row = conn.execute("SELECT * FROM review_findings WHERE id = ?", (target_db_id,)).fetchone()
         _write_current_task_md_for_task(conn, resolved_task_ref)
-        payload = {"ok": True, "finding": _row_to_dict(row)}
+        payload = {
+            "ok": True,
+            "finding": _row_to_dict(row),
+            "commit_guard": {
+                "finding_commit_sha": finding_commit_sha,
+                "current_commit_sha": current_commit_sha,
+                "current_branch": branch,
+                "relation": commit_relation,
+                "verified_commit_sha": normalized_verified_commit_sha,
+                "required": needs_descendant_ack,
+            },
+        }
         if is_reopen_transition:
             payload["reopened"] = True
             payload["reopen_reason"] = normalized_reopen_reason
+        if normalized_verification_evidence is not None:
+            payload["verification_evidence"] = normalized_verification_evidence
         return _json_response(payload)
 
 
@@ -1651,15 +1864,24 @@ def list_review_findings(task_ref: str | None = None, status: str = "all", sever
             params.append(severity)
         where_sql = " AND ".join(where_parts)
         total_row = conn.execute(f"SELECT COUNT(*) AS count FROM review_findings WHERE {where_sql}", tuple(params)).fetchone()
-        findings = [dict(row) for row in conn.execute(f"SELECT * FROM review_findings WHERE {where_sql} ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'deferred' THEN 1 WHEN 'fixed' THEN 2 WHEN 'wontfix' THEN 3 END, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()]
+        raw_findings = [dict(row) for row in conn.execute(f"SELECT * FROM review_findings WHERE {where_sql} ORDER BY CASE status WHEN 'open' THEN 0 WHEN 'deferred' THEN 1 WHEN 'fixed' THEN 2 WHEN 'wontfix' THEN 3 END, CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ? OFFSET ?", (*params, limit, offset)).fetchall()]
         status_counts = {key: 0 for key in sorted(REVIEW_FINDING_STATUSES)}
         for row in conn.execute("SELECT status, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY status", (resolved_task_ref,)).fetchall():
             status_counts[str(row["status"])] = int(row["count"])
         severity_counts = {key: 0 for key in sorted(REVIEW_FINDING_SEVERITIES)}
         for row in conn.execute("SELECT severity, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY severity", (resolved_task_ref,)).fetchall():
             severity_counts[str(row["severity"])] = int(row["count"])
+    workspace_git = _workspace_git_context()
+    findings = [
+        _annotate_review_finding(
+            row,
+            workspace_branch=workspace_git["branch"],
+            workspace_commit_sha=workspace_git["commit_sha"],
+        )
+        for row in raw_findings
+    ]
     total = int(total_row["count"]) if total_row else 0
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "filters": {"status": status, "severity": severity, "limit": limit, "offset": offset}, "total_matching": total, "returned": len(findings), "has_more": (offset + len(findings)) < total, "counts": {"status": status_counts, "severity": severity_counts}, "findings": findings})
+    return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "filters": {"status": status, "severity": severity, "limit": limit, "offset": offset}, "total_matching": total, "returned": len(findings), "has_more": (offset + len(findings)) < total, "counts": {"status": status_counts, "severity": severity_counts}, "findings": findings})
 
 
 def get_review_finding(finding_db_id: int | None = None, finding_id: str | None = None, task_ref: str | None = None) -> str:
@@ -1670,7 +1892,8 @@ def get_review_finding(finding_db_id: int | None = None, finding_id: str | None 
         row = conn.execute("SELECT * FROM review_findings WHERE id = ? AND task_ref = ?" if finding_db_id is not None else "SELECT * FROM review_findings WHERE finding_id = ? AND task_ref = ?", (finding_db_id, resolved_task_ref) if finding_db_id is not None else (finding_id, resolved_task_ref)).fetchone()
         if row is None:
             return _json_response({"ok": False, "error": "Finding not found for task."})
-        return _json_response({"ok": True, "task_ref": resolved_task_ref, "finding": _row_to_dict(row)})
+        workspace_git = _workspace_git_context()
+        return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "finding": _annotate_review_finding(dict(row), workspace_branch=workspace_git["branch"], workspace_commit_sha=workspace_git["commit_sha"])})
 
 
 def get_review_findings_summary(task_ref: str | None = None, top_n_open: int = 5, top_n_recent_updates: int = 3) -> str:
@@ -1685,9 +1908,26 @@ def get_review_findings_summary(task_ref: str | None = None, top_n_open: int = 5
         severity_counts = {key: 0 for key in sorted(REVIEW_FINDING_SEVERITIES)}
         for row in conn.execute("SELECT severity, COUNT(*) AS count FROM review_findings WHERE task_ref = ? GROUP BY severity", (resolved_task_ref,)).fetchall():
             severity_counts[str(row["severity"])] = int(row["count"])
-        open_findings = [dict(row) for row in conn.execute("SELECT * FROM review_findings WHERE task_ref = ? AND status = 'open' ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?", (resolved_task_ref, top_n_open)).fetchall()]
-        recent_updates = [dict(row) for row in conn.execute("SELECT * FROM review_findings WHERE task_ref = ? ORDER BY COALESCE(updated_at, resolved_at, created_at) DESC, id DESC LIMIT ?", (resolved_task_ref, top_n_recent_updates)).fetchall()]
-    return _json_response({"ok": True, "task_ref": resolved_task_ref, "counts": {"total": int(total_row["total"]) if total_row else 0, "status": status_counts, "severity": severity_counts}, "open_top": open_findings, "recent_updates": recent_updates, "limits": {"top_n_open": top_n_open, "top_n_recent_updates": top_n_recent_updates}})
+        raw_open_findings = [dict(row) for row in conn.execute("SELECT * FROM review_findings WHERE task_ref = ? AND status = 'open' ORDER BY CASE severity WHEN 'high' THEN 0 WHEN 'medium' THEN 1 WHEN 'low' THEN 2 END, COALESCE(updated_at, created_at) DESC, id DESC LIMIT ?", (resolved_task_ref, top_n_open)).fetchall()]
+        raw_recent_updates = [dict(row) for row in conn.execute("SELECT * FROM review_findings WHERE task_ref = ? ORDER BY COALESCE(updated_at, resolved_at, created_at) DESC, id DESC LIMIT ?", (resolved_task_ref, top_n_recent_updates)).fetchall()]
+    workspace_git = _workspace_git_context()
+    open_findings = [
+        _annotate_review_finding(
+            row,
+            workspace_branch=workspace_git["branch"],
+            workspace_commit_sha=workspace_git["commit_sha"],
+        )
+        for row in raw_open_findings
+    ]
+    recent_updates = [
+        _annotate_review_finding(
+            row,
+            workspace_branch=workspace_git["branch"],
+            workspace_commit_sha=workspace_git["commit_sha"],
+        )
+        for row in raw_recent_updates
+    ]
+    return _json_response({"ok": True, "task_ref": resolved_task_ref, "workspace_git": workspace_git, "counts": {"total": int(total_row["total"]) if total_row else 0, "status": status_counts, "severity": severity_counts}, "open_top": open_findings, "recent_updates": recent_updates, "limits": {"top_n_open": top_n_open, "top_n_recent_updates": top_n_recent_updates}})
 
 
 def _collect_review_findings_integrity(conn: sqlite3.Connection, task_ref: str, *, apply: bool = False) -> dict:

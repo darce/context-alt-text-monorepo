@@ -679,6 +679,154 @@ def test_update_review_finding_status_and_resolved_at(isolated_handoff: dict) ->
     assert reopened["finding"]["last_reopened_at"] is not None
 
 
+def test_update_review_finding_requires_verified_descendant_commit(isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="4.12.0",
+            objective="Review commit guard",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-review",
+            finding_id="GUARD-1",
+            severity="high",
+            file_path="scripts/mcp/unified_server.py",
+            description="Guard descendant fix",
+            actor={"agent": "reviewer", "branch": "feature/review", "commit_sha": "abc123"},
+        )
+    )
+    finding_db_id = created["finding"]["id"]
+
+    monkeypatch.setattr(handoff_core, "_detect_git_write_context", lambda: ("feature/review", "def456"))
+    monkeypatch.setattr(
+        handoff_core,
+        "_classify_commit_relation",
+        lambda reference_sha, candidate_sha: "descendant" if (reference_sha, candidate_sha) in {("abc123", "def456"), ("abc123", "abc123")} else "unknown",
+    )
+
+    missing_verified_commit = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=finding_db_id,
+            status="fixed",
+            resolution_notes="Verified after follow-up changes.",
+        )
+    )
+    assert missing_verified_commit["ok"] is False
+    assert "verified_commit_sha is required" in missing_verified_commit["error"]
+    assert missing_verified_commit["commit_guard"]["finding_commit_sha"] == "abc123"
+    assert missing_verified_commit["commit_guard"]["current_commit_sha"] == "def456"
+    assert missing_verified_commit["commit_guard"]["relation"] == "descendant"
+
+    mismatched_verified_commit = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=finding_db_id,
+            status="fixed",
+            resolution_notes="Verified after follow-up changes.",
+            verified_commit_sha="zzz999",
+        )
+    )
+    assert mismatched_verified_commit["ok"] is False
+    assert "must match the current workspace/actor commit" in mismatched_verified_commit["error"]
+
+    fixed = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=finding_db_id,
+            status="fixed",
+            resolution_notes="Verified on descendant commit def456 after reviewing the newer branch state.",
+            verified_commit_sha="def456",
+        )
+    )
+    assert fixed["ok"] is True
+    assert fixed["finding"]["status"] == "fixed"
+    assert fixed["commit_guard"]["relation"] == "descendant"
+    assert fixed["commit_guard"]["verified_commit_sha"] == "def456"
+
+
+def test_update_review_finding_rejects_non_descendant_verified_commit(isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="4.12.0",
+            objective="Reject divergent verification",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-review",
+            finding_id="GUARD-2",
+            severity="medium",
+            file_path="scripts/mcp/unified_server.py",
+            description="Guard divergent fix",
+            actor={"agent": "reviewer", "branch": "feature/review", "commit_sha": "abc123"},
+        )
+    )
+    finding_db_id = created["finding"]["id"]
+
+    monkeypatch.setattr(handoff_core, "_detect_git_write_context", lambda: ("feature/review", "zzz999"))
+
+    def _fake_relation(reference_sha: str | None, candidate_sha: str | None) -> str:
+        mapping = {
+            ("abc123", "def456"): "descendant",
+            ("abc123", "zzz999"): "diverged",
+        }
+        return mapping.get((reference_sha, candidate_sha), "unknown")
+
+    monkeypatch.setattr(handoff_core, "_classify_commit_relation", _fake_relation)
+
+    divergent = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=finding_db_id,
+            status="fixed",
+            resolution_notes="Attempted verification on unrelated commit.",
+            verified_commit_sha="zzz999",
+        )
+    )
+    assert divergent["ok"] is False
+    assert "same commit or a newer descendant commit" in divergent["error"]
+    assert divergent["commit_guard"]["relation"] == "diverged"
+
+
+def test_review_list_and_summary_surface_workspace_git_context(isolated_handoff: dict, monkeypatch: pytest.MonkeyPatch) -> None:
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="4.12.0",
+            objective="Workspace git visibility",
+            status="in_progress",
+        )
+    )
+    _parse(
+        mcp_server.record_review_finding(
+            session="s-review",
+            finding_id="CTX-1",
+            severity="medium",
+            file_path="scripts/mcp/unified_server.py",
+            description="Workspace git visibility finding",
+            actor={"agent": "reviewer", "branch": "feature/review", "commit_sha": "abc123"},
+        )
+    )
+
+    monkeypatch.setattr(handoff_core, "_detect_git_write_context", lambda: ("feature/review", "def456"))
+    monkeypatch.setattr(
+        handoff_core,
+        "_classify_commit_relation",
+        lambda reference_sha, candidate_sha: "descendant" if (reference_sha, candidate_sha) == ("abc123", "def456") else "same",
+    )
+
+    listed = _parse(mcp_server.list_review_findings())
+    assert listed["ok"] is True
+    assert listed["workspace_git"]["branch"] == "feature/review"
+    assert listed["workspace_git"]["commit_sha"] == "def456"
+    assert listed["findings"][0]["workspace_commit_relation"] == "descendant"
+    assert listed["findings"][0]["workspace_branch_matches"] is True
+
+    summary = _parse(mcp_server.get_review_findings_summary())
+    assert summary["ok"] is True
+    assert summary["workspace_git"]["commit_sha"] == "def456"
+    assert summary["open_top"][0]["workspace_commit_relation"] == "descendant"
+
+
 def test_update_review_finding_rejects_invalid_status_and_task_mismatch(isolated_handoff: dict) -> None:
     _parse(
         mcp_server.set_handoff_state(
@@ -1323,3 +1471,268 @@ def test_generate_current_task_md_no_related_param(isolated_handoff: dict) -> No
     )
     md = payload["markdown"]
     assert "## Related Open Review Findings" not in md
+
+
+# ---------------------------------------------------------------------------
+# False-fix structural guards
+# ---------------------------------------------------------------------------
+
+
+def _create_and_cycle_finding(finding_id: str, cycles: int = 1) -> int:
+    """Create a finding and reopen it `cycles` times (leaving it open)."""
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-guard",
+            finding_id=finding_id,
+            severity="high",
+            file_path="core.py",
+            description=f"Guard test finding {finding_id}",
+        )
+    )
+    db_id = created["finding"]["id"]
+    for i in range(cycles):
+        _parse(mcp_server.update_review_finding(finding_db_id=db_id, status="fixed"))
+        _parse(
+            mcp_server.update_review_finding(
+                finding_db_id=db_id,
+                status="open",
+                reopen_reason=f"Reopen cycle {i + 1}",
+            )
+        )
+    return db_id
+
+
+def test_reopen_escalation_requires_evidence(isolated_handoff: dict) -> None:
+    """After >=2 reopens, closing as fixed requires verification_evidence."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-reopen",
+            objective="Reopen escalation guard",
+            status="in_progress",
+        )
+    )
+    db_id = _create_and_cycle_finding("RE-1", cycles=2)
+    # reopen_count is now 2 -- should require evidence
+    rejected = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="fixed",
+        )
+    )
+    assert rejected["ok"] is False
+    assert "verification_evidence is required" in rejected["error"]
+    assert rejected["false_fix_guard"]["guard"] == "reopen_escalation"
+    assert rejected["false_fix_guard"]["reopen_count"] == 2
+
+    # With evidence, it succeeds
+    accepted = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="fixed",
+            verification_evidence="grep -n '_resolve_task_ref' core.py shows function at line 450",
+        )
+    )
+    assert accepted["ok"] is True
+    assert accepted["finding"]["status"] == "fixed"
+    assert accepted["verification_evidence"] == "grep -n '_resolve_task_ref' core.py shows function at line 450"
+
+
+def test_reopen_escalation_not_triggered_below_threshold(isolated_handoff: dict) -> None:
+    """Findings with reopen_count < 2 can be fixed without evidence."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-reopen-ok",
+            objective="Below threshold",
+            status="in_progress",
+        )
+    )
+    db_id = _create_and_cycle_finding("RE-2", cycles=1)
+    # reopen_count is 1 -- below threshold
+    accepted = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="fixed",
+        )
+    )
+    assert accepted["ok"] is True
+    assert accepted["finding"]["status"] == "fixed"
+
+
+def test_batch_close_detection_requires_evidence(isolated_handoff: dict) -> None:
+    """Fixing 3+ findings within 60s window requires verification_evidence."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-batch",
+            objective="Batch close guard",
+            status="in_progress",
+        )
+    )
+    # Create 4 findings
+    db_ids = []
+    for i in range(4):
+        created = _parse(
+            mcp_server.record_review_finding(
+                session="s-batch",
+                finding_id=f"BC-{i}",
+                severity="medium",
+                file_path="core.py",
+                description=f"Batch test {i}",
+            )
+        )
+        db_ids.append(created["finding"]["id"])
+
+    # Fix the first two -- no guard triggered (0 and 1 recent fixes)
+    for db_id in db_ids[:2]:
+        resp = _parse(mcp_server.update_review_finding(finding_db_id=db_id, status="fixed"))
+        assert resp["ok"] is True
+
+    # Third fix should trigger batch-close guard (2 recent fixes already in window)
+    rejected = _parse(
+        mcp_server.update_review_finding(finding_db_id=db_ids[2], status="fixed")
+    )
+    assert rejected["ok"] is False
+    assert "Batch-close guard" in rejected["error"]
+    assert rejected["false_fix_guard"]["guard"] == "batch_close"
+
+    # With evidence, the third fix succeeds
+    accepted = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_ids[2],
+            status="fixed",
+            verification_evidence="git diff HEAD~1 -- core.py shows BC-2 fix at line 100",
+        )
+    )
+    assert accepted["ok"] is True
+
+
+def test_verification_evidence_stored_and_returned(isolated_handoff: dict) -> None:
+    """verification_evidence is persisted in DB and included in response."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-store",
+            objective="Evidence storage",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-store",
+            finding_id="VS-1",
+            severity="low",
+            file_path="core.py",
+            description="Evidence storage test",
+        )
+    )
+    db_id = created["finding"]["id"]
+
+    fixed = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="fixed",
+            verification_evidence="diff --git a/core.py b/core.py\n+    def new_function():",
+        )
+    )
+    assert fixed["ok"] is True
+    assert fixed["verification_evidence"] == "diff --git a/core.py b/core.py\n+    def new_function():"
+    assert fixed["finding"]["verification_evidence"] == "diff --git a/core.py b/core.py\n+    def new_function():"
+
+
+def test_verification_evidence_cleared_on_reopen(isolated_handoff: dict) -> None:
+    """When a finding is reopened, verification_evidence is cleared."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-clear",
+            objective="Evidence cleared on reopen",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-clear",
+            finding_id="VC-1",
+            severity="medium",
+            file_path="core.py",
+            description="Clear on reopen test",
+        )
+    )
+    db_id = created["finding"]["id"]
+
+    _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="fixed",
+            verification_evidence="some evidence",
+        )
+    )
+
+    reopened = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="open",
+            reopen_reason="Evidence was wrong",
+        )
+    )
+    assert reopened["ok"] is True
+    assert reopened["finding"]["verification_evidence"] is None
+
+
+def test_verification_evidence_rejected_for_non_fixed_status(isolated_handoff: dict) -> None:
+    """verification_evidence is only accepted when status='fixed'."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-status",
+            objective="Evidence status check",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-statuscheck",
+            finding_id="SC-1",
+            severity="low",
+            file_path="core.py",
+            description="Status check test",
+        )
+    )
+    db_id = created["finding"]["id"]
+
+    rejected = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="wontfix",
+            verification_evidence="this should be rejected",
+        )
+    )
+    assert rejected["ok"] is False
+    assert "only supported when status='fixed'" in rejected["error"]
+
+
+def test_verification_evidence_too_long(isolated_handoff: dict) -> None:
+    """verification_evidence exceeding max length is rejected."""
+    _parse(
+        mcp_server.set_handoff_state(
+            task_ref="guard-len",
+            objective="Evidence length check",
+            status="in_progress",
+        )
+    )
+    created = _parse(
+        mcp_server.record_review_finding(
+            session="s-len",
+            finding_id="LN-1",
+            severity="low",
+            file_path="core.py",
+            description="Length check test",
+        )
+    )
+    db_id = created["finding"]["id"]
+
+    rejected = _parse(
+        mcp_server.update_review_finding(
+            finding_db_id=db_id,
+            status="fixed",
+            verification_evidence="x" * 2001,
+        )
+    )
+    assert rejected["ok"] is False
+    assert "2000" in rejected["error"]

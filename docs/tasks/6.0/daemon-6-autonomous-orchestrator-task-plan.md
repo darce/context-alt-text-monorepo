@@ -41,9 +41,9 @@ The daemon's Python code is correctly multi-lane within a single-task singleton 
 
 2. **No orchestrator-specific guard.** Fixed in Phase 1: `task-guard` now validates TASK + manifest existence without requiring LANE.
 
-3. **Task inference was fragile from orchestrator root.** Fixed in Phase 2: Make now falls back through explicit `TASK`, MCP active task, then `SOLE_TASK`, and the CLI mirrors that chain via `_resolve_task_ref()`.
+3. **Task inference was fragile from orchestrator root.** Fixed in Phase 2: Makefile layer falls back through explicit `TASK`, MCP active task, then `SOLE_TASK`, and the Python CLI mirrors that chain via `_resolve_task_ref()`.
 
-4. **CLI required explicit `--task-ref`.** Fixed in Phase 2: `orchestrator_daemon.py run` now accepts an omitted task ref and resolves it from MCP state or manifests.
+4. **CLI required explicit `--task-ref`.** Fixed in Phase 2: `orchestrator_daemon.py run` accepts an omitted task ref and resolves it from MCP state or a sole manifest before failing with a clear task listing.
 
 5. **Lifecycle commands were inconsistent about singleton semantics.** Fixed in Phase 3: `daemon-pause`, `daemon-resume`, and `daemon-status` consistently operate on `ORCHESTRATOR_ROOT` and expose singleton-root status paths.
 

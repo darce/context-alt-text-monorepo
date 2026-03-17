@@ -94,6 +94,13 @@ Both daemons default to `BACKEND=codex-cli`.
 - `BACKEND=codex-cli`: runs the normal `codex exec` subprocess flow.
 - `BACKEND=codex-subagent`: uses the host-provided `codex_subagent_bridge` module instead of spawning `codex exec`.
 
+Backend dispatch is now registry-based, not duplicated per caller. The shared
+registry lives at
+[`scripts/mcp/backend_registry.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/backend_registry.py).
+`lane_exec.py`, `review_runner.py`, and the daemon CLI surfaces all read backend
+choices from that registry. New bridge backends should be added there instead of
+editing `if backend == ...` branches in multiple files.
+
 Important:
 
 - `codex-subagent` is only available when the current runtime has provisioned that bridge module.
@@ -106,6 +113,32 @@ Important:
 - Spawned app-server sessions discover repo instructions from the worktree root (`CLAUDE.md` / `GEMINI.md` symlinked to `docs/agentic/instructions.md` in this repo). There is no `AGENTS.md` here.
 - Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
 - The reference bridge is safe for parallel daemon calls because each `run_subagent()` invocation starts its own short-lived `codex app-server` process; there is no shared in-process session state.
+
+### MCP orchestration commands
+
+For in-app agents that can call MCP tools directly, `agent-handoff-mcp` now exposes
+an orchestration control surface in addition to the existing handoff state tools.
+
+- `orchestrator_start(task_ref, backend, poll_interval, single_pass)`
+- `orchestrator_status()`
+- `orchestrator_stop(force=False)`
+- `orchestrator_pause()`
+- `orchestrator_resume()`
+- `run_structured_turn(prompt, schema, cwd, backend, env=None, timeout_seconds=120.0)`
+
+Use these when the host agent already has MCP access and you want to avoid driving
+daemon lifecycle through a shell or `run_in_terminal`.
+
+Important:
+
+- `run_structured_turn` is bridge-only. It rejects `codex-cli` because synchronous
+  `codex exec` management belongs in the daemon/worker path.
+- The MCP daemon controls operate on the authoritative orchestrator checkout, using
+  the same lock, pause sentinel, logs, and `.task-state` conventions as the Make
+  wrappers.
+- Remote HTTP custom-MCP deployment is documented separately and is being tracked as
+  follow-on work in daemon-9. For daemon-8, treat these tools as part of the MCP
+  surface once the server is already attached to the host app.
 
 ---
 
@@ -212,6 +245,26 @@ What this does:
 2. Runs `codex exec` with the rendered lane prompt.
 3. Submits the final handoff automatically.
 4. Repeats until stopped.
+
+### Recipe: In-app orchestration via MCP
+
+**Who:** Orchestrator or lead in-app agent. **When:** The host already exposes
+`agent-handoff-mcp` as MCP tools and you want to control orchestration without shell
+commands.
+
+Typical flow:
+
+1. Call `orchestrator_start(task_ref="<task-ref>", backend="codex-cli" | "codex-subagent")`.
+2. Poll `orchestrator_status()` until the daemon is running and work begins flowing.
+3. Use `run_structured_turn(...)` when you need one synchronous bridge-backed
+   execution turn without starting a worker daemon.
+4. Call `orchestrator_pause()` / `orchestrator_resume()` when the singleton loop
+   needs to be temporarily gated.
+5. Call `orchestrator_stop()` when orchestration should exit cleanly.
+
+Use Make targets when you are operating from a shell-first workflow. Use MCP tools
+when you are already inside an MCP-capable agent host and want the same control plane
+without shell mediation.
 
 Notes:
 

@@ -11,6 +11,36 @@ def run_subagent(
 ) -> dict | str: ...
 ```
 
+Bridge backends are now registered centrally through
+[`scripts/mcp/backend_registry.py`](/Users/daniel/Development/context-alt-text-monorepo/scripts/mcp/backend_registry.py).
+`lane_exec.py` and `review_runner.py` no longer hardcode bridge imports directly;
+they validate the backend name through the registry and dispatch any backend whose
+registered `kind` is `"bridge"` through `resolve_bridge(backend_name)`.
+
+That means adding a new bridge backend should not require edits to the lane/review
+execution callers. The expected shape is:
+
+```python
+from backend_registry import BACKENDS, BackendSpec
+
+BACKENDS["kimi-host"] = BackendSpec(
+    kind="bridge",
+    module="kimi_host_bridge",
+    description="Kimi host bridge via structured prompt API.",
+)
+```
+
+The referenced module must expose:
+
+```python
+def run_subagent(
+    prompt: str,
+    schema: dict,
+    cwd: str,
+    env: dict | None = None,
+) -> dict | str: ...
+```
+
 That seam is intentionally host-oriented rather than Codex-specific. A non-Codex
 adapter can fit without changing `lane_exec.py` or `review_runner.py` as long as it:
 
@@ -38,6 +68,7 @@ What should stay outside any bridge implementation:
 - review finding persistence
 - lane routing or manifest logic
 - result-schema ownership
+- daemon lifecycle management
 
 Those responsibilities remain in the parent daemon process so bridges stay portable
 and easy to swap.

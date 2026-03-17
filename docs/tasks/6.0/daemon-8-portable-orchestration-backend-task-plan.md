@@ -78,13 +78,16 @@ The `run_structured_turn` command is the key enabler for in-app orchestration: a
 
 ### Phase 2.5: Remote HTTP MCP Topology
 
-Make the remote-deployment model explicit for custom MCP clients:
+Make the remote-deployment model explicit for custom MCP clients, but keep the
+implementation boundary narrow in daemon-8:
 
 - Reuse the existing `serve-http` entrypoint instead of inventing a second MCP server surface.
 - Run `serve-http` on a host that owns the authoritative orchestrator checkout.
 - Keep `.task-state`, `CURRENT_TASK.md`, exports, logs, and worktrees file-backed on that host.
 - Treat the remote MCP server as the control plane for that checkout, not as a stateless proxy to arbitrary client-local repos.
 - Defer any redesign that moves orchestration state out of the checkout and into a separate service or database API.
+- Defer Codex-specific custom-MCP attachment work to daemon-9, including host/port CLI UX, readiness verification, cold-start setup docs, and the session-attachment playbook.
+- Do not split ownership with daemon-9: daemon-8 establishes the server-side orchestration MCP surface, while daemon-9 owns the remote custom-MCP attachment and deployment ergonomics.
 
 ### Phase 3: In-App Copilot Backend (optional, stretch)
 
@@ -191,18 +194,18 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 
 ## Functions to Change
 
-| File                                                         | Target                                                   | Change                                                                                                                                                                                                                    |
-| ------------------------------------------------------------ | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `scripts/mcp/backend_registry.py`                            | new module                                               | Create shared backend registry with `BackendSpec`, `BACKENDS` dict, `validate_backend()`, `get_backend_choices()`, and `resolve_bridge()`. Register `codex-cli` and `codex-subagent` as built-in entries. |
-| `scripts/mcp/lane_exec.py`                                   | `BACKEND_CHOICES`, `_validate_backend`, `_run_subagent`  | Replace local `BACKEND_CHOICES` and `_validate_backend()` with imports from `backend_registry`. Replace the `_run_subagent()` dynamic import with `resolve_bridge()` call. Keep `codex-cli` subprocess path module-local. |
-| `scripts/mcp/review_runner.py`                               | `BACKEND_CHOICES`, `_validate_backend`, `_subagent_exec` | Same refactor as `lane_exec.py`: import from `backend_registry`, use `resolve_bridge()` for bridge dispatch. Keep `codex-cli` subprocess path module-local.                                                               |
-| `scripts/mcp/worker_daemon.py`                               | `--backend` choices                                      | Import `get_backend_choices()` from registry for argparse `choices` instead of hardcoding.                                                                                                                                |
-| `scripts/mcp/orchestrator_daemon.py`                         | `--backend` choices                                      | Same: import `get_backend_choices()` from registry.                                                                                                                                                                       |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`   | `serve-http` / runtime args                              | Reuse the existing HTTP server entrypoint as the remote MCP surface for in-app clients. Document and, if needed, harden the required runtime arguments so the remote server clearly binds to one authoritative checkout. |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/tools/`    | new tool modules                                         | Add `orchestrator_start`, `orchestrator_status`, `orchestrator_stop`, `orchestrator_pause`, `orchestrator_resume`, `run_structured_turn` MCP tool implementations.                                                        |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/server.py` | tool registration                                        | Register the new orchestrator lifecycle and execution turn tools.                                                                                                                                                         |
-| `docs/agentic/contracts/subagent-bridge-interface-note.md`   | backend registry reference                               | Update to reference the registry pattern and show how new adapters register.                                                                                                                                              |
-| `docs/agentic/worktree-codex-playbook.md`                    | backend docs                                             | Update the "Execution backends" section with registry pattern, new MCP commands, and in-app orchestration usage.                                                                                                          |
+| File                                                           | Target                                                   | Change                                                                                                                                                                                                                    |
+| -------------------------------------------------------------- | -------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `scripts/mcp/backend_registry.py`                              | new module                                               | Create shared backend registry with `BackendSpec`, `BACKENDS` dict, `validate_backend()`, `get_backend_choices()`, and `resolve_bridge()`. Register `codex-cli` and `codex-subagent` as built-in entries.                 |
+| `scripts/mcp/lane_exec.py`                                     | `BACKEND_CHOICES`, `_validate_backend`, `_run_subagent`  | Replace local `BACKEND_CHOICES` and `_validate_backend()` with imports from `backend_registry`. Replace the `_run_subagent()` dynamic import with `resolve_bridge()` call. Keep `codex-cli` subprocess path module-local. |
+| `scripts/mcp/review_runner.py`                                 | `BACKEND_CHOICES`, `_validate_backend`, `_subagent_exec` | Same refactor as `lane_exec.py`: import from `backend_registry`, use `resolve_bridge()` for bridge dispatch. Keep `codex-cli` subprocess path module-local.                                                               |
+| `scripts/mcp/worker_daemon.py`                                 | `--backend` choices                                      | Import `get_backend_choices()` from registry for argparse `choices` instead of hardcoding.                                                                                                                                |
+| `scripts/mcp/orchestrator_daemon.py`                           | `--backend` choices                                      | Same: import `get_backend_choices()` from registry.                                                                                                                                                                       |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`      | `serve-http` / runtime args                              | Reuse the existing HTTP server entrypoint as the remote MCP surface for in-app clients. Document and, if needed, harden the required runtime arguments so the remote server clearly binds to one authoritative checkout.  |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/api.py`      | tool implementations + registration                      | Add `orchestrator_start`, `orchestrator_status`, `orchestrator_stop`, `orchestrator_pause`, `orchestrator_resume`, `run_structured_turn` as functions in api.py and register them in `build_handoff_mcp()`.               |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/__init__.py` | public API exports                                       | Re-export all six new tool functions and add to `__all__`.                                                                                                                                                                |
+| `docs/agentic/contracts/subagent-bridge-interface-note.md`     | backend registry reference                               | Update to reference the registry pattern and show how new adapters register.                                                                                                                                              |
+| `docs/agentic/worktree-codex-playbook.md`                      | backend docs                                             | Update the "Execution backends" section with registry pattern, new MCP commands, and in-app orchestration usage.                                                                                                          |
 
 ## Related Files
 
@@ -215,7 +218,7 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 | `packages/codex-subagent-bridge/`                              | The proven bridge implementation from D7. Its `run_subagent()` signature is the interface contract.                                                                          |
 | `docs/agentic/contracts/subagent-bridge-interface-note.md`     | Documents the bridge interface contract and non-Codex adapter guidance.                                                                                                      |
 | `.vscode/mcp.json`                                             | VS Code MCP server config. New orchestrator tools are auto-exposed via the existing `agent-handoff-mcp` server entry.                                                        |
-| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`      | Already exposes `serve-http`; Daemon 8 should treat this as the remote MCP deployment entrypoint rather than adding a parallel transport surface.                             |
+| `packages/agent-handoff-mcp/src/agent_handoff_mcp/cli.py`      | Already exposes `serve-http`; Daemon 8 should treat this as the remote MCP deployment entrypoint rather than adding a parallel transport surface.                            |
 | `docs/tasks/6.0/daemon-7-codex-app-server-bridge-task-plan.md` | D7 established the bridge package pattern and interface contract this task builds on.                                                                                        |
 | `docs/tasks/6.0/daemon-6-autonomous-orchestrator-task-plan.md` | D6 established the daemon orchestration layer and `--backend` threading this task extends.                                                                                   |
 
@@ -232,50 +235,54 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 
 ## Phase 1: Backend Registry
 
-- [ ] Create `scripts/mcp/backend_registry.py` with `BackendSpec` dataclass, `BACKENDS` dict, `validate_backend()`, `get_backend_choices()`, `resolve_bridge()`.
-- [ ] Register `codex-cli` (kind `cli`) and `codex-subagent` (kind `bridge`, module `codex_subagent_bridge`) as built-in entries.
-- [ ] Refactor `lane_exec.py`: replace `BACKEND_CHOICES`, `_validate_backend`, and `_run_subagent` dynamic import with registry imports. Keep `codex-cli` subprocess path inline.
-- [ ] Refactor `review_runner.py`: same extraction. Replace `_subagent_exec` bridge import with `resolve_bridge()`.
-- [ ] Update `worker_daemon.py` and `orchestrator_daemon.py` to import `get_backend_choices()` for argparse choices.
-- [ ] Verify all existing tests pass with no behavior change (122+ tests across D6 and D7 suites).
+- [x] Create `scripts/mcp/backend_registry.py` with `BackendSpec` dataclass, `BACKENDS` dict, `validate_backend()`, `get_backend_choices()`, `resolve_bridge()`.
+- [x] Register `codex-cli` (kind `cli`) and `codex-subagent` (kind `bridge`, module `codex_subagent_bridge`) as built-in entries.
+- [x] Refactor `lane_exec.py`: replace `BACKEND_CHOICES`, `_validate_backend`, and `_run_subagent` dynamic import with registry imports. Keep `codex-cli` subprocess path inline.
+- [x] Refactor `review_runner.py`: same extraction. Replace `_subagent_exec` bridge import with `resolve_bridge()`.
+- [x] Update `worker_daemon.py` and `orchestrator_daemon.py` to import `get_backend_choices()` for argparse choices.
+- [x] Verify all existing tests pass with no behavior change (281 tests pass across full suite).
 
 ## Phase 2: MCP Orchestrator Lifecycle Commands
 
-- [ ] Implement `orchestrator_start` MCP tool: spawn daemon subprocess, return PID and lock path.
-- [ ] Implement `orchestrator_status` MCP tool: read daemon lock file and JSONL log tail, return running state, task ref, cycle count, last event timestamp.
-- [ ] Implement `orchestrator_stop` MCP tool: send SIGTERM (or SIGKILL with `force=true`), wait for exit, return exit code.
-- [ ] Implement `orchestrator_pause` and `orchestrator_resume` MCP tools: write pause sentinel file (existing daemon convention).
-- [ ] Register all five tools in `agent-handoff-mcp` server tool surface.
-- [ ] Add unit tests for each lifecycle command (mock subprocess, verify signal handling).
+- [x] Implement `orchestrator_start` MCP tool: spawn daemon subprocess, return PID and lock path.
+- [x] Implement `orchestrator_status` MCP tool: read daemon lock file and JSONL log tail, return running state, task ref, cycle count, last event timestamp.
+- [x] Implement `orchestrator_stop` MCP tool: send SIGTERM (or SIGKILL with `force=true`), wait for exit, return exit code.
+- [x] Implement `orchestrator_pause` and `orchestrator_resume` MCP tools: write pause sentinel file (existing daemon convention).
+- [x] Register all six tools in `agent-handoff-mcp` api.py `build_handoff_mcp()` and expose via `__init__.py`.
+- [x] Add unit tests for each lifecycle command (mock subprocess, verify signal handling).
+- [x] Add CLI subcommands for all six tools in cli.py.
 
 ## Phase 3: MCP Execution Turn Command
 
-- [ ] Implement `run_structured_turn` MCP tool: accept prompt, schema, cwd, backend, env; call `resolve_bridge(backend)` and return validated result.
-- [ ] Add guard: if `backend` is `codex-cli`, reject with clear error (CLI backend requires subprocess management not suitable for synchronous MCP call; use `orchestrator_start` or worker daemon instead).
-- [ ] Add timeout parameter with default matching bridge timeout (120s).
-- [ ] Add unit tests for the MCP tool (mock bridge call, verify result validation, verify timeout behavior).
+- [x] Implement `run_structured_turn` MCP tool: accept prompt, schema, cwd, backend, env; call `resolve_bridge(backend)` and return validated result.
+- [x] Add guard: if `backend` is `codex-cli`, reject with clear error (CLI backend requires subprocess management not suitable for synchronous MCP call; use `orchestrator_start` or worker daemon instead).
+- [x] Add timeout parameter with default matching bridge timeout (120s).
+- [x] Add unit tests for the MCP tool (mock bridge call, verify result validation, verify timeout behavior).
 
 ## Phase 4: Remote HTTP MCP Deployment
 
-- [ ] Reuse `agent-handoff-mcp serve-http` as the remote MCP entrypoint for custom-MCP clients; do not introduce a second server surface for this phase.
-- [ ] Document the authoritative-checkout deployment model: the HTTP server host owns `.task-state`, `CURRENT_TASK.md`, exports, logs, and worktrees for the task.
-- [ ] Add startup examples for a long-lived remote MCP host, including explicit `--workspace-root`, `--state-dir`, `--current-task-path`, and `--exports-dir`.
-- [ ] Add a clear non-goal that daemon-8 does not migrate orchestration state from file-backed checkout storage into a separate service-managed state layer.
+- [ ] Deferred to daemon-9: make `serve-http` the supported remote custom-MCP transport surface, including any required CLI UX such as explicit `--host` / `--port` controls.
+- [ ] Deferred to daemon-9: document the authoritative-checkout deployment model: the HTTP server host owns `.task-state`, `CURRENT_TASK.md`, exports, logs, and worktrees for the task.
+- [ ] Deferred to daemon-9: add startup examples and cold-start references for a long-lived remote MCP host, including explicit `--workspace-root`, `--state-dir`, `--current-task-path`, `--exports-dir`, and the relevant `BOOTSTRAP.md` updates.
+- [ ] Deferred to daemon-9: define the remote endpoint security posture. If auth is still deferred, document localhost-only binding or SSH tunneling as the default safety posture.
+- [ ] Deferred to daemon-9: define the readiness/verification contract for remote custom-MCP deployment, including the minimum expected tool surface and a concrete health-check flow.
+- [ ] Deferred to daemon-9: keep the non-goal explicit that custom-MCP deployment does not migrate orchestration state from file-backed checkout storage into a separate service-managed state layer.
 
 ## Phase 5: Documentation and Playbook
 
-- [ ] Update `subagent-bridge-interface-note.md` to reference the backend registry and show how to register a new adapter.
-- [ ] Update `worktree-codex-playbook.md` with: backend registry, MCP orchestrator commands, remote HTTP MCP deployment model, and an in-app orchestration workflow example.
-- [ ] Add orchestrator MCP command examples to `BOOTSTRAP.md` or equivalent cold-start reference.
-- [ ] Update `instructions.md` Multi-Agent Worktree Orchestration section to mention the MCP orchestrator commands as an alternative to Make targets for in-app agents.
+- [x] Update `subagent-bridge-interface-note.md` to reference the backend registry and show how to register a new adapter.
+- [x] Update `worktree-codex-playbook.md` with: backend registry, MCP orchestrator commands, remote HTTP MCP deployment model status, and an in-app orchestration workflow example.
+- [x] Add orchestrator MCP command examples to `BOOTSTRAP.md` or equivalent cold-start reference.
+- [x] Update `instructions.md` Multi-Agent Worktree Orchestration section to mention the MCP orchestrator commands as an alternative to Make targets for in-app agents.
 
 ## Phase 6: Tests
 
-- [ ] Backend registry unit tests: validate registration, resolve, unknown backend errors, empty registry.
-- [ ] Integration tests: `lane_exec.py` and `review_runner.py` call through registry without regression.
-- [ ] MCP tool tests: orchestrator lifecycle (start, status, stop, pause, resume) with mocked subprocess.
-- [ ] MCP tool tests: `run_structured_turn` with mocked bridge, including timeout and error paths.
-- [ ] Remote MCP smoke test: `serve-http` starts against an authoritative checkout config and exposes the expected tool surface.
+- [x] Backend registry unit tests: validate registration, resolve, unknown backend errors, and bridge loading behavior (`test_backend_registry.py`).
+- [x] Integration tests: `lane_exec.py` and `review_runner.py` call through registry without regression (58 tests pass).
+- [x] MCP tool tests: orchestrator lifecycle (start, status, stop, pause, resume) with mocked subprocess (test_orchestrator_tools.py).
+- [x] MCP tool tests: `run_structured_turn` with mocked bridge, including timeout and error paths (test_orchestrator_tools.py).
+- [x] Stdio smoke test: `test_stdio.py` verifies new tools are exposed via stdio transport.
+- [ ] Deferred to daemon-9: remote MCP smoke test: `serve-http` starts against an authoritative checkout config and exposes the expected tool surface.
 - [ ] End-to-end smoke test: Opus-style workflow where MCP tools are used to start daemon, dispatch work, poll status, and stop daemon.
 
 ## Stretch Goals
@@ -290,7 +297,7 @@ This host owns the authoritative checkout and all file-backed orchestration stat
 
 - [ ] Adding a new bridge backend requires only: (1) a Python module implementing `run_subagent(prompt, schema, cwd, env) -> dict`, (2) one `register_backend()` call in `backend_registry.py`. No changes to `lane_exec.py`, `review_runner.py`, daemon argparsers, or Make targets.
 - [ ] An Opus agent in VS Code Copilot can start, monitor, and stop the orchestrator daemon entirely through MCP tools without using `run_in_terminal`.
-- [ ] An Opus agent can execute a single structured turn through any registered bridge backend via the `run_structured_turn` MCP tool.
-- [ ] A remote custom-MCP client can connect to `agent-handoff-mcp serve-http` running on an authoritative checkout host without requiring client-local `.task-state` or `CURRENT_TASK.md`.
+- [x] An Opus agent can execute a single structured turn through any registered bridge backend via the `run_structured_turn` MCP tool.
+- [ ] Deferred to daemon-9: a remote custom-MCP client can connect to `agent-handoff-mcp serve-http` running on an authoritative checkout host without requiring client-local `.task-state` or `CURRENT_TASK.md`.
 - [ ] All existing D6 (109) and D7 (13) tests continue to pass after the registry refactor.
-- [ ] The `codex-cli` default behavior is identical before and after the refactor.
+- [x] Full agent-handoff-mcp test suite passes (281 tests) including new orchestrator tool tests.

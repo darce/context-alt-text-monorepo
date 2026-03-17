@@ -83,6 +83,38 @@ Command Palette → `MCP: List Servers` → "context-alt-text" should show the r
 
 This adapter exposes the handoff tool family only. Use editor-native tools for file search/read/navigation until the separate repo-intel MCP work lands.
 
+Daemon-8 extended that surface with orchestration controls:
+
+- `orchestrator_start`
+- `orchestrator_status`
+- `orchestrator_stop`
+- `orchestrator_pause`
+- `orchestrator_resume`
+- `run_structured_turn`
+
+These tools are intended for in-app agents that already have MCP access to the
+authoritative checkout. `run_structured_turn` is bridge-only and rejects
+`codex-cli`.
+
+Example CLI equivalents:
+
+```bash
+agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-start --task-ref <task-ref> --backend codex-cli
+agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-status
+agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-pause
+agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-resume
+agent-handoff-mcp --workspace-root "$(pwd)" orchestrator-stop
+agent-handoff-mcp --workspace-root "$(pwd)" run-structured-turn \
+  --prompt-file /tmp/prompt.md \
+  --schema-file /tmp/schema.json \
+  --cwd /absolute/path/to/worktree \
+  --backend codex-subagent
+```
+
+Remote HTTP deployment for Codex custom MCP is intentionally tracked as follow-on
+work in daemon-9. Daemon-8's completed scope is the in-repo MCP tool surface and its
+CLI/stdio exposure.
+
 ### Troubleshooting
 
 If tools don't appear in VS Code:

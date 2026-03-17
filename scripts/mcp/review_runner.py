@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import hashlib
-import importlib
 import json
 import subprocess
 import sys
@@ -16,9 +15,15 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from backend_registry import get_backend_choices
+from backend_registry import get_backend_spec
+from backend_registry import resolve_bridge
+from backend_registry import validate_backend
+
 REPO_ROOT = SCRIPT_DIR.parents[1]
 RULES_DIR = REPO_ROOT / "docs" / "agentic" / "rules"
-BACKEND_CHOICES = ("codex-cli", "codex-subagent")
+
+BACKEND_CHOICES = get_backend_choices()
 
 # Stack guide selection by file extension
 STACK_GUIDES: dict[str, str] = {
@@ -277,21 +282,15 @@ def _codex_exec(prompt: str, worktree_path: Path) -> dict[str, Any]:
         return payload
 
 
-def _subagent_exec(prompt: str, worktree_path: Path, *, env: dict[str, str] | None = None) -> dict[str, Any]:
+def _subagent_exec(
+    backend_name: str,
+    prompt: str,
+    worktree_path: Path,
+    *,
+    env: dict[str, str] | None = None,
+) -> dict[str, Any]:
     """Execute the optional host-provided Codex subagent bridge for review."""
-    try:
-        bridge = importlib.import_module("codex_subagent_bridge")
-    except ImportError as exc:
-        raise RuntimeError(
-            "codex-subagent backend is unavailable in this runtime. "
-            "Provide a host bridge module named 'codex_subagent_bridge'."
-        ) from exc
-
-    runner = getattr(bridge, "run_subagent", None)
-    if not callable(runner):
-        raise RuntimeError(
-            "codex_subagent_bridge.run_subagent is required for the codex-subagent backend."
-        )
+    runner = resolve_bridge(backend_name)
 
     runner_kwargs: dict[str, Any] = {
         "prompt": prompt,
@@ -310,10 +309,10 @@ def _subagent_exec(prompt: str, worktree_path: Path, *, env: dict[str, str] | No
         try:
             payload = json.loads(payload)
         except json.JSONDecodeError as exc:
-            raise RuntimeError(f"codex-subagent backend returned invalid JSON: {exc}") from exc
+            raise RuntimeError(f"{backend_name} backend returned invalid JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise RuntimeError(
-            f"codex-subagent backend returned non-object payload: {type(payload).__name__}"
+            f"{backend_name} backend returned non-object payload: {type(payload).__name__}"
         )
     return payload
 
@@ -324,16 +323,6 @@ def _find_codex_path() -> str:
         sys.path.insert(0, str(SCRIPT_DIR))
     from lane_exec import find_codex
     return find_codex()
-
-
-def _validate_backend(backend: str) -> str:
-    normalized = backend.strip()
-    if normalized not in BACKEND_CHOICES:
-        raise RuntimeError(
-            f"Unsupported review backend '{backend}'. Valid values: {', '.join(BACKEND_CHOICES)}"
-        )
-    return normalized
-
 
 # ---------------------------------------------------------------------------
 # Result validation
@@ -448,7 +437,7 @@ def run_review(
     dry_run: bool = False,
 ) -> dict[str, Any]:
     """Run a full review cycle: discover changes, build prompt, execute Codex, validate, optionally record."""
-    backend_name = _validate_backend(backend)
+    backend_name = validate_backend(backend)
     env = None
     if orchestrator_root is not None:
         from _env import pythonpath_env
@@ -476,8 +465,8 @@ def run_review(
             "stack_guides": guides,
         }
 
-    if backend_name == "codex-subagent":
-        raw_result = _subagent_exec(prompt, worktree_path, env=env)
+    if get_backend_spec(backend_name).kind == "bridge":
+        raw_result = _subagent_exec(backend_name, prompt, worktree_path, env=env)
     else:
         raw_result = _codex_exec(prompt, worktree_path)
     validated = _validate_review_result(raw_result)

@@ -22,6 +22,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
+from backend_registry import get_backend_choices
+
 # ---------------------------------------------------------------------------
 # Re-export submodule symbols for backward compatibility (tests load this
 # module via importlib and access everything through ``mod.X``).
@@ -755,6 +757,7 @@ def orchestrator_loop(
 
 
 def _parse_args() -> argparse.Namespace:
+    backend_choices = get_backend_choices()
     parser = argparse.ArgumentParser(
         description="Orchestrator daemon: dispatch, intake, refresh, verify."
     )
@@ -770,7 +773,7 @@ def _parse_args() -> argparse.Namespace:
     run_parser.add_argument("--single-pass", action="store_true",
                             help="Run one cycle and exit.")
     run_parser.add_argument("--backend", default="codex-cli",
-                            choices=("codex-cli", "codex-subagent"),
+                            choices=backend_choices,
                             help="Execution backend to use for orchestrator-invoked operations (default: codex-cli).")
     run_parser.add_argument("--dry-run", action="store_true",
                             help="Skip mutating operations.")

@@ -25,3 +25,6 @@ def test_stdio_server_lists_handoff_tools(tmp_path: Path) -> None:
     assert "get_handoff_state" in tool_names
     assert "record_review_finding" in tool_names
     assert "handoff_close_check" in tool_names
+    assert "orchestrator_start" in tool_names
+    assert "orchestrator_status" in tool_names
+    assert "run_structured_turn" in tool_names

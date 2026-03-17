@@ -17,6 +17,7 @@ import db.session as db_session_module
 from db.base import Base
 from db.models import IdentityCluster, Tenant
 from recognition.interface_adapters.http import router as recognition_router
+from recognition.interface_adapters.http.routers import clusters as cluster_router
 
 
 def _make_client() -> TestClient:
@@ -80,6 +81,7 @@ async def session_factory(
 ) -> AsyncGenerator[async_sessionmaker[AsyncSession], None]:
     factory = async_sessionmaker(sqlite_engine, expire_on_commit=False)
     monkeypatch.setattr(db_session_module, "async_session_factory", factory)
+    monkeypatch.setattr(cluster_router.db_session_module, "async_session_factory", factory)
     yield factory
 
 
@@ -95,12 +97,12 @@ async def test_patch_cluster_label_persists_across_sessions(
         session.add(IdentityCluster(id=cluster_id, tenant_id=tenant_id, label=None, identity_count=0))
         await session.commit()
 
-    client = _make_client()
-    response = client.patch(
-        f"/recognition/clusters/{cluster_id}",
-        headers={"X-Tenant-ID": str(tenant_id)},
-        json={"tenant_id": str(tenant_id), "label": "Persisted"},
-    )
+    with _make_client() as client:
+        response = client.patch(
+            f"/recognition/clusters/{cluster_id}",
+            headers={"X-Tenant-ID": str(tenant_id)},
+            json={"tenant_id": str(tenant_id), "label": "Persisted"},
+        )
 
     assert response.status_code == 200
 
@@ -123,19 +125,19 @@ async def test_patch_then_list_clusters_returns_label(
         session.add(IdentityCluster(id=cluster_id, tenant_id=tenant_id, label=None, identity_count=0))
         await session.commit()
 
-    client = _make_client()
-    patch = client.patch(
-        f"/recognition/clusters/{cluster_id}",
-        headers={"X-Tenant-ID": str(tenant_id)},
-        json={"tenant_id": str(tenant_id), "label": "Persisted"},
-    )
-    assert patch.status_code == 200
+    with _make_client() as client:
+        patch = client.patch(
+            f"/recognition/clusters/{cluster_id}",
+            headers={"X-Tenant-ID": str(tenant_id)},
+            json={"tenant_id": str(tenant_id), "label": "Persisted"},
+        )
+        assert patch.status_code == 200
 
-    resp = client.get(
-        "/recognition/clusters",
-        headers={"X-Tenant-ID": str(tenant_id)},
-        params={"tenant_id": str(tenant_id)},
-    )
+        resp = client.get(
+            "/recognition/clusters",
+            headers={"X-Tenant-ID": str(tenant_id)},
+            params={"tenant_id": str(tenant_id)},
+        )
     assert resp.status_code == 200
     clusters = resp.json()
     assert isinstance(clusters, list)

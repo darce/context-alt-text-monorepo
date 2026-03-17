@@ -13,9 +13,9 @@ from uuid import UUID
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Query, Response, status
 from sqlalchemy import select
 
+import db.session as db_session_module
 from db.models import Tenant
 from db.models.identity import CurationReplayRecord
-from db.session import async_session_factory
 from recognition.application.tasks.clustering import run_background_surface_suggestions
 from recognition.config import get_settings as get_recognition_settings
 from recognition.config.security import get_security_settings
@@ -628,7 +628,7 @@ async def update_cluster(
             request.tenant_id,
             cluster_id,
             label,  # Pass label directly (optimistic update pattern)
-            session_factory=async_session_factory,
+            session_factory=db_session_module.async_session_factory,
             cluster_service_builder=build_cluster_service,
         )
 

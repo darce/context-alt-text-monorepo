@@ -1,11 +1,15 @@
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
+import importlib
 import json
 import os
+import signal
 import subprocess
 import sys
 import tempfile
+import time
 from pathlib import Path
 from typing import Any
 
@@ -81,6 +85,12 @@ TOOL_DESCRIPTIONS: dict[str, str] = {
     "import_handoff_state": "Import a previously exported handoff state snapshot into the local database.",
     "archive_task_state": "Archive completed task state from the live handoff tables into archive storage.",
     "get_handoff_dashboard": "Return a broader handoff dashboard view across task state, lanes, findings, blockers, and reports.",
+    "orchestrator_start": "Start the orchestrator daemon for the authoritative checkout and return its PID and lock path.",
+    "orchestrator_status": "Return orchestrator daemon runtime status, including pause state, PID, last event, and cycle count.",
+    "orchestrator_stop": "Stop the orchestrator daemon with SIGTERM, or SIGKILL when force=true.",
+    "orchestrator_pause": "Pause the orchestrator daemon by creating the standard pause sentinel on the authoritative host.",
+    "orchestrator_resume": "Resume the orchestrator daemon by clearing the standard pause sentinel on the authoritative host.",
+    "run_structured_turn": "Execute one synchronous structured bridge turn through a registered non-CLI backend.",
 }
 
 
@@ -148,6 +158,330 @@ def generate_current_task_md(
     )
 
 
+def _scripts_mcp_dir() -> Path:
+    return get_runtime_config().workspace_root / "scripts" / "mcp"
+
+
+def _import_scripts_mcp_module(name: str) -> Any:
+    scripts_dir = _scripts_mcp_dir()
+    if str(scripts_dir) not in sys.path:
+        sys.path.insert(0, str(scripts_dir))
+    return importlib.import_module(name)
+
+
+def _handoff_pythonpath() -> str:
+    package_src = Path(__file__).resolve().parents[1]
+    existing = os.environ.get("PYTHONPATH")
+    return str(package_src) if not existing else f"{package_src}:{existing}"
+
+
+def _orchestrator_paths() -> dict[str, Path]:
+    config = get_runtime_config()
+    state_dir = config.workspace_root / ".task-state"
+    return {
+        "workspace_root": config.workspace_root,
+        "state_dir": state_dir,
+        "lock_path": state_dir / "orchestrator.lock",
+        "pause_path": state_dir / "daemon-paused",
+        "log_dir": config.workspace_root / "logs" / "daemon",
+        "log_path": config.workspace_root / "logs" / "daemon" / "orchestrator.jsonl",
+        "script_path": config.workspace_root / "scripts" / "mcp" / "orchestrator_daemon.py",
+    }
+
+
+def _read_lock_pid(lock_path: Path) -> int | None:
+    if not lock_path.exists():
+        return None
+    try:
+        payload = json.loads(lock_path.read_text())
+    except (OSError, json.JSONDecodeError):
+        return None
+    pid = payload.get("pid")
+    return int(pid) if isinstance(pid, int) or isinstance(pid, str) and str(pid).isdigit() else None
+
+
+def _pid_is_running(pid: int | None) -> bool:
+    if pid is None:
+        return False
+    try:
+        os.kill(pid, 0)
+    except OSError:
+        return False
+    return True
+
+
+def _last_log_event(log_path: Path) -> dict[str, Any] | None:
+    if not log_path.exists():
+        return None
+    try:
+        for line in reversed(log_path.read_text().splitlines()):
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict):
+                return payload
+    except OSError:
+        return None
+    return None
+
+
+def _count_log_events(log_path: Path, event_name: str) -> int:
+    if not log_path.exists():
+        return 0
+    try:
+        count = 0
+        for line in log_path.read_text().splitlines():
+            if not line.strip():
+                continue
+            try:
+                payload = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if isinstance(payload, dict) and payload.get("event") == event_name:
+                count += 1
+        return count
+    except OSError:
+        return 0
+
+
+def orchestrator_start(
+    task_ref: str,
+    backend: str = "codex-cli",
+    poll_interval: int = 60,
+    single_pass: bool = False,
+) -> str:
+    paths = _orchestrator_paths()
+    try:
+        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_name = backend_registry.validate_backend(backend)
+    except RuntimeError as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+    existing_pid = _read_lock_pid(paths["lock_path"])
+    if _pid_is_running(existing_pid):
+        return core._json_response(
+            {
+                "ok": False,
+                "error": "Orchestrator daemon is already running.",
+                "pid": existing_pid,
+                "lock_path": str(paths["lock_path"]),
+            }
+        )
+
+    env = dict(os.environ)
+    env["PYTHONPATH"] = _handoff_pythonpath()
+    cmd = [
+        sys.executable,
+        str(paths["script_path"]),
+        "run",
+        "--orchestrator-root",
+        str(paths["workspace_root"]),
+        "--task-ref",
+        task_ref,
+        "--backend",
+        backend_name,
+        "--poll-interval",
+        str(poll_interval),
+    ]
+    if single_pass:
+        cmd.append("--single-pass")
+    proc = subprocess.Popen(
+        cmd,
+        cwd=str(paths["workspace_root"]),
+        env=env,
+        stdin=subprocess.DEVNULL,
+        stdout=subprocess.DEVNULL,
+        stderr=subprocess.DEVNULL,
+    )
+    return core._json_response(
+        {
+            "ok": True,
+            "pid": proc.pid,
+            "lock_path": str(paths["lock_path"]),
+            "backend": backend_name,
+            "single_pass": single_pass,
+        }
+    )
+
+
+def orchestrator_status() -> str:
+    paths = _orchestrator_paths()
+    orchestrator_daemon = _import_scripts_mcp_module("orchestrator_daemon")
+    status = orchestrator_daemon.daemon_status(paths["state_dir"], paths["log_dir"])
+    pid = None
+    lock_info = status.get("lock")
+    if isinstance(lock_info, dict):
+        raw_pid = lock_info.get("pid")
+        if isinstance(raw_pid, int) or isinstance(raw_pid, str) and str(raw_pid).isdigit():
+            pid = int(raw_pid)
+    running = _pid_is_running(pid)
+    last_event = _last_log_event(paths["log_path"])
+    task_ref = None
+    if isinstance(last_event, dict):
+        raw_task_ref = last_event.get("task_ref")
+        if isinstance(raw_task_ref, str) and raw_task_ref.strip():
+            task_ref = raw_task_ref
+    return core._json_response(
+        {
+            "ok": True,
+            "running": running,
+            "pid": pid,
+            "task_ref": task_ref,
+            "cycle_count": _count_log_events(paths["log_path"], "cycle_end"),
+            "last_event": last_event,
+            "paused": bool(status.get("paused")),
+            "lock_path": str(paths["lock_path"]),
+            "status": status,
+        }
+    )
+
+
+def orchestrator_pause() -> str:
+    paths = _orchestrator_paths()
+    orchestrator_daemon = _import_scripts_mcp_module("orchestrator_daemon")
+    orchestrator_daemon.daemon_pause(paths["state_dir"])
+    return core._json_response(
+        {
+            "ok": True,
+            "paused": True,
+            "pause_path": str(paths["pause_path"]),
+        }
+    )
+
+
+def orchestrator_resume() -> str:
+    paths = _orchestrator_paths()
+    orchestrator_daemon = _import_scripts_mcp_module("orchestrator_daemon")
+    orchestrator_daemon.daemon_resume(paths["state_dir"])
+    return core._json_response(
+        {
+            "ok": True,
+            "paused": False,
+            "pause_path": str(paths["pause_path"]),
+        }
+    )
+
+
+def orchestrator_stop(force: bool = False, wait_seconds: float = 5.0) -> str:
+    paths = _orchestrator_paths()
+    pid = _read_lock_pid(paths["lock_path"])
+    if not _pid_is_running(pid):
+        return core._json_response(
+            {
+                "ok": True,
+                "running": False,
+                "pid": pid,
+                "exit_code": None,
+            }
+        )
+
+    sig = signal.SIGKILL if force else signal.SIGTERM
+    os.kill(pid, sig)
+    deadline = time.monotonic() + max(wait_seconds, 0.0)
+    while time.monotonic() < deadline:
+        if not _pid_is_running(pid):
+            return core._json_response(
+                {
+                    "ok": True,
+                    "running": False,
+                    "pid": pid,
+                    "exit_code": -int(sig),
+                }
+            )
+        time.sleep(0.05)
+    return core._json_response(
+        {
+            "ok": False,
+            "error": f"Orchestrator daemon did not exit after {signal.Signals(sig).name}.",
+            "running": True,
+            "pid": pid,
+        }
+    )
+
+
+def run_structured_turn(
+    prompt: str,
+    schema: dict[str, Any],
+    cwd: str,
+    backend: str = "codex-subagent",
+    env: dict[str, str] | None = None,
+    timeout_seconds: float = 120.0,
+) -> str:
+    try:
+        backend_registry = _import_scripts_mcp_module("backend_registry")
+        backend_name = backend_registry.validate_backend(backend)
+        spec = backend_registry.get_backend_spec(backend_name)
+        if spec.kind == "cli":
+            return core._json_response(
+                {
+                    "ok": False,
+                    "error": "CLI backends are not supported for synchronous MCP turns. Use orchestrator_start or a worker daemon instead.",
+                }
+            )
+        runner = backend_registry.resolve_bridge(backend_name)
+    except RuntimeError as exc:
+        return core._json_response({"ok": False, "error": str(exc)})
+
+    runner_kwargs: dict[str, Any] = {
+        "prompt": prompt,
+        "schema": schema,
+        "cwd": cwd,
+    }
+    if env is not None:
+        runner_kwargs["env"] = env
+
+    def _invoke_runner() -> Any:
+        try:
+            return runner(**runner_kwargs)
+        except TypeError as exc:
+            if env is None or "env" not in str(exc):
+                raise
+            retry_kwargs = dict(runner_kwargs)
+            retry_kwargs.pop("env", None)
+            return runner(**retry_kwargs)
+
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+            future = executor.submit(_invoke_runner)
+            payload = future.result(timeout=max(timeout_seconds, 0.0))
+    except concurrent.futures.TimeoutError:
+        return core._json_response(
+            {
+                "ok": False,
+                "error": f"Structured turn timed out after {timeout_seconds} seconds.",
+                "backend": backend,
+            }
+        )
+    except RuntimeError as exc:
+        return core._json_response({"ok": False, "error": str(exc), "backend": backend})
+    except TypeError as exc:
+        return core._json_response({"ok": False, "error": str(exc), "backend": backend})
+
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            return core._json_response(
+                {
+                    "ok": False,
+                    "error": f"{backend_name} backend returned invalid JSON: {exc}",
+                    "backend": backend_name,
+                }
+            )
+    if not isinstance(payload, dict):
+        return core._json_response(
+            {
+                "ok": False,
+                "error": f"{backend_name} backend returned non-object payload: {type(payload).__name__}",
+                "backend": backend_name,
+            }
+        )
+    return core._json_response({"ok": True, "backend": backend_name, "result": payload})
+
+
 def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
     configure_runtime(config)
     mcp = FastMCP(
@@ -189,6 +523,12 @@ def build_handoff_mcp(config: RuntimeConfig) -> FastMCP:
         import_handoff_state,
         archive_task_state,
         get_handoff_dashboard,
+        orchestrator_start,
+        orchestrator_status,
+        orchestrator_stop,
+        orchestrator_pause,
+        orchestrator_resume,
+        run_structured_turn,
     ]:
         mcp.add_tool(tool)
     return mcp

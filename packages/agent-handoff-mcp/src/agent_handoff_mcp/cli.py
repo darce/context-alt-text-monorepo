@@ -19,12 +19,18 @@ from .api import (
     list_review_findings,
     list_worker_reports,
     list_worktree_lanes,
+    orchestrator_pause,
+    orchestrator_resume,
+    orchestrator_start,
+    orchestrator_status,
+    orchestrator_stop,
     record_lane_message,
     record_decision,
     record_review_finding,
     record_test_result,
     record_worker_report,
     report_blocker,
+    run_structured_turn,
     run_doctor,
     set_handoff_state,
     update_lane_message,
@@ -210,6 +216,27 @@ def _build_parser() -> argparse.ArgumentParser:
     archive_parser.add_argument("--clear-active-if-matches", action="store_true")
     archive_parser.add_argument("--prune-working-rows", action="store_true")
     archive_parser.add_argument("--allow-destructive-clear", action="store_true")
+
+    orchestrator_start_parser = subparsers.add_parser("orchestrator-start")
+    orchestrator_start_parser.add_argument("--task-ref", required=True)
+    orchestrator_start_parser.add_argument("--backend", default="codex-cli")
+    orchestrator_start_parser.add_argument("--poll-interval", type=int, default=60)
+    orchestrator_start_parser.add_argument("--single-pass", action="store_true")
+
+    subparsers.add_parser("orchestrator-status")
+
+    orchestrator_stop_parser = subparsers.add_parser("orchestrator-stop")
+    orchestrator_stop_parser.add_argument("--force", action="store_true")
+
+    subparsers.add_parser("orchestrator-pause")
+    subparsers.add_parser("orchestrator-resume")
+
+    turn_parser = subparsers.add_parser("run-structured-turn")
+    turn_parser.add_argument("--prompt-file", required=True)
+    turn_parser.add_argument("--schema-file", required=True)
+    turn_parser.add_argument("--cwd", required=True)
+    turn_parser.add_argument("--backend", default="codex-subagent")
+    turn_parser.add_argument("--timeout-seconds", type=float, default=120.0)
 
     return parser
 
@@ -462,3 +489,37 @@ def main() -> None:
                 allow_destructive_clear=args.allow_destructive_clear,
             )
         )
+        return
+    if args.command == "orchestrator-start":
+        _print_json(
+            orchestrator_start(
+                task_ref=args.task_ref,
+                backend=args.backend,
+                poll_interval=args.poll_interval,
+                single_pass=args.single_pass,
+            )
+        )
+        return
+    if args.command == "orchestrator-status":
+        _print_json(orchestrator_status())
+        return
+    if args.command == "orchestrator-stop":
+        _print_json(orchestrator_stop(force=args.force))
+        return
+    if args.command == "orchestrator-pause":
+        _print_json(orchestrator_pause())
+        return
+    if args.command == "orchestrator-resume":
+        _print_json(orchestrator_resume())
+        return
+    if args.command == "run-structured-turn":
+        _print_json(
+            run_structured_turn(
+                prompt=Path(args.prompt_file).read_text(),
+                schema=json.loads(Path(args.schema_file).read_text()),
+                cwd=args.cwd,
+                backend=args.backend,
+                timeout_seconds=args.timeout_seconds,
+            )
+        )
+        return

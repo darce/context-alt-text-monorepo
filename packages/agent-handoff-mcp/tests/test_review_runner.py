@@ -76,6 +76,11 @@ def test_findings_converged_one_high_fails() -> None:
     assert module.findings_converged([{"severity": "high"}]) is False
 
 
+def test_backend_choices_come_from_registry() -> None:
+    module = _load_review_runner_module()
+    assert module.BACKEND_CHOICES == ("codex-cli", "codex-subagent")
+
+
 # ---------------------------------------------------------------------------
 # Stack guide detection tests
 # ---------------------------------------------------------------------------
@@ -379,6 +384,7 @@ def test_run_review_subagent_backend_uses_subagent_exec(tmp_path: Path) -> None:
     assert result["summary"] == "Clean review."
     assert result["converged"] is True
     mock_subagent_exec.assert_called_once()
+    assert mock_subagent_exec.call_args.args[0] == "codex-subagent"
     mock_codex_exec.assert_not_called()
 
 
@@ -405,6 +411,7 @@ def test_run_review_subagent_backend_passes_runtime_env(tmp_path: Path) -> None:
             backend="codex-subagent",
         )
 
+    assert mock_subagent_exec.call_args.args[0] == "codex-subagent"
     env = mock_subagent_exec.call_args.kwargs["env"]
     assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
     assert env["PYENV_VERSION"] == "description-service"
@@ -417,11 +424,11 @@ def test_subagent_exec_falls_back_when_bridge_does_not_accept_env(tmp_path: Path
     def legacy_runner(*, prompt: str, schema: dict[str, Any], cwd: str) -> dict[str, Any]:
         return {"findings": [], "summary": "Clean review."}
 
-    fake_bridge = mock.Mock(run_subagent=mock.Mock(side_effect=legacy_runner))
+    fake_runner = mock.Mock(side_effect=legacy_runner)
 
-    with mock.patch.object(module.importlib, "import_module", return_value=fake_bridge):
-        result = module._subagent_exec("Prompt", tmp_path, env={"TMPDIR": "/tmp/lane"})
+    with mock.patch.object(module, "resolve_bridge", return_value=fake_runner):
+        result = module._subagent_exec("codex-subagent", "Prompt", tmp_path, env={"TMPDIR": "/tmp/lane"})
 
     assert result == {"findings": [], "summary": "Clean review."}
-    assert fake_bridge.run_subagent.call_count == 2
-    assert "env" not in fake_bridge.run_subagent.call_args.kwargs
+    assert fake_runner.call_count == 2
+    assert "env" not in fake_runner.call_args.kwargs

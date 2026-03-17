@@ -24,8 +24,10 @@ if str(SCRIPT_DIR) not in sys.path:
     sys.path.insert(0, str(SCRIPT_DIR))
 
 from _env import pythonpath_env
+from backend_registry import get_backend_choices
 
 _MAX_LOG_BYTES = 1_000_000
+BACKEND_CHOICES = get_backend_choices()
 
 
 # ---------------------------------------------------------------------------
@@ -520,7 +522,7 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--single-pass", action="store_true",
                         help="Run one cycle and exit instead of looping.")
     parser.add_argument("--backend", default="codex-cli",
-                        choices=("codex-cli", "codex-subagent"),
+                        choices=BACKEND_CHOICES,
                         help="Execution backend to use (default: codex-cli).")
     parser.add_argument("--codex-bin", default=None,
                         help="Explicit path to the codex binary.")

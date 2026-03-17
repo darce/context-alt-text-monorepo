@@ -2,7 +2,7 @@
 
 ## Problem Statement
 
-The `codex-subagent` backend seam now exists in the orchestration layer, but it is not usable because no runtime provides the required `codex_subagent_bridge` module. Worker daemons that select `BACKEND=codex-subagent` fail on the first execution attempt before any lane work can begin. The orchestrator daemon also accepts `--backend` for future orchestrator-invoked review/execution flows, but the orchestrator loop currently coordinates only via MCP and Make, so the missing bridge is not an immediate blocker on that side.
+The `codex-subagent` backend seam now exists in the orchestration layer, but it is not usable because no runtime provides the required `codex_subagent_bridge` module. Worker daemons that select `BACKEND=codex-subagent` fail on the first execution attempt before any lane work can begin. The Make surface passes `BACKEND` to the orchestrator daemon, and `orchestrator_daemon.py` now accepts `--backend` in its argparser (D6-FR-M1, fixed in D6 Phase 2).
 
 We need to implement Option A: a host-provided bridge that speaks `codex app-server` over stdio, preserves the current prompt-in/schema-out contract, and keeps the orchestration package portable enough to support other agent runtimes later.
 
@@ -130,63 +130,63 @@ except ImportError as exc:
 ## Completed
 
 - [x] The execution seam for `codex-subagent` already exists in `lane_exec.py` and `review_runner.py`.
-- [x] Worker daemon and Make surfaces thread `BACKEND=codex-subagent` through worker entrypoints, and the orchestrator CLI also accepts `--backend` for future orchestrator-invoked review/execution flows.
+- [x] Worker daemon and Make surfaces thread `BACKEND=codex-subagent` through worker entrypoints. `orchestrator_daemon.py` now accepts `--backend` (D6-FR-M1, fixed in D6 Phase 2).
 - [x] Result validation remains outside the bridge and already guards the lane/review contracts.
 
 ## Phase 0: Scaffolding
 
-- [ ] Create `packages/codex-subagent-bridge/` as an optional installable package with `src/` layout.
-- [ ] Add public `run_subagent(prompt, schema, cwd, env=None)` signature and docstring.
-- [ ] Add internal client/protocol helper stubs with `NotImplementedError("TODO: ...")`.
-- [ ] Run `codex app-server generate-json-schema` and vendor a snapshot of the protocol schema as a test fixture and reference document.
-- [ ] Add bridge test files with scaffolded mocked app-server fixtures.
-- [ ] Verify the package imports cleanly in editable mode.
+- [x] Create `packages/codex-subagent-bridge/` as an optional installable package with `src/` layout.
+- [x] Add public `run_subagent(prompt, schema, cwd, env=None)` signature and docstring.
+- [x] Implement the internal client/protocol helpers directly (superseding the earlier stub-only placeholder).
+- [x] Run `codex app-server generate-json-schema` and vendor a snapshot of the protocol schema as a test fixture and reference document.
+- [x] Add bridge test files with scaffolded mocked app-server fixtures.
+- [x] Verify the package imports cleanly in editable mode.
 
 ## Phase 1: App-Server Session Management
 
-- [ ] Launch `codex app-server --listen stdio://` in the requested `cwd`.
-- [ ] Verify that the `cwd` placement ensures the spawned app-server discovers the worktree's agent instruction file (currently `CLAUDE.md`, a symlink to `docs/agentic/instructions.md`). This repo has no `AGENTS.md`; instruction routing relies on `CLAUDE.md` and `GEMINI.md` symlinks at the repo root.
-- [ ] Implement request/response correlation and event streaming over stdio.
-- [ ] Send the `initialize` handshake and validate server readiness before starting work.
-- [ ] Ensure process shutdown is deterministic on success, protocol failure, timeout, and caller interruption.
+- [x] Launch `codex app-server --listen stdio://` in the requested `cwd`.
+- [x] Verify that the `cwd` placement ensures the spawned app-server discovers the worktree's agent instruction file (currently `CLAUDE.md`, a symlink to `docs/agentic/instructions.md`). This repo has no `AGENTS.md`; instruction routing relies on `CLAUDE.md` and `GEMINI.md` symlinks at the repo root.
+- [x] Implement request/response correlation and event streaming over stdio.
+- [x] Send the `initialize` handshake and validate server readiness before starting work.
+- [x] Ensure process shutdown is deterministic on success, protocol failure, timeout, and caller interruption.
 
 ## Phase 2: Structured Turn Execution
 
-- [ ] Implement `thread/start` followed by `turn/start` using the caller-provided prompt and output schema.
-- [ ] Stream events until the turn reaches its terminal completed state.
-- [ ] Extract the structured output payload from the terminal turn result and normalize it to a Python `dict`.
-- [ ] Raise clear runtime errors for protocol failures, incomplete turns, invalid JSON payloads, or missing structured content.
+- [x] Implement `thread/start` followed by `turn/start` using the caller-provided prompt and output schema.
+- [x] Stream events until the turn reaches its terminal completed state.
+- [x] Extract the structured output payload from the terminal turn result and normalize it to a Python `dict`.
+- [x] Raise clear runtime errors for protocol failures, incomplete turns, invalid JSON payloads, or missing structured content.
 
 ## Phase 3: Runtime Hints And Portability
 
-- [ ] Decide and document which `env` hints are forwarded to app-server configuration versus ignored as CLI-only details.
-- [ ] Decide whether `env` hints can forward a reasoning level (`low`/`medium`/`high`) to the app-server session, and if so, how the bridge maps that to the protocol.
-- [ ] MCP server config (tool endpoints, credentials) is NOT forwarded through the bridge. Any required context must be baked into the rendered prompt or handled by the parent daemon process. This follows from the Workflow Principles rule that the bridge must have no direct MCP access. If read-only tool access is ever desired, scope that as a separate follow-up that explicitly revisits the ownership principle.
-- [ ] Keep the bridge API Codex-specific but package layout adapter-friendly so sibling non-Codex bridges can be added later.
-- [ ] Document supported provisioning paths: editable install, wheel install, or host injection via `PYTHONPATH`/`sys.modules`.
-- [ ] Document that the worktree's agent instruction file (`CLAUDE.md` / `GEMINI.md`, symlinked to `docs/agentic/instructions.md`) is the instruction surface for spawned agents. This repo does not use `AGENTS.md`.
-- [ ] Document that build and test commands must be discoverable by the spawned agent, either through the instruction file or explicitly included in the rendered prompt.
-- [ ] Keep orchestration-layer imports unchanged so the core package remains unaware of adapter packaging details.
+- [x] Decide and document which `env` hints are forwarded to app-server configuration versus ignored as CLI-only details.
+- [x] Decide whether `env` hints can forward a reasoning level (`low`/`medium`/`high`) to the app-server session, and if so, how the bridge maps that to the protocol.
+- [x] MCP server config (tool endpoints, credentials) is NOT forwarded through the bridge. Any required context must be baked into the rendered prompt or handled by the parent daemon process. This follows from the Workflow Principles rule that the bridge must have no direct MCP access. If read-only tool access is ever desired, scope that as a separate follow-up that explicitly revisits the ownership principle.
+- [x] Keep the bridge API Codex-specific but package layout adapter-friendly so sibling non-Codex bridges can be added later.
+- [x] Document supported provisioning paths: editable install, wheel install, or host injection via `PYTHONPATH`/`sys.modules`.
+- [x] Document that the worktree's agent instruction file (`CLAUDE.md` / `GEMINI.md`, symlinked to `docs/agentic/instructions.md`) is the instruction surface for spawned agents. This repo does not use `AGENTS.md`.
+- [x] Document that build and test commands must be discoverable by the spawned agent, either through the instruction file or explicitly included in the rendered prompt.
+- [x] Keep orchestration-layer imports unchanged so the core package remains unaware of adapter packaging details.
 
 ## Phase 4: Tests
 
-- [ ] Add unit tests for process startup, handshake sequencing, request id routing, and teardown.
-- [ ] Add contract tests for lane execution payloads compatible with `lane_exec.py`.
-- [ ] Add contract tests for review payloads compatible with `review_runner.py`.
-- [ ] Add failure-path tests for timeouts, malformed event streams, missing `turn.completed`, and invalid structured output.
-- [ ] Add a concurrency-safety test or note: document whether `run_subagent` is safe for parallel calls (multiple concurrent app-server processes) or requires external serialization by the caller.
-- [ ] Verify existing daemon/backend regression tests still pass when the bridge package is present.
+- [x] Add unit tests for process startup, handshake sequencing, request id routing, and teardown.
+- [x] Add contract tests for lane execution payloads compatible with `lane_exec.py`.
+- [x] Add contract tests for review payloads compatible with `review_runner.py`.
+- [x] Add failure-path tests for timeouts, malformed event streams, missing `turn.completed`, and invalid structured output.
+- [x] Add a concurrency-safety test or note: document whether `run_subagent` is safe for parallel calls (multiple concurrent app-server processes) or requires external serialization by the caller.
+- [x] Verify existing daemon/backend regression tests still pass when the bridge package is present.
 
 ## Stretch Goals
 
-- [ ] Add an opt-in long-lived host connection mode if repeated one-turn calls show startup cost is materially high.
+- [x] Add an opt-in long-lived host connection mode if repeated one-turn calls show startup cost is materially high.
 - [ ] ~~Generate or vendor a minimal protocol schema snapshot~~ (promoted to Phase 0).
-- [ ] Add a second adapter package example or interface note showing how a non-Codex bridge would fit the same seam.
+- [x] Add a second adapter package example or interface note showing how a non-Codex bridge would fit the same seam.
 
 ## Success Criteria
 
 - [ ] Installing or injecting `codex_subagent_bridge` makes `BACKEND=codex-subagent` usable without changing daemon orchestration code.
-- [ ] A worker lane execution can complete through app-server and return a valid lane-result JSON object.
-- [ ] A review execution can complete through app-server and return a valid review-result JSON object.
-- [ ] The bridge fails loudly and diagnostically when app-server is unavailable or returns invalid structured output.
-- [ ] The orchestration package remains agent-agnostic above the existing execution seam.
+- [x] A worker lane execution can complete through app-server and return a valid lane-result JSON object.
+- [x] A review execution can complete through app-server and return a valid review-result JSON object.
+- [x] The bridge fails loudly and diagnostically when app-server is unavailable or returns invalid structured output.
+- [x] The orchestration package remains agent-agnostic above the existing execution seam.

@@ -81,7 +81,7 @@ def _render_prompt(
         "--lane-id", lane_id,
         "--worktree-path", str(worktree_path),
     ]
-    env = pythonpath_env(orchestrator_root)
+    env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
     completed = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if completed.returncode != 0:
         raise RuntimeError(
@@ -237,7 +237,7 @@ def run_lane_exec(
     recording or handoff side-effects.
     """
     codex = find_codex(codex_bin)
-    env = pythonpath_env(orchestrator_root)
+    env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
 
     # Build prompt
     if prompt_override:

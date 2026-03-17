@@ -138,9 +138,12 @@ def test_tail_text_accepts_bytes() -> None:
 
 def test_pythonpath_env_includes_mcp_src() -> None:
     mod = _load_module()
-    env = mod.pythonpath_env(REPO_ROOT)
+    env = mod.pythonpath_env(REPO_ROOT, task_ref="phase-5-retention-export-and-audit-controls", lane_id="backend-domain")
     expected = str(REPO_ROOT / "packages" / "agent-handoff-mcp" / "src")
     assert expected in env["PYTHONPATH"]
+    assert env["PYENV_VERSION"] == "description-service"
+    assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
+    assert "/.pyenv/versions/description-service/bin" in env["PATH"]
 
 
 # ---------------------------------------------------------------------------

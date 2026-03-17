@@ -67,6 +67,7 @@ make lane-refresh TASK=<task> LANE=<lane>                      # Sync lane to ro
 make lane-list                                                 # List all lanes
 make state                                                     # Full MCP state
 make dashboard                                                 # MCP dashboard
+make orchestrator-daemon [TASK=<task>] [BACKEND=codex-cli|codex-subagent]
 ```
 
 ### Worker one-liners (run from worker worktree)
@@ -75,7 +76,7 @@ make dashboard                                                 # MCP dashboard
 make lane-inbox                                                # Poll assignments
 make lane-prompt                                               # Render actionable prompt
 make lane-check                                                # Run lane tests
-make worker-daemon TASK=<task> LANE=<lane>                     # Continuous worker polling loop
+make worker-daemon TASK=<task> LANE=<lane> [BACKEND=codex-cli|codex-subagent]  # Continuous worker polling loop
 make worker-daemon-status                                      # Inspect lock/PID/log state
 make worker-daemon-stop                                        # Stop the lane daemon
 make worker-daemon-resume                                      # Resume a stopped lane daemon
@@ -85,6 +86,20 @@ make lane-report STATUS=blocked MERGE_READY=0 SUMMARY="..." MESSAGE="..."  # Blo
 ```
 
 All `lane-*` commands work from the repo root and from the app directories that ship forwarding Makefiles. The app-level Makefiles use a `lane-%:` pattern rule that auto-forwards any `lane-*` target to the root Makefile, so new lane targets never need to be registered in the app Makefiles. `worker-daemon` should be launched from the worker worktree root. If you are already in an app subdirectory and that checkout does not yet forward `worker-daemon`, use `make -C "$$(git rev-parse --show-toplevel)" worker-daemon ...`.
+
+### Execution backends
+
+Both daemons default to `BACKEND=codex-cli`.
+
+- `BACKEND=codex-cli`: runs the normal `codex exec` subprocess flow.
+- `BACKEND=codex-subagent`: uses the host-provided `codex_subagent_bridge` module instead of spawning `codex exec`.
+
+Important:
+
+- `codex-subagent` is only available when the current runtime has provisioned that bridge module.
+- The bridge should accept the lane/review prompt, output schema, worktree `cwd`, and may also receive an optional `env` map with lane-scoped runtime hints such as `TMPDIR` and `PYENV_VERSION`.
+- If the bridge is unavailable, the daemon raises an error; it does not silently fall back to `codex-cli`.
+- The backend changes only the execution seam. MCP handoff, lane manifests, worktree isolation, and intake/merge flow stay the same.
 
 ---
 
@@ -182,6 +197,7 @@ Notes:
 ```bash
 cd /Users/daniel/Development/context-alt-text-monorepo-p5-backend-domain
 make worker-daemon TASK=<task-ref> LANE=<lane>
+make worker-daemon TASK=<task-ref> LANE=<lane> BACKEND=codex-subagent
 ```
 
 What this does:
@@ -258,6 +274,67 @@ To preview without sending:
 ```bash
 make handoff-dispatch TASK=<task-ref> DRY_RUN=1
 ```
+
+### Recipe: Inspect plan cursor state
+
+**Who:** Orchestrator. **When:** A task-plan-driven daemon is dispatching work and you need to inspect or override cursor state.
+
+Check the active task and current runtime view first:
+
+```bash
+make state
+```
+
+List plan cursors directly:
+
+```bash
+PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
+  --workspace-root /Users/daniel/Development/context-alt-text-monorepo \
+  --state-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state \
+  --current-task-path /Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md \
+  --exports-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state/exports \
+  review-summary --task-ref <task-ref>
+
+PYTHONPATH="packages/agent-handoff-mcp/src" python3 -m agent_handoff_mcp \
+  --workspace-root /Users/daniel/Development/context-alt-text-monorepo \
+  --state-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state \
+  --current-task-path /Users/daniel/Development/context-alt-text-monorepo/CURRENT_TASK.md \
+  --exports-dir /Users/daniel/Development/context-alt-text-monorepo/.task-state/exports \
+  dashboard
+```
+
+For direct cursor inspection or override, use the Python API helpers from the orchestrator root:
+
+```bash
+PYTHONPATH="packages/agent-handoff-mcp/src" python3 - <<'PY'
+from agent_handoff_mcp import list_plan_cursors, upsert_plan_cursor
+print(list_plan_cursors(task_ref="<task-ref>", state="all"))
+print(upsert_plan_cursor(task_ref="<task-ref>", plan_item_id="<plan-item-id>", state="skipped", summary="Operator skipped stuck item."))
+PY
+```
+
+Expected daemon log lines during plan-driven dispatch include:
+
+- `task_plan_dispatch`
+- `plan_cursor_completed`
+- `task_plan_remaining`
+- `task_plan_stalled`
+
+### Recipe: Start the root-side orchestrator daemon
+
+**Who:** Orchestrator. **When:** You want the singleton root daemon to keep dispatching, intaking, refreshing, and verifying automatically.
+
+```bash
+cd /Users/daniel/Development/context-alt-text-monorepo
+make orchestrator-daemon
+make orchestrator-daemon BACKEND=codex-subagent
+```
+
+Notes:
+
+- The orchestrator daemon is singleton-root scoped, not lane scoped.
+- `BACKEND` is threaded for orchestrator-invoked execution surfaces so the operator-facing command line stays aligned with worker-daemon usage.
+- In current daemon-6 scope, most orchestrator work still happens through MCP + Make orchestration, so `BACKEND` mainly keeps the CLI surface consistent while future orchestrator-invoked execution hooks are added.
 
 Items that cannot be auto-routed (ambiguous or no file path) are listed as `unmatched` in the output. Route those manually with `make lane-dispatch`.
 

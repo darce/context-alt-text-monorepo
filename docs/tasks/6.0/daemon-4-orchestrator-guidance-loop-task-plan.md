@@ -42,6 +42,8 @@ Extend `scripts/mcp/orchestrator_daemon.py` with a dedicated guidance-resolution
 6. run `handoff-close-check`
 7. either sleep, exit successfully, or exit with a terminal error
 
+Daemon-5 later extends this cycle with a task-plan dispatch step between guidance resolution and merge-ready polling. This daemon-4 plan still owns the guidance-resolution semantics; task-plan-derived dispatch is a later layer.
+
 The daemon should poll open `worker_to_orchestrator` messages and recent blocked reports, classify each lane’s request, and then take exactly one of four actions:
 
 1. **Close stale work** when the worker demonstrates the assignment is already satisfied.
@@ -152,7 +154,11 @@ Both long-running and `--single-pass` orchestrator runs should execute this clos
 
 | File                                                           | Function / Target                                                          | Change                                                                                                       |
 | -------------------------------------------------------------- | -------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `scripts/mcp/orchestrator_daemon.py`                           | `_run_handoff_dispatch`, new guidance helpers, `orchestrator_loop`, `main` | Add guidance polling/resolution, close-check invocation, repeated-loop tracking, and terminal exit behavior. |
+| `scripts/mcp/orchestrator_daemon.py`                           | `_run_handoff_dispatch`, `orchestrator_loop`, `main`                        | Integrate guidance polling/resolution, close-check invocation, repeated-loop tracking, and terminal exit behavior. |
+| `scripts/mcp/orchestrator_guidance.py`                         | guidance helpers and resolution loop                                        | Own guidance classification, resolution application, stale-dispatch cleanup, and pending-action completion.  |
+| `scripts/mcp/orchestrator_guidance_policy.py`                  | fallback assignment policy                                                   | Own manifest-driven fallback assignment rules used during redispatch.                                         |
+| `scripts/mcp/orchestrator_helpers.py`                          | shared helper surface                                                        | Provide shared text/logging/JSON helpers used by extracted guidance logic.                                    |
+| `scripts/mcp/handoff_guidance_summary.py`                      | operator summary surface                                                     | Provide an operator-facing summary of unresolved guidance state.                                               |
 | `mk/handoff.mk`                                                | `handoff-inbox`, optional new daemon status/help target                    | Add an operator-facing summary surface for unresolved guidance items and daemon terminal state.              |
 | `packages/agent-handoff-mcp/tests/test_orchestrator_daemon.py` | existing orchestrator-daemon test module                                   | Add coverage for guidance polling, stale-dispatch cleanup, success exit, and repeated-loop error behavior.   |
 
@@ -161,6 +167,9 @@ Both long-running and `--single-pass` orchestrator runs should execute this clos
 | File                                          | Note                                                                                                                                      |
 | --------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `scripts/mcp/worker_daemon.py`                | Worker-side waiting/dormant behavior already exists and must stay compatible with the new orchestrator loop.                              |
+| `scripts/mcp/orchestrator_guidance.py`        | Extracted guidance classifier/resolution layer used by the orchestrator main loop.                                                         |
+| `scripts/mcp/orchestrator_guidance_policy.py` | Manifest-driven fallback assignment rules; not the primary daemon-4 logic surface.                                                         |
+| `scripts/mcp/orchestrator_helpers.py`         | Shared JSON/text/logging helpers used by the extracted guidance modules.                                                                    |
 | `scripts/worktree-lane`                       | Guidance handoffs are emitted here via `report --guidance-request`; the orchestrator loop consumes those messages.                        |
 | `scripts/mcp/lane_result.py`                  | Structured `needs_guidance` handoffs already map into MCP reports/messages that the orchestrator will classify.                           |
 | `config/lane-orchestration/<task-ref>.json`   | Existing manifest still provides lane ownership, routing, merge order, and worktree metadata; it does not yet provide ordered sub-slices. |
@@ -179,7 +188,7 @@ Both long-running and `--single-pass` orchestrator runs should execute this clos
 ## Phase 0: Scaffolding
 
 - [x] Add orchestrator-daemon helpers for listing open `worker_to_orchestrator` guidance messages and correlating them with recent lane reports.
-- [x] Add typed guidance-classification/result structures with explicit outcomes: `close_as_resolved`, `redispatch`, `escalate`, `noop_wait`, `fatal_error`.
+- [x] Add typed guidance-classification/result structures with explicit outcomes: `review`, `redispatch`, `blocked`, `fatal_error`.
 - [x] Add JSONL logging events for `guidance_detected`, `guidance_resolved`, `guidance_redispatched`, `guidance_escalated`, `task_complete`, and `terminal_error`.
 - [x] Verify scaffolds compile: `python3 -m py_compile scripts/mcp/orchestrator_daemon.py`.
 

@@ -8,6 +8,7 @@ side-effects -- callers decide what to do with the result file.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import os
 import shutil
@@ -34,6 +35,7 @@ _CODEX_SEARCH_PATHS = (
     "/Applications/Codex.app/Contents/Resources/codex",
     "{home}/.local/bin/codex",
 )
+BACKEND_CHOICES = ("codex-cli", "codex-subagent")
 
 
 def find_codex(explicit: str | None = None) -> str:
@@ -200,6 +202,93 @@ def _run_codex_process(
                 progress_callback("exec_heartbeat", **payload)
 
 
+def _validate_backend(backend: str) -> str:
+    normalized = backend.strip()
+    if normalized not in BACKEND_CHOICES:
+        raise RuntimeError(
+            f"Unsupported execution backend '{backend}'. Valid values: {', '.join(BACKEND_CHOICES)}"
+        )
+    return normalized
+
+
+def _run_subagent(
+    *,
+    prompt_text: str,
+    schema_text: str,
+    worktree_path: Path,
+    env: dict[str, str] | None = None,
+    progress_callback: Callable[..., None] | None = None,
+) -> dict[str, Any]:
+    """Run the optional host-provided Codex subagent bridge and return structured JSON."""
+    try:
+        bridge = importlib.import_module("codex_subagent_bridge")
+    except ImportError as exc:
+        raise RuntimeError(
+            "codex-subagent backend is unavailable in this runtime. "
+            "Provide a host bridge module named 'codex_subagent_bridge'."
+        ) from exc
+
+    runner = getattr(bridge, "run_subagent", None)
+    if not callable(runner):
+        raise RuntimeError(
+            "codex_subagent_bridge.run_subagent is required for the codex-subagent backend."
+        )
+
+    if progress_callback:
+        progress_callback("exec_spawned", backend="codex-subagent")
+
+    runner_kwargs: dict[str, Any] = {
+        "prompt": prompt_text,
+        "schema": json.loads(schema_text),
+        "cwd": str(worktree_path),
+    }
+    if env is not None:
+        runner_kwargs["env"] = env
+    try:
+        payload = runner(**runner_kwargs)
+    except TypeError as exc:
+        if env is None or "env" not in str(exc):
+            raise
+        runner_kwargs.pop("env", None)
+        payload = runner(**runner_kwargs)
+
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"codex-subagent backend returned invalid JSON: {exc}") from exc
+    if not isinstance(payload, dict):
+        raise RuntimeError(
+            f"codex-subagent backend returned non-object payload: {type(payload).__name__}"
+        )
+    if progress_callback:
+        progress_callback("exec_complete", backend="codex-subagent")
+    return payload
+
+
+def _validate_lane_result_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    """Validate the lane-result contract for subagent execution."""
+    required_text = ("handoff_action", "summary", "details")
+    for key in required_text:
+        value = payload.get(key)
+        if not isinstance(value, str) or not value.strip():
+            raise RuntimeError(f"Lane execution result missing required non-empty string '{key}'.")
+
+    action = payload["handoff_action"]
+    if action not in {"merge_ready", "needs_guidance"}:
+        raise RuntimeError(
+            "Lane execution result has invalid 'handoff_action'. "
+            "Valid values: merge_ready, needs_guidance"
+        )
+
+    for key in ("tests_run", "blockers"):
+        value = payload.get(key)
+        if not isinstance(value, list) or not all(isinstance(item, str) for item in value):
+            raise RuntimeError(f"Lane execution result '{key}' must be an array of strings.")
+
+    return payload
+
+
 # ---------------------------------------------------------------------------
 # Temp-file helpers
 # ---------------------------------------------------------------------------
@@ -224,6 +313,7 @@ def run_lane_exec(
     session: str,
     worktree_path: Path,
     output_path: Path | None = None,
+    backend: str = "codex-cli",
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     prompt_override: str | None = None,
@@ -236,7 +326,7 @@ def run_lane_exec(
     Returns the path to the result JSON file.  Does NOT trigger any MCP
     recording or handoff side-effects.
     """
-    codex = find_codex(codex_bin)
+    backend_name = _validate_backend(backend)
     env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
 
     # Build prompt
@@ -257,6 +347,7 @@ def run_lane_exec(
     if dry_run:
         result: dict[str, Any] = {
             "dry_run": True,
+            "backend": backend_name,
             "handoff_action": "merge_ready",
             "summary": f"Dry-run lane execution for {lane_id}.",
             "details": "No codex exec was run; this is a simulated structured result.",
@@ -264,11 +355,26 @@ def run_lane_exec(
             "blockers": [],
             "prompt": prompt_text,
             "schema": json.loads(schema_text),
-            "codex_bin": codex,
         }
+        if backend_name == "codex-cli":
+            result["codex_bin"] = find_codex(codex_bin)
         out = output_path or _temp_output_path(lane_id=lane_id)
         out.write_text(json.dumps(result, indent=2))
         return out
+
+    if backend_name == "codex-subagent":
+        payload = _validate_lane_result_payload(_run_subagent(
+            prompt_text=prompt_text,
+            schema_text=schema_text,
+            worktree_path=worktree_path,
+            env=env,
+            progress_callback=progress_callback,
+        ))
+        out = output_path or _temp_output_path(lane_id=lane_id)
+        out.write_text(json.dumps(payload, indent=2))
+        return out
+
+    codex = find_codex(codex_bin)
 
     # Write temp files and execute
     with tempfile.TemporaryDirectory(prefix=f"lane-exec-{lane_id}-") as tmpdir:
@@ -333,6 +439,8 @@ def _parse_args() -> argparse.Namespace:
     parser.add_argument("--session", required=True)
     parser.add_argument("--worktree-path", required=True)
     parser.add_argument("--output-path", help="Where to write the result JSON. Defaults to a temp file.")
+    parser.add_argument("--backend", default="codex-cli", choices=BACKEND_CHOICES,
+                        help="Execution backend to use (default: codex-cli).")
     parser.add_argument("--codex-bin", help="Explicit path to the codex binary.")
     parser.add_argument("--codex-args", help="Extra args for codex exec (space-separated).")
     parser.add_argument("--prompt-file", help="Override the lane prompt with contents of this file.")
@@ -359,6 +467,7 @@ def main() -> int:
         session=args.session,
         worktree_path=worktree_path,
         output_path=output_path,
+        backend=args.backend,
         codex_bin=args.codex_bin,
         codex_args=codex_args,
         prompt_override=prompt_override,

@@ -205,6 +205,182 @@ def test_run_lane_exec_dry_run_with_prompt_override(tmp_path: Path) -> None:
     assert "Custom prompt here." in data["prompt"]
 
 
+def test_run_lane_exec_dry_run_subagent_skips_find_codex(tmp_path: Path) -> None:
+    mod = _load_module()
+    output = tmp_path / "result.json"
+    schema_json = json.dumps({"type": "object", "properties": {}})
+
+    with (
+        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_schema", return_value=schema_json),
+        mock.patch.object(mod, "find_codex") as mock_find_codex,
+    ):
+        result_path = mod.run_lane_exec(
+            orchestrator_root=REPO_ROOT,
+            task_ref="test-task",
+            lane_id="test-lane",
+            session="test-task-test-lane",
+            worktree_path=tmp_path,
+            output_path=output,
+            backend="codex-subagent",
+            dry_run=True,
+        )
+
+    assert result_path == output
+    data = json.loads(output.read_text())
+    assert data["backend"] == "codex-subagent"
+    assert "codex_bin" not in data
+    mock_find_codex.assert_not_called()
+
+
+def test_run_lane_exec_subagent_backend_writes_structured_result(tmp_path: Path) -> None:
+    mod = _load_module()
+    output = tmp_path / "result.json"
+    schema_json = json.dumps({"type": "object", "properties": {}})
+    subagent_payload = {
+        "handoff_action": "merge_ready",
+        "summary": "Done.",
+        "details": "Implemented the slice.",
+        "tests_run": [],
+        "blockers": [],
+    }
+
+    with (
+        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_schema", return_value=schema_json),
+        mock.patch.object(mod, "_run_subagent", return_value=subagent_payload) as mock_run_subagent,
+        mock.patch.object(mod, "find_codex") as mock_find_codex,
+    ):
+        result_path = mod.run_lane_exec(
+            orchestrator_root=REPO_ROOT,
+            task_ref="test-task",
+            lane_id="test-lane",
+            session="test-task-test-lane",
+            worktree_path=tmp_path,
+            output_path=output,
+            backend="codex-subagent",
+        )
+
+    assert result_path == output
+    assert json.loads(output.read_text()) == subagent_payload
+    mock_run_subagent.assert_called_once()
+    mock_find_codex.assert_not_called()
+
+
+def test_run_subagent_emits_progress_callbacks() -> None:
+    mod = _load_module()
+    progress: list[tuple[str, dict[str, Any]]] = []
+    fake_bridge = mock.Mock()
+    fake_bridge.run_subagent.return_value = {"handoff_action": "merge_ready", "summary": "Done."}
+
+    with mock.patch.object(mod.importlib, "import_module", return_value=fake_bridge):
+        payload = mod._run_subagent(
+            prompt_text="Prompt",
+            schema_text=json.dumps({"type": "object"}),
+            worktree_path=Path("/tmp/worktree"),
+            progress_callback=lambda event, **kw: progress.append((event, kw)),
+        )
+
+    assert payload == {"handoff_action": "merge_ready", "summary": "Done."}
+    assert [event for event, _ in progress] == ["exec_spawned", "exec_complete"]
+    assert progress[0][1]["backend"] == "codex-subagent"
+
+
+def test_run_subagent_does_not_emit_complete_for_invalid_payload() -> None:
+    mod = _load_module()
+    progress: list[tuple[str, dict[str, Any]]] = []
+    fake_bridge = mock.Mock()
+    fake_bridge.run_subagent.return_value = "not-json"
+
+    with mock.patch.object(mod.importlib, "import_module", return_value=fake_bridge):
+        with pytest.raises(RuntimeError, match="invalid JSON"):
+            mod._run_subagent(
+                prompt_text="Prompt",
+                schema_text=json.dumps({"type": "object"}),
+                worktree_path=Path("/tmp/worktree"),
+                progress_callback=lambda event, **kw: progress.append((event, kw)),
+            )
+
+    assert [event for event, _ in progress] == ["exec_spawned"]
+
+
+def test_run_subagent_passes_env_when_bridge_supports_it() -> None:
+    mod = _load_module()
+    fake_bridge = mock.Mock()
+    fake_bridge.run_subagent.return_value = {"handoff_action": "merge_ready", "summary": "Done."}
+    env = {"TMPDIR": "/tmp/lane", "PYENV_VERSION": "description-service"}
+
+    with mock.patch.object(mod.importlib, "import_module", return_value=fake_bridge):
+        mod._run_subagent(
+            prompt_text="Prompt",
+            schema_text=json.dumps({"type": "object"}),
+            worktree_path=Path("/tmp/worktree"),
+            env=env,
+        )
+
+    assert fake_bridge.run_subagent.call_args.kwargs["env"] == env
+
+
+def test_run_subagent_falls_back_when_bridge_does_not_accept_env() -> None:
+    mod = _load_module()
+
+    def legacy_runner(*, prompt: str, schema: dict[str, Any], cwd: str) -> dict[str, Any]:
+        return {"handoff_action": "merge_ready", "summary": "Done."}
+
+    fake_bridge = mock.Mock(run_subagent=mock.Mock(side_effect=legacy_runner))
+
+    with mock.patch.object(mod.importlib, "import_module", return_value=fake_bridge):
+        payload = mod._run_subagent(
+            prompt_text="Prompt",
+            schema_text=json.dumps({"type": "object"}),
+            worktree_path=Path("/tmp/worktree"),
+            env={"TMPDIR": "/tmp/lane"},
+        )
+
+    assert payload == {"handoff_action": "merge_ready", "summary": "Done."}
+    assert fake_bridge.run_subagent.call_count == 2
+    assert "env" not in fake_bridge.run_subagent.call_args.kwargs
+
+
+def test_validate_lane_result_payload_rejects_missing_fields() -> None:
+    mod = _load_module()
+    with pytest.raises(RuntimeError, match="missing required non-empty string 'details'"):
+        mod._validate_lane_result_payload(
+            {
+                "handoff_action": "merge_ready",
+                "summary": "Done.",
+                "tests_run": [],
+                "blockers": [],
+            }
+        )
+
+
+def test_run_lane_exec_subagent_backend_rejects_invalid_payload(tmp_path: Path) -> None:
+    mod = _load_module()
+    output = tmp_path / "result.json"
+    schema_json = json.dumps({"type": "object", "properties": {}})
+
+    with (
+        mock.patch.object(mod, "_render_prompt", return_value="Test prompt"),
+        mock.patch.object(mod, "_render_schema", return_value=schema_json),
+        mock.patch.object(
+            mod,
+            "_run_subagent",
+            return_value={"handoff_action": "merge_ready", "summary": "Done.", "tests_run": [], "blockers": []},
+        ),
+    ):
+        with pytest.raises(RuntimeError, match="missing required non-empty string 'details'"):
+            mod.run_lane_exec(
+                orchestrator_root=REPO_ROOT,
+                task_ref="test-task",
+                lane_id="test-lane",
+                session="test-task-test-lane",
+                worktree_path=tmp_path,
+                output_path=output,
+                backend="codex-subagent",
+            )
+
+
 # ---------------------------------------------------------------------------
 # _render_prompt subprocess call shape
 # ---------------------------------------------------------------------------

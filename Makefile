@@ -40,8 +40,9 @@ PYTHON ?= python3
 _ACTIVE_TASK_CMD = $(shell $(MCP_CMD) $(MCP_STATE_ARGS) state 2>/dev/null | python3 -c 'import sys,json; data=json.load(sys.stdin); print(data.get("task_ref",""))' 2>/dev/null)
 ACTIVE_TASK = $(eval ACTIVE_TASK := $(_ACTIVE_TASK_CMD))$(ACTIVE_TASK)
 SUPPORTED_TASKS := $(shell $(LANE_CONFIG_CMD) list-tasks 2>/dev/null)
+SOLE_TASK := $(if $(filter 1,$(words $(SUPPORTED_TASKS))),$(SUPPORTED_TASKS),)
 INFERRED_TASK := $(shell $(LANE_CONFIG_CMD) infer-task --branch "$(CURRENT_BRANCH)" --worktree-path "$(WORKTREE_ROOT_REAL)" --orchestrator-root "$(ORCHESTRATOR_ROOT)" 2>/dev/null)
-TASK ?= $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(ACTIVE_TASK),$(or $(INFERRED_TASK),$(ACTIVE_TASK)))
+TASK ?= $(if $(filter 1,$(IN_ORCHESTRATOR_ROOT)),$(or $(ACTIVE_TASK),$(SOLE_TASK)),$(or $(INFERRED_TASK),$(ACTIVE_TASK),$(SOLE_TASK)))
 INFERRED_LANE := $(shell $(LANE_CONFIG_CMD) infer-lane --branch "$(CURRENT_BRANCH)" $(if $(TASK),--task-ref "$(TASK)",) 2>/dev/null)
 LANE ?= $(INFERRED_LANE)
 TASK_LANES := $(shell $(if $(TASK),$(LANE_CONFIG_CMD) list-lanes --task-ref "$(TASK)" 2>/dev/null,))
@@ -63,6 +64,7 @@ REF ?= $(CURRENT_BRANCH)
 ENTER_SHELL ?= 1
 CODEX_ARGS ?=
 CODEX_BIN ?= $(shell command -v codex 2>/dev/null || true)
+BACKEND ?= codex-cli
 TASK_PLAN ?=
 LANE_IDS ?=
 
@@ -145,6 +147,8 @@ help:
 	@echo "  See docs/agentic/BOOTSTRAP.md for details."
 	@echo ""
 	@echo "Handoff Integrity:"
+	@echo "  make list-tasks"
+	@echo "    List available lane-orchestration task manifests."
 	@echo "  make handoff-close-check    - Enforce close-readiness on active handoff task"
 	@echo "  make handoff-integrity-check - Run parser/lifecycle/sync guard checks"
 	@echo "  make handoff-dispatch TASK=<task-ref> [DRY_RUN=1]"
@@ -196,6 +200,8 @@ help:
 	@echo "  make lane-intake TASK=<task-ref> LANE=<lane> [DRY_RUN=1] [SKIP_TESTS=1]"
 	@echo "    Prints the latest merge-ready lane report, cherry-picks into a scratch worktree, runs lane-local verification there, and only fast-forwards root if clean."
 	@echo "    Use SKIP_TESTS=1 to bypass scratch-worktree test commands (e.g. when deps are not installable in the scratch checkout)."
+	@echo "  make orchestrator-daemon [TASK=<task-ref>] [BACKEND=codex-cli|codex-subagent]"
+	@echo "    Shared singleton orchestrator loop rooted at $(ORCHESTRATOR_ROOT). Start it from any worktree; pause/resume/status use the same shared root state."
 	@echo "  Supported task manifests: $(SUPPORTED_TASKS)"
 	@echo "  Enumerated lanes for $(if $(TASK),$(TASK),the active task): $(TASK_LANES)"
 

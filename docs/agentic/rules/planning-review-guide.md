@@ -60,6 +60,7 @@ Hard rule for agent responses:
 - [ ] Deferred/stretch items do not conflict with "done" or success-criteria language.
 - [ ] Phase ordering matches stated prerequisites and dependencies.
 - [ ] Terminology is consistent with current ADRs/contracts.
+- [ ] Review findings and handoff action items are tracked exclusively in MCP handoff state, not duplicated into the task plan. Task plans define scope and checklists; MCP is the single source of truth for review findings, blockers, and agent-recorded decisions. Embedding handoff items in the plan creates drift when findings are resolved or reopened.
 
 ### Architecture and Ownership
 

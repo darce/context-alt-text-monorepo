@@ -25,6 +25,8 @@ if str(SCRIPT_DIR) not in sys.path:
 
 from _env import pythonpath_env
 
+_MAX_LOG_BYTES = 1_000_000
+
 
 # ---------------------------------------------------------------------------
 # JSONL logger
@@ -42,6 +44,15 @@ def _log(lane_id: str, log_dir: Path, level: str, event: str, **extra: Any) -> N
         **extra,
     }
     path = log_dir / f"worker-{lane_id}.jsonl"
+    if path.exists():
+        try:
+            if path.stat().st_size >= _MAX_LOG_BYTES:
+                rotated = path.with_suffix(path.suffix + ".1")
+                if rotated.exists():
+                    rotated.unlink()
+                path.replace(rotated)
+        except OSError:
+            pass
     with path.open("a") as fh:
         fh.write(json.dumps(entry, default=str) + "\n")
     # Also print for interactive visibility.
@@ -219,6 +230,16 @@ def _run_final_handoff(
     return result.returncode
 
 
+def _cleanup_result_file(path: Path | None) -> None:
+    """Delete a consumed lane result artifact if it still exists."""
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+
+
 # ---------------------------------------------------------------------------
 # Result file helpers
 # ---------------------------------------------------------------------------
@@ -251,6 +272,7 @@ def worker_loop(
     max_review_cycles: int = 3,
     poll_interval: int = 30,
     single_pass: bool = False,
+    backend: str = "codex-cli",
     codex_bin: str | None = None,
     codex_args: list[str] | None = None,
     dry_run: bool = False,
@@ -265,11 +287,12 @@ def worker_loop(
     log = lambda level, event, **kw: _log(lane_id, log_dir, level, event, **kw)
 
     log("INFO", "daemon_start", task_ref=task_ref, single_pass=single_pass,
-        max_review_cycles=max_review_cycles)
+        max_review_cycles=max_review_cycles, backend=backend)
 
-    # Validate codex binary early
-    codex = find_codex(codex_bin)
-    log("INFO", "codex_found", codex_bin=codex)
+    codex = None
+    if backend == "codex-cli":
+        codex = find_codex(codex_bin)
+        log("INFO", "codex_found", codex_bin=codex)
     dormant_state: str | None = None
 
     while True:
@@ -348,6 +371,7 @@ def worker_loop(
                     lane_id=lane_id,
                     session=session,
                     worktree_path=worktree_path,
+                    backend=backend,
                     codex_bin=codex,
                     codex_args=codex_args,
                     prompt_override=prompt_override,
@@ -373,6 +397,8 @@ def worker_loop(
                     result_path=final_result_path,
                     dry_run=dry_run,
                 )
+                if handoff_exit == 0:
+                    _cleanup_result_file(final_result_path)
                 if single_pass:
                     return handoff_exit
                 break
@@ -386,6 +412,7 @@ def worker_loop(
                     task_ref=task_ref,
                     session=session,
                     orchestrator_root=orchestrator_root,
+                    backend=backend,
                     record_findings=True,
                     dry_run=dry_run,
                 )
@@ -430,6 +457,8 @@ def worker_loop(
                     result_path=final_result_path,
                     dry_run=dry_run,
                 )
+                if handoff_exit == 0:
+                    _cleanup_result_file(final_result_path)
                 if single_pass:
                     return handoff_exit
                 break
@@ -455,6 +484,8 @@ def worker_loop(
                     result_path=final_result_path,
                     dry_run=dry_run,
                 )
+                if handoff_exit == 0:
+                    _cleanup_result_file(final_result_path)
 
         if single_pass:
             return handoff_exit
@@ -488,6 +519,9 @@ def _parse_args() -> argparse.Namespace:
                         help="Seconds between poll cycles (default: 30).")
     parser.add_argument("--single-pass", action="store_true",
                         help="Run one cycle and exit instead of looping.")
+    parser.add_argument("--backend", default="codex-cli",
+                        choices=("codex-cli", "codex-subagent"),
+                        help="Execution backend to use (default: codex-cli).")
     parser.add_argument("--codex-bin", default=None,
                         help="Explicit path to the codex binary.")
     parser.add_argument("--codex-args", default=None,
@@ -526,6 +560,7 @@ def main() -> int:
             max_review_cycles=args.max_review_cycles,
             poll_interval=args.poll_interval,
             single_pass=args.single_pass,
+            backend=args.backend,
             codex_bin=args.codex_bin,
             codex_args=codex_args,
             dry_run=args.dry_run,

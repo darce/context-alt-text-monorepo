@@ -329,6 +329,7 @@ def _apply_guidance_resolution(
     from agent_handoff_mcp import (
         record_decision,
         record_lane_message,
+        update_next_actions,
         update_lane_message,
         upsert_worktree_lane,
     )
@@ -351,6 +352,13 @@ def _apply_guidance_resolution(
         status=resolution.lane_status,
         notes=resolution.lane_notes,
     )
+
+    if resolution.kind == "review":
+        for action in _pending_lane_actions(_lane_activity(task_ref, resolution.lane_id)):
+            action_id = action.get("id")
+            if action_id is None:
+                continue
+            update_next_actions(operation="update", action_id=int(action_id), status="done")
 
     if resolution.kind == "redispatch" and resolution.dispatch_message:
         record_lane_message(

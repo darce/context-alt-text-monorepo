@@ -45,9 +45,11 @@ Introduce two pieces:
    - Run `make handoff-dispatch`
    - Query merge-ready worker reports
    - Intake lanes in manifest order
+   - Resolve worker guidance messages
+   - Derive the next dispatchable slice from the task plan when backlog routing is otherwise empty
    - Refresh downstream lanes declared by the same manifest
    - Run cross-lane verification after each successful intake
-   - Record decisions/tests for each cycle
+   - Record decisions/tests for each cycle and persist daemon status
 
 Because workers are already polling, the orchestrator daemon does not need a special wake-up message system in the first version.
 
@@ -83,13 +85,20 @@ Because workers are already polling, the orchestrator daemon does not need a spe
 
 ```python
 def orchestrator_loop(...) -> None:
-    while not _is_paused(...):
+    while True:
+        if _is_paused(...):
+            _sleep(...)
+            continue
+
         _dispatch_open_items(...)
         ready_lanes = _poll_merge_ready_lanes(...)
         for lane_id in _sort_by_manifest_merge_order(ready_lanes, manifest):
             if _intake_lane(..., lane_id):
                 _refresh_downstream(..., lane_id, manifest)
                 _run_cross_lane_verify(...)
+        _resolve_guidance_cycle(...)
+        _dispatch_from_task_plan(...)
+        _log_cycle_status(...)
         if single_pass:
             return
         _sleep(...)
@@ -109,7 +118,8 @@ class OrchestratorLock:
 | ------------------------------------------- | --------------------------------------------------------------------------------------- |
 | `config/lane-orchestration/<task-ref>.json` | Existing routing and merge-order manifest; add `downstream` declarations if needed      |
 | `scripts/mcp/orchestrator_daemon.py`        | New root-side poll/dispatch/intake loop                                                 |
-| `Makefile`                                  | Add `orchestrator-daemon`, `daemon-pause`, `daemon-resume`, and `daemon-status` targets |
+| `scripts/mcp/orchestrator_lanes.py`         | Shared intake, refresh, and lane-capacity helpers used by the daemon                    |
+| `mk/handoff.mk`                             | Add `orchestrator-daemon`, `daemon-pause`, `daemon-resume`, and `daemon-status` targets |
 
 ## Related Files
 
@@ -160,7 +170,7 @@ class OrchestratorLock:
 - [x] Wire pause/resume via `.task-state/daemon-paused`
 - [x] Make `daemon-status` show lock ownership, latest cycle, and last verification result
 - [x] Add JSONL logging under `logs/daemon/orchestrator.jsonl`
-- [ ] Document single-pass and long-running usage in operator docs
+- [x] Document single-pass and long-running usage in operator docs
 
 ## Success Criteria
 

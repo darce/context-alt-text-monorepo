@@ -352,3 +352,76 @@ def test_run_review_record_findings_records_ids_and_line_refs(tmp_path: Path) ->
     assert kwargs["details"]["line_start"] == 10
     assert kwargs["details"]["line_end"] == 12
     assert kwargs["details"]["fix"] == "Validate the payload before use."
+
+
+def test_run_review_subagent_backend_uses_subagent_exec(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean review.",
+    }
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "_subagent_exec", return_value=raw_result) as mock_subagent_exec,
+        mock.patch.object(module, "_codex_exec") as mock_codex_exec,
+    ):
+        result = module.run_review(
+            worktree_path=tmp_path,
+            lane_id="backend-domain",
+            backend="codex-subagent",
+        )
+
+    assert result["summary"] == "Clean review."
+    assert result["converged"] is True
+    mock_subagent_exec.assert_called_once()
+    mock_codex_exec.assert_not_called()
+
+
+def test_run_review_subagent_backend_passes_runtime_env(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    raw_result = {
+        "findings": [],
+        "summary": "Clean review.",
+    }
+
+    with (
+        mock.patch.object(module, "_changed_files", return_value=["src/main.py"]),
+        mock.patch.object(module, "_diff_stat", return_value="1 file changed"),
+        mock.patch.object(module, "_detect_stack_guides", return_value=["branch-review-python.md"]),
+        mock.patch.object(module, "_subagent_exec", return_value=raw_result) as mock_subagent_exec,
+    ):
+        module.run_review(
+            worktree_path=tmp_path,
+            lane_id="backend-domain",
+            task_ref="phase-5-retention-export-and-audit-controls",
+            orchestrator_root=REPO_ROOT,
+            backend="codex-subagent",
+        )
+
+    env = mock_subagent_exec.call_args.kwargs["env"]
+    assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
+    assert env["PYENV_VERSION"] == "description-service"
+
+
+def test_subagent_exec_falls_back_when_bridge_does_not_accept_env(tmp_path: Path) -> None:
+    module = _load_review_runner_module()
+    import unittest.mock as mock
+
+    def legacy_runner(*, prompt: str, schema: dict[str, Any], cwd: str) -> dict[str, Any]:
+        return {"findings": [], "summary": "Clean review."}
+
+    fake_bridge = mock.Mock(run_subagent=mock.Mock(side_effect=legacy_runner))
+
+    with mock.patch.object(module.importlib, "import_module", return_value=fake_bridge):
+        result = module._subagent_exec("Prompt", tmp_path, env={"TMPDIR": "/tmp/lane"})
+
+    assert result == {"findings": [], "summary": "Clean review."}
+    assert fake_bridge.run_subagent.call_count == 2
+    assert "env" not in fake_bridge.run_subagent.call_args.kwargs

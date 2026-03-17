@@ -88,6 +88,7 @@
       "worktree_path": "{orchestrator_root}-p5-backend-domain",
       "title": "Backend domain",
       "objective": "Phase 5 backend-domain retention/export/audit slice.",
+      "app_root": "apps/prototype-description-service",
       "owned_paths": [
         "apps/prototype-description-service/db/**",
         "apps/prototype-description-service/recognition/domain/**",
@@ -142,6 +143,7 @@
       "worktree_path": "{orchestrator_root}-p5-backend-http",
       "title": "Backend HTTP",
       "objective": "Phase 5 backend-http retention router and schema slice.",
+      "app_root": "apps/prototype-description-service",
       "owned_paths": [
         "apps/prototype-description-service/recognition/interface_adapters/http/**",
         "apps/prototype-description-service/recognition/tests/fakes.py",

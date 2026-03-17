@@ -32,6 +32,7 @@ def test_build_prompt_returns_no_work_message_when_lane_is_idle() -> None:
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="backend-domain",
         worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
     )
 
     assert prompt == module.NO_WORK_MESSAGE
@@ -76,12 +77,21 @@ def test_build_prompt_includes_messages_actions_and_findings() -> None:
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="backend-domain",
         worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
     )
 
     assert "Open orchestrator messages:" in prompt
     assert "Pending lane actions:" in prompt
     assert "Open lane review findings:" in prompt
+    assert "Verification commands for this lane:" in prompt
+    assert "PYENV_VERSION=description-service" in prompt
+    assert "Backend runtime notes:" in prompt
     assert "make lane-handoff" in prompt
+    assert "Working directory:" in prompt
+    assert "apps/prototype-description-service/" in prompt
+    assert "Owned paths" in prompt
+    assert "Constraints:" in prompt
+    assert "Do not edit HTTP router files." in prompt
 
 
 def test_build_summary_lines_color_codes_actionable_items() -> None:
@@ -161,6 +171,7 @@ def test_build_prompt_waits_when_worker_handoff_is_newer_than_open_work() -> Non
         task_ref="phase-5-retention-export-and-audit-controls",
         lane_id="backend-domain",
         worktree_path="/tmp/backend-domain",
+        orchestrator_root=REPO_ROOT,
     )
 
     assert prompt == module.WAITING_MESSAGE

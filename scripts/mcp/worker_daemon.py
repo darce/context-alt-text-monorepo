@@ -131,7 +131,7 @@ def poll_lane_state(
         "--worktree-path", str(worktree_path),
         "--check",
     ]
-    env = pythonpath_env(orchestrator_root)
+    env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
     result = subprocess.run(cmd, capture_output=True, text=True, check=False, env=env)
     if result.returncode == 0:
         return "actionable"
@@ -324,7 +324,7 @@ def worker_loop(
                     "--lane-id", lane_id,
                     "--worktree-path", str(worktree_path),
                 ]
-                env = pythonpath_env(orchestrator_root)
+                env = pythonpath_env(orchestrator_root, task_ref=task_ref, lane_id=lane_id)
                 base_result = subprocess.run(
                     base_prompt_cmd, capture_output=True, text=True, check=False, env=env
                 )

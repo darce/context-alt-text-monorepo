@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -10,6 +11,12 @@ from typing import Any
 from agent_handoff_mcp import RuntimeConfig
 from agent_handoff_mcp import configure_runtime
 from agent_handoff_mcp import get_lane_activity
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+if str(SCRIPT_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPT_DIR))
+
+from lane_manifest import get_lane_config
 
 
 NO_WORK_MESSAGE = "No actionable lane inbox items."
@@ -24,6 +31,7 @@ ANSI = {
     "cyan": "\033[36m",
     "green": "\033[32m",
 }
+_PYENV_PATTERN = re.compile(r"\bPYENV_VERSION=([A-Za-z0-9._-]+)")
 
 
 def _parse_args() -> argparse.Namespace:
@@ -193,7 +201,72 @@ def _actionable_state(activity: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def _build_prompt(activity: dict[str, Any], task_ref: str, lane_id: str, worktree_path: str) -> str:
+def _runtime_guidance(
+    *,
+    orchestrator_root: Path,
+    task_ref: str,
+    lane_id: str,
+) -> list[str]:
+    lane_config = get_lane_config(task_ref, lane_id, orchestrator_root=str(orchestrator_root)) or {}
+    test_commands = [str(item).strip() for item in lane_config.get("test_commands", []) if str(item).strip()]
+    app_root = str(lane_config.get("app_root") or "").strip()
+    non_goals = [str(item).strip() for item in lane_config.get("non_goals", []) if str(item).strip()]
+    owned_paths = [str(item).strip() for item in lane_config.get("owned_paths", []) if str(item).strip()]
+
+    lines: list[str] = []
+
+    if app_root:
+        lines.extend(
+            [
+                "",
+                "Working directory:",
+                f"- Your primary application directory is `{app_root}/`. Run all test and build commands from there.",
+                f"- `cd {app_root}` before running any lane verification commands.",
+            ]
+        )
+
+    if owned_paths:
+        lines.extend(["", "Owned paths (only edit files within these):"])
+        lines.extend(_bullet_lines([f"`{path}`" for path in owned_paths]))
+
+    if non_goals:
+        lines.extend(["", "Constraints:"])
+        lines.extend(_bullet_lines(non_goals))
+
+    if test_commands:
+        lines.extend(["", "Verification commands for this lane:"])
+        lines.extend(_bullet_lines([f"`{command}`" for command in test_commands]))
+
+    pyenv_version = None
+    for command in test_commands:
+        match = _PYENV_PATTERN.search(command)
+        if match:
+            pyenv_version = match.group(1)
+            break
+    if pyenv_version:
+        app_dir = app_root or "the application directory"
+        lines.extend(
+            [
+                "",
+                "Backend runtime notes:",
+                f"- Your environment already has `PYENV_VERSION={pyenv_version}` exported with the virtualenv `bin/` directory on `PATH`.",
+                f"- Use `python`, `pytest`, and `mypy` directly (they resolve to the `{pyenv_version}` virtualenv). Do NOT use bare `python3` or probe the system Python.",
+                f"- Always `cd {app_dir}` first so imports resolve correctly.",
+                "- A writable lane temp dir is provided under `.task-state/tmp/<lane>`; temp-file failures usually mean the command escaped the managed worker environment.",
+                "- Local reset/bootstrap work depends on backend resources outside the worker sandbox. If PostgreSQL or other local services are unavailable, report `needs_guidance` instead of treating that as a code defect.",
+            ]
+        )
+    return lines
+
+
+def _build_prompt(
+    activity: dict[str, Any],
+    task_ref: str,
+    lane_id: str,
+    worktree_path: str,
+    *,
+    orchestrator_root: Path,
+) -> str:
     lane = activity.get("lane") if isinstance(activity.get("lane"), dict) else {}
     branch = str(lane.get("branch") or "")
     objective = str(lane.get("objective") or "").strip()
@@ -223,6 +296,8 @@ def _build_prompt(activity: dict[str, Any], task_ref: str, lane_id: str, worktre
             "Operate only within this lane's owned files and do not edit sibling-lane paths.",
         ]
     )
+
+    lines.extend(_runtime_guidance(orchestrator_root=orchestrator_root, task_ref=task_ref, lane_id=lane_id))
 
     if messages:
         lines.extend(["", "Open orchestrator messages:"])
@@ -280,7 +355,13 @@ def main() -> int:
         raise RuntimeError(f"Unable to load lane activity: {activity}")
 
     state = _actionable_state(activity)
-    prompt = _build_prompt(activity, task_ref=args.task_ref, lane_id=args.lane_id, worktree_path=args.worktree_path)
+    prompt = _build_prompt(
+        activity,
+        task_ref=args.task_ref,
+        lane_id=args.lane_id,
+        worktree_path=args.worktree_path,
+        orchestrator_root=orchestrator_root,
+    )
     if args.check:
         if state["actionable"]:
             return 0

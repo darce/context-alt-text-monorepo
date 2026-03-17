@@ -106,6 +106,19 @@ def test_log_appends_multiple_entries(tmp_path: Path) -> None:
     assert len(lines) == 2
 
 
+def test_pythonpath_env_sets_lane_tempdir_and_backend_pyenv() -> None:
+    mod = _load_module()
+    env = mod.pythonpath_env(
+        REPO_ROOT,
+        task_ref="phase-5-retention-export-and-audit-controls",
+        lane_id="backend-domain",
+    )
+    assert env["PYENV_VERSION"] == "description-service"
+    assert env["TMPDIR"].endswith("/.task-state/tmp/backend-domain")
+    assert env["TMP"] == env["TMPDIR"]
+    assert env["TEMP"] == env["TMPDIR"]
+
+
 # ---------------------------------------------------------------------------
 # has_actionable_work
 # ---------------------------------------------------------------------------

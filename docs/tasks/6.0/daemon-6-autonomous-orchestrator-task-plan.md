@@ -189,6 +189,8 @@ Contract details:
 
 Provisioning of the bridge is host-owned. Acceptable mechanisms include `PYTHONPATH` injection, pre-populating `sys.modules`, or packaging the bridge as an installable module. This task does not standardize the delivery mechanism beyond the import contract above.
 
+Daemon 7 is the concrete implementation follow-through for this seam. The in-repo reference adapter now lives under `packages/codex-subagent-bridge/` and uses `codex app-server` over stdio without changing the daemon-side contract above.
+
 #### Runtime topology
 
 `codex-subagent` is only usable when the Python daemon process can reach a host that knows how to satisfy the `codex_subagent_bridge` contract.

@@ -100,6 +100,12 @@ Important:
 - The bridge should accept the lane/review prompt, output schema, worktree `cwd`, and may also receive an optional `env` map with lane-scoped runtime hints such as `TMPDIR` and `PYENV_VERSION`.
 - If the bridge is unavailable, the daemon raises an error; it does not silently fall back to `codex-cli`.
 - The backend changes only the execution seam. MCP handoff, lane manifests, worktree isolation, and intake/merge flow stay the same.
+- The in-repo reference bridge now lives at `packages/codex-subagent-bridge/`. Install it editable (`pip install -e packages/codex-subagent-bridge`) or expose its `src/` directory on `PYTHONPATH` so `import codex_subagent_bridge` succeeds in the daemon runtime.
+- The bridge forwards runtime hints only as local process/session context. Today that means lane-scoped environment values such as `TMPDIR`, `PATH`, and `PYENV_VERSION` become subprocess environment for `codex app-server`, while reasoning effort may be forwarded from `CODEX_REASONING_EFFORT` or `REASONING_EFFORT` into `turn/start.effort`.
+- MCP endpoints, credentials, and handoff writes are intentionally not forwarded through the bridge. Any MCP interaction stays in the parent daemon process.
+- Spawned app-server sessions discover repo instructions from the worktree root (`CLAUDE.md` / `GEMINI.md` symlinked to `docs/agentic/instructions.md` in this repo). There is no `AGENTS.md` here.
+- Build and test commands still need to be discoverable by the spawned agent. In practice that means keeping them in the repo instruction surface or rendering them directly into the lane/review prompt.
+- The reference bridge is safe for parallel daemon calls because each `run_subagent()` invocation starts its own short-lived `codex app-server` process; there is no shared in-process session state.
 
 ---
 
